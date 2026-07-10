@@ -478,6 +478,7 @@ pub(crate) async fn route_assistant_execute(
         slot: route.summary.slot,
         task_policy: task_policy.clone(),
         skill_activation_plan: Some(skill_activation_plan.clone()),
+        failover_candidates: route.failover_candidates.clone(),
     };
     let task_result = crate::ai_runtime::harness_task::run_harness_task(
         state,

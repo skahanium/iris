@@ -489,6 +489,9 @@ async fn call_mcp_search_provider(
             max_stdout_line_bytes: 64 * 1024,
             max_stderr_bytes: 4 * 1024,
             cwd: None,
+            stdio_session_pool: true,
+            stdio_session_idle_timeout:
+                crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         },
     )
     .await?;
@@ -1305,6 +1308,9 @@ async fn collect_mcp_page_fetch(
             max_stdout_line_bytes: 128 * 1024,
             max_stderr_bytes: 4 * 1024,
             cwd: None,
+            stdio_session_pool: true,
+            stdio_session_idle_timeout:
+                crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         },
     )
     .await;

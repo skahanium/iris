@@ -84,6 +84,8 @@ pub struct HarnessRunInput {
     /// 图片附件（传给 LLM API 的多模态内容）。
     pub images: Option<Vec<crate::commands::ai_commands::ImageAttachmentDto>>,
     pub history_messages: Vec<(String, String)>,
+    pub structured_history_messages: Vec<crate::ai_runtime::prompt_builder::HistoryEntry>,
+    pub allowed_tools: Option<Vec<String>>,
     pub depth: u32,
     pub resume_from_checkpoint: bool,
     pub max_rounds_override: Option<u32>,
@@ -91,4 +93,5 @@ pub struct HarnessRunInput {
     pub input_budget: Option<u32>,
     pub skill_activation_plan: Option<SkillActivationPlanSummary>,
     pub task_policy: AgentTaskPolicy,
+    pub provider_failover_candidates: Vec<crate::ai_runtime::model_gateway::ProviderConfig>,
 }

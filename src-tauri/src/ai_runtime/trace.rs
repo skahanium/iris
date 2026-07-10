@@ -139,7 +139,7 @@ pub fn redact_classified_leaks(input: &str) -> String {
 }
 
 /// AI 请求追踪记录。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiTrace {
     pub request_id: String,
     pub scene: AiScene,
@@ -155,7 +155,7 @@ pub struct AiTrace {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TraceStatus {
     Started,
@@ -325,6 +325,24 @@ impl TraceRecorder {
         })
     }
 
+    /// Mark stale awaiting tool confirmations as failed so checkpoints do not hang forever.
+    pub fn expire_stale_tool_confirmations(db: &Database, ttl_minutes: i64) -> AppResult<usize> {
+        let cutoff = chrono::Utc::now() - chrono::Duration::minutes(ttl_minutes.max(1));
+        db.with_conn(|conn| {
+            let changed = conn.execute(
+                "UPDATE ai_traces
+                 SET status = ?1, error_code = ?2, checkpoint = NULL
+                 WHERE status = ?3 AND created_at < ?4",
+                rusqlite::params![
+                    TraceStatus::Failed.as_str(),
+                    "tool_confirmation_expired",
+                    TraceStatus::AwaitingToolConfirmation.as_str(),
+                    cutoff.to_rfc3339(),
+                ],
+            )?;
+            Ok(changed)
+        })
+    }
     /// 清理超过 N 天的 trace 记录。
     pub fn cleanup_older_than(db: &Database, days: i64) -> AppResult<usize> {
         db.with_conn(|conn| {
@@ -405,6 +423,31 @@ mod tests {
         assert!(matches!(traces[0].status, TraceStatus::Failed));
     }
 
+    #[test]
+    fn expire_stale_tool_confirmation_traces_marks_failed_with_stable_code() {
+        let db = Database::open_in_memory().unwrap();
+        TraceRecorder::start(&db, "old-awaiting", AiScene::KnowledgeLookup).unwrap();
+        TraceRecorder::update_status(&db, "old-awaiting", TraceStatus::AwaitingToolConfirmation)
+            .unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE ai_traces SET created_at = ?1 WHERE request_id = ?2",
+                rusqlite::params!["2020-01-01T00:00:00Z", "old-awaiting"],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let expired = TraceRecorder::expire_stale_tool_confirmations(&db, 30).unwrap();
+
+        assert_eq!(expired, 1);
+        let trace = TraceRecorder::recent(&db, 1).unwrap().remove(0);
+        assert_eq!(trace.status, TraceStatus::Failed);
+        assert_eq!(
+            trace.error_code.as_deref(),
+            Some("tool_confirmation_expired")
+        );
+    }
     #[test]
     fn trace_cleanup_removes_old_records() {
         let db = setup_db();

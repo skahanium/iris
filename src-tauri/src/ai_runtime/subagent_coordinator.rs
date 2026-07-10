@@ -87,8 +87,6 @@ impl SubAgentTaskSpec {
             .unwrap_or_default();
         let allowed_tools = if requested_allowed_tools.is_empty() {
             inherited_allowed_tools
-        } else if inherited_allowed_tools.is_empty() {
-            requested_allowed_tools
         } else {
             requested_allowed_tools
                 .into_iter()
@@ -303,5 +301,54 @@ impl SubAgentCoordinator {
             "harness_rounds": 0,
             "subagent_report": report,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ai_runtime::model_gateway::FunctionCall;
+
+    fn subagent_call(arguments: &str) -> ToolCall {
+        ToolCall {
+            id: "call-sub".to_string(),
+            call_type: "function".to_string(),
+            function: FunctionCall {
+                name: "spawn_subagent".to_string(),
+                arguments: arguments.to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn requested_allowed_tools_are_intersected_with_parent_surface() {
+        let call = subagent_call(r#"{"task":"search","allowed_tools":["web_search","read_note"]}"#);
+
+        let spec = SubAgentTaskSpec::from_tool_call(
+            "parent",
+            &call,
+            None,
+            Vec::new(),
+            vec!["read_note".to_string()],
+            Some(1000),
+        );
+
+        assert_eq!(spec.allowed_tools, vec!["read_note".to_string()]);
+    }
+
+    #[test]
+    fn requested_tools_do_not_expand_empty_parent_surface() {
+        let call = subagent_call(r#"{"task":"search","allowed_tools":["web_search"]}"#);
+
+        let spec = SubAgentTaskSpec::from_tool_call(
+            "parent",
+            &call,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Some(1000),
+        );
+
+        assert!(spec.allowed_tools.is_empty());
     }
 }

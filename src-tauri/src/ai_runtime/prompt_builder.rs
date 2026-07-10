@@ -140,6 +140,279 @@ pub fn build_prompt_messages(
     Ok(messages)
 }
 
+/// Structured persisted session history for prompt assembly.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistoryEntry {
+    pub seq: i64,
+    pub role: String,
+    pub content: String,
+    pub tool_calls: Option<serde_json::Value>,
+    pub evidence_packets: Option<serde_json::Value>,
+    pub content_hash: Option<String>,
+}
+
+impl HistoryEntry {
+    pub fn from_role_content(seq: i64, role: &str, content: &str) -> Self {
+        Self {
+            seq,
+            role: role.to_string(),
+            content: content.to_string(),
+            tool_calls: None,
+            evidence_packets: None,
+            content_hash: None,
+        }
+    }
+}
+
+/// Token-aware knobs for assembling session history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryAssemblyPolicy {
+    pub input_budget: Option<usize>,
+    pub model_context_window: Option<usize>,
+    pub max_tool_summary_tokens: usize,
+    pub preserve_recent_turns: usize,
+}
+
+impl Default for HistoryAssemblyPolicy {
+    fn default() -> Self {
+        Self {
+            input_budget: None,
+            model_context_window: None,
+            max_tool_summary_tokens: 500,
+            preserve_recent_turns: 8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolTurnSummary {
+    pub assistant_content: String,
+    pub tool_name: String,
+    pub args_summary: String,
+    pub result_summary: String,
+    pub status: String,
+    pub evidence_ids: Vec<String>,
+}
+
+pub struct HistoryAssembler;
+
+impl HistoryAssembler {
+    pub fn assemble(
+        legacy_history: &[(String, String)],
+        structured_history: &[HistoryEntry],
+        policy: HistoryAssemblyPolicy,
+    ) -> Vec<(String, String)> {
+        if structured_history.is_empty() {
+            use crate::ai_runtime::harness_support::compress_history_messages;
+            return compress_history_messages(legacy_history);
+        }
+
+        let mut out = Vec::new();
+        let mut summaries = Vec::new();
+        let start = structured_history
+            .len()
+            .saturating_sub(policy.preserve_recent_turns.max(1));
+        let mut last_assistant: Option<&HistoryEntry> = None;
+        for entry in &structured_history[start..] {
+            match entry.role.as_str() {
+                "system" if entry.content.contains("## ConversationMemory") => {
+                    out.push((entry.role.clone(), entry.content.clone()));
+                }
+                "assistant" => {
+                    last_assistant = Some(entry);
+                    if !entry.content.trim().is_empty() {
+                        out.push((entry.role.clone(), entry.content.clone()));
+                    }
+                }
+                "tool" => {
+                    if last_assistant.and_then(extract_first_tool_call).is_some() {
+                        summaries.push(summarize_tool_entry(entry, last_assistant, policy));
+                    }
+                }
+                "user" => out.push((entry.role.clone(), entry.content.clone())),
+                _ => {}
+            }
+        }
+
+        if !summaries.is_empty() {
+            tracing::debug!(
+                reason_code = "history_tool_summary_inserted",
+                tool_summary_count = summaries.len(),
+                "inserted historical tool turn summaries"
+            );
+            let body = summaries
+                .into_iter()
+                .map(format_tool_summary)
+                .collect::<Vec<_>>()
+                .join("\n");
+            out.insert(
+                0,
+                ("system".to_string(), format!("## 历史工具结果摘要\n{body}")),
+            );
+        }
+        out
+    }
+}
+
+fn summarize_tool_entry(
+    entry: &HistoryEntry,
+    assistant: Option<&HistoryEntry>,
+    policy: HistoryAssemblyPolicy,
+) -> ToolTurnSummary {
+    let (tool_name, args_summary) = assistant
+        .and_then(extract_first_tool_call)
+        .unwrap_or_else(|| ("tool".to_string(), String::new()));
+    let status = infer_tool_status(&entry.content);
+    let mut result_summary = summarize_tool_result(&tool_name, &entry.content);
+    let marker = "\n...（已按上下文预算截断）";
+    result_summary = crate::ai_runtime::harness_support::truncate_text_to_token_budget(
+        &result_summary,
+        policy.max_tool_summary_tokens.max(1),
+        marker,
+    );
+    ToolTurnSummary {
+        assistant_content: assistant
+            .map(|entry| entry.content.clone())
+            .unwrap_or_default(),
+        tool_name,
+        args_summary,
+        result_summary,
+        status,
+        evidence_ids: extract_evidence_ids(entry.evidence_packets.as_ref()),
+    }
+}
+
+fn extract_first_tool_call(entry: &HistoryEntry) -> Option<(String, String)> {
+    let calls = entry.tool_calls.as_ref()?.as_array()?;
+    let first = calls.first()?;
+    let function = first.get("function")?;
+    let name = function.get("name")?.as_str()?.to_string();
+    let args = function
+        .get("arguments")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    Some((name, summarize_jsonish_text(args, 180)))
+}
+
+fn infer_tool_status(content: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(value) => {
+            if value.get("error").is_some()
+                || value.get("failure_class").is_some()
+                || value.get("success").and_then(|v| v.as_bool()) == Some(false)
+            {
+                "error".to_string()
+            } else {
+                "ok".to_string()
+            }
+        }
+        Err(_) => "ok".to_string(),
+    }
+}
+
+fn summarize_tool_result(tool_name: &str, content: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return summarize_jsonish_text(content, 1_200);
+    };
+    if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
+        return results
+            .iter()
+            .take(5)
+            .map(|item| {
+                let title = item
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("untitled");
+                let locator = item
+                    .get("url")
+                    .or_else(|| item.get("source_path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let snippet = item
+                    .get("snippet")
+                    .or_else(|| item.get("excerpt"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                format!(
+                    "- {title} {locator}: {}",
+                    summarize_jsonish_text(snippet, 240)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    if matches!(
+        tool_name,
+        "vault_create_note"
+            | "vault_rename_move"
+            | "vault_delete_to_trash"
+            | "vault_asset_write"
+            | "insert_text_at_cursor"
+            | "replace_selection"
+    ) {
+        return summarize_write_result(&value);
+    }
+    summarize_jsonish_text(&value.to_string(), 1_200)
+}
+
+fn summarize_write_result(value: &serde_json::Value) -> String {
+    let status = value
+        .get("status")
+        .or_else(|| value.get("result").and_then(|v| v.get("status")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("ok");
+    let path = value
+        .get("path")
+        .or_else(|| value.get("target_path"))
+        .or_else(|| value.get("result").and_then(|v| v.get("path")))
+        .and_then(|v| v.as_str())
+        .unwrap_or("目标未声明");
+    let error = value
+        .get("error")
+        .and_then(|v| v.as_str())
+        .map(|err| format!("; error={}", summarize_jsonish_text(err, 160)))
+        .unwrap_or_default();
+    format!("status={status}; path={path}{error}")
+}
+
+fn summarize_jsonish_text(text: &str, max_chars: usize) -> String {
+    let sanitized =
+        crate::ai_runtime::trace::redact_classified_leaks(text).replace(['\n', '\r'], " ");
+    sanitized.chars().take(max_chars).collect()
+}
+
+fn extract_evidence_ids(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.get("id")
+                        .and_then(|id| id.as_str())
+                        .map(str::to_string)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn format_tool_summary(summary: ToolTurnSummary) -> String {
+    let evidence = if summary.evidence_ids.is_empty() {
+        String::new()
+    } else {
+        format!("; evidence_ids={}", summary.evidence_ids.join(","))
+    };
+    let args = if summary.args_summary.is_empty() {
+        String::new()
+    } else {
+        format!("; args={}", summary.args_summary)
+    };
+    format!(
+        "- tool={}; status={}{}{}; result={}",
+        summary.tool_name, summary.status, args, evidence, summary.result_summary
+    )
+}
 /// Inputs for the harness initial message construction.
 #[derive(Debug, Clone)]
 pub struct HarnessMessageInput<'a> {
@@ -148,6 +421,8 @@ pub struct HarnessMessageInput<'a> {
     pub environment: &'a str,
     pub cold_start_packets: &'a [ContextPacket],
     pub history: &'a [(String, String)],
+    pub structured_history: &'a [HistoryEntry],
+    pub history_policy: HistoryAssemblyPolicy,
     pub web_search_enabled: bool,
     pub skills_fragment: Option<&'a str>,
 }
@@ -220,9 +495,12 @@ pub fn build_initial_messages(
         });
     }
 
-    // History messages (skip orphan tool rows — they lack tool_calls context)
-    use crate::ai_runtime::harness_support::compress_history_messages;
-    let compressed = compress_history_messages(input.history);
+    // History messages: convert persisted tool-role rows into safe summaries instead of replaying orphan tool messages.
+    let compressed = HistoryAssembler::assemble(
+        input.history,
+        input.structured_history,
+        input.history_policy,
+    );
     for (role, content) in compressed {
         if role == "tool" {
             continue;
@@ -391,6 +669,8 @@ mod tests {
             environment: "Environment: 当前笔记标题 A",
             cold_start_packets: &[],
             history: &[("user".to_string(), "问题".to_string())],
+            structured_history: &[],
+            history_policy: HistoryAssemblyPolicy::default(),
             web_search_enabled: false,
             skills_fragment: Some("Skill overlay: active skill"),
         };
@@ -420,6 +700,140 @@ mod tests {
     }
 
     #[test]
+    fn harness_initial_messages_summarize_complete_tool_turns() {
+        let profile = PromptProfile::default();
+        let policy = legacy_policy(AiScene::KnowledgeLookup, true);
+        let tool_calls = serde_json::json!([
+            {
+                "id": "call-search-1",
+                "type": "function",
+                "function": { "name": "web_search", "arguments": "{\"query\":\"Rust async patterns\"}" }
+            }
+        ]);
+        let history = vec![
+            HistoryEntry::from_role_content(1, "user", "搜索 Rust async patterns"),
+            HistoryEntry {
+                seq: 2,
+                role: "assistant".into(),
+                content: "我会搜索一下。".into(),
+                tool_calls: Some(tool_calls),
+                evidence_packets: None,
+                content_hash: Some("assistant-hash".into()),
+            },
+            HistoryEntry::from_role_content(
+                3,
+                "tool",
+                r#"{"results":[{"title":"Tokio tutorial","url":"https://tokio.rs","snippet":"Async runtime patterns"}]}"#,
+            ),
+            HistoryEntry::from_role_content(4, "assistant", "第一个结果是 Tokio tutorial。"),
+            HistoryEntry::from_role_content(5, "user", "第一个结果是什么？"),
+        ];
+        let input = HarnessMessageInput {
+            scene: AiScene::KnowledgeLookup,
+            task_policy: &policy,
+            environment: "",
+            cold_start_packets: &[],
+            history: &[],
+            structured_history: &history,
+            history_policy: HistoryAssemblyPolicy {
+                input_budget: Some(8_000),
+                model_context_window: Some(16_000),
+                max_tool_summary_tokens: 120,
+                preserve_recent_turns: 4,
+            },
+            web_search_enabled: true,
+            skills_fragment: None,
+        };
+
+        let joined = build_initial_messages(&input, &profile)
+            .into_iter()
+            .map(|message| message.content.text_content())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("## 历史工具结果摘要"));
+        assert!(joined.contains("web_search"));
+        assert!(joined.contains("Tokio tutorial"));
+        assert!(joined.contains("https://tokio.rs"));
+        assert!(joined.contains("第一个结果是什么？"));
+    }
+
+    #[test]
+    fn harness_initial_messages_truncate_tool_result_summaries() {
+        let profile = PromptProfile::default();
+        let policy = legacy_policy(AiScene::KnowledgeLookup, true);
+        let long_body = "重要内容".repeat(2_000);
+        let history = vec![
+            HistoryEntry {
+                seq: 1,
+                role: "assistant".to_string(),
+                content: "读取笔记。".to_string(),
+                tool_calls: Some(
+                    serde_json::json!([{"function":{"name":"read_note","arguments":"{\"path\":\"note.md\"}"}}]),
+                ),
+                evidence_packets: None,
+                content_hash: None,
+            },
+            HistoryEntry::from_role_content(2, "tool", &long_body),
+            HistoryEntry::from_role_content(3, "user", "概括刚才读到的内容"),
+        ];
+        let input = HarnessMessageInput {
+            scene: AiScene::KnowledgeLookup,
+            task_policy: &policy,
+            environment: "",
+            cold_start_packets: &[],
+            history: &[],
+            structured_history: &history,
+            history_policy: HistoryAssemblyPolicy {
+                input_budget: Some(2_000),
+                model_context_window: Some(4_000),
+                max_tool_summary_tokens: 40,
+                preserve_recent_turns: 3,
+            },
+            web_search_enabled: true,
+            skills_fragment: None,
+        };
+
+        let joined = build_initial_messages(&input, &profile)
+            .into_iter()
+            .map(|message| message.content.text_content())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("已按上下文预算截断"));
+        assert!(joined.len() < long_body.len() / 4);
+    }
+    #[test]
+    fn harness_initial_messages_skip_orphan_tool_messages() {
+        let profile = PromptProfile::default();
+        let policy = legacy_policy(AiScene::KnowledgeLookup, true);
+        let history = vec![
+            HistoryEntry::from_role_content(1, "tool", r#"{"content":"orphan"}"#),
+            HistoryEntry::from_role_content(2, "user", "继续"),
+        ];
+        let input = HarnessMessageInput {
+            scene: AiScene::KnowledgeLookup,
+            task_policy: &policy,
+            environment: "",
+            cold_start_packets: &[],
+            history: &[],
+            structured_history: &history,
+            history_policy: HistoryAssemblyPolicy::default(),
+            web_search_enabled: true,
+            skills_fragment: None,
+        };
+
+        let joined = build_initial_messages(&input, &profile)
+            .into_iter()
+            .map(|message| message.content.text_content())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(!joined.contains("## 历史工具结果摘要"));
+        assert!(!joined.contains("orphan"));
+        assert!(joined.contains("继续"));
+    }
+    #[test]
     fn harness_initial_messages_require_explicit_evidence_gap_labels() {
         let profile = PromptProfile::default();
         let policy = legacy_policy(AiScene::KnowledgeLookup, false);
@@ -429,6 +843,8 @@ mod tests {
             environment: "",
             cold_start_packets: &[],
             history: &[("user".to_string(), "问题".to_string())],
+            structured_history: &[],
+            history_policy: HistoryAssemblyPolicy::default(),
             web_search_enabled: false,
             skills_fragment: None,
         };

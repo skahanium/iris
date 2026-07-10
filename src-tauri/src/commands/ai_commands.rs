@@ -857,6 +857,7 @@ pub(crate) struct AiSendRoutingOverride {
     pub slot: crate::ai_types::CapabilitySlot,
     pub task_policy: AgentTaskPolicy,
     pub skill_activation_plan: Option<crate::ai_types::SkillActivationPlanSummary>,
+    pub failover_candidates: Vec<ResolvedLlmConfig>,
 }
 
 /// 前端传入的图片附件 DTO。
@@ -1275,11 +1276,19 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     let skill_activation_plan = routing_override
         .as_ref()
         .and_then(|route| route.skill_activation_plan.clone());
-    let (resolved, route_slot) = if let Some(route) = routing_override {
-        (route.resolved, route.slot)
+    let (resolved, route_slot, failover_resolved): (
+        ResolvedLlmConfig,
+        crate::ai_types::CapabilitySlot,
+        Vec<ResolvedLlmConfig>,
+    ) = if let Some(route) = routing_override {
+        (route.resolved, route.slot, route.failover_candidates)
     } else {
         match resolve_for_task_policy(&state.db, &task_policy) {
-            Ok(route) => (route.resolved, route.summary.slot),
+            Ok(route) => (
+                route.resolved,
+                route.summary.slot,
+                route.failover_candidates,
+            ),
             Err(err) => {
                 let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "MODEL_CONFIG_ERROR");
                 return Err(err);
@@ -1407,7 +1416,22 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         .iter()
         .map(|m| (m.role.clone(), m.content.clone()))
         .collect();
+    let structured_history_messages: Vec<crate::ai_runtime::prompt_builder::HistoryEntry> = history
+        .iter()
+        .map(|m| crate::ai_runtime::prompt_builder::HistoryEntry {
+            seq: m.seq,
+            role: m.role.clone(),
+            content: m.content.clone(),
+            tool_calls: m.tool_calls.clone(),
+            evidence_packets: m.evidence_packets.clone(),
+            content_hash: m.content_hash.clone(),
+        })
+        .collect();
 
+    let provider_failover_candidates = failover_resolved
+        .iter()
+        .map(|candidate| candidate.to_provider_config_for_slot(route_slot))
+        .collect::<Vec<_>>();
     let provider_config = resolved.to_provider_config_for_slot(route_slot);
     let provider_name = provider_config.name.clone();
     if let Err(err) = AgentTaskRuntime::update_budget_policy(
@@ -1444,6 +1468,8 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             user_message: message.clone(),
             images,
             history_messages,
+            structured_history_messages,
+            allowed_tools: None,
             depth: 0,
             resume_from_checkpoint: false,
             token_budget: None,
@@ -1451,6 +1477,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             max_rounds_override: None,
             skill_activation_plan,
             task_policy: task_policy.clone(),
+            provider_failover_candidates,
         },
         provider_config,
         Some(resolved.output_budget),
@@ -1808,6 +1835,27 @@ pub async fn tool_confirm(
         resume_harness_after_tool_confirm_or_restore,
     };
 
+    let expired_pending = state.ai.expire_pending_tool_calls();
+    for (_, pending) in &expired_pending {
+        let _ = TraceRecorder::complete(
+            &state.db,
+            &pending.request_id,
+            TraceStatus::Failed,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("tool_confirmation_expired"),
+        );
+    }
+    if expired_pending.iter().any(|(id, _)| id == &tool_call_id) {
+        return Err(AppError::msg(format!(
+            "tool_confirmation_expired: no pending tool call for id: {tool_call_id}"
+        )));
+    }
     state.ai.prune_pending_tool_calls();
 
     if decision == "reject" {
@@ -2706,6 +2754,9 @@ async fn provider_diagnostics_for_summary(
             max_stdout_line_bytes: 64 * 1024,
             max_stderr_bytes: 8 * 1024,
             cwd: None,
+            stdio_session_pool: true,
+            stdio_session_idle_timeout:
+                crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         };
         match crate::ai_runtime::mcp_host_runtime::discover_provider_tools(
             db,

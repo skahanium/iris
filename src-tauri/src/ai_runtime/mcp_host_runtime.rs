@@ -5,15 +5,18 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::hash::{Hash, Hasher};
 use std::net::IpAddr;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::time::Duration;
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::error::{AppError, AppResult};
@@ -62,7 +65,11 @@ pub struct McpHostRuntimeOptions {
     pub max_stdout_line_bytes: usize,
     pub max_stderr_bytes: usize,
     pub cwd: Option<PathBuf>,
+    pub stdio_session_pool: bool,
+    pub stdio_session_idle_timeout: Duration,
 }
+
+pub const DEFAULT_STDIO_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -132,6 +139,9 @@ struct McpStdioToolCallLaunch {
     max_stderr_bytes: usize,
     tool_name: String,
     arguments: serde_json::Value,
+    provider_id: String,
+    use_session_pool: bool,
+    session_idle_timeout: Duration,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1119,6 +1129,281 @@ where
     env
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct McpStdioSessionKey {
+    provider_id: String,
+    command: PathBuf,
+    args: Vec<String>,
+    cwd: Option<PathBuf>,
+    env_fingerprint: u64,
+    max_stderr_bytes: usize,
+}
+
+impl McpStdioSessionKey {
+    fn from_launch(launch: &McpStdioToolCallLaunch) -> Self {
+        Self {
+            provider_id: launch.provider_id.clone(),
+            command: launch.command.clone(),
+            args: launch.args.clone(),
+            cwd: launch.cwd.clone(),
+            env_fingerprint: stdio_env_fingerprint(&launch.env),
+            max_stderr_bytes: launch.max_stderr_bytes,
+        }
+    }
+}
+
+fn stdio_env_fingerprint(env: &[(String, String)]) -> u64 {
+    let mut sorted = env.to_vec();
+    sorted.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    sorted.hash(&mut hasher);
+    hasher.finish()
+}
+
+struct McpStdioSession {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    stderr_task: Option<tokio::task::JoinHandle<String>>,
+    next_id: i64,
+    last_used: Instant,
+}
+
+impl McpStdioSession {
+    fn is_idle_expired(&self, idle_timeout: Duration) -> bool {
+        self.last_used.elapsed() > idle_timeout
+    }
+
+    fn has_exited(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(Some(_)) | Err(_))
+    }
+
+    async fn call_tool(&mut self, launch: &McpStdioToolCallLaunch) -> AppResult<serde_json::Value> {
+        let id = self.next_id;
+        self.next_id = self.next_id.saturating_add(1);
+        let run = async {
+            write_json_line(
+                &mut self.stdin,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "tools/call",
+                    "params": {
+                        "name": launch.tool_name,
+                        "arguments": launch.arguments,
+                    },
+                }),
+            )
+            .await?;
+            let call =
+                read_capped_json_line(&mut self.stdout, launch.max_stdout_line_bytes).await?;
+            result_or_error(call, id)
+        };
+
+        match timeout(launch.request_timeout, run).await {
+            Ok(Ok(result)) => {
+                self.last_used = Instant::now();
+                Ok(result)
+            }
+            Ok(Err(err)) => Err(err),
+            Err(_) => Err(runtime_error(
+                McpRuntimeFailureKind::Timeout,
+                "MCP stdio tool call timed out",
+            )),
+        }
+    }
+
+    async fn shutdown_and_kill(&mut self) -> Option<String> {
+        let _ = self.stdin.shutdown().await;
+        kill_child(&mut self.child).await;
+        match self.stderr_task.take() {
+            Some(task) => {
+                let stderr = task.await.unwrap_or_default();
+                (!stderr.is_empty()).then_some(stderr)
+            }
+            None => None,
+        }
+    }
+}
+
+type SharedMcpStdioSession = Arc<Mutex<McpStdioSession>>;
+
+fn stdio_session_pool() -> &'static Mutex<HashMap<McpStdioSessionKey, SharedMcpStdioSession>> {
+    static POOL: OnceLock<Mutex<HashMap<McpStdioSessionKey, SharedMcpStdioSession>>> =
+        OnceLock::new();
+    POOL.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+async fn spawn_initialized_stdio_session(
+    launch: &McpStdioToolCallLaunch,
+) -> AppResult<McpStdioSession> {
+    if launch.max_stdout_line_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP stdout cap must be greater than zero",
+        ));
+    }
+
+    let mut command = Command::new(&launch.command);
+    command.args(&launch.args);
+    if let Some(cwd) = &launch.cwd {
+        command.current_dir(cwd);
+    }
+    let child_env = build_stdio_child_env(std::env::vars(), &launch.env);
+    command.envs(child_env.iter());
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    command.kill_on_drop(true);
+
+    let mut child = command.spawn().map_err(|err| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            format!("failed to start MCP stdio process: {err}"),
+        )
+    })?;
+    let mut stdin = child.stdin.take().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "MCP stdio stdin unavailable",
+        )
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "MCP stdio stdout unavailable",
+        )
+    })?;
+    let stderr = child.stderr.take().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "MCP stdio stderr unavailable",
+        )
+    })?;
+    let stderr_task = tokio::spawn(drain_stderr(stderr, launch.max_stderr_bytes));
+    let mut stdout = BufReader::new(stdout);
+
+    let run = async {
+        write_json_line(
+            &mut stdin,
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": MCP_PROTOCOL_VERSION,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "iris",
+                        "version": env!("CARGO_PKG_VERSION"),
+                    },
+                },
+            }),
+        )
+        .await?;
+        let init = read_capped_json_line(&mut stdout, launch.max_stdout_line_bytes).await?;
+        let _ = parse_initialize_result(result_or_error(init, 1)?)?;
+
+        write_json_line(
+            &mut stdin,
+            json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {},
+            }),
+        )
+        .await?;
+        Ok::<_, AppError>(())
+    };
+
+    match timeout(launch.request_timeout, run).await {
+        Ok(Ok(())) => Ok(McpStdioSession {
+            child,
+            stdin,
+            stdout,
+            stderr_task: Some(stderr_task),
+            next_id: 2,
+            last_used: Instant::now(),
+        }),
+        Ok(Err(err)) => {
+            kill_child(&mut child).await;
+            let _ = stderr_task.await;
+            Err(err)
+        }
+        Err(_) => {
+            kill_child(&mut child).await;
+            let _ = stderr_task.await;
+            Err(runtime_error(
+                McpRuntimeFailureKind::Timeout,
+                "MCP stdio request timed out",
+            ))
+        }
+    }
+}
+
+async fn remove_stdio_session(key: &McpStdioSessionKey, session: &SharedMcpStdioSession) {
+    let mut map = stdio_session_pool().lock().await;
+    if map
+        .get(key)
+        .is_some_and(|current| Arc::ptr_eq(current, session))
+    {
+        map.remove(key);
+    }
+}
+
+async fn acquire_stdio_session(
+    key: &McpStdioSessionKey,
+    launch: &McpStdioToolCallLaunch,
+) -> AppResult<SharedMcpStdioSession> {
+    if let Some(session) = stdio_session_pool().lock().await.get(key).cloned() {
+        let mut guard = session.lock().await;
+        let expired = guard.is_idle_expired(launch.session_idle_timeout);
+        let exited = guard.has_exited();
+        if !expired && !exited {
+            drop(guard);
+            return Ok(session);
+        }
+        let _ = guard.shutdown_and_kill().await;
+        drop(guard);
+        remove_stdio_session(key, &session).await;
+    }
+
+    let session = Arc::new(Mutex::new(spawn_initialized_stdio_session(launch).await?));
+    stdio_session_pool()
+        .lock()
+        .await
+        .insert(key.clone(), session.clone());
+    Ok(session)
+}
+
+async fn call_stdio_tool_with_pool(
+    launch: McpStdioToolCallLaunch,
+) -> AppResult<(serde_json::Value, Option<String>)> {
+    let key = McpStdioSessionKey::from_launch(&launch);
+    let mut last_error: Option<AppError> = None;
+
+    for _ in 0..2 {
+        let session = acquire_stdio_session(&key, &launch).await?;
+        let mut guard = session.lock().await;
+        match guard.call_tool(&launch).await {
+            Ok(result) => return Ok((result, None)),
+            Err(err) => {
+                last_error = Some(err);
+                let _ = guard.shutdown_and_kill().await;
+                drop(guard);
+                remove_stdio_session(&key, &session).await;
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "MCP stdio pooled session failed",
+        )
+    }))
+}
+
 async fn discover_stdio_tools_inner(
     launch: McpStdioLaunch,
     env: &[(String, String)],
@@ -1248,7 +1533,7 @@ async fn discover_stdio_tools_inner(
     Ok(discovery)
 }
 
-async fn call_stdio_tool(
+async fn call_stdio_tool_once(
     launch: McpStdioToolCallLaunch,
 ) -> AppResult<(serde_json::Value, Option<String>)> {
     if launch.max_stdout_line_bytes == 0 {
@@ -1371,6 +1656,16 @@ async fn call_stdio_tool(
     }
 }
 
+async fn call_stdio_tool(
+    launch: McpStdioToolCallLaunch,
+) -> AppResult<(serde_json::Value, Option<String>)> {
+    if launch.use_session_pool {
+        call_stdio_tool_with_pool(launch).await
+    } else {
+        call_stdio_tool_once(launch).await
+    }
+}
+
 pub async fn call_provider_stdio_tool(
     db: &Database,
     provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
@@ -1394,6 +1689,9 @@ pub async fn call_provider_stdio_tool(
         max_stderr_bytes: options.max_stderr_bytes,
         tool_name: provider.tool_name.clone(),
         arguments,
+        provider_id: provider.profile_id.clone(),
+        use_session_pool: options.stdio_session_pool,
+        session_idle_timeout: options.stdio_session_idle_timeout,
     })
     .await?;
     Ok(McpToolCallResult {
@@ -1748,6 +2046,52 @@ mod tests {
         assert!(env.is_empty(), "{env:?}");
     }
 
+    #[test]
+    fn stdio_session_key_uses_env_fingerprint_without_debug_leaking_secret() {
+        let launch = McpStdioToolCallLaunch {
+            command: PathBuf::from("mcp-server"),
+            args: vec!["--stdio".into()],
+            env: vec![("API_KEY".into(), "super-secret-token".into())],
+            cwd: None,
+            request_timeout: Duration::from_secs(5),
+            max_stdout_line_bytes: 1024,
+            max_stderr_bytes: 1024,
+            tool_name: "web.search".into(),
+            arguments: serde_json::json!({"query":"iris"}),
+            provider_id: "provider-a".into(),
+            use_session_pool: true,
+            session_idle_timeout: DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
+        };
+
+        let key = McpStdioSessionKey::from_launch(&launch);
+        let debug = format!("{key:?}");
+
+        assert!(debug.contains("provider-a"));
+        assert!(!debug.contains("super-secret-token"), "{debug}");
+    }
+
+    #[test]
+    fn stdio_session_key_changes_when_env_changes() {
+        let mut first = McpStdioToolCallLaunch {
+            command: PathBuf::from("mcp-server"),
+            args: vec!["--stdio".into()],
+            env: vec![("API_KEY".into(), "one".into())],
+            cwd: None,
+            request_timeout: Duration::from_secs(5),
+            max_stdout_line_bytes: 1024,
+            max_stderr_bytes: 1024,
+            tool_name: "web.search".into(),
+            arguments: serde_json::json!({"query":"iris"}),
+            provider_id: "provider-a".into(),
+            use_session_pool: true,
+            session_idle_timeout: DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
+        };
+        let first_key = McpStdioSessionKey::from_launch(&first);
+        first.env = vec![("API_KEY".into(), "two".into())];
+        let second_key = McpStdioSessionKey::from_launch(&first);
+
+        assert_ne!(first_key, second_key);
+    }
     #[test]
     fn stdio_env_inherits_host_env_and_overrides_provider_entries() {
         let host = vec![

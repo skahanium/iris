@@ -1,6 +1,6 @@
 //! Unified Agent Harness — multi-round tool loop with streaming final response.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use futures_util::future::join_all;
@@ -62,6 +62,43 @@ const FINAL_BUDGET_FALLBACK: &str = "这次上下文预算已用尽，未能生�
 const FINAL_EMPTY_FALLBACK: &str = "这次没有生成可展示回答。请重试，或换一种问法。";
 const ADAPTIVE_RETRY_MESSAGE_CHAR_BUDGET: usize = 12_000;
 
+fn filter_tools_by_allowed_names(
+    tools: &[crate::ai_runtime::ToolSpec],
+    allowed_tools: Option<&Vec<String>>,
+) -> Vec<crate::ai_runtime::ToolSpec> {
+    let Some(allowed_tools) = allowed_tools else {
+        return tools.to_vec();
+    };
+    let allowed = allowed_tools
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    tools
+        .iter()
+        .filter(|tool| allowed.contains(tool.name.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn tool_allowed_by_inherited_surface(input: &HarnessRunInput, tool_name: &str) -> bool {
+    input
+        .allowed_tools
+        .as_ref()
+        .map(|allowed| allowed.iter().any(|tool| tool == tool_name))
+        .unwrap_or(true)
+}
+
+fn inherited_allowed_tool_names(
+    scene_tools: &[crate::ai_runtime::ToolSpec],
+    input: &HarnessRunInput,
+) -> Vec<String> {
+    input.allowed_tools.clone().unwrap_or_else(|| {
+        scene_tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>()
+    })
+}
 #[derive(Debug, Clone)]
 struct FinalAnswerDecision {
     content: String,
@@ -313,6 +350,35 @@ fn compact_messages_for_adaptive_retry(messages: &[LlmMessage]) -> Vec<LlmMessag
         .collect()
 }
 
+fn provider_candidates_for_gateway(
+    primary: &ProviderConfig,
+    failover_candidates: &[ProviderConfig],
+) -> Vec<ProviderConfig> {
+    let mut providers = vec![primary.clone()];
+    for candidate in failover_candidates {
+        if candidate.slot != primary.slot {
+            tracing::warn!(
+                primary_provider = %primary.name,
+                candidate_provider = %candidate.name,
+                primary_slot = ?primary.slot,
+                candidate_slot = ?candidate.slot,
+                reason_code = "provider_failover_candidate_rejected",
+                "Ignoring failover candidate from a different capability slot"
+            );
+            continue;
+        }
+        let duplicate = providers.iter().any(|provider| {
+            provider.name == candidate.name
+                && provider.model == candidate.model
+                && provider.base_url == candidate.base_url
+        });
+        if !duplicate {
+            providers.push(candidate.clone());
+        }
+    }
+    providers
+}
+
 fn build_adaptive_degraded_llm_request(request: &GatewayRequest) -> GatewayRequest {
     let mut degraded = request.clone();
     degraded.messages =
@@ -334,113 +400,188 @@ fn build_adaptive_degraded_llm_request(request: &GatewayRequest) -> GatewayReque
     degraded
 }
 
-/// Streaming agent-round LLM call: reuses the circuit breaker and
-/// exponential-backoff retry logic, but dispatches through
-/// `ModelGateway::send_streaming_request_with_surface` so caller chooses whether
-/// provider tokens are internal candidates or visible answer text.
+/// Streaming LLM call: reuses the circuit breaker and exponential-backoff retry
+/// logic, then optionally fails over to the next explicit same-slot provider.
 async fn send_llm_streaming_request_with_retry(
     app_handle: &AppHandle,
     gateway: &ModelGateway,
     request: GatewayRequest,
     request_id: &str,
-    provider_id: &str,
     surface: StreamSurface,
 ) -> AppResult<GatewayResponse> {
-    if !circuit_breaker::is_request_allowed(provider_id) {
-        return Err(AppError::msg(format!(
-            "Provider {provider_id} 已被熔断，请稍后重试"
-        )));
-    }
-    let mut last_err: Option<String> = None;
     let mut active_request = request;
-    let mut adaptive_degrade_used = false;
-    for attempt in 0..=LLM_MAX_RETRIES {
-        let emit_error_event = attempt == LLM_MAX_RETRIES;
-        match gateway
-            .send_streaming_request_with_surface(
-                request_id,
-                active_request.clone(),
-                surface,
-                emit_error_event,
-            )
-            .await
-        {
-            Ok(response) => {
-                circuit_breaker::record_success(provider_id);
-                return Ok(response);
-            }
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("request aborted") {
-                    return Err(e);
-                }
-                if msg.contains("partial_visible_stream_error") {
-                    circuit_breaker::record_failure(provider_id);
-                    return Err(e);
-                }
-                if should_adaptive_degrade_after_llm_error(&msg) {
-                    if adaptive_degrade_used {
-                        last_err = Some(format!(
-                            "{msg}；已自动降级重试一次仍失败，请减少上下文或检查模型参数。"
-                        ));
-                        break;
-                    }
-                    adaptive_degrade_used = true;
-                    active_request = build_adaptive_degraded_llm_request(&active_request);
-                    let retry_reason = classify_retry_reason(&msg);
+    let mut attempted_providers: Vec<String> = Vec::new();
+
+    loop {
+        let provider_id = active_request.provider.name.clone();
+        if attempted_providers.iter().any(|id| id == &provider_id) {
+            return Err(AppError::msg(format!(
+                "Provider {provider_id} failover loop detected"
+            )));
+        }
+
+        if !circuit_breaker::is_request_allowed(&provider_id) {
+            let msg = format!("Provider {provider_id} circuit open: 503 provider unavailable");
+            if let Some(next_provider) =
+                gateway.failover_provider_after(&active_request.provider, &msg)
+            {
+                if circuit_breaker::is_request_allowed(&next_provider.name) {
+                    tracing::warn!(
+                        request_id = %request_id,
+                        from_provider = %provider_id,
+                        to_provider = %next_provider.name,
+                        reason_code = "provider_failover",
+                        error = %msg,
+                        "Switching to explicit same-slot failover provider"
+                    );
                     let _ = app_handle.emit(
                         "ai:retry_status",
                         &serde_json::json!({
                             "request_id": request_id,
-                            "attempt": attempt + 1,
+                            "attempt": 0,
                             "max_attempts": LLM_MAX_RETRIES,
                             "delay_ms": 0,
-                            "reason_kind": "adaptive_degrade",
-                            "source_reason_kind": retry_reason.reason_kind,
-                            "status_code": retry_reason.status_code,
+                            "reason_kind": "provider_failover",
+                            "from_provider": provider_id,
+                            "to_provider": next_provider.name,
                         }),
                     );
-                    tracing::warn!(
-                        request_id = %request_id,
-                        error = %msg,
-                        "LLM 请求失败，执行一次压缩上下文/关闭工具的自适应降级重试"
-                    );
+                    active_request.provider = next_provider;
                     continue;
                 }
-                if attempt < LLM_MAX_RETRIES {
-                    let delay_ms = LLM_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
-                    let retry_reason = classify_retry_reason(&msg);
-                    let _ = app_handle.emit(
-                        "ai:retry_status",
-                        &serde_json::json!({
-                            "request_id": request_id,
-                            "attempt": attempt + 1,
-                            "max_attempts": LLM_MAX_RETRIES,
-                            "delay_ms": delay_ms,
-                            "reason_kind": retry_reason.reason_kind,
-                            "status_code": retry_reason.status_code,
-                        }),
-                    );
-                    tracing::warn!(
-                        request_id = %request_id,
-                        attempt = attempt + 1,
-                        delay_ms,
-                        error = %msg,
-                        "LLM 流式请求失败，{}ms后重试",
-                        delay_ms
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            return Err(AppError::msg(format!(
+                "Provider {provider_id} 宸茶鐔旀柇锛岃绋嶅悗閲嶈瘯"
+            )));
+        }
+
+        let mut last_err: Option<String> = None;
+        let mut adaptive_degrade_used = false;
+        for attempt in 0..=LLM_MAX_RETRIES {
+            let emit_error_event = attempt == LLM_MAX_RETRIES;
+            match gateway
+                .send_streaming_request_with_surface(
+                    request_id,
+                    active_request.clone(),
+                    surface,
+                    emit_error_event,
+                )
+                .await
+            {
+                Ok(response) => {
+                    circuit_breaker::record_success(&provider_id);
+                    return Ok(response);
                 }
-                last_err = Some(msg);
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("request aborted") {
+                        return Err(e);
+                    }
+                    if msg.contains("partial_visible_stream_error") {
+                        circuit_breaker::record_failure(&provider_id);
+                        return Err(e);
+                    }
+                    if should_adaptive_degrade_after_llm_error(&msg) {
+                        if adaptive_degrade_used {
+                            last_err = Some(format!(
+                                "{msg}锛涘凡鑷姩闄嶇骇閲嶈瘯涓€娆′粛澶辫触锛岃鍑忓皯涓婁笅鏂囨垨妫€鏌ユā鍨嬪弬鏁般€?"
+                            ));
+                            break;
+                        }
+                        adaptive_degrade_used = true;
+                        active_request = build_adaptive_degraded_llm_request(&active_request);
+                        let retry_reason = classify_retry_reason(&msg);
+                        let _ = app_handle.emit(
+                            "ai:retry_status",
+                            &serde_json::json!({
+                                "request_id": request_id,
+                                "attempt": attempt + 1,
+                                "max_attempts": LLM_MAX_RETRIES,
+                                "delay_ms": 0,
+                                "reason_kind": "adaptive_degrade",
+                                "source_reason_kind": retry_reason.reason_kind,
+                                "status_code": retry_reason.status_code,
+                            }),
+                        );
+                        tracing::warn!(
+                            request_id = %request_id,
+                            provider_id = %provider_id,
+                            error = %msg,
+                            "LLM 璇锋眰澶辫触锛屾墽琛屼竴娆″帇缂╀笂涓嬫枃/鍏抽棴宸ュ叿鐨勮嚜閫傚簲闄嶇骇閲嶈瘯"
+                        );
+                        continue;
+                    }
+                    if attempt < LLM_MAX_RETRIES {
+                        let delay_ms = LLM_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
+                        let retry_reason = classify_retry_reason(&msg);
+                        let _ = app_handle.emit(
+                            "ai:retry_status",
+                            &serde_json::json!({
+                                "request_id": request_id,
+                                "attempt": attempt + 1,
+                                "max_attempts": LLM_MAX_RETRIES,
+                                "delay_ms": delay_ms,
+                                "reason_kind": retry_reason.reason_kind,
+                                "status_code": retry_reason.status_code,
+                            }),
+                        );
+                        tracing::warn!(
+                            request_id = %request_id,
+                            provider_id = %provider_id,
+                            attempt = attempt + 1,
+                            delay_ms,
+                            error = %msg,
+                            "LLM streaming request failed; retrying after delay"
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                    }
+                    last_err = Some(msg);
+                }
             }
         }
-    }
-    circuit_breaker::record_failure(provider_id);
-    Err(AppError::msg(last_err.unwrap_or_else(|| {
-        "LLM streaming request failed after all retries".into()
-    })))
-}
 
+        circuit_breaker::record_failure(&provider_id);
+        attempted_providers.push(provider_id.clone());
+        let final_error =
+            last_err.unwrap_or_else(|| "LLM streaming request failed after all retries".into());
+        if let Some(next_provider) =
+            gateway.failover_provider_after(&active_request.provider, &final_error)
+        {
+            if attempted_providers
+                .iter()
+                .any(|id| id == &next_provider.name)
+            {
+                return Err(AppError::msg(final_error));
+            }
+            if circuit_breaker::is_request_allowed(&next_provider.name) {
+                tracing::warn!(
+                    request_id = %request_id,
+                    from_provider = %provider_id,
+                    to_provider = %next_provider.name,
+                    reason_code = "provider_failover",
+                    error = %final_error,
+                    "Switching to explicit same-slot failover provider"
+                );
+                let _ = app_handle.emit(
+                    "ai:retry_status",
+                    &serde_json::json!({
+                        "request_id": request_id,
+                        "attempt": LLM_MAX_RETRIES + 1,
+                        "max_attempts": LLM_MAX_RETRIES,
+                        "delay_ms": 0,
+                        "reason_kind": "provider_failover",
+                        "from_provider": provider_id,
+                        "to_provider": next_provider.name,
+                    }),
+                );
+                active_request.provider = next_provider;
+                continue;
+            }
+        }
+
+        return Err(AppError::msg(final_error));
+    }
+}
 /// Run the unified agent harness loop.
 ///
 /// Streaming progress is protected by idle_timeout/stall_timeout checks in the model
@@ -488,7 +629,9 @@ async fn run_harness_inner(
         web_search_enabled: input.web_search_enabled,
         depth: input.depth,
     };
-    let scene_tools = registry.tools_for_policy_surface(&policy_ctx, false);
+    let policy_scene_tools = registry.tools_for_policy_surface(&policy_ctx, false);
+    let scene_tools =
+        filter_tools_by_allowed_names(&policy_scene_tools, input.allowed_tools.as_ref());
     let llm_tools = ModelGateway::tools_to_llm_format(&scene_tools);
 
     let (env_text, skills_prompt) = prepare_environment_and_skills_with_plan(
@@ -523,6 +666,17 @@ async fn run_harness_inner(
             environment: &env_text,
             cold_start_packets: &input.cold_start_packets,
             history: &input.history_messages,
+            structured_history: &input.structured_history_messages,
+            history_policy: crate::ai_runtime::prompt_builder::HistoryAssemblyPolicy {
+                input_budget: input.input_budget.map(|budget| budget as usize),
+                model_context_window: input.input_budget.map(|budget| budget as usize),
+                max_tool_summary_tokens: 500,
+                preserve_recent_turns: if input.input_budget.unwrap_or_default() >= 64_000 {
+                    16
+                } else {
+                    8
+                },
+            },
             web_search_enabled: input.web_search_enabled,
             skills_fragment: if skills_prompt.is_empty() {
                 None
@@ -560,7 +714,10 @@ async fn run_harness_inner(
         &skills_prompt,
     );
 
-    let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider_config.clone()])?;
+    let gateway = ModelGateway::with_defaults(
+        app_handle.clone(),
+        provider_candidates_for_gateway(&provider_config, &input.provider_failover_candidates),
+    )?;
 
     let mut total_usage = TokenUsage::default();
     let mut usage_source = UsageSource::Provider;
@@ -706,7 +863,6 @@ async fn run_harness_inner(
                 &gateway,
                 request,
                 &input.request_id,
-                &provider_config.name,
                 StreamSurface::InternalCandidate,
             )
             .await?;
@@ -865,6 +1021,27 @@ async fn run_harness_inner(
                         continue;
                     }
                 };
+                if !tool_allowed_by_inherited_surface(&input, &tc.function.name) {
+                    let hint = tool_policy::denial_user_message(
+                        DenialReason::CapabilityMismatch,
+                        &tc.function.name,
+                    );
+                    policy_denied.push((
+                        tc.clone(),
+                        ToolCallResult {
+                            tool_name: tc.function.name.clone(),
+                            success: false,
+                            output: serde_json::json!({
+                                "error": hint,
+                                "policy_denied": true,
+                            }),
+                            duration_ms: 0,
+                            tokens_used: None,
+                            error: Some(hint),
+                        },
+                    ));
+                    continue;
+                }
                 let Some(entry) = catalog_find(&tc.function.name) else {
                     let hint = tool_policy::denial_user_message(
                         DenialReason::NotImplemented,
@@ -976,6 +1153,7 @@ async fn run_harness_inner(
                     .iter()
                     .map(|packet| packet.id.clone())
                     .collect::<Vec<_>>();
+                let inherited_allowed_tools = inherited_allowed_tool_names(&scene_tools, &input);
                 let subagent_specs = subagent_calls
                     .iter()
                     .map(|prepared| {
@@ -984,7 +1162,7 @@ async fn run_harness_inner(
                             &prepared.tool_call,
                             input.note_path.as_deref(),
                             evidence_ids.clone(),
-                            Vec::new(),
+                            inherited_allowed_tools.clone(),
                             input.token_budget,
                         )
                     })
@@ -1014,6 +1192,7 @@ async fn run_harness_inner(
                             max_tokens,
                             reasoning,
                             &subagent_calls[*idx].tool_call,
+                            &subagent_specs[*idx],
                         )
                     })
                     .collect::<Vec<_>>();
@@ -1292,14 +1471,14 @@ async fn run_harness_inner(
             skip_stub_ids: vec![],
         };
         let final_surface = final_answer_stream_surface(&reasoning);
-        let response = gateway
-            .send_streaming_request_with_surface(
-                &input.request_id,
-                stream_request,
-                final_surface,
-                true,
-            )
-            .await?;
+        let response = send_llm_streaming_request_with_retry(
+            app_handle,
+            &gateway,
+            stream_request,
+            &input.request_id,
+            final_surface,
+        )
+        .await?;
         if usage_is_empty(&response.usage) {
             // Prompt tokens already accumulated from prior rounds.
             // Only estimate the completion portion from the streaming response.
@@ -1791,6 +1970,7 @@ async fn pause_for_tool_confirmation(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_subagent_harness(
     state: &Arc<AppState>,
     app_handle: &AppHandle,
@@ -1799,6 +1979,7 @@ async fn run_subagent_harness(
     max_tokens: Option<u32>,
     reasoning: crate::ai_types::ResolvedReasoningRequest,
     tool_call: &ToolCall,
+    spec: &SubAgentTaskSpec,
 ) -> AppResult<HarnessRunResult> {
     let args = parse_tool_call_arguments(&tool_call.function.arguments).map_err(|err| {
         AppError::msg(format!(
@@ -1841,6 +2022,8 @@ async fn run_subagent_harness(
         user_message: task.clone(),
         images: None,
         history_messages: vec![("user".to_string(), task)],
+        structured_history_messages: vec![],
+        allowed_tools: Some(spec.allowed_tools.clone()),
         depth: parent.depth + 1,
         resume_from_checkpoint: false,
         max_rounds_override: Some(sub_rounds.min(parent.task_policy.max_agentic_rounds)),
@@ -1848,6 +2031,7 @@ async fn run_subagent_harness(
         input_budget: parent.input_budget,
         skill_activation_plan: parent.skill_activation_plan.clone(),
         task_policy: parent.task_policy.clone(),
+        provider_failover_candidates: parent.provider_failover_candidates.clone(),
     };
 
     run_harness(
@@ -1913,6 +2097,20 @@ mod tests {
         }]
     }
 
+    #[test]
+    fn allowed_tool_filter_removes_tools_outside_parent_surface() {
+        let registry = ToolRegistry::new();
+        let tools = registry.tools_for_policy_surface(&test_policy_ctx(true), false);
+        let filtered = filter_tools_by_allowed_names(&tools, Some(&vec!["read_note".to_string()]));
+        let names = filtered
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect::<Vec<_>>();
+
+        assert!(names.contains(&"read_note".to_string()));
+        assert!(!names.contains(&"web_search".to_string()));
+        assert!(!names.contains(&"replace_selection".to_string()));
+    }
     #[test]
     fn tool_argument_parse_error_result_is_structured_and_not_policy_denied() {
         let tool_call = ToolCall {

@@ -625,6 +625,51 @@ fn stream_error_event(
     }
 }
 
+const SSE_JSON_PARSE_FAILURE_THRESHOLD: u32 = 3;
+
+#[derive(Debug, Default)]
+struct SseJsonFailureTracker {
+    consecutive_failures: u32,
+}
+
+impl SseJsonFailureTracker {
+    fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+    }
+
+    fn record_parse_result(&mut self, request_id: &str, data: &str) -> AppResult<()> {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        tracing::warn!(
+            request_id = %request_id,
+            consecutive_failures = self.consecutive_failures,
+            data_preview = %sanitize_stream_error_message(data),
+            "SSE data line contained invalid JSON"
+        );
+        if self.consecutive_failures >= SSE_JSON_PARSE_FAILURE_THRESHOLD {
+            return Err(AppError::msg(format!(
+                "stream_invalid_json: consecutive invalid SSE JSON data lines reached {}",
+                self.consecutive_failures
+            )));
+        }
+        Ok(())
+    }
+
+    fn parse_data(&mut self, request_id: &str, data: &str) -> AppResult<Option<serde_json::Value>> {
+        if data.trim().is_empty() {
+            return Ok(None);
+        }
+        match serde_json::from_str::<serde_json::Value>(data) {
+            Ok(json) => {
+                self.record_success();
+                Ok(Some(json))
+            }
+            Err(_) => {
+                self.record_parse_result(request_id, data)?;
+                Ok(None)
+            }
+        }
+    }
+}
 const PARTIAL_VISIBLE_STREAM_ERROR: &str = "partial_visible_stream_error";
 
 fn has_visible_partial(surface: StreamSurface, token_index: u32) -> bool {
@@ -872,6 +917,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
     let mut usage = TokenUsage::default();
     let mut token_index: u32 = 0;
     let mut anthropic_state = AnthropicStreamState::default();
+    let mut json_failure_tracker = SseJsonFailureTracker::default();
     let mut visible_sanitizer = if surface.sanitizes_visible_output() {
         Some(VisibleStreamSanitizer::new())
     } else {
@@ -1034,60 +1080,35 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 break 'stream;
             }
 
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                if endpoint_family == EndpointFamily::AnthropicMessages {
-                    if let Some(delta) = anthropic_state.apply_event_json(&json).map_err(|e| {
-                        finish_stream_with_error(
-                            app_handle,
-                            request_id,
-                            e.to_string(),
-                            classified,
-                            surface,
-                            token_index,
-                            emit_error_event,
-                        )
-                    })? {
-                        let token = visible_token_delta(&mut visible_sanitizer, &delta);
-                        emit_visible_token_delta(
-                            app_handle,
-                            request_id,
-                            token,
-                            surface,
-                            classified,
-                            &mut token_index,
-                        )?;
-                    }
-                    if json["type"].as_str() == Some("message_stop") {
-                        let token = visible_token_finish(&mut visible_sanitizer);
-                        emit_visible_token_delta(
-                            app_handle,
-                            request_id,
-                            token,
-                            surface,
-                            classified,
-                            &mut token_index,
-                        )?;
-                        let event = StreamEvent {
-                            request_id: request_id.to_string(),
-                            event_type: StreamEventType::Done,
-                            data: StreamEventData::Done {
-                                usage: Some(anthropic_state.usage.clone()),
-                            },
-                            surface,
-                            classified,
-                        };
-                        emit_stream_event(app_handle, &event, token_index)?;
-                        // Anthropic's terminal event; stop reading the socket
-                        // so a half-open connection cannot hang the loop.
-                        break 'stream;
-                    }
-                    continue;
+            let Some(json) = (match json_failure_tracker.parse_data(request_id, data) {
+                Ok(json) => json,
+                Err(err) => {
+                    return Err(finish_stream_with_error(
+                        app_handle,
+                        request_id,
+                        err.to_string(),
+                        classified,
+                        surface,
+                        token_index,
+                        emit_error_event,
+                    ));
                 }
-
-                // Process content delta
-                if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
-                    full_content.push_str(delta);
-                    let token = visible_token_delta(&mut visible_sanitizer, delta);
+            }) else {
+                continue;
+            };
+            if endpoint_family == EndpointFamily::AnthropicMessages {
+                if let Some(delta) = anthropic_state.apply_event_json(&json).map_err(|e| {
+                    finish_stream_with_error(
+                        app_handle,
+                        request_id,
+                        e.to_string(),
+                        classified,
+                        surface,
+                        token_index,
+                        emit_error_event,
+                    )
+                })? {
+                    let token = visible_token_delta(&mut visible_sanitizer, &delta);
                     emit_visible_token_delta(
                         app_handle,
                         request_id,
@@ -1097,35 +1118,73 @@ pub async fn send_streaming_request_with_meta_error_mode(
                         &mut token_index,
                     )?;
                 }
-
-                if let Some(reasoning) = json["choices"][0]["delta"]["reasoning_content"].as_str() {
-                    full_reasoning.push_str(reasoning);
+                if json["type"].as_str() == Some("message_stop") {
+                    let token = visible_token_finish(&mut visible_sanitizer);
+                    emit_visible_token_delta(
+                        app_handle,
+                        request_id,
+                        token,
+                        surface,
+                        classified,
+                        &mut token_index,
+                    )?;
+                    let event = StreamEvent {
+                        request_id: request_id.to_string(),
+                        event_type: StreamEventType::Done,
+                        data: StreamEventData::Done {
+                            usage: Some(anthropic_state.usage.clone()),
+                        },
+                        surface,
+                        classified,
+                    };
+                    emit_stream_event(app_handle, &event, token_index)?;
+                    // Anthropic's terminal event; stop reading the socket
+                    // so a half-open connection cannot hang the loop.
+                    break 'stream;
                 }
+                continue;
+            }
 
-                // Accumulate tool call deltas by index
-                if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
-                    for tc_delta in tc_deltas {
-                        let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
-                        let entry =
-                            tool_call_deltas
-                                .entry(idx)
-                                .or_insert((None, None, String::new()));
+            // Process content delta
+            if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
+                full_content.push_str(delta);
+                let token = visible_token_delta(&mut visible_sanitizer, delta);
+                emit_visible_token_delta(
+                    app_handle,
+                    request_id,
+                    token,
+                    surface,
+                    classified,
+                    &mut token_index,
+                )?;
+            }
 
-                        if let Some(id) = tc_delta["id"].as_str() {
-                            entry.0 = Some(id.to_string());
-                        }
-                        if let Some(name) = tc_delta["function"]["name"].as_str() {
-                            entry.1 = Some(name.to_string());
-                        }
-                        if let Some(args) = tc_delta["function"]["arguments"].as_str() {
-                            entry.2.push_str(args);
-                        }
+            if let Some(reasoning) = json["choices"][0]["delta"]["reasoning_content"].as_str() {
+                full_reasoning.push_str(reasoning);
+            }
+
+            // Accumulate tool call deltas by index
+            if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
+                for tc_delta in tc_deltas {
+                    let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
+                    let entry = tool_call_deltas
+                        .entry(idx)
+                        .or_insert((None, None, String::new()));
+
+                    if let Some(id) = tc_delta["id"].as_str() {
+                        entry.0 = Some(id.to_string());
+                    }
+                    if let Some(name) = tc_delta["function"]["name"].as_str() {
+                        entry.1 = Some(name.to_string());
+                    }
+                    if let Some(args) = tc_delta["function"]["arguments"].as_str() {
+                        entry.2.push_str(args);
                     }
                 }
+            }
 
-                if json.get("usage").is_some() && json["usage"].get("prompt_tokens").is_some() {
-                    usage = parse_usage(&json);
-                }
+            if json.get("usage").is_some() && json["usage"].get("prompt_tokens").is_some() {
+                usage = parse_usage(&json);
             }
         }
     }
@@ -1137,60 +1196,48 @@ pub async fn send_streaming_request_with_meta_error_mode(
             if let Some(data) = remainder.strip_prefix("data: ") {
                 let data = data.trim();
                 if data != "[DONE]" {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
-                        if endpoint_family == EndpointFamily::AnthropicMessages {
-                            if let Some(delta) =
-                                anthropic_state.apply_event_json(&json).map_err(|e| {
-                                    finish_stream_with_error(
-                                        app_handle,
-                                        request_id,
-                                        e.to_string(),
-                                        classified,
-                                        surface,
-                                        token_index,
-                                        emit_error_event,
-                                    )
-                                })?
-                            {
-                                full_content.push_str(delta.as_str());
-                                let token = visible_token_delta(&mut visible_sanitizer, &delta);
-                                emit_visible_token_delta(
-                                    app_handle,
-                                    request_id,
-                                    token,
-                                    surface,
-                                    classified,
-                                    &mut token_index,
-                                )?;
-                            }
-                            if json["type"].as_str() == Some("message_stop") {
-                                let token = visible_token_finish(&mut visible_sanitizer);
-                                emit_visible_token_delta(
-                                    app_handle,
-                                    request_id,
-                                    token,
-                                    surface,
-                                    classified,
-                                    &mut token_index,
-                                )?;
-                                let event = StreamEvent {
-                                    request_id: request_id.to_string(),
-                                    event_type: StreamEventType::Done,
-                                    data: StreamEventData::Done {
-                                        usage: Some(anthropic_state.usage.clone()),
-                                    },
-                                    surface,
-                                    classified,
-                                };
-                                emit_stream_event(app_handle, &event, token_index)?;
-                            }
-                            clear_abort(request_id);
-                            return Ok(anthropic_state.into_gateway_response());
+                    let Some(json) = (match json_failure_tracker.parse_data(request_id, data) {
+                        Ok(json) => json,
+                        Err(err) => {
+                            return Err(finish_stream_with_error(
+                                app_handle,
+                                request_id,
+                                err.to_string(),
+                                classified,
+                                surface,
+                                token_index,
+                                emit_error_event,
+                            ));
                         }
-
-                        if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
-                            full_content.push_str(delta);
-                            let token = visible_token_delta(&mut visible_sanitizer, delta);
+                    }) else {
+                        return Ok(GatewayResponse {
+                            content: Some(full_content),
+                            tool_calls: vec![],
+                            usage,
+                            finish_reason: "stop".into(),
+                            reasoning_content: if full_reasoning.is_empty() {
+                                None
+                            } else {
+                                Some(full_reasoning)
+                            },
+                        });
+                    };
+                    if endpoint_family == EndpointFamily::AnthropicMessages {
+                        if let Some(delta) =
+                            anthropic_state.apply_event_json(&json).map_err(|e| {
+                                finish_stream_with_error(
+                                    app_handle,
+                                    request_id,
+                                    e.to_string(),
+                                    classified,
+                                    surface,
+                                    token_index,
+                                    emit_error_event,
+                                )
+                            })?
+                        {
+                            full_content.push_str(delta.as_str());
+                            let token = visible_token_delta(&mut visible_sanitizer, &delta);
                             emit_visible_token_delta(
                                 app_handle,
                                 request_id,
@@ -1200,32 +1247,63 @@ pub async fn send_streaming_request_with_meta_error_mode(
                                 &mut token_index,
                             )?;
                         }
-                        if let Some(tc_deltas) =
-                            json["choices"][0]["delta"]["tool_calls"].as_array()
-                        {
-                            for tc_delta in tc_deltas {
-                                let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
-                                let entry = tool_call_deltas.entry(idx).or_insert((
-                                    None,
-                                    None,
-                                    String::new(),
-                                ));
-                                if let Some(id) = tc_delta["id"].as_str() {
-                                    entry.0 = Some(id.to_string());
-                                }
-                                if let Some(name) = tc_delta["function"]["name"].as_str() {
-                                    entry.1 = Some(name.to_string());
-                                }
-                                if let Some(args) = tc_delta["function"]["arguments"].as_str() {
-                                    entry.2.push_str(args);
-                                }
+                        if json["type"].as_str() == Some("message_stop") {
+                            let token = visible_token_finish(&mut visible_sanitizer);
+                            emit_visible_token_delta(
+                                app_handle,
+                                request_id,
+                                token,
+                                surface,
+                                classified,
+                                &mut token_index,
+                            )?;
+                            let event = StreamEvent {
+                                request_id: request_id.to_string(),
+                                event_type: StreamEventType::Done,
+                                data: StreamEventData::Done {
+                                    usage: Some(anthropic_state.usage.clone()),
+                                },
+                                surface,
+                                classified,
+                            };
+                            emit_stream_event(app_handle, &event, token_index)?;
+                        }
+                        clear_abort(request_id);
+                        return Ok(anthropic_state.into_gateway_response());
+                    }
+
+                    if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
+                        full_content.push_str(delta);
+                        let token = visible_token_delta(&mut visible_sanitizer, delta);
+                        emit_visible_token_delta(
+                            app_handle,
+                            request_id,
+                            token,
+                            surface,
+                            classified,
+                            &mut token_index,
+                        )?;
+                    }
+                    if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
+                        for tc_delta in tc_deltas {
+                            let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
+                            let entry =
+                                tool_call_deltas
+                                    .entry(idx)
+                                    .or_insert((None, None, String::new()));
+                            if let Some(id) = tc_delta["id"].as_str() {
+                                entry.0 = Some(id.to_string());
+                            }
+                            if let Some(name) = tc_delta["function"]["name"].as_str() {
+                                entry.1 = Some(name.to_string());
+                            }
+                            if let Some(args) = tc_delta["function"]["arguments"].as_str() {
+                                entry.2.push_str(args);
                             }
                         }
-                        if json.get("usage").is_some()
-                            && json["usage"].get("prompt_tokens").is_some()
-                        {
-                            usage = parse_usage(&json);
-                        }
+                    }
+                    if json.get("usage").is_some() && json["usage"].get("prompt_tokens").is_some() {
+                        usage = parse_usage(&json);
                     }
                 }
             }
@@ -1520,6 +1598,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn sse_json_failure_tracker_tolerates_single_bad_line_but_fails_after_threshold() {
+        let mut tracker = SseJsonFailureTracker::default();
+        assert!(tracker.record_parse_result("req-json", "{bad json").is_ok());
+        assert_eq!(tracker.consecutive_failures, 1);
+        assert!(tracker
+            .record_parse_result("req-json", "{still bad")
+            .is_ok());
+        let err = tracker
+            .record_parse_result("req-json", "{third bad")
+            .unwrap_err();
+        assert!(err.to_string().contains("stream_invalid_json"));
+    }
+
+    #[test]
+    fn sse_json_failure_tracker_resets_after_valid_json() {
+        let mut tracker = SseJsonFailureTracker::default();
+        assert!(tracker.record_parse_result("req-json", "{bad json").is_ok());
+        tracker.record_success();
+        assert_eq!(tracker.consecutive_failures, 0);
+        assert!(tracker
+            .record_parse_result("req-json", "{bad again")
+            .is_ok());
+    }
+    #[test]
+    fn sse_json_failure_tracker_ignores_empty_data_lines() {
+        let mut tracker = SseJsonFailureTracker::default();
+        assert!(tracker.parse_data("req-json", "   ").unwrap().is_none());
+        assert_eq!(tracker.consecutive_failures, 0);
+    }
     #[test]
     fn stream_error_event_uses_public_lifecycle_contract() {
         let event = stream_error_event(

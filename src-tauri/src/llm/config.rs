@@ -36,6 +36,8 @@ pub struct LlmRoutingConfig {
     pub providers: std::collections::HashMap<String, ProviderOverride>,
     #[serde(default)]
     pub slots: std::collections::HashMap<String, SlotRoute>,
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub slot_failover: std::collections::HashMap<String, Vec<SlotRoute>>,
     #[serde(default, skip_serializing)]
     pub scenes: std::collections::HashMap<String, SceneRoute>,
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
@@ -175,6 +177,7 @@ pub struct CapabilityRouteInput {
 pub struct ResolvedCapabilityRoute {
     pub resolved: ResolvedLlmConfig,
     pub summary: CapabilityRouteSummary,
+    pub failover_candidates: Vec<ResolvedLlmConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -404,6 +407,7 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
         updated_at: None,
         providers: std::collections::HashMap::new(),
         slots: empty_slot_defaults(),
+        slot_failover: std::collections::HashMap::new(),
         scenes: std::collections::HashMap::new(),
         context_strategy: std::collections::HashMap::new(),
     }
@@ -421,7 +425,13 @@ fn normalize_routing_json_value(value: &mut serde_json::Value) -> AppResult<bool
     }
 
     let mut changed = false;
-    for field in ["providers", "slots", "scenes", "contextStrategy"] {
+    for field in [
+        "providers",
+        "slots",
+        "scenes",
+        "slotFailover",
+        "contextStrategy",
+    ] {
         changed |= normalize_json_map_field(value, field)?;
     }
     changed |= normalize_provider_capability_maps(value)?;
@@ -772,6 +782,12 @@ fn resolve_capability_route_with_registry(
                 } else {
                     format!("Selected {:?} for {:?}.", slot, input.intent)
                 };
+                let failover_candidates = resolve_slot_failover_candidates(
+                    routing,
+                    *slot,
+                    input.privacy_preference,
+                    registry,
+                );
                 return Ok(ResolvedCapabilityRoute {
                     summary: CapabilityRouteSummary {
                         slot: *slot,
@@ -783,6 +799,7 @@ fn resolve_capability_route_with_registry(
                         degraded,
                     },
                     resolved,
+                    failover_candidates,
                 });
             }
             Err(e) => {
@@ -798,6 +815,47 @@ fn resolve_capability_route_with_registry(
             slot_display_name(requested_slot)
         ))
     }))
+}
+
+fn resolve_slot_failover_candidates(
+    routing: &LlmRoutingConfig,
+    slot: CapabilitySlot,
+    privacy_preference: PrivacyPreference,
+    registry: &[ModelRegistryEntry],
+) -> Vec<ResolvedLlmConfig> {
+    let key = slot_key(slot);
+    routing
+        .slot_failover
+        .get(key)
+        .into_iter()
+        .flatten()
+        .filter_map(|route| {
+            if !route_satisfies_slot(route, slot, privacy_preference, registry) {
+                tracing::warn!(
+                    slot = ?slot,
+                    provider_id = %route.provider_id,
+                    model = %route.model,
+                    reason_code = "provider_failover_candidate_invalid",
+                    "Ignoring invalid same-slot failover candidate"
+                );
+                return None;
+            }
+            match resolve_route(routing, slot, route.clone()) {
+                Ok(resolved) => Some(resolved),
+                Err(error) => {
+                    tracing::warn!(
+                        slot = ?slot,
+                        provider_id = %route.provider_id,
+                        model = %route.model,
+                        error = %error,
+                        reason_code = "provider_failover_candidate_invalid",
+                        "Ignoring unresolved same-slot failover candidate"
+                    );
+                    None
+                }
+            }
+        })
+        .collect()
 }
 
 fn resolve_route(
@@ -1566,6 +1624,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn route_resolution_includes_explicit_same_slot_failover_candidates() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("deepseek-v4-flash".into()),
+                enabled_models: Some(vec!["deepseek-v4-flash".into(), "deepseek-v4-pro".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "fast".into(),
+            SlotRoute {
+                provider_id: "deepseek".into(),
+                model: "deepseek-v4-flash".into(),
+                thinking: false,
+                reasoning: None,
+            },
+        );
+        routing.slot_failover.insert(
+            "fast".into(),
+            vec![SlotRoute {
+                provider_id: "deepseek".into(),
+                model: "deepseek-v4-pro".into(),
+                thinking: false,
+                reasoning: None,
+            }],
+        );
+
+        let route = resolve_capability_route_from_config(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::Chat,
+                context_tokens: 1_000,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: false,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(route.resolved.model, "deepseek-v4-flash");
+        assert_eq!(route.failover_candidates.len(), 1);
+        assert_eq!(route.failover_candidates[0].model, "deepseek-v4-pro");
+    }
     #[test]
     fn connectivity_status_accepts_live_validated_custom_text_model() {
         let db = Database::open_in_memory().expect("mem db");

@@ -57,20 +57,106 @@ pub struct GatewayResponse {
 pub struct ModelGateway {
     app_handle: AppHandle,
     client: Client,
-    providers: HashMap<CapabilitySlot, ProviderConfig>,
+    providers: HashMap<CapabilitySlot, Vec<ProviderConfig>>,
+}
+
+fn build_provider_routes(
+    providers: Vec<ProviderConfig>,
+) -> HashMap<CapabilitySlot, Vec<ProviderConfig>> {
+    let mut routes: HashMap<CapabilitySlot, Vec<ProviderConfig>> = HashMap::new();
+    for provider in providers {
+        routes.entry(provider.slot).or_default().push(provider);
+    }
+    routes
+}
+
+fn extract_http_status_code(message: &str) -> Option<u16> {
+    let bytes = message.as_bytes();
+    if bytes.len() < 3 {
+        return None;
+    }
+    for index in 0..=(bytes.len() - 3) {
+        let code = &bytes[index..index + 3];
+        if code.iter().all(u8::is_ascii_digit) {
+            let value = (code[0] - b'0') as u16 * 100
+                + (code[1] - b'0') as u16 * 10
+                + (code[2] - b'0') as u16;
+            if (400..=599).contains(&value) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+fn is_provider_level_failover_error(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    if lower.contains("request aborted")
+        || lower.contains("partial_visible_stream_error")
+        || lower.contains("invalid_api_key")
+        || lower.contains("unauthorized")
+        || lower.contains("forbidden")
+        || lower.contains("api key")
+        || lower.contains("auth")
+        || lower.contains("context length")
+        || lower.contains("maximum context")
+        || lower.contains("too many tokens")
+        || lower.contains("unprocessable entity")
+        || lower.contains("policy")
+    {
+        return false;
+    }
+
+    match extract_http_status_code(message) {
+        Some(429) => return true,
+        Some(status) if (500..=599).contains(&status) => return true,
+        Some(_) => return false,
+        None => {}
+    }
+
+    lower.contains("llm streaming request failed")
+        || lower.contains("llm request failed")
+        || lower.contains("request failed")
+        || lower.contains("error sending request")
+        || lower.contains("connection")
+        || lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("deadline")
+        || lower.contains("service unavailable")
+        || lower.contains("too busy")
+        || lower.contains("overloaded")
+        || lower.contains("stream_invalid_json")
+        || lower.contains("妯″瀷鏈嶅姟绻佸繖")
+}
+
+fn select_failover_provider_from_routes(
+    routes: &HashMap<CapabilitySlot, Vec<ProviderConfig>>,
+    failed_provider: &ProviderConfig,
+    error_message: &str,
+) -> Option<ProviderConfig> {
+    if !is_provider_level_failover_error(error_message) {
+        return None;
+    }
+    let candidates = routes.get(&failed_provider.slot)?;
+    let failed_index = candidates.iter().position(|candidate| {
+        candidate.name == failed_provider.name
+            && candidate.model == failed_provider.model
+            && candidate.base_url == failed_provider.base_url
+    })?;
+    candidates
+        .iter()
+        .skip(failed_index + 1)
+        .find(|candidate| candidate.name != failed_provider.name)
+        .cloned()
 }
 
 impl ModelGateway {
     /// Create a new gateway with injected HTTP client and provider configurations.
     pub fn new(app_handle: AppHandle, client: Client, providers: Vec<ProviderConfig>) -> Self {
-        let mut provider_map = HashMap::new();
-        for p in providers {
-            provider_map.insert(p.slot, p);
-        }
         Self {
             app_handle,
             client,
-            providers: provider_map,
+            providers: build_provider_routes(providers),
         }
     }
 
@@ -82,7 +168,23 @@ impl ModelGateway {
 
     /// Get provider for a capability slot.
     pub fn get_provider(&self, slot: CapabilitySlot) -> Option<&ProviderConfig> {
-        self.providers.get(&slot)
+        self.providers
+            .get(&slot)
+            .and_then(|providers| providers.first())
+    }
+
+    /// Get ordered explicit provider candidates for a capability slot.
+    pub fn provider_candidates(&self, slot: CapabilitySlot) -> &[ProviderConfig] {
+        self.providers.get(&slot).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Select the next same-slot provider only for provider-level failures.
+    pub fn failover_provider_after(
+        &self,
+        failed_provider: &ProviderConfig,
+        error_message: &str,
+    ) -> Option<ProviderConfig> {
+        select_failover_provider_from_routes(&self.providers, failed_provider, error_message)
     }
     pub fn slot_for_scene(scene: AiScene) -> CapabilitySlot {
         match scene {
@@ -492,6 +594,68 @@ fn parse_openai_compatible_response(json: &serde_json::Value) -> GatewayResponse
 mod tests {
     use super::*;
     use crate::ai_runtime::{CorpusPacketMeta, SourceType, TrustLevel};
+
+    fn test_provider(name: &str, slot: CapabilitySlot) -> ProviderConfig {
+        ProviderConfig {
+            name: name.into(),
+            base_url: format!("https://{name}.example/v1"),
+            api_key: Some("test".into()),
+            model: format!("{name}-model"),
+            slot,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        }
+    }
+
+    #[test]
+    fn provider_routes_keep_ordered_same_slot_candidates() {
+        let primary = test_provider("primary", CapabilitySlot::Reasoner);
+        let backup = test_provider("backup", CapabilitySlot::Reasoner);
+        let writer = test_provider("writer", CapabilitySlot::Writer);
+
+        let routes = build_provider_routes(vec![primary.clone(), backup.clone(), writer]);
+        let reasoner = routes.get(&CapabilitySlot::Reasoner).unwrap();
+
+        assert_eq!(reasoner[0].name, primary.name);
+        assert_eq!(reasoner[1].name, backup.name);
+    }
+
+    #[test]
+    fn failover_selects_next_same_slot_provider_for_provider_level_failure() {
+        let primary = test_provider("primary", CapabilitySlot::Reasoner);
+        let backup = test_provider("backup", CapabilitySlot::Reasoner);
+        let writer = test_provider("writer", CapabilitySlot::Writer);
+        let routes = build_provider_routes(vec![primary.clone(), backup.clone(), writer]);
+
+        let selected = select_failover_provider_from_routes(
+            &routes,
+            &primary,
+            "LLM streaming request failed: connection reset by peer",
+        )
+        .unwrap();
+
+        assert_eq!(selected.name, backup.name);
+        assert_eq!(selected.slot, CapabilitySlot::Reasoner);
+    }
+
+    #[test]
+    fn failover_rejects_auth_context_and_user_abort_errors() {
+        let primary = test_provider("primary", CapabilitySlot::Reasoner);
+        let backup = test_provider("backup", CapabilitySlot::Reasoner);
+        let routes = build_provider_routes(vec![primary.clone(), backup]);
+
+        for message in [
+            "invalid_api_key: check API key",
+            "401 unauthorized",
+            "context length exceeded",
+            "request aborted by user",
+            "partial_visible_stream_error: after visible content",
+        ] {
+            assert!(
+                select_failover_provider_from_routes(&routes, &primary, message).is_none(),
+                "unexpected failover for {message}"
+            );
+        }
+    }
 
     #[test]
     fn build_system_prompt_includes_packets() {

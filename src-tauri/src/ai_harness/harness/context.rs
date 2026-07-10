@@ -4,7 +4,7 @@
 use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
 use crate::ai_runtime::environment::{build_environment_map, EnvironmentInput};
 use crate::ai_runtime::model_gateway::LlmMessage;
-use crate::ai_runtime::prompt_builder::HarnessMessageInput;
+use crate::ai_runtime::prompt_builder::{HarnessMessageInput, HistoryAssemblyPolicy, HistoryEntry};
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::skills::{active_skills_for_task_prompt, inject_into_prompt, scan_all};
 use crate::ai_runtime::ToolSpec;
@@ -32,6 +32,8 @@ pub(crate) struct InitialMessagesInput<'a> {
     pub(crate) environment: &'a str,
     pub(crate) cold_start_packets: &'a [ContextPacket],
     pub(crate) history: &'a [(String, String)],
+    pub(crate) structured_history: &'a [HistoryEntry],
+    pub(crate) history_policy: HistoryAssemblyPolicy,
     pub(crate) web_search_enabled: bool,
     pub(crate) skills_fragment: Option<&'a str>,
 }
@@ -49,6 +51,17 @@ pub(crate) fn build_initial_messages(
         history.push(memory);
     }
     history.extend(input.history.iter().cloned());
+
+    let mut structured_history = Vec::new();
+    if let Ok(Some((role, content))) =
+        crate::ai_runtime::conversation_memory::build_memory_system_message(
+            &state.db,
+            input.session_id,
+        )
+    {
+        structured_history.push(HistoryEntry::from_role_content(0, &role, &content));
+    }
+    structured_history.extend(input.structured_history.iter().cloned());
     crate::ai_runtime::prompt_builder::build_initial_messages(
         &HarnessMessageInput {
             scene: input.scene,
@@ -56,6 +69,8 @@ pub(crate) fn build_initial_messages(
             environment: input.environment,
             cold_start_packets: input.cold_start_packets,
             history: &history,
+            structured_history: &structured_history,
+            history_policy: input.history_policy,
             web_search_enabled: input.web_search_enabled,
             skills_fragment: input.skills_fragment,
         },

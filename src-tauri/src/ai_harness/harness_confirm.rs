@@ -21,6 +21,7 @@ use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::tool_policy::ToolPolicyContext;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
 use crate::ai_runtime::AiScene;
+use crate::ai_types::{ReasoningAdapter, ResolvedReasoningRequest};
 use crate::app::{AppState, PendingToolCall};
 use crate::error::{AppError, AppResult};
 
@@ -40,12 +41,70 @@ pub fn classify_resume_error(message: &str) -> &'static str {
         "resume_failed"
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeThinkingDecision {
+    Enabled,
+    DisabledMissingReasoning,
+    DisabledProviderUnsupported,
+    EnabledWithReplay,
+}
+
+impl ResumeThinkingDecision {
+    pub fn enabled(self) -> bool {
+        matches!(self, Self::Enabled | Self::EnabledWithReplay)
+    }
+
+    fn degradation_code(self) -> Option<&'static str> {
+        match self {
+            Self::DisabledMissingReasoning => Some("reasoning_resume_degraded"),
+            Self::DisabledProviderUnsupported | Self::Enabled | Self::EnabledWithReplay => None,
+        }
+    }
+}
+
 /// Keep thinking-mode resumes compatible with providers that require replayed reasoning.
-pub fn thinking_mode_for_resume_checkpoint(messages: &[LlmMessage], requested: bool) -> bool {
-    requested
-        && !messages
-            .iter()
-            .any(assistant_tool_call_missing_reasoning_content)
+pub fn thinking_mode_for_resume_checkpoint(
+    messages: &[LlmMessage],
+    reasoning: &ResolvedReasoningRequest,
+) -> ResumeThinkingDecision {
+    if !reasoning.requested {
+        return ResumeThinkingDecision::DisabledProviderUnsupported;
+    }
+    if !provider_requires_reasoning_replay(reasoning) {
+        return ResumeThinkingDecision::Enabled;
+    }
+    if messages
+        .iter()
+        .any(assistant_tool_call_missing_reasoning_content)
+    {
+        return ResumeThinkingDecision::DisabledMissingReasoning;
+    }
+    ResumeThinkingDecision::EnabledWithReplay
+}
+
+fn provider_requires_reasoning_replay(reasoning: &ResolvedReasoningRequest) -> bool {
+    reasoning.requested
+        && matches!(
+            reasoning.adapter,
+            ReasoningAdapter::DeepSeekReasoningContent | ReasoningAdapter::GlmThinking
+        )
+}
+
+pub fn record_resume_thinking_decision(
+    db: &crate::storage::db::Database,
+    request_id: &str,
+    decision: ResumeThinkingDecision,
+) -> AppResult<()> {
+    let Some(code) = decision.degradation_code() else {
+        return Ok(());
+    };
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE ai_traces SET error_code = ?1 WHERE request_id = ?2",
+            rusqlite::params![code, request_id],
+        )?;
+        Ok(())
+    })
 }
 
 fn assistant_tool_call_missing_reasoning_content(message: &LlmMessage) -> bool {
@@ -152,7 +211,7 @@ pub async fn resume_harness_after_tool_confirm(
 
     TraceRecorder::update_status(&state.db, request_id, TraceStatus::ModelCalled)?;
 
-    let (resolved, provider_config, thinking) =
+    let (resolved, provider_config, thinking, provider_failover_candidates) =
         if let (Some(provider_id), Some(model), Some(slot)) = (
             cp.meta.provider_id.as_deref(),
             cp.meta.model.as_deref(),
@@ -171,7 +230,7 @@ pub async fn resume_harness_after_tool_confirm(
             }
             let thinking = cp.meta.thinking.unwrap_or(resolved.thinking);
             let provider_config = resolved.to_provider_config_for_slot(slot);
-            (resolved, provider_config, thinking)
+            (resolved, provider_config, thinking, Vec::new())
         } else {
             let policy = cp.meta.task_policy.clone().unwrap_or_else(|| {
                 crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
@@ -190,13 +249,26 @@ pub async fn resume_harness_after_tool_confirm(
             });
             let route =
                 crate::ai_runtime::agent_task_policy::resolve_for_task_policy(&state.db, &policy)?;
+            let slot = route.summary.slot;
+            let provider_failover_candidates = route
+                .failover_candidates
+                .iter()
+                .map(|candidate| candidate.to_provider_config_for_slot(slot))
+                .collect::<Vec<_>>();
             let resolved = route.resolved;
-            let provider_config = resolved.to_provider_config_for_slot(route.summary.slot);
+            let provider_config = resolved.to_provider_config_for_slot(slot);
             let thinking = resolved.thinking;
-            (resolved, provider_config, thinking)
+            (
+                resolved,
+                provider_config,
+                thinking,
+                provider_failover_candidates,
+            )
         };
     let requested_thinking = thinking;
-    let thinking = thinking_mode_for_resume_checkpoint(&cp.messages, requested_thinking);
+    let thinking_decision = thinking_mode_for_resume_checkpoint(&cp.messages, &resolved.reasoning);
+    record_resume_thinking_decision(&state.db, request_id, thinking_decision)?;
+    let thinking = thinking_decision.enabled();
     if requested_thinking && !thinking {
         tracing::warn!(
             request_id = %request_id,
@@ -227,6 +299,8 @@ pub async fn resume_harness_after_tool_confirm(
             user_message,
             images: None,
             history_messages: vec![],
+            structured_history_messages: vec![],
+            allowed_tools: None,
             depth: cp.meta.depth,
             resume_from_checkpoint: true,
             token_budget: None,
@@ -248,6 +322,7 @@ pub async fn resume_harness_after_tool_confirm(
                     },
                 )
             }),
+            provider_failover_candidates,
         },
         provider_config,
         Some(resolved.output_budget),

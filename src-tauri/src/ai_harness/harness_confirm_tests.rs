@@ -10,6 +10,10 @@ mod tests {
     use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, TokenUsage, ToolCall};
     use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
     use crate::ai_runtime::AiScene;
+    use crate::ai_types::{
+        ReasoningAdapter, ReasoningControl, ReasoningMode, ReasoningVisibility,
+        ResolvedReasoningRequest,
+    };
     use crate::app::AppState;
     use crate::storage::db::Database;
     use std::sync::Arc;
@@ -19,6 +23,23 @@ mod tests {
         AppState::new(dir.path().to_path_buf()).unwrap()
     }
 
+    fn reasoning_request(adapter: ReasoningAdapter, requested: bool) -> ResolvedReasoningRequest {
+        if !requested {
+            return ResolvedReasoningRequest::disabled();
+        }
+        ResolvedReasoningRequest {
+            mode: ReasoningMode::High,
+            adapter,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: false,
+        }
+    }
+
+    fn deepseek_reasoning() -> ResolvedReasoningRequest {
+        reasoning_request(ReasoningAdapter::DeepSeekReasoningContent, true)
+    }
     fn sample_checkpoint(_request_id: &str) -> HarnessCheckpoint {
         HarnessCheckpoint {
             meta: HarnessCheckpointMeta {
@@ -181,6 +202,73 @@ mod tests {
     }
 
     #[test]
+    fn resume_thinking_decision_reports_missing_reasoning_and_records_trace() {
+        use crate::ai_runtime::harness_confirm::{
+            record_resume_thinking_decision, thinking_mode_for_resume_checkpoint,
+            ResumeThinkingDecision,
+        };
+
+        let db = Database::open_in_memory().unwrap();
+        let rid = "reasoning-resume-decision-1";
+        TraceRecorder::start(&db, rid, AiScene::KnowledgeLookup).unwrap();
+        let messages = vec![LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_calls: Some(vec![ToolCall::new("call_1", "replace_selection", "{}")]),
+            reasoning_content: None,
+            ..Default::default()
+        }];
+
+        let decision = thinking_mode_for_resume_checkpoint(&messages, &deepseek_reasoning());
+        assert_eq!(decision, ResumeThinkingDecision::DisabledMissingReasoning);
+        record_resume_thinking_decision(&db, rid, decision).unwrap();
+
+        let trace = TraceRecorder::recent(&db, 1).unwrap().remove(0);
+        assert_eq!(
+            trace.error_code.as_deref(),
+            Some("reasoning_resume_degraded")
+        );
+    }
+
+    #[test]
+    fn resume_thinking_decision_enables_replay_when_reasoning_is_available() {
+        use crate::ai_runtime::harness_confirm::{
+            thinking_mode_for_resume_checkpoint, ResumeThinkingDecision,
+        };
+
+        let messages = vec![LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_calls: Some(vec![ToolCall::new("call_1", "web_search", "{}")]),
+            reasoning_content: Some("minimal replay token".into()),
+            ..Default::default()
+        }];
+
+        let decision = thinking_mode_for_resume_checkpoint(&messages, &deepseek_reasoning());
+        assert_eq!(decision, ResumeThinkingDecision::EnabledWithReplay);
+        assert!(decision.enabled());
+    }
+
+    #[test]
+    fn resume_thinking_decision_keeps_non_replay_provider_enabled() {
+        use crate::ai_runtime::harness_confirm::{
+            thinking_mode_for_resume_checkpoint, ResumeThinkingDecision,
+        };
+
+        let messages = vec![LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_calls: Some(vec![ToolCall::new("call_1", "web_search", "{}")]),
+            reasoning_content: None,
+            ..Default::default()
+        }];
+        let qwen_reasoning = reasoning_request(ReasoningAdapter::QwenChatTemplate, true);
+
+        let decision = thinking_mode_for_resume_checkpoint(&messages, &qwen_reasoning);
+        assert_eq!(decision, ResumeThinkingDecision::Enabled);
+        assert!(decision.enabled());
+    }
+    #[test]
     fn tool_confirm_resume_disables_thinking_after_scrubbed_reasoning() {
         use crate::ai_runtime::harness_confirm::{
             append_tool_message_to_checkpoint, thinking_mode_for_resume_checkpoint,
@@ -222,8 +310,8 @@ mod tests {
 
         let loaded = load_harness_checkpoint(&db, rid).unwrap().unwrap();
         assert!(loaded.messages[0].reasoning_content.is_none());
-        let thinking = thinking_mode_for_resume_checkpoint(&loaded.messages, true);
-        assert!(!thinking);
+        let thinking = thinking_mode_for_resume_checkpoint(&loaded.messages, &deepseek_reasoning());
+        assert!(!thinking.enabled());
         let body = build_chat_completions_body(&GatewayRequest {
             provider: ProviderConfig {
                 name: "deepseek".into(),
@@ -239,7 +327,7 @@ mod tests {
             input_token_budget: None,
             temperature: Some(0.7),
             stream: false,
-            thinking,
+            thinking: thinking.enabled(),
             reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             skip_stub_ids: vec![],
         });
@@ -296,8 +384,8 @@ mod tests {
         .unwrap();
 
         let loaded = load_harness_checkpoint(&db, rid).unwrap().unwrap();
-        let thinking = thinking_mode_for_resume_checkpoint(&loaded.messages, true);
-        assert!(!thinking);
+        let thinking = thinking_mode_for_resume_checkpoint(&loaded.messages, &deepseek_reasoning());
+        assert!(!thinking.enabled());
 
         let body = build_chat_completions_body(&GatewayRequest {
             provider: ProviderConfig {
@@ -314,7 +402,7 @@ mod tests {
             input_token_budget: None,
             temperature: Some(0.7),
             stream: false,
-            thinking,
+            thinking: thinking.enabled(),
             reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             skip_stub_ids: vec![],
         });

@@ -162,6 +162,27 @@ impl AiRuntimeState {
         }
     }
 
+    pub fn expire_pending_tool_calls(&self) -> Vec<(String, PendingToolCall)> {
+        if let Ok(mut pending) = self.pending_tool_calls.lock() {
+            return Self::expire_pending_tool_calls_locked(&mut pending, Instant::now());
+        }
+        Vec::new()
+    }
+
+    fn expire_pending_tool_calls_locked(
+        pending: &mut HashMap<String, PendingToolCall>,
+        now: Instant,
+    ) -> Vec<(String, PendingToolCall)> {
+        let expired_ids = pending
+            .iter()
+            .filter(|(_, call)| now.duration_since(call.created_at) > PENDING_TOOL_CALL_TTL)
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        expired_ids
+            .into_iter()
+            .filter_map(|id| pending.remove(&id).map(|call| (id, call)))
+            .collect()
+    }
     pub fn prune_pending_tool_calls(&self) {
         if let Ok(mut pending) = self.pending_tool_calls.lock() {
             Self::prune_pending_tool_calls_locked(&mut pending, Instant::now());
@@ -172,7 +193,7 @@ impl AiRuntimeState {
         pending: &mut HashMap<String, PendingToolCall>,
         now: Instant,
     ) {
-        pending.retain(|_, call| now.duration_since(call.created_at) <= PENDING_TOOL_CALL_TTL);
+        let _ = Self::expire_pending_tool_calls_locked(pending, now);
         let overflow = pending.len().saturating_sub(MAX_PENDING_TOOL_CALLS);
         if overflow == 0 {
             return;
@@ -258,6 +279,11 @@ impl AppState {
         }
         if let Err(e) = crate::llm::fetch_web_page::cleanup_expired_web_cache(&state.db) {
             tracing::warn!("failed to cleanup expired web cache: {e}");
+        }
+        if let Err(e) =
+            crate::ai_runtime::trace::TraceRecorder::expire_stale_tool_confirmations(&state.db, 30)
+        {
+            tracing::warn!("failed to expire stale tool confirmations: {e}");
         }
 
         if let Some(v) = state.load_vault_setting()? {
@@ -468,6 +494,24 @@ mod document_open_state_tests {
             weak.upgrade().is_none(),
             "embedding queue worker must not keep AppState alive"
         );
+    }
+    #[test]
+    fn pending_tool_calls_expire_returns_removed_entries() {
+        let now = Instant::now();
+        let mut pending = HashMap::new();
+        pending.insert(
+            "expired".into(),
+            pending_tool_call(1, now - PENDING_TOOL_CALL_TTL - Duration::from_secs(1)),
+        );
+        pending.insert("fresh".into(), pending_tool_call(2, now));
+
+        let expired = AiRuntimeState::expire_pending_tool_calls_locked(&mut pending, now);
+
+        assert_eq!(expired.len(), 1);
+        assert_eq!(expired[0].0, "expired");
+        assert_eq!(expired[0].1.request_id, "req-1");
+        assert!(!pending.contains_key("expired"));
+        assert!(pending.contains_key("fresh"));
     }
     #[test]
     fn pending_tool_calls_prune_expired_and_over_capacity_entries() {
