@@ -6,7 +6,6 @@
 
 use rusqlite::Connection;
 
-use crate::embedding::engine::{embed_text, f32_to_bytes};
 use crate::error::AppResult;
 use crate::knowledge::{
     content_hash, make_anchor_key, EMBEDDING_DIM, EMBEDDING_MODEL, EXTRACTOR_VERSION,
@@ -354,10 +353,6 @@ pub fn index_anchors(
     let mut indexed = 0usize;
 
     for anchor in anchors {
-        // Generate embedding
-        let embedding = embed_text(&anchor.content)?;
-        let blob = f32_to_bytes(&embedding);
-
         conn.execute(
             "INSERT OR IGNORE INTO semantic_anchors
              (anchor_key, file_id, anchor_type, content, heading_path,
@@ -382,18 +377,8 @@ pub fn index_anchors(
                 now,
             ],
         )?;
-
-        // Insert into vec table
-        let rowid = conn.last_insert_rowid();
-        if rowid > 0 {
-            conn.execute(
-                "INSERT OR IGNORE INTO vec_anchors (rowid, embedding) VALUES (?1, ?2)",
-                rusqlite::params![rowid, blob],
-            )?;
-            indexed += 1;
-        }
+        indexed += 1;
     }
-
     Ok(indexed)
 }
 

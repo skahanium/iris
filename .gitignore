@@ -14,8 +14,7 @@ dist/
 # --- Rust / Tauri build output ---
 target/
 **/target/
-**/target-codex/
-**/target-codex-check*/
+**/target-codex*/
 src-tauri/gen/
 src-tauri/WixTools/
 src-tauri/icons-staging/
@@ -106,3 +105,10 @@ $RECYCLE.BIN/
 .learnings/
 .opencode/
 .superpowers/
+
+# Local agent planning state
+.zcode/
+
+# --- Build / eval caches ---
+.cargo-target/
+docs/eval/results/

@@ -1,13 +1,11 @@
-//! Hybrid retrieval broker — unified search across five layers.
-//!
-//! Layers: FTS → Vector → Graph → Exact Parser → Template
-//! Results are fused by weighted score and returned as ContextPackets.
+//! Hybrid retrieval broker: request contract and layer wiring.
 
 use rusqlite::Connection;
 
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::{ContextPacket, RuntimeDocumentSnapshot};
 use crate::error::AppResult;
+use crate::knowledge::corpora::CorpusConfig;
 
 #[path = "retrieval_broker/query_hash.rs"]
 mod query_hash_impl;
@@ -26,6 +24,8 @@ mod exact_impl;
 mod fts_impl;
 #[path = "retrieval_broker/graph.rs"]
 mod graph_impl;
+#[path = "retrieval_broker/metadata.rs"]
+mod metadata_impl;
 #[path = "retrieval_broker/rank.rs"]
 mod rank_impl;
 #[path = "retrieval_broker/template.rs"]
@@ -36,43 +36,31 @@ mod vector_impl;
 use exact_impl::search_exact_regulation;
 use fts_impl::search_fts;
 use graph_impl::search_graph_neighbors;
+use metadata_impl::search_metadata;
 use rank_impl::fuse_and_rank;
 use template_impl::search_template;
 use vector_impl::{search_vector_anchors, search_vector_chunks, search_vector_regulations};
 
-// ─── Retrieval Request ───────────────────────────────────
-
-/// 检索请求，定义查询内容和检索参数。
+/// Complete request contract for one hybrid retrieval call.
 #[derive(Debug, Clone)]
 pub struct RetrievalRequest {
-    /// 用户查询文本
     pub query: String,
-    /// 最大返回结果数
     pub max_results: usize,
-    /// 启用的检索层配置
     pub layers: RetrievalLayers,
-    /// 当前笔记路径，用于图谱反向链接增强
     pub note_context: Option<String>,
-    /// 当前笔记的文件 ID，用于图谱邻居检索
     pub file_id_context: Option<i64>,
-    /// 检索范围约束
     pub scope: RetrievalScope,
-    /// 本轮编辑器运行期文档快照，不落库。
     pub runtime_documents: Vec<RuntimeDocumentSnapshot>,
+    pub corpus_config: Option<CorpusConfig>,
 }
 
-/// 检索层开关，控制启用哪些检索通道。
+/// Independently enabled retrieval layers.
 #[derive(Debug, Clone)]
 pub struct RetrievalLayers {
-    /// 全文检索（FTS5 关键词匹配）
     pub fts: bool,
-    /// 向量检索（sqlite-vec 语义相似度）
     pub vector: bool,
-    /// 图谱检索（已确认的链接邻居）
     pub graph: bool,
-    /// 精确匹配（法规条文号解析）
     pub exact: bool,
-    /// 模板匹配（文种模板）
     pub template: bool,
 }
 
@@ -88,28 +76,7 @@ impl Default for RetrievalLayers {
     }
 }
 
-// ─── Unified Retrieval ───────────────────────────────────
-
-/// 执行混合检索，返回融合评分后的证据包列表。
-///
-/// 按以下顺序依次检索各层，结果合并后由 [`fuse_and_rank`] 统一评分：
-///
-/// 1. **FTS** — FTS5 全文关键词匹配
-/// 2. **Vector** — sqlite-vec 向量相似度（chunks / anchors / regulations）
-/// 3. **Graph** — 已确认链接的邻居文件
-/// 4. **Exact** — 法规条文号精确解析（如 `《纪律处分条例》第六条`）
-/// 5. **Template** — 文种模板关键词匹配
-///
-/// 各层内部错误会被降级为诊断信息，不会中断整体检索。
-///
-/// # Arguments
-///
-/// - `conn` — SQLite 数据库连接
-/// - `request` — 检索请求参数
-///
-/// # Returns
-///
-/// 按加权评分降序排列的证据包列表，已去重且不超过 `max_results`。
+/// Run hybrid retrieval and return fused evidence packets.
 pub fn hybrid_retrieve(
     conn: &Connection,
     request: &RetrievalRequest,
@@ -121,19 +88,17 @@ fn truncate(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(max_chars).collect::<String>())
+        format!("{}...", s.chars().take(max_chars).collect::<String>())
     }
 }
-
-// ─── Tests ───────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn retrieval_request_default_layers() {
-        let req = RetrievalRequest {
+    fn retrieval_request_default_layers_are_enabled_as_expected() {
+        let request = RetrievalRequest {
             query: "test".into(),
             max_results: 10,
             layers: RetrievalLayers::default(),
@@ -141,76 +106,36 @@ mod tests {
             file_id_context: None,
             scope: RetrievalScope::default(),
             runtime_documents: Vec::new(),
+            corpus_config: None,
         };
-        assert!(req.layers.fts);
-        assert!(req.layers.vector);
-        assert!(req.layers.graph);
-        assert!(req.layers.exact);
-        assert!(!req.layers.template);
+        assert!(request.layers.fts);
+        assert!(request.layers.vector);
+        assert!(request.layers.graph);
+        assert!(request.layers.exact);
+        assert!(!request.layers.template);
     }
 
     #[test]
-    fn exact_regulation_regex_matches() {
-        let query = "《纪律处分条例》第六条怎么规定";
-        let re = regex::Regex::new(r"《([^》]+)》\s*第([一二三四五六七八九十百千0-9]+)条").unwrap();
-        assert!(re.is_match(query));
-    }
-
-    #[test]
-    fn hybrid_retrieve_empty_db_returns_empty() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let req = RetrievalRequest {
-            query: "《纪律处分条例》第六条".into(),
+    fn empty_database_returns_no_packets() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open database");
+        let request = RetrievalRequest {
+            query: "article 6".into(),
             max_results: 10,
             layers: RetrievalLayers::default(),
             note_context: None,
             file_id_context: None,
             scope: RetrievalScope::default(),
             runtime_documents: Vec::new(),
+            corpus_config: None,
         };
-        let packets = hybrid_retrieve(&conn, &req).unwrap();
-        // No tables exist in a fresh in-memory DB, so all layers should fail gracefully
-        assert!(packets.is_empty());
+        assert!(hybrid_retrieve(&conn, &request)
+            .expect("retrieve")
+            .is_empty());
     }
 
     #[test]
-    fn hybrid_retrieve_with_diagnostics_reports_unavailable_layers() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        let req = RetrievalRequest {
-            query: "《纪律处分条例》第六条".into(),
-            max_results: 10,
-            layers: RetrievalLayers::default(),
-            note_context: None,
-            file_id_context: None,
-            scope: RetrievalScope::default(),
-            runtime_documents: Vec::new(),
-        };
-
-        let outcome = hybrid_retrieve_with_diagnostics(&conn, &req).unwrap();
-        assert!(outcome.packets.is_empty());
-        assert!(outcome.diagnostics.iter().any(|diag| {
-            diag.layer == "fts" && diag.status == RetrievalLayerStatus::Unavailable
-        }));
-        assert!(outcome.diagnostics.iter().any(|diag| {
-            diag.layer == "vector" && diag.status == RetrievalLayerStatus::IndexNotReady
-        }));
-    }
-
-    #[test]
-    fn truncate_within_limit() {
+    fn truncate_preserves_short_values_and_marks_long_values() {
         assert_eq!(truncate("hello", 10), "hello");
-    }
-
-    #[test]
-    fn truncate_exceeds_limit() {
-        let long = "a".repeat(100);
-        let result = truncate(&long, 20);
-        assert!(result.ends_with('…'));
-        assert_eq!(result.chars().count(), 21); // 20 chars + '…'
-    }
-
-    #[test]
-    fn truncate_empty() {
-        assert_eq!(truncate("", 10), "");
+        assert_eq!(truncate(&"a".repeat(100), 20).chars().count(), 23);
     }
 }

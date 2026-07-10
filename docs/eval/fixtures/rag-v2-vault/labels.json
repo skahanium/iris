@@ -1,0 +1,944 @@
+{
+    "version":  "v1.2.6",
+    "notes":  [
+                  {
+                      "path":  "foundation/note01.md"
+                  },
+                  {
+                      "path":  "foundation/note02.md"
+                  },
+                  {
+                      "path":  "foundation/note03.md"
+                  },
+                  {
+                      "path":  "foundation/note04.md"
+                  },
+                  {
+                      "path":  "search/note05.md"
+                  },
+                  {
+                      "path":  "search/note06.md"
+                  },
+                  {
+                      "path":  "search/note07.md"
+                  },
+                  {
+                      "path":  "search/note08.md"
+                  },
+                  {
+                      "path":  "editor/note09.md"
+                  },
+                  {
+                      "path":  "editor/note10.md"
+                  },
+                  {
+                      "path":  "editor/note11.md"
+                  },
+                  {
+                      "path":  "editor/note12.md"
+                  },
+                  {
+                      "path":  "security/note13.md"
+                  },
+                  {
+                      "path":  "security/note14.md"
+                  },
+                  {
+                      "path":  "security/note15.md"
+                  },
+                  {
+                      "path":  "security/note16.md"
+                  },
+                  {
+                      "path":  "performance/note17.md"
+                  },
+                  {
+                      "path":  "performance/note18.md"
+                  },
+                  {
+                      "path":  "performance/note19.md"
+                  },
+                  {
+                      "path":  "performance/note20.md"
+                  },
+                  {
+                      "path":  "integration/note21.md"
+                  },
+                  {
+                      "path":  "integration/note22.md"
+                  },
+                  {
+                      "path":  "integration/note23.md"
+                  },
+                  {
+                      "path":  "integration/note24.md"
+                  },
+                  {
+                      "path":  "knowledge/note25.md"
+                  },
+                  {
+                      "path":  "knowledge/note26.md"
+                  },
+                  {
+                      "path":  "knowledge/note27.md"
+                  },
+                  {
+                      "path":  "knowledge/note28.md"
+                  },
+                  {
+                      "path":  "ai/note29.md"
+                  },
+                  {
+                      "path":  "ai/note30.md"
+                  },
+                  {
+                      "path":  "ai/note31.md"
+                  },
+                  {
+                      "path":  "ai/note32.md"
+                  },
+                  {
+                      "path":  "sync/note33.md"
+                  },
+                  {
+                      "path":  "sync/note34.md"
+                  },
+                  {
+                      "path":  "sync/note35.md"
+                  },
+                  {
+                      "path":  "sync/note36.md"
+                  },
+                  {
+                      "path":  "storage/note37.md"
+                  },
+                  {
+                      "path":  "storage/note38.md"
+                  },
+                  {
+                      "path":  "storage/note39.md"
+                  },
+                  {
+                      "path":  "storage/note40.md"
+                  },
+                  {
+                      "path":  "quality/note41.md"
+                  },
+                  {
+                      "path":  "quality/note42.md"
+                  },
+                  {
+                      "path":  "quality/note43.md"
+                  },
+                  {
+                      "path":  "quality/note44.md"
+                  },
+                  {
+                      "path":  "product/note45.md"
+                  },
+                  {
+                      "path":  "product/note46.md"
+                  },
+                  {
+                      "path":  "product/note47.md"
+                  },
+                  {
+                      "path":  "product/note48.md"
+                  }
+              ],
+    "queries":  [
+                    {
+                        "id":  "token-01",
+                        "query":  "evaltok01",
+                        "expectedPaths":  [
+                                              "foundation/note01.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-02",
+                        "query":  "evaltok02",
+                        "expectedPaths":  [
+                                              "foundation/note02.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-03",
+                        "query":  "evaltok03",
+                        "expectedPaths":  [
+                                              "foundation/note03.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-04",
+                        "query":  "evaltok04",
+                        "expectedPaths":  [
+                                              "foundation/note04.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-05",
+                        "query":  "evaltok05",
+                        "expectedPaths":  [
+                                              "search/note05.md"
+                                          ],
+                        "scope":  {
+                                      "pathPrefixes":  [
+                                                           "search/"
+                                                       ]
+                                  },
+                        "subsets":  [
+                                        "body_token",
+                                        "hard_scope"
+                                    ]
+                    },
+                    {
+                        "id":  "token-06",
+                        "query":  "evaltok06",
+                        "expectedPaths":  [
+                                              "search/note06.md"
+                                          ],
+                        "scope":  {
+                                      "requiredTags":  [
+                                                           "area-search"
+                                                       ]
+                                  },
+                        "subsets":  [
+                                        "body_token",
+                                        "hard_scope"
+                                    ]
+                    },
+                    {
+                        "id":  "token-07",
+                        "query":  "evaltok07",
+                        "expectedPaths":  [
+                                              "search/note07.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-08",
+                        "query":  "evaltok08",
+                        "expectedPaths":  [
+                                              "search/note08.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-09",
+                        "query":  "evaltok09",
+                        "expectedPaths":  [
+                                              "editor/note09.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-10",
+                        "query":  "evaltok10",
+                        "expectedPaths":  [
+                                              "editor/note10.md"
+                                          ],
+                        "scope":  {
+                                      "paths":  [
+                                                    "editor/note10.md"
+                                                ]
+                                  },
+                        "subsets":  [
+                                        "body_token",
+                                        "hard_scope"
+                                    ]
+                    },
+                    {
+                        "id":  "token-11",
+                        "query":  "evaltok11",
+                        "expectedPaths":  [
+                                              "editor/note11.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-12",
+                        "query":  "evaltok12",
+                        "expectedPaths":  [
+                                              "editor/note12.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-13",
+                        "query":  "evaltok13",
+                        "expectedPaths":  [
+                                              "security/note13.md"
+                                          ],
+                        "scope":  {
+                                      "requiredTags":  [
+                                                           "area-security",
+                                                           "fixture"
+                                                       ]
+                                  },
+                        "subsets":  [
+                                        "body_token",
+                                        "hard_scope"
+                                    ]
+                    },
+                    {
+                        "id":  "token-14",
+                        "query":  "evaltok14",
+                        "expectedPaths":  [
+                                              "security/note14.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-15",
+                        "query":  "evaltok15",
+                        "expectedPaths":  [
+                                              "security/note15.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-16",
+                        "query":  "evaltok16",
+                        "expectedPaths":  [
+                                              "security/note16.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-17",
+                        "query":  "evaltok17",
+                        "expectedPaths":  [
+                                              "performance/note17.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-18",
+                        "query":  "evaltok18",
+                        "expectedPaths":  [
+                                              "performance/note18.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-19",
+                        "query":  "evaltok19",
+                        "expectedPaths":  [
+                                              "performance/note19.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-20",
+                        "query":  "evaltok20",
+                        "expectedPaths":  [
+                                              "performance/note20.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-21",
+                        "query":  "evaltok21",
+                        "expectedPaths":  [
+                                              "integration/note21.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-22",
+                        "query":  "evaltok22",
+                        "expectedPaths":  [
+                                              "integration/note22.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-23",
+                        "query":  "evaltok23",
+                        "expectedPaths":  [
+                                              "integration/note23.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-24",
+                        "query":  "evaltok24",
+                        "expectedPaths":  [
+                                              "integration/note24.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-25",
+                        "query":  "evaltok25",
+                        "expectedPaths":  [
+                                              "knowledge/note25.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-26",
+                        "query":  "evaltok26",
+                        "expectedPaths":  [
+                                              "knowledge/note26.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-27",
+                        "query":  "evaltok27",
+                        "expectedPaths":  [
+                                              "knowledge/note27.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-28",
+                        "query":  "evaltok28",
+                        "expectedPaths":  [
+                                              "knowledge/note28.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-29",
+                        "query":  "evaltok29",
+                        "expectedPaths":  [
+                                              "ai/note29.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-30",
+                        "query":  "evaltok30",
+                        "expectedPaths":  [
+                                              "ai/note30.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-31",
+                        "query":  "evaltok31",
+                        "expectedPaths":  [
+                                              "ai/note31.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-32",
+                        "query":  "evaltok32",
+                        "expectedPaths":  [
+                                              "ai/note32.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-33",
+                        "query":  "evaltok33",
+                        "expectedPaths":  [
+                                              "sync/note33.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-34",
+                        "query":  "evaltok34",
+                        "expectedPaths":  [
+                                              "sync/note34.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-35",
+                        "query":  "evaltok35",
+                        "expectedPaths":  [
+                                              "sync/note35.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-36",
+                        "query":  "evaltok36",
+                        "expectedPaths":  [
+                                              "sync/note36.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-37",
+                        "query":  "evaltok37",
+                        "expectedPaths":  [
+                                              "storage/note37.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-38",
+                        "query":  "evaltok38",
+                        "expectedPaths":  [
+                                              "storage/note38.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-39",
+                        "query":  "evaltok39",
+                        "expectedPaths":  [
+                                              "storage/note39.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-40",
+                        "query":  "evaltok40",
+                        "expectedPaths":  [
+                                              "storage/note40.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-41",
+                        "query":  "evaltok41",
+                        "expectedPaths":  [
+                                              "quality/note41.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-42",
+                        "query":  "evaltok42",
+                        "expectedPaths":  [
+                                              "quality/note42.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-43",
+                        "query":  "evaltok43",
+                        "expectedPaths":  [
+                                              "quality/note43.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-44",
+                        "query":  "evaltok44",
+                        "expectedPaths":  [
+                                              "quality/note44.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-45",
+                        "query":  "evaltok45",
+                        "expectedPaths":  [
+                                              "product/note45.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-46",
+                        "query":  "evaltok46",
+                        "expectedPaths":  [
+                                              "product/note46.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-47",
+                        "query":  "evaltok47",
+                        "expectedPaths":  [
+                                              "product/note47.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "token-48",
+                        "query":  "evaltok48",
+                        "expectedPaths":  [
+                                              "product/note48.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "body_token"
+                                    ]
+                    },
+                    {
+                        "id":  "alias-01",
+                        "query":  "alias-eval-01",
+                        "expectedPaths":  [
+                                              "foundation/note01.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "metadata_alias"
+                                    ]
+                    },
+                    {
+                        "id":  "alias-02",
+                        "query":  "alias-eval-02",
+                        "expectedPaths":  [
+                                              "foundation/note02.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "metadata_alias"
+                                    ]
+                    },
+                    {
+                        "id":  "alias-03",
+                        "query":  "alias-eval-03",
+                        "expectedPaths":  [
+                                              "foundation/note03.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "metadata_alias"
+                                    ]
+                    },
+                    {
+                        "id":  "alias-04",
+                        "query":  "alias-eval-04",
+                        "expectedPaths":  [
+                                              "foundation/note04.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "metadata_alias"
+                                    ]
+                    },
+                    {
+                        "id":  "alias-05",
+                        "query":  "alias-eval-05",
+                        "expectedPaths":  [
+                                              "search/note05.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "metadata_alias"
+                                    ]
+                    },
+                    {
+                        "id":  "alias-06",
+                        "query":  "alias-eval-06",
+                        "expectedPaths":  [
+                                              "search/note06.md"
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "metadata_alias"
+                                    ]
+                    },
+                    {
+                        "id":  "no-answer-01",
+                        "query":  "noanswertoken01",
+                        "expectedPaths":  [
+
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "no_answer"
+                                    ]
+                    },
+                    {
+                        "id":  "no-answer-02",
+                        "query":  "noanswertoken02",
+                        "expectedPaths":  [
+
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "no_answer"
+                                    ]
+                    },
+                    {
+                        "id":  "no-answer-03",
+                        "query":  "noanswertoken03",
+                        "expectedPaths":  [
+
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "no_answer"
+                                    ]
+                    },
+                    {
+                        "id":  "no-answer-04",
+                        "query":  "noanswertoken04",
+                        "expectedPaths":  [
+
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "no_answer"
+                                    ]
+                    },
+                    {
+                        "id":  "no-answer-05",
+                        "query":  "noanswertoken05",
+                        "expectedPaths":  [
+
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "no_answer"
+                                    ]
+                    },
+                    {
+                        "id":  "no-answer-06",
+                        "query":  "noanswertoken06",
+                        "expectedPaths":  [
+
+                                          ],
+                        "scope":  {
+
+                                  },
+                        "subsets":  [
+                                        "no_answer"
+                                    ]
+                    }
+                ]
+}

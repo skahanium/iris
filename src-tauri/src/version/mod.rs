@@ -141,6 +141,7 @@ fn purge_classified_derived_rows(
     path: &str,
 ) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM files_fts WHERE path = ?1", [path])?;
+    conn.execute("DELETE FROM files_metadata_fts WHERE path = ?1", [path])?;
     conn.execute(
         "DELETE FROM chunk_embeddings
          WHERE chunk_id IN (SELECT id FROM chunks WHERE file_id = ?1)",
@@ -741,6 +742,17 @@ mod tests {
             .expect("classified snapshot");
         let listed = version_list(&state, ".classified/secret.md").unwrap();
         assert_eq!(listed.len(), 1);
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO files_metadata_fts (path, aliases, tags)
+                     VALUES ('.classified/secret.md', 'secret', 'classified')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
 
         let restored = version_restore(&state, entry.id, "# Current").unwrap();
         assert_eq!(restored, "# Historical");
@@ -750,7 +762,7 @@ mod tests {
         let decrypted = classified_io::decrypt_cef(&raw, &key).unwrap();
         assert_eq!(String::from_utf8(decrypted).unwrap(), "# Historical");
 
-        let (chunks, fts): (i64, i64) = state
+        let (chunks, fts, metadata_fts): (i64, i64, i64) = state
             .db
             .with_conn(|conn| {
                 let file_id: i64 = conn.query_row(
@@ -768,11 +780,17 @@ mod tests {
                     [],
                     |r| r.get(0),
                 )?;
-                Ok((chunks, fts))
+                let metadata_fts = conn.query_row(
+                    "SELECT COUNT(*) FROM files_metadata_fts WHERE path = '.classified/secret.md'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok((chunks, fts, metadata_fts))
             })
             .unwrap();
         assert_eq!(chunks, 0);
         assert_eq!(fts, 0);
+        assert_eq!(metadata_fts, 0);
     }
 
     #[test]

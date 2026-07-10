@@ -8,7 +8,6 @@ use regex::Regex;
 use rusqlite::Connection;
 use std::sync::LazyLock;
 
-use crate::embedding::engine::{embed_text, f32_to_bytes};
 use crate::error::AppResult;
 use crate::knowledge::{content_hash, EMBEDDING_DIM, EMBEDDING_MODEL, EXTRACTOR_VERSION};
 
@@ -189,13 +188,7 @@ pub fn index_regulation_clauses(
     let mut indexed = 0usize;
 
     for clause in clauses {
-        // Generate embedding
-        let embedding = embed_text(&clause.content)?;
-        let blob = f32_to_bytes(&embedding);
-
-        // Build keywords: extract from content (simple heuristic — LLM batch in Phase C)
         let keywords = extract_keywords_heuristic(&clause.content);
-
         conn.execute(
             "INSERT INTO regulation_index
              (file_id, regulation_name, issuer, version_label, chapter, section,
@@ -205,8 +198,8 @@ pub fn index_regulation_clauses(
             rusqlite::params![
                 file_id,
                 clause.regulation_name,
-                None::<String>, // issuer — Phase C+
-                None::<String>, // version_label — Phase C+
+                None::<String>,
+                None::<String>,
                 clause.chapter,
                 clause.section,
                 clause.article,
@@ -222,17 +215,8 @@ pub fn index_regulation_clauses(
                 now,
             ],
         )?;
-
-        // Insert into vec table
-        let rowid = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO vec_regulations (rowid, embedding) VALUES (?1, ?2)",
-            rusqlite::params![rowid, blob],
-        )?;
-
         indexed += 1;
     }
-
     Ok(indexed)
 }
 

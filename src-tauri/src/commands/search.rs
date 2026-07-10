@@ -5,6 +5,9 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::embedding::engine::{semantic_search, SemanticHit};
+use crate::embedding::rebuild::{
+    embedding_index_status, rebuild_v2_embeddings, EmbeddingIndexStatus,
+};
 use crate::error::AppResult;
 use crate::indexer::scan::{index_vault_incremental, IndexEmbeddingMode};
 
@@ -63,5 +66,11 @@ pub fn search_reindex(state: State<'_, Arc<AppState>>) -> AppResult<usize> {
         crate::storage::db::log_vector_index_consistency(conn);
         Ok(entries)
     })?;
+    state.db.with_conn(rebuild_v2_embeddings)?;
     Ok(entries.len())
+}
+
+#[tauri::command]
+pub fn search_embedding_status(state: State<'_, Arc<AppState>>) -> AppResult<EmbeddingIndexStatus> {
+    state.db.with_read_conn(embedding_index_status)
 }

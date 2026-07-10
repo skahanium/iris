@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use std::collections::HashSet;
 
 use crate::error::AppResult;
 
@@ -65,9 +66,54 @@ pub fn upsert_fts(conn: &Connection, path: &str, title: &str, content: &str) -> 
     Ok(())
 }
 
+/// Canonicalize metadata terms for storage in the dedicated metadata FTS table.
+///
+/// This intentionally keeps the display/search value readable: trim whitespace, discard empty
+/// entries, then sort and deduplicate so equivalent frontmatter produces a stable index row.
+fn metadata_terms(values: &[String]) -> String {
+    let mut seen = HashSet::new();
+    let mut terms: Vec<String> = values
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .filter(|value| seen.insert(value.clone()))
+        .collect();
+    terms.sort();
+    terms.join(" ")
+}
+
+/// Upsert aliases and tags without adding metadata to the body-search FTS table.
+pub fn upsert_metadata_fts(
+    conn: &Connection,
+    path: &str,
+    aliases: &[String],
+    tags: &[String],
+) -> AppResult<()> {
+    conn.execute("DELETE FROM files_metadata_fts WHERE path = ?1", [path])?;
+    conn.execute(
+        "INSERT INTO files_metadata_fts (path, aliases, tags) VALUES (?1, ?2, ?3)",
+        rusqlite::params![path, metadata_terms(aliases), metadata_terms(tags)],
+    )?;
+    Ok(())
+}
+/// Move both FTS records when a note path changes.
+pub fn rename_fts(conn: &Connection, old_path: &str, new_path: &str) -> AppResult<()> {
+    conn.execute("DELETE FROM files_fts WHERE path = ?1", [new_path])?;
+    conn.execute("DELETE FROM files_metadata_fts WHERE path = ?1", [new_path])?;
+    conn.execute(
+        "UPDATE files_fts SET path = ?1 WHERE path = ?2",
+        rusqlite::params![new_path, old_path],
+    )?;
+    conn.execute(
+        "UPDATE files_metadata_fts SET path = ?1 WHERE path = ?2",
+        rusqlite::params![new_path, old_path],
+    )?;
+    Ok(())
+}
 /// Remove FTS entry for a path.
 pub fn delete_fts(conn: &Connection, path: &str) -> AppResult<()> {
     conn.execute("DELETE FROM files_fts WHERE path = ?1", [path])?;
+    conn.execute("DELETE FROM files_metadata_fts WHERE path = ?1", [path])?;
     Ok(())
 }
 

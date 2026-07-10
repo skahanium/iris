@@ -9,7 +9,7 @@ use walkdir::WalkDir;
 
 use super::chunker::{chunk_markdown_with_metadata, MarkdownChunk};
 use super::frontmatter::{parse_note, resolve_display_title};
-use super::fts::{delete_fts, upsert_fts};
+use super::fts::{delete_fts, rename_fts, upsert_fts, upsert_metadata_fts};
 use super::image_ref::index_image_refs;
 use super::wikilink::index_wiki_links;
 use crate::app::AppState;
@@ -343,6 +343,7 @@ pub fn index_file_with_embed(
     let _image_count = index_image_refs(&tx, file_id, &parsed.body)?;
 
     upsert_fts(&tx, &rel, &title, &parsed.body)?;
+    upsert_metadata_fts(&tx, &rel, &parsed.aliases, &parsed.tags)?;
 
     insert_chunks(
         &tx,
@@ -451,6 +452,7 @@ pub fn index_file_from_content(
     let _image_count = index_image_refs(&tx, file_id, &parsed.body)?;
 
     upsert_fts(&tx, &rel, &title, &parsed.body)?;
+    upsert_metadata_fts(&tx, &rel, &parsed.aliases, &parsed.tags)?;
 
     insert_chunks(
         &tx,
@@ -663,7 +665,7 @@ pub fn rename_file_index(conn: &Connection, old_path: &str, new_path: &str) -> A
         ));
     }
 
-    delete_fts(conn, old_path)?;
+    rename_fts(conn, old_path, new_path)?;
     conn.execute(
         "UPDATE files SET path = ?1 WHERE id = ?2",
         rusqlite::params![new_path, file_id],
@@ -1194,6 +1196,13 @@ mod tests {
                 [file_id],
             )?;
 
+            upsert_metadata_fts(
+                conn,
+                "old.md",
+                &["Legacy name".to_string()],
+                &["work".to_string()],
+            )?;
+
             let preserved_id = rename_file_index(conn, "old.md", "renamed.md")?;
             assert_eq!(preserved_id, file_id);
 
@@ -1217,6 +1226,18 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert_eq!(old_id_count, 0);
+            let renamed_aliases: String = conn.query_row(
+                "SELECT aliases FROM files_metadata_fts WHERE path = 'renamed.md'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(renamed_aliases, "Legacy name");
+            let old_metadata_rows: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM files_metadata_fts WHERE path = 'old.md'",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(old_metadata_rows, 0);
             Ok(())
         })
         .unwrap();

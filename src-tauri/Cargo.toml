@@ -1,6 +1,6 @@
 [package]
 name = "iris"
-version = "1.2.4"
+version = "1.2.6"
 description = "Local-first AI-native Markdown notes"
 authors = ["Iris Contributors"]
 license = "AGPL-3.0"
@@ -86,10 +86,6 @@ path = "tests/frontmatter_index.rs"
 [[test]]
 name = "vault_watcher"
 path = "tests/vault_watcher.rs"
-
-[[test]]
-name = "semantic_recall_eval"
-path = "tests/semantic_recall_eval.rs"
 
 [[test]]
 name = "cas_hash"

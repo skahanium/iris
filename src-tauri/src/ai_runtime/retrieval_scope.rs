@@ -1,5 +1,8 @@
 //! Retrieval path scope for hybrid search (corpus + @ mentions).
 
+use std::collections::HashSet;
+
+use rusqlite::{params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 
 use crate::ai_runtime::AiScene;
@@ -15,6 +18,8 @@ pub struct ContextScopeDto {
     pub path_prefixes: Vec<String>,
     #[serde(default)]
     pub corpus_ids: Vec<String>,
+    #[serde(default)]
+    pub required_tags: Vec<String>,
 }
 
 /// Resolved scope used by the retrieval broker.
@@ -22,10 +27,15 @@ pub struct ContextScopeDto {
 pub struct RetrievalScope {
     pub path_prefixes: Vec<String>,
     pub paths: Vec<String>,
+    pub required_tags: Vec<String>,
 }
 
 impl RetrievalScope {
     pub fn is_unrestricted(&self) -> bool {
+        self.is_path_unrestricted() && self.required_tags.is_empty()
+    }
+
+    pub fn is_path_unrestricted(&self) -> bool {
         self.path_prefixes.is_empty() && self.paths.is_empty()
     }
 
@@ -63,6 +73,16 @@ impl RetrievalScope {
             self.paths.push(norm);
         }
     }
+
+    fn push_required_tag(&mut self, tag: String) {
+        let norm = tag.trim().to_lowercase();
+        if norm.is_empty() {
+            return;
+        }
+        if !self.required_tags.iter().any(|item| item == &norm) {
+            self.required_tags.push(norm);
+        }
+    }
 }
 
 /// Resolve retrieval scope.
@@ -76,8 +96,10 @@ pub fn resolve_retrieval_scope(
 ) -> RetrievalScope {
     let mut scope = RetrievalScope::default();
 
-    let has_user_scope =
-        !user.paths.is_empty() || !user.path_prefixes.is_empty() || !user.corpus_ids.is_empty();
+    let has_user_scope = !user.paths.is_empty()
+        || !user.path_prefixes.is_empty()
+        || !user.corpus_ids.is_empty()
+        || !user.required_tags.is_empty();
 
     if has_user_scope {
         for prefix in corpora::prefixes_for_corpus_ids(vault_corpora, &user.corpus_ids) {
@@ -88,6 +110,9 @@ pub fn resolve_retrieval_scope(
         }
         for path in &user.paths {
             scope.push_path(path.clone());
+        }
+        for tag in &user.required_tags {
+            scope.push_required_tag(tag.clone());
         }
     } else {
         for prefix in corpora::prefixes_for_scene(vault_corpora, scene) {
@@ -103,7 +128,7 @@ pub fn filter_packets_by_scope<T>(
     scope: &RetrievalScope,
     path_fn: impl Fn(&T) -> Option<&str>,
 ) {
-    if scope.is_unrestricted() {
+    if scope.is_path_unrestricted() {
         return;
     }
     packets.retain(|p| match path_fn(p) {
@@ -112,16 +137,81 @@ pub fn filter_packets_by_scope<T>(
     });
 }
 
+/// Retain only packets whose file carries every required tag in the scope.
+pub fn filter_packets_by_required_tags<T>(
+    conn: &Connection,
+    packets: &mut Vec<T>,
+    scope: &RetrievalScope,
+    path_fn: impl Fn(&T) -> Option<&str>,
+) -> crate::error::AppResult<()> {
+    let mut tags: Vec<String> = scope
+        .required_tags
+        .iter()
+        .map(|tag| tag.trim().to_lowercase())
+        .filter(|tag| !tag.is_empty())
+        .collect();
+    tags.sort();
+    tags.dedup();
+    if tags.is_empty() {
+        return Ok(());
+    }
+
+    let placeholders = vec!["?"; tags.len()].join(",");
+    let sql = format!(
+        "SELECT f.path
+         FROM files AS f
+         INNER JOIN file_tags AS ft ON ft.file_id = f.id
+         INNER JOIN tags AS t ON t.id = ft.tag_id
+         WHERE lower(t.name) IN ({placeholders})
+         GROUP BY f.id, f.path
+         HAVING COUNT(DISTINCT lower(t.name)) = {}",
+        tags.len()
+    );
+    let mut statement = conn.prepare(&sql)?;
+    let allowed_paths: HashSet<String> = statement
+        .query_map(params_from_iter(tags.iter()), |row| row.get::<_, String>(0))?
+        .collect::<Result<_, _>>()?;
+
+    packets.retain(|packet| path_fn(packet).is_some_and(|path| allowed_paths.contains(path)));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::knowledge::corpora::{CorpusConfig, CorpusEntry};
 
     #[test]
+    fn required_tags_are_an_and_boundary_for_packet_paths() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open database");
+        conn.execute_batch(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT NOT NULL);
+             CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+             CREATE TABLE file_tags (file_id INTEGER NOT NULL, tag_id INTEGER NOT NULL);
+             INSERT INTO files (id, path) VALUES (1, 'both.md'), (2, 'one.md');
+             INSERT INTO tags (id, name) VALUES (1, 'alpha'), (2, 'beta');
+             INSERT INTO file_tags (file_id, tag_id) VALUES (1, 1), (1, 2), (2, 1);",
+        )
+        .expect("seed tags");
+        let scope = RetrievalScope {
+            required_tags: vec![" alpha ".into(), "beta".into()],
+            ..RetrievalScope::default()
+        };
+        let mut paths = vec!["both.md".to_string(), "one.md".to_string(), String::new()];
+
+        filter_packets_by_required_tags(&conn, &mut paths, &scope, |path| {
+            (!path.is_empty()).then_some(path.as_str())
+        })
+        .expect("filter tag scope");
+
+        assert_eq!(paths, vec!["both.md"]);
+    }
+    #[test]
     fn matches_prefix_and_exact() {
         let scope = RetrievalScope {
             path_prefixes: vec!["党纪法规/".into()],
             paths: vec!["范文/样例.md".into()],
+            required_tags: Vec::new(),
         };
         assert!(scope.matches_path("党纪法规/条例.md"));
         assert!(scope.matches_path("范文/样例.md"));
@@ -155,6 +245,7 @@ mod tests {
             paths: vec!["草稿/指定.md".into()],
             path_prefixes: vec!["项目/".into()],
             corpus_ids: Vec::new(),
+            required_tags: Vec::new(),
         };
 
         let scope = resolve_retrieval_scope(&corpus_config(), AiScene::KnowledgeLookup, &user);
@@ -172,6 +263,7 @@ mod tests {
             paths: Vec::new(),
             path_prefixes: Vec::new(),
             corpus_ids: vec!["drafts".into()],
+            required_tags: Vec::new(),
         };
 
         let scope = resolve_retrieval_scope(&corpus_config(), AiScene::KnowledgeLookup, &user);

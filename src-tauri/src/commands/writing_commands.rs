@@ -614,6 +614,7 @@ async fn retrieve_writing_evidence(
         file_id_context: None,
         scope: RetrievalScope::default(),
         runtime_documents: Vec::new(),
+        corpus_config: None,
     };
 
     state

@@ -2131,6 +2131,7 @@ pub async fn search_hybrid(
         file_id_context: file_id,
         scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
         runtime_documents: Vec::new(),
+        corpus_config: None,
     };
 
     let packets = state

@@ -154,3 +154,139 @@ fn scan_vault_indexes_multiple_notes() {
         })
         .unwrap();
 }
+
+#[test]
+fn indexes_normalized_aliases_in_dedicated_metadata_fts() {
+    let dir = tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    fs::create_dir_all(&vault).unwrap();
+    let note = vault.join("project.md");
+    fs::write(
+        &note,
+        "---\ntags: [work, iris]\naliases: [Project Phoenix, '  Project Phoenix  ', 42, { invalid: true }, '']\n---\n\nBody must stay out of metadata FTS.",
+    )
+    .unwrap();
+
+    let conn = Connection::open_in_memory().unwrap();
+    migrate_up(&conn).unwrap();
+    index_file(&conn, &vault, &note).unwrap();
+
+    let (aliases, tags): (String, String) = conn
+        .query_row(
+            "SELECT aliases, tags FROM files_metadata_fts WHERE path = 'project.md'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+
+    assert_eq!(aliases, "Project Phoenix");
+    assert_eq!(tags, "iris work");
+
+    let body_hits: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files_metadata_fts WHERE files_metadata_fts MATCH 'Body'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(body_hits, 0, "metadata FTS must not index note body text");
+    remove_file_index(&conn, "project.md").unwrap();
+    let metadata_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files_metadata_fts WHERE path = 'project.md'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        metadata_rows, 0,
+        "deleting a note must remove its metadata FTS row"
+    );
+}
+
+#[test]
+fn metadata_fts_migration_backfills_existing_frontmatter_and_tags() {
+    let conn = Connection::open_in_memory().unwrap();
+    migrate_up(&conn).unwrap();
+    conn.execute(
+        "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
+         VALUES ('legacy.md', 'Legacy', ?1, 'hash', 0, 'now', 'now')",
+        [r#"{"aliases":[" Legacy Alias ", "Legacy Alias", 42, ""]}"#],
+    )
+    .unwrap();
+    let file_id = conn.last_insert_rowid();
+    conn.execute(
+        "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
+         VALUES ('legacy-scalar.md', 'Legacy scalar', ?1, 'hash-scalar', 0, 'now', 'now')",
+        [r#"{"aliases":" Legacy Shortcut "}"#],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
+         VALUES ('.classified/secret.md', 'Secret', '{\"aliases\":[\"secret\"]}', 'hash-secret', 0, 'now', 'now')",
+        [],
+    )
+    .unwrap();
+    conn.execute("INSERT INTO tags (name) VALUES ('blue'), ('atlas')", [])
+        .unwrap();
+    conn.execute(
+        "INSERT INTO file_tags (file_id, tag_id)
+         SELECT ?1, id FROM tags WHERE name IN ('blue', 'atlas')",
+        [file_id],
+    )
+    .unwrap();
+
+    conn.execute_batch(include_str!("../migrations/045_metadata_fts.sql"))
+        .unwrap();
+
+    let (aliases, tags): (String, String) = conn
+        .query_row(
+            "SELECT aliases, tags FROM files_metadata_fts WHERE path = 'legacy.md'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(aliases, "Legacy Alias");
+    assert_eq!(tags, "atlas blue");
+    let scalar_alias: String = conn
+        .query_row(
+            "SELECT aliases FROM files_metadata_fts WHERE path = 'legacy-scalar.md'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(scalar_alias, "Legacy Shortcut");
+    let classified_rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files_metadata_fts WHERE path = '.classified/secret.md'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        classified_rows, 0,
+        "classified paths must never enter metadata FTS"
+    );
+}
+
+#[test]
+fn indexes_scalar_alias_in_metadata_fts() {
+    let dir = tempdir().unwrap();
+    let vault = dir.path().join("vault");
+    fs::create_dir_all(&vault).unwrap();
+    let note = vault.join("scalar.md");
+    fs::write(&note, "---\naliases: '  Shortcut  '\n---\nBody").unwrap();
+
+    let conn = Connection::open_in_memory().unwrap();
+    migrate_up(&conn).unwrap();
+    index_file(&conn, &vault, &note).unwrap();
+
+    let aliases: String = conn
+        .query_row(
+            "SELECT aliases FROM files_metadata_fts WHERE path = 'scalar.md'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(aliases, "Shortcut");
+}

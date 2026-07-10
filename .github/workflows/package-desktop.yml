@@ -35,6 +35,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Restore embedded BGE model
+        uses: actions/cache@v5
+        with:
+          path: .iris-dev/models/bge-small-zh-v1.5
+          key: ${{ runner.os }}-bge-small-zh-v1.5-fcecc3c5fef6becfa2b2bdda15c1c938857be534
+
+      - name: Verify or prepare embedded BGE model
+        run: npm run model:prepare
       - name: Package Windows NSIS installer
         run: npm run package:local:win
 
@@ -67,6 +75,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Restore embedded BGE model
+        uses: actions/cache@v5
+        with:
+          path: .iris-dev/models/bge-small-zh-v1.5
+          key: ${{ runner.os }}-bge-small-zh-v1.5-fcecc3c5fef6becfa2b2bdda15c1c938857be534
+
+      - name: Verify or prepare embedded BGE model
+        run: npm run model:prepare
       - name: Package macOS DMG
         run: node scripts/package-local.mjs --no-sqlite-vec mac
 

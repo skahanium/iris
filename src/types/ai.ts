@@ -1,4 +1,4 @@
-﻿// AI Runtime core types — mirrors Rust ai_runtime::types
+// AI Runtime core types — mirrors Rust ai_runtime::types
 
 export type AiScene =
   | "knowledge_lookup"
@@ -714,6 +714,7 @@ export interface ContextScope {
   paths: string[];
   pathPrefixes: string[];
   corpusIds?: string[];
+  requiredTags?: string[];
 }
 
 export interface ContextStatus {

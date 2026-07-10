@@ -133,6 +133,22 @@ export interface SemanticHit {
   score: number;
 }
 
+export type EmbeddingIndexPhase =
+  | "legacy_ready"
+  | "rebuilding"
+  | "ready"
+  | "failed";
+
+export interface EmbeddingIndexStatus {
+  activeModelId: string;
+  targetModelId: string;
+  dimension: number;
+  phase: EmbeddingIndexPhase;
+  indexedItems: number;
+  totalItems: number;
+  lastError: string | null;
+}
+
 export interface FileChangedEvent {
   path: string;
   hash?: string;

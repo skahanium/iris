@@ -14,6 +14,13 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bundleRoot = path.join(root, ".iris-dev", "target", "release", "bundle");
 const appPath = path.join(bundleRoot, "macos", "Iris.app");
+const embeddedModelTauriConfig = JSON.stringify({
+  bundle: {
+    resources: {
+      "../.iris-dev/models/bge-small-zh-v1.5": "models/bge-small-zh-v1.5",
+    },
+  },
+});
 
 function usage() {
   return [
@@ -68,12 +75,13 @@ function parseArgs(argv) {
   return options;
 }
 
-function run(label, command, args) {
+function run(label, command, args, extraEnv = {}) {
   process.stdout.write(`\n[package-local] ${label}\n`);
   const result = spawnSync(command, args, {
     cwd: root,
     shell: process.platform === "win32",
     stdio: "inherit",
+    env: { ...process.env, ...extraEnv },
   });
   if (result.status !== 0) {
     const code = result.status ?? 1;
@@ -118,6 +126,10 @@ function tauriBuildArgs(target, sqliteVec) {
     "nsis",
   );
   return args;
+}
+
+function prepareEmbeddedModel() {
+  run("prepare embedded BGE model", "npm", ["run", "model:prepare"]);
 }
 
 function runChecks() {
@@ -178,10 +190,12 @@ function packageMac(options) {
   if (process.platform !== "darwin") {
     throw new Error("mac packaging must run on macOS.");
   }
+  prepareEmbeddedModel();
   run(
     "build macOS app intermediate",
     "npm",
     tauriBuildArgs("mac", options.sqliteVec),
+    { TAURI_CONFIG: embeddedModelTauriConfig },
   );
   signMacApp();
   const dmgPath = createLocalDmg();
@@ -204,10 +218,12 @@ function packageWin(options) {
   if (process.platform !== "win32") {
     throw new Error("Windows NSIS packaging must run on Windows.");
   }
+  prepareEmbeddedModel();
   run(
     "build Windows NSIS installer",
     "npm",
     tauriBuildArgs("win", options.sqliteVec),
+    { TAURI_CONFIG: embeddedModelTauriConfig },
   );
   process.stdout.write(
     [

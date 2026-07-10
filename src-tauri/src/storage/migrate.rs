@@ -108,6 +108,14 @@ const MIGRATION_042_DOWN: &str =
 const MIGRATION_043_UP: &str = include_str!("../../migrations/043_chunk_retrieval_metadata.sql");
 const MIGRATION_043_DOWN: &str =
     include_str!("../../migrations/043_chunk_retrieval_metadata.down.sql");
+const MIGRATION_044_UP: &str = include_str!("../../migrations/044_embedding_generation_v2.sql");
+const MIGRATION_044_DOWN: &str =
+    include_str!("../../migrations/044_embedding_generation_v2.down.sql");
+const MIGRATION_045_UP: &str = include_str!("../../migrations/045_metadata_fts.sql");
+const MIGRATION_045_DOWN: &str = include_str!("../../migrations/045_metadata_fts.down.sql");
+const MIGRATION_046_UP: &str = include_str!("../../migrations/046_auxiliary_embeddings_v2.sql");
+const MIGRATION_046_DOWN: &str =
+    include_str!("../../migrations/046_auxiliary_embeddings_v2.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -249,6 +257,9 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_043_UP,
         false,
     )?;
+    apply_migration(conn, "044_embedding_generation_v2", MIGRATION_044_UP, false)?;
+    apply_migration(conn, "045_metadata_fts", MIGRATION_045_UP, false)?;
+    apply_migration(conn, "046_auxiliary_embeddings_v2", MIGRATION_046_UP, false)?;
 
     Ok(())
 }
@@ -260,6 +271,9 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "046_auxiliary_embeddings_v2", MIGRATION_046_DOWN);
+    rollback_migration(conn, "045_metadata_fts", MIGRATION_045_DOWN);
+    rollback_migration(conn, "044_embedding_generation_v2", MIGRATION_044_DOWN);
     rollback_migration(conn, "043_chunk_retrieval_metadata", MIGRATION_043_DOWN);
     rollback_migration(conn, "042_reign_in_ai_capabilities", MIGRATION_042_DOWN);
     rollback_migration(conn, "041_mcp_transport_https_contract", MIGRATION_041_DOWN);

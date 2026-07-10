@@ -167,6 +167,7 @@ async fn search_tool_respects_hard_retrieval_scope_and_clamps_limit() {
     let retrieval_scope = RetrievalScope {
         path_prefixes: vec!["scoped/".into()],
         paths: Vec::new(),
+        required_tags: Vec::new(),
     };
     let ctx = ctx_with_scope(None, &retrieval_scope);
 

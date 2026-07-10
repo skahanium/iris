@@ -1575,6 +1575,7 @@ mod tests {
             paths: vec![".classified/a.md".into()],
             path_prefixes: vec![".classified/projects".into()],
             corpus_ids: vec![],
+            required_tags: vec![],
         };
         assert!(validate_classified_scope(Some(&scope)).unwrap());
 
@@ -1582,6 +1583,7 @@ mod tests {
             paths: vec!["normal.md".into()],
             path_prefixes: vec![],
             corpus_ids: vec![],
+            required_tags: vec![],
         };
         assert!(validate_classified_scope(Some(&ordinary_path)).is_err());
 
@@ -1589,6 +1591,7 @@ mod tests {
             paths: vec![],
             path_prefixes: vec!["notes/".into()],
             corpus_ids: vec![],
+            required_tags: vec![],
         };
         assert!(validate_classified_scope(Some(&ordinary_prefix)).is_err());
 
@@ -1596,6 +1599,7 @@ mod tests {
             paths: vec![],
             path_prefixes: vec![".classified".into()],
             corpus_ids: vec!["default".into()],
+            required_tags: vec![],
         };
         assert!(validate_classified_scope(Some(&corpus_scope)).is_err());
     }
@@ -1610,6 +1614,7 @@ mod tests {
             paths: vec![".classified/exact.md".into()],
             path_prefixes: vec![".classified/team".into()],
             corpus_ids: vec![],
+            required_tags: vec![],
         };
         assert!(classified_scope_matches(".classified/exact.md", &scope));
         assert!(classified_scope_matches(".classified/team/a.md", &scope));

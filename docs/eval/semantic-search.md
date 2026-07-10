@@ -1,96 +1,38 @@
-# 语义搜索评估（v1.1.0）
+# 检索评测
 
-> **文档索引**：[docs/README.md](../README.md) · **排期**：[ROADMAP.md](../../ROADMAP.md)
+> 评测对象是端到端 AI 检索，而非单独的 embedding 相似度。版本范围见 [ROADMAP.md](../../ROADMAP.md)。
 
-## 当前实现（v1.1.0）
+## 当前基线与 v1.2.6 目标
 
-Iris 语义检索采用**本地嵌入 + 混合存储 + 双路径检索**：
+现有基线使用 fastembed `AllMiniLML6V2`（384 维），普通语义搜索可以在 sqlite-vec 不可用时走 Rust cosine 路径；AI retrieval broker 另有 FTS、链接、锚点和法规候选。该基线不能证明 broker 的范围过滤、证据 span/hash 或排序质量。
 
-| 环节     | 实现                                                                                                                                              |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 嵌入模型 | [fastembed](https://github.com/Anush008/fastembed-rs) `AllMiniLML6V2`（384 维）                                                                   |
-| 存储     | `chunk_embeddings.embedding` BLOB；`002_vec`/sqlite-vec vec0 为 optional/experimental，`025_knowledge_scalar_backfill` 确保 scalar 知识表默认存在 |
-| 分块     | `chunk_markdown`，约 2000 字符/块，见 `indexer/chunker.rs`                                                                                        |
-| 检索     | `embedding::engine::semantic_search`：默认 BLOB 全量 cosine；vec0 可用时可作为 optional 加速路径                                                  |
-| IPC      | `search_semantic(query, limit?)`，默认 `limit=5`                                                                                                  |
-| 重建索引 | `search_reindex` / 扫描 vault 时 `store_chunk_embeddings`                                                                                         |
-| AI 融合  | `retrieval_broker`：FTS + vec + link + exact 多路融合（助手面板上下文）                                                                           |
+v1.2.6 将以 BGE-small-zh-v1.5 与 Rank v2 完成强制索引迁移，评测从 `hybrid_retrieve → Rank → scope → ContextPacket` 全链路执行。完整设计与验收门槛见 [RAG 优化设计](../specs/v1.2.6-rag-optimization.md)。
 
-**数据流：**
+## Fixture 与标签
 
-```
-.md 文件 → scan_vault → chunks 表
-                    → fastembed → chunk_embeddings BLOB（vec0 可用时可另建）
-用户查询 → embed(query) → cosine Top-K（vec0 optional）→ SemanticHit { path, title, snippet, score }
-```
+`fixtures/rag-v2-vault/` 将包含 48 篇合成 Markdown 笔记，覆盖相近主题、长文、精确法规、tags/aliases、链接、多文档任务和干扰项。标签集共 60 条：
 
-**说明**：sqlite-vec 扩展当前不作为默认质量门禁；Windows 构建存在阻塞，默认路径依赖 Rust 全量 cosine。sqlite-vec 后续单独评估升级、vendor 修复或替代方案。
+- 20 条语义硬负例；
+- 10 条关键词/精确命中；
+- 10 条 tags/aliases；
+- 10 条链接/多文档；
+- 10 条无答案。
 
----
+fixture 只用于测试，不包含真实用户笔记或秘密。旧 `semantic-vault` 是 v1.2.5 历史基线，待 v2 fixture 落地后整体替换，不再扩充。
 
-## 指标
+## 指标与发布门槛
 
-- **Recall@5**：每条查询的期望笔记是否出现在语义 Top-5 的 `path` 中（按 chunk 命中，同文件多 chunk 任一命中即算成功）。
-- **Recall@10**：同上，但观察 Top-10，用于判断候选召回是否足够、是否只是排序靠后。
-- **MRR@10**：期望笔记在 Top-10 中的倒数排名均值，用于观察首屏排序质量。
-- **No-answer false positive rate**：对少量不在 fixture vault 中的问题，统计 Top-1 分数超过阈值的比例。当前仅报告，不作为硬门禁。
-- **硬门禁目标**：Recall@5 ≥ **0.6**（20 条中至少 12 条命中）。
+每次评测保存机器、commit、模型、索引状态、查询标签和结果 JSON。固定基线为 `docs/eval/results/v1.2.5-hybrid.json`。
 
----
+| 指标                           | v1.2.6 门槛                  |
+| ------------------------------ | ---------------------------- |
+| scope 泄漏                     | 0                            |
+| ContextPacket span/hash 有效性 | 100%                         |
+| 候选 Recall@30                 | ≥ 0.95                       |
+| Recall@5                       | ≥ 0.80                       |
+| 无答案 false-positive rate     | ≤ 0.10                       |
+| nDCG@10、MRR@10                | 相对 v1.2.5 各提升 ≥ 0.05    |
+| 任一标签子集回退               | 不超过 0.02                  |
+| warm p95                       | 不劣于基线 25%，目标 ≤ 500ms |
 
-## 评测集
-
-- **Fixture vault**：[`fixtures/semantic-vault/`](./fixtures/semantic-vault/)（20 篇标注笔记，中文主题互不混淆）
-- **自动化**：`src-tauri/tests/semantic_recall_eval.rs`（`#[ignore]`，需下载嵌入模型）
-
-```bash
-cd src-tauri
-cargo test semantic_recall_at_5_on_fixture_vault -- --ignored --nocapture
-```
-
----
-
-## 评测结果（fixture vault，2026-05-25）
-
-| #   | 查询                                                | 期望 path                 | Top-1 path                | 命中@5 |
-| --- | --------------------------------------------------- | ------------------------- | ------------------------- | ------ |
-| 1   | 性能优化 帧率 reindex profiling                     | `perf-meeting.md`         | `perf-meeting.md`         | 是     |
-| 2   | SQLite 元数据与 FTS 索引                            | `sqlite-arch.md`          | `fts-keyword.md`          | 是     |
-| 3   | Tauri 2 桌面应用                                    | `tauri-stack.md`          | `tauri-stack.md`          | 是     |
-| 4   | TipTap ai-stream 流式                               | `tiptap-editor.md`        | `tiptap-editor.md`        | 是     |
-| 5   | MCP 凭据作用域                                      | `credentials-security.md` | `credentials-security.md` | 是     |
-| 6   | all-MiniLM-L6-v2 嵌入                               | `embedding-model.md`      | `embedding-model.md`      | 是     |
-| 7   | search_semantic 关联笔记                            | `semantic-search-impl.md` | `semantic-search-impl.md` | 是     |
-| 8   | 未配置 MCP 搜索提供方                               | `web-search-fallback.md`  | `web-search-fallback.md`  | 是     |
-| 9   | frontmatter tags 表                                 | `frontmatter-tags.md`     | `frontmatter-tags.md`     | 是     |
-| 10  | FileWatcher notify 监听                             | `file-watcher.md`         | `file-watcher.md`         | 是     |
-| 11  | Anthropic content_block_delta                       | `anthropic-api.md`        | `anthropic-api.md`        | 是     |
-| 12  | htmlToMarkdown round-trip                           | `markdown-roundtrip.md`   | `markdown-roundtrip.md`   | 是     |
-| 13  | 内联 AI 接受回退                                    | `inline-ai.md`            | `inline-ai.md`            | 是     |
-| 14  | 双向链接 力导向图                                   | `knowledge-graph-v02.md`  | `knowledge-graph-v02.md`  | 是     |
-| 15  | AGPL-3.0 依赖许可                                   | `agpl-license.md`         | `agpl-license.md`         | 是     |
-| 16  | chunk_markdown 分块                                 | `chunking-strategy.md`    | `chunking-strategy.md`    | 是     |
-| 17  | files_fts unicode61                                 | `fts-keyword.md`          | `fts-keyword.md`          | 是     |
-| 18  | 旧评测语料：Ollama 11434 本地（不代表当前内建能力） | `ollama-local.md`         | `ollama-local.md`         | 是     |
-| 19  | Recall@5 评测目标                                   | `eval-recall.md`          | `eval-recall.md`          | 是     |
-| 20  | 混合检索 broker 融合                                | `semantic-search-impl.md` | `semantic-search-impl.md` | 是     |
-
-**汇总**：Recall@5 = **20/20 = 1.00**（fixture 集；阈值 ≥ 0.6，达标）。当前评测脚本还会额外输出 Recall@10、MRR@10 与 no-answer false positive rate，作为成熟化观察指标；历史表格仅保留 Recall@5 的逐条记录。
-
-**说明**：`vault-encryption.md` 为已废弃的规划 fixture，不再参与产品能力假设。过于笼统的中文查询在实测中可能误召回它篇；评测查询宜包含 distinctive 关键词（见 `semantic_recall_eval.rs` 中的 `EVAL_QUERIES`）。
-
----
-
-## 人工复现步骤
-
-1. 将 `docs/eval/fixtures/semantic-vault` 设为 Iris 笔记目录，或复制到测试目录
-2. 应用内执行全文/语义重建索引（`search_reindex` 或打开 vault 触发 `scan_vault`）
-3. 在搜索面板或 `search_semantic` IPC 逐条验证上表查询
-4. 用户真实 vault 的 Recall 可能低于 fixture，发布前建议在目标语料上抽检
-
----
-
-## 与产品功能的关联
-
-- **搜索面板**：语义 Tab 调用 `search_semantic`
-- **AI 助手**：`retrieval_broker` 对 vault 做 FTS + vec + link + exact 融合，组装 `ContextPacket` 证据包
+评测失败不得以“模型下载、sqlite-vec 未启用或候选不足”跳过并宣称通过；必须明确记录降级状态和失败原因。

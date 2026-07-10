@@ -1,15 +1,18 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
-use crate::ai_runtime::retrieval_scope::filter_packets_by_scope;
+use crate::ai_runtime::retrieval_scope::{
+    filter_packets_by_required_tags, filter_packets_by_scope,
+};
 use crate::ai_runtime::{
     ContextPacket, RuntimeDocumentSnapshot, SourceSpan, SourceType, TrustLevel,
 };
 use crate::error::{AppError, AppResult};
 
 use super::{
-    fuse_and_rank, search_exact_regulation, search_fts, search_graph_neighbors, search_template,
-    search_vector_anchors, search_vector_chunks, search_vector_regulations, RetrievalRequest,
+    fuse_and_rank, search_exact_regulation, search_fts, search_graph_neighbors, search_metadata,
+    search_template, search_vector_anchors, search_vector_chunks, search_vector_regulations,
+    RetrievalRequest,
 };
 
 /// Per-layer retrieval status reported by the diagnostic API.
@@ -41,40 +44,50 @@ pub struct RetrievalOutcome {
     pub diagnostics: Vec<RetrievalLayerDiagnostic>,
 }
 
-/// 执行混合检索，并返回每个检索层的非敏感诊断信息。
+/// Execute hybrid retrieval and return non-sensitive per-layer diagnostics.
 pub fn hybrid_retrieve_with_diagnostics(
     conn: &Connection,
     request: &RetrievalRequest,
 ) -> AppResult<RetrievalOutcome> {
     let mut packets: Vec<ContextPacket> = Vec::new();
     let mut diagnostics: Vec<RetrievalLayerDiagnostic> = Vec::new();
+    // Retrieve a bounded candidate pool before applying the hard scope boundary.
+    // Applying the final Top-K limit first can let out-of-scope records consume
+    // all slots and leave a valid scoped query with no results.
+    let candidate_limit = request.max_results.saturating_mul(4).max(8);
 
     if request.layers.fts {
         append_layer_result(
             "fts",
-            search_fts(conn, &request.query, request.max_results),
+            search_fts(conn, &request.query, candidate_limit),
+            &mut packets,
+            &mut diagnostics,
+        );
+        append_layer_result(
+            "metadata",
+            search_metadata(conn, &request.query, candidate_limit),
             &mut packets,
             &mut diagnostics,
         );
     }
 
     if request.layers.vector {
-        if crate::storage::db::vector_index_ready() {
+        if crate::embedding::engine::embedding_generation_ready(conn)? {
             append_layer_result(
                 "vector_chunks",
-                search_vector_chunks(conn, &request.query, request.max_results),
+                search_vector_chunks(conn, &request.query, candidate_limit),
                 &mut packets,
                 &mut diagnostics,
             );
             append_layer_result(
                 "vector_anchors",
-                search_vector_anchors(conn, &request.query, request.max_results),
+                search_vector_anchors(conn, &request.query, candidate_limit),
                 &mut packets,
                 &mut diagnostics,
             );
             append_layer_result(
                 "vector_regulations",
-                search_vector_regulations(conn, &request.query, request.max_results),
+                search_vector_regulations(conn, &request.query, candidate_limit),
                 &mut packets,
                 &mut diagnostics,
             );
@@ -82,7 +95,7 @@ pub fn hybrid_retrieve_with_diagnostics(
             diagnostics.push(RetrievalLayerDiagnostic {
                 layer: "vector".to_string(),
                 status: RetrievalLayerStatus::IndexNotReady,
-                message: Some("sqlite-vec index is not ready".to_string()),
+                message: Some("BGE v2 embedding generation is rebuilding".to_string()),
             });
         }
     }
@@ -110,7 +123,7 @@ pub fn hybrid_retrieve_with_diagnostics(
     if request.layers.template {
         append_layer_result(
             "template",
-            search_template(conn, &request.query, request.max_results),
+            search_template(conn, &request.query, candidate_limit),
             &mut packets,
             &mut diagnostics,
         );
@@ -127,8 +140,12 @@ pub fn hybrid_retrieve_with_diagnostics(
         &mut diagnostics,
     );
 
-    fuse_and_rank(&mut packets, request.max_results);
+    annotate_packets_with_corpus(request.corpus_config.as_ref(), &mut packets);
     filter_packets_by_scope(&mut packets, &request.scope, |p| p.source_path.as_deref());
+    filter_packets_by_required_tags(conn, &mut packets, &request.scope, |p| {
+        p.source_path.as_deref()
+    })?;
+    fuse_and_rank(&mut packets, request.max_results);
 
     Ok(RetrievalOutcome {
         packets,
@@ -136,6 +153,22 @@ pub fn hybrid_retrieve_with_diagnostics(
     })
 }
 
+fn annotate_packets_with_corpus(
+    corpora: Option<&crate::knowledge::corpora::CorpusConfig>,
+    packets: &mut [ContextPacket],
+) {
+    let Some(corpora) = corpora else {
+        return;
+    };
+    for packet in packets {
+        let Some(path) = packet.source_path.as_deref() else {
+            continue;
+        };
+        if let Some(entry) = crate::knowledge::corpora::corpus_for_path(corpora, path) {
+            packet.corpus = Some(crate::knowledge::corpora::packet_meta_for_entry(entry));
+        }
+    }
+}
 const MAX_RUNTIME_DOCUMENTS: usize = 24;
 const MAX_RUNTIME_DOCUMENT_CHARS: usize = 80_000;
 const MAX_RUNTIME_EXCERPT_CHARS: usize = 900;
@@ -167,7 +200,7 @@ fn search_runtime_documents(
         if score == 0 {
             continue;
         }
-        let excerpt = runtime_excerpt(&content, &terms);
+        let (excerpt, source_span) = runtime_excerpt(&content, &terms);
         packets.push(ContextPacket {
             id: format!(
                 "runtime-overlay:{}:{}",
@@ -182,7 +215,7 @@ fn search_runtime_documents(
                 document.title.trim().to_string()
             },
             heading_path: None,
-            source_span: None::<SourceSpan>,
+            source_span: Some(source_span),
             content_hash: crate::cas::hash::content_hash_str(&content),
             excerpt,
             retrieval_reason: "runtime_overlay".to_string(),
@@ -224,7 +257,7 @@ fn runtime_query_terms(query: &str) -> Vec<String> {
     terms
 }
 
-fn runtime_excerpt(content: &str, terms: &[String]) -> String {
+fn runtime_excerpt(content: &str, terms: &[String]) -> (String, SourceSpan) {
     let lower = content.to_lowercase();
     let start_byte = terms
         .iter()
@@ -237,22 +270,15 @@ fn runtime_excerpt(content: &str, terms: &[String]) -> String {
         .find(|index| content.is_char_boundary(*index))
         .unwrap_or(0);
     let start_char = content[..safe_start].chars().count();
-    let half_window = MAX_RUNTIME_EXCERPT_CHARS / 2;
-    let from = start_char.saturating_sub(half_window);
+    let from = start_char.saturating_sub(MAX_RUNTIME_EXCERPT_CHARS / 2);
     let excerpt: String = content
         .chars()
         .skip(from)
         .take(MAX_RUNTIME_EXCERPT_CHARS)
         .collect();
-    let prefix = if from > 0 { "..." } else { "" };
-    let suffix = if content.chars().count() > from + MAX_RUNTIME_EXCERPT_CHARS {
-        "..."
-    } else {
-        ""
-    };
-    format!("{prefix}{}{suffix}", excerpt.trim())
+    let end = from + excerpt.chars().count();
+    (excerpt, SourceSpan { start: from, end })
 }
-
 fn append_layer_result(
     layer: &str,
     result: AppResult<Vec<ContextPacket>>,
@@ -345,6 +371,71 @@ mod tests {
     }
 
     #[test]
+    fn corpus_role_is_attached_before_rank_v2() {
+        let conn = Connection::open_in_memory().expect("open database");
+        let corpora = crate::knowledge::corpora::CorpusConfig {
+            corpus: vec![
+                crate::knowledge::corpora::CorpusEntry {
+                    id: "authority".into(),
+                    name: "Authority".into(),
+                    path_prefix: "authority/".into(),
+                    kind: "authority".into(),
+                    scenes: Vec::new(),
+                },
+                crate::knowledge::corpora::CorpusEntry {
+                    id: "lookup".into(),
+                    name: "Lookup".into(),
+                    path_prefix: "lookup/".into(),
+                    kind: "lookup".into(),
+                    scenes: Vec::new(),
+                },
+            ],
+        };
+        let request = RetrievalRequest {
+            query: "evidence".into(),
+            max_results: 2,
+            layers: RetrievalLayers {
+                fts: false,
+                vector: false,
+                graph: false,
+                exact: false,
+                template: false,
+            },
+            note_context: None,
+            file_id_context: None,
+            scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+            runtime_documents: vec![
+                RuntimeDocumentSnapshot {
+                    path: "lookup/a.md".into(),
+                    title: "A".into(),
+                    content: "evidence".into(),
+                    is_locked: false,
+                },
+                RuntimeDocumentSnapshot {
+                    path: "authority/z.md".into(),
+                    title: "Z".into(),
+                    content: "evidence".into(),
+                    is_locked: false,
+                },
+            ],
+            corpus_config: Some(corpora),
+        };
+
+        let outcome = hybrid_retrieve_with_diagnostics(&conn, &request).expect("retrieve");
+
+        assert_eq!(
+            outcome.packets[0].source_path.as_deref(),
+            Some("authority/z.md")
+        );
+        assert_eq!(
+            outcome.packets[0]
+                .corpus
+                .as_ref()
+                .map(|meta| meta.kind.as_str()),
+            Some("authority")
+        );
+    }
+    #[test]
     fn runtime_documents_are_transient_and_respect_scope() {
         let conn = Connection::open_in_memory().unwrap();
         let documents = vec![RuntimeDocumentSnapshot {
@@ -367,6 +458,7 @@ mod tests {
             file_id_context: None,
             scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
             runtime_documents: documents,
+            corpus_config: None,
         };
 
         let outcome = hybrid_retrieve_with_diagnostics(&conn, &request).unwrap();
@@ -375,6 +467,8 @@ mod tests {
             outcome.packets[0].retrieval_reason.as_str(),
             "runtime_overlay"
         );
+        assert!(outcome.packets[0].source_span.is_some());
+        assert!(!outcome.packets[0].content_hash.is_empty());
 
         request.scope.paths = vec!["other.md".to_string()];
         let scoped_out = hybrid_retrieve_with_diagnostics(&conn, &request).unwrap();

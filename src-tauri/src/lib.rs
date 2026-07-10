@@ -171,6 +171,7 @@ pub fn run() {
             commands::search::search_keyword,
             commands::search::search_semantic,
             commands::search::search_reindex,
+            commands::search::search_embedding_status,
             commands::llm::llm_providers,
             commands::llm::llm_generate,
             commands::llm::llm_chat,

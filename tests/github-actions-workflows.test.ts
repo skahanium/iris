@@ -37,6 +37,13 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).not.toContain("releaseDraft");
   });
 
+  it("caches and verifies the embedded BGE staging before desktop packaging", () => {
+    const workflow = readWorkflow(".github/workflows/package-desktop.yml");
+
+    expect(workflow).toContain("actions/cache@v5");
+    expect(workflow).toContain(".iris-dev/models/bge-small-zh-v1.5");
+    expect(workflow).toContain("npm run model:prepare");
+  });
   it("creates a draft GitHub Release with packaged assets for v tags", () => {
     const workflow = readWorkflow(".github/workflows/package-desktop.yml");
 

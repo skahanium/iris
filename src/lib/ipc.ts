@@ -42,6 +42,7 @@ import type {
   FileSignatureResult,
   DocumentOpenScopeResult,
   DocumentOpenResult,
+  EmbeddingIndexStatus,
   GraphData,
   ImageAttachmentDto,
   InboxItem,
@@ -458,6 +459,10 @@ export async function searchSemantic(
 
 export async function searchReindex(): Promise<number> {
   return invoke<number>("search_reindex");
+}
+
+export async function searchEmbeddingStatus(): Promise<EmbeddingIndexStatus> {
+  return invoke<EmbeddingIndexStatus>("search_embedding_status");
 }
 
 export async function llmProviders(): Promise<LlmProviderInfo[]> {

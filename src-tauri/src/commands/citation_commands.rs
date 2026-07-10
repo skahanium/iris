@@ -118,9 +118,11 @@ async fn retrieve_citation_evidence(
             .map(|s| RetrievalScope {
                 paths: s.paths.clone(),
                 path_prefixes: s.path_prefixes.clone(),
+                required_tags: Vec::new(),
             })
             .unwrap_or_default(),
         runtime_documents: Vec::new(),
+        corpus_config: None,
     };
 
     let packets = state

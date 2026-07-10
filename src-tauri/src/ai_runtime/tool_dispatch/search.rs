@@ -47,6 +47,7 @@ pub(super) async fn hybrid_search(
             file_id_context: ctx.file_id,
             scope: ctx.retrieval_scope.clone(),
             runtime_documents: ctx.runtime_documents.to_vec(),
+            corpus_config: None,
         };
         crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
     })?;
@@ -79,6 +80,7 @@ pub(super) async fn regulation_lookup(
             file_id_context: None,
             scope: RetrievalScope::default(),
             runtime_documents: Vec::new(),
+            corpus_config: None,
         };
         crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
     })?;

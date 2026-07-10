@@ -11,23 +11,20 @@ pub(super) fn search_vector_chunks(
     query: &str,
     limit: usize,
 ) -> AppResult<Vec<ContextPacket>> {
-    let query_vec = engine::embed_text(query)?;
-    let blob = engine::f32_to_bytes(&query_vec);
-
-    let mut stmt = conn.prepare(
-        "SELECT vc.rowid, c.content, f.path, f.title, c.heading_path,
-                c.source_start, c.source_end, c.content_hash, c.char_count, vc.distance
-         FROM vec_chunks vc
-         JOIN chunks c ON c.id = vc.rowid
-         JOIN files f ON f.id = c.file_id
-         WHERE vc.embedding MATCH ?1
-           AND f.path <> '.classified'
-           AND f.path NOT LIKE '.classified/%'
-         ORDER BY vc.distance
-         LIMIT ?2",
+    if !engine::embedding_generation_ready(conn)? {
+        return Ok(Vec::new());
+    }
+    let query_embedding = engine::embed_query(query)?;
+    let mut statement = conn.prepare(
+        "SELECT c.id, c.content, f.path, f.title, c.heading_path,
+                c.source_start, c.source_end, c.content_hash, ce.embedding
+         FROM chunk_embeddings_v2 AS ce
+         INNER JOIN chunks AS c ON c.id = ce.chunk_id
+         INNER JOIN files AS f ON f.id = c.file_id
+         WHERE f.path <> '.classified'
+           AND f.path NOT LIKE '.classified/%'",
     )?;
-
-    let rows = stmt.query_map(rusqlite::params![blob, limit as i64], |row| {
+    let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
@@ -37,125 +34,69 @@ pub(super) fn search_vector_chunks(
             row.get::<_, Option<i64>>(5)?,
             row.get::<_, Option<i64>>(6)?,
             row.get::<_, Option<String>>(7)?,
-            row.get::<_, i64>(8)?,
-            row.get::<_, f64>(9)?,
+            row.get::<_, Vec<u8>>(8)?,
         ))
     })?;
 
-    let packets: Vec<_> = rows
-        .filter_map(|r| match r {
-            Ok(v) => Some(v),
-            Err(e) => {
-                tracing::warn!("vector chunk row parse failed: {e}");
-                None
-            }
-        })
-        .enumerate()
-        .map(
-            |(i, (rowid, text, path, title, heading, start, end, hash, _char_count, distance))| {
-                let score = (1.0 - distance).max(0.0);
-                let source_span = match (start, end) {
-                    (Some(start), Some(end)) if start >= 0 && end >= start => Some(SourceSpan {
-                        start: start as usize,
-                        end: end as usize,
-                    }),
-                    _ => None,
-                };
-                ContextPacket {
-                    id: format!("chunk-{rowid}"),
-                    source_type: SourceType::Note,
-                    source_path: Some(path),
-                    title: title.clone(),
-                    heading_path: heading,
-                    source_span,
-                    content_hash: hash.unwrap_or_default(),
-                    excerpt: truncate(&text, 300),
-                    retrieval_reason: "vector_chunk".into(),
-                    score,
-                    trust_level: TrustLevel::UserNote,
-                    citation_label: format!("[C{i}]"),
-                    stale: false,
-                    web: None,
-                    corpus: None,
-                }
-            },
-        )
-        .collect();
-
+    let mut packets = Vec::new();
+    for row in rows.flatten() {
+        let (chunk_id, content, path, title, heading_path, start, end, content_hash, blob) = row;
+        let embedding = engine::bytes_to_f32(&blob);
+        if embedding.len() != engine::EMBEDDING_DIMENSION {
+            tracing::warn!(
+                chunk_id,
+                dimensions = embedding.len(),
+                "skipping invalid v2 vector row"
+            );
+            continue;
+        }
+        let source_span = match (start, end) {
+            (Some(start), Some(end)) if start >= 0 && end >= start => Some(SourceSpan {
+                start: start as usize,
+                end: end as usize,
+            }),
+            _ => None,
+        };
+        packets.push(ContextPacket {
+            id: format!("chunk-{chunk_id}"),
+            source_type: SourceType::Note,
+            source_path: Some(path),
+            title,
+            heading_path,
+            source_span,
+            content_hash: content_hash.unwrap_or_default(),
+            excerpt: truncate(&content, 300),
+            retrieval_reason: "vector_chunk".to_string(),
+            score: engine::cosine_similarity(&query_embedding, &embedding) as f64,
+            trust_level: TrustLevel::UserNote,
+            citation_label: format!("[C{chunk_id}]"),
+            stale: false,
+            web: None,
+            corpus: None,
+        });
+    }
+    packets.sort_by(|left, right| right.score.total_cmp(&left.score));
+    packets.truncate(limit);
     Ok(packets)
 }
-
 pub(super) fn search_vector_anchors(
     conn: &Connection,
     query: &str,
     limit: usize,
 ) -> AppResult<Vec<ContextPacket>> {
-    let query_vec = engine::embed_text(query)?;
-    let blob = engine::f32_to_bytes(&query_vec);
-
-    let mut stmt = match conn.prepare(
-        "SELECT va.rowid, sa.content, f.path, f.title, sa.heading_path,
-                sa.anchor_type, sa.confidence, va.distance
-         FROM vec_anchors va
-         JOIN semantic_anchors sa ON sa.id = va.rowid
-         JOIN files f ON f.id = sa.file_id
-         WHERE va.embedding MATCH ?1
-           AND f.path <> '.classified'
-           AND f.path NOT LIKE '.classified/%'
-         ORDER BY va.distance
-         LIMIT ?2",
-    ) {
-        Ok(s) => s,
-        Err(_) => return Ok(vec![]), // vec_anchors table may not exist yet
-    };
-
-    let rows = stmt.query_map(rusqlite::params![blob, limit as i64], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Option<String>>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, f64>(6)?,
-            row.get::<_, f64>(7)?,
-        ))
-    })?;
-
-    let packets: Vec<_> = rows
-        .filter_map(|r| match r {
-            Ok(v) => Some(v),
-            Err(e) => {
-                tracing::warn!("vector anchor row parse failed: {e}");
-                None
-            }
-        })
-        .enumerate()
-        .map(
-            |(i, (rowid, content, path, title, heading, anchor_type, _confidence, distance))| {
-                let score = (1.0 - distance).max(0.0);
-                ContextPacket {
-                    id: format!("anchor-{rowid}"),
-                    source_type: SourceType::Anchor,
-                    source_path: Some(path),
-                    title,
-                    heading_path: heading,
-                    source_span: None,
-                    content_hash: String::new(),
-                    excerpt: truncate(&content, 300),
-                    retrieval_reason: format!("vector_{anchor_type}"),
-                    score,
-                    trust_level: TrustLevel::DerivedCache,
-                    citation_label: format!("[A{i}]"),
-                    stale: false,
-                    web: None,
-                    corpus: None,
-                }
-            },
-        )
-        .collect();
-
-    Ok(packets)
+    search_structured_vectors(
+        conn,
+        query,
+        limit,
+        "SELECT a.id, a.content, f.path, f.title, a.heading_path, a.source_start, a.source_end, a.content_hash, e.embedding, a.confidence
+         FROM semantic_anchor_embeddings_v2 AS e
+         INNER JOIN semantic_anchors AS a ON a.id = e.anchor_id
+         INNER JOIN files AS f ON f.id = a.file_id
+         WHERE f.path <> '.classified' AND f.path NOT LIKE '.classified/%'",
+        "anchor",
+        SourceType::Anchor,
+        TrustLevel::UserNote,
+    )
 }
 
 pub(super) fn search_vector_regulations(
@@ -163,73 +104,83 @@ pub(super) fn search_vector_regulations(
     query: &str,
     limit: usize,
 ) -> AppResult<Vec<ContextPacket>> {
-    let query_vec = engine::embed_text(query)?;
-    let blob = engine::f32_to_bytes(&query_vec);
+    search_structured_vectors(
+        conn,
+        query,
+        limit,
+        "SELECT r.id, r.content, f.path, f.title, r.article, r.source_start, r.source_end, r.content_hash, e.embedding, 1.0
+         FROM regulation_embeddings_v2 AS e
+         INNER JOIN regulation_index AS r ON r.id = e.regulation_id
+         INNER JOIN files AS f ON f.id = r.file_id
+         WHERE f.path <> '.classified' AND f.path NOT LIKE '.classified/%'",
+        "regulation",
+        SourceType::Regulation,
+        TrustLevel::UserNote,
+    )
+}
 
-    let mut stmt = match conn.prepare(
-        "SELECT vr.rowid, ri.content, f.path, f.title, ri.regulation_name,
-                ri.article, ri.paragraph, vr.distance
-         FROM vec_regulations vr
-         JOIN regulation_index ri ON ri.id = vr.rowid
-         JOIN files f ON f.id = ri.file_id
-         WHERE vr.embedding MATCH ?1
-           AND f.path <> '.classified'
-           AND f.path NOT LIKE '.classified/%'
-         ORDER BY vr.distance
-         LIMIT ?2",
-    ) {
-        Ok(s) => s,
-        Err(_) => return Ok(vec![]),
-    };
-
-    let rows = stmt.query_map(rusqlite::params![blob, limit as i64], |row| {
+fn search_structured_vectors(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+    sql: &str,
+    kind: &str,
+    source_type: SourceType,
+    trust_level: TrustLevel,
+) -> AppResult<Vec<ContextPacket>> {
+    if !engine::embedding_generation_ready(conn)? {
+        return Ok(Vec::new());
+    }
+    let query_embedding = engine::embed_query(query)?;
+    let mut statement = conn.prepare(sql)?;
+    let rows = statement.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, Option<String>>(6)?,
-            row.get::<_, f64>(7)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, i64>(5)?,
+            row.get::<_, i64>(6)?,
+            row.get::<_, String>(7)?,
+            row.get::<_, Vec<u8>>(8)?,
+            row.get::<_, f64>(9)?,
         ))
     })?;
-
-    let packets: Vec<_> = rows
-        .filter_map(|r| match r {
-            Ok(v) => Some(v),
-            Err(e) => {
-                tracing::warn!("vector regulation row parse failed: {e}");
-                None
-            }
-        })
-        .map(
-            |(rowid, content, path, title, reg_name, article, paragraph, distance)| {
-                let score = (1.0 - distance).max(0.0);
-                let citation = match &paragraph {
-                    Some(p) => format!("{reg_name} {article}{p}"),
-                    None => format!("{reg_name} {article}"),
-                };
-                ContextPacket {
-                    id: format!("reg-{rowid}"),
-                    source_type: SourceType::Regulation,
-                    source_path: Some(path),
-                    title,
-                    heading_path: Some(format!("{reg_name} > {article}")),
-                    source_span: None,
-                    content_hash: String::new(),
-                    excerpt: truncate(&content, 400),
-                    retrieval_reason: "vector_regulation_match".into(),
-                    score,
-                    trust_level: TrustLevel::DerivedCache,
-                    citation_label: citation,
-                    stale: false,
-                    web: None,
-                    corpus: None,
-                }
-            },
-        )
-        .collect();
-
+    let mut packets = Vec::new();
+    for row in rows.flatten() {
+        let (id, content, path, title, heading_path, start, end, hash, blob, confidence) = row;
+        let embedding = engine::bytes_to_f32(&blob);
+        if embedding.len() != engine::EMBEDDING_DIMENSION
+            || start < 0
+            || end < start
+            || hash.is_empty()
+        {
+            continue;
+        }
+        packets.push(ContextPacket {
+            id: format!("{kind}-{id}"),
+            source_type: source_type.clone(),
+            source_path: Some(path),
+            title,
+            heading_path,
+            source_span: Some(SourceSpan {
+                start: start as usize,
+                end: end as usize,
+            }),
+            content_hash: hash,
+            excerpt: truncate(&content, 400),
+            retrieval_reason: format!("vector_{kind}"),
+            score: (engine::cosine_similarity(&query_embedding, &embedding) as f64
+                * confidence.clamp(0.0, 1.0)),
+            trust_level: trust_level.clone(),
+            citation_label: format!("[V{id}]"),
+            stale: false,
+            web: None,
+            corpus: None,
+        });
+    }
+    packets.sort_by(|left, right| right.score.total_cmp(&left.score));
+    packets.truncate(limit);
     Ok(packets)
 }

@@ -331,6 +331,7 @@ async fn retrieve_chapter_evidence(
         file_id_context: None,
         scope: RetrievalScope::default(),
         runtime_documents: Vec::new(),
+        corpus_config: None,
     };
 
     state
@@ -350,6 +351,7 @@ async fn retrieve_document_evidence(
         file_id_context: None,
         scope: RetrievalScope::default(),
         runtime_documents: Vec::new(),
+        corpus_config: None,
     };
 
     state

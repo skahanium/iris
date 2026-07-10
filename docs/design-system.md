@@ -1,277 +1,44 @@
-﻿# Iris 设计系统
+# Iris 设计系统
 
-**方向定稿**：**Iris 知识工作台**——Iris Rail 壳层 + 沉静编辑画布 + AI 协作侧车 + 任务舱 Overlay；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。
+> 本文定义当前 UI 的 token、组件边界和验收规则，不承担版本排期；排期见 [ROADMAP.md](../ROADMAP.md)。
 
-**Iris Rail 完整刷新设计**：当前目标直接维护在本文，覆盖 Home、顶栏、Rail Segments Tab、Editor Workspace、Outline Rail、AI Conversation Workspace、Overlay Family 与管理中心。
+## 方向与非目标
 
-手工验收清单：见 [Iris Rail Refresh Manual Checklist](./testing/iris-rail-refresh-manual-checklist.md)。
+Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先，命令与 AI 是辅助层。避免纸墨/信纸视觉、紫色渐变、聊天主屏化、第三方主题和插件换肤。
 
-**排期**：阶段与路线图版本的绑定见下文「落地阶段与路线图版本对照」；**版本 checklist 以 [ROADMAP.md](../ROADMAP.md) 为准**。
+## Token 与实现位置
 
-本文档是 **界面** 的单一参考；交互线框见 [ARCHITECTURE.md](../ARCHITECTURE.md)；全库文档索引见 [docs/README.md](./README.md)。
+主题变量在 `src/styles/globals.css`；新增或调整 token 时，先更新本文档、ROADMAP 对应事项和样式源，再修改组件。
 
----
+| Token 组                                   | 用途                                       |
+| ------------------------------------------ | ------------------------------------------ |
+| `--background`、`--foreground`、`--border` | 基础画布、文字与分隔                       |
+| `--surface-*`                              | Chrome、浮层、输入区与内嵌表面             |
+| `--command-highlight-*`                    | 命令列表焦点与选中态                       |
+| `--ai-*`                                   | AI 消息、输入、流式状态与协作侧栏          |
+| `--knowledge-accent`、`--outline-rail-*`   | 链接、目录、知识图谱与当前章节             |
+| `--iris-rail-*`                            | 品牌轨、Tab rail 与激活/hover 状态         |
+| `--shadow-overlay`、`--shadow-floating`    | 仅用于浮层和悬浮工具；编辑区不使用纸页阴影 |
 
-## Iris 编辑与协作（主方向）
+动效通常为 150–200ms；`prefers-reduced-motion` 下必须降级。
 
-### 气质
+## 组件边界
 
-内容优先：编辑区与外壳**同色扁平**，无浮动纸页、无行线网格。**AI 侧栏**为与笔记并列的**协作对话区**（默认约 360px、可拖拽调宽），承载多轮对话、检索与长文回复，视觉精致、可读，而非弱化附庸或粗糙 IM。
+- `components/ui/`：shadcn/ui 基础原语与共享无业务组件。
+- `components/editor/`：TipTap、编辑器命令、查找、媒体和 Markdown 往返体验。
+- `components/ai/`：助手、证据包、工具确认、消息与写作提案。
+- `components/layout/`：窗口 Chrome、Rail、标题栏、Overlay 和全局布局。
 
-Iris Rail 刷新后，识别度来自结构签名而非装饰：常驻品牌轨道、现代化 Rail Segments Tab、边缘目录轨、沉静编辑画布、AI 协作侧车和统一任务舱 Overlay。落地可以按风险分批，但设计目标一次性覆盖完整界面系统。
+可复用控件应优先使用现有 `OverlayChrome`、`IrisSurfaceMenu`、`CommandListOption`、`Kbd`、`AiComposer`、`AiMessageBubble`、`SurfaceCard` 等原语，不能在业务组件重复实现。
 
-### 分区
+## 交互规则
 
-| 区域              | 角色                              | 默认观感                                    |
-| ----------------- | --------------------------------- | ------------------------------------------- |
-| **Chrome**        | 标签栏、状态栏、AI 侧栏、命令浮层 | 中性灰阶，细 `1px` 分隔，小圆角（4–8px）    |
-| **Editor canvas** | 居中内容栏约 `52rem`，与背景同色  | 扉页无衬线标题 + 无衬线正文、左对齐         |
-| **AI 协作区**     | 对话消息流、证据与工具结果        | 15px 正文、角色分明消息壳、共用 prose token |
-| **Accent**        | 链接、主按钮、AI 标识             | 中性蓝灰（**不用** violet 紫、赭铜）        |
+- 主路径必须有可见入口或快捷键；纯 icon 控件必须有可访问名称和 tooltip。
+- `/` 菜单仅承载文档级命令；选区 AI 以右键和助手面板为主。
+- AI 写入必须显示目标笔记、范围与风险并要求确认；不得展示或复制原始模型思维链。
+- AI 证据卡显示来源、摘录与引用，不能伪造“链接即证据”。
+- 标题栏、Rail 和 Tab 溢出应维持当前平台窗口行为；人工验收见 `docs/testing/`。
 
-Iris Rail Refresh 的 accent 演进为低饱和鼠尾草绿系，仅用于知识连接、AI/检索状态、Home/品牌轨道选中线、Outline Rail 当前章节和少量焦点态；灰阶仍承担编辑与壳层底色。
+## 验收
 
-### 色彩 token（CSS 变量）
-
-实现见 `src/styles/globals.css`。
-
-**品牌 monogram**（几何「I」v3；桌面图标、顶栏、托盘、欢迎页）：见 [design-system/brand.md](./design-system/brand.md)。
-
-| Token                | 亮色 `.light`                           | 暗色 `:root`        | 用途                       |
-| -------------------- | --------------------------------------- | ------------------- | -------------------------- |
-| `--background`       | 纯白附近                                | `#191919` 附近      | 壳层、编辑区、侧栏         |
-| `--foreground`       | 深灰字                                  | 浅灰字              | 正文、标题                 |
-| `--primary`          | `hsl(210 12% 45%)`                      | `hsl(210 18% 62%)`  | 主操作、链接、caret        |
-| `--panel` / `--card` | 略区别于 background                     | 略区别于 background | 标签选中、浮层、输入       |
-| `--editor-*`         | 与 `--background` / `--foreground` 对齐 | 同上                | 兼容旧 `editor-paper` 类名 |
-
-Iris Rail Refresh adds semantic surface tokens for the complete interface system: `--iris-rail-*` for brand rail and Rail Segments tabs, `--outline-rail-*` for the editor outline rail, `--ai-workspace-*` for the collaboration sidecar, and `--overlay-task-*` for task-capsule overlays. These tokens are semantic and should not be reused as generic decoration colors.
-
-### 字体
-
-| 场景                 | 栈 / Token   | 说明                                       |
-| -------------------- | ------------ | ------------------------------------------ |
-| **Chrome / UI**      | `font-sans`  | `Inter` + 系统无衬线（`--font-ui`）        |
-| **编辑正文 / AI MD** | `font-prose` | `Noto Sans SC` + `Inter` + 系统中文字体    |
-| **文档标题（扉页）** | `font-title` | 复用 `font-sans`，标题数字强制 lining nums |
-| **代码块**           | `font-mono`  | JetBrains Mono                             |
-
-实现见 `src/styles/markdown-prose.css`、`src/styles/globals.css` 的本地 `@font-face`，以及 `index.html` 的自托管 woff2 preload。
-
-### 间距与栏宽
-
-- 编辑区：`max-width: 52rem`，水平 `clamp(1.5rem, 5vw, 6rem)`，正文 `16px` / `line-height: 1.62`，段落左对齐
-- AI 侧栏：默认 `360px`，左缘拖拽调整（`280px`–`560px`，偏好写入 localStorage），可 `Ctrl+Shift+A` 收起
-- AI 对话排版：`15px` / `line-height: 1.52`，`data-prose-surface="conversation"`，与编辑区共用 `markdown-prose.css` 与代码高亮 token
-- AI 侧栏 chrome：**对话区仅消息流 + 证据包折叠条**；**Token 累计**、**工具/检索进行中**在全局底栏（`StatusBar` + `StatusBarTokenUsage`）；证据包标题行展示 **N 证据**、**M 搜索**、**K 正文片段**（由 WebEvidenceBroker URL 深读与 `ContextPacketDrawer` 提供）
-- AI 对话区规则：消息时间线 **Markdown-first**，助手输出默认是普通文字流；临时 tab 是高价值产物，不是 workflow 默认副产品；过程 tab 只用于长任务、暂停、失败、权限等待或有意义诊断；引用胶囊显示短摘要，不显示完整选区
-
-### 编辑区结构
-
-```
-.iris-editor
-  └── .iris-editor-zoom-scroll（滚动）
-        └── .iris-editor-canvas（居中栏 + zoom）
-              └── .iris-editor-body（左侧为折叠钮留白）
-                    └── .ProseMirror
-```
-
-**无** `.iris-paper` 卡片、**无** 行线 `repeating-linear-gradient`。
-
-### 文档与块样式
-
-| 元素                        | 规则                                                                                                                                                                                                                                                                        |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **文档标题**                | 独立字段 `DocumentTitleField`；**居中**、无衬线 `font-title`、`~2.25rem` bold；数字使用 lining nums，避免 mixed CJK/Latin 标题中 oldstyle figures 高低不齐；与正文间距 `--prose-title-gap`；Enter 进入正文                                                                  |
-| **章节标题**                | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                                                                                                                                                                       |
-| **段落**                    | 无段首缩进；左对齐；块间距 `--prose-block-gap`；Markdown 空行只作为块分隔，不创建 spacer 段落                                                                                                                                                                               |
-| **共用排版**                | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）                                                                                                                                                         |
-| **AI 消息**                 | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                                                                                                                                                                  |
-| **章节折叠**                | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                                                                                                                                                                        |
-| **Zen**                     | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                                                                                                                                                                   |
-| **缩放**                    | canvas `zoom` 75%–150%                                                                                                                                                                                                                                                      |
-| **文档目录（Ghost Spine）** | `EditorOutline`：左缘细线把手 + 透明文字索引列；H1/H2/H3 缩进；当前章节文字 / 背景 / 左侧滑动条高亮；50+ 条目虚拟化；锁定态仍可点击跳转。竖轴（`.outline-ghost-list::before`，3px）与文字间距统一 `0.75rem`（9px），不分平台，避免 macOS/Windows 字体度量差异导致的紧贴观感 |
-| **媒体嵌入**                | `![[path]]` 支持图片 / 视频 / PDF；隐藏或预热编辑器只保留占位与 `data-iris-media-src`，可见 surface 才申请 `iris-media` lease；PDF/video 使用稳定尺寸防止布局跳动                                                                                                           |
-
----
-
-## 命令浮层（Command Overlay）
-
-快捷键唤起的次级 UI **统一为居中浮层**，禁止右侧贴边长条 `SidePanel` 形态。
-
-### 行为契约
-
-| 规则     | 说明                             |
-| -------- | -------------------------------- |
-| **蒙层** | 全窗 scrim；盖住含 AI 在内的整窗 |
-| **AI**   | 打开浮层时 **不自动收起** AI     |
-| **互斥** | **同时仅一个** 命令浮层          |
-| **关闭** | `Esc`、点击 scrim、显式关闭按钮  |
-
-### 尺寸变体（`IrisOverlay`）
-
-| size         | 用途                   | 约略尺寸                      |
-| ------------ | ---------------------- | ----------------------------- |
-| `compact`    | Quick Open             | `max-w-xl`                    |
-| `command`    | 搜索、文件、知识关联等 | `max-w-3xl`，高 `78vh`        |
-| `management` | 管理中心               | `1180px × 760px` 上限，中面板 |
-| `wide`       | 版本时间线等           | `max-w-7xl`，高 `88vh`        |
-| `graph`      | 知识图谱               | 宽 `96vw`，高 `92vh`          |
-
-浮层：`rounded-xl`（12px），`--shadow-overlay`，`border-border/60`。
-
-### 管理中心
-
-`ManagementCenterPanel` 是唯一管理型入口，使用横向全宽顶部标签导航，一级分区固定为 `总览 / 笔记 / 知识库 / AI`。取消左侧设置栏、工作台页、系统安全页和关于页；系统边界、许可和源码信息并入总览。总览、知识库默认不设置子页面，内容多时在同页纵向滚动；笔记分区允许用同窗详情页承载文件树与回收站，详情页必须保留返回笔记顶层的入口；AI 允许使用同窗子页承载模型、联网、人格、Skills 和记忆等复杂配置，子页必须保留返回 AI 顶层的入口。模型配置以供应商为单位展示，供应商配置位于能力槽模型路由上方；未配置厂商只出现在添加模型向导中。能力槽非 Vision 行固定为供应商、模型、推理开关、推理强度；模型卡只展示文本、视觉、推理状态、能力来源和最近验证时间，不暴露底层 adapter 或内部通道术语。
-
-任务型浮层保持快速列表体验：Quick Open、全库搜索、知识关联、版本追踪与知识图谱仍按各自工作流选择尺寸。文件树和回收站归入管理中心 `笔记` 分区，并可在同窗详情页内嵌完整操作面板；文件树保留 `Ctrl+Shift+E` / `Cmd+Shift+E` 直达。知识图谱由底栏直达。涉密能力不出现在管理中心或普通主界面，只保留隐藏特殊直达。
-
-AI 分区的联网与证据配置必须低干扰、可解释：管理中心展示 MCP 联网证据提供方、mapping 完整性、凭据引用状态和最近失败分类；Iris 不展示或内置原生/厂商搜索引擎托底。MCP 预设只保留卡片内“快速预设”下拉这一个入口，“添加 MCP 提供方”进入草稿卡后由用户选择预设或自定义服务。
-
----
-
-## 圆角、阴影与动效
-
-| Token             | 值   | 用于                                    |
-| ----------------- | ---- | --------------------------------------- |
-| `--radius-sm`     | 6px  | chip、小控件                            |
-| `--radius-md`     | 8px  | 输入、按钮                              |
-| `--radius-lg`     | 12px | 卡片、工具条                            |
-| `--radius-xl`     | 16px | 命令浮层                                |
-| `--window-radius` | 12px | 无边框窗口外轮廓（配合 `shadow: true`） |
-
-桌面窗口：单行 **`DesktopTitleBar`**（`bg-surface-chrome`），禁止出现「Tauri App」或双层系统标题栏。顶栏高度统一为 44px，让品牌轨、Rail Segments 与右侧窗口控制在同一中线。
-
-| 平台            | `--titlebar-height` | 装饰 / 标题                                                                                                              | 窗口按钮                                             | 顶栏左侧                                                                                                                                                                                                                                                                           |
-| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS           | **44px（2.75rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: true`、`trafficLightPosition: { x: 14, y: 24 }`、非透明窗口 | 左侧系统原生红黄绿；Iris 不渲染自绘 `WindowControls` | 窗口态 `--titlebar-traffic-inset: 88px` 空 spacer 后接 `iris-brand-rail`（`--titlebar-leading-inset: 0px`，brand-rail 以 `margin-left: -0.375rem` 在红黄绿旁居中）；fullscreen 时 spacer 收为 `0px` 且 `--titlebar-leading-inset: 0.5rem`，brand-rail 与 tab 右移 8px 不再贴左边缘 |
-| Windows / Linux | **44px（2.75rem）** | `decorations: false`（Win 另 `shadow: true`）                                                                            | 右侧标准顺序窗口控件：最小化 / 最大化 / 关闭         | 常驻 `iris-brand-rail`；`--titlebar-leading-inset: 0.5rem`，brand-rail 与 tab 距窗口左缘 8px，圆角 / hover / 激活态高亮完整可见                                                                                                                                                    |
-
-顶栏左侧安全区由 CSS 变量 `--titlebar-leading-inset` 驱动（默认 `0px`，覆盖 macOS 窗口态；Windows/Linux 与 macOS 全屏为 `0.5rem`），`<header>` 以 `pl-[var(--titlebar-leading-inset)]` 消费，splash 与 document 变体共用。
-
-指标单一来源：Rust [`chrome_metrics.rs`](../src-tauri/src/chrome_metrics.rs)（顶栏统一 44px，macOS traffic inset 88px）；前端镜像见 [`chrome-metrics.ts`](../src/lib/chrome-metrics.ts)。
-
-- **Windows 11**：`transparent: false`（见 `tauri.windows.conf.json`），圆角由 DWM + `shadow` 提供；**勿**与 `transparent: true` 同开。
-- **macOS**：使用系统 AppKit 作为唯一窗口外壳 owner：`transparent: false`、`decorations: true`、Overlay titlebar、hidden title，并通过配置期 `trafficLightPosition: { x: 14, y: 24 }` 让系统红黄绿与 Iris 44px 顶栏视觉中线对齐；禁止运行期动态 `setDecorations()` / `setTitleBarStyle()` 切换。窗口态左侧 88px spacer 不放按钮、文本或图标，系统红黄绿独占该区域。
-- **macOS 全屏**：使用系统绿色按钮进入 / 退出原生 fullscreen Space；标题栏双击仍执行最大化 / 还原，两者语义互不替代。fullscreen 状态由 `data-iris-window-fullscreen` 驱动，左侧 traffic-light spacer 从 88px 顺滑收为 0px，`--titlebar-leading-inset` 由 0px 升为 `0.5rem`，完整 `Iris` 品牌轨和 tab 右移补位但不贴左边缘。macOS WindowServer 的贴顶 reveal 行为不可由 Web 前端完全接管，治理原则是避免 Iris 再渲染第二套交通灯、保留空白或动态切换窗口壳层。
-
-**Tab 条压缩与溢出**：`.iris-rail-tab` 硬下限 `min-width: 4.5rem`（72px）、`max-width: 14rem`，默认 `flex-shrink` 可压缩。`DesktopTitleBar` 用 `ResizeObserver` + 测量渲染（`measuring` 态，全量 tab 自然宽度，`overflow-x-hidden` 不滚动、无滚动条）判定是否溢出：不溢出时全部自然宽度；溢出时切换压缩态（可见 tab 固定 `4.5rem`），装不下的 tab 收进 tab 条末尾「更多笔记」按钮的下拉菜单（`IrisSurfaceMenuPanel`），活动 tab 始终保持在可见区（必要时占用末位）。新建「+」按钮固定在 `iris-brand-rail` 之后、`.iris-titlebar-tab-rail` 之前，作为 tab 条之外的 header 兄弟位，永不随溢出滚走，也不得漂移到右侧窗口控件旁。指标计算见 `src/lib/tab-overflow.ts` 的 `computeVisibleTabCount`。
-
-**人工验收**：macOS 窗口模式 — 左侧系统红黄绿正常显示且在 Iris 顶栏内垂直居中，Iris 品牌轨从 88px spacer 后开始并承担 Home 入口，不出现独立 Home tab；系统绿色进入原生全屏，标题栏双击最大化 / 还原；fullscreen 后左侧 spacer 收起为 0px、`--titlebar-leading-inset` 升为 `0.5rem`，完整 Iris 品牌轨与 tab 右移补位且不贴左边缘；全屏→退出后标题栏高度、品牌轨和系统窗口控件不漂移，不出现 Iris 自绘交通灯叠层。Windows — 顶栏 44px、左侧 `0.5rem` 安全区、最小化 / 最大化 / 关闭顺序与 Tab 无回归。Tab 溢出 — 打开 20+ 文档，tab 压缩到 72px，溢出项进「更多笔记」菜单可激活 / 关闭，活动 tab 始终可见，「+」固定在品牌轨之后、tab rail 之前且始终可达，不出现在最小化 / 最大化 / 关闭按钮旁，不出现横向滚动条或滚轮。
-
-阴影：仅浮层 / 悬浮工具条使用 `--shadow-overlay` / `--shadow-floating`；**编辑区无纸页阴影**。
-
-动效：150–200ms，`prefers-reduced-motion` 降级。
-
-Home / 欢迎页打开最近笔记：点击后立即离开 Home 进入目标文档 loading view，loading 绑定目标 path/title；旧 `activePath` 仍在后台保存或新文档读取未完成时，不得渲染上一个编辑器。连续点击多个目标时只允许最后一次请求决定最终显示。
-
-### 启动体验
-
-Iris 启动使用 Knowledge Orbit 启动层遮住 Tauri/WebView 首帧不稳定期：窗口先隐藏，启动层首帧完成绘制后再显示主窗口；前端首屏以 Iris mark、低饱和知识轨道和少量节点涟漪表达“唤醒知识网络”。启动层只使用现有 `--background`、`--foreground`、`--surface-chrome`、`--knowledge-accent`、`--border` 等 token，日间/夜间模式由 `.light` 变量自然切换，不建立独立主题。启动层以真实就绪为退出条件，最短展示 1600ms，淡出约 220ms；`prefers-reduced-motion` 下禁用轨道旋转和涟漪，仅保留静态 mark 与淡入淡出。
-
-### Chrome 表面与命令/AI token
-
-| Token                                                         | 用途                                                 |
-| ------------------------------------------------------------- | ---------------------------------------------------- |
-| `--surface-chrome`                                            | TabBar、StatusBar、侧栏壳                            |
-| `--surface-elevated`                                          | 浮层、popover                                        |
-| `--surface-inset`                                             | 输入底、列表 hover 底                                |
-| `--command-highlight-bg` / `--command-highlight-ring`         | 命令列表选中（浅底 + inset ring，非大面积 primary）  |
-| `--ai-user-bg` / `--ai-assistant-border` / `--ai-composer-bg` | AI 对话与输入区                                      |
-| `--ai-stream-pulse`                                           | 流式等待指示                                         |
-| `--knowledge-accent` / `--knowledge-accent-foreground`        | 鼠尾草绿知识连接色；品牌轨道选中线、Outline 当前章节 |
-| `--iris-rail-*`                                               | 品牌轨道与 Rail Segments Tab 背景、激活、hover       |
-| `--outline-rail-*`                                            | 边缘目录轨背景与当前章节高亮                         |
-| `--ai-workspace-*`                                            | AI 协作侧车背景与边框                                |
-| `--overlay-task-*`                                            | 任务舱 Overlay 标题区与列表选中态                    |
-
----
-
-## Chrome 控件选型
-
-| 场景        | 形态                                                                |
-| ----------- | ------------------------------------------------------------------- |
-| AI 状态     | `AgentStatusBadge` 展示当前 TaskPlan intent、工具权限与联网状态     |
-| AI 发送     | `AiComposer` 多行；Enter 发送、Shift+Enter 换行                     |
-| 证据包      | 可折叠 Section 标题 + badge                                         |
-| 状态栏缩放  | Popover 滑块/步进（非三个并排按钮）                                 |
-| 连通性      | 两枚 8px 圆点成组（LLM · 联网）；灰 / emerald / sky（`--status-*`） |
-| 命令列表    | 仅保留给 Quick Open / 搜索等任务型列表；Lucide 图标                 |
-| `/` 菜单    | `IrisSurfaceMenu`；仅文档级命令；有选区时提示用右键                 |
-| 选区 AI     | **右键为主**；`editor-actions` 注册表；无自动浮动条                 |
-| 右键菜单    | `iris_only`：`IrisContextMenu` + `IrisSurfaceMenu` 分组             |
-| AI 消息选区 | 仅右键：复制、引用到输入；选区高亮限制在 `.ai-message-body` 内      |
-| AI 输入框   | 右键仅剪贴板（复制/粘贴/全选），不含润色类动作                      |
-
-主路径保留可见控件或快捷键；StatusBar 避免超过 3 个并排 icon-only 按钮。底栏右侧齿轮打开管理中心总览，图谱按钮打开知识图谱；写作型 AI 只走右键、`/` 菜单或 AI 侧栏。
-
----
-
-## AI 组件
-
-- **引用卡**：`border-border`，`rounded-lg`，细 primary 边
-- **对话泡**：`AiMessageBubble` — 用户轻底、助手细边框；壳层 `overflow-hidden`；流式左边线 `--ai-stream-pulse`
-- **AI 产物展开**：对话时间线只保留 Markdown 文字流；证据、过程、写作补丁等展开内容进入只读临时 tab。临时 tab 必须有可读内容或可执行价值，禁止为空过程、占位综述或无证据矩阵
-- **过程摘要**：只展示模型槽位、推理模式、工具执行、检索数量、预算状态与失败原因等安全事实；不展示、不保存、不复制原始 chain-of-thought、`reasoning_content`、`<think>` 或厂商 thinking block
-- **流式节点**：与 primary 同系，无紫色渐变
-- **联网状态**：普通短答只显示低干扰“已联网查证 / provider / 来源数量”；明确研究任务才展示研究进度、证据矩阵或过程性临时 tab
-- **证据详情**：普通详情只展示标题、安全 URL/domain、引用、摘录、检索原因与冲突说明；provider id、raw result hash、抓取后端、提取方式等只属于审计/诊断路径
-- **写入确认**：选区翻译、扩写、缩写、替换与插入必须展示目标笔记/范围和风险提示，确认后再由 native vault patch 执行；确认卡不展示底层参数或完整正文
-
----
-
-## C · 命令优先（备选原则）
-
-| 原则        | 现状                                                             |
-| ----------- | ---------------------------------------------------------------- |
-| 导航        | `Ctrl+P` Quick Open                                              |
-| 查找 / 搜索 | `Ctrl+F`、`Ctrl+H`、`Ctrl+Shift+F`                               |
-| 保存笔记    | `Ctrl+S`（层 1，写当前 `.md`）                                   |
-| 链接        | `Ctrl+K` 打开编辑器链接弹窗，不做 leader key                     |
-| 版本追踪    | `Ctrl+Shift+V`；手动检查点 / 定稿在版本面板内操作                |
-| 管理中心    | `Ctrl+,` 或底栏齿轮，四个顶层标签：总览 / 笔记 / 知识库 / AI     |
-| 文件树      | `Ctrl+Shift+E` / `Cmd+Shift+E`，直达管理中心 `笔记 → 浏览笔记库` |
-| 知识图谱    | 底栏图谱按钮；不新增默认快捷键                                   |
-| **AI 侧栏** | `Ctrl+Shift+A`                                                   |
-| Zen         | `Ctrl+.`                                                         |
-| 涉密面板    | `Ctrl+Shift+L`，隐藏特殊直达；不在管理中心展示                   |
-
----
-
-## 编辑器 · Callout 展示
-
-Obsidian 式 `> [!note]` 在编辑区渲染为带左边框的 blockquote（accent 色与 `globals.css` 中 `.ProseMirror blockquote` 一致）。保存时写回 `> [!type]` 前缀，语义见 [markdown-export.md](./markdown-export.md)。
-
----
-
-## 非目标（视觉）
-
-- 纸墨浮纸、信纸行线、衬线正文、段首缩进
-- 紫色渐变、聊天主屏化
-- 第三方主题 / 插件换肤
-
----
-
-## 已废弃：B · 纸墨编辑 / 信纸（Letterhead）
-
-v0.4.0-ui 起不再作为验收标准。历史实现含：`.iris-paper`、赭铜 accent、Noto Serif、`repeating-linear-gradient` 行线、`text-indent: 2em`。勿在新代码中引用。
-
----
-
-## 落地阶段与路线图版本对照
-
-| 设计阶段 | 路线图版本         | 内容                                        | 状态                      |
-| -------- | ------------------ | ------------------------------------------- | ------------------------- |
-| **0**    | **v0.1.1**         | 初版 token、AI 侧栏收起                     | 已完成（已被 N 取代视觉） |
-| **1**    | **v0.2.0**         | 引用卡、`/` 菜单、图谱/标签                 | 已完成                    |
-| **1.5**  | **v0.3.1-ui**      | 命令浮层基础设施                            | 部分 / 样式并入 v0.4.0-ui |
-| **N**    | **v0.4.0-ui**      | Notion 扁平编辑、去行线、Inter、蓝灰 accent | **已发布**                |
-| **N+**   | **v0.4.1-ui**      | Chrome 现代化：命令面板、AI、浮层原语       | **已发布**                |
-| **2**    | **v1.2.1**（按需） | 标签栏自动隐藏、高对比主题                  | 待做                      |
-
----
-
-## 参考
-
-- **路线图**：[ROADMAP.md](../ROADMAP.md)
-- **交互线框**：[ARCHITECTURE.md](../ARCHITECTURE.md)
+UI 改动至少验证亮/暗主题、键盘导航、窄窗口/Tab 溢出、`prefers-reduced-motion`、错误与加载态，并运行 lint、format、typecheck 与相关测试。涉及编辑器 schema 时，还必须运行 Markdown parse → node tree → serialize 往返测试。

@@ -35,6 +35,7 @@ mod tests {
             file_id_context: Some(1),
             scope: RetrievalScope::default(),
             runtime_documents: Vec::new(),
+            corpus_config: None,
         };
         let mut same_query_different_context = base.clone();
         same_query_different_context.note_context = Some("B.md".into());

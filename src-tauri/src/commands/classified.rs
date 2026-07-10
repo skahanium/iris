@@ -9,6 +9,7 @@ use crate::app::AppState;
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
 use crate::error::{AppError, AppResult};
+use crate::indexer::fts::delete_fts;
 use crate::indexer::scan::{index_file_with_embed, remove_file_index, IndexEmbeddingMode};
 use crate::storage::paths::{
     is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
@@ -382,8 +383,8 @@ fn rename_classified_metadata(state: &AppState, old_path: &str, new_path: &str) 
                 format!("{new}{}", &path[old.len()..])
             };
             let title = display_title(&next);
-            conn.execute("DELETE FROM files_fts WHERE path = ?1", [&path])?;
-            conn.execute("DELETE FROM files_fts WHERE path = ?1", [&next])?;
+            delete_fts(conn, &path)?;
+            delete_fts(conn, &next)?;
             conn.execute(
                 "UPDATE files
                  SET path = ?1, title = ?2, updated_at = datetime('now')

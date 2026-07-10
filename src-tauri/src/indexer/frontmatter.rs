@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::error::{AppError, AppResult};
@@ -13,6 +14,8 @@ pub struct ParsedNote {
     pub body: String,
     pub title: Option<String>,
     pub tags: Vec<String>,
+    /// 从 YAML frontmatter 的 `aliases` 提取的规范化别名。
+    pub aliases: Vec<String>,
     /// 完整 frontmatter 对象的 JSON，无 frontmatter 时为 `None`。
     pub frontmatter_json: Option<String>,
 }
@@ -21,6 +24,8 @@ pub struct ParsedNote {
 struct FrontmatterFields {
     title: Option<String>,
     tags: Option<TagsField>,
+    #[serde(default)]
+    aliases: AliasesField,
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,6 +76,43 @@ impl TagsField {
     }
 }
 
+/// `aliases` only accepts a string or a sequence of strings. Invalid values are ignored so
+/// a malformed alias never prevents title or tag indexing.
+#[derive(Debug, Default)]
+struct AliasesField(Vec<String>);
+
+impl<'de> Deserialize<'de> for AliasesField {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        let strings = match value {
+            Value::String(value) => vec![value],
+            Value::Array(values) => values
+                .into_iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        };
+
+        let mut seen = HashSet::new();
+        Ok(Self(
+            strings
+                .into_iter()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+                .filter(|value| seen.insert(value.clone()))
+                .collect(),
+        ))
+    }
+}
+
+impl AliasesField {
+    fn into_aliases(self) -> Vec<String> {
+        self.0
+    }
+}
 /// 拆分 `---` YAML frontmatter 与正文（Obsidian 风格）。
 pub fn split_frontmatter(content: &str) -> (Option<String>, String) {
     let s = content.trim_start_matches('\u{feff}');
@@ -142,16 +184,16 @@ pub fn resolve_display_title(
     path_stem.to_string()
 }
 
-fn extract_fields(yaml: &str) -> (Option<String>, Vec<String>) {
+fn extract_fields(yaml: &str) -> (Option<String>, Vec<String>, Vec<String>) {
     let Ok(fields) = serde_yaml::from_str::<FrontmatterFields>(yaml) else {
-        return (None, vec![]);
+        return (None, vec![], vec![]);
     };
     let title = fields
         .title
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty());
     let tags = fields.tags.map(TagsField::into_tags).unwrap_or_default();
-    (title, tags)
+    (title, tags, fields.aliases.into_aliases())
 }
 
 /// Extract `#tag` from body text (e.g. `#rust`, `#机器学习`, `#hello-world`).
@@ -176,13 +218,14 @@ pub fn parse_note(content: &str) -> AppResult<ParsedNote> {
             body,
             title: None,
             tags: body_tags,
+            aliases: vec![],
             frontmatter_json: None,
         });
     };
 
     let value: Value = serde_yaml::from_str(&yaml)
         .map_err(|e| AppError::msg(format!("Invalid frontmatter YAML: {e}")))?;
-    let (title, mut tags) = extract_fields(&yaml);
+    let (title, mut tags, aliases) = extract_fields(&yaml);
     let body_tags = extract_body_tags(&body);
     for t in body_tags {
         if !tags.contains(&t) {
@@ -195,6 +238,7 @@ pub fn parse_note(content: &str) -> AppResult<ParsedNote> {
         body,
         title,
         tags,
+        aliases,
         frontmatter_json: Some(frontmatter_json),
     })
 }

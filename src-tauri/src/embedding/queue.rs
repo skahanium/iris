@@ -32,7 +32,7 @@ impl EmbedQueue {
                 // would keep a strong `Arc<AppState>` alive for the entire
                 // lifetime of the worker thread (which blocks on `rx.recv()`),
                 // pinning `AppState` in memory even after all other holders drop
-                // it — both a test invariant violation and a production leak on
+                // it 閳?both a test invariant violation and a production leak on
                 // app shutdown.
                 let weak = Arc::downgrade(&state);
                 drop(state);
@@ -101,11 +101,11 @@ fn embed_worker_loop(state: Weak<AppState>, rx: Receiver<i64>, pending: Arc<Mute
 /// Embed chunks for a file while minimizing DB write-lock hold time.
 ///
 /// 1. Read chunks (brief read lock)
-/// 2. Compute embeddings in batch (no lock — this is the expensive part)
+/// 2. Compute embeddings in batch (no lock 閳?this is the expensive part)
 /// 3. Write embeddings (brief write lock)
 fn embed_file_chunked(state: &Arc<AppState>, file_id: i64) -> AppResult<()> {
-    use super::engine::{embed_texts_batch, f32_to_bytes};
-    use crate::storage::db;
+    use super::engine::embed_texts_batch;
+    use super::store::store_chunk_embedding_v2;
 
     let chunks: Vec<(i64, String)> = state.db.with_read_conn(|conn| {
         let mut stmt =
@@ -129,10 +129,10 @@ fn embed_file_chunked(state: &Arc<AppState>, file_id: i64) -> AppResult<()> {
         }
     };
 
-    let embeddings: Vec<(i64, Vec<u8>)> = chunks
+    let embeddings: Vec<(i64, Vec<f32>)> = chunks
         .iter()
-        .zip(batch_results.iter())
-        .map(|((chunk_id, _), vec)| (*chunk_id, f32_to_bytes(vec)))
+        .zip(batch_results)
+        .map(|((chunk_id, _), embedding)| (*chunk_id, embedding))
         .collect();
 
     if embeddings.is_empty() {
@@ -140,17 +140,8 @@ fn embed_file_chunked(state: &Arc<AppState>, file_id: i64) -> AppResult<()> {
     }
 
     state.db.with_conn(|conn| {
-        for (chunk_id, blob) in &embeddings {
-            conn.execute(
-                "INSERT OR REPLACE INTO chunk_embeddings (chunk_id, embedding) VALUES (?1, ?2)",
-                rusqlite::params![chunk_id, blob],
-            )?;
-            if db::vector_index_ready() {
-                let _ = conn.execute(
-                    "INSERT OR REPLACE INTO vec_chunks (rowid, embedding) VALUES (?1, ?2)",
-                    rusqlite::params![chunk_id, blob],
-                );
-            }
+        for (chunk_id, embedding) in &embeddings {
+            store_chunk_embedding_v2(conn, *chunk_id, embedding)?;
         }
         Ok(())
     })

@@ -63,6 +63,7 @@ pub fn build_context_packets(
         file_id_context: note_file_id,
         scope,
         runtime_documents: runtime_documents.to_vec(),
+        corpus_config: Some(corpora.clone()),
     };
 
     let mut packets = hybrid_retrieve(conn, &request)?;
