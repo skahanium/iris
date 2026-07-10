@@ -554,6 +554,7 @@ async fn execute_tool_call(
                     },
                     note_context: None,
                     file_id_context: None,
+                    runtime_documents: Vec::new(),
                 };
                 crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
             })
@@ -576,6 +577,7 @@ async fn execute_tool_call(
                     },
                     note_context: None,
                     file_id_context: None,
+                    runtime_documents: Vec::new(),
                 };
                 crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
             })

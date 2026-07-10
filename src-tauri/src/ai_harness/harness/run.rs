@@ -60,6 +60,7 @@ const FINAL_ROUND_FALLBACK: &str =
     "我已停止继续调用工具，但这次没有生成可展示回答。请重试，或换一种问法。";
 const FINAL_BUDGET_FALLBACK: &str = "这次上下文预算已用尽，未能生成可展示回答。请缩小范围后重试。";
 const FINAL_EMPTY_FALLBACK: &str = "这次没有生成可展示回答。请重试，或换一种问法。";
+const ADAPTIVE_RETRY_MESSAGE_CHAR_BUDGET: usize = 12_000;
 
 #[derive(Debug, Clone)]
 struct FinalAnswerDecision {
@@ -264,6 +265,75 @@ fn classify_retry_reason(message: &str) -> RetryReason {
     }
 }
 
+fn should_adaptive_degrade_after_llm_error(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    extract_http_status_code(message) == Some(422)
+        || lower.contains("unprocessable entity")
+        || lower.contains("llm_input_context_overflow")
+        || lower.contains("context length")
+        || lower.contains("maximum context")
+        || lower.contains("too many tokens")
+        || lower.contains("input tokens")
+}
+
+fn truncate_message_for_adaptive_retry(message: &LlmMessage) -> LlmMessage {
+    let text = message.content.text_content();
+    if text.chars().count() <= ADAPTIVE_RETRY_MESSAGE_CHAR_BUDGET {
+        return message.clone();
+    }
+    let mut trimmed = message.clone();
+    let marker = "...（已为模型重试压缩前文）\n";
+    let body_budget = ADAPTIVE_RETRY_MESSAGE_CHAR_BUDGET
+        .saturating_sub(marker.chars().count())
+        .max(1);
+    let suffix = text
+        .chars()
+        .rev()
+        .take(body_budget)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    trimmed.content = format!("{marker}{suffix}").into();
+    trimmed.reasoning_content = None;
+    trimmed
+}
+
+fn compact_messages_for_adaptive_retry(messages: &[LlmMessage]) -> Vec<LlmMessage> {
+    let kept = if messages.len() > 8 {
+        let mut out = Vec::with_capacity(8);
+        out.extend_from_slice(&messages[..2]);
+        out.extend_from_slice(&messages[messages.len() - 6..]);
+        out
+    } else {
+        messages.to_vec()
+    };
+    kept.iter()
+        .map(truncate_message_for_adaptive_retry)
+        .collect()
+}
+
+fn build_adaptive_degraded_llm_request(request: &GatewayRequest) -> GatewayRequest {
+    let mut degraded = request.clone();
+    degraded.messages =
+        build_final_answer_messages(&compact_messages_for_adaptive_retry(&request.messages));
+    degraded.tools.clear();
+    degraded.skip_stub_ids.clear();
+    degraded.max_tokens = Some(
+        request
+            .max_tokens
+            .unwrap_or(2048)
+            .saturating_div(2)
+            .max(512),
+    );
+    degraded.input_token_budget = request
+        .input_token_budget
+        .map(|budget| budget.saturating_div(2).max(8_000));
+    degraded.thinking = false;
+    degraded.reasoning = ResolvedReasoningRequest::disabled();
+    degraded
+}
+
 /// Streaming agent-round LLM call: reuses the circuit breaker and
 /// exponential-backoff retry logic, but dispatches through
 /// `ModelGateway::send_streaming_request_with_surface` so caller chooses whether
@@ -282,12 +352,14 @@ async fn send_llm_streaming_request_with_retry(
         )));
     }
     let mut last_err: Option<String> = None;
+    let mut active_request = request;
+    let mut adaptive_degrade_used = false;
     for attempt in 0..=LLM_MAX_RETRIES {
         let emit_error_event = attempt == LLM_MAX_RETRIES;
         match gateway
             .send_streaming_request_with_surface(
                 request_id,
-                request.clone(),
+                active_request.clone(),
                 surface,
                 emit_error_event,
             )
@@ -305,6 +377,35 @@ async fn send_llm_streaming_request_with_retry(
                 if msg.contains("partial_visible_stream_error") {
                     circuit_breaker::record_failure(provider_id);
                     return Err(e);
+                }
+                if should_adaptive_degrade_after_llm_error(&msg) {
+                    if adaptive_degrade_used {
+                        last_err = Some(format!(
+                            "{msg}；已自动降级重试一次仍失败，请减少上下文或检查模型参数。"
+                        ));
+                        break;
+                    }
+                    adaptive_degrade_used = true;
+                    active_request = build_adaptive_degraded_llm_request(&active_request);
+                    let retry_reason = classify_retry_reason(&msg);
+                    let _ = app_handle.emit(
+                        "ai:retry_status",
+                        &serde_json::json!({
+                            "request_id": request_id,
+                            "attempt": attempt + 1,
+                            "max_attempts": LLM_MAX_RETRIES,
+                            "delay_ms": 0,
+                            "reason_kind": "adaptive_degrade",
+                            "source_reason_kind": retry_reason.reason_kind,
+                            "status_code": retry_reason.status_code,
+                        }),
+                    );
+                    tracing::warn!(
+                        request_id = %request_id,
+                        error = %msg,
+                        "LLM 请求失败，执行一次压缩上下文/关闭工具的自适应降级重试"
+                    );
+                    continue;
                 }
                 if attempt < LLM_MAX_RETRIES {
                     let delay_ms = LLM_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
@@ -528,6 +629,7 @@ async fn run_harness_inner(
         note_title: input.note_title.clone(),
         selection_excerpt: input.selection_excerpt.clone(),
         cold_start_packets: input.cold_start_packets.clone(),
+        context_scope: input.context_scope.clone(),
         web_search_enabled: input.web_search_enabled,
         depth: input.depth,
         capability_slot: Some(provider_config.slot),
@@ -1345,6 +1447,18 @@ async fn dispatch_prepared_tool_call(
     prepared: &PreparedToolCall,
     cold_start_packets: &[crate::ai_runtime::ContextPacket],
 ) -> ToolCallResult {
+    let retrieval_scope = state
+        .vault_path()
+        .ok()
+        .map(|vault| crate::knowledge::corpora::load_corpora(&vault).unwrap_or_default())
+        .map(|corpora| {
+            crate::ai_runtime::retrieval_scope::resolve_retrieval_scope(
+                &corpora,
+                input.scene,
+                &input.context_scope,
+            )
+        })
+        .unwrap_or_default();
     let dispatch_ctx = ToolDispatchContext {
         scene: input.scene,
         note_path: input.note_path.as_deref(),
@@ -1352,6 +1466,8 @@ async fn dispatch_prepared_tool_call(
         web_search_enabled: input.web_search_enabled,
         max_web_fetches: input.task_policy.max_fetch_per_round as usize,
         cold_start_packets,
+        retrieval_scope: &retrieval_scope,
+        runtime_documents: &input.runtime_documents,
         app_handle: Some(app_handle.clone()),
         attachment_count: input.images.as_ref().map_or(0, Vec::len),
         skill_activation_plan: input.skill_activation_plan.as_ref(),
@@ -1719,6 +1835,8 @@ async fn run_subagent_harness(
         note_title: parent.note_title.clone(),
         selection_excerpt: context_hint.or_else(|| parent.selection_excerpt.clone()),
         cold_start_packets: parent.cold_start_packets.clone(),
+        context_scope: parent.context_scope.clone(),
+        runtime_documents: parent.runtime_documents.clone(),
         web_search_enabled: parent.web_search_enabled,
         user_message: task.clone(),
         images: None,
@@ -2034,6 +2152,85 @@ mod tests {
             .as_str()
             .expect("text instruction")
             .contains("NEED_MORE_EVIDENCE"));
+    }
+
+    #[test]
+    fn adaptive_retry_detects_422_and_context_overflow() {
+        assert!(should_adaptive_degrade_after_llm_error(
+            "模型请求失败（422 Unprocessable Entity）"
+        ));
+        assert!(should_adaptive_degrade_after_llm_error(
+            "llm_input_context_overflow: estimated input tokens exceed model input budget"
+        ));
+        assert!(!should_adaptive_degrade_after_llm_error(
+            "模型请求失败（429 Too Many Requests）"
+        ));
+    }
+
+    #[test]
+    fn adaptive_retry_request_compacts_tools_history_and_output_budget() {
+        let request = GatewayRequest {
+            provider: ProviderConfig {
+                name: "test".into(),
+                base_url: "https://api.example.com".into(),
+                api_key: Some("secret".into()),
+                model: "model-a".into(),
+                slot: crate::ai_types::CapabilitySlot::Fast,
+                endpoint_family: crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions,
+            },
+            messages: vec![
+                LlmMessage {
+                    role: MessageRole::System,
+                    content: "system".into(),
+                    ..Default::default()
+                },
+                LlmMessage {
+                    role: MessageRole::Tool,
+                    content: "x".repeat(80_000).into(),
+                    tool_call_id: Some("call-1".into()),
+                    ..Default::default()
+                },
+                LlmMessage {
+                    role: MessageRole::User,
+                    content: "请基于证据回答".into(),
+                    ..Default::default()
+                },
+            ],
+            tools: vec![LlmToolDef {
+                tool_type: "function".into(),
+                function: crate::ai_runtime::model_gateway::LlmFunctionDef {
+                    name: "web_search".into(),
+                    description: "Search web".into(),
+                    parameters: serde_json::json!({"type": "object"}),
+                },
+            }],
+            max_tokens: Some(4096),
+            input_token_budget: Some(64_000),
+            temperature: Some(0.2),
+            stream: true,
+            thinking: true,
+            reasoning: ResolvedReasoningRequest::legacy_enabled(true),
+            skip_stub_ids: Vec::new(),
+        };
+
+        let compact = build_adaptive_degraded_llm_request(&request);
+
+        assert!(compact.tools.is_empty());
+        assert_eq!(compact.max_tokens, Some(2048));
+        assert_eq!(compact.input_token_budget, Some(32_000));
+        assert!(compact.messages.len() <= request.messages.len() + 1);
+        assert!(compact.messages.iter().any(|message| {
+            message
+                .content
+                .as_str()
+                .unwrap_or_default()
+                .contains("不要再调用工具")
+        }));
+        assert!(compact
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::Tool))
+            .all(|message| message.content.text_content().chars().count() <= 12_000));
     }
 
     // ── depth-based reflection/subagent behavior ──────────

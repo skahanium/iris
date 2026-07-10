@@ -76,6 +76,9 @@ fn index_tagged_note(state: &AppState, path: &str, tag: &str) {
 fn dispatch_context_with_plan<'a>(
     plan: Option<&'a SkillActivationPlanSummary>,
 ) -> ToolDispatchContext<'a> {
+    let retrieval_scope = Box::leak(Box::new(
+        crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+    ));
     ToolDispatchContext {
         scene: AiScene::DraftingAssist,
         note_path: None,
@@ -83,6 +86,8 @@ fn dispatch_context_with_plan<'a>(
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
+        retrieval_scope,
+        runtime_documents: &[],
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: plan,
@@ -266,6 +271,7 @@ fn write_tool_approval_applies_patch_with_cas() {
     let (state, _dir) = test_state();
     let base = "# Test\nHello world";
     let base_hash = crate::ai_runtime::writing_workflow::compute_content_hash(base);
+    let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
         scene: AiScene::DraftingAssist,
         note_path: Some("notes/test.md"),
@@ -273,6 +279,8 @@ fn write_tool_approval_applies_patch_with_cas() {
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
+        retrieval_scope: &retrieval_scope,
+        runtime_documents: &[],
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
@@ -337,6 +345,7 @@ fn write_tool_rejects_target_outside_active_skill_scope_before_apply() {
 #[test]
 fn write_tool_approval_reports_hash_conflict_without_writing() {
     let (state, _dir) = test_state();
+    let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
         scene: AiScene::DraftingAssist,
         note_path: Some("notes/test.md"),
@@ -344,6 +353,8 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
+        retrieval_scope: &retrieval_scope,
+        runtime_documents: &[],
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,

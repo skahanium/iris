@@ -307,8 +307,7 @@ function modelCapabilitySummary(
   const probeVision =
     model.registry?.visionVerifiedAt &&
     model.registry.visionVerifiedAt !== "built_in";
-  const catalogSaysNo =
-    model.catalog && !model.catalog.supportsVision;
+  const catalogSaysNo = model.catalog && !model.catalog.supportsVision;
   const visionLabel = visionReady
     ? probeVision && catalogSaysNo
       ? "视觉可用 (探测确认)"
@@ -1659,8 +1658,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                         : "需要配置 Key"}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      检查、刷新、验证只使用当前输入框
-                      Key；填写后会先保存再探测。
+                      检查、刷新、验证会优先使用当前输入框 Key；留空则使用已保存
+                      Key。
                     </p>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button

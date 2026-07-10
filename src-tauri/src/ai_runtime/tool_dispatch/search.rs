@@ -14,7 +14,7 @@ pub(super) async fn hybrid_search(
     let query = args["query"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing query"))?;
-    let limit = args["limit"].as_u64().unwrap_or(10) as usize;
+    let limit = (args["limit"].as_u64().unwrap_or(10) as usize).clamp(1, 8);
     let layers = match tool_name {
         "search_keyword" => RetrievalLayers {
             fts: true,
@@ -45,7 +45,8 @@ pub(super) async fn hybrid_search(
             layers,
             note_context: ctx.note_path.map(|s| s.to_string()),
             file_id_context: ctx.file_id,
-            scope: RetrievalScope::default(),
+            scope: ctx.retrieval_scope.clone(),
+            runtime_documents: ctx.runtime_documents.to_vec(),
         };
         crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
     })?;
@@ -77,6 +78,7 @@ pub(super) async fn regulation_lookup(
             note_context: None,
             file_id_context: None,
             scope: RetrievalScope::default(),
+            runtime_documents: Vec::new(),
         };
         crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
     })?;

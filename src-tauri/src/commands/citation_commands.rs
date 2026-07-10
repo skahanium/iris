@@ -120,6 +120,7 @@ async fn retrieve_citation_evidence(
                 path_prefixes: s.path_prefixes.clone(),
             })
             .unwrap_or_default(),
+        runtime_documents: Vec::new(),
     };
 
     let packets = state

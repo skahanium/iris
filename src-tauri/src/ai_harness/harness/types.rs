@@ -5,7 +5,8 @@ use serde::Serialize;
 use crate::ai_runtime::deliberation::{DeliberationState, VerificationSummary};
 use crate::ai_runtime::model_gateway::{TokenUsage, ToolCall};
 use crate::ai_runtime::{
-    agent_task_policy::AgentTaskPolicy, AiScene, ContextPacket, SkillActivationPlanSummary,
+    agent_task_policy::AgentTaskPolicy, retrieval_scope::ContextScopeDto, AiScene, ContextPacket,
+    RuntimeDocumentSnapshot, SkillActivationPlanSummary,
 };
 
 use super::token_estimator::UsageSource;
@@ -76,6 +77,8 @@ pub struct HarnessRunInput {
     pub note_title: Option<String>,
     pub selection_excerpt: Option<String>,
     pub cold_start_packets: Vec<ContextPacket>,
+    pub context_scope: ContextScopeDto,
+    pub runtime_documents: Vec<RuntimeDocumentSnapshot>,
     pub web_search_enabled: bool,
     pub user_message: String,
     /// 图片附件（传给 LLM API 的多模态内容）。

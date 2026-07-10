@@ -329,6 +329,14 @@ export interface ContextReference {
   invalidReason?: string | null;
 }
 
+/** 本轮运行期文档快照，只用于临时检索，不落库。 */
+export interface RuntimeDocumentSnapshot {
+  path: string;
+  title: string;
+  content: string;
+  isLocked?: boolean;
+}
+
 export interface ArtifactPlanItem {
   kind:
     | "evidence_sources"
@@ -505,6 +513,7 @@ export interface AssistantExecuteRequest {
   intentDetection?: IntentDetectionResult | null;
   taskPlan?: TaskPlan;
   contextReferences?: ContextReference[];
+  runtimeDocuments?: RuntimeDocumentSnapshot[];
   message: string;
   notePath?: string | null;
   noteContent?: string | null;

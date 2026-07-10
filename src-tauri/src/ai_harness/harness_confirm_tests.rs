@@ -28,6 +28,7 @@ mod tests {
                 note_title: None,
                 selection_excerpt: None,
                 cold_start_packets: vec![],
+                context_scope: Default::default(),
                 web_search_enabled: false,
                 depth: 0,
                 capability_slot: None,

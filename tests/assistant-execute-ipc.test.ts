@@ -52,8 +52,12 @@ describe("assistant_execute IPC contract", () => {
     const ipc = read("src/lib/ipc.ts");
 
     expect(types).toContain("contextReferences?: ContextReference[]");
+    expect(types).toContain("runtimeDocuments?: RuntimeDocumentSnapshot[]");
     expect(facade).toContain(
       "pub context_references: Vec<ContextReferenceWire>",
+    );
+    expect(facade).toContain(
+      "pub runtime_documents: Vec<RuntimeDocumentSnapshot>",
     );
     expect(ipc).toContain(
       'invoke<AssistantExecuteResponse>("assistant_execute"',

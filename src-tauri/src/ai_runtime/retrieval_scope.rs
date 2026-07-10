@@ -65,7 +65,10 @@ impl RetrievalScope {
     }
 }
 
-/// Merge scene default corpora with user `@` scope (union).
+/// Resolve retrieval scope.
+///
+/// User-provided `@` paths, prefixes, or corpus IDs are a hard boundary: when
+/// present, scene defaults are not unioned in.
 pub fn resolve_retrieval_scope(
     vault_corpora: &CorpusConfig,
     scene: AiScene,
@@ -73,17 +76,23 @@ pub fn resolve_retrieval_scope(
 ) -> RetrievalScope {
     let mut scope = RetrievalScope::default();
 
-    for prefix in corpora::prefixes_for_scene(vault_corpora, scene) {
-        scope.push_prefix(prefix);
-    }
-    for prefix in corpora::prefixes_for_corpus_ids(vault_corpora, &user.corpus_ids) {
-        scope.push_prefix(prefix);
-    }
-    for prefix in &user.path_prefixes {
-        scope.push_prefix(prefix.clone());
-    }
-    for path in &user.paths {
-        scope.push_path(path.clone());
+    let has_user_scope =
+        !user.paths.is_empty() || !user.path_prefixes.is_empty() || !user.corpus_ids.is_empty();
+
+    if has_user_scope {
+        for prefix in corpora::prefixes_for_corpus_ids(vault_corpora, &user.corpus_ids) {
+            scope.push_prefix(prefix);
+        }
+        for prefix in &user.path_prefixes {
+            scope.push_prefix(prefix.clone());
+        }
+        for path in &user.paths {
+            scope.push_path(path.clone());
+        }
+    } else {
+        for prefix in corpora::prefixes_for_scene(vault_corpora, scene) {
+            scope.push_prefix(prefix);
+        }
     }
 
     scope
@@ -106,6 +115,7 @@ pub fn filter_packets_by_scope<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::knowledge::corpora::{CorpusConfig, CorpusEntry};
 
     #[test]
     fn matches_prefix_and_exact() {
@@ -116,5 +126,58 @@ mod tests {
         assert!(scope.matches_path("党纪法规/条例.md"));
         assert!(scope.matches_path("范文/样例.md"));
         assert!(!scope.matches_path("其他/笔记.md"));
+    }
+
+    fn corpus_config() -> CorpusConfig {
+        CorpusConfig {
+            corpus: vec![
+                CorpusEntry {
+                    id: "authority".into(),
+                    name: "制度".into(),
+                    path_prefix: "制度/".into(),
+                    kind: "authority".into(),
+                    scenes: vec!["knowledge_lookup".into()],
+                },
+                CorpusEntry {
+                    id: "drafts".into(),
+                    name: "草稿".into(),
+                    path_prefix: "草稿/".into(),
+                    kind: "lookup".into(),
+                    scenes: Vec::new(),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn user_scope_is_hard_boundary_over_scene_defaults() {
+        let user = ContextScopeDto {
+            paths: vec!["草稿/指定.md".into()],
+            path_prefixes: vec!["项目/".into()],
+            corpus_ids: Vec::new(),
+        };
+
+        let scope = resolve_retrieval_scope(&corpus_config(), AiScene::KnowledgeLookup, &user);
+
+        assert!(scope.matches_path("草稿/指定.md"));
+        assert!(scope.matches_path("项目/计划.md"));
+        assert!(!scope.matches_path("制度/条例.md"));
+        assert_eq!(scope.path_prefixes, vec!["项目/"]);
+        assert_eq!(scope.paths, vec!["草稿/指定.md"]);
+    }
+
+    #[test]
+    fn explicit_corpus_ids_are_hard_boundary_over_scene_defaults() {
+        let user = ContextScopeDto {
+            paths: Vec::new(),
+            path_prefixes: Vec::new(),
+            corpus_ids: vec!["drafts".into()],
+        };
+
+        let scope = resolve_retrieval_scope(&corpus_config(), AiScene::KnowledgeLookup, &user);
+
+        assert!(scope.matches_path("草稿/备忘.md"));
+        assert!(!scope.matches_path("制度/条例.md"));
+        assert_eq!(scope.path_prefixes, vec!["草稿/"]);
     }
 }

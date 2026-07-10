@@ -61,6 +61,7 @@ import type {
   PatchProposal,
   ResearchFocusPayload,
   ResearchState,
+  RuntimeDocumentSnapshot,
   TokenUsage,
   WritingState,
   WritingEditorContext,
@@ -120,6 +121,7 @@ interface AssistantTaskContext {
   messages: ChatLine[];
   notePath: string | null;
   packets: ContextPacket[];
+  runtimeDocumentSnapshots: RuntimeDocumentSnapshot[];
   selectedPacketIds: string[];
   selectionQuoteText?: string | null;
   sessionId: number | null;
@@ -324,6 +326,7 @@ export function useAssistantTasks({
     messages,
     notePath,
     packets,
+    runtimeDocumentSnapshots,
     selectedPacketIds,
     selectionQuoteText,
     sessionId,
@@ -461,6 +464,8 @@ export function useAssistantTasks({
         query,
         session_id: sessionId,
         context_scope: contextScope,
+        runtime_documents:
+          aiDomain === "classified" ? [] : runtimeDocumentSnapshots,
         webSearch,
       });
       const preview = result.provisional !== false;
@@ -474,8 +479,10 @@ export function useAssistantTasks({
       return result;
     },
     [
+      aiDomain,
       contextScope,
       notePath,
+      runtimeDocumentSnapshots,
       sessionId,
       setContextStatusData,
       setPackets,
@@ -535,6 +542,8 @@ export function useAssistantTasks({
           message: rawMessage,
           aiDomain,
           contextReferences: getContextReferencesForRequest(),
+          runtimeDocuments:
+            aiDomain === "classified" ? [] : runtimeDocumentSnapshots,
           taskPlan: options?.taskPlan,
           images: options?.images,
           notePath: attachNoteContext ? notePath : null,
@@ -699,6 +708,7 @@ export function useAssistantTasks({
       panelSendActiveRef,
       recordRunPlan,
       recordAssistantArtifacts,
+      runtimeDocumentSnapshots,
       saveConversationSnapshot,
       getContextReferencesForRequest,
       clearHarnessRecoveryState,
@@ -815,6 +825,8 @@ export function useAssistantTasks({
         message: rawMessage,
         aiDomain,
         contextReferences: getContextReferencesForRequest(),
+        runtimeDocuments:
+          aiDomain === "classified" ? [] : runtimeDocumentSnapshots,
         taskPlan,
         notePath: targetPath,
         noteContent: targetNoteContent,
@@ -867,6 +879,7 @@ export function useAssistantTasks({
       setPacketsOpen,
       setWritingPatches,
       setWritingState,
+      runtimeDocumentSnapshots,
       webSearch,
     ],
   );
@@ -895,6 +908,8 @@ export function useAssistantTasks({
         message: rawMessage,
         aiDomain,
         contextReferences: getContextReferencesForRequest(),
+        runtimeDocuments:
+          aiDomain === "classified" ? [] : runtimeDocumentSnapshots,
         taskPlan,
         notePath,
         webAuthorized: webSearch,
@@ -932,6 +947,7 @@ export function useAssistantTasks({
       setCitationResult,
       setPackets,
       setPacketsOpen,
+      runtimeDocumentSnapshots,
       webSearch,
     ],
   );
@@ -953,6 +969,8 @@ export function useAssistantTasks({
         message: rawMessage,
         aiDomain,
         contextReferences: getContextReferencesForRequest(),
+        runtimeDocuments:
+          aiDomain === "classified" ? [] : runtimeDocumentSnapshots,
         taskPlan,
         webAuthorized: webSearch,
         contextScope,
@@ -993,6 +1011,7 @@ export function useAssistantTasks({
       setAgentTaskId,
       setOrganizeSelection,
       setOrganizeSuggestions,
+      runtimeDocumentSnapshots,
       webSearch,
     ],
   );
@@ -1022,6 +1041,8 @@ export function useAssistantTasks({
         message: rawMessage,
         aiDomain,
         contextReferences: getContextReferencesForRequest(),
+        runtimeDocuments:
+          aiDomain === "classified" ? [] : runtimeDocumentSnapshots,
         taskPlan,
         notePath,
         noteContent: getNoteContentForRequest(),
@@ -1063,6 +1084,7 @@ export function useAssistantTasks({
       setActionState,
       setAgentTaskId,
       setWritingPatches,
+      runtimeDocumentSnapshots,
       webSearch,
     ],
   );
@@ -1093,6 +1115,8 @@ export function useAssistantTasks({
           message: rawMessage,
           aiDomain,
           contextReferences: getContextReferencesForRequest(),
+          runtimeDocuments:
+            aiDomain === "classified" ? [] : runtimeDocumentSnapshots,
           taskPlan,
           notePath,
           noteContent: getNoteContentForRequest(),
@@ -1168,6 +1192,7 @@ export function useAssistantTasks({
       setDocIssues,
       setDocSummary,
       setWritingPatches,
+      runtimeDocumentSnapshots,
       webSearch,
     ],
   );
@@ -1199,6 +1224,8 @@ export function useAssistantTasks({
           message: rawMessage,
           aiDomain,
           contextReferences: getContextReferencesForRequest(),
+          runtimeDocuments:
+            aiDomain === "classified" ? [] : runtimeDocumentSnapshots,
           taskPlan,
           webAuthorized: webSearch,
         });
@@ -1285,6 +1312,7 @@ export function useAssistantTasks({
       setResearchState,
       setResearchRunning,
       setStreaming,
+      runtimeDocumentSnapshots,
       streamBufRef,
       webSearch,
     ],

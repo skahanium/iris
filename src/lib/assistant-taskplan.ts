@@ -159,6 +159,12 @@ const RESEARCH_ACTION_TERMS = ["研究", "调研", "深挖", "文献", "论文",
 
 const FRESH_EXTERNAL_FACT_TERMS = [
   "最新",
+  "近期",
+  "最近",
+  "当前",
+  "现在",
+  "战况",
+  "世界杯",
   "榜单",
   "排名",
   "排行",
@@ -174,6 +180,8 @@ const FRESH_EXTERNAL_FACT_TERMS = [
   "天气",
   "赛程",
   "日程",
+  "版本",
+  "政策变更",
 ];
 
 const CHAPTER_KEYWORDS = ["章节", "这一章", "本章", "章内", "heading"];
@@ -343,6 +351,29 @@ function hasExplicitContextReference(
   );
 }
 
+function hasExplicitCurrentNoteReference(
+  input: BuildAssistantTaskPlanInput,
+  message: string,
+): boolean {
+  return Boolean(
+    input.notePath && includesAny(message, EXPLICIT_NOTE_REFERENCE_TERMS),
+  );
+}
+
+function hasExplicitWebExpansionRequest(message: string): boolean {
+  return includesAny(message, EXPLICIT_RESEARCH_TERMS);
+}
+
+function webAllowedForPlan(
+  input: BuildAssistantTaskPlanInput,
+  message: string,
+): boolean {
+  return Boolean(
+    input.webAuthorized &&
+    (!input.explicitScope || hasExplicitWebExpansionRequest(message)),
+  );
+}
+
 function hasExplicitResearchIntent(
   input: BuildAssistantTaskPlanInput,
   message: string,
@@ -373,20 +404,23 @@ function contextReferencesFor(
 
 function sourceHintsFor(input: BuildAssistantTaskPlanInput): string[] {
   const hints: string[] = [];
+  const message = input.message.toLowerCase();
 
   if (input.uiAction) hints.push(`ui_action:${input.uiAction}`);
   if (input.hasSelection) hints.push("context:selection");
-  if (input.notePath) hints.push("context:note");
+  if (hasExplicitCurrentNoteReference(input, message)) {
+    hints.push("context:current_note");
+    hints.push("context:note");
+  } else if (input.notePath && hasExplicitNoteWriteIntent(message)) {
+    hints.push("context:note");
+  }
   if (input.explicitScope) hints.push("context:scope");
   if (input.hasImage) hints.push("context:image");
   if (input.hasPendingWriteProposal)
     hints.push("context:pending_write_proposal");
   if (input.skillMention) hints.push("skill:mention");
   if (contextReferencesFor(input).length > 0) hints.push("context:reference");
-  if (
-    input.webAuthorized &&
-    needsFreshWebEvidence(input.message.toLowerCase())
-  ) {
+  if (webAllowedForPlan(input, message) && needsFreshWebEvidence(message)) {
     hints.push("web:fresh_required");
   }
 
@@ -409,6 +443,7 @@ function basePlan(
   | "sourceHints"
 > {
   const contextReferences = contextReferencesFor(input);
+  const message = input.message.toLowerCase();
 
   return {
     contextReferences,
@@ -416,7 +451,7 @@ function basePlan(
       input.hasSelection || contextReferences.length > 0
         ? "current_reference"
         : "none",
-    webMode: input.webAuthorized ? "brokered" : "disabled",
+    webMode: webAllowedForPlan(input, message) ? "brokered" : "disabled",
     evidenceNeed: "none",
     contextNeed:
       input.hasSelection || contextReferences.length > 0
@@ -581,7 +616,11 @@ function askNotesPlan(input: BuildAssistantTaskPlanInput): TaskPlan {
   return plan(input, {
     intent: "ask_notes",
     confidence: "medium",
-    retrievalMode: hasCurrentReference ? "current_reference" : "local_notes",
+    retrievalMode: hasCurrentReference
+      ? "current_reference"
+      : input.explicitScope
+        ? "scoped_notes"
+        : "local_notes",
     modelSlot: "fast",
     executionMode: "context_answer",
     outputMode: "markdown_message",
@@ -690,7 +729,7 @@ function planForUiAction(input: BuildAssistantTaskPlanInput): TaskPlan | null {
 }
 
 export function shouldAttachNoteContextToTaskPlan(plan: TaskPlan): boolean {
-  return plan.retrievalMode !== "none";
+  return plan.sourceHints.includes("context:current_note");
 }
 export function buildAssistantTaskPlan(
   input: BuildAssistantTaskPlanInput,
@@ -794,7 +833,7 @@ export function buildAssistantTaskPlan(
     return researchPlan(input);
   }
 
-  if (input.webAuthorized && needsFreshWebEvidence(message)) {
+  if (webAllowedForPlan(input, message) && needsFreshWebEvidence(message)) {
     return freshWebShortAnswerPlan(input);
   }
 

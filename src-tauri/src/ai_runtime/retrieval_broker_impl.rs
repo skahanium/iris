@@ -6,7 +6,7 @@
 use rusqlite::Connection;
 
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
-use crate::ai_runtime::ContextPacket;
+use crate::ai_runtime::{ContextPacket, RuntimeDocumentSnapshot};
 use crate::error::AppResult;
 
 #[path = "retrieval_broker/query_hash.rs"]
@@ -57,6 +57,8 @@ pub struct RetrievalRequest {
     pub file_id_context: Option<i64>,
     /// 检索范围约束
     pub scope: RetrievalScope,
+    /// 本轮编辑器运行期文档快照，不落库。
+    pub runtime_documents: Vec<RuntimeDocumentSnapshot>,
 }
 
 /// 检索层开关，控制启用哪些检索通道。
@@ -138,6 +140,7 @@ mod tests {
             note_context: None,
             file_id_context: None,
             scope: RetrievalScope::default(),
+            runtime_documents: Vec::new(),
         };
         assert!(req.layers.fts);
         assert!(req.layers.vector);
@@ -163,6 +166,7 @@ mod tests {
             note_context: None,
             file_id_context: None,
             scope: RetrievalScope::default(),
+            runtime_documents: Vec::new(),
         };
         let packets = hybrid_retrieve(&conn, &req).unwrap();
         // No tables exist in a fresh in-memory DB, so all layers should fail gracefully
@@ -179,6 +183,7 @@ mod tests {
             note_context: None,
             file_id_context: None,
             scope: RetrievalScope::default(),
+            runtime_documents: Vec::new(),
         };
 
         let outcome = hybrid_retrieve_with_diagnostics(&conn, &req).unwrap();

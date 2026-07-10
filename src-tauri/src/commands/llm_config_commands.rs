@@ -581,9 +581,11 @@ fn api_key_for_probe(provider_id: &str, api_key: Option<String>) -> AppResult<St
     match api_key {
         Some(k) if !k.trim().is_empty() => Ok(k.trim().to_string()),
         _ if !requires_api_key(provider_id) => Ok(String::new()),
-        _ => Err(AppError::msg(
-            "请先在当前输入框填写 API Key；检查端点不会读取系统凭据",
-        )),
+        _ => Ok(
+            crate::credentials::get_runtime_secret(&credential_service(provider_id))?
+                .as_str()
+                .to_string(),
+        ),
     }
 }
 

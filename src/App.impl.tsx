@@ -666,27 +666,12 @@ function App() {
   });
 
   const activeDocumentTitle =
-    activePath && displayTitleForChrome(activePath, noteTitle);
-  const assistantNotePathWithoutMedia =
-    activeArtifactTab || activeNoteIsClassified ? null : activePath;
-  const getLiveMarkdownForNoteSurface = useCallback(
-    () =>
-      activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown(),
-    [activeArtifactTab, activeNoteIsClassified, getLiveMarkdown],
-  );
-  const getWritingContextForNoteSurface = useCallback(
-    () => (activeArtifactTab ? null : getWritingContext()),
-    [activeArtifactTab, getWritingContext],
-  );
-  const handleInsertToNoteSurface = useCallback(
-    (content: string) => {
-      handleInsertToEditor(content);
-    },
-    [handleInsertToEditor],
-  );
+    activePath && displayTitleForChrome(activePath, noteTitle); // AI domain gating lives in useWorkspaceAssistantRouting: activeArtifactTab || activeNoteIsClassified ? null : activePath; activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown(); activeArtifactTab ? null : getWritingContext()
   const {
     aiDomain,
     assistantNotePath,
+    assistantRuntimeDocumentCandidates,
+    assistantRuntimeDocumentSnapshots,
     assistantSelectionQuote,
     classifiedPath,
     getAssistantLiveMarkdown,
@@ -698,14 +683,15 @@ function App() {
     activeMediaTab,
     activeNoteIsClassified,
     activePath,
-    assistantNotePathWithoutMedia,
     classifiedUnlocked,
-    getLiveMarkdown: getLiveMarkdownForNoteSurface,
+    getLiveMarkdown,
     getParagraphText,
-    getWritingContext: getWritingContextForNoteSurface,
-    handleInsertToEditor: handleInsertToNoteSurface,
+    getTabMarkdownCached,
+    getWritingContext,
+    handleInsertToEditor,
     selectionQuote,
     setAiStatus,
+    tabs,
   });
   const handlePatchApplied = useCallback(
     (newContent: string) => {
@@ -880,6 +866,8 @@ function App() {
             bumpVaultIndex={bumpVaultIndex}
             classifiedPath={classifiedPath}
             getLiveMarkdown={getAssistantLiveMarkdown}
+            runtimeDocumentCandidates={assistantRuntimeDocumentCandidates}
+            runtimeDocumentSnapshots={assistantRuntimeDocumentSnapshots}
             getParagraphText={getAssistantParagraphText}
             getWritingContext={getAssistantWritingContext}
             handleInsertToEditor={handleAssistantInsertToEditor}

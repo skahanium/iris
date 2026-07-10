@@ -97,8 +97,8 @@ describe("markdown list inline bold", () => {
 
     try {
       const strong = editor.view.dom.querySelector("strong");
-      expect(strong?.textContent).toBe('匹配规则升级为“窗口安全长度”：');
-      expect(editor.view.dom.textContent).not.toContain('**匹配规则');
+      expect(strong?.textContent).toBe("匹配规则升级为“窗口安全长度”：");
+      expect(editor.view.dom.textContent).not.toContain("**匹配规则");
     } finally {
       editor.destroy();
     }

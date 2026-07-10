@@ -1,6 +1,12 @@
-import type { AiDomain, ContextPacket, WritingEditorContext } from "@/types/ai";
+import type {
+  AiDomain,
+  ContextPacket,
+  RuntimeDocumentSnapshot,
+  WritingEditorContext,
+} from "@/types/ai";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
+import type { FileListItem } from "@/types/ipc";
 
 export interface AssistantSelectionQuote {
   filePath: string;
@@ -14,6 +20,8 @@ export interface UnifiedAssistantPanelProps {
   classifiedPath?: string | null;
   notePath: string | null;
   getNoteContent: () => string;
+  runtimeDocumentCandidates?: FileListItem[];
+  runtimeDocumentSnapshots?: RuntimeDocumentSnapshot[];
   webSearch?: boolean;
   webSearchProviderName?: string | null;
   getWritingContext: () => WritingEditorContext | null;

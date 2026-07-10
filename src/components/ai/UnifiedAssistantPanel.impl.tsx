@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -8,13 +8,6 @@ import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
 import { useDocSummaryStream } from "@/hooks/useDocSummaryStream";
 import { agentTaskAbort, harnessAbort } from "@/lib/ipc";
 import { legacySceneHintForTaskPlanIntent } from "@/lib/assistant-scene";
-import type {
-  AssistantActionState,
-  ContextPacket,
-  ContextStatus,
-  TaskPlanIntent,
-  WebSearchUsage,
-} from "@/types/ai";
 import { buildActionState } from "./unified-assistant-panel-utils";
 import { AssistantComposerDock } from "./AssistantComposerDock";
 import { ConversationSurface } from "./ConversationSurface";
@@ -38,8 +31,8 @@ import { AgentTaskStatusPanel } from "./AgentTaskStatusPanel";
 import { AssistantConfirmDialogs } from "./AssistantConfirmDialogs";
 import { useAssistantRunPlan } from "./hooks/useAssistantRunPlan";
 import { useSelectionQuoteReference } from "./hooks/useSelectionQuoteReference";
+import { useAssistantPanelRuntimeState } from "./hooks/useAssistantPanelRuntimeState";
 import { AssistantErrorRecovery } from "./AssistantErrorRecovery";
-import type { AssistantProcessEvent } from "./AiMessageList";
 import type { UnifiedAssistantPanelProps } from "./types";
 
 export function UnifiedAssistantPanel({
@@ -47,6 +40,8 @@ export function UnifiedAssistantPanel({
   classifiedPath = null,
   notePath,
   getNoteContent,
+  runtimeDocumentCandidates = [],
+  runtimeDocumentSnapshots = [],
   webSearch = false,
   webSearchProviderName = null,
   getWritingContext,
@@ -61,39 +56,35 @@ export function UnifiedAssistantPanel({
   prefillMessage,
   onChromeChange,
 }: UnifiedAssistantPanelProps) {
-  const [actionState, setActionState] = useState<AssistantActionState>(
-    buildActionState("chat", "idle"),
-  );
-  const [currentTaskPlanIntent, setCurrentTaskPlanIntent] =
-    useState<TaskPlanIntent | null>(null);
-  const [streaming, setStreaming] = useState(false);
+  const panelRuntime = useAssistantPanelRuntimeState();
+  const {
+    actionState,
+    activityHint,
+    agentTaskId,
+    currentTaskPlanIntent,
+    packets,
+    requestIdRef,
+    setActionState,
+    setActivityHint,
+    setAgentTaskId,
+    setContextStatusData,
+    setCurrentTaskPlanIntent,
+    setHarnessRequestId,
+    setPackets,
+    setPacketsOpen,
+    setPausedTaskId,
+    setProcessEvents,
+    setSelectedPacketIds,
+    setStreaming,
+    setWebSearchUsage,
+    streamBuf,
+    streaming,
+    textareaRef,
+  } = panelRuntime;
   const bubbleSelection = useAiBubbleSelection();
   const { pruneSelected } = bubbleSelection;
-  const [packets, setPackets] = useState<ContextPacket[]>([]);
-  const [webSearchUsage, setWebSearchUsage] = useState<WebSearchUsage | null>(
-    null,
-  );
-  const [selectedPacketIds, setSelectedPacketIds] = useState<string[]>([]);
-  const [packetsOpen, setPacketsOpen] = useState(false);
-  const [contextStatusData, setContextStatusData] =
-    useState<ContextStatus | null>(null);
-  const [activityHint, setActivityHint] = useState<string | null>(null);
-  const [processEvents, setProcessEvents] = useState<AssistantProcessEvent[]>(
-    [],
-  );
-  const streamBuf = useRef("");
-  const requestIdRef = useRef<string | null>(null);
-  const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
-  const [agentTaskId, setAgentTaskId] = useState<string | null>(null);
-  const [pausedTaskId, setPausedTaskId] = useState<string | null>(null);
   const runPlan = useAssistantRunPlan();
   const assistantRun = useAssistantRun("chat");
-  const clearResearchProgressRef = useRef<(() => void) | null>(null);
-  const panelSendActiveRef = useRef(false);
-  const docStreamActiveRef = useRef(false);
-  const forceNewSessionRef = useRef(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const messageListRef = useRef<HTMLDivElement>(null);
   const { profile: promptProfile } = usePromptProfile();
   const aiRuntime = useAiDomainRuntime({
     domainState: {
@@ -138,12 +129,12 @@ export function UnifiedAssistantPanel({
     onVaultRefresh,
   });
 
-  const clearTaskSurfaces = useCallback(() => {
+  function clearTaskSurfaces() {
     clearArtifactSurfaces();
-    clearResearchProgressRef.current?.();
+    panelRuntime.clearResearchProgressRef.current?.();
     setProcessEvents([]);
     setAgentTaskId(null);
-  }, [clearArtifactSurfaces]);
+  }
 
   const {
     appendAssistantSummary,
@@ -172,7 +163,7 @@ export function UnifiedAssistantPanel({
     clearContextReferences: bubbleSelection.clearContextReferences,
     clearTaskSurfaces,
     documentPath: classifiedPath ?? undefined,
-    forceNewSessionRef,
+    forceNewSessionRef: panelRuntime.forceNewSessionRef,
     onInsertToEditor,
     requestIdRef,
     setActionState,
@@ -206,6 +197,7 @@ export function UnifiedAssistantPanel({
     input,
     setInput,
     textareaRef,
+    runtimeDocumentCandidates,
   });
 
   const {
@@ -221,11 +213,11 @@ export function UnifiedAssistantPanel({
     setLastError,
     setMessages,
   });
-  clearResearchProgressRef.current = clearResearchProgress;
+  panelRuntime.clearResearchProgressRef.current = clearResearchProgress;
 
   useAssistantPanelEffects({
     activityHint,
-    harnessRequestId,
+    harnessRequestId: panelRuntime.harnessRequestId,
     messages,
     onChromeChange,
     packets,
@@ -243,7 +235,7 @@ export function UnifiedAssistantPanel({
 
   useAssistantLlmStream({
     domain: aiDomain,
-    panelSendActiveRef,
+    panelSendActiveRef: panelRuntime.panelSendActiveRef,
     requestIdRef,
     streamBufRef: streamBuf,
     setActivityHint,
@@ -253,7 +245,7 @@ export function UnifiedAssistantPanel({
   });
 
   useDocSummaryStream({
-    docStreamActiveRef,
+    docStreamActiveRef: panelRuntime.docStreamActiveRef,
     requestIdRef,
     setDocSummary,
   });
@@ -265,8 +257,8 @@ export function UnifiedAssistantPanel({
 
   const handleHarnessResume = useAssistantHarnessResume({
     ensureAssistantStreamSlot,
-    harnessRequestId,
-    pausedTaskId,
+    harnessRequestId: panelRuntime.harnessRequestId,
+    pausedTaskId: panelRuntime.pausedTaskId,
     setActivityHint,
     setLastError,
     setMessages,
@@ -333,8 +325,9 @@ export function UnifiedAssistantPanel({
       messages,
       notePath,
       packets,
-      selectedPacketIds,
+      selectedPacketIds: panelRuntime.selectedPacketIds,
       contextReferences: bubbleSelection.contextReferences,
+      runtimeDocumentSnapshots,
       acceptWritingPatch: handleAcceptPatch,
       selectionQuoteText: selectionQuote?.text,
       sessionId,
@@ -342,12 +335,12 @@ export function UnifiedAssistantPanel({
       writingPatches,
     },
     refs: {
-      forceNewSessionRef,
-      panelSendActiveRef,
+      forceNewSessionRef: panelRuntime.forceNewSessionRef,
+      panelSendActiveRef: panelRuntime.panelSendActiveRef,
       requestIdRef,
       researchRequestIdRef,
       streamBufRef: streamBuf,
-      docStreamActiveRef,
+      docStreamActiveRef: panelRuntime.docStreamActiveRef,
     },
     state: {
       setActionState,
@@ -381,21 +374,20 @@ export function UnifiedAssistantPanel({
     },
   });
 
-  const resetAssistantSessionState = useCallback(() => {
+  function resetAssistantSessionState() {
     setAgentTaskId(null);
     setPausedTaskId(null);
     setCurrentTaskPlanIntent(null);
     setWebSearchUsage(null);
     handleNewChat();
-  }, [handleNewChat]);
-  const loadSessionAndResetTaskPlan = useCallback(
-    (...args: Parameters<typeof handleLoadSession>) => {
-      setCurrentTaskPlanIntent(null);
-      setWebSearchUsage(null);
-      handleLoadSession(...args);
-    },
-    [handleLoadSession],
-  );
+  }
+  function loadSessionAndResetTaskPlan(
+    ...args: Parameters<typeof handleLoadSession>
+  ) {
+    setCurrentTaskPlanIntent(null);
+    setWebSearchUsage(null);
+    handleLoadSession(...args);
+  }
   const stopStreaming = useCallback(() => {
     const taskId = agentTaskId;
     const id = requestIdRef.current;
@@ -404,15 +396,21 @@ export function UnifiedAssistantPanel({
     } else if (id) {
       void harnessAbort(id);
     }
-    panelSendActiveRef.current = false;
+    panelRuntime.panelSendActiveRef.current = false;
     setStreaming(false);
     setActivityHint(null);
-  }, [agentTaskId]);
-  const togglePacketSelection = useCallback((id: string) => {
+  }, [
+    agentTaskId,
+    panelRuntime.panelSendActiveRef,
+    requestIdRef,
+    setActivityHint,
+    setStreaming,
+  ]);
+  const togglePacketSelection = (id: string) => {
     setSelectedPacketIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
-  }, []);
+  };
   const currentScene = legacySceneHintForTaskPlanIntent(currentTaskPlanIntent);
   const currentConversationId =
     aiDomain === "classified" ? classifiedThreadId : sessionId;
@@ -436,25 +434,25 @@ export function UnifiedAssistantPanel({
         taskStatus={actionState.status}
         webSearch={webSearch}
         webSearchProviderName={webSearchProviderName}
-        webSearchUsage={webSearchUsage}
+        webSearchUsage={panelRuntime.webSearchUsage}
       />
       <ContextPacketDrawer
-        open={packetsOpen}
+        open={panelRuntime.packetsOpen}
         onOpenChange={setPacketsOpen}
         packets={packets}
-        selectedIds={selectedPacketIds}
+        selectedIds={panelRuntime.selectedPacketIds}
         onSelect={togglePacketSelection}
         onOpenSource={onOpenEvidenceSource}
-        contextStatus={contextStatusData}
+        contextStatus={panelRuntime.contextStatusData}
         citationMiss={citationMiss}
         sessionId={sessionId}
         onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
       />
       <AssistantErrorRecovery
         disabled={streaming}
-        harnessRequestId={harnessRequestId}
+        harnessRequestId={panelRuntime.harnessRequestId}
         lastError={lastError}
-        pausedTaskId={pausedTaskId}
+        pausedTaskId={panelRuntime.pausedTaskId}
         onResume={() => void handleHarnessResume()}
       />
       <ErrorBoundary scope="AI任务区">
@@ -476,9 +474,9 @@ export function UnifiedAssistantPanel({
           messages={messages}
           contextReferences={bubbleSelection.contextReferences}
           streaming={streaming}
-          processEvents={processEvents}
+          processEvents={panelRuntime.processEvents}
           selectedIndices={bubbleSelection.selected}
-          messageListRef={messageListRef}
+          messageListRef={panelRuntime.messageListRef}
           onCitationClick={handleCitationClick}
           onRetract={handleRetract}
           onSelect={bubbleSelection.handleClick}

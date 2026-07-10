@@ -330,6 +330,7 @@ async fn retrieve_chapter_evidence(
         note_context: Some(input.target_path.clone()),
         file_id_context: None,
         scope: RetrievalScope::default(),
+        runtime_documents: Vec::new(),
     };
 
     state
@@ -348,6 +349,7 @@ async fn retrieve_document_evidence(
         note_context: Some(input.target_path.clone()),
         file_id_context: None,
         scope: RetrievalScope::default(),
+        runtime_documents: Vec::new(),
     };
 
     state

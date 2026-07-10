@@ -360,6 +360,57 @@ it("routes fresh external fact questions to short answer with web evidence", () 
   expect(plan.sourceHints).toContain("web:fresh_required");
 });
 
+it("treats @ scope as a hard boundary even when web is enabled and facts look fresh", () => {
+  const plan = buildAssistantTaskPlan({
+    message: "根据 @A.md 梳理近期世界杯战况",
+    hasSelection: false,
+    notePath: "/notes/open.md",
+    explicitScope: true,
+    contextReferences: [],
+    webAuthorized: true,
+  });
+
+  expect(plan.webMode).toBe("disabled");
+  expect(plan.intent).toBe("ask_notes");
+  expect(plan.retrievalMode).toBe("scoped_notes");
+  expect(plan.sourceHints).toContain("context:scope");
+  expect(plan.sourceHints).not.toContain("web:fresh_required");
+  expect(shouldAttachNoteContextToTaskPlan(plan)).toBe(false);
+});
+
+it("does not attach the open note to ordinary knowledge lookup unless the user names the current document", () => {
+  const plan = buildAssistantTaskPlan({
+    message: "库里查一下 sqlite-vec 的资料",
+    hasSelection: false,
+    notePath: "/notes/open.md",
+    explicitScope: false,
+    contextReferences: [],
+    webAuthorized: false,
+  });
+
+  expect(plan.intent).toBe("ask_notes");
+  expect(plan.retrievalMode).toBe("local_notes");
+  expect(plan.sourceHints).not.toContain("context:note");
+  expect(plan.sourceHints).not.toContain("context:current_note");
+  expect(shouldAttachNoteContextToTaskPlan(plan)).toBe(false);
+});
+
+it("attaches live current-note context only for explicit current-document references", () => {
+  const plan = buildAssistantTaskPlan({
+    message: "请根据当前文档回答这个问题",
+    hasSelection: false,
+    notePath: "/notes/open.md",
+    explicitScope: false,
+    contextReferences: [],
+    webAuthorized: false,
+  });
+
+  expect(plan.intent).toBe("ask_notes");
+  expect(plan.retrievalMode).toBe("local_notes");
+  expect(plan.sourceHints).toContain("context:current_note");
+  expect(shouldAttachNoteContextToTaskPlan(plan)).toBe(true);
+});
+
 it("keeps fresh fact questions direct when web is disabled", () => {
   const plan = buildAssistantTaskPlan({
     message: "最新的刑法是哪一年修订的？",

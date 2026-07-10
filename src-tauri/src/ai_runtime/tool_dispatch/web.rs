@@ -33,9 +33,13 @@ fn web_search_tool_response(
 
     Ok(serde_json::json!({
         "broker": "网络证据代理",
-        "evidence": evidence,
         "results": packets,
         "count": packets.len(),
+        "rawEvidenceCount": evidence.len(),
+        "resultBudget": {
+            "format": "context_packets_only",
+            "rawEvidenceOmitted": true,
+        },
         "webUsage": output.usage,
     }))
 }
@@ -112,6 +116,30 @@ mod tests {
         }
     }
 
+    fn successful_provider_item(index: usize, fetched_excerpt: String) -> WebEvidenceItem {
+        WebEvidenceItem {
+            url: format!("https://example.com/{index}"),
+            canonical_url: format!("https://example.com/{index}"),
+            title: format!("来源 {index}"),
+            domain: "example.com".into(),
+            snippet: "摘要".into(),
+            fetched_excerpt: Some(fetched_excerpt),
+            provider_id: "web.provider".into(),
+            provider_kind: "mcp".into(),
+            cost_class: "free".into(),
+            raw_result_hash: format!("hash-{index}"),
+            extraction_method: "search_result".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "search".into(),
+            search_backend: WebSearchBackend::Provider,
+            source_rank: WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        }
+    }
+
     #[test]
     fn failed_only_web_evidence_is_returned_as_tool_error() {
         let err = web_search_tool_response(
@@ -136,5 +164,26 @@ mod tests {
         assert!(err
             .to_string()
             .contains("mcp_search_parse_empty:text_without_url"));
+    }
+
+    #[test]
+    fn successful_web_response_is_packetized_without_raw_evidence_blob() {
+        let output = WebEvidenceBrokerOutput {
+            items: (0..8)
+                .map(|index| successful_provider_item(index, "长正文".repeat(4_000)))
+                .collect(),
+            usage: WebEvidenceUsage {
+                successful_search_requests: WebEvidenceSearchRequestUsage { mcp: 1 },
+                providers: Vec::new(),
+            },
+        };
+
+        let response = web_search_tool_response("近期世界杯战况", output).unwrap();
+        let encoded = serde_json::to_string(&response).unwrap();
+
+        assert!(response.get("evidence").is_none());
+        assert_eq!(response["count"], serde_json::json!(8));
+        assert_eq!(response["results"].as_array().unwrap().len(), 8);
+        assert!(encoded.chars().count() < 50_000);
     }
 }

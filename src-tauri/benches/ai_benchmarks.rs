@@ -176,6 +176,7 @@ fn bench_retrieval_request_hash(c: &mut Criterion) {
         note_context: Some("notes/architecture.md".to_string()),
         file_id_context: Some(42),
         scope: Default::default(),
+        runtime_documents: Vec::new(),
     };
 
     c.bench_function("retrieval_query_hash_large_request", |b| {
@@ -243,6 +244,7 @@ fn bench_retrieval_hybrid_synthetic_corpus(c: &mut Criterion) {
             note_context: None,
             file_id_context: None,
             scope: Default::default(),
+            runtime_documents: Vec::new(),
         };
         group.bench_with_input(
             BenchmarkId::new("hybrid_vector_not_ready", rows),

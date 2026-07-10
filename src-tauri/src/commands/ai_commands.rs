@@ -26,7 +26,8 @@ use crate::ai_runtime::{
     },
     tool_executor::ToolRegistry,
     trace::{TraceRecorder, TraceStatus},
-    AgentIntent, AiScene, AssembledContext, ContextPacket, TokenUsage, ToolAccessLevel,
+    AgentIntent, AiScene, AssembledContext, ContextPacket, RuntimeDocumentSnapshot, TokenUsage,
+    ToolAccessLevel,
 };
 use std::collections::HashSet;
 use std::path::Path;
@@ -482,6 +483,7 @@ fn build_context_packets_cached(
     file_id: Option<i64>,
     query: &str,
     user_scope: &ContextScopeDto,
+    runtime_documents: &[RuntimeDocumentSnapshot],
     build_opts: ContextBuildOptions,
 ) -> AppResult<(
     Vec<crate::ai_runtime::ContextPacket>,
@@ -500,21 +502,33 @@ fn build_context_packets_cached(
         build_opts.input_budget as u32,
         &profile_fingerprint,
     );
-    if let Some(cached) = crate::llm::safe_lock(&state.ai.context_cache).get(&cache_key) {
-        return Ok(cached);
+    if runtime_documents.is_empty() {
+        if let Some(cached) = crate::llm::safe_lock(&state.ai.context_cache).get(&cache_key) {
+            return Ok(cached);
+        }
     }
 
     let built = state.db.with_conn(|conn| {
         build_context_packets(
-            conn, vault, scene, note_path, file_id, query, user_scope, build_opts,
+            conn,
+            vault,
+            scene,
+            note_path,
+            file_id,
+            query,
+            user_scope,
+            runtime_documents,
+            build_opts,
         )
     })?;
 
-    crate::llm::safe_lock(&state.ai.context_cache).insert(
-        cache_key,
-        built.0.clone(),
-        built.1.clone(),
-    );
+    if runtime_documents.is_empty() {
+        crate::llm::safe_lock(&state.ai.context_cache).insert(
+            cache_key,
+            built.0.clone(),
+            built.1.clone(),
+        );
+    }
     Ok(built)
 }
 
@@ -529,8 +543,39 @@ fn should_prefetch_web(message: &str) -> bool {
     }
 
     let strong_signals = [
-        "联网", "搜索", "网页", "最新", "近期", "新闻", "时事", "天气", "web", "search", "online",
-        "latest", "recent", "news", "weather", "2025", "2026",
+        "联网",
+        "搜索",
+        "网页",
+        "最新",
+        "近期",
+        "最近",
+        "当前价格",
+        "现在价格",
+        "价格",
+        "股价",
+        "汇率",
+        "战况",
+        "赛况",
+        "世界杯",
+        "政策变更",
+        "版本",
+        "发布",
+        "新闻",
+        "时事",
+        "天气",
+        "web",
+        "search",
+        "online",
+        "latest",
+        "recent",
+        "current price",
+        "price",
+        "version",
+        "release",
+        "news",
+        "weather",
+        "2025",
+        "2026",
     ];
     strong_signals.iter().any(|signal| lower.contains(signal))
 }
@@ -634,6 +679,7 @@ async fn build_context_packets_with_optional_web_prefetch(
     file_id: Option<i64>,
     query: &str,
     user_scope: &ContextScopeDto,
+    runtime_documents: &[RuntimeDocumentSnapshot],
     build_opts: ContextBuildOptions,
     task_policy: &AgentTaskPolicy,
     web_search_enabled: bool,
@@ -650,7 +696,15 @@ async fn build_context_packets_with_optional_web_prefetch(
         web_search_enabled,
     ) {
         return build_context_packets_cached(
-            state, vault, scene, note_path, file_id, query, user_scope, build_opts,
+            state,
+            vault,
+            scene,
+            note_path,
+            file_id,
+            query,
+            user_scope,
+            runtime_documents,
+            build_opts,
         );
     }
 
@@ -659,6 +713,7 @@ async fn build_context_packets_with_optional_web_prefetch(
     let note_path_for_local = note_path.map(str::to_string);
     let query_for_local = query.to_string();
     let user_scope_for_local = user_scope.clone();
+    let runtime_documents_for_local = runtime_documents.to_vec();
     let local_context = tokio::task::spawn_blocking(move || {
         build_context_packets_cached(
             &state_for_local,
@@ -668,6 +723,7 @@ async fn build_context_packets_with_optional_web_prefetch(
             file_id,
             &query_for_local,
             &user_scope_for_local,
+            &runtime_documents_for_local,
             build_opts,
         )
     });
@@ -691,6 +747,7 @@ pub async fn context_assemble(
     query: String,
     session_id: Option<i64>,
     context_scope: Option<ContextScopeDto>,
+    runtime_documents: Option<Vec<RuntimeDocumentSnapshot>>,
     web_search: Option<bool>,
 ) -> AppResult<AssembledContext> {
     validate_ai_note_path(note_path.as_deref())?;
@@ -755,6 +812,7 @@ pub async fn context_assemble(
 
     let vault = state.vault_path()?;
     let user_scope = context_scope.unwrap_or_default();
+    let runtime_documents = runtime_documents.unwrap_or_default();
     let route = resolve_for_task_policy(&state.db, &task_policy)?;
     let resolved = route.resolved;
     let build_opts = ContextBuildOptions {
@@ -774,6 +832,7 @@ pub async fn context_assemble(
         file_id,
         primary_query,
         &user_scope,
+        &runtime_documents,
         build_opts,
     )?;
 
@@ -1018,6 +1077,7 @@ pub(crate) async fn execute_ai_send_message(
     selected_packet_ids: Option<Vec<String>>,
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
+    runtime_documents: Vec<RuntimeDocumentSnapshot>,
     web_search: Option<bool>,
     new_session: Option<bool>,
 ) -> AppResult<AiChatResponse> {
@@ -1033,6 +1093,7 @@ pub(crate) async fn execute_ai_send_message(
         selected_packet_ids,
         note_path,
         context_scope,
+        runtime_documents,
         web_search,
         new_session,
         None,
@@ -1053,6 +1114,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     selected_packet_ids: Option<Vec<String>>,
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
+    runtime_documents: Vec<RuntimeDocumentSnapshot>,
     web_search: Option<bool>,
     new_session: Option<bool>,
     routing_override: Option<AiSendRoutingOverride>,
@@ -1258,6 +1320,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         file_id,
         &message,
         &user_scope,
+        &runtime_documents,
         build_opts,
         &task_policy,
         web_search,
@@ -1375,6 +1438,8 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             note_title,
             selection_excerpt: None,
             cold_start_packets: filtered_packets.clone(),
+            context_scope: user_scope.clone(),
+            runtime_documents: runtime_documents.clone(),
             web_search_enabled: web_search,
             user_message: message.clone(),
             images,
@@ -1522,6 +1587,7 @@ pub async fn ai_send_message(
     selected_packet_ids: Option<Vec<String>>,
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
+    runtime_documents: Option<Vec<RuntimeDocumentSnapshot>>,
     web_search: Option<bool>,
     new_session: Option<bool>,
 ) -> AppResult<AiChatResponse> {
@@ -1536,6 +1602,7 @@ pub async fn ai_send_message(
         selected_packet_ids,
         note_path,
         context_scope,
+        runtime_documents.unwrap_or_default(),
         web_search,
         new_session,
     )
@@ -2015,6 +2082,7 @@ pub async fn search_hybrid(
         note_context: note_path,
         file_id_context: file_id,
         scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+        runtime_documents: Vec::new(),
     };
 
     let packets = state
@@ -3333,6 +3401,10 @@ mod tests {
         assert!(should_prefetch_web(
             "核对 https://example.com/release 的内容"
         ));
+        assert!(should_prefetch_web("当前苹果股票价格是多少"));
+        assert!(should_prefetch_web("梳理世界杯战况"));
+        assert!(should_prefetch_web("这个政策变更是什么时候发布的"));
+        assert!(should_prefetch_web("Rust 最新稳定版本是多少"));
         assert!(!should_prefetch_web("什么是 SQLite 向量索引"));
         assert!(!should_prefetch_web("今天星期几"));
         assert!(!should_prefetch_web("what is today's date"));
@@ -3465,6 +3537,7 @@ mod tests {
                     note_title: None,
                     selection_excerpt: None,
                     cold_start_packets: Vec::new(),
+                    context_scope: Default::default(),
                     web_search_enabled: false,
                     depth: 0,
                     capability_slot: None,

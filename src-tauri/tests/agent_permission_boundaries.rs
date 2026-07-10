@@ -2,6 +2,7 @@ use iris_lib::ai_runtime::agent_permissions::{
     permission_profile_for_tool, preflight_tool_permission, AgentPermissionAtom,
     PermissionDecision, PermissionGrantInput, PermissionRiskLevel, PermissionScopeKind,
 };
+use iris_lib::ai_runtime::retrieval_scope::RetrievalScope;
 use iris_lib::ai_runtime::tool_catalog::{catalog_find, ToolImplementationStatus, TOOL_CATALOG};
 use iris_lib::ai_runtime::tool_dispatch::{dispatch_tool, ToolDispatchContext};
 use iris_lib::ai_runtime::{AiScene, SkillCapabilitySupportStatus};
@@ -22,6 +23,7 @@ fn dispatchable(name: &str) -> bool {
 }
 
 fn ctx() -> ToolDispatchContext<'static> {
+    let retrieval_scope = Box::leak(Box::new(RetrievalScope::default()));
     ToolDispatchContext {
         scene: AiScene::DraftingAssist,
         note_path: None,
@@ -29,6 +31,8 @@ fn ctx() -> ToolDispatchContext<'static> {
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
+        retrieval_scope,
+        runtime_documents: &[],
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,

@@ -55,6 +55,7 @@ fn fts_retrieval_builds_user_note_context_packet() {
         note_context: None,
         file_id_context: None,
         scope: RetrievalScope::default(),
+        runtime_documents: Vec::new(),
     };
 
     let outcome =

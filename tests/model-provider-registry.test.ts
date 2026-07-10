@@ -152,7 +152,7 @@ describe("model provider registry contract", () => {
     expect(rust).toContain("llm_model_confirm_capability");
   });
 
-  it("settings probe commands use explicit api key override instead of reading saved keychain secrets", () => {
+  it("settings probe commands can use saved credentials without exposing key material to the frontend", () => {
     const rust = read("src-tauri/src/commands/llm_config_commands.rs");
     const probeSection =
       rust.split("async fn llm_config_test_provider_inner")[1] ?? "";
@@ -160,10 +160,12 @@ describe("model provider registry contract", () => {
       rust.split("async fn llm_model_validate_inner")[1] ?? "";
 
     expect(rust).toContain("api_key_override");
+    expect(rust).toContain("api_key_for_probe");
+    expect(rust).toContain("crate::credentials::get_runtime_secret");
     expect(probeSection).toContain("resolve_for_provider_without_secret");
     expect(validateSection).toContain("resolve_for_provider_without_secret");
-    expect(probeSection).not.toContain("config::resolve_for_provider(");
-    expect(validateSection).not.toContain("config::resolve_for_provider(");
+    expect(probeSection).not.toContain("resolved.api_key");
+    expect(validateSection).not.toContain("resolved.api_key");
   });
 
   it("saves the typed provider key before provider probes so status and probes stay aligned", () => {

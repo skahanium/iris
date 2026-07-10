@@ -778,6 +778,18 @@ pub struct ContextReferenceWire {
     pub invalid_reason: Option<String>,
 }
 
+/// Per-turn live document snapshot supplied by the editor runtime.
+/// It is used only for transient retrieval and must never be persisted as an index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeDocumentSnapshot {
+    pub path: String,
+    pub title: String,
+    pub content: String,
+    #[serde(default)]
+    pub is_locked: bool,
+}
+
 /// Artifact family proposed by the TaskPlan value gate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

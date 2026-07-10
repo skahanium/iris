@@ -53,6 +53,7 @@ mod tests {
     #[tokio::test]
     async fn runtime_context_tools_return_structured_readonly_state() {
         let (state, _dir) = test_state();
+        let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
         let ctx = ToolDispatchContext {
             scene: AiScene::KnowledgeLookup,
             note_path: Some("notes/test.md"),
@@ -60,6 +61,8 @@ mod tests {
             web_search_enabled: true,
             max_web_fetches: 3,
             cold_start_packets: &[],
+            retrieval_scope: &retrieval_scope,
+            runtime_documents: &[],
             app_handle: None,
             attachment_count: 2,
             skill_activation_plan: None,

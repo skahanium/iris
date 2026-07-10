@@ -1,3 +1,4 @@
+use iris_lib::ai_runtime::retrieval_scope::RetrievalScope;
 use iris_lib::ai_runtime::tool_catalog::catalog_find;
 use iris_lib::ai_runtime::tool_dispatch::{
     dispatch_tool, ToolDispatchContext, DISPATCHABLE_TOOL_NAMES,
@@ -16,6 +17,13 @@ fn test_state() -> (std::sync::Arc<AppState>, tempfile::TempDir) {
 }
 
 fn ctx<'a>(note_path: Option<&'a str>) -> ToolDispatchContext<'a> {
+    ctx_with_scope(note_path, Box::leak(Box::new(RetrievalScope::default())))
+}
+
+fn ctx_with_scope<'a>(
+    note_path: Option<&'a str>,
+    retrieval_scope: &'a RetrievalScope,
+) -> ToolDispatchContext<'a> {
     ToolDispatchContext {
         scene: AiScene::DraftingAssist,
         note_path,
@@ -23,6 +31,8 @@ fn ctx<'a>(note_path: Option<&'a str>) -> ToolDispatchContext<'a> {
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
+        retrieval_scope,
+        runtime_documents: &[],
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
@@ -139,6 +149,40 @@ async fn vault_create_note_writes_markdown_and_indexes_it() {
         })
         .unwrap();
     assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn search_tool_respects_hard_retrieval_scope_and_clamps_limit() {
+    let (state, _dir) = test_state();
+    index_note(
+        &state,
+        "scoped/target.md",
+        "# Target\n\nalpha scoped evidence",
+    );
+    index_note(
+        &state,
+        "outside/leak.md",
+        "# Leak\n\nalpha outside evidence",
+    );
+    let retrieval_scope = RetrievalScope {
+        path_prefixes: vec!["scoped/".into()],
+        paths: Vec::new(),
+    };
+    let ctx = ctx_with_scope(None, &retrieval_scope);
+
+    let result = dispatch_tool(
+        &state,
+        &ctx,
+        "search_hybrid",
+        &serde_json::json!({ "query": "alpha", "limit": 50 }),
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let serialized = serde_json::to_string(&result.output).unwrap();
+    assert!(serialized.contains("scoped/target.md"), "{serialized}");
+    assert!(!serialized.contains("outside/leak.md"), "{serialized}");
+    assert!(result.output["count"].as_u64().unwrap_or(0) <= 8);
 }
 
 #[tokio::test]

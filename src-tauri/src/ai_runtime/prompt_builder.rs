@@ -28,6 +28,11 @@ use crate::ai_runtime::{AiScene, ContextPacket, ToolSpec};
 use crate::error::AppResult;
 use std::path::Path;
 
+const EVIDENCE_GAP_GUIDANCE: &str = "## 证据使用规则\n\n\
+如果当前证据不足，必须先明确说明“当前证据不足”。\
+可以给出模型常识层面的初步判断，但必须明确标注“未由当前证据支持”。\
+法规、制度、政策、规范、医疗、法律、财务、版本事实、近期事实等高风险或时效性问题，不能把未检索到的内容当作事实依据。";
+
 /// Inputs for the PromptBuilder.
 #[derive(Debug, Clone)]
 pub struct PromptBuildInput<'a> {
@@ -93,6 +98,14 @@ pub fn build_prompt_messages(
             ..Default::default()
         });
     }
+
+    messages.push(LlmMessage {
+        role: MessageRole::System,
+        content: EVIDENCE_GAP_GUIDANCE.into(),
+        tool_call_id: None,
+        tool_calls: None,
+        ..Default::default()
+    });
 
     // Layer 5: Active Skills
     if let Some(skills) = input.skills_fragment {
@@ -181,6 +194,14 @@ pub fn build_initial_messages(
             });
         }
     }
+
+    messages.push(LlmMessage {
+        role: MessageRole::System,
+        content: EVIDENCE_GAP_GUIDANCE.into(),
+        tool_call_id: None,
+        tool_calls: None,
+        ..Default::default()
+    });
 
     // Evidence packets
     if !input.cold_start_packets.is_empty() {
@@ -390,6 +411,35 @@ mod tests {
             messages[2].content.as_str(),
             Some("Skill overlay: active skill")
         );
-        assert_eq!(messages[3].content.as_str(), Some("问题"));
+        assert!(messages[3]
+            .content
+            .as_str()
+            .unwrap()
+            .contains("证据使用规则"));
+        assert_eq!(messages[4].content.as_str(), Some("问题"));
+    }
+
+    #[test]
+    fn harness_initial_messages_require_explicit_evidence_gap_labels() {
+        let profile = PromptProfile::default();
+        let policy = legacy_policy(AiScene::KnowledgeLookup, false);
+        let input = HarnessMessageInput {
+            scene: AiScene::KnowledgeLookup,
+            task_policy: &policy,
+            environment: "",
+            cold_start_packets: &[],
+            history: &[("user".to_string(), "问题".to_string())],
+            web_search_enabled: false,
+            skills_fragment: None,
+        };
+
+        let joined = build_initial_messages(&input, &profile)
+            .into_iter()
+            .map(|message| message.content.text_content())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(joined.contains("当前证据不足"));
+        assert!(joined.contains("未由当前证据支持"));
     }
 }

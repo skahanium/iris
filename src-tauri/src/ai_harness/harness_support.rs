@@ -382,6 +382,8 @@ pub struct HarnessCheckpointMeta {
     pub note_title: Option<String>,
     pub selection_excerpt: Option<String>,
     pub cold_start_packets: Vec<ContextPacket>,
+    #[serde(default)]
+    pub context_scope: crate::ai_runtime::retrieval_scope::ContextScopeDto,
     pub web_search_enabled: bool,
     pub depth: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -804,6 +806,7 @@ mod tests {
                 note_title: None,
                 selection_excerpt: None,
                 cold_start_packets: vec![],
+                context_scope: Default::default(),
                 web_search_enabled: false,
                 depth: 0,
                 capability_slot: None,

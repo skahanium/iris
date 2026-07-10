@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type KeyboardEvent,
@@ -27,6 +28,7 @@ interface UseAssistantContextScopeOptions {
   setInput: Dispatch<SetStateAction<string>>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   loadVaultFiles?: () => Promise<FileListItem[]>;
+  runtimeDocumentCandidates?: FileListItem[];
 }
 
 export function useAssistantContextScope({
@@ -34,33 +36,56 @@ export function useAssistantContextScope({
   setInput,
   textareaRef,
   loadVaultFiles = fileList,
+  runtimeDocumentCandidates = [],
 }: UseAssistantContextScopeOptions) {
   const [vaultFiles, setVaultFiles] = useState<FileListItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionStart, setMentionStart] = useState(0);
   const [mentionQuery, setMentionQuery] = useState("");
+  const loadSeqRef = useRef(0);
 
   const mentionTokens = useMemo(() => parseMentionTokens(input), [input]);
   const contextScope = useMemo(
     () => tokensToContextScope(mentionTokens),
     [mentionTokens],
   );
+  const mentionSourceFiles = useMemo(() => {
+    const byPath = new Map<string, FileListItem>();
+    for (const item of vaultFiles) byPath.set(item.path, item);
+    for (const item of runtimeDocumentCandidates) byPath.set(item.path, item);
+    return [...byPath.values()];
+  }, [runtimeDocumentCandidates, vaultFiles]);
   const mentionCandidates = useMemo(
-    () => (mentionOpen ? buildMentionCandidates(vaultFiles, mentionQuery) : []),
-    [mentionOpen, vaultFiles, mentionQuery],
+    () =>
+      mentionOpen
+        ? buildMentionCandidates(mentionSourceFiles, mentionQuery)
+        : [],
+    [mentionOpen, mentionSourceFiles, mentionQuery],
   );
 
-  useEffect(() => {
-    let active = true;
-    void loadVaultFiles()
+  const refreshVaultFiles = useCallback(() => {
+    const seq = loadSeqRef.current + 1;
+    loadSeqRef.current = seq;
+    return loadVaultFiles()
       .then((files) => {
-        if (active) setVaultFiles(files);
+        if (loadSeqRef.current === seq) setVaultFiles(files);
       })
       .catch(() => {
-        if (active) setVaultFiles([]);
+        if (loadSeqRef.current === seq) setVaultFiles([]);
       });
+  }, [loadVaultFiles]);
+
+  useEffect(() => {
+    void refreshVaultFiles();
+  }, [refreshVaultFiles]);
+
+  useEffect(() => {
+    if (mentionOpen) void refreshVaultFiles();
+  }, [mentionOpen, refreshVaultFiles]);
+
+  useEffect(() => {
     return () => {
-      active = false;
+      loadSeqRef.current += 1;
     };
   }, [loadVaultFiles]);
 

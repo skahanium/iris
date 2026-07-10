@@ -221,6 +221,8 @@ pub async fn resume_harness_after_tool_confirm(
             note_title: cp.meta.note_title.clone(),
             selection_excerpt: cp.meta.selection_excerpt.clone(),
             cold_start_packets: cp.meta.cold_start_packets.clone(),
+            context_scope: cp.meta.context_scope.clone(),
+            runtime_documents: Vec::new(),
             web_search_enabled: cp.meta.web_search_enabled,
             user_message,
             images: None,
@@ -355,6 +357,8 @@ pub async fn dispatch_approved_tool_to_checkpoint(
     }
 
     let file_id = pending.file_id;
+    let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+    let runtime_documents = Vec::new();
     let result = dispatch_tool(
         state,
         &ToolDispatchContext {
@@ -364,6 +368,8 @@ pub async fn dispatch_approved_tool_to_checkpoint(
             web_search_enabled: pending.web_search_enabled,
             max_web_fetches: 3,
             cold_start_packets: &[],
+            retrieval_scope: &retrieval_scope,
+            runtime_documents: &runtime_documents,
             app_handle: Some(app_handle.clone()),
             attachment_count: 0,
             skill_activation_plan: pending.skill_activation_plan.as_ref(),

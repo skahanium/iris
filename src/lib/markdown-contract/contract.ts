@@ -694,10 +694,9 @@ function renderByProfile(
     case "chat_user":
       // Apply bold boundary repair so **text：** and __text：__ render correctly.
       return sanitizeHtml(
-        contractMarked.parse(
-          repairTightStrongPunctuationBoundaries(md),
-          { async: false },
-        ) as string,
+        contractMarked.parse(repairTightStrongPunctuationBoundaries(md), {
+          async: false,
+        }) as string,
       );
     case "editor_ingest":
       return markdownBodyToEditorHtml(md);

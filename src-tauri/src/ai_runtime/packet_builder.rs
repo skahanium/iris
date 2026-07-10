@@ -8,7 +8,9 @@ use crate::ai_runtime::retrieval_broker::{hybrid_retrieve, RetrievalLayers, Retr
 use crate::ai_runtime::retrieval_scope::{
     resolve_retrieval_scope, ContextScopeDto, RetrievalScope,
 };
-use crate::ai_runtime::{AiScene, ContextPacket, ContextStatus, SourceType, TrustLevel};
+use crate::ai_runtime::{
+    AiScene, ContextPacket, ContextStatus, RuntimeDocumentSnapshot, SourceType, TrustLevel,
+};
 use crate::error::AppResult;
 use crate::knowledge::corpora::{
     corpus_for_path, load_corpora, packet_meta_for_entry, CorpusConfig,
@@ -43,6 +45,7 @@ pub fn build_context_packets(
     note_file_id: Option<i64>,
     query: &str,
     user_scope: &ContextScopeDto,
+    runtime_documents: &[RuntimeDocumentSnapshot],
     opts: ContextBuildOptions,
 ) -> AppResult<(Vec<ContextPacket>, ContextStatus)> {
     let corpora = load_corpora(vault_path)?;
@@ -59,6 +62,7 @@ pub fn build_context_packets(
         note_context: note_path.map(|s| s.to_string()),
         file_id_context: note_file_id,
         scope,
+        runtime_documents: runtime_documents.to_vec(),
     };
 
     let mut packets = hybrid_retrieve(conn, &request)?;

@@ -1,11 +1,16 @@
-﻿import { lazy, Suspense } from "react";
+﻿import { lazy, Suspense, useMemo } from "react";
 
 import type { AssistantSelectionQuote } from "@/components/ai/UnifiedAssistantPanel";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import type { ContextPacket, WritingEditorContext } from "@/types/ai";
-import type { AiDomain } from "@/types/ai";
+import type {
+  AiDomain,
+  ContextPacket,
+  RuntimeDocumentSnapshot,
+  WritingEditorContext,
+} from "@/types/ai";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
+import type { FileListItem } from "@/types/ipc";
 import type {
   DocumentOpenPriority,
   NoteOpenSource,
@@ -36,6 +41,8 @@ interface AppAiPanelSlotProps {
   bumpVaultIndex: () => void;
   classifiedPath: string | null;
   getLiveMarkdown: () => string;
+  runtimeDocumentCandidates?: FileListItem[];
+  runtimeDocumentSnapshots?: RuntimeDocumentSnapshot[];
   getParagraphText: () => string | null;
   getWritingContext: () => WritingEditorContext | null;
   handleInsertToEditor: (content: string) => void;
@@ -66,6 +73,8 @@ export function AppAiPanelSlot({
   bumpVaultIndex,
   classifiedPath,
   getLiveMarkdown,
+  runtimeDocumentCandidates = [],
+  runtimeDocumentSnapshots = [],
   getParagraphText,
   getWritingContext,
   handleInsertToEditor,
@@ -80,6 +89,14 @@ export function AppAiPanelSlot({
   webSearch,
   webSearchProviderName = null,
 }: AppAiPanelSlotProps) {
+  const mentionRuntimeCandidates = useMemo(
+    () =>
+      runtimeDocumentCandidates.filter((candidate) =>
+        candidate.path.trim().endsWith(".md"),
+      ),
+    [runtimeDocumentCandidates],
+  );
+
   const openEvidenceSource = (packet: ContextPacket) => {
     if (packet.source_type === "web") {
       const url = packet.web?.url ?? packet.source_path;
@@ -103,6 +120,8 @@ export function AppAiPanelSlot({
           classifiedPath={classifiedPath}
           notePath={assistantNotePath}
           getNoteContent={getLiveMarkdown}
+          runtimeDocumentCandidates={mentionRuntimeCandidates}
+          runtimeDocumentSnapshots={runtimeDocumentSnapshots}
           webSearch={webSearch}
           webSearchProviderName={webSearchProviderName}
           getWritingContext={getWritingContext}

@@ -80,7 +80,9 @@ describe("credential session IPC contract", () => {
     expect(hasCommand).toContain("credential_available_for_runtime");
     expect(config).toContain("credentials::credential_available(service)");
     expect(config).not.toContain("credential_marker_configured(db, service)");
-    expect(runtimeContext).toContain("credentials::credential_available(&service)");
+    expect(runtimeContext).toContain(
+      "credentials::credential_available(&service)",
+    );
     expect(mcpRuntime).toContain("credentials::credential_available(service)");
   });
 });

@@ -321,6 +321,7 @@ mod tests {
             intent_detection: None,
             task_plan: Some(plan),
             context_references: Vec::new(),
+            runtime_documents: Vec::new(),
             message: "hello".into(),
             note_path: None,
             note_content: None,

@@ -18,7 +18,8 @@ use crate::ai_runtime::writing_workflow::WritingTaskOutput;
 use crate::ai_runtime::{
     AgentAuditSummary, AgentIntent, AgentRunPlanSummary, CitationCheckResult, ContextReferenceWire,
     ExecutionMode, IntentDetectionSummary, OrganizeTaskResult, PermissionPreflightSummary,
-    SkillActivationPlanSummary, SkillCapabilitySupportStatus, TaskPlanSummary,
+    RuntimeDocumentSnapshot, SkillActivationPlanSummary, SkillCapabilitySupportStatus,
+    TaskPlanSummary,
 };
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -50,6 +51,8 @@ pub struct AssistantExecuteRequest {
     pub task_plan: Option<TaskPlanSummary>,
     #[serde(default)]
     pub context_references: Vec<ContextReferenceWire>,
+    #[serde(default)]
+    pub runtime_documents: Vec<RuntimeDocumentSnapshot>,
     pub message: String,
     #[serde(default)]
     pub note_path: Option<String>,
@@ -161,6 +164,12 @@ impl AssistantExecuteRequest {
                 self.context_references.len()
             ));
         }
+        if !self.runtime_documents.is_empty() {
+            summary.push(format!(
+                "包含 {} 个运行期文档快照",
+                self.runtime_documents.len()
+            ));
+        }
         if self.task_plan.is_some() {
             summary.push("包含 TaskPlan 摘要".to_string());
         }
@@ -218,6 +227,11 @@ pub(crate) fn validate_assistant_domain_boundary(
             if !request.context_references.is_empty() {
                 return Err(AppError::msg(
                     "classified assistant cannot use normal context references",
+                ));
+            }
+            if !request.runtime_documents.is_empty() {
+                return Err(AppError::msg(
+                    "classified assistant cannot use normal runtime documents",
                 ));
             }
         }
@@ -546,6 +560,7 @@ mod tests {
             intent_detection: None,
             task_plan: None,
             context_references: Vec::new(),
+            runtime_documents: Vec::new(),
             message: "test".into(),
             note_path: note_path.map(str::to_string),
             note_content: note_content.map(str::to_string),

@@ -291,7 +291,8 @@ function repairStrongDelimitersInDocument(markdown: string): string {
 }
 
 function repairEscapedStrongDelimiters(markdown: string): string {
-  if (!markdown.includes("\\*\\*") && !markdown.includes("\\_\\_")) return markdown;
+  if (!markdown.includes("\\*\\*") && !markdown.includes("\\_\\_"))
+    return markdown;
 
   const lines = markdown.split("\n");
   let inFence = false;
@@ -303,8 +304,14 @@ function repairEscapedStrongDelimiters(markdown: string): string {
     if (inFence) return line;
 
     return line
-      .replace(/\\\*\\\*([^\\\n]+?)\\\*\\\*/g, (_match, inner: string) => `**${inner}**`)
-      .replace(/\\_\\_([^\\\n]+?)\\_\\_/g, (_match, inner: string) => `__${inner}__`);
+      .replace(
+        /\\\*\\\*([^\\\n]+?)\\\*\\\*/g,
+        (_match, inner: string) => `**${inner}**`,
+      )
+      .replace(
+        /\\_\\_([^\\\n]+?)\\_\\_/g,
+        (_match, inner: string) => `__${inner}__`,
+      );
   });
 
   return repairedLines.join("\n");

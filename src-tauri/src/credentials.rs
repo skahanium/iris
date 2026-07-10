@@ -108,6 +108,11 @@ impl LocalEncryptedCredentialBackend {
         }
     }
 
+    #[cfg(test)]
+    fn new_for_test_with_config(root: PathBuf, config_dir: PathBuf) -> Self {
+        Self { root, config_dir }
+    }
+
     fn ensure_root(&self) -> AppResult<()> {
         fs::create_dir_all(&self.root)?;
         set_private_dir_permissions(&self.root)?;
@@ -204,6 +209,29 @@ impl LocalEncryptedCredentialBackend {
         let digest = Sha256::digest(format!("{service}:{account}").as_bytes());
         hex::encode(digest)
     }
+
+    fn decrypt_record(
+        &self,
+        service: &str,
+        nonce_bytes: &[u8],
+        ciphertext: &[u8],
+        key: &[u8; LOCAL_KEY_LEN],
+    ) -> AppResult<Zeroizing<String>> {
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+        let plaintext = cipher
+            .decrypt(
+                Nonce::from_slice(nonce_bytes),
+                Payload {
+                    msg: ciphertext,
+                    aad: service.as_bytes(),
+                },
+            )
+            .map_err(|_| AppError::Credential("local credential decryption failed".into()))?;
+        let value = String::from_utf8(plaintext).map_err(|_| {
+            AppError::Credential("local credential value is not valid UTF-8".into())
+        })?;
+        Ok(Zeroizing::new(value))
+    }
 }
 
 impl CredentialBackend for LocalEncryptedCredentialBackend {
@@ -257,20 +285,21 @@ impl CredentialBackend for LocalEncryptedCredentialBackend {
         }
         let (nonce_bytes, ciphertext) = encrypted.split_at(LOCAL_NONCE_LEN);
         let key = self.master_key()?;
-        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
-        let plaintext = cipher
-            .decrypt(
-                Nonce::from_slice(nonce_bytes),
-                Payload {
-                    msg: ciphertext,
-                    aad: service.as_bytes(),
-                },
-            )
-            .map_err(|_| AppError::Credential("local credential decryption failed".into()))?;
-        let value = String::from_utf8(plaintext).map_err(|_| {
-            AppError::Credential("local credential value is not valid UTF-8".into())
-        })?;
-        Ok(Zeroizing::new(value))
+        match self.decrypt_record(service, nonce_bytes, ciphertext, &key) {
+            Ok(value) => Ok(value),
+            Err(primary_err) => {
+                let legacy_path = self.legacy_master_key_path();
+                if !legacy_path.is_file() || legacy_path == self.master_key_path() {
+                    return Err(primary_err);
+                }
+                let legacy_key = self.master_key_from_path(&legacy_path)?;
+                let value = self.decrypt_record(service, nonce_bytes, ciphertext, &legacy_key)?;
+                if let Err(err) = self.set_password(service, account, value.as_str()) {
+                    tracing::warn!("failed to rewrap legacy credential for {service}: {}", err);
+                }
+                Ok(value)
+            }
+        }
     }
 
     fn delete_password(&self, service: &str, account: &str) -> AppResult<()> {
@@ -707,6 +736,40 @@ mod tests {
             "legacy master.key should be moved away"
         );
         assert!(mk_path.is_file(), "master.key should now be in config dir");
+    }
+
+    #[test]
+    fn legacy_data_dir_credentials_remain_readable_when_global_master_key_already_exists() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let shared_config = dir.path().join("shared_config");
+        let credential_root = dir.path().join("credentials");
+
+        let current_backend = LocalEncryptedCredentialBackend::new_for_test_with_config(
+            dir.path().join("other_credentials"),
+            shared_config.clone(),
+        );
+        current_backend
+            .master_key()
+            .expect("create current global master key");
+
+        let legacy_backend = LocalEncryptedCredentialBackend::new_for_test_with_config(
+            credential_root.clone(),
+            credential_root.clone(),
+        );
+        set_api_key_with_backend(&legacy_backend, "iris.llm.deepseek", "legacy-key")
+            .expect("write legacy credential");
+
+        let migrated_backend = LocalEncryptedCredentialBackend::new_for_test_with_config(
+            credential_root,
+            shared_config,
+        );
+
+        assert_eq!(
+            get_runtime_secret_with_backend(&migrated_backend, "iris.llm.deepseek")
+                .expect("read legacy credential with fallback")
+                .as_str(),
+            "legacy-key"
+        );
     }
 
     #[test]

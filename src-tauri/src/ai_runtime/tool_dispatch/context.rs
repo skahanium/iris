@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::ai_runtime::{AiScene, ContextPacket};
+use crate::ai_runtime::{
+    retrieval_scope::RetrievalScope, AiScene, ContextPacket, RuntimeDocumentSnapshot,
+};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -12,6 +14,8 @@ pub struct ToolDispatchContext<'a> {
     pub web_search_enabled: bool,
     pub max_web_fetches: usize,
     pub cold_start_packets: &'a [ContextPacket],
+    pub retrieval_scope: &'a RetrievalScope,
+    pub runtime_documents: &'a [RuntimeDocumentSnapshot],
     pub app_handle: Option<tauri::AppHandle>,
     pub attachment_count: usize,
     pub skill_activation_plan: Option<&'a crate::ai_types::SkillActivationPlanSummary>,

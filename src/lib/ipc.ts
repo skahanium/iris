@@ -1066,6 +1066,7 @@ export async function contextAssemble(params: {
   query: string;
   session_id: number | null;
   context_scope?: ContextScope | null;
+  runtime_documents?: import("@/types/ai").RuntimeDocumentSnapshot[] | null;
   webSearch?: boolean;
 }): Promise<AssembledContext> {
   return invoke<AssembledContext>("context_assemble", {
@@ -1076,6 +1077,7 @@ export async function contextAssemble(params: {
     query: params.query,
     sessionId: params.session_id,
     contextScope: params.context_scope ?? null,
+    runtimeDocuments: params.runtime_documents ?? null,
     webSearch: params.webSearch ?? false,
   });
 }
@@ -1096,6 +1098,7 @@ export async function aiSendMessage(params: {
   note_path?: string | null;
   selected_packet_ids?: string[];
   context_scope?: ContextScope | null;
+  runtime_documents?: import("@/types/ai").RuntimeDocumentSnapshot[] | null;
   /** 为 true 时通过 WebEvidenceBroker 收集联网证据。 */
   webSearch?: boolean;
   /** 为 true 时创建新会话，而不是续写当前 scene/note 会话。 */
@@ -1110,6 +1113,7 @@ export async function aiSendMessage(params: {
     notePath: params.note_path ?? null,
     selectedPacketIds: params.selected_packet_ids ?? null,
     contextScope: params.context_scope ?? null,
+    runtimeDocuments: params.runtime_documents ?? null,
     webSearch: params.webSearch ?? false,
     newSession: params.new_session ?? false,
   });

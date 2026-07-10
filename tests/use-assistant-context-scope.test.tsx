@@ -24,11 +24,15 @@ type HookApi = ReturnType<typeof useAssistantContextScope>;
 
 function Harness({
   input,
+  loadVaultFiles = async () => files,
+  runtimeDocumentCandidates = [],
   onInput,
   onReady,
   textareaRef,
 }: {
   input: string;
+  loadVaultFiles?: () => Promise<FileListItem[]>;
+  runtimeDocumentCandidates?: FileListItem[];
   onInput: (next: string | ((prev: string) => string)) => void;
   onReady: (api: HookApi) => void;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -37,7 +41,8 @@ function Harness({
     input,
     setInput: onInput,
     textareaRef,
-    loadVaultFiles: async () => files,
+    loadVaultFiles,
+    runtimeDocumentCandidates,
   });
   onReady(api);
   return null;
@@ -50,6 +55,8 @@ describe("useAssistantContextScope", () => {
   let input: string;
   let api!: HookApi;
   let textareaRef: RefObject<HTMLTextAreaElement | null>;
+  let loadVaultFiles: () => Promise<FileListItem[]>;
+  let runtimeDocumentCandidates: FileListItem[];
 
   function setInput(next: string | ((prev: string) => string)) {
     input = typeof next === "function" ? next(input) : next;
@@ -60,6 +67,8 @@ describe("useAssistantContextScope", () => {
     root.render(
       createElement(Harness, {
         input,
+        loadVaultFiles,
+        runtimeDocumentCandidates,
         onInput: setInput,
         onReady: (value) => {
           api = value;
@@ -82,6 +91,8 @@ describe("useAssistantContextScope", () => {
     root = createRoot(container);
     textarea = document.createElement("textarea");
     textareaRef = { current: textarea };
+    loadVaultFiles = async () => files;
+    runtimeDocumentCandidates = [];
     await act(async () => {
       render();
     });
@@ -170,5 +181,65 @@ describe("useAssistantContextScope", () => {
 
     expect(preventDefault).toHaveBeenCalled();
     expect(api.mentionOpen).toBe(false);
+  });
+
+  it("refreshes stale vault files when opening mention suggestions", async () => {
+    let currentFiles = files;
+    loadVaultFiles = async () => currentFiles;
+    await act(async () => {
+      render();
+      await Promise.resolve();
+    });
+    currentFiles = [
+      ...files,
+      {
+        path: "Drafts/新建文档.md",
+        title: "新建文档",
+        updatedAt: "2026-01-02",
+        isLocked: false,
+      },
+    ];
+
+    await act(async () => {
+      setInput("ask @新");
+    });
+    moveCursorToEnd();
+    await act(async () => {
+      api.syncMentionFromInput();
+      await Promise.resolve();
+    });
+
+    expect(
+      api.mentionCandidates.some((item) => item.value === "Drafts/新建文档.md"),
+    ).toBe(true);
+  });
+
+  it("includes runtime document candidates that are not yet returned by fileList", async () => {
+    runtimeDocumentCandidates = [
+      {
+        path: "Drafts/运行期文档.md",
+        title: "运行期文档",
+        updatedAt: "2026-01-02",
+        isLocked: false,
+      },
+    ];
+    await act(async () => {
+      render();
+    });
+
+    await act(async () => {
+      setInput("ask @运行");
+    });
+    moveCursorToEnd();
+    await act(async () => {
+      api.syncMentionFromInput();
+      await Promise.resolve();
+    });
+
+    expect(
+      api.mentionCandidates.some(
+        (item) => item.value === "Drafts/运行期文档.md",
+      ),
+    ).toBe(true);
   });
 });
