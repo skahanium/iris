@@ -37,6 +37,12 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 
 `search_keyword`、`search_semantic`、`search_reindex` 服务于普通搜索；`search_hybrid` 返回 AI `ContextPacket`。`search_embedding_status` 返回当前嵌入模型、维度与重建进度（`EmbeddingIndexStatus`），供管理中心和调试面板展示。v1.2.6 将新增嵌入索引进度事件契约，必须同步本文件、Rust/TS 类型和测试后才可使用。
 
+### Skills 与联网证据
+
+Skills are prompt-only；`SKILL.md scope is the fact source`。`skills_*` IPC 只负责草稿、确认、启用状态和用户可见元数据，不安装依赖、不执行脚本、不暴露外部运行时。
+
+联网证据通过 `webEvidenceProvidersList`、`webEvidenceProviderDiagnostics` 与相关 provider IPC 管理。普通 LLM provider 不作为联网证据后端；只有被显式映射并通过诊断的 MCP/web provider 才能进入 `WebEvidenceBroker`。
+
 ### 事件
 
 需要长时间运行进度的功能使用 Tauri event；事件 payload 必须有稳定类型、可取消语义和脱敏错误文本。现有 research 进度封装在 `src/lib/ipc.ts`；后续嵌入重建沿用同一原则。

@@ -2,7 +2,11 @@ import { StatusBar } from "@/components/layout/StatusBar";
 import { useEffect, useState } from "react";
 import { fileLinkSummary } from "@/lib/ipc";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
-import type { FileLinkSummary } from "@/types/ipc";
+import type {
+  AppUpdateInfo,
+  AppUpdateStatus,
+  FileLinkSummary,
+} from "@/types/ipc";
 import type { WebSearchAvailability } from "@/lib/web-search-provider-state";
 import type { ConnectivityStatus } from "@/types/llm";
 
@@ -29,8 +33,13 @@ interface AppStatusBarSlotProps {
   theme: "dark" | "light";
   onThemeChange: (theme: "dark" | "light") => void;
   connectivity: ConnectivityStatus | null;
+  appUpdate?: {
+    status: AppUpdateStatus;
+    info: AppUpdateInfo | null;
+  };
   onOpenConnectivitySettings: () => void;
   onOpenManagementCenter: () => void;
+  onOpenUpdateCenter?: () => void;
   onOpenGraph: () => void;
   onOpenKnowledgeRelations: () => void;
 }
@@ -58,8 +67,10 @@ export function AppStatusBarSlot({
   theme,
   onThemeChange,
   connectivity,
+  appUpdate,
   onOpenConnectivitySettings,
   onOpenManagementCenter,
+  onOpenUpdateCenter,
   onOpenGraph,
   onOpenKnowledgeRelations,
 }: AppStatusBarSlotProps) {
@@ -116,8 +127,11 @@ export function AppStatusBarSlot({
       theme={theme}
       onThemeChange={onThemeChange}
       connectivity={connectivity}
+      appUpdateStatus={appUpdate?.status ?? "idle"}
+      appUpdateInfo={appUpdate?.info ?? null}
       onOpenConnectivitySettings={onOpenConnectivitySettings}
       onOpenManagementCenter={onOpenManagementCenter}
+      onOpenUpdateCenter={onOpenUpdateCenter}
       onOpenGraph={onOpenGraph}
       linkSummary={linkSummary}
       linkSummaryUnavailable={linkSummaryUnavailable}

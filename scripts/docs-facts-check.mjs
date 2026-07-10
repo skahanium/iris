@@ -198,9 +198,7 @@ function checkForbiddenPhrases() {
       for (const phrase of phrases) {
         if (lineContainsPhrase(lines[i], phrase)) {
           const rel = path.relative(root, filePath);
-          fail(
-            `Forbidden phrase "${phrase}" found in ${rel}:${i + 1}`,
-          );
+          fail(`Forbidden phrase "${phrase}" found in ${rel}:${i + 1}`);
         }
       }
     }
@@ -216,7 +214,9 @@ function checkForbiddenPhrases() {
     const lines = readFileSync(f, "utf8").split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (lineContainsPhrase(lines[i], "OS 凭据管理器")) {
-        fail(`${path.relative(root, f)}:${i + 1} — "OS 凭据管理器" (must say AES-256-GCM)`);
+        fail(
+          `${path.relative(root, f)}:${i + 1} — "OS 凭据管理器" (must say AES-256-GCM)`,
+        );
       }
     }
   }

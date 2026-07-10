@@ -49,9 +49,8 @@ pub(super) fn fuse_and_rank_with_reranker(
     }
 
     let candidates = std::mem::take(packets);
-    let (exact, mut ordinary): (Vec<_>, Vec<_>) = candidates
-        .into_iter()
-        .partition(|packet| is_exact_regulation(packet));
+    let (exact, mut ordinary): (Vec<_>, Vec<_>) =
+        candidates.into_iter().partition(is_exact_regulation);
 
     reranker.rerank(&mut ordinary);
     let mut selected = select_exact_packets(exact, max_results);

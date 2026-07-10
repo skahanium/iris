@@ -34,8 +34,8 @@ mod template_impl;
 mod vector_impl;
 
 use exact_impl::search_exact_regulation;
-use fts_impl::search_fts;
 pub use fts_impl::escape_fts5_query;
+use fts_impl::search_fts;
 use graph_impl::search_graph_neighbors;
 use metadata_impl::search_metadata;
 use rank_impl::fuse_and_rank;
@@ -138,9 +138,9 @@ pub(crate) fn expand_span_excerpt(
     let mut excerpt_end = safe_end;
     let chars_after = content[excerpt_end..].chars().count();
     let target_after = margin.min(chars_after);
-    let mut char_count = 0;
-    let mut last_was_newline = content.as_bytes().get(excerpt_end.saturating_sub(1)) == Some(&b'\n');
-    for (byte_pos, _) in content[excerpt_end..].char_indices() {
+    let mut last_was_newline =
+        content.as_bytes().get(excerpt_end.saturating_sub(1)) == Some(&b'\n');
+    for (char_count, (byte_pos, _)) in content[excerpt_end..].char_indices().enumerate() {
         if char_count >= target_after {
             break;
         }
@@ -151,8 +151,11 @@ pub(crate) fn expand_span_excerpt(
             break;
         }
         last_was_newline = ch == Some(&b'\n');
-        excerpt_end = abs_pos + content[abs_pos..].chars().next().map_or(0, |c| c.len_utf8());
-        char_count += 1;
+        excerpt_end = abs_pos
+            + content[abs_pos..]
+                .chars()
+                .next()
+                .map_or(0, |c| c.len_utf8());
     }
 
     // Clamp to content boundaries.

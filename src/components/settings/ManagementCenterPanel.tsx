@@ -1,11 +1,13 @@
 import {
   ArchiveRestore,
+  AlertCircle,
   Bot,
   ChevronLeft,
   CheckCircle2,
   Clock3,
   Cpu,
   Database,
+  DownloadCloud,
   FileClock,
   FolderTree,
   Globe2,
@@ -32,6 +34,8 @@ import type {
   ManagementCenterDetail,
   ManagementCenterSection,
 } from "@/hooks/useOverlayManager";
+import type { AppUpdateSnapshot } from "@/hooks/useAppUpdate";
+import { isWindowsDesktopChrome } from "@/lib/platform-chrome";
 import { cn } from "@/lib/utils";
 import {
   webSearchStatusDetail,
@@ -79,6 +83,11 @@ interface ManagementCenterPanelProps {
   onAutoVersionIdleMinutesChange: (minutes: number) => void;
   embeddingStatus: EmbeddingIndexStatus | null;
   onReindexEmbeddings: () => void;
+  appUpdate: AppUpdateSnapshot;
+  hasUnsaved: boolean;
+  onCheckUpdate: () => Promise<void>;
+  onDownloadUpdate: () => Promise<void>;
+  onInstallUpdate: () => Promise<void>;
 }
 
 interface ManagementSectionMeta {
@@ -102,6 +111,8 @@ type AiManagementDetail =
   | "memory";
 
 type NotesManagementDetail = "file-sheet" | "recycle-bin";
+
+const WINDOWS_INSTALL_WARNING = "Windows 上安装会关闭 Iris。";
 
 const AI_DETAIL_META: Record<
   AiManagementDetail,
@@ -231,6 +242,50 @@ function StatusValue({
   );
 }
 
+function updateStatusText(status: AppUpdateSnapshot["status"]) {
+  switch (status) {
+    case "checking":
+      return "正在检查更新";
+    case "up_to_date":
+      return "已是最新版";
+    case "available":
+      return "发现新版本";
+    case "downloading":
+      return "正在下载更新";
+    case "downloaded":
+      return "更新已下载";
+    case "ready_to_install":
+      return "可以安装";
+    case "unsupported":
+      return "当前平台暂不支持应用内更新";
+    case "error":
+      return "无法检查更新";
+    default:
+      return "尚未检查";
+  }
+}
+
+function updateProgressText(appUpdate: AppUpdateSnapshot) {
+  const progress = appUpdate.progress;
+  if (!progress || appUpdate.status !== "downloading") return null;
+  if (!progress.contentLength) {
+    return `已下载 ${(progress.downloaded / 1024 / 1024).toFixed(1)} MB`;
+  }
+  const percent = Math.min(
+    100,
+    Math.round((progress.downloaded / progress.contentLength) * 100),
+  );
+  return `${percent}% · ${(progress.downloaded / 1024 / 1024).toFixed(1)} MB / ${(
+    progress.contentLength /
+    1024 /
+    1024
+  ).toFixed(1)} MB`;
+}
+
+function appUpdateMessageText(message: string) {
+  return message.includes("signature") ? "更新包验证失败" : message;
+}
+
 function SwitchControl({
   checked,
   onCheckedChange,
@@ -317,6 +372,11 @@ export function ManagementCenterPanel({
   onAutoVersionIdleMinutesChange,
   embeddingStatus,
   onReindexEmbeddings,
+  appUpdate,
+  hasUnsaved,
+  onCheckUpdate,
+  onDownloadUpdate,
+  onInstallUpdate,
 }: ManagementCenterPanelProps) {
   const [activeSection, setActiveSection] =
     useState<ManagementCenterSection>(section);
@@ -361,6 +421,12 @@ export function ManagementCenterPanel({
     (provider) => provider.providerKind === "mcp" && provider.hasSearchMapping,
   ).length;
   const llmReady = status?.llm.state === "ready";
+  const updateProgress = updateProgressText(appUpdate);
+  const failedPreflightChecks =
+    appUpdate.preflight?.checks.filter((check) => check.status === "failed") ??
+    [];
+  const showWindowsInstallWarning =
+    isWindowsDesktopChrome() && appUpdate.status === "ready_to_install";
 
   const openAiDetail = (detail: AiManagementDetail) => {
     setActiveSection("ai");
@@ -436,13 +502,120 @@ export function ManagementCenterPanel({
           title="关于 Iris"
           detail={
             <>
-              版本 1.2.6 · GNU Affero General Public License v3.0 · Source:
+              版本 1.2.7 · GNU Affero General Public License v3.0 · Source:
               <span className="ml-1 font-mono">
                 https://github.com/skahanium/iris
               </span>
             </>
           }
         />
+        <SettingRow
+          icon={DownloadCloud}
+          title="应用更新"
+          detail={
+            <div className="space-y-2">
+              <p>
+                {updateStatusText(appUpdate.status)}
+                {appUpdate.info ? (
+                  <>
+                    {" "}
+                    · 当前 {appUpdate.info.currentVersion} · 新版本{" "}
+                    {appUpdate.info.version}
+                  </>
+                ) : null}
+              </p>
+              {appUpdate.info?.pubDate ? (
+                <p>发布时间：{appUpdate.info.pubDate}</p>
+              ) : null}
+              {appUpdate.info?.notes ? (
+                <p className="line-clamp-3 whitespace-pre-line">
+                  {appUpdate.info.notes}
+                </p>
+              ) : null}
+              {updateProgress ? <p>{updateProgress}</p> : null}
+              {appUpdate.message ? (
+                <p className="text-destructive">
+                  {appUpdateMessageText(appUpdate.message)}
+                </p>
+              ) : null}
+              {appUpdate.status === "unsupported" ? (
+                <p>
+                  可打开{" "}
+                  <a
+                    className="text-foreground underline underline-offset-4"
+                    href="https://github.com/skahanium/iris/releases"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    GitHub Release
+                  </a>{" "}
+                  手动下载。
+                </p>
+              ) : null}
+              {failedPreflightChecks.length > 0 ? (
+                <div className="space-y-1 text-destructive">
+                  {failedPreflightChecks.map((check) => (
+                    <p key={check.id}>
+                      {check.label}：{check.message}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+              {appUpdate.preflight?.ok ? (
+                <p className="text-foreground">兼容性预检已通过。</p>
+              ) : null}
+              {hasUnsaved && appUpdate.status === "ready_to_install" ? (
+                <p className="text-destructive">
+                  安装前若有未保存内容，必须先保存或取消。
+                </p>
+              ) : null}
+              {appUpdate.installBlockedMessage ? (
+                <p className="text-destructive">
+                  {appUpdate.installBlockedMessage}
+                </p>
+              ) : null}
+              {showWindowsInstallWarning ? (
+                <p>{WINDOWS_INSTALL_WARNING}</p>
+              ) : null}
+              <p className="sr-only">更新包验证失败</p>
+            </div>
+          }
+        >
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={appUpdate.busy}
+            onClick={() => void onCheckUpdate()}
+          >
+            检查更新
+          </Button>
+          {appUpdate.status === "available" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={appUpdate.busy}
+              onClick={() => void onDownloadUpdate()}
+            >
+              下载更新
+            </Button>
+          ) : null}
+          {appUpdate.status === "ready_to_install" ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={appUpdate.busy || hasUnsaved}
+              onClick={() => void onInstallUpdate()}
+            >
+              安装并重启
+            </Button>
+          ) : null}
+          {failedPreflightChecks.length > 0 ? (
+            <StatusValue>
+              <AlertCircle className="h-3.5 w-3.5" />
+              预检失败
+            </StatusValue>
+          ) : null}
+        </SettingRow>
       </PanelSection>
     </SectionShell>
   );
@@ -652,11 +825,7 @@ export function ManagementCenterPanel({
                 : "重建嵌入向量以提高搜索质量。"
             }
           >
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onReindexEmbeddings}
-            >
+            <Button size="sm" variant="outline" onClick={onReindexEmbeddings}>
               重试重建
             </Button>
           </SettingRow>
@@ -666,11 +835,7 @@ export function ManagementCenterPanel({
             title="嵌入重建"
             detail="重新生成全部 BGE v2 嵌入向量。"
           >
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onReindexEmbeddings}
-            >
+            <Button size="sm" variant="outline" onClick={onReindexEmbeddings}>
               重建嵌入
             </Button>
           </SettingRow>

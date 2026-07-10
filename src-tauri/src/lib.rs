@@ -43,6 +43,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_page_load(|webview, payload| {
             if payload.event() != PageLoadEvent::Finished || webview.label() != "main" {
                 return;
@@ -94,6 +95,7 @@ pub fn run() {
             let state = AppState::new(data_dir)?;
             crate::crypto::vault_key::init_vault_key();
             app.manage(state.clone());
+            app.manage(commands::app_update::PendingAppUpdate::default());
 
             // Start the scheduler for periodic tasks (GC at 3:00 AM daily)
             // `_scheduler_handle` is intentionally held alive for the app lifetime;
@@ -129,6 +131,10 @@ pub fn run() {
             commands::settings::credential_status,
             commands::settings::credential_delete,
             commands::settings::credential_lock_session,
+            commands::app_update::app_update_check_cmd,
+            commands::app_update::app_update_download_cmd,
+            commands::app_update::app_update_preflight_cmd,
+            commands::app_update::app_update_install_cmd,
             commands::file::file_list,
             commands::file::file_signature,
             commands::file::document_open_begin,

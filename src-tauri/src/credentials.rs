@@ -506,6 +506,35 @@ pub fn has_secret(service: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Check the local credential store and separated `master.key` are reachable
+/// without decrypting any credential value.
+pub fn local_credential_store_accessible() -> AppResult<()> {
+    let backend = local_backend()?;
+    backend.ensure_root()?;
+    backend.ensure_config_dir()?;
+    let master_key_path = backend.master_key_path();
+    let legacy_master_key_path = backend.legacy_master_key_path();
+
+    if !master_key_path.is_file() && !legacy_master_key_path.is_file() {
+        return Err(AppError::Credential("master.key is not accessible".into()));
+    }
+
+    let key_path = if master_key_path.is_file() {
+        master_key_path
+    } else {
+        legacy_master_key_path
+    };
+    let encoded = fs::read_to_string(key_path)?;
+    let decoded = B64
+        .decode(encoded.trim())
+        .map_err(|_| AppError::Credential("master.key is corrupt".into()))?;
+    if decoded.len() != LOCAL_KEY_LEN {
+        return Err(AppError::Credential("master.key has invalid length".into()));
+    }
+
+    Ok(())
+}
+
 /// Clear runtime-only credential caches. API keys are not cached by the credential layer.
 pub fn credential_lock_session() -> AppResult<()> {
     crate::cas::encryption::clear_cas_key_cache()?;

@@ -1,0 +1,10 @@
+{
+  "version": "1.2.5",
+  "fixture": {
+    "labelsSha256": "488729ff6efb110e0f58b48b8ca538b597d84f759e60269d13b5fcf1d5ab2668"
+  },
+  "metrics": {
+    "mrrAt10": 0.88,
+    "ndcgAt10": 0.89
+  }
+}

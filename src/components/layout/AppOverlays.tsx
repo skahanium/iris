@@ -24,7 +24,12 @@ import type {
   PrepareNoteOpenRequest,
   PreparedNoteOpen,
 } from "@/lib/document-open-runtime";
-import type { ClassifiedStatus, EmbeddingIndexStatus, FileListItem } from "@/types/ipc";
+import type { AppUpdateController } from "@/hooks/useAppUpdate";
+import type {
+  ClassifiedStatus,
+  EmbeddingIndexStatus,
+  FileListItem,
+} from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
 import type {
   WebSearchAvailability,
@@ -164,6 +169,7 @@ interface AppOverlaysProps {
   touchClassifiedActivity: () => void;
   versionSnapshotScheduler: VersionSchedulerPort;
   webSearch: boolean;
+  appUpdateController: AppUpdateController;
 }
 
 export function AppOverlays({
@@ -211,6 +217,7 @@ export function AppOverlays({
   touchClassifiedActivity,
   versionSnapshotScheduler,
   webSearch,
+  appUpdateController,
 }: AppOverlaysProps) {
   const [embeddingStatus, setEmbeddingStatus] =
     useState<EmbeddingIndexStatus | null>(null);
@@ -334,6 +341,11 @@ export function AppOverlays({
             }
             embeddingStatus={embeddingStatus}
             onReindexEmbeddings={handleReindexEmbeddings}
+            appUpdate={appUpdateController.snapshot}
+            hasUnsaved={appUpdateController.hasUnsaved}
+            onCheckUpdate={appUpdateController.check}
+            onDownloadUpdate={appUpdateController.download}
+            onInstallUpdate={appUpdateController.install}
           />
         </Suspense>
       ) : null}

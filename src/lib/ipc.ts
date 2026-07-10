@@ -24,6 +24,10 @@ import type {
 } from "@/types/ai";
 import type {
   AiCacheClearResult,
+  AppUpdateInfo,
+  AppUpdatePreflightResult,
+  AppUpdateProgressEvent,
+  AppUpdateStateEvent,
   AgentTaskDto,
   AgentTaskEventDto,
   AgentTaskListParams,
@@ -585,6 +589,40 @@ export async function credentialDelete(
 export async function credentialLockSession(): Promise<void> {
   return invoke("credential_lock_session");
 }
+
+export async function appUpdateCheck(): Promise<AppUpdateStateEvent> {
+  return invoke<AppUpdateStateEvent>("app_update_check_cmd");
+}
+
+export async function appUpdateDownload(): Promise<AppUpdateStateEvent> {
+  return invoke<AppUpdateStateEvent>("app_update_download_cmd");
+}
+
+export async function appUpdatePreflight(): Promise<AppUpdatePreflightResult> {
+  return invoke<AppUpdatePreflightResult>("app_update_preflight_cmd");
+}
+
+export async function appUpdateInstall(): Promise<void> {
+  return invoke("app_update_install_cmd");
+}
+
+export async function listenAppUpdateStatus(
+  handler: (payload: AppUpdateStateEvent) => void,
+): Promise<() => void> {
+  return listen<AppUpdateStateEvent>(IPC_EVENTS.APP_UPDATE_STATUS, (e) =>
+    handler(e.payload),
+  );
+}
+
+export async function listenAppUpdateProgress(
+  handler: (payload: AppUpdateProgressEvent) => void,
+): Promise<() => void> {
+  return listen<AppUpdateProgressEvent>(IPC_EVENTS.APP_UPDATE_PROGRESS, (e) =>
+    handler(e.payload),
+  );
+}
+
+export type { AppUpdateInfo };
 
 export async function listenFileChanged(
   handler: (payload: FileChangedEvent) => void,

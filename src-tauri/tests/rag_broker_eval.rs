@@ -358,7 +358,7 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
     assert!(metrics.ndcg_at_10() >= NDCG_AT_10_MIN);
     assert!(metrics.metadata_match_queries >= METADATA_MATCH_QUERY_MIN);
     assert!(metrics.no_answer_false_positive_rate() <= NO_ANSWER_FALSE_POSITIVE_RATE_MAX);
-    assert!(metrics.scope_leaks <= SCOPE_LEAK_COUNT_MAX);
+    assert_eq!(metrics.scope_leaks, SCOPE_LEAK_COUNT_MAX);
     let baseline_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("docs")

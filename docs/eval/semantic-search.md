@@ -6,7 +6,7 @@
 
 现有基线使用 fastembed `AllMiniLML6V2`（384 维），普通语义搜索可以在 sqlite-vec 不可用时走 Rust cosine 路径；AI retrieval broker 另有 FTS、链接、锚点和法规候选。该基线不能证明 broker 的范围过滤、证据 span/hash 或排序质量。
 
-v1.2.6 将以 BGE-small-zh-v1.5 与 Rank v2 完成强制索引迁移，评测从 `hybrid_retrieve → Rank → scope → ContextPacket` 全链路执行。完整设计与验收门槛见 [RAG 优化设计](../specs/v1.2.6-rag-optimization.md)。
+v1.2.6 将以 BGE-small-zh-v1.5 与 Rank v2 完成强制索引迁移，评测从 `hybrid_retrieve → Rank → scope → ContextPacket` 全链路执行。当前工作树不保留已替代的 RAG 规格文档，验收事实以本评测页、fixture 和测试合同为准。
 
 ## Fixture 与标签
 

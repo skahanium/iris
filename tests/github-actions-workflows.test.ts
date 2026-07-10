@@ -54,14 +54,26 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).toContain("actions/download-artifact@v7");
     expect(workflow).toContain("name: iris-windows-x64-nsis");
     expect(workflow).toContain("name: iris-macos-arm64-dmg");
+    expect(workflow).toContain("TAURI_SIGNING_PRIVATE_KEY");
+    expect(workflow).toContain("latest.json");
+    expect(workflow).toContain(".app.tar.gz");
+    expect(workflow).toContain("*setup.exe.sig");
     expect(workflow).toContain("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
     expect(workflow).toContain('gh release create "$GITHUB_REF_NAME"');
     expect(workflow).toContain("--draft");
     expect(workflow).toContain("--generate-notes");
     expect(workflow).toContain("--verify-tag");
     expect(workflow).toContain("gh release upload");
-    expect(workflow).toContain("--clobber");
+    expect(workflow).not.toContain("--clobber");
     expect(workflow).not.toContain("softprops/action-gh-release");
+  });
+
+  it("fails desktop packaging early when updater signing secrets are missing", () => {
+    const workflow = readWorkflow(".github/workflows/package-desktop.yml");
+
+    expect(workflow).toContain("Verify Tauri updater signing secrets");
+    expect(workflow).toContain("Missing TAURI_SIGNING_PRIVATE_KEY");
+    expect(workflow).toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
   });
 
   it("uses Node 24-compatible official actions while keeping project Node 20", () => {

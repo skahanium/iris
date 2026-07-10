@@ -1,5 +1,4 @@
 import type { Editor } from "@tiptap/react";
-import { Moon, Sun } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -18,12 +17,16 @@ import { AppShell } from "@/components/layout/AppShell";
 import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
 import { DesktopFrame } from "@/components/layout/DesktopFrame";
 import { PreVaultDesktopFrame } from "@/components/layout/PreVaultDesktopFrame";
+import {
+  BrowserRuntimeNotice,
+  VaultPickerScreen,
+} from "@/components/layout/AppPreVaultScreens";
 import { StartupSplash } from "@/components/layout/StartupSplash";
 import { TabBar } from "@/components/layout/TabBar";
-import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
 import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
+import { useAppUpdateController } from "@/hooks/useAppUpdate";
 import {
   useCurrentFileChangeListener,
   type ConflictState,
@@ -185,6 +188,12 @@ function App() {
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
+  const appUpdateController = useAppUpdateController({
+    enabled: Boolean(vaultPath),
+    tabs,
+    tabsRef,
+    onStatus: setAiStatus,
+  });
 
   useWorkspaceSessionSnapshot({ activePath, tabs, vaultPath });
   const {
@@ -718,27 +727,7 @@ function App() {
   );
 
   if (!isTauriRuntime()) {
-    return (
-      <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-background px-6 text-center">
-        <h1 className="text-xl font-semibold text-foreground">
-          请在 Iris 桌面窗口中使用
-        </h1>
-        <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">
-            http://127.0.0.1:1420
-          </code>{" "}
-          这里只是 Vite 前端热更新地址，浏览器里没有 Rust
-          后端，无法读写笔记目录。
-        </p>
-        <p className="max-w-md text-sm text-muted-foreground">
-          方式 B 需要两个终端：一个 <code className="text-xs">npm run dev</code>
-          ，另一个启动 <code className="text-xs">npx tauri dev</code>
-          ，请使用弹出的{" "}
-          <strong className="font-medium text-foreground">Iris</strong>{" "}
-          窗口操作。
-        </p>
-      </div>
-    );
+    return <BrowserRuntimeNotice />;
   }
 
   if (startupSplashVisible) {
@@ -755,39 +744,12 @@ function App() {
   if (!vaultPath) {
     return (
       <PreVaultDesktopFrame>
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 bg-background px-6">
-          <div className="text-center">
-            <h1 className="text-3xl font-semibold tracking-tight text-foreground">
-              Iris
-            </h1>
-            <p className="mt-2 text-sm text-muted-foreground">本地优先笔记</p>
-          </div>
-          <Button type="button" onClick={() => void pickVault()}>
-            选择笔记目录
-          </Button>
-          {vaultError ? (
-            <p
-              className="max-w-md text-center text-sm text-destructive"
-              role="alert"
-            >
-              {vaultError}
-            </p>
-          ) : null}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="gap-1.5"
-            onClick={() => void setTheme(theme === "dark" ? "light" : "dark")}
-          >
-            {theme === "dark" ? (
-              <Sun className="h-3.5 w-3.5" />
-            ) : (
-              <Moon className="h-3.5 w-3.5" />
-            )}
-            {theme === "dark" ? "亮色模式" : "暗色模式"}
-          </Button>
-        </div>
+        <VaultPickerScreen
+          theme={theme}
+          vaultError={vaultError}
+          onPickVault={() => void pickVault()}
+          onThemeChange={(nextTheme) => void setTheme(nextTheme)}
+        />
       </PreVaultDesktopFrame>
     );
   }
@@ -919,10 +881,12 @@ function App() {
             theme={theme}
             onThemeChange={(nextTheme) => void setTheme(nextTheme)}
             connectivity={connectivityStatus}
+            appUpdate={appUpdateController.statusBar}
             onOpenConnectivitySettings={handleOpenConnectivitySettings}
             onOpenManagementCenter={() =>
               overlays.openManagementCenter("overview")
             }
+            onOpenUpdateCenter={() => overlays.openManagementCenter("overview")}
             onOpenGraph={() => overlays.openOverlay("graph")}
             onOpenKnowledgeRelations={() =>
               overlays.openOverlay("knowledgeRelations")
@@ -977,6 +941,7 @@ function App() {
             touchClassifiedActivity={touchClassifiedActivity}
             versionSnapshotScheduler={versionSnapshotScheduler}
             webSearch={webSearch}
+            appUpdateController={appUpdateController}
           />
         }
       />

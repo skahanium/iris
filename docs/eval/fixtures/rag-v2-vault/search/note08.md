@@ -1,6 +1,15 @@
 ---
 title: "向量检索与语义搜索技术"
-aliases: ["向量检索", "语义搜索", "dense-retrieval", "embedding-search", "ANN检索", "相似度搜索", "神经信息检索"]
+aliases:
+  [
+    "向量检索",
+    "语义搜索",
+    "dense-retrieval",
+    "embedding-search",
+    "ANN检索",
+    "相似度搜索",
+    "神经信息检索",
+  ]
 tags: ["area-search", "fixture", "信息检索", "向量检索", "语义搜索", "ANN"]
 ---
 

@@ -374,7 +374,7 @@ fn semantic_search_cosine_v2(
         tracing::warn!(
             chunks = chunk_count,
             max = MAX_COSINE_FALLBACK_CHUNKS,
-            "v2 cosine scan skipped: too many chunks for the non-sqlite-vec build"
+            "cosine fallback skipped: too many chunks for the non-sqlite-vec build"
         );
         return Ok(vec![]);
     }
@@ -460,7 +460,7 @@ pub(crate) fn bytes_to_f32(blob: &[u8]) -> Vec<f32> {
 /// still accepts the legacy scalar-quantized format so existing databases stay
 /// searchable by the cosine fallback until their v2 generation is rebuilt.
 pub fn f32_to_bytes(vec: &[f32]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(vec.len() * std::mem::size_of::<f32>());
+    let mut bytes = Vec::with_capacity(std::mem::size_of_val(vec));
     for value in vec {
         bytes.extend_from_slice(&value.to_le_bytes());
     }

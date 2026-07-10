@@ -1,11 +1,23 @@
 import { memo } from "react";
-import { Moon, Network, Redo2, Settings, Sun, Undo2 } from "lucide-react";
+import {
+  DownloadCloud,
+  Moon,
+  Network,
+  Redo2,
+  Settings,
+  Sun,
+  Undo2,
+} from "lucide-react";
 
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
-import type { FileLinkSummary } from "@/types/ipc";
+import type {
+  AppUpdateInfo,
+  AppUpdateStatus,
+  FileLinkSummary,
+} from "@/types/ipc";
 import type { WebSearchAvailability } from "@/lib/web-search-provider-state";
 import type { ConnectivityStatus } from "@/types/llm";
 
@@ -35,6 +47,9 @@ interface StatusBarProps {
   connectivity?: ConnectivityStatus | null;
   onOpenConnectivitySettings?: () => void;
   onOpenManagementCenter?: () => void;
+  appUpdateStatus?: AppUpdateStatus;
+  appUpdateInfo?: AppUpdateInfo | null;
+  onOpenUpdateCenter?: () => void;
   onOpenGraph?: () => void;
   /** AI 侧栏上报的 Token / 工具活动（见 UnifiedAssistantPanel） */
   assistantChrome?: AssistantChromeSnapshot | null;
@@ -72,6 +87,9 @@ export const StatusBar = memo(function StatusBar({
   connectivity = null,
   onOpenConnectivitySettings,
   onOpenManagementCenter,
+  appUpdateStatus = "idle",
+  appUpdateInfo = null,
+  onOpenUpdateCenter,
   onOpenGraph,
   assistantChrome = null,
   linkSummary = null,
@@ -85,6 +103,18 @@ export const StatusBar = memo(function StatusBar({
   const safeStatusLine =
     rawStatusLine && isClassifiedStatusLine(rawStatusLine) ? "" : rawStatusLine;
   const statusTitle = [safeStatusLine].filter(Boolean).join(" · ") || undefined;
+  const showUpdateHint =
+    onOpenUpdateCenter &&
+    appUpdateInfo &&
+    (appUpdateStatus === "available" ||
+      appUpdateStatus === "downloaded" ||
+      appUpdateStatus === "ready_to_install");
+  const updateLabel =
+    appUpdateStatus === "ready_to_install"
+      ? "更新待安装"
+      : appUpdateStatus === "downloaded"
+        ? "更新已下载"
+        : `发现 ${appUpdateInfo?.version}`;
 
   return (
     <footer
@@ -183,6 +213,26 @@ export const StatusBar = memo(function StatusBar({
         </>
       ) : null}
       <div className="ml-auto flex min-w-0 shrink-0 items-center gap-3">
+        {showUpdateHint ? (
+          <>
+            <button
+              type="button"
+              data-testid="status-bar-update-available"
+              title="查看 Iris 更新"
+              className="iris-focus-soft inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm border border-[hsl(var(--status-llm-ready)/0.45)] bg-[hsl(var(--status-llm-ready)/0.10)] px-2 text-[11px] text-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-[hsl(var(--status-llm-ready)/0.16)] focus:outline-none active:scale-[0.98]"
+              onClick={onOpenUpdateCenter}
+            >
+              <DownloadCloud className="h-3.5 w-3.5" />
+              <span>{updateLabel}</span>
+            </button>
+            <span
+              className="hidden shrink-0 text-muted-foreground/60 sm:inline"
+              aria-hidden
+            >
+              ·
+            </span>
+          </>
+        ) : null}
         {onOpenManagementCenter ? (
           <>
             <button

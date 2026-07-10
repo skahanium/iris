@@ -1,6 +1,6 @@
 [package]
 name = "iris"
-version = "1.2.6"
+version = "1.2.7"
 description = "Local-first AI-native Markdown notes"
 authors = ["Iris Contributors"]
 license = "AGPL-3.0"
@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"

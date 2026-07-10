@@ -117,6 +117,53 @@ export interface CredentialStatus {
   checkedAt: string;
 }
 
+export type AppUpdateStatus =
+  | "idle"
+  | "checking"
+  | "up_to_date"
+  | "available"
+  | "downloading"
+  | "downloaded"
+  | "ready_to_install"
+  | "unsupported"
+  | "error";
+
+export interface AppUpdateInfo {
+  currentVersion: string;
+  version: string;
+  pubDate?: string | null;
+  notes?: string | null;
+  downloaded: boolean;
+  preflightPassed: boolean;
+}
+
+export interface AppUpdateStateEvent {
+  status: AppUpdateStatus;
+  info?: AppUpdateInfo | null;
+  message?: string | null;
+}
+
+export type AppUpdatePreflightCheckStatus = "passed" | "failed" | "warning";
+
+export interface AppUpdatePreflightCheck {
+  id: string;
+  label: string;
+  status: AppUpdatePreflightCheckStatus;
+  message: string;
+}
+
+export interface AppUpdatePreflightResult {
+  ok: boolean;
+  checks: AppUpdatePreflightCheck[];
+}
+
+export interface AppUpdateProgressEvent {
+  phase: "started" | "progress" | "finished";
+  chunkLength: number;
+  contentLength?: number | null;
+  downloaded: number;
+}
+
 export type AppExitResult = void;
 
 export interface KeywordHit {

@@ -45,16 +45,16 @@ emits descriptive text.
 
 Each packet producer has a concrete remediation route:
 
-| Producer | Required evidence source |
-| --- | --- |
-| FTS | Resolve the matching `files` row to the selected `chunks` row; use its `content_hash`, `source_start`, `source_end`, heading and source excerpt. |
-| Metadata aliases/tags | Resolve the matching file to a concrete chunk before constructing the packet; aliases and tags are a retrieval reason, never an evidence excerpt. |
-| Graph | Expand a linked file, then retrieve a real target chunk from that file; do not use a `linked via` sentence as evidence. |
-| Vector chunks | Preserve the chunk's stored `content_hash` and source offsets when turning the vector hit into a packet. |
+| Producer                   | Required evidence source                                                                                                                                 |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FTS                        | Resolve the matching `files` row to the selected `chunks` row; use its `content_hash`, `source_start`, `source_end`, heading and source excerpt.         |
+| Metadata aliases/tags      | Resolve the matching file to a concrete chunk before constructing the packet; aliases and tags are a retrieval reason, never an evidence excerpt.        |
+| Graph                      | Expand a linked file, then retrieve a real target chunk from that file; do not use a `linked via` sentence as evidence.                                  |
+| Vector chunks              | Preserve the chunk's stored `content_hash` and source offsets when turning the vector hit into a packet.                                                 |
 | Vector anchors/regulations | Store/recover the canonical source text and stable offsets (or resolve the cited backing note); do not synthesize a citation from vector metadata alone. |
-| Exact regulation | Attach the canonical regulation source hash and article span that produced the exact match. |
-| Templates | Hash the immutable template text and return its actual source span. |
-| Runtime overlay | Hash the current in-memory document content and calculate UTF-8-safe offsets into that snapshot; mark it transient but still cite it. |
+| Exact regulation           | Attach the canonical regulation source hash and article span that produced the exact match.                                                              |
+| Templates                  | Hash the immutable template text and return its actual source span.                                                                                      |
+| Runtime overlay            | Hash the current in-memory document content and calculate UTF-8-safe offsets into that snapshot; mark it transient but still cite it.                    |
 
 ## Baseline policy
 

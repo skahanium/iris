@@ -86,7 +86,8 @@ fn rebuild_marks_v2_ready_only_after_complete_512_dimensional_coverage() {
     let embedding = vec![0.5_f32; EMBEDDING_DIMENSION];
     let batcher = ScriptedBatcher::new(vec![Ok(vec![embedding.clone(), embedding])]);
 
-    let rebuilt = rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect("rebuild v2 embeddings");
+    let rebuilt =
+        rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect("rebuild v2 embeddings");
 
     assert_eq!(rebuilt, 2);
     let state = generation_state(&conn);
@@ -130,7 +131,8 @@ fn rebuild_with_invalid_dimension_never_activates_v2() {
     seed_chunks(&conn, 1);
     let batcher = ScriptedBatcher::new(vec![Ok(vec![vec![0.5_f32; EMBEDDING_DIMENSION - 1]])]);
 
-    let error = rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect_err("invalid vectors must fail");
+    let error = rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {})
+        .expect_err("invalid vectors must fail");
 
     assert!(matches!(error, AppError::Embed(_)));
     let state = generation_state(&conn);
@@ -156,8 +158,8 @@ fn rebuild_failure_persists_only_sanitized_error_summary() {
         "failed on /private/vault/secret.md with sk-very-secret-token".into(),
     ))]);
 
-    let _ =
-        rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect_err("backend failure must propagate");
+    let _ = rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {})
+        .expect_err("backend failure must propagate");
 
     let state = generation_state(&conn);
     assert_eq!(state.1, "failed");

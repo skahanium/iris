@@ -14,6 +14,8 @@ export const IPC_EVENTS = {
   AI_REQUEST_STARTED: "ai:request_started",
   RESEARCH_PROGRESS: "ai:research_progress",
   EMBEDDING_INDEX_PROGRESS: "embedding-index-progress",
+  APP_UPDATE_STATUS: "app-update:status",
+  APP_UPDATE_PROGRESS: "app-update:progress",
 } as const;
 
 export type IpcEventName = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS];

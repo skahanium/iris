@@ -1,4 +1,5 @@
 pub mod ai_commands;
+pub mod app_update;
 pub mod assistant_commands;
 pub mod citation_commands;
 pub mod classified;

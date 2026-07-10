@@ -43,14 +43,33 @@ jobs:
 
       - name: Verify or prepare embedded BGE model
         run: npm run model:prepare
+
+      - name: Verify Tauri updater signing secrets
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            Write-Error "Missing TAURI_SIGNING_PRIVATE_KEY. Configure the Tauri updater private key in GitHub Secrets before packaging desktop releases."
+          }
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
+            Write-Error "Missing TAURI_SIGNING_PRIVATE_KEY_PASSWORD. Configure the Tauri updater private key password in GitHub Secrets before packaging desktop releases."
+          }
+
       - name: Package Windows NSIS installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run package:local:win
 
-      - name: Upload Windows installer
+      - name: Upload Windows installer and updater signature
         uses: actions/upload-artifact@v6
         with:
           name: iris-windows-x64-nsis
-          path: .iris-dev/target/release/bundle/nsis/*setup.exe
+          path: |
+            .iris-dev/target/release/bundle/nsis/*setup.exe
+            .iris-dev/target/release/bundle/nsis/*setup.exe.sig
           if-no-files-found: error
           retention-days: 14
 
@@ -83,14 +102,36 @@ jobs:
 
       - name: Verify or prepare embedded BGE model
         run: npm run model:prepare
+
+      - name: Verify Tauri updater signing secrets
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY. Configure the Tauri updater private key in GitHub Secrets before packaging desktop releases."
+            exit 1
+          fi
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]; then
+            echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY_PASSWORD. Configure the Tauri updater private key password in GitHub Secrets before packaging desktop releases."
+            exit 1
+          fi
+
       - name: Package macOS DMG
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/package-local.mjs --no-sqlite-vec mac
 
-      - name: Upload macOS DMG
+      - name: Upload macOS DMG and updater bundle
         uses: actions/upload-artifact@v6
         with:
           name: iris-macos-arm64-dmg
-          path: .iris-dev/target/release/bundle/dmg/*.dmg
+          path: |
+            .iris-dev/target/release/bundle/dmg/*.dmg
+            .iris-dev/target/release/bundle/macos/*.app.tar.gz
+            .iris-dev/target/release/bundle/macos/*.app.tar.gz.sig
           if-no-files-found: error
           retention-days: 14
 
@@ -104,6 +145,14 @@ jobs:
       contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
       - name: Download Windows installer artifact
         uses: actions/download-artifact@v7
         with:
@@ -116,12 +165,28 @@ jobs:
           name: iris-macos-arm64-dmg
           path: release-assets/macos
 
+      - name: Build Tauri updater latest.json
+        shell: bash
+        run: |
+          node scripts/build-updater-manifest.mjs \
+            --version "$GITHUB_REF_NAME" \
+            --asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
+            --assets-dir release-assets \
+            --out release-assets/latest.json
+
       - name: Create or update draft release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          assets=(release-assets/windows/*setup.exe release-assets/macos/*.dmg)
+          assets=(
+            release-assets/windows/*setup.exe
+            release-assets/windows/*setup.exe.sig
+            release-assets/macos/*.dmg
+            release-assets/macos/*.app.tar.gz
+            release-assets/macos/*.app.tar.gz.sig
+            release-assets/latest.json
+          )
 
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             is_draft="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
@@ -130,7 +195,7 @@ jobs:
               exit 1
             fi
 
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
           fi

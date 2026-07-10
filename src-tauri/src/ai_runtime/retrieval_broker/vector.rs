@@ -160,7 +160,7 @@ fn search_structured_vectors(
         }
         packets.push(ContextPacket {
             id: format!("{kind}-{id}"),
-            source_type: source_type.clone(),
+            source_type,
             source_path: Some(path),
             title,
             heading_path,
@@ -173,7 +173,7 @@ fn search_structured_vectors(
             retrieval_reason: format!("vector_{kind}"),
             score: (engine::cosine_similarity(&query_embedding, &embedding) as f64
                 * confidence.clamp(0.0, 1.0)),
-            trust_level: trust_level.clone(),
+            trust_level,
             citation_label: format!("[V{id}]"),
             stale: false,
             web: None,

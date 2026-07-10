@@ -1,6 +1,6 @@
 # Iris 文档索引
 
-**v1.2.6** 为当前开发版本。版本排期只由 [ROADMAP.md](../ROADMAP.md) 维护；历史计划、过期审计和已替代规格请通过 git 历史查阅。
+**v1.2.7** 为当前开发版本。版本排期只由 [ROADMAP.md](../ROADMAP.md) 维护；历史计划、过期审计和已替代规格请通过 git 历史查阅。
 
 ## 核心文档
 
@@ -15,17 +15,20 @@
 
 ## 专题文档
 
-| 主题                                | 文档                                                                   |
-| ----------------------------------- | ---------------------------------------------------------------------- |
-| UI token、组件与人工验收            | [design-system.md](./design-system.md)                                 |
-| IPC 契约与变更流程                  | [ipc-api-reference.md](./ipc-api-reference.md)                         |
-| LLM 配置、连通性和联网证据          | [llm-routing.md](./llm-routing.md)                                     |
-| Markdown 导出                       | [markdown-export.md](./markdown-export.md)                             |
-| 语义/混合检索评测                   | [eval/semantic-search.md](./eval/semantic-search.md)                   |
-| v1.2.6 RAG 正式设计                 | [specs/v1.2.6-rag-optimization.md](./specs/v1.2.6-rag-optimization.md) |
-| 关闭、文档打开和 Iris Rail 手工验收 | [testing/](./testing/)                                                 |
-| 性能排查                            | [ops/performance-guide.md](./ops/performance-guide.md)                 |
-| 品牌规范                            | [design-system/brand.md](./design-system/brand.md)                     |
+| 主题                                | 文档                                                   |
+| ----------------------------------- | ------------------------------------------------------ |
+| UI token、组件与人工验收            | [design-system.md](./design-system.md)                 |
+| IPC 契约与变更流程                  | [ipc-api-reference.md](./ipc-api-reference.md)         |
+| LLM 配置、连通性和联网证据          | [llm-routing.md](./llm-routing.md)                     |
+| Markdown 导出                       | [markdown-export.md](./markdown-export.md)             |
+| 语义/混合检索评测                   | [eval/semantic-search.md](./eval/semantic-search.md)   |
+| 关闭、文档打开和 Iris Rail 手工验收 | [testing/](./testing/)                                 |
+| 性能排查                            | [ops/performance-guide.md](./ops/performance-guide.md) |
+| 品牌规范                            | [design-system/brand.md](./design-system/brand.md)     |
+
+历史 TaskPlan 设计材料已从当前工作树移出，必要时通过 git 历史查阅：
+`2026-06-21-agent-harness-taskplan-blueprint-design.md`、
+`2026-06-21-agent-harness-taskplan-blueprint.md`。
 
 ## 维护规则
 

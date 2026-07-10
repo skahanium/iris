@@ -112,3 +112,5 @@ $RECYCLE.BIN/
 # --- Build / eval caches ---
 .cargo-target/
 docs/eval/results/
+!docs/eval/results/
+!docs/eval/results/v1.2.5-hybrid.json

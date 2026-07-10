@@ -6,7 +6,7 @@ use tauri::{Emitter, State};
 use crate::app::AppState;
 use crate::embedding::engine::{semantic_search, SemanticHit};
 use crate::embedding::rebuild::{
-    embedding_index_status, rebuild_v2_embeddings_with, EmbeddingIndexStatus, BgeEmbeddingBatcher,
+    embedding_index_status, rebuild_v2_embeddings_with, BgeEmbeddingBatcher, EmbeddingIndexStatus,
 };
 use crate::error::AppResult;
 use crate::indexer::scan::{index_vault_incremental, IndexEmbeddingMode};

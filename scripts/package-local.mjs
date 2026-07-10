@@ -14,8 +14,10 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const bundleRoot = path.join(root, ".iris-dev", "target", "release", "bundle");
 const appPath = path.join(bundleRoot, "macos", "Iris.app");
+const updaterSigningEnabled = Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY);
 const embeddedModelTauriConfig = JSON.stringify({
   bundle: {
+    createUpdaterArtifacts: updaterSigningEnabled,
     resources: {
       "../.iris-dev/models/bge-small-zh-v1.5": "models/bge-small-zh-v1.5",
     },

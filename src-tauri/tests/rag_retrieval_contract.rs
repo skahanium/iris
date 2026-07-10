@@ -13,6 +13,23 @@ fn migrated_memory_connection() -> Connection {
     conn
 }
 
+fn insert_chunk_for_path(conn: &Connection, path: &str, content: &str) {
+    conn.execute(
+        "INSERT INTO chunks
+         (file_id, chunk_index, content, heading_path, source_start, source_end, content_hash)
+         SELECT id, 0, ?2, 'Evidence', 0, ?3, ?4
+         FROM files
+         WHERE path = ?1",
+        rusqlite::params![
+            path,
+            content,
+            content.len() as i64,
+            format!("chunk-hash-{path}")
+        ],
+    )
+    .expect("insert citable chunk");
+}
+
 #[test]
 fn semantic_search_empty_index_returns_empty_without_query_embedding() {
     let conn = migrated_memory_connection();
@@ -99,6 +116,7 @@ fn scope_is_applied_before_top_k_selection() {
             rusqlite::params![path, title],
         )
         .expect("insert fts row");
+        insert_chunk_for_path(&conn, path, "alpha evidence");
     }
 
     let request = RetrievalRequest {
@@ -173,6 +191,7 @@ fn metadata_alias_retrieval_returns_note_without_polluting_body_fts() {
         [],
     )
     .expect("insert metadata fts");
+    insert_chunk_for_path(&conn, "notes/project.md", "Project summary evidence");
 
     let request = RetrievalRequest {
         query: "Phoenix".into(),

@@ -6,10 +6,10 @@ const repoRoot = process.cwd();
 const scriptPath = path.join(repoRoot, "scripts", "docs-facts-check.mjs");
 
 function runDocsCheck(args: string[] = []) {
-	  const result = spawnSync("node", [scriptPath, ...args], {
-	    cwd: repoRoot,
-	    encoding: "utf8",
-	  });
+  const result = spawnSync("node", [scriptPath, ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
   return {
     exitCode: result.status ?? 1,
     stdout: result.stdout ?? "",
