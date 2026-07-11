@@ -98,7 +98,8 @@ describe("GitHub Actions workflows", () => {
     const workflow = readWorkflow(".github/workflows/ci.yml");
 
     expect(workflow).toContain("pull_request:");
-    expect(workflow).toContain("branches: [main]");
+    expect(workflow).toContain("workflow_dispatch:");
+    expect(workflow).not.toContain("branches: [main]");
     expect(workflow).toContain("npm ci");
     expect(workflow).toContain("npm run version:check");
     expect(workflow).toContain("npm run format:check");

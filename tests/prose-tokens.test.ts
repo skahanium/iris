@@ -20,7 +20,10 @@ describe("prose polish v2 tokens", () => {
     expect(markdownProse).toContain("--prose-letter-spacing: 0");
     expect(markdownProse).not.toContain("--prose-spacer-ratio");
     expect(markdownProse).not.toContain("letter-spacing: -");
-    expect(markdownProse).not.toContain("text-align: justify");
+    expect(markdownProse).toContain("text-align: justify");
+    expect(markdownProse).toContain("text-justify: inter-character");
+    expect(markdownProse).toContain("line-break: loose");
+    expect(markdownProse).not.toContain("text-align-last: justify");
     expect(markdownProse).not.toContain("text-justify: inter-ideograph");
   });
 

@@ -189,7 +189,11 @@
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > blockquote {
-    text-align: left;
+    overflow-wrap: break-word;
+    word-break: normal;
+    line-break: loose;
+    text-align: justify;
+    text-justify: inter-character;
   }
 
   .iris-editor-body
