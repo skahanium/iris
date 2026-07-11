@@ -98,6 +98,7 @@ $RECYCLE.BIN/
 
 # --- Agent local state ---
 .worktrees/
+website/
 .cursor/
 .agent/
 .claude/
