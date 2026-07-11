@@ -48,7 +48,7 @@ use crate::ai_runtime::tool_fallback::{
     should_retry_tool_parse, strip_tool_markup_from_visible,
 };
 use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext};
-use crate::ai_runtime::ToolCallResult;
+use crate::ai_runtime::{ContextPacket, ToolCallResult};
 use crate::ai_types::{ReasoningVisibility, ResolvedReasoningRequest};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -118,8 +118,70 @@ fn build_final_answer_messages(messages: &[LlmMessage]) -> Vec<LlmMessage> {
     final_messages
 }
 
+fn compact_one_line(value: &str, max_chars: usize) -> String {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+    let mut clipped = normalized.chars().take(max_chars).collect::<String>();
+    clipped.push_str("...");
+    clipped
+}
+
+fn web_evidence_fallback_from_packets(packets: &[ContextPacket]) -> Option<String> {
+    let lines = packets
+        .iter()
+        .filter(|packet| {
+            packet.web.is_some() || matches!(packet.source_type, crate::ai_runtime::SourceType::Web)
+        })
+        .take(4)
+        .filter_map(|packet| {
+            let title = compact_one_line(&packet.title, 80);
+            let excerpt = compact_one_line(&packet.excerpt, 160);
+            let source = packet
+                .web
+                .as_ref()
+                .and_then(|meta| meta.url.as_deref())
+                .or(packet.source_path.as_deref())
+                .or_else(|| packet.web.as_ref().and_then(|meta| meta.domain.as_deref()))
+                .map(|value| compact_one_line(value, 100))
+                .unwrap_or_default();
+            let citation = packet.citation_label.trim();
+
+            if title.is_empty() && excerpt.is_empty() {
+                return None;
+            }
+
+            let label = if citation.is_empty() {
+                String::new()
+            } else {
+                format!("{citation} ")
+            };
+            let source_suffix = if source.is_empty() {
+                String::new()
+            } else {
+                format!("（{source}）")
+            };
+            let summary = if excerpt.is_empty() {
+                title
+            } else if title.is_empty() {
+                excerpt
+            } else {
+                format!("{title}：{excerpt}")
+            };
+            Some(format!("- {label}{summary}{source_suffix}"))
+        })
+        .collect::<Vec<_>>();
+
+    if lines.is_empty() {
+        return None;
+    }
+    Some(format!("以下基于检索结果摘要：\n\n{}", lines.join("\n")))
+}
+
 fn classify_final_answer(
     sanitized_final: Option<String>,
+    evidence_fallback: Option<String>,
     total_tokens: u32,
     token_budget: u32,
     harness_rounds: u32,
@@ -142,6 +204,14 @@ fn classify_final_answer(
             content: FINAL_BUDGET_FALLBACK.into(),
             finish_reason: HarnessFinishReason::BudgetExhausted,
             save_checkpoint: true,
+        };
+    }
+
+    if let Some(fallback) = evidence_fallback.filter(|content| !content.trim().is_empty()) {
+        return FinalAnswerDecision {
+            content: fallback,
+            finish_reason: HarnessFinishReason::Completed,
+            save_checkpoint: false,
         };
     }
 
@@ -1508,14 +1578,16 @@ async fn run_harness_inner(
             "AI lifecycle rejected non-user-visible final content"
         );
     }
+    let evidence_packets = ledger_to_packets(&evidence_ledger, token_budget);
+    let evidence_fallback = web_evidence_fallback_from_packets(&evidence_packets);
     let decision = classify_final_answer(
         sanitized_final,
+        evidence_fallback,
         total_usage.total_tokens,
         token_budget,
         harness_rounds,
         max_rounds,
     );
-    let evidence_packets = ledger_to_packets(&evidence_ledger, token_budget);
 
     if decision.save_checkpoint {
         save_round_checkpoint(
@@ -2250,7 +2322,7 @@ mod tests {
 
     #[test]
     fn round_limit_without_budget_exhaustion_completes_with_fallback() {
-        let decision = classify_final_answer(None, 99, 100, 3, 3);
+        let decision = classify_final_answer(None, None, 99, 100, 3, 3);
 
         assert_eq!(decision.finish_reason, HarnessFinishReason::Completed);
         assert!(!decision.save_checkpoint);
@@ -2260,10 +2332,69 @@ mod tests {
 
     #[test]
     fn budget_exhaustion_still_pauses_for_recovery() {
-        let decision = classify_final_answer(None, 100, 100, 1, 3);
+        let decision = classify_final_answer(None, None, 100, 100, 1, 3);
 
         assert_eq!(decision.finish_reason, HarnessFinishReason::BudgetExhausted);
         assert!(decision.save_checkpoint);
+    }
+
+    #[test]
+    fn empty_final_answer_uses_web_evidence_fallback_before_round_fallback() {
+        let fallback = "以下基于检索结果摘要：\n\n- 来源 1：Example News - 摘要".to_string();
+        let decision = classify_final_answer(None, Some(fallback.clone()), 99, 100, 3, 3);
+
+        assert_eq!(decision.finish_reason, HarnessFinishReason::Completed);
+        assert_eq!(decision.content, fallback);
+        assert!(!decision.content.contains(FINAL_ROUND_FALLBACK));
+        assert!(!decision.save_checkpoint);
+    }
+
+    #[test]
+    fn web_evidence_fallback_summarizes_titles_excerpts_and_sources() {
+        use crate::ai_runtime::{
+            ContextPacket, SourceType, TrustLevel, WebEvidenceMeta, WebSearchBackend, WebSourceRank,
+        };
+
+        let packet = ContextPacket {
+            id: "web-1".into(),
+            source_type: SourceType::Web,
+            source_path: Some("https://example.com/news".into()),
+            title: "Example News".into(),
+            heading_path: None,
+            source_span: None,
+            content_hash: "hash".into(),
+            excerpt: "This is the search result summary.".into(),
+            retrieval_reason: "web prefetch".into(),
+            score: 0.9,
+            trust_level: TrustLevel::ExternalWeb,
+            citation_label: "[C1]".into(),
+            stale: false,
+            web: Some(WebEvidenceMeta {
+                url: Some("https://example.com/news".into()),
+                domain: Some("example.com".into()),
+                published_at: None,
+                fetched_at: "2026-07-11T00:00:00Z".into(),
+                search_backend: WebSearchBackend::Provider,
+                source_rank: WebSourceRank::Media,
+                provider_id: None,
+                provider_kind: None,
+                raw_result_hash: None,
+                extraction_method: None,
+                conflict_group: None,
+                conflict_note: None,
+                failure_reason: None,
+                fallback_from: None,
+            }),
+            corpus: None,
+        };
+
+        let fallback =
+            web_evidence_fallback_from_packets(&[packet]).expect("web evidence fallback");
+
+        assert!(fallback.starts_with("以下基于检索结果摘要："));
+        assert!(fallback.contains("[C1] Example News"));
+        assert!(fallback.contains("This is the search result summary."));
+        assert!(fallback.contains("https://example.com/news"));
     }
 
     #[test]
@@ -2273,7 +2404,7 @@ mod tests {
             r#"{"path":"党纪国法/政府采购货物和服务招标投标管理办法.md","max_chars":15000}"#,
             "max_chars=15000 path=党纪国法/政府采购货物和服务招标投标管理办法.md",
         ] {
-            let decision = classify_final_answer(Some(artifact.to_string()), 10, 100, 1, 3);
+            let decision = classify_final_answer(Some(artifact.to_string()), None, 10, 100, 1, 3);
 
             assert_eq!(decision.finish_reason, HarnessFinishReason::Completed);
             assert_eq!(decision.content, FINAL_EMPTY_FALLBACK);
@@ -2284,7 +2415,7 @@ mod tests {
     #[test]
     fn final_answer_keeps_normal_legal_analysis() {
         let answer = "根据《政府采购货物和服务招标投标管理办法》，邀请招标应当符合特定适用条件。";
-        let decision = classify_final_answer(Some(answer.to_string()), 10, 100, 1, 3);
+        let decision = classify_final_answer(Some(answer.to_string()), None, 10, 100, 1, 3);
 
         assert_eq!(decision.finish_reason, HarnessFinishReason::Completed);
         assert_eq!(decision.content, answer);

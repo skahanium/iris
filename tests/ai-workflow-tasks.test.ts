@@ -87,6 +87,25 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(plan.sourceHints).toContain("web:fresh_required");
   });
 
+  it("routes simple current-news questions to lightweight web answers", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "特朗普最近有什么新闻？",
+      hasImage: false,
+      hasSelection: false,
+      notePath: null,
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("chat");
+    expect(plan.webMode).toBe("brokered");
+    expect(plan.executionMode).toBe("direct_answer");
+    expect(plan.evidenceNeed).toBe("fresh_web");
+    expect(plan.artifactPlan).toEqual([]);
+    expect(plan.sourceHints).toContain("web:fresh_required");
+  });
+
   it("does not treat the web toggle alone as a research command", () => {
     const plan = buildAssistantTaskPlan({
       message: "这个概念是什么意思？",

@@ -636,6 +636,20 @@ fn should_start_web_prefetch(
         && web_prefetch_allowed(task_policy, scene, web_search_enabled)
 }
 
+fn should_use_lightweight_web_answer(
+    message: &str,
+    selected_packet_ids: Option<&[String]>,
+    task_policy: &AgentTaskPolicy,
+    web_search_enabled: bool,
+) -> bool {
+    let has_selected_packets = selected_packet_ids.is_some_and(|ids| !ids.is_empty());
+    !has_selected_packets
+        && web_search_enabled
+        && task_policy.web_authorized
+        && matches!(task_policy.intent, AgentIntent::Chat)
+        && should_prefetch_web(message)
+}
+
 async fn prefetch_web_context_packets(
     state: &Arc<AppState>,
     message: &str,
@@ -1434,6 +1448,12 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         .collect::<Vec<_>>();
     let provider_config = resolved.to_provider_config_for_slot(route_slot);
     let provider_name = provider_config.name.clone();
+    let lightweight_web_answer = should_use_lightweight_web_answer(
+        &message,
+        selected_packet_ids.as_deref(),
+        &task_policy,
+        web_search,
+    );
     if let Err(err) = AgentTaskRuntime::update_budget_policy(
         &state.db,
         &task_id,
@@ -1464,17 +1484,29 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             cold_start_packets: filtered_packets.clone(),
             context_scope: user_scope.clone(),
             runtime_documents: runtime_documents.clone(),
-            web_search_enabled: web_search,
+            web_search_enabled: if lightweight_web_answer {
+                false
+            } else {
+                web_search
+            },
             user_message: message.clone(),
             images,
             history_messages,
             structured_history_messages,
-            allowed_tools: None,
+            allowed_tools: if lightweight_web_answer {
+                Some(Vec::new())
+            } else {
+                None
+            },
             depth: 0,
             resume_from_checkpoint: false,
             token_budget: None,
             input_budget: Some(resolved.input_budget.min(u32::MAX as usize) as u32),
-            max_rounds_override: None,
+            max_rounds_override: if lightweight_web_answer {
+                Some(1)
+            } else {
+                None
+            },
             skill_activation_plan,
             task_policy: task_policy.clone(),
             provider_failover_candidates,
@@ -3341,7 +3373,7 @@ mod tests {
     use super::{
         compact_cold_start_packets_for_budget, finalize_chat_harness_run,
         parse_confirmed_tool_args, partial_tool_confirm_response, reasoning_route_diagnostics,
-        should_prefetch_web, validate_ai_note_path,
+        should_prefetch_web, should_use_lightweight_web_answer, validate_ai_note_path,
     };
 
     #[test]
@@ -3462,6 +3494,53 @@ mod tests {
         assert!(!should_prefetch_web("what is today's date"));
         assert!(!should_prefetch_web(
             "compare Rust and TypeScript for desktop apps"
+        ));
+    }
+
+    #[test]
+    fn simple_current_news_chat_uses_lightweight_web_answer_path() {
+        use crate::ai_runtime::agent_task::AgentTaskKind;
+        use crate::ai_runtime::agent_task_policy::{
+            AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope,
+        };
+        use crate::ai_runtime::AgentIntent;
+
+        let chat_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent: AgentIntent::Chat,
+            task_kind: AgentTaskKind::Lightweight,
+            scope: AgentTaskScope::Vault,
+            web_authorized: true,
+            has_attachments: false,
+            write_permission_required: false,
+            research_depth: 0,
+        });
+        let research_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent: AgentIntent::Research,
+            task_kind: AgentTaskKind::Complex,
+            scope: AgentTaskScope::Vault,
+            web_authorized: true,
+            has_attachments: false,
+            write_permission_required: false,
+            research_depth: 2,
+        });
+
+        assert!(should_use_lightweight_web_answer(
+            "特朗普最近有什么新闻？",
+            None,
+            &chat_policy,
+            true,
+        ));
+        assert!(!should_use_lightweight_web_answer(
+            "特朗普最近有什么新闻？",
+            None,
+            &research_policy,
+            true,
+        ));
+        assert!(!should_use_lightweight_web_answer(
+            "特朗普最近有什么新闻？",
+            Some(&["packet-1".to_string()]),
+            &chat_policy,
+            true,
         ));
     }
 

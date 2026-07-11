@@ -200,4 +200,23 @@ describe("AI hang/stuck root-cause fixes contract", () => {
       expect(run).toContain("Some(result.duration_ms)");
     });
   });
+
+  describe("Fix 11: simple fresh web chat avoids the full agent loop", () => {
+    it("backend clamps simple fresh web chat to a one-shot no-tool harness path", () => {
+      const s = read("src-tauri/src/commands/ai_commands.rs");
+
+      expect(s).toContain("should_use_lightweight_web_answer");
+      expect(s).toContain("allowed_tools: if lightweight_web_answer");
+      expect(s).toContain("max_rounds_override: if lightweight_web_answer");
+      expect(s).toContain("web_search_enabled: if lightweight_web_answer");
+    });
+
+    it("empty final answers can fall back to already fetched web evidence", () => {
+      const s = read("src-tauri/src/ai_harness/harness/run.rs");
+
+      expect(s).toContain("web_evidence_fallback_from_packets");
+      expect(s).toContain("以下基于检索结果摘要");
+      expect(s).toContain("evidence_fallback");
+    });
+  });
 });
