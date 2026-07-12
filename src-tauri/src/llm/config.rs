@@ -719,15 +719,27 @@ pub fn resolve_capability_route(
     db: &Database,
     input: CapabilityRouteInput,
 ) -> AppResult<ResolvedCapabilityRoute> {
+    let mut route = resolve_capability_route_without_secret(db, input)?;
+    hydrate_resolved_api_key(db, &mut route.resolved)?;
+    Ok(route)
+}
+
+/// Resolve an ordered capability route without reading any provider credential.
+///
+/// The caller must hydrate only the candidate it is about to dispatch through
+/// the Provider Router. Legacy callers should continue using
+/// [`resolve_capability_route`] until they have migrated their dispatch path.
+pub fn resolve_capability_route_without_secret(
+    db: &Database,
+    input: CapabilityRouteInput,
+) -> AppResult<ResolvedCapabilityRoute> {
     let routing = load(db)?;
     model_registry::clear_invalid_vision_validations(db)?;
     let registry = model_registry::entries_from_builtin_and_routing(
         &routing,
         model_registry::list_registry_entries(db)?,
     );
-    let mut route = resolve_capability_route_with_registry(&routing, input, &registry)?;
-    hydrate_resolved_api_key(db, &mut route.resolved)?;
-    Ok(route)
+    resolve_capability_route_with_registry(&routing, input, &registry)
 }
 
 #[cfg(test)]
@@ -1672,6 +1684,60 @@ mod tests {
         assert_eq!(route.resolved.model, "deepseek-v4-flash");
         assert_eq!(route.failover_candidates.len(), 1);
         assert_eq!(route.failover_candidates[0].model, "deepseek-v4-pro");
+    }
+
+    #[test]
+    fn secret_free_capability_route_never_hydrates_primary_or_failover_credentials() {
+        let db = Database::open_in_memory().expect("mem db");
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("deepseek-v4-flash".into()),
+                enabled_models: Some(vec!["deepseek-v4-flash".into(), "deepseek-v4-pro".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "fast".into(),
+            SlotRoute {
+                provider_id: "deepseek".into(),
+                model: "deepseek-v4-flash".into(),
+                thinking: false,
+                reasoning: None,
+            },
+        );
+        routing.slot_failover.insert(
+            "fast".into(),
+            vec![SlotRoute {
+                provider_id: "deepseek".into(),
+                model: "deepseek-v4-pro".into(),
+                thinking: false,
+                reasoning: None,
+            }],
+        );
+        save(&db, &routing).expect("save routing");
+
+        let route = resolve_capability_route_without_secret(
+            &db,
+            CapabilityRouteInput {
+                intent: AgentIntent::Chat,
+                context_tokens: 1_000,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: false,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+        )
+        .expect("secret-free route");
+
+        assert!(route.resolved.api_key.is_none());
+        assert!(route
+            .failover_candidates
+            .iter()
+            .all(|candidate| candidate.api_key.is_none()));
     }
     #[test]
     fn connectivity_status_accepts_live_validated_custom_text_model() {

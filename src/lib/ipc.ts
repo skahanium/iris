@@ -10,6 +10,12 @@ import type {
   AssembledContext,
   AssistantExecuteRequest,
   AssistantExecuteResponse,
+  AssistantRunAccepted,
+  AssistantRunControlRequest,
+  AssistantRunEvent,
+  AssistantRunGetRequest,
+  AssistantRunGetResponse,
+  AssistantRunStartRequest,
   ChapterInfo,
   ChapterWritingExecuteResult,
   CitationCheckResult,
@@ -21,6 +27,16 @@ import type {
   ResearchProgressEvent,
   ToolAccessLevel,
   WritingExecuteResult,
+} from "@/types/ai";
+
+// Phase 1 exposes the shared Run DTOs without connecting a production invoke path.
+export type {
+  AssistantRunAccepted,
+  AssistantRunControlRequest,
+  AssistantRunEvent,
+  AssistantRunGetRequest,
+  AssistantRunGetResponse,
+  AssistantRunStartRequest,
 } from "@/types/ai";
 import type {
   AiCacheClearResult,
@@ -661,6 +677,15 @@ export async function listenLlmToken(
   return listen<LlmTokenEvent>(IPC_EVENTS.LLM_TOKEN, (e) => handler(e.payload));
 }
 
+/** 订阅统一 Run 的已持久化事件；缺口由 assistantRunGet 回放。 */
+export async function listenAssistantRunEvent(
+  handler: (event: AssistantRunEvent) => void,
+): Promise<() => void> {
+  return listen<AssistantRunEvent>(IPC_EVENTS.ASSISTANT_RUN_EVENT, (event) =>
+    handler(event.payload),
+  );
+}
+
 export async function listenLlmDone(
   handler: (payload: import("@/types/ipc").LlmDoneEvent) => void,
 ): Promise<() => void> {
@@ -1130,6 +1155,25 @@ export async function assistantExecute(
   request: AssistantExecuteRequest,
 ): Promise<AssistantExecuteResponse> {
   return invoke<AssistantExecuteResponse>("assistant_execute", { request });
+}
+
+/** Phase 4 开发期统一 Run 入口；生产面板切换留待阶段 8。 */
+export async function assistantRunStart(
+  request: AssistantRunStartRequest,
+): Promise<AssistantRunAccepted> {
+  return invoke<AssistantRunAccepted>("assistant_run_start", { request });
+}
+
+export async function assistantRunControl(
+  request: AssistantRunControlRequest,
+): Promise<void> {
+  return invoke<void>("assistant_run_control", { request });
+}
+
+export async function assistantRunGet(
+  request: AssistantRunGetRequest,
+): Promise<AssistantRunGetResponse | null> {
+  return invoke<AssistantRunGetResponse | null>("assistant_run_get", { request });
 }
 
 export async function aiSendMessage(params: {

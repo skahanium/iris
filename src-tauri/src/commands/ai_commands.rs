@@ -1852,6 +1852,44 @@ fn parse_confirmed_tool_args(
         .map_err(|err| AppError::msg(format!("tool_arguments_parse_error: {err}")))
 }
 
+fn validate_tool_confirmation(
+    pending: &crate::app::PendingToolCall,
+    request_id: &str,
+    decision: &str,
+    modified_args: Option<&serde_json::Value>,
+) -> AppResult<()> {
+    if pending.request_id != request_id {
+        return Err(AppError::msg("tool_confirmation_request_mismatch"));
+    }
+    if modified_args.is_some() || decision == "modify" {
+        return Err(AppError::msg("tool_confirmation_reconfirm_required"));
+    }
+    if !matches!(decision, "approve" | "reject") {
+        return Err(AppError::msg("tool_confirmation_invalid_decision"));
+    }
+    Ok(())
+}
+
+fn take_validated_pending_tool_call(
+    pending_tool_calls: &std::sync::Mutex<
+        std::collections::HashMap<String, crate::app::PendingToolCall>,
+    >,
+    tool_call_id: &str,
+    request_id: &str,
+    decision: &str,
+    modified_args: Option<&serde_json::Value>,
+) -> AppResult<crate::app::PendingToolCall> {
+    let mut pending_tool_calls = crate::llm::safe_lock(pending_tool_calls);
+    let pending = pending_tool_calls
+        .get(tool_call_id)
+        .cloned()
+        .ok_or_else(|| AppError::msg("tool_confirmation_not_pending"))?;
+    validate_tool_confirmation(&pending, request_id, decision, modified_args)?;
+    pending_tool_calls
+        .remove(tool_call_id)
+        .ok_or_else(|| AppError::msg("tool_confirmation_not_pending"))
+}
+
 /// Handle tool confirmation from the user.
 #[tauri::command]
 pub async fn tool_confirm(
@@ -1890,8 +1928,15 @@ pub async fn tool_confirm(
     }
     state.ai.prune_pending_tool_calls();
 
+    let pending = take_validated_pending_tool_call(
+        &state.ai.pending_tool_calls,
+        &tool_call_id,
+        &request_id,
+        &decision,
+        modified_args.as_ref(),
+    )?;
+
     if decision == "reject" {
-        crate::llm::safe_lock(&state.ai.pending_tool_calls).remove(&tool_call_id);
         append_rejected_tool_to_checkpoint(state.inner(), &request_id, &tool_call_id)?;
         let harness_result =
             resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
@@ -1910,14 +1955,7 @@ pub async fn tool_confirm(
         );
     }
 
-    let pending = crate::llm::safe_lock(&state.ai.pending_tool_calls).remove(&tool_call_id);
-    let Some(pending) = pending else {
-        return Err(AppError::msg(format!(
-            "no pending tool call for id: {tool_call_id}"
-        )));
-    };
-
-    let args = parse_confirmed_tool_args(&pending.arguments, modified_args)?;
+    let args = parse_confirmed_tool_args(&pending.arguments, None)?;
 
     dispatch_approved_tool_to_checkpoint(
         state.inner(),
@@ -3373,7 +3411,8 @@ mod tests {
     use super::{
         compact_cold_start_packets_for_budget, finalize_chat_harness_run,
         parse_confirmed_tool_args, partial_tool_confirm_response, reasoning_route_diagnostics,
-        should_prefetch_web, should_use_lightweight_web_answer, validate_ai_note_path,
+        should_prefetch_web, should_use_lightweight_web_answer, take_validated_pending_tool_call,
+        validate_ai_note_path, validate_tool_confirmation,
     };
 
     #[test]
@@ -3638,6 +3677,82 @@ mod tests {
     fn parse_confirmed_tool_args_requires_modified_args_object() {
         let err = parse_confirmed_tool_args("{}", Some(serde_json::json!(["bad"]))).unwrap_err();
         assert!(err.to_string().contains("tool_arguments_parse_error"));
+    }
+
+    #[test]
+    fn confirmation_validation_rejects_wrong_request_and_modified_arguments() {
+        let pending = pending_tool_call();
+        assert_eq!(
+            validate_tool_confirmation(&pending, "other-request", "approve", None)
+                .unwrap_err()
+                .to_string(),
+            "tool_confirmation_request_mismatch"
+        );
+        let modified = serde_json::json!({ "replacement": "changed" });
+        assert_eq!(
+            validate_tool_confirmation(&pending, "owner-request", "modify", Some(&modified),)
+                .unwrap_err()
+                .to_string(),
+            "tool_confirmation_reconfirm_required"
+        );
+    }
+
+    #[test]
+    fn confirmation_take_is_atomic_so_only_one_approval_can_dispatch() {
+        let pending_calls = std::sync::Mutex::new(std::collections::HashMap::from([(
+            "tool-call-1".to_string(),
+            pending_tool_call(),
+        )]));
+
+        let first = take_validated_pending_tool_call(
+            &pending_calls,
+            "tool-call-1",
+            "owner-request",
+            "approve",
+            None,
+        )
+        .expect("first confirmation consumes pending call");
+        assert_eq!(first.tool_name, "replace_selection");
+        assert_eq!(
+            take_validated_pending_tool_call(
+                &pending_calls,
+                "tool-call-1",
+                "owner-request",
+                "approve",
+                None,
+            )
+            .expect_err("second confirmation cannot consume the same call")
+            .to_string(),
+            "tool_confirmation_not_pending"
+        );
+    }
+
+    fn pending_tool_call() -> crate::app::PendingToolCall {
+        crate::app::PendingToolCall {
+            tool_name: "replace_selection".to_string(),
+            arguments: "{}".to_string(),
+            request_id: "owner-request".to_string(),
+            session_id: 42,
+            scene: crate::ai_runtime::AiScene::KnowledgeLookup,
+            note_path: None,
+            file_id: None,
+            web_search_enabled: false,
+            autonomy_level: crate::ai_runtime::AutonomyLevel::L1,
+            task_policy: crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+                crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+                    intent: crate::ai_runtime::AgentIntent::Write,
+                    task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+                    scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Selection,
+                    web_authorized: false,
+                    has_attachments: false,
+                    write_permission_required: true,
+                    research_depth: 0,
+                },
+            ),
+            depth: 0,
+            skill_activation_plan: None,
+            created_at: std::time::Instant::now(),
+        }
     }
 
     #[test]

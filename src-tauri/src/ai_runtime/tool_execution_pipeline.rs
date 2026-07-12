@@ -17,6 +17,8 @@ use crate::storage::db::Database;
 #[derive(Clone, Copy)]
 pub struct ToolExecutionGate<'a> {
     pub request_id: &'a str,
+    /// Real session identity for Session-scoped grants; never substitute request_id.
+    pub session_id: Option<i64>,
     pub harness_round: u32,
     pub entry: &'a ToolCatalogEntry,
     pub args: &'a serde_json::Value,
@@ -43,6 +45,7 @@ pub fn evaluate_tool_execution(
         db,
         PermissionDecisionRequest {
             request_id: gate.request_id,
+            session_id: gate.session_id,
             entry: gate.entry,
             args: gate.args,
             policy_ctx: gate.policy_ctx,

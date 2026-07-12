@@ -7,6 +7,17 @@ pub use crate::ai_types::*;
 
 // Modules that remain in ai_runtime (coordination layer).
 pub mod agent_permissions;
+// Stage 2 keeps normal-domain evidence registration on the existing ledger.
+// It is intentionally not connected to the legacy context/evidence path.
+#[allow(dead_code)]
+pub(crate) mod agent_evidence_repository;
+// Stage 2 establishes the new normal-domain persistence facts before Stage 4
+// may route a production request through them. Calling it from a legacy path
+// would introduce the prohibited dual-write lifecycle.
+#[cfg(test)]
+mod agent_evidence_repository_tests;
+#[allow(dead_code)]
+pub(crate) mod agent_run_repository;
 pub mod agent_task;
 pub mod agent_task_policy;
 pub mod capability_resolver;
@@ -17,22 +28,56 @@ pub mod context_cache;
 pub mod context_planner;
 pub mod conversation_memory;
 pub mod deliberation;
+#[allow(dead_code)]
+pub(crate) mod direct_provider_route;
 pub mod environment;
 pub mod execution_plan;
+#[cfg(test)]
+mod frozen_change_plan_tests;
 pub mod guardrails;
 pub mod mcp_host_runtime;
 pub mod mcp_runtime_registry;
 pub mod model_gateway;
 pub mod model_registry;
+#[allow(dead_code)]
+pub(crate) mod normal_session_repository;
+#[cfg(test)]
+mod normal_session_repository_tests;
 pub mod packet_builder;
 pub mod permission_decision;
 pub mod persona_resolver;
+#[cfg(test)]
+mod run_engine_tests;
+#[cfg(test)]
+mod run_intake_tests;
+// Stage 3 keeps this deterministic policy kernel isolated until every tool
+// caller is migrated to the single decision path; connecting only one legacy
+// caller would create a second authorization source.
+#[allow(dead_code)]
+pub(crate) mod policy_decision_engine;
 pub mod prompt_builder;
 pub mod prompt_profile;
+#[allow(dead_code)]
+pub(crate) mod provider_router;
 pub mod research_state;
 pub mod retrieval_broker;
 pub mod retrieval_scope;
 pub mod runtime_context;
+// Stage 1 defines this complete shared contract before Stage 4 is allowed to
+// connect it to production Request Intake. Keeping the contract isolated here
+// prevents a compatibility path from prematurely becoming a second runtime.
+#[cfg(test)]
+mod agent_run_repository_tests;
+#[allow(dead_code)]
+pub(crate) mod frozen_change_plan;
+#[allow(dead_code)]
+pub(crate) mod run_contract;
+#[cfg(test)]
+mod run_contract_tests;
+#[allow(dead_code)]
+pub(crate) mod run_engine;
+#[allow(dead_code)]
+pub(crate) mod run_intake;
 pub mod sandbox_profile;
 pub mod session;
 pub mod session_evidence;

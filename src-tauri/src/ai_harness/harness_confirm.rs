@@ -406,6 +406,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
     };
     let execution_gate = ToolExecutionGate {
         request_id: &pending.request_id,
+        session_id: Some(pending.session_id),
         harness_round: 0,
         entry,
         args,
@@ -583,6 +584,7 @@ mod tests {
             tool_name: "replace_selection".into(),
             arguments: "{}".into(),
             request_id: "req-policy".into(),
+            session_id: 1,
             scene: AiScene::KnowledgeLookup,
             note_path: Some("notes/a.md".into()),
             file_id: Some(7),

@@ -43,6 +43,7 @@ fn permission_decision_hard_denies_unsupported_profiles() {
         &db,
         PermissionDecisionRequest {
             request_id: "phase2-unsupported",
+            session_id: Some(1),
             entry,
             args: &serde_json::json!({ "reason": "attach source" }),
             policy_ctx: &ctx,
@@ -72,7 +73,7 @@ fn permission_decision_applies_exact_session_grants_only() {
             permission_name: "vault.write.patch",
             decision: PermissionDecision::AllowForSession,
             scope_kind: PermissionScopeKind::Session,
-            scope_value: Some("other-session"),
+            scope_value: Some("7"),
             risk_level: PermissionRiskLevel::Medium,
             skill_id: None,
             expires_at: None,
@@ -84,6 +85,7 @@ fn permission_decision_applies_exact_session_grants_only() {
         &db,
         PermissionDecisionRequest {
             request_id: "phase2-session-a",
+            session_id: Some(42),
             entry,
             args: &serde_json::json!({ "replacement": "text" }),
             policy_ctx: &ctx,
@@ -102,7 +104,7 @@ fn permission_decision_applies_exact_session_grants_only() {
             permission_name: "vault.write.patch",
             decision: PermissionDecision::AllowForSession,
             scope_kind: PermissionScopeKind::Session,
-            scope_value: Some("phase2-session-a"),
+            scope_value: Some("42"),
             risk_level: PermissionRiskLevel::Medium,
             skill_id: None,
             expires_at: None,
@@ -114,6 +116,7 @@ fn permission_decision_applies_exact_session_grants_only() {
         &db,
         PermissionDecisionRequest {
             request_id: "phase2-session-a",
+            session_id: Some(42),
             entry,
             args: &serde_json::json!({ "replacement": "text" }),
             policy_ctx: &ctx,
@@ -138,6 +141,7 @@ fn tool_execution_pipeline_records_denied_permission_and_tool_audit() {
         &db,
         ToolExecutionGate {
             request_id: "phase2-pipeline-deny",
+            session_id: Some(1),
             harness_round: 3,
             entry,
             args: &serde_json::json!({ "reason": "import" }),

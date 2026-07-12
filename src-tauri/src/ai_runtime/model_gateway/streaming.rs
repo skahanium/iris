@@ -89,6 +89,24 @@ pub enum StreamEventData {
     Error { message: String, final_error: bool },
 }
 
+/// Receives normalized streaming lifecycle events without depending on Tauri.
+pub trait StreamEventObserver: Send {
+    /// Handle a stream event together with its emitted token index.
+    fn observe(&mut self, event: &StreamEvent, token_index: u32) -> AppResult<()>;
+}
+
+/// Bridges streaming lifecycle events to the legacy Tauri event contract.
+pub struct LegacyTauriStreamObserver<'a> {
+    app_handle: &'a AppHandle,
+}
+
+impl<'a> LegacyTauriStreamObserver<'a> {
+    /// Create an observer that emits the established `llm:*` and `ai:tool_call` events.
+    pub fn new(app_handle: &'a AppHandle) -> Self {
+        Self { app_handle }
+    }
+}
+
 fn lifecycle_content_hash(value: &str) -> String {
     let mut hash = 0x811c9dc5u32;
     for byte in value.as_bytes() {
@@ -685,7 +703,7 @@ fn should_emit_stream_error(
 }
 
 fn finish_stream_with_error(
-    app_handle: &AppHandle,
+    observer: &mut dyn StreamEventObserver,
     request_id: &str,
     message: impl Into<String>,
     classified: bool,
@@ -698,7 +716,7 @@ fn finish_stream_with_error(
     let visible_partial = has_visible_partial(surface, token_index);
     if should_emit_stream_error(emit_error_event, surface, token_index) {
         let event = stream_error_event(request_id, &message, classified, surface, true);
-        if let Err(err) = emit_stream_event(app_handle, &event, token_index) {
+        if let Err(err) = observer.observe(&event, token_index) {
             tracing::warn!(
                 request_id = %request_id,
                 error = %err,
@@ -734,7 +752,7 @@ fn visible_token_finish(visible_sanitizer: &mut Option<VisibleStreamSanitizer>) 
 }
 
 fn emit_visible_token_delta(
-    app_handle: &AppHandle,
+    observer: &mut dyn StreamEventObserver,
     request_id: &str,
     token: String,
     surface: StreamSurface,
@@ -751,7 +769,7 @@ fn emit_visible_token_delta(
         surface,
         classified,
     };
-    emit_stream_event(app_handle, &event, *token_index)?;
+    observer.observe(&event, *token_index)?;
     *token_index += 1;
     Ok(())
 }
@@ -763,13 +781,15 @@ pub async fn send_streaming_request(
     request_id: &str,
     request: GatewayRequest,
 ) -> AppResult<GatewayResponse> {
-    send_streaming_request_with_meta(
-        app_handle,
+    let mut observer = LegacyTauriStreamObserver::new(app_handle);
+    send_streaming_request_to_observer(
         _client,
         request_id,
         request,
+        &mut observer,
         false,
         StreamSurface::VisibleAnswer,
+        true,
     )
     .await
 }
@@ -783,11 +803,12 @@ pub async fn send_streaming_request_with_surface(
     surface: StreamSurface,
     emit_error_event: bool,
 ) -> AppResult<GatewayResponse> {
-    send_streaming_request_with_meta_error_mode(
-        app_handle,
+    let mut observer = LegacyTauriStreamObserver::new(app_handle);
+    send_streaming_request_to_observer(
         _client,
         request_id,
         request,
+        &mut observer,
         false,
         surface,
         emit_error_event,
@@ -804,25 +825,32 @@ pub async fn send_streaming_request_with_meta(
     classified: bool,
     surface: StreamSurface,
 ) -> AppResult<GatewayResponse> {
-    send_streaming_request_with_meta_error_mode(
-        app_handle, _client, request_id, request, classified, surface, true,
+    let mut observer = LegacyTauriStreamObserver::new(app_handle);
+    send_streaming_request_to_observer(
+        _client,
+        request_id,
+        request,
+        &mut observer,
+        classified,
+        surface,
+        true,
     )
     .await
 }
 
-/// Send a streaming request and optionally suppress terminal error events.
-pub async fn send_streaming_request_with_meta_error_mode(
-    app_handle: &AppHandle,
+/// Send a streaming request and deliver each lifecycle event to an observer.
+pub async fn send_streaming_request_to_observer(
     _client: &Client,
     request_id: &str,
     request: GatewayRequest,
+    observer: &mut dyn StreamEventObserver,
     classified: bool,
     surface: StreamSurface,
     emit_error_event: bool,
 ) -> AppResult<GatewayResponse> {
     if is_abort_requested(request_id) {
         return Err(finish_stream_with_error(
-            app_handle,
+            observer,
             request_id,
             "request aborted",
             classified,
@@ -838,7 +866,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
 
     let mut body = build_llm_api_body(&request).map_err(|e| {
         finish_stream_with_error(
-            app_handle,
+            observer,
             request_id,
             e.to_string(),
             classified,
@@ -852,7 +880,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
     let streaming_client =
         crate::network::cert_pinning::create_streaming_https_client().map_err(|e| {
             finish_stream_with_error(
-                app_handle,
+                observer,
                 request_id,
                 e.to_string(),
                 classified,
@@ -873,7 +901,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
 
     let response = req_builder.json(&body).send().await.map_err(|e| {
         finish_stream_with_error(
-            app_handle,
+            observer,
             request_id,
             format!("LLM streaming request failed: {e}"),
             classified,
@@ -887,7 +915,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         return Err(finish_stream_with_error(
-            app_handle,
+            observer,
             request_id,
             format_llm_http_error(status, &text),
             classified,
@@ -964,7 +992,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
             Err(_) => {
                 if is_abort_requested(request_id) {
                     return Err(finish_stream_with_error(
-                        app_handle,
+                        observer,
                         request_id,
                         "request aborted",
                         classified,
@@ -984,7 +1012,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
 
         if is_abort_requested(request_id) {
             return Err(finish_stream_with_error(
-                app_handle,
+                observer,
                 request_id,
                 "request aborted",
                 classified,
@@ -1017,7 +1045,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 "stream body read failed"
             );
             finish_stream_with_error(
-                app_handle,
+                observer,
                 request_id,
                 format!("Stream read error: {e}"),
                 classified,
@@ -1056,7 +1084,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
             if data == "[DONE]" {
                 let token = visible_token_finish(&mut visible_sanitizer);
                 emit_visible_token_delta(
-                    app_handle,
+                    observer,
                     request_id,
                     token,
                     surface,
@@ -1072,7 +1100,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                     surface,
                     classified,
                 };
-                emit_stream_event(app_handle, &event, token_index)?;
+                observer.observe(&event, token_index)?;
                 // The stream is finished; stop reading from the socket. Some
                 // providers/proxies keep the connection open after [DONE];
                 // `continue` here would wait for the server to close (or the
@@ -1084,7 +1112,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 Ok(json) => json,
                 Err(err) => {
                     return Err(finish_stream_with_error(
-                        app_handle,
+                        observer,
                         request_id,
                         err.to_string(),
                         classified,
@@ -1099,7 +1127,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
             if endpoint_family == EndpointFamily::AnthropicMessages {
                 if let Some(delta) = anthropic_state.apply_event_json(&json).map_err(|e| {
                     finish_stream_with_error(
-                        app_handle,
+                        observer,
                         request_id,
                         e.to_string(),
                         classified,
@@ -1110,7 +1138,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 })? {
                     let token = visible_token_delta(&mut visible_sanitizer, &delta);
                     emit_visible_token_delta(
-                        app_handle,
+                        observer,
                         request_id,
                         token,
                         surface,
@@ -1121,7 +1149,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 if json["type"].as_str() == Some("message_stop") {
                     let token = visible_token_finish(&mut visible_sanitizer);
                     emit_visible_token_delta(
-                        app_handle,
+                        observer,
                         request_id,
                         token,
                         surface,
@@ -1137,7 +1165,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                         surface,
                         classified,
                     };
-                    emit_stream_event(app_handle, &event, token_index)?;
+                    observer.observe(&event, token_index)?;
                     // Anthropic's terminal event; stop reading the socket
                     // so a half-open connection cannot hang the loop.
                     break 'stream;
@@ -1150,7 +1178,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 full_content.push_str(delta);
                 let token = visible_token_delta(&mut visible_sanitizer, delta);
                 emit_visible_token_delta(
-                    app_handle,
+                    observer,
                     request_id,
                     token,
                     surface,
@@ -1200,7 +1228,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                         Ok(json) => json,
                         Err(err) => {
                             return Err(finish_stream_with_error(
-                                app_handle,
+                                observer,
                                 request_id,
                                 err.to_string(),
                                 classified,
@@ -1226,7 +1254,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                         if let Some(delta) =
                             anthropic_state.apply_event_json(&json).map_err(|e| {
                                 finish_stream_with_error(
-                                    app_handle,
+                                    observer,
                                     request_id,
                                     e.to_string(),
                                     classified,
@@ -1239,7 +1267,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                             full_content.push_str(delta.as_str());
                             let token = visible_token_delta(&mut visible_sanitizer, &delta);
                             emit_visible_token_delta(
-                                app_handle,
+                                observer,
                                 request_id,
                                 token,
                                 surface,
@@ -1250,7 +1278,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                         if json["type"].as_str() == Some("message_stop") {
                             let token = visible_token_finish(&mut visible_sanitizer);
                             emit_visible_token_delta(
-                                app_handle,
+                                observer,
                                 request_id,
                                 token,
                                 surface,
@@ -1266,7 +1294,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                                 surface,
                                 classified,
                             };
-                            emit_stream_event(app_handle, &event, token_index)?;
+                            observer.observe(&event, token_index)?;
                         }
                         clear_abort(request_id);
                         return Ok(anthropic_state.into_gateway_response());
@@ -1276,7 +1304,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                         full_content.push_str(delta);
                         let token = visible_token_delta(&mut visible_sanitizer, delta);
                         emit_visible_token_delta(
-                            app_handle,
+                            observer,
                             request_id,
                             token,
                             surface,
@@ -1322,7 +1350,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 surface,
                 classified,
             };
-            emit_stream_event(app_handle, &event, token_index)?;
+            observer.observe(&event, token_index)?;
         }
         clear_abort(request_id);
         return Ok(response);
@@ -1354,7 +1382,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
             surface,
             classified,
         };
-        emit_stream_event(app_handle, &event, token_index)?;
+        observer.observe(&event, token_index)?;
     }
 
     clear_abort(request_id);
@@ -1375,96 +1403,101 @@ pub async fn send_streaming_request_with_meta_error_mode(
     })
 }
 
-/// Emit a stream event to the frontend (`llm:*` 与 `engine.rs` / 侧栏监听一致).
-pub(super) fn emit_stream_event(
-    app_handle: &AppHandle,
-    event: &StreamEvent,
-    token_index: u32,
-) -> AppResult<()> {
-    let emit_err = |e: tauri::Error| AppError::msg(format!("Failed to emit stream event: {e}"));
-    match event.event_type {
-        StreamEventType::Token => {
-            if let StreamEventData::Token { token } = &event.data {
+impl StreamEventObserver for LegacyTauriStreamObserver<'_> {
+    fn observe(&mut self, event: &StreamEvent, token_index: u32) -> AppResult<()> {
+        let emit_err = |e: tauri::Error| AppError::msg(format!("Failed to emit stream event: {e}"));
+        match event.event_type {
+            StreamEventType::Token => {
+                if let StreamEventData::Token { token } = &event.data {
+                    tracing::debug!(
+                        request_id = %event.request_id,
+                        event = "stream_token_emitted",
+                        token_index,
+                        content_len = token.len(),
+                        content_hash = %lifecycle_content_hash(token),
+                        surface = event.surface.wire(),
+                        candidate_kind = event.surface.candidate_kind(),
+                        classified = event.classified,
+                        "AI lifecycle stream token emitted"
+                    );
+                    if !event.surface.is_visible() {
+                        return Ok(());
+                    }
+                    let mut payload = serde_json::json!({
+                        "request_id": event.request_id,
+                        "token": token,
+                        "index": token_index,
+                        "surface": event.surface.wire(),
+                        "candidate_kind": event.surface.candidate_kind(),
+                    });
+                    if event.classified {
+                        payload["classified"] = serde_json::json!(true);
+                    }
+                    self.app_handle
+                        .emit("llm:token", payload)
+                        .map_err(emit_err)?;
+                }
+            }
+            StreamEventType::Done => {
                 tracing::debug!(
                     request_id = %event.request_id,
-                    event = "stream_token_emitted",
+                    event = "stream_done_emitted",
                     token_index,
-                    content_len = token.len(),
-                    content_hash = %lifecycle_content_hash(token),
                     surface = event.surface.wire(),
                     candidate_kind = event.surface.candidate_kind(),
                     classified = event.classified,
-                    "AI lifecycle stream token emitted"
+                    "AI lifecycle stream done emitted"
                 );
                 if !event.surface.is_visible() {
                     return Ok(());
                 }
                 let mut payload = serde_json::json!({
                     "request_id": event.request_id,
-                    "token": token,
-                    "index": token_index,
                     "surface": event.surface.wire(),
                     "candidate_kind": event.surface.candidate_kind(),
                 });
                 if event.classified {
                     payload["classified"] = serde_json::json!(true);
                 }
-                app_handle.emit("llm:token", payload).map_err(emit_err)?;
+                self.app_handle
+                    .emit("llm:done", payload)
+                    .map_err(emit_err)?;
+            }
+            StreamEventType::Error => {
+                let (message, final_error) = if let StreamEventData::Error {
+                    message,
+                    final_error,
+                } = &event.data
+                {
+                    (message.clone(), *final_error)
+                } else {
+                    ("stream error".to_string(), true)
+                };
+                if !event.surface.is_visible() {
+                    return Ok(());
+                }
+                let mut payload = serde_json::json!({
+                    "request_id": event.request_id,
+                    "error": message,
+                    "final": final_error,
+                    "surface": event.surface.wire(),
+                    "candidate_kind": event.surface.candidate_kind(),
+                });
+                if event.classified {
+                    payload["classified"] = serde_json::json!(true);
+                }
+                self.app_handle
+                    .emit("llm:error", payload)
+                    .map_err(emit_err)?;
+            }
+            StreamEventType::ToolCall => {
+                self.app_handle
+                    .emit("ai:tool_call", event)
+                    .map_err(emit_err)?;
             }
         }
-        StreamEventType::Done => {
-            tracing::debug!(
-                request_id = %event.request_id,
-                event = "stream_done_emitted",
-                token_index,
-                surface = event.surface.wire(),
-                candidate_kind = event.surface.candidate_kind(),
-                classified = event.classified,
-                "AI lifecycle stream done emitted"
-            );
-            if !event.surface.is_visible() {
-                return Ok(());
-            }
-            let mut payload = serde_json::json!({
-                "request_id": event.request_id,
-                "surface": event.surface.wire(),
-                "candidate_kind": event.surface.candidate_kind(),
-            });
-            if event.classified {
-                payload["classified"] = serde_json::json!(true);
-            }
-            app_handle.emit("llm:done", payload).map_err(emit_err)?;
-        }
-        StreamEventType::Error => {
-            let (message, final_error) = if let StreamEventData::Error {
-                message,
-                final_error,
-            } = &event.data
-            {
-                (message.clone(), *final_error)
-            } else {
-                ("stream error".to_string(), true)
-            };
-            if !event.surface.is_visible() {
-                return Ok(());
-            }
-            let mut payload = serde_json::json!({
-                "request_id": event.request_id,
-                "error": message,
-                "final": final_error,
-                "surface": event.surface.wire(),
-                "candidate_kind": event.surface.candidate_kind(),
-            });
-            if event.classified {
-                payload["classified"] = serde_json::json!(true);
-            }
-            app_handle.emit("llm:error", payload).map_err(emit_err)?;
-        }
-        StreamEventType::ToolCall => {
-            app_handle.emit("ai:tool_call", event).map_err(emit_err)?;
-        }
+        Ok(())
     }
-    Ok(())
 }
 
 /// Emit a `llm:reset` event so the frontend drops buffered tokens from a
@@ -1529,6 +1562,41 @@ pub fn emit_stream_reset_with_surface(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingStreamObserver {
+        events: Vec<StreamEvent>,
+    }
+
+    impl StreamEventObserver for RecordingStreamObserver {
+        fn observe(&mut self, event: &StreamEvent, _token_index: u32) -> AppResult<()> {
+            self.events.push(event.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn stream_events_are_delivered_to_observer_without_tauri_handle() {
+        let mut observer = RecordingStreamObserver::default();
+        let mut token_index = 0;
+
+        emit_visible_token_delta(
+            &mut observer,
+            "agent-run",
+            "观察者令牌".to_string(),
+            StreamSurface::VisibleAnswer,
+            false,
+            &mut token_index,
+        )
+        .unwrap();
+
+        assert_eq!(token_index, 1);
+        assert_eq!(observer.events.len(), 1);
+        assert!(matches!(
+            observer.events[0].data,
+            StreamEventData::Token { ref token } if token == "观察者令牌"
+        ));
+    }
 
     #[test]
     fn anthropic_stream_state_accumulates_text_and_tool_use_blocks() {

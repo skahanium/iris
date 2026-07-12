@@ -116,6 +116,11 @@ const MIGRATION_045_DOWN: &str = include_str!("../../migrations/045_metadata_fts
 const MIGRATION_046_UP: &str = include_str!("../../migrations/046_auxiliary_embeddings_v2.sql");
 const MIGRATION_046_DOWN: &str =
     include_str!("../../migrations/046_auxiliary_embeddings_v2.down.sql");
+const MIGRATION_047_UP: &str = include_str!("../../migrations/047_agent_run_foundation.sql");
+const MIGRATION_047_DOWN: &str = include_str!("../../migrations/047_agent_run_foundation.down.sql");
+const MIGRATION_048_UP: &str = include_str!("../../migrations/048_agent_run_confirmations.sql");
+const MIGRATION_048_DOWN: &str =
+    include_str!("../../migrations/048_agent_run_confirmations.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -260,6 +265,8 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "044_embedding_generation_v2", MIGRATION_044_UP, false)?;
     apply_migration(conn, "045_metadata_fts", MIGRATION_045_UP, false)?;
     apply_migration(conn, "046_auxiliary_embeddings_v2", MIGRATION_046_UP, false)?;
+    apply_migration(conn, "047_agent_run_foundation", MIGRATION_047_UP, false)?;
+    apply_migration(conn, "048_agent_run_confirmations", MIGRATION_048_UP, false)?;
 
     Ok(())
 }
@@ -271,6 +278,8 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "048_agent_run_confirmations", MIGRATION_048_DOWN);
+    rollback_migration(conn, "047_agent_run_foundation", MIGRATION_047_DOWN);
     rollback_migration(conn, "046_auxiliary_embeddings_v2", MIGRATION_046_DOWN);
     rollback_migration(conn, "045_metadata_fts", MIGRATION_045_DOWN);
     rollback_migration(conn, "044_embedding_generation_v2", MIGRATION_044_DOWN);
@@ -1280,6 +1289,195 @@ mod tests {
         assert!(!columns.contains(&"full_prompt".to_string()));
         assert!(!columns.contains(&"full_messages".to_string()));
         assert!(!columns.contains(&"note_content".to_string()));
+    }
+
+    #[test]
+    fn migration_047_creates_unified_agent_run_schema_without_legacy_routing_fields() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["agent_runs", "agent_run_steps", "agent_run_events"] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count > 0)
+                .unwrap();
+            assert!(exists, "missing {table}");
+        }
+
+        let run_columns = conn
+            .prepare("PRAGMA table_info(agent_runs)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        for required in [
+            "run_id",
+            "client_request_id",
+            "session_id",
+            "turn_id",
+            "status",
+            "state_version",
+            "effect",
+            "effort",
+            "security_domain",
+            "risk",
+            "envelope_json",
+            "goal_summary",
+            "budget_policy_json",
+            "provider_route_summary_json",
+            "stage_metrics_json",
+            "token_input",
+            "token_output",
+            "error_code",
+            "safe_error_message",
+            "created_at",
+            "updated_at",
+            "completed_at",
+        ] {
+            assert!(
+                run_columns.contains(&required.to_string()),
+                "missing {required}"
+            );
+        }
+        for forbidden in ["scene", "note_path", "document_path", "checkpoint"] {
+            assert!(
+                !run_columns.contains(&forbidden.to_string()),
+                "agent_runs must not contain legacy {forbidden}"
+            );
+        }
+
+        conn.execute(
+            "INSERT INTO sessions (session_key, scene, created_at, updated_at)
+             VALUES ('run-schema-session', 'knowledge_lookup', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let session_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO agent_runs
+             (run_id, client_request_id, session_id, turn_id, status, state_version,
+              effect, effort, security_domain, risk, envelope_json, goal_summary,
+              budget_policy_json, provider_route_summary_json, stage_metrics_json,
+              token_input, token_output, created_at, updated_at)
+             VALUES ('run-1', 'request-1', ?1, 'turn-1', 'accepted', 0,
+                     'answer', 'direct', 'normal', 'read_only', '{}', 'summary',
+                     '{}', '{}', '{}', 0, 0, datetime('now'), datetime('now'))",
+            [session_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_run_events
+             (run_id, event_seq, state_version, event_type, payload_json, created_at)
+             VALUES ('run-1', 1, 0, 'accepted', '{}', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        assert!(conn
+            .execute(
+                "INSERT INTO agent_run_events
+                 (run_id, event_seq, state_version, event_type, payload_json, created_at)
+                 VALUES ('run-1', 1, 0, 'accepted', '{}', datetime('now'))",
+                [],
+            )
+            .is_err());
+
+        let evidence_columns = conn
+            .prepare("PRAGMA table_info(session_evidence)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        for required in ["origin_run_id", "material_role", "stale", "bounded_excerpt"] {
+            assert!(
+                evidence_columns.contains(&required.to_string()),
+                "missing session_evidence.{required}"
+            );
+        }
+
+        conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])
+            .unwrap();
+        let events: i64 = conn
+            .query_row("SELECT COUNT(*) FROM agent_run_events", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(events, 0, "run events must cascade with their session");
+        let foreign_key_issues: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(foreign_key_issues, 0);
+    }
+
+    #[test]
+    fn migration_047_roundtrips_and_preserves_database_integrity() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        assert!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_runs'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+                > 0
+        );
+
+        rollback_migration(&conn, "047_agent_run_foundation", MIGRATION_047_DOWN);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'agent_runs'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+
+        apply_migration(&conn, "047_agent_run_foundation", MIGRATION_047_UP, false).unwrap();
+        let integrity: String = conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        let foreign_key_issues: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(foreign_key_issues, 0);
+    }
+
+    #[test]
+    fn migration_048_creates_frozen_run_confirmation_facts() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        let columns = conn
+            .prepare("PRAGMA table_info(agent_run_confirmations)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        for required in [
+            "confirmation_id",
+            "run_id",
+            "plan_hash",
+            "plan_json",
+            "expires_at",
+            "status",
+        ] {
+            assert!(
+                columns.contains(&required.to_string()),
+                "missing {required}"
+            );
+        }
     }
 
     #[test]

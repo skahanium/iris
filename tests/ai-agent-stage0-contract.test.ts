@@ -6,47 +6,51 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-const specPath = "docs/superpowers/specs/ai-agent-system-remediation.md";
+const specRoot = "docs/agent-harness-refactor";
 const matrixPath = "docs/audits/2026-06-20-ai-agent-issue-matrix.md";
 const readinessPath = "docs/audits/2026-06-20-ai-agent-current-readiness.md";
 
 describe("AI agent stage 0 baseline contracts", () => {
-  it("documents the full audit scope and future architecture entities", () => {
-    const spec = read(specPath);
+  it("uses the agent-harness-refactor document suite as the sole target specification", () => {
+    const readme = read(`${specRoot}/README.md`);
+    const architecture = read(`${specRoot}/02-target-architecture.md`);
+    const lifecycle = read(`${specRoot}/03-lifecycle-and-evidence.md`);
+    const policy = read(`${specRoot}/04-policy-and-security.md`);
+    const migration = read(`${specRoot}/07-api-and-data-migration.md`);
+    const plan = read(`${specRoot}/08-implementation-plan.md`);
 
-    for (const dimension of [
-      "长对话",
-      "复杂推理",
-      "subagent",
-      "工具",
-      "skills",
-      "检索",
-      "文件权限",
-      "agent 权限",
-      "沙箱",
-      "前端协作状态",
+    expect(readme).toContain("状态：**目标规格，尚未实施**");
+    expect(readme).toContain("一个对话入口、一个 Run 状态机、一个权限策略引擎");
+    expect(readme).toContain("课题研究专用工作流");
+    expect(architecture).toContain("ExecutionEnvelope");
+    expect(lifecycle).toContain("AssistantRunEvent");
+    expect(policy).toContain("PolicyDecisionEngine");
+    expect(migration).toContain("assistant_run_start");
+
+    for (let phase = 0; phase <= 10; phase += 1) {
+      expect(plan).toContain(`阶段 ${phase}`);
+    }
+  });
+
+  it("records the legacy execution chain before later phases remove it", () => {
+    const commands = read("src-tauri/src/lib.rs");
+    const ipc = read("src/lib/ipc.ts");
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+
+    for (const command of [
+      "assistant_execute",
+      "context_assemble",
+      "ai_send_message",
+      "harness_resume",
+      "agent_task_resume",
+      "research_execute",
     ]) {
-      expect(spec).toContain(dimension);
+      expect(commands).toContain(command);
+      expect(ipc).toContain(command);
     }
 
-    for (const entity of [
-      "ToolExecutionPipeline",
-      "PermissionDecisionEngine",
-      "ConversationMemory",
-      "DeliberationState",
-      "WritingState",
-      "ResearchState",
-      "EvidencePipeline",
-      "SubAgentCoordinator",
-      "SkillTrustPolicy",
-      "SandboxProfile",
-    ]) {
-      expect(spec).toContain(entity);
-    }
-
-    for (let phase = 1; phase <= 10; phase += 1) {
-      expect(spec).toContain(`阶段 ${phase}`);
-    }
+    expect(panel).toContain("useAssistantTasks");
+    expect(panel).toContain("useAssistantHarnessResume");
   });
 
   it("keeps the issue matrix evidence-based and stage-targeted", () => {

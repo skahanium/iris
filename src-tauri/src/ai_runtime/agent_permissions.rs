@@ -383,6 +383,15 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
 
 /// Persist or replace a metadata-only permission grant.
 pub fn upsert_permission_grant(db: &Database, input: &PermissionGrantInput<'_>) -> AppResult<()> {
+    if input.scope_kind == PermissionScopeKind::Session
+        && input.decision == PermissionDecision::AllowForSession
+        && matches!(
+            input.risk_level,
+            PermissionRiskLevel::High | PermissionRiskLevel::Critical
+        )
+    {
+        return Err(AppError::msg("agent_permission_session_grant_risk_denied"));
+    }
     validate_permission_storage_value(input.scope_value)?;
     validate_permission_storage_value(input.skill_id)?;
     validate_permission_storage_value(input.expires_at)?;
@@ -707,5 +716,27 @@ mod tests {
         ] {
             assert!(permission_profile_for_tool(name).is_none(), "{name}");
         }
+    }
+
+    #[test]
+    fn high_risk_session_grant_is_rejected_before_persistence() {
+        let db = Database::open_in_memory().expect("database");
+        let error = upsert_permission_grant(
+            &db,
+            &PermissionGrantInput {
+                permission_name: "vault.write.patch",
+                decision: PermissionDecision::AllowForSession,
+                scope_kind: PermissionScopeKind::Session,
+                scope_value: Some("42"),
+                risk_level: PermissionRiskLevel::High,
+                skill_id: None,
+                expires_at: None,
+            },
+        )
+        .expect_err("high-risk session grants must not persist");
+        assert_eq!(
+            error.to_string(),
+            "agent_permission_session_grant_risk_denied"
+        );
     }
 }

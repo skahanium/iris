@@ -329,6 +329,254 @@ export interface ContextReference {
   invalidReason?: string | null;
 }
 
+// ─── Unified Assistant Run contracts ────────────────────
+
+/** A domain-safe session reference that never exposes a database primary key. */
+export interface AssistantSessionRef {
+  domain: SecurityDomain;
+  sessionKey: string;
+}
+
+/** Explicit target selected for the current editor action only. */
+export interface ExplicitTarget {
+  referenceId: string;
+  contentHash: string;
+}
+
+/** Immutable selection supplied by an explicit editor action for one Run. */
+export interface SelectionSnapshot {
+  referenceId: string;
+  contentHash: string;
+  utf8Range: SourceSpan;
+  text: string;
+}
+
+/** User-visible effect the current Run may produce. */
+export type Effect = "answer" | "draft" | "apply";
+
+/** Context boundary from which the Run may assemble material. */
+export type ContextMode =
+  | "none"
+  | "conversation"
+  | "explicit_references"
+  | "explicit_scope";
+
+/** Whether the Run may use Web capabilities. */
+export type Freshness = "offline" | "web_preferred" | "web_required";
+
+/** Amount of coordinated work the Run may perform. */
+export type Effort = "direct" | "tool_loop" | "durable";
+
+/** Physical storage and capability isolation boundary for a Run. */
+export type SecurityDomain = "normal" | "classified";
+
+/** Maximum risk class allowed for a Run. */
+export type RiskClass =
+  | "read_only"
+  | "bounded_write"
+  | "destructive"
+  | "external_side_effect";
+
+/** Input or output modality required by a Run. */
+export type Modality = "text" | "image";
+
+/** Authorized role of material requested from the Run context. */
+export type MaterialNeed = "exemplar" | "authority" | "reference" | "web";
+
+/** Stable capability name requested by an executor or the Run Engine. */
+export type CapabilityId = string;
+
+/** Binding deterministic user or UI constraint. */
+export interface ExplicitConstraint {
+  kind: string;
+  value: string | null;
+}
+
+/** Scene-free, orthogonal execution boundary resolved for one Agent Run. */
+export interface ExecutionEnvelope {
+  effect: Effect;
+  context: ContextMode;
+  freshness: Freshness;
+  effort: Effort;
+  securityDomain: SecurityDomain;
+  risk: RiskClass;
+  modalities: Modality[];
+  materialNeeds: MaterialNeed[];
+  requiredCapabilities: CapabilityId[];
+  explicitConstraints: ExplicitConstraint[];
+}
+
+/** The user-visible effect explicitly requested for a Run. */
+export type RunEffect = Effect;
+
+/** Evidence reference containing only a stable ID and safe presentation metadata. */
+export interface EvidenceRef {
+  evidenceId: string;
+  sourceKind: "local" | "web";
+  displayLabel: string;
+  title?: string;
+  stale: boolean;
+}
+
+/** Scene-free request accepted by the unified Run control plane. */
+export interface AssistantRunStartRequest {
+  clientRequestId: string;
+  session?: AssistantSessionRef;
+  message: string;
+  contentParts?: ContentPart[];
+  explicitReferences: ContextReference[];
+  explicitAction?: {
+    effect: RunEffect;
+    target?: ExplicitTarget;
+    selectionSnapshot?: SelectionSnapshot;
+  };
+  webEnabled: boolean;
+  securityDomain: SecurityDomain;
+}
+
+/** Immediate durable acknowledgement returned by `assistant_run_start`. */
+export interface AssistantRunAccepted {
+  runId: string;
+  turnId: string;
+  session: AssistantSessionRef;
+  state: "accepted";
+  stateVersion: number;
+}
+
+/** Unified lifecycle states of an Assistant Run. */
+export type RunState =
+  | "accepted"
+  | "preparing"
+  | "running"
+  | "awaiting_confirmation"
+  | "paused"
+  | "verifying"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+/** Stable events persisted and emitted by a unified Assistant Run. */
+export type RunEventType =
+  | "accepted"
+  | "stage_changed"
+  | "content_delta"
+  | "tool_started"
+  | "tool_completed"
+  | "confirmation_required"
+  | "permission_denied"
+  | "provider_switched"
+  | "evidence_registered"
+  | "paused"
+  | "resumed"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+/** Safe, UI-displayable event payload; prompts, tool arguments and secrets are excluded. */
+export type AssistantRunEventPayload =
+  | { kind: "accepted"; turnId: string; sessionKey: string }
+  | { kind: "stage_changed"; state: RunState; stage: string }
+  | { kind: "content_delta"; delta: string }
+  | { kind: "tool_started"; capability: string; toolCallId: string }
+  | {
+      kind: "tool_completed";
+      capability: string;
+      toolCallId: string;
+      summary: string;
+    }
+  | {
+      kind: "confirmation_required";
+      confirmationId: string;
+      planHash: string;
+      summary: string;
+    }
+  | {
+      kind: "permission_denied";
+      code: AssistantRunErrorCode;
+      message: string;
+    }
+  | { kind: "provider_switched"; providerId: string; reason: string }
+  | { kind: "evidence_registered"; evidenceId: string }
+  | { kind: "paused"; reason: string }
+  | { kind: "resumed"; reason: string }
+  | { kind: "completed"; messageId: string | null }
+  | { kind: "failed"; code: AssistantRunErrorCode; message: string }
+  | { kind: "cancelled"; reason: string };
+
+/** Fields shared by every persisted unified Run event. */
+interface AssistantRunEventBase {
+  runId: string;
+  seq: number;
+  stateVersion: number;
+  timestamp: string;
+}
+
+/** Unified event envelope whose `type` always matches its payload discriminator. */
+export type AssistantRunEvent = {
+  [Type in RunEventType]: AssistantRunEventBase & {
+    type: Type;
+    payload: Extract<AssistantRunEventPayload, { kind: Type }>;
+  };
+}[RunEventType];
+
+/** Stable safe error codes surfaced by the unified Run control plane. */
+export type AssistantRunErrorCode =
+  | "agent_run_invalid_request"
+  | "agent_run_session_not_found"
+  | "agent_run_illegal_transition"
+  | "agent_run_state_version_conflict"
+  | "agent_run_not_found"
+  | "agent_run_permission_denied"
+  | "agent_run_confirmation_expired"
+  | "agent_run_persistence_failed"
+  | "agent_run_provider_unavailable"
+  | "agent_run_cancelled";
+
+/** A control action is retried idempotently with the same expected version. */
+export type RunControlAction =
+  | { type: "approve_change"; confirmationId: string; planHash: string }
+  | { type: "reject_change"; confirmationId: string }
+  | { type: "resume" }
+  | { type: "cancel" };
+
+/** Request for `assistant_run_control`. */
+export interface AssistantRunControlRequest {
+  session: AssistantSessionRef;
+  runId: string;
+  expectedStateVersion: number;
+  action: RunControlAction;
+}
+
+/** Request for the persisted snapshot and event replay endpoint. */
+export interface AssistantRunGetRequest {
+  session: AssistantSessionRef;
+  runId: string;
+}
+
+/** Safe persisted Run summary returned with replayable events. */
+export interface AssistantRunSnapshot {
+  runId: string;
+  turnId: string;
+  session: AssistantSessionRef;
+  state: RunState;
+  stateVersion: number;
+  finalMessageId?: string | null;
+  pendingConfirmation?: {
+    confirmationId: string;
+    summary: string;
+  } | null;
+  recovery?: {
+    code: AssistantRunErrorCode;
+    message: string;
+  } | null;
+}
+
+/** Safe response from `assistant_run_get`, used to fill event sequence gaps. */
+export interface AssistantRunGetResponse {
+  run: AssistantRunSnapshot;
+  events: AssistantRunEvent[];
+}
+
 /** 本轮运行期文档快照，只用于临时检索，不落库。 */
 export interface RuntimeDocumentSnapshot {
   path: string;

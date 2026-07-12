@@ -37,8 +37,9 @@ pub use messages_impl::{
 use prompts_impl::is_rule_applicable_for_scene;
 pub use prompts_impl::{build_citation_prompt, build_drafting_prompt};
 pub use streaming_impl::{
-    emit_stream_reset, emit_stream_reset_with_reason, emit_stream_reset_with_surface, StreamEvent,
-    StreamEventData, StreamEventType, StreamSurface,
+    emit_stream_reset, emit_stream_reset_with_reason, emit_stream_reset_with_surface,
+    LegacyTauriStreamObserver, StreamEvent, StreamEventData, StreamEventObserver, StreamEventType,
+    StreamSurface,
 };
 use usage_impl::parse_usage;
 
@@ -469,6 +470,26 @@ impl ModelGateway {
         streaming_impl::send_streaming_request(&self.app_handle, &self.client, request_id, request)
             .await
     }
+
+    /// Send a streaming request to a caller-owned observer without Tauri event emission.
+    pub async fn send_streaming_request_to_observer(
+        &self,
+        request_id: &str,
+        request: GatewayRequest,
+        observer: &mut dyn StreamEventObserver,
+    ) -> AppResult<GatewayResponse> {
+        streaming_impl::send_streaming_request_to_observer(
+            &self.client,
+            request_id,
+            request,
+            observer,
+            false,
+            StreamSurface::VisibleAnswer,
+            true,
+        )
+        .await
+    }
+
     pub async fn send_streaming_request_with_surface(
         &self,
         request_id: &str,

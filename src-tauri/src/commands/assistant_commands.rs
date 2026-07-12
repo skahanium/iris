@@ -11,6 +11,14 @@ use crate::ai_runtime::assistant_facade::{
 use crate::ai_runtime::chapter_workflow::ChapterInfo;
 use crate::ai_runtime::document_workflow::DocumentCheckResult;
 use crate::ai_runtime::retrieval_scope::ContextScopeDto;
+use crate::ai_runtime::run_contract::{
+    AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetRequest,
+    AssistantRunGetResponse, AssistantRunStartRequest,
+};
+use crate::ai_runtime::run_engine::{
+    ModelGatewayStreamingDirectAnswerProvider, RunEngine, TauriRunEventSink,
+};
+use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::task_plan::{
     agent_intent_for_task_plan, build_or_validate_task_plan, legacy_intent_for_task_plan,
 };
@@ -540,6 +548,134 @@ pub async fn assistant_execute(
     request: AssistantExecuteRequest,
 ) -> AppResult<AssistantExecuteResponse> {
     route_assistant_execute(state.inner(), &app_handle, request).await
+}
+
+/// Start the isolated normal-domain Agent Run development path.
+#[tauri::command]
+pub async fn assistant_run_start(
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+    request: AssistantRunStartRequest,
+) -> AppResult<AssistantRunAccepted> {
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &TauriRunEventSink::new(&app_handle))?;
+    spawn_normal_direct_run(Arc::clone(&state.db), app_handle, accepted.clone());
+    Ok(accepted)
+}
+
+/// Apply one explicit control action to an isolated Agent Run.
+#[tauri::command]
+pub async fn assistant_run_control(
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+    request: AssistantRunControlRequest,
+) -> AppResult<()> {
+    RunIntake::control_with_sink(&state.db, request, &TauriRunEventSink::new(&app_handle))
+}
+
+/// Replay one isolated Agent Run through its owning session reference.
+#[tauri::command]
+pub async fn assistant_run_get(
+    state: State<'_, Arc<AppState>>,
+    request: AssistantRunGetRequest,
+) -> AppResult<Option<AssistantRunGetResponse>> {
+    RunIntake::get(&state.db, &request.session, &request.run_id)
+}
+
+/// Start the minimal normal-domain direct execution after its accepted event exists.
+///
+/// This development entry deliberately bypasses the legacy Harness and does not
+/// expose tools, context assembly, web, Skills, or scene routing.
+fn spawn_normal_direct_run(
+    db: Arc<crate::storage::db::Database>,
+    app_handle: AppHandle,
+    accepted: AssistantRunAccepted,
+) {
+    tauri::async_runtime::spawn(async move {
+        let sink = TauriRunEventSink::new(&app_handle);
+        let route_result = crate::llm::config::resolve_capability_route_without_secret(
+            &db,
+            crate::llm::config::CapabilityRouteInput {
+                intent: AgentIntent::Chat,
+                context_tokens: 0,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: false,
+                privacy_preference: crate::llm::config::PrivacyPreference::ExternalAllowed,
+            },
+        )
+        .and_then(|route| {
+            let endpoint_family = route.resolved.endpoint_family;
+            crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route(
+                route,
+            )
+            .and_then(|route| {
+                route.hydrate_selected_text_streaming_no_tools_as_fast_dispatch(endpoint_family, 0)
+            })
+        });
+
+        let dispatch = match route_result {
+            Ok(dispatch) => dispatch,
+            Err(_) => {
+                let _ = RunEngine::fail_before_dispatch_with_sink(
+                    &db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                    &sink,
+                );
+                return;
+            }
+        };
+        let provider_config = dispatch.provider;
+        let gateway = match crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
+            app_handle.clone(),
+            vec![provider_config.clone()],
+        ) {
+            Ok(gateway) => gateway,
+            Err(_) => {
+                let _ = RunEngine::fail_before_dispatch_with_sink(
+                    &db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                    &sink,
+                );
+                return;
+            }
+        };
+        let provider = match ModelGatewayStreamingDirectAnswerProvider::new(
+            &gateway,
+            provider_config,
+            dispatch.max_output_tokens,
+        ) {
+            Ok(provider) => provider,
+            Err(_) => {
+                let _ = RunEngine::fail_before_dispatch_with_sink(
+                    &db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                    &sink,
+                );
+                return;
+            }
+        };
+        let _ = RunEngine::execute_direct_streaming_with_sink(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            &provider,
+            &sink,
+        )
+        .await;
+
+        if crate::ai_runtime::model_gateway::is_abort_requested(&accepted.run_id) {
+            // The gateway normally clears the marker. This defensive cleanup only
+            // covers a provider implementation that exited during cancellation.
+            crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
+        }
+    });
 }
 
 #[cfg(test)]

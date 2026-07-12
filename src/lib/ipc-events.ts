@@ -4,6 +4,7 @@ export const IPC_EVENTS = {
   CLASSIFIED_FILE_TAKEN: "classified:file_taken",
   SKILLS_CHANGED: "skills:changed",
   TOOL_CONFIRM_REQUEST: "ai:tool_confirm_request",
+  ASSISTANT_RUN_EVENT: "assistant_run_event",
   LLM_TOKEN: "llm:token",
   LLM_DONE: "llm:done",
   LLM_ERROR: "llm:error",

@@ -28,6 +28,8 @@ pub struct PendingToolCall {
     pub tool_name: String,
     pub arguments: String,
     pub request_id: String,
+    /// Owning session used for any Session-scoped permission grant.
+    pub session_id: i64,
     pub scene: AiScene,
     pub note_path: Option<String>,
     pub file_id: Option<i64>,
@@ -462,6 +464,7 @@ mod document_open_state_tests {
             tool_name: format!("tool-{id}"),
             arguments: "{}".into(),
             request_id: format!("req-{id}"),
+            session_id: id as i64,
             scene: AiScene::KnowledgeLookup,
             note_path: None,
             file_id: None,

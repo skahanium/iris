@@ -304,6 +304,15 @@ struct PreparedToolCall {
     class: ToolExecutionClass,
 }
 
+fn permission_requires_confirmation(
+    decision: crate::ai_runtime::permission_decision::PermissionExecutionDecision,
+) -> bool {
+    matches!(
+        decision,
+        crate::ai_runtime::permission_decision::PermissionExecutionDecision::RequiresConfirmation
+    )
+}
+
 #[derive(Debug, Clone, Copy)]
 struct RetryReason {
     reason_kind: &'static str,
@@ -1137,6 +1146,7 @@ async fn run_harness_inner(
                     &state.db,
                     ToolExecutionGate {
                         request_id: &input.request_id,
+                        session_id: Some(input.session_id),
                         harness_round: harness_rounds,
                         entry,
                         args: &args,
@@ -1376,12 +1386,38 @@ async fn run_harness_inner(
 
             // Dispatch contexts keep web fetch limits policy-driven: max_web_fetches: input.task_policy.max_fetch_per_round as usize
 
+            if let Some(prepared) = other_calls
+                .iter()
+                .find(|prepared| permission_requires_confirmation(prepared.decision.decision))
+            {
+                return pause_for_tool_confirmation(
+                    state,
+                    app_handle,
+                    input,
+                    &checkpoint_meta,
+                    harness_rounds,
+                    bonus_round_used,
+                    &mut messages,
+                    &all_tool_calls,
+                    &mut tool_results_json,
+                    evidence_ledger.packets(),
+                    total_usage,
+                    usage_source,
+                    assistant_content,
+                    file_id,
+                    &prepared.tool_call,
+                )
+                .await;
+            }
+
             let mut tools_this_round = 0u32;
             let mut parallel_batch: Vec<&PreparedToolCall> = Vec::new();
             for prepared in other_calls {
                 let tool_call = &prepared.tool_call;
                 abort_if_requested(&input.request_id)?;
-                if registry.requires_confirmation(&tool_call.function.name) {
+                if registry.requires_confirmation(&tool_call.function.name)
+                    || permission_requires_confirmation(prepared.decision.decision)
+                {
                     continue;
                 }
                 if tools_this_round >= input.task_policy.max_tool_calls_per_round {
@@ -1778,6 +1814,7 @@ fn record_prepared_tool_result(
 
     let execution_gate = ToolExecutionGate {
         request_id: &input.request_id,
+        session_id: Some(input.session_id),
         harness_round: harness_rounds,
         entry: prepared.entry,
         args: &prepared.args,
@@ -1927,6 +1964,7 @@ async fn pause_for_tool_confirmation(
             tool_name: tool_name.clone(),
             arguments: tool_call.function.arguments.clone(),
             request_id: input.request_id.clone(),
+            session_id: input.session_id,
             scene: input.scene,
             note_path: input.note_path.clone(),
             file_id,
@@ -1952,6 +1990,7 @@ async fn pause_for_tool_confirmation(
             &state.db,
             PermissionDecisionRequest {
                 request_id: &input.request_id,
+                session_id: Some(input.session_id),
                 entry,
                 args: &args,
                 policy_ctx: &ToolPolicyContext {
@@ -2278,6 +2317,16 @@ mod tests {
             result.is_none(),
             "no confirm tool → no pending confirmation"
         );
+    }
+
+    #[test]
+    fn permission_outcome_requires_confirmation_even_when_the_catalog_entry_does_not() {
+        assert!(permission_requires_confirmation(
+            crate::ai_runtime::permission_decision::PermissionExecutionDecision::RequiresConfirmation
+        ));
+        assert!(!permission_requires_confirmation(
+            crate::ai_runtime::permission_decision::PermissionExecutionDecision::AutoAllowed
+        ));
     }
 
     #[test]
