@@ -75,8 +75,19 @@ function harnessToolLabel(toolName: string): string {
 function harnessTraceHint(ev: HarnessTraceEvent): string | null {
   const label = harnessToolLabel(ev.tool_name);
   const duration = formatDuration(ev.duration_ms);
+  const completed =
+    ev.status === "ok" || ev.status === "completed" || ev.status === "complete";
+  const failed = ev.status === "failed" || ev.status === "error";
+  const aborted = ev.status === "aborted" || ev.status === "cancelled";
+  if (failed) return `${label}\u5931\u8d25\u3002`;
+  if (aborted) return `${label}\u5df2\u4e2d\u6b62\u3002`;
   switch (ev.phase) {
     case "tool_start":
+      if (completed) {
+        return duration
+          ? `${label}\u5b8c\u6210\uff0c\u7528\u65f6 ${duration}\u3002`
+          : `${label}\u5b8c\u6210\u3002`;
+      }
       return ev.status === "pending"
         ? `${label}\u7b49\u5f85\u786e\u8ba4...`
         : `${label}\u4e2d...`;

@@ -143,20 +143,36 @@ fn run_status_wire(status: HarnessRunStatus) -> &'static str {
     }
 }
 
-fn emit_workflow_trace(app_handle: &AppHandle, request_id: &str, task_name: &str, status: &str) {
+fn build_workflow_trace_event(
+    request_id: &str,
+    task_name: &str,
+    status: &str,
+) -> crate::ai_runtime::harness::HarnessTraceEvent {
     use crate::ai_runtime::harness::{HarnessPhase, HarnessTraceEvent};
+
+    let phase = match status {
+        "ok" | "completed" | "complete" | "failed" | "error" | "aborted" => {
+            HarnessPhase::ToolComplete
+        }
+        _ => HarnessPhase::ToolStart,
+    };
+
+    HarnessTraceEvent {
+        request_id: request_id.to_string(),
+        round: 0,
+        phase,
+        tool_name: task_name.to_string(),
+        status: status.to_string(),
+        duration_ms: None,
+        message: None,
+        output_preview: None,
+    }
+}
+
+fn emit_workflow_trace(app_handle: &AppHandle, request_id: &str, task_name: &str, status: &str) {
     let _ = app_handle.emit(
         "ai:harness_trace",
-        &HarnessTraceEvent {
-            request_id: request_id.to_string(),
-            round: 0,
-            phase: HarnessPhase::ToolStart,
-            tool_name: task_name.to_string(),
-            status: status.to_string(),
-            duration_ms: None,
-            message: None,
-            output_preview: None,
-        },
+        &build_workflow_trace_event(request_id, task_name, status),
     );
 }
 
@@ -1440,6 +1456,32 @@ mod tests {
     use super::*;
     use crate::ai_runtime::agent_task::{AgentTaskRuntime, AgentTaskStatus};
     use crate::storage::db::Database;
+
+    #[test]
+    fn workflow_trace_status_maps_to_terminal_phase() {
+        let running = build_workflow_trace_event("req-1", "chat", "running");
+        let completed = build_workflow_trace_event("req-1", "chat", "ok");
+        let failed = build_workflow_trace_event("req-1", "chat", "failed");
+        let aborted = build_workflow_trace_event("req-1", "chat", "aborted");
+
+        assert_eq!(
+            serde_json::to_value(&running).unwrap()["phase"],
+            serde_json::json!("tool_start")
+        );
+        assert_eq!(
+            serde_json::to_value(&completed).unwrap()["phase"],
+            serde_json::json!("tool_complete")
+        );
+        assert_eq!(completed.status, "ok");
+        assert_eq!(
+            serde_json::to_value(&failed).unwrap()["phase"],
+            serde_json::json!("tool_complete")
+        );
+        assert_eq!(
+            serde_json::to_value(&aborted).unwrap()["phase"],
+            serde_json::json!("tool_complete")
+        );
+    }
 
     #[test]
     fn chat_pending_task_status() {

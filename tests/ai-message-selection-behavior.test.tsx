@@ -157,6 +157,57 @@ describe("AI message selection behavior", () => {
     );
   });
 
+  it("shows the latest process step only in the collapsed timeline header", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "" }]}
+          streaming={true}
+          processEvents={[
+            {
+              id: "req-1:1",
+              requestId: "req-1",
+              kind: "trace",
+              label: "联网检索中...",
+              round: 1,
+              createdAt: 1,
+            },
+            {
+              id: "req-1:2",
+              requestId: "req-1",
+              kind: "trace",
+              label: "chat完成。",
+              round: 1,
+              createdAt: 2,
+            },
+          ]}
+          selectedIndices={new Set()}
+          onSelect={vi.fn()}
+        />,
+      );
+    });
+
+    const timeline = host.querySelector<HTMLElement>(
+      '[data-testid="assistant-process-timeline"]',
+    );
+    const toggle = timeline?.querySelector<HTMLButtonElement>("button");
+    expect(timeline).not.toBeNull();
+    expect(toggle).not.toBeNull();
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(toggle?.textContent).toBe("处理过程");
+    expect(timeline?.textContent).toContain("联网检索中...");
+    expect(timeline?.textContent).toContain("chat完成。");
+
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle?.textContent).toContain("处理过程");
+    expect(toggle?.textContent).toContain("chat完成。");
+    expect(timeline?.textContent).not.toContain("联网检索中...");
+  });
+
   it("hides the standalone thinking indicator when process events are visible", async () => {
     await act(async () => {
       root.render(

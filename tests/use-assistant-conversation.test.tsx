@@ -211,12 +211,12 @@ describe("useAssistantConversation", () => {
     expect(setPackets).toHaveBeenLastCalledWith([packet]);
     expect(setSelectedPacketIds).toHaveBeenLastCalledWith([]);
   });
-  it("prefers session ledger packets when loading a session", async () => {
+  it("keeps richer message evidence when ledger metadata is also restored", async () => {
     const messagePacket: ContextPacket = {
-      id: "message-packet",
+      id: "shared-packet",
       source_type: "note",
-      source_path: "Sources/Message.md",
-      title: "Message Source",
+      source_path: "",
+      title: "",
       heading_path: null,
       source_span: null,
       content_hash: "hash-message",
@@ -229,10 +229,10 @@ describe("useAssistantConversation", () => {
     };
     const ledgerPacket: ContextPacket = {
       ...messagePacket,
-      id: "ledger-packet",
       source_path: "Sources/Ledger.md",
       title: "Ledger Source",
       citation_label: "[C1]",
+      excerpt: "",
     };
     const setPackets = vi.fn();
 
@@ -254,7 +254,14 @@ describe("useAssistantConversation", () => {
       );
     });
 
-    expect(setPackets).toHaveBeenLastCalledWith([ledgerPacket]);
+    expect(setPackets).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        id: "shared-packet",
+        excerpt: "message evidence",
+        source_path: "Sources/Ledger.md",
+        title: "Ledger Source",
+      }),
+    ]);
   });
 
   it("converts assistant citations when inserting selected messages", async () => {

@@ -398,6 +398,56 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     });
   });
 
+  it("treats legacy tool_start ok trace events as completed instead of still running", async () => {
+    await mountHook();
+
+    await act(async () => {
+      handlers.trace?.({
+        request_id: "req-1",
+        round: 0,
+        phase: "tool_start",
+        tool_name: "chat",
+        status: "ok",
+      });
+    });
+
+    expect(activityHintState).toBe("chat完成。");
+    expect(processEventsState).toHaveLength(1);
+    expect(processEventsState[0]).toMatchObject({
+      kind: "trace",
+      label: "chat完成。",
+      requestId: "req-1",
+      round: 0,
+      status: "ok",
+    });
+    expect(processEventsState[0]?.label).not.toContain("中");
+  });
+
+  it("renders terminal failed workflow traces without a stale running label", async () => {
+    await mountHook();
+
+    await act(async () => {
+      handlers.trace?.({
+        request_id: "req-1",
+        round: 0,
+        phase: "tool_complete",
+        tool_name: "chat",
+        status: "failed",
+      });
+    });
+
+    expect(activityHintState).toBe("chat失败。");
+    expect(processEventsState).toHaveLength(1);
+    expect(processEventsState[0]).toMatchObject({
+      kind: "trace",
+      label: "chat失败。",
+      requestId: "req-1",
+      round: 0,
+      status: "failed",
+    });
+    expect(processEventsState[0]?.label).not.toContain("中");
+  });
+
   it("coalesces reset and tool trace events for the same round and tool", async () => {
     await mountHook();
 

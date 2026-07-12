@@ -29,4 +29,28 @@ describe("mergeContextPackets", () => {
     );
     expect(merged.map((p) => p.id)).toEqual(["a", "b", "c"]);
   });
+
+  it("fills missing metadata from duplicate packets without replacing rich excerpts", () => {
+    const rich = {
+      ...packet("a"),
+      source_path: "",
+      title: "",
+      excerpt: "message excerpt",
+    };
+    const metadata = {
+      ...packet("a"),
+      source_path: "/ledger.md",
+      title: "Ledger",
+      excerpt: "",
+    };
+
+    expect(mergeContextPackets([rich], [metadata])).toMatchObject([
+      {
+        id: "a",
+        source_path: "/ledger.md",
+        title: "Ledger",
+        excerpt: "message excerpt",
+      },
+    ]);
+  });
 });

@@ -178,7 +178,7 @@ function AssistantProcessTimeline({
         <span className="shrink-0 font-medium text-foreground/75">
           处理过程
         </span>
-        {latest ? (
+        {!open && latest ? (
           <span className="min-w-0 truncate text-muted-foreground">
             {latest.label}
           </span>

@@ -617,8 +617,14 @@ export function useAssistantTasks({
         setMessages((prev) => {
           const next = [...prev];
           const last = next[next.length - 1];
+          const nextEvidencePackets =
+            evidencePackets.length > 0 ? evidencePackets : undefined;
           if (last?.role === "assistant") {
-            if (reconcile.mutation === "noop" && last.toolCalls === toolCalls) {
+            if (
+              reconcile.mutation === "noop" &&
+              last.toolCalls === toolCalls &&
+              !nextEvidencePackets
+            ) {
               void saveConversationSnapshot?.(
                 restoreChatLinesForPersistence(next),
               );
@@ -628,12 +634,14 @@ export function useAssistantTasks({
               ...last,
               content: reconcile.content,
               toolCalls,
+              evidencePackets: nextEvidencePackets ?? last.evidencePackets,
             };
           } else {
             next.push({
               role: "assistant",
               content: reconcile.content,
               toolCalls,
+              evidencePackets: nextEvidencePackets,
             });
           }
           void saveConversationSnapshot?.(restoreChatLinesForPersistence(next));

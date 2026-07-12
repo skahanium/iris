@@ -404,9 +404,10 @@ export function useAssistantConversation({
       loaded: ChatLine[],
       ledgerPackets?: ContextPacket[],
     ) => {
-      const loadedPackets = ledgerPackets?.length
-        ? ledgerPackets
-        : loaded.flatMap((message) => message.evidencePackets ?? []);
+      const messagePackets = loaded.flatMap(
+        (message) => message.evidencePackets ?? [],
+      );
+      const loadedPackets = mergeContextPackets(messagePackets, ledgerPackets);
 
       if (aiDomain === "classified") {
         setClassifiedThreadId(id as string);
@@ -419,7 +420,7 @@ export function useAssistantConversation({
       setMessages(
         restoreChatLinesForPersistence(loaded, payloadStoreRef.current),
       );
-      setPackets(mergeContextPackets([], loadedPackets));
+      setPackets(loadedPackets);
       setSelectedPacketIds([]);
       forceNewSessionRef.current = false;
       clearTaskSurfaces();

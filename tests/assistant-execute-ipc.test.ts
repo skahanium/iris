@@ -104,4 +104,14 @@ describe("assistant_execute IPC contract", () => {
     expect(tasks).toContain("explicitIntentDetection(");
     expect(tasks).not.toContain("intentDetection: null");
   });
+
+  it("attaches returned evidence packets to the final assistant chat line", () => {
+    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
+    const reconcileBlock =
+      tasks.split("const evidencePackets = mergeContextPackets")[1] ?? "";
+
+    expect(reconcileBlock).toContain("evidencePackets");
+    expect(reconcileBlock).toContain("next[next.length - 1] = {");
+    expect(reconcileBlock).toContain("next.push({");
+  });
 });
