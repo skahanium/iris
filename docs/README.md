@@ -20,6 +20,7 @@
 | UI token、组件与人工验收            | [design-system.md](./design-system.md)                 |
 | IPC 契约与变更流程                  | [ipc-api-reference.md](./ipc-api-reference.md)         |
 | LLM 配置、连通性和联网证据          | [llm-routing.md](./llm-routing.md)                     |
+| Agent Harness 目标规格与施工计划    | [agent-harness-refactor/](./agent-harness-refactor/)   |
 | Markdown 导出                       | [markdown-export.md](./markdown-export.md)             |
 | 语义/混合检索评测                   | [eval/semantic-search.md](./eval/semantic-search.md)   |
 | 关闭、文档打开和 Iris Rail 手工验收 | [testing/](./testing/)                                 |
@@ -37,3 +38,5 @@
 3. 修改 UI：先更新设计系统与 ROADMAP，再更新样式和组件。
 4. 修改安全、凭据或外部网络边界：同步 `SECURITY.md`、`ARCHITECTURE.md` 和相关专题文档。
 5. 旧计划、临时审计、代理状态文件不作为工作树文档体系的一部分。
+
+Agent Harness 重构文档集是经用户确认保留的当前目标规格，不属于历史临时计划；在实施完成前不得将其中的目标结构写入 `ARCHITECTURE.md` 作为当前事实。
