@@ -2,11 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   assistantRunControl,
+  assistantRunGet,
   assistantRunStart,
   listenAssistantRunEvent,
 } from "@/lib/ipc";
+import {
+  createAssistantRunEventState,
+  reduceAssistantRunEvent,
+  replayAssistantRunEvents,
+  type AssistantRunEventState,
+} from "@/lib/assistant-run-events";
 import type {
   AssistantRunEvent,
+  AssistantRunGetResponse,
   AssistantRunStartRequest,
   AssistantSessionRef,
   RunState,
@@ -33,23 +41,6 @@ export function isAssistantRunBusy(runState: AssistantRunState): boolean {
   return ["accepted", "preparing", "running", "verifying"].includes(runState);
 }
 
-function stateFromEvent(
-  event: AssistantRunEvent,
-  previous: RunState,
-): RunState {
-  if (event.payload.kind === "stage_changed") return event.payload.state;
-  if (event.type === "completed") return "completed";
-  if (event.type === "failed") return "failed";
-  if (event.type === "cancelled") return "cancelled";
-  if (event.type === "paused") return "paused";
-  if (event.type === "resumed") return "running";
-  return previous;
-}
-
-function activityHintFromEvent(event: AssistantRunEvent): string | null {
-  return event.payload.kind === "stage_changed" ? event.payload.stage : null;
-}
-
 function activeRunFromAccepted(
   accepted: Awaited<ReturnType<typeof assistantRunStart>>,
 ): ActiveAssistantRun {
@@ -64,39 +55,83 @@ function activeRunFromAccepted(
 
 /** One reducer-backed controller for the unified Agent Run lifecycle. */
 export function useAssistantRun() {
-  const [currentRun, setCurrentRun] = useState<ActiveAssistantRun | null>(null);
+  const [runIdentity, setRunIdentity] = useState<ActiveAssistantRun | null>(
+    null,
+  );
+  const [eventState, setEventState] = useState<AssistantRunEventState | null>(
+    null,
+  );
   const [latestEvent, setLatestEvent] = useState<AssistantRunEvent | null>(
     null,
   );
-  const [activityHint, setActivityHint] = useState<string | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
-  activeRunIdRef.current = currentRun?.runId ?? activeRunIdRef.current;
+  const currentRunRef = useRef<ActiveAssistantRun | null>(null);
+  const earlyEventsRef = useRef(new Map<string, AssistantRunEvent[]>());
+  const resyncingRef = useRef(new Set<string>());
+
+  const currentRun = useMemo<ActiveAssistantRun | null>(() => {
+    if (!runIdentity) return null;
+    if (!eventState || eventState.runId !== runIdentity.runId)
+      return runIdentity;
+    return {
+      ...runIdentity,
+      state: eventState.state ?? runIdentity.state,
+      stateVersion: Math.max(runIdentity.stateVersion, eventState.stateVersion),
+    };
+  }, [eventState, runIdentity]);
+  activeRunIdRef.current = currentRun?.runId ?? null;
+  currentRunRef.current = currentRun;
 
   const runState: AssistantRunState = currentRun?.state ?? "idle";
+  const activityHint = eventState?.stage ?? null;
   const snapshot: AssistantRunSnapshot = useMemo(
     () => ({ runState, activityHint, currentRun }),
     [activityHint, currentRun, runState],
   );
   const isBusy = isAssistantRunBusy(runState);
 
+  const replay = useCallback(async (run: ActiveAssistantRun) => {
+    if (resyncingRef.current.has(run.runId)) return;
+    resyncingRef.current.add(run.runId);
+    try {
+      const persisted = await assistantRunGet({
+        session: run.session,
+        runId: run.runId,
+      });
+      if (!persisted || activeRunIdRef.current !== run.runId) return;
+      setEventState(replayAssistantRunEvents(run.runId, persisted.events));
+      setLatestEvent(persisted.events.at(-1) ?? null);
+    } finally {
+      resyncingRef.current.delete(run.runId);
+    }
+  }, []);
+
+  const reduceLiveEvent = useCallback(
+    (event: AssistantRunEvent) => {
+      if (activeRunIdRef.current !== event.runId) {
+        const buffered = earlyEventsRef.current.get(event.runId) ?? [];
+        earlyEventsRef.current.set(event.runId, [...buffered, event]);
+        return;
+      }
+      setEventState((previous) => {
+        if (!previous || previous.runId !== event.runId) return previous;
+        const next = reduceAssistantRunEvent(previous, event);
+        if (next.resyncFromSeq !== null) {
+          const active = currentRunRef.current;
+          if (active?.runId === event.runId) void replay(active);
+        }
+        return next;
+      });
+      setLatestEvent(event);
+    },
+    [replay],
+  );
+
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | null = null;
     void listenAssistantRunEvent((event) => {
-      if (disposed || activeRunIdRef.current !== event.runId) return;
-      setLatestEvent(event);
-      setCurrentRun((previous) => {
-        if (!previous || previous.runId !== event.runId) return previous;
-        const state = stateFromEvent(event, previous.state);
-        return {
-          ...previous,
-          state,
-          stateVersion: event.stateVersion,
-        };
-      });
-
-      const hint = activityHintFromEvent(event);
-      if (hint !== null) setActivityHint(hint);
+      if (!disposed) reduceLiveEvent(event);
     }).then((stop) => {
       if (disposed) stop();
       else unlisten = stop;
@@ -105,16 +140,38 @@ export function useAssistantRun() {
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [reduceLiveEvent]);
 
-  const start = useCallback(async (request: AssistantRunStartRequest) => {
-    const accepted = await assistantRunStart(request);
-    activeRunIdRef.current = accepted.runId;
-    setCurrentRun(activeRunFromAccepted(accepted));
-    setLatestEvent(null);
-    setActivityHint(null);
-    return accepted;
-  }, []);
+  const start = useCallback(
+    async (request: AssistantRunStartRequest) => {
+      const accepted = await assistantRunStart(request);
+      const run = activeRunFromAccepted(accepted);
+      activeRunIdRef.current = accepted.runId;
+      setRunIdentity(run);
+      let replayState = createAssistantRunEventState(accepted.runId);
+      replayState = reduceAssistantRunEvent(replayState, {
+        runId: accepted.runId,
+        seq: 1,
+        stateVersion: accepted.stateVersion,
+        timestamp: new Date().toISOString(),
+        type: "accepted",
+        payload: {
+          kind: "accepted",
+          turnId: accepted.turnId,
+          sessionKey: accepted.session.sessionKey,
+        },
+      });
+      for (const event of earlyEventsRef.current.get(accepted.runId) ?? []) {
+        replayState = reduceAssistantRunEvent(replayState, event);
+      }
+      earlyEventsRef.current.delete(accepted.runId);
+      setEventState(replayState);
+      setLatestEvent(replayState.events.at(-1) ?? null);
+      void replay(run);
+      return accepted;
+    },
+    [replay],
+  );
 
   const cancel = useCallback(async () => {
     const run = currentRun;
@@ -127,10 +184,25 @@ export function useAssistantRun() {
     });
   }, [currentRun]);
 
+  const recover = useCallback((persisted: AssistantRunGetResponse) => {
+    const run: ActiveAssistantRun = {
+      runId: persisted.run.runId,
+      turnId: persisted.run.turnId,
+      session: persisted.run.session,
+      state: persisted.run.state,
+      stateVersion: persisted.run.stateVersion,
+    };
+    activeRunIdRef.current = run.runId;
+    setRunIdentity(run);
+    const replayed = replayAssistantRunEvents(run.runId, persisted.events);
+    setEventState(replayed);
+    setLatestEvent(replayed.events.at(-1) ?? null);
+  }, []);
+
   const reset = useCallback(() => {
-    setActivityHint(null);
     activeRunIdRef.current = null;
-    setCurrentRun(null);
+    setRunIdentity(null);
+    setEventState(null);
     setLatestEvent(null);
   }, []);
 
@@ -141,8 +213,10 @@ export function useAssistantRun() {
     activityHint,
     currentRun,
     latestEvent,
+    eventState,
     start,
     cancel,
+    recover,
     reset,
   };
 }

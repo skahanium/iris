@@ -117,6 +117,17 @@ impl DirectProviderRoute {
                     .position(|candidate| std::ptr::eq(*candidate, next))
             })
     }
+
+    /// Return the safe configured provider identifier for one selected candidate.
+    pub(crate) fn selected_provider_id(
+        &self,
+        endpoint_family: EndpointFamily,
+        selected_index: usize,
+    ) -> Option<&str> {
+        self.select_text_streaming_no_tools(endpoint_family)
+            .get(selected_index)
+            .map(|candidate| candidate.provider_id.as_str())
+    }
 }
 
 fn ensure_route_is_secret_free(route: &ResolvedCapabilityRoute) -> AppResult<()> {

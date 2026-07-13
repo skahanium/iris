@@ -59,17 +59,12 @@ pub(crate) async fn execute_classified_direct_streaming_with_sink(
     };
     let response = match response {
         Ok(response) => response,
-        Err(_) => {
-            if let Some(failed) = classified_run_fail(
-                vault,
-                session,
-                run_id,
-                2,
-                SafeRunErrorCode::ProviderUnavailable,
-            )? {
+        Err(error) => {
+            let code = classify_classified_provider_failure(&error);
+            if let Some(failed) = classified_run_fail(vault, session, run_id, 2, code)? {
                 sink.emit(&failed)?;
             }
-            return Err(AppError::msg("agent_run_provider_unavailable"));
+            return Err(AppError::msg(code.as_str()));
         }
     };
     if !response.tool_calls.is_empty() || response.content.as_deref().map_or(true, str::is_empty) {
@@ -88,6 +83,20 @@ pub(crate) async fn execute_classified_direct_streaming_with_sink(
         response.content.expect("validated non-empty content"),
     )?;
     sink.emit(&completed)
+}
+
+fn classify_classified_provider_failure(error: &AppError) -> SafeRunErrorCode {
+    let message = error.to_string().to_ascii_lowercase();
+    if message.contains("first_response_timeout")
+        || message.contains("stream_idle_timeout")
+        || message.contains("timed out")
+        || message.contains("timeout")
+        || message.contains("deadline")
+    {
+        SafeRunErrorCode::ProviderTimeout
+    } else {
+        SafeRunErrorCode::ProviderUnavailable
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +185,25 @@ mod tests {
         }
     }
     struct CountingProvider(AtomicU32);
+
+    struct FailingProvider;
+
+    impl StreamingDirectAnswerProvider for FailingProvider {
+        fn answer_streaming<'a>(
+            &'a self,
+            _run_id: &'a str,
+            _message: &'a str,
+            _observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            Box::pin(async { Err(AppError::msg("llm_stream_first_response_timeout")) })
+        }
+    }
 
     impl StreamingDirectAnswerProvider for CountingProvider {
         fn answer_streaming<'a>(
@@ -323,6 +351,56 @@ mod tests {
         assert!(events.iter().all(|event| {
             event["type"] != "content_delta" && !event.to_string().contains("confidential answer")
         }));
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn classified_streaming_timeout_persists_the_distinct_safe_failure() {
+        let _test_lock = VAULT_KEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        crate::crypto::vault_key::init_vault_key();
+        let mut key = VAULT_KEY
+            .get()
+            .expect("vault key initialized")
+            .write()
+            .expect("vault key write lock");
+        key.set_test_key([8; 32]);
+        drop(key);
+        let vault = std::env::temp_dir().join(format!("iris-classified-engine-{}", Uuid::new_v4()));
+        fs::create_dir_all(&vault).unwrap();
+        let accepted = classified_run_accept(
+            &vault,
+            ClassifiedRunAcceptInput {
+                client_request_id: "classified-timeout-request".into(),
+                session_key: None,
+                run_id: "019f0871-0000-7000-8000-000000000042".into(),
+                turn_id: "019f0871-0000-7000-8000-000000000043".into(),
+                message: "confidential question".into(),
+                content_parts: None,
+                explicit_references: Vec::new(),
+                explicit_action: None,
+                envelope: classified_envelope(),
+                effect: "answer".into(),
+            },
+        )
+        .unwrap();
+        let sink = RecordingSink::new();
+
+        let error = tauri::async_runtime::block_on(execute_classified_direct_streaming_with_sink(
+            &vault,
+            &accepted.session,
+            &accepted.run_id,
+            &FailingProvider,
+            &sink,
+        ))
+        .expect_err("timeout must terminalize the classified Run");
+
+        assert_eq!(error.to_string(), "agent_run_provider_timeout");
+        let stored = classified_ai_thread_load(&vault, accepted.session.session_key).unwrap();
+        assert_eq!(stored.runs[0].status, "failed");
+        let failed = stored.events.last().expect("failed event");
+        assert_eq!(failed.payload["code"], "agent_run_provider_timeout");
         fs::remove_dir_all(vault).unwrap();
     }
 }

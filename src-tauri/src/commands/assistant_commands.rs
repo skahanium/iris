@@ -10,7 +10,8 @@ use crate::ai_runtime::run_contract::{
     AssistantRunGetResponse, AssistantRunStartRequest, AssistantSessionRef, SecurityDomain,
 };
 use crate::ai_runtime::run_engine::{
-    ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink, TauriRunEventSink,
+    FailoverStreamingDirectAnswerProvider, ModelGatewayStreamingDirectAnswerProvider, RunEngine,
+    RunEventSink, TauriRunEventSink,
 };
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::app::AppState;
@@ -274,7 +275,7 @@ pub async fn assistant_session_retract(
         }
     }
 }
-/// Start the isolated normal-domain Agent Run development path.
+/// Accept and start one normal-domain Agent Run.
 #[tauri::command]
 pub async fn assistant_run_start(
     state: State<'_, Arc<AppState>>,
@@ -349,14 +350,23 @@ pub async fn assistant_run_get(
     request: AssistantRunGetRequest,
 ) -> AppResult<Option<AssistantRunGetResponse>> {
     match request.session.domain {
-        SecurityDomain::Normal => RunIntake::get(&state.db, &request.session, &request.run_id),
+        SecurityDomain::Normal => match request.run_id.as_deref() {
+            Some(run_id) => RunIntake::get(&state.db, &request.session, run_id),
+            None => RunIntake::get_latest_active(&state.db, &request.session),
+        },
         SecurityDomain::Classified => {
             let vault = state.vault_path()?;
-            crate::ai_runtime::classified_session::classified_run_get(
-                &vault,
-                &request.session,
-                &request.run_id,
-            )
+            match request.run_id.as_deref() {
+                Some(run_id) => crate::ai_runtime::classified_session::classified_run_get(
+                    &vault,
+                    &request.session,
+                    run_id,
+                ),
+                None => crate::ai_runtime::classified_session::classified_latest_active_run_get(
+                    &vault,
+                    &request.session,
+                ),
+            }
         }
     }
 }
@@ -376,10 +386,11 @@ fn evaluate_normal_run_policy(
     let engine = crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?;
     Ok(engine.evaluate_run(request))
 }
-/// Start the minimal normal-domain direct execution after its accepted event exists.
+/// Start normal-domain execution after its accepted event exists.
 ///
-/// This development entry deliberately bypasses the legacy Harness and does not
-/// expose tools, context assembly, web, Skills, or scene routing.
+/// Context, policy and bounded Web evidence are prepared from persisted Run
+/// facts before the streaming Provider is dispatched. The Run Engine remains
+/// the sole owner of lifecycle persistence and terminalization.
 fn spawn_normal_direct_run(
     db: Arc<crate::storage::db::Database>,
     app_handle: AppHandle,
@@ -484,13 +495,11 @@ fn spawn_normal_direct_run(
             crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route(
                 route,
             )
-            .and_then(|route| {
-                route.hydrate_selected_text_streaming_no_tools_as_fast_dispatch(endpoint_family, 0)
-            })
+            .map(|route| (route, endpoint_family))
         });
 
-        let dispatch = match route_result {
-            Ok(dispatch) => dispatch,
+        let (route, endpoint_family) = match route_result {
+            Ok(route) => route,
             Err(_) => {
                 let _ = RunEngine::fail_before_dispatch_with_sink(
                     &db,
@@ -502,41 +511,15 @@ fn spawn_normal_direct_run(
                 return;
             }
         };
-        let provider_config = dispatch.provider;
-        let gateway = match crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
+        let provider = FailoverStreamingDirectAnswerProvider::new(
+            route,
+            endpoint_family,
             app_handle.clone(),
-            vec![provider_config.clone()],
-        ) {
-            Ok(gateway) => gateway,
-            Err(_) => {
-                let _ = RunEngine::fail_before_dispatch_with_sink(
-                    &db,
-                    &accepted.session,
-                    &accepted.run_id,
-                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
-                    &sink,
-                );
-                return;
-            }
-        };
-        let provider = match ModelGatewayStreamingDirectAnswerProvider::new(
-            &gateway,
-            provider_config,
-            dispatch.max_output_tokens,
-        ) {
-            Ok(provider) => provider,
-            Err(_) => {
-                let _ = RunEngine::fail_before_dispatch_with_sink(
-                    &db,
-                    &accepted.session,
-                    &accepted.run_id,
-                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
-                    &sink,
-                );
-                return;
-            }
-        };
-        let _ = RunEngine::execute_direct_streaming_with_prompt_evidence_and_domain_plan_with_sink(
+            &db,
+            &accepted.session,
+            &sink,
+        );
+        if RunEngine::execute_direct_streaming_with_prompt_evidence_and_domain_plan_with_sink(
             &db,
             &accepted.session,
             &accepted.run_id,
@@ -546,7 +529,16 @@ fn spawn_normal_direct_run(
             &provider,
             &sink,
         )
-        .await;
+        .await
+        .is_err()
+        {
+            tracing::warn!(
+                run_id = %accepted.run_id,
+                "normal Agent Run exited without a successful result"
+            );
+            let _ =
+                RunEngine::fail_active_with_sink(&db, &accepted.session, &accepted.run_id, &sink);
+        }
 
         if crate::ai_runtime::model_gateway::is_abort_requested(&accepted.run_id) {
             // The gateway normally clears the marker. This defensive cleanup only
@@ -614,14 +606,33 @@ fn spawn_classified_direct_run(
                 return;
             }
         };
-        let _ = crate::ai_runtime::classified_run_engine::execute_classified_direct_streaming_with_sink(
+        if crate::ai_runtime::classified_run_engine::execute_classified_direct_streaming_with_sink(
             &vault,
             &accepted.session,
             &accepted.run_id,
             &provider,
             &sink,
         )
-        .await;
+        .await
+        .is_err()
+        {
+            tracing::warn!(
+                run_id = %accepted.run_id,
+                "classified Agent Run exited without a successful result"
+            );
+            if let Ok(events) =
+                crate::ai_runtime::classified_session::classified_run_fail_unfinished(
+                    &vault,
+                    &accepted.session,
+                    &accepted.run_id,
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::PersistenceFailed,
+                )
+            {
+                for event in events {
+                    let _ = sink.emit(&event);
+                }
+            }
+        }
         if crate::ai_runtime::model_gateway::is_abort_requested(&accepted.run_id) {
             crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
         }

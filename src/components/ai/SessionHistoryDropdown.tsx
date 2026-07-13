@@ -10,6 +10,7 @@ import {
   assistantSessionList,
   assistantSessionLoad,
   assistantSessionRename,
+  assistantRunGet,
 } from "@/lib/ipc";
 import type {
   AiDomain,
@@ -42,7 +43,11 @@ interface SessionHistoryDropdownProps {
   currentSession?: AssistantSessionRef | null;
   disabled?: boolean;
   domain: AiDomain;
-  onSelectSession: (session: AssistantSessionRef, messages: ChatLine[]) => void;
+  onSelectSession: (
+    session: AssistantSessionRef,
+    messages: ChatLine[],
+    activeRun: import("@/types/ai").AssistantRunGetResponse | null,
+  ) => void;
   onDeleted?: (session: AssistantSessionRef) => void;
 }
 
@@ -96,10 +101,11 @@ export function SessionHistoryDropdown({
   const handleSelect = useCallback(
     async (summary: AssistantSessionSummary) => {
       try {
-        const messages = await assistantSessionLoad({
-          session: summary.session,
-        });
-        onSelectSession(summary.session, toChatLines(messages));
+        const [messages, activeRun] = await Promise.all([
+          assistantSessionLoad({ session: summary.session }),
+          assistantRunGet({ session: summary.session }),
+        ]);
+        onSelectSession(summary.session, toChatLines(messages), activeRun);
         setOpen(false);
       } catch (reason) {
         setError(invokeErrorMessage(reason));

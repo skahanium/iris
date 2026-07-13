@@ -251,6 +251,10 @@ impl AppState {
     ) -> AppResult<Arc<Self>> {
         let db_path = data_dir.join("iris.db");
         let db = Arc::new(Database::open(&db_path)?);
+        if let Err(error) = crate::ai_runtime::run_engine::RunEngine::recover_interrupted_runs(&db)
+        {
+            tracing::warn!("failed to recover interrupted Agent Runs safely: {error}");
+        }
         let vector_ready = db.vector_index_ready();
 
         let storage = StorageState::new(Arc::clone(&db), cas_key_override);

@@ -7,6 +7,7 @@ use crate::error::AppResult;
 
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_READ_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 10;
 
 /// 创建带有安全 TLS 配置的 HTTP client builder（无证书固定）。
 ///
@@ -15,6 +16,7 @@ const DEFAULT_READ_TIMEOUT_SECS: u64 = 60;
 /// - 强制 HTTPS（拒绝明文 HTTP）
 /// - 使用 rustls TLS 后端（不依赖系统 OpenSSL）
 /// - 总超时 300 秒（普通非流式请求整体 deadline，兜底长请求上界）
+/// - 连接超时 10 秒，避免 DNS/TCP/TLS 建连无限等待
 /// - 读超时 60 秒（每次读操作超时，成功读后重置；用于检测 SSE/流式
 ///   stalled 连接——某些 provider 在 `[DONE]` 后保持 socket 打开，或
 ///   中途停止发送，`read_timeout` 能在 60s 无数据时强制断流，而不是
@@ -23,6 +25,7 @@ pub fn https_client_builder() -> ClientBuilder {
     reqwest::Client::builder()
         .use_rustls_tls()
         .https_only(true)
+        .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
         .read_timeout(Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS))
 }
@@ -36,6 +39,7 @@ pub fn https_streaming_client_builder() -> ClientBuilder {
     reqwest::Client::builder()
         .use_rustls_tls()
         .https_only(true)
+        .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
         .read_timeout(Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS))
 }
 

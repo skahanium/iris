@@ -207,7 +207,10 @@ function canTransition(current: RunState | null, next: RunState): boolean {
     (current === "awaiting_confirmation" && next === "running") ||
     (current === "paused" && next === "running") ||
     (current === "verifying" &&
-      (next === "completed" || next === "failed" || next === "cancelled"))
+      (next === "paused" ||
+        next === "completed" ||
+        next === "failed" ||
+        next === "cancelled"))
   );
 }
 

@@ -292,8 +292,10 @@ pub struct AssistantRunControlRequest {
 pub struct AssistantRunGetRequest {
     /// Session that owns the Run.
     pub(crate) session: AssistantSessionRef,
-    /// Stable Run identifier.
-    pub(crate) run_id: String,
+    /// Stable Run identifier. Omit only to recover the latest non-terminal Run
+    /// owned by the supplied session after a frontend reconnect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) run_id: Option<String>,
 }
 
 /// Pending confirmation summary safe to replay after reconnecting.
@@ -578,6 +580,11 @@ impl AssistantRunEvent {
             payload,
         })
     }
+
+    /// Return the optimistic state version recorded by this durable event.
+    pub(crate) const fn state_version(&self) -> u64 {
+        self.state_version
+    }
 }
 
 impl Serialize for AssistantRunEvent {
@@ -698,6 +705,9 @@ pub(crate) enum SafeRunErrorCode {
     /// No suitable Provider can complete the permitted route.
     #[serde(rename = "agent_run_provider_unavailable")]
     ProviderUnavailable,
+    /// The Provider did not establish or maintain a response within the Run deadline.
+    #[serde(rename = "agent_run_provider_timeout")]
+    ProviderTimeout,
     /// A required persistence operation failed safely.
     #[serde(rename = "agent_run_persistence_failed")]
     PersistenceFailed,
@@ -718,6 +728,7 @@ impl SafeRunErrorCode {
             Self::PermissionDenied => "agent_run_permission_denied",
             Self::ConfirmationExpired => "agent_run_confirmation_expired",
             Self::ProviderUnavailable => "agent_run_provider_unavailable",
+            Self::ProviderTimeout => "agent_run_provider_timeout",
             Self::PersistenceFailed => "agent_run_persistence_failed",
             Self::Cancelled => "agent_run_cancelled",
         }
@@ -781,7 +792,7 @@ pub(crate) fn transition_to(
             | (RunState::Paused, RunState::Running)
             | (
                 RunState::Verifying,
-                RunState::Completed | RunState::Failed | RunState::Cancelled
+                RunState::Paused | RunState::Completed | RunState::Failed | RunState::Cancelled
             )
     );
 

@@ -1,10 +1,10 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import type { ChatLine } from "../AiMessageList";
-import type { AssistantRunEvent } from "@/types/ai";
+import type { AssistantRunEventState } from "@/lib/assistant-run-events";
 
 export interface AssistantRunTranscriptOptions {
-  event: AssistantRunEvent | null;
+  run: AssistantRunEventState | null;
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setStreaming: (streaming: boolean) => void;
   setActivityHint: (hint: string | null) => void;
@@ -13,7 +13,7 @@ export interface AssistantRunTranscriptOptions {
 
 /** Projects persisted Run events into the local, presentation-only transcript. */
 export function useAssistantRunTranscript({
-  event,
+  run,
   setMessages,
   setStreaming,
   setActivityHint,
@@ -22,24 +22,31 @@ export function useAssistantRunTranscript({
   const appliedEventRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!run || run.lastSeq === 0) return;
+    const event = run.events.at(-1);
     if (!event) return;
-    const key = `${event.runId}:${event.seq}`;
+    const key = `${run.runId}:${run.lastSeq}`;
     if (appliedEventRef.current === key) return;
     appliedEventRef.current = key;
 
-    switch (event.type) {
-      case "stage_changed":
-        setActivityHint(event.payload.stage);
+    setMessages((previous) => {
+      const last = previous.at(-1);
+      if (!last || last.role !== "assistant") return previous;
+      if (last.content === run.content) return previous;
+      return [...previous.slice(0, -1), { ...last, content: run.content }];
+    });
+
+    setActivityHint(run.stage);
+    switch (run.state) {
+      case "accepted":
+      case "preparing":
+      case "running":
+      case "verifying":
+        setStreaming(true);
         return;
-      case "content_delta":
-        setMessages((previous) => {
-          const last = previous.at(-1);
-          if (!last || last.role !== "assistant") return previous;
-          return [
-            ...previous.slice(0, -1),
-            { ...last, content: `${last.content}${event.payload.delta}` },
-          ];
-        });
+      case "awaiting_confirmation":
+      case "paused":
+        setStreaming(false);
         return;
       case "completed":
         setStreaming(false);
@@ -48,7 +55,11 @@ export function useAssistantRunTranscript({
       case "failed":
         setStreaming(false);
         setActivityHint(null);
-        setError(event.payload.message);
+        setError(
+          event.payload.kind === "failed"
+            ? event.payload.message
+            : "本次运行未能完成。",
+        );
         return;
       case "cancelled":
         setStreaming(false);
@@ -70,5 +81,5 @@ export function useAssistantRunTranscript({
       default:
         return;
     }
-  }, [event, setActivityHint, setError, setMessages, setStreaming]);
+  }, [run, setActivityHint, setError, setMessages, setStreaming]);
 }

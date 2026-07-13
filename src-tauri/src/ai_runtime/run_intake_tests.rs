@@ -170,6 +170,56 @@ fn intake_scoped_get_does_not_expose_a_run_to_another_session() {
 }
 
 #[test]
+fn reconnect_lookup_returns_only_the_owner_latest_nonterminal_run() {
+    let db = Database::open_in_memory().expect("database");
+    let first = RunIntake::start(&db, request()).expect("first accepted run");
+    let mut second_request = request();
+    second_request.client_request_id = "latest-active-client-request".to_string();
+    second_request.session = Some(first.session.clone());
+    let second = RunIntake::start(&db, second_request).expect("second accepted run");
+
+    let recovered = RunIntake::get_latest_active(&db, &first.session)
+        .expect("recover latest")
+        .expect("active run");
+    assert_eq!(recovered.run.run_id, second.run_id);
+
+    RunIntake::control(
+        &db,
+        AssistantRunControlRequest {
+            session: first.session.clone(),
+            run_id: second.run_id.clone(),
+            expected_state_version: 0,
+            action: RunControlAction::Cancel,
+        },
+    )
+    .expect("cancel latest run");
+    assert_eq!(
+        RunIntake::get_latest_active(&db, &first.session)
+            .expect("recover remaining active")
+            .expect("first run remains active")
+            .run
+            .run_id,
+        first.run_id
+    );
+
+    RunIntake::control(
+        &db,
+        AssistantRunControlRequest {
+            session: first.session.clone(),
+            run_id: first.run_id.clone(),
+            expected_state_version: 0,
+            action: RunControlAction::Cancel,
+        },
+    )
+    .expect("cancel first run");
+    assert!(RunIntake::get_latest_active(&db, &first.session)
+        .expect("recover with no active run")
+        .is_none());
+    crate::ai_runtime::model_gateway::clear_abort(&first.run_id);
+    crate::ai_runtime::model_gateway::clear_abort(&second.run_id);
+}
+
+#[test]
 fn cancel_control_updates_only_the_owned_new_run() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted run");

@@ -17,7 +17,11 @@ interface AssistantPanelHeaderProps {
   onDeletedCurrentSession: () => void;
   onDeletedSession?: (session: AssistantSessionRef) => void;
   onNewChat: () => void;
-  onSelectSession: (session: AssistantSessionRef, messages: ChatLine[]) => void;
+  onSelectSession: (
+    session: AssistantSessionRef,
+    messages: ChatLine[],
+    activeRun: import("@/types/ai").AssistantRunGetResponse | null,
+  ) => void;
   profile: PromptProfileDto;
   runState: AssistantRunState;
   webSearch: boolean;

@@ -277,6 +277,7 @@ export type AssistantRunErrorCode =
   | "agent_run_confirmation_expired"
   | "agent_run_persistence_failed"
   | "agent_run_provider_unavailable"
+  | "agent_run_provider_timeout"
   | "agent_run_cancelled";
 
 export type AssistantRunEventPayload =
@@ -338,7 +339,8 @@ export interface AssistantRunControlRequest {
 
 export interface AssistantRunGetRequest {
   session: AssistantSessionRef;
-  runId: string;
+  /** Omit to recover this session's latest non-terminal Run after reconnecting. */
+  runId?: string;
 }
 
 export interface AssistantRunSnapshot {

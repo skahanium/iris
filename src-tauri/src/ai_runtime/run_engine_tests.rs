@@ -33,7 +33,7 @@ struct MockProvider {
 
 struct MockStreamingProvider {
     calls: AtomicU32,
-    fail: bool,
+    failure: Option<&'static str>,
 }
 
 #[derive(Default)]
@@ -75,8 +75,8 @@ impl StreamingDirectAnswerProvider for MockStreamingProvider {
     > {
         self.calls.fetch_add(1, Ordering::SeqCst);
         Box::pin(async move {
-            if self.fail {
-                return Err(AppError::msg("provider transport error"));
+            if let Some(failure) = self.failure {
+                return Err(AppError::msg(failure));
             }
             observer.observe(
                 &StreamEvent {
@@ -285,6 +285,72 @@ fn preparation_failure_after_acceptance_persists_a_safe_failed_terminal_event() 
 }
 
 #[test]
+fn background_failure_guard_terminalizes_a_running_run_without_exposing_its_cause() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+            },
+        },
+    )
+    .expect("preparing");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: event_state_version(&preparing),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在处理".into(),
+            },
+        },
+    )
+    .expect("running");
+    let sink = RecordingSink::default();
+
+    assert!(
+        RunEngine::fail_active_with_sink(&db, &accepted.session, &accepted.run_id, &sink,)
+            .expect("guard failure")
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    let failed =
+        serde_json::to_value(replay.events.last().expect("failed")).expect("serialize failed");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert_eq!(failed["payload"]["code"], "agent_run_persistence_failed");
+    assert!(!failed.to_string().contains("unexpected orchestration"));
+}
+
+#[test]
+fn startup_recovery_terminalizes_interrupted_direct_runs_for_replay() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover interrupted runs"),
+        1
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert_eq!(
+        serde_json::to_value(replay.events.last().expect("failure")).expect("serialize failure")
+            ["payload"]["message"],
+        "运行因应用关闭而中断，请重新提交请求"
+    );
+}
+
+#[test]
 fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
@@ -362,7 +428,7 @@ async fn streaming_direct_engine_persists_deltas_and_one_terminal_message() {
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let provider = MockStreamingProvider {
         calls: AtomicU32::new(0),
-        fail: false,
+        failure: None,
     };
     let sink = RecordingSink::default();
 
@@ -400,7 +466,7 @@ async fn streaming_provider_failure_persists_a_safe_failed_terminal_event() {
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let provider = MockStreamingProvider {
         calls: AtomicU32::new(0),
-        fail: true,
+        failure: Some("provider transport error"),
     };
     let sink = RecordingSink::default();
 
@@ -426,6 +492,37 @@ async fn streaming_provider_failure_persists_a_safe_failed_terminal_event() {
             ["type"],
         "failed"
     );
+}
+
+#[tokio::test]
+async fn streaming_first_response_timeout_persists_a_distinct_safe_failure() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockStreamingProvider {
+        calls: AtomicU32::new(0),
+        failure: Some("llm_stream_first_response_timeout"),
+    };
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_direct_streaming_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+    )
+    .await
+    .expect_err("a first-response timeout must become terminal");
+
+    assert_eq!(error.to_string(), "agent_run_provider_timeout");
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run exists");
+    assert_eq!(replay.run.state, RunState::Failed);
+    let failed = serde_json::to_value(replay.events.last().expect("failed event"))
+        .expect("serialize failed event");
+    assert_eq!(failed["payload"]["code"], "agent_run_provider_timeout");
+    assert_eq!(failed["payload"]["message"], "模型服务响应超时，请稍后重试");
 }
 
 #[tokio::test]
@@ -465,7 +562,7 @@ async fn streaming_prompt_execution_binds_registered_evidence_to_final_message()
     .expect("registered evidence");
     let provider = MockStreamingProvider {
         calls: AtomicU32::new(0),
-        fail: false,
+        failure: None,
     };
     let sink = RecordingSink::default();
 

@@ -94,7 +94,7 @@ export function UnifiedAssistantPanel({
   });
 
   useAssistantRunTranscript({
-    event: assistantRun.latestEvent,
+    run: assistantRun.eventState,
     setMessages,
     setStreaming,
     setActivityHint,
@@ -143,7 +143,11 @@ export function UnifiedAssistantPanel({
         domain={aiDomain}
         onDeletedCurrentSession={resetAssistantSessionState}
         onNewChat={resetAssistantSessionState}
-        onSelectSession={handleLoadSession}
+        onSelectSession={(session, loaded, activeRun) => {
+          handleLoadSession(session, loaded);
+          if (activeRun) assistantRun.recover(activeRun);
+          else assistantRun.reset();
+        }}
         profile={promptProfile}
         runState={assistantRun.runState}
         webSearch={webSearch}

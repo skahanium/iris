@@ -262,6 +262,17 @@ impl RunIntake {
         AgentRunRepository::get_for_session(db, &session.session_key, run_id)
     }
 
+    /// Return the latest recoverable Run for one normal-domain session.
+    pub(crate) fn get_latest_active(
+        db: &Database,
+        session: &AssistantSessionRef,
+    ) -> AppResult<Option<AssistantRunGetResponse>> {
+        if session.domain != SecurityDomain::Normal {
+            return Err(AppError::msg("agent_run_classified_domain_not_supported"));
+        }
+        AgentRunRepository::latest_active_for_session(db, &session.session_key)
+    }
+
     /// Apply an explicit lifecycle control without legacy task state.
     pub(crate) fn control(db: &Database, request: AssistantRunControlRequest) -> AppResult<()> {
         let _ = Self::control_event(db, request)?;

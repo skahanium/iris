@@ -8,6 +8,7 @@ import {
   assistantSessionList,
   assistantSessionLoad,
   assistantSessionRename,
+  assistantRunGet,
 } from "@/lib/ipc";
 import type {
   AssistantSessionMessage,
@@ -19,12 +20,14 @@ vi.mock("@/lib/ipc", () => ({
   assistantSessionList: vi.fn(),
   assistantSessionLoad: vi.fn(),
   assistantSessionRename: vi.fn(),
+  assistantRunGet: vi.fn(),
 }));
 
 const mockAssistantSessionDelete = vi.mocked(assistantSessionDelete);
 const mockAssistantSessionList = vi.mocked(assistantSessionList);
 const mockAssistantSessionLoad = vi.mocked(assistantSessionLoad);
 const mockAssistantSessionRename = vi.mocked(assistantSessionRename);
+const mockAssistantRunGet = vi.mocked(assistantRunGet);
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -62,6 +65,7 @@ afterEach(() => {
     mockAssistantSessionList,
     mockAssistantSessionLoad,
     mockAssistantSessionRename,
+    mockAssistantRunGet,
   ]) {
     mock.mockReset();
   }
@@ -85,6 +89,7 @@ describe("SessionHistoryDropdown", () => {
     };
     mockAssistantSessionList.mockResolvedValue([summary]);
     mockAssistantSessionLoad.mockResolvedValue([message]);
+    mockAssistantRunGet.mockResolvedValue(null);
     const onSelectSession = renderHistory();
 
     act(() => {
@@ -113,8 +118,13 @@ describe("SessionHistoryDropdown", () => {
     expect(mockAssistantSessionLoad).toHaveBeenCalledWith({
       session: summary.session,
     });
-    expect(onSelectSession).toHaveBeenCalledWith(summary.session, [
-      { role: "user", content: "hello", seq: 1 },
-    ]);
+    expect(mockAssistantRunGet).toHaveBeenCalledWith({
+      session: summary.session,
+    });
+    expect(onSelectSession).toHaveBeenCalledWith(
+      summary.session,
+      [{ role: "user", content: "hello", seq: 1 }],
+      null,
+    );
   });
 });

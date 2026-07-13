@@ -704,6 +704,30 @@ impl AgentRunRepository {
         Self::get_scoped(db, run_id, None)
     }
 
+    /// Return the latest recoverable Run for one normal-domain session.
+    pub(crate) fn latest_active_for_session(
+        db: &Database,
+        session_key: &str,
+    ) -> AppResult<Option<AssistantRunGetResponse>> {
+        let run_id = db.with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT r.run_id FROM agent_runs r
+                 JOIN sessions s ON s.id = r.session_id
+                 WHERE s.session_key = ?1
+                   AND r.status IN ('accepted', 'preparing', 'running', 'awaiting_confirmation', 'paused', 'verifying')
+                 ORDER BY r.updated_at DESC, r.created_at DESC LIMIT 1",
+                [session_key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(Into::into)
+        })?;
+        match run_id {
+            Some(run_id) => Self::get_for_session(db, session_key, &run_id),
+            None => Ok(None),
+        }
+    }
+
     fn get_scoped(
         db: &Database,
         run_id: &str,

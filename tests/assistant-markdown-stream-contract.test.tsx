@@ -51,7 +51,7 @@ describe("assistant Run transcript rendering", () => {
       false,
     );
     expect(list).not.toContain("ResearchResultMessage");
-    expect(transcript).toContain('case "content_delta"');
+    expect(transcript).toContain("run.content");
     expect(transcript).toContain('case "completed"');
   });
 

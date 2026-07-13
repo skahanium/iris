@@ -668,6 +668,37 @@ pub(crate) fn classified_run_get(
     }))
 }
 
+/// Return the latest recoverable classified Run without exposing CEF internals.
+pub(crate) fn classified_latest_active_run_get(
+    vault: &Path,
+    session: &AssistantSessionRef,
+) -> AppResult<Option<AssistantRunGetResponse>> {
+    if session.domain != SecurityDomain::Classified {
+        return Err(AppError::msg("agent_run_session_not_found"));
+    }
+    let thread = classified_ai_thread_load(vault, session.session_key.clone())?;
+    let run_id = thread
+        .runs
+        .iter()
+        .rev()
+        .find(|run| {
+            matches!(
+                run.status.as_str(),
+                "accepted"
+                    | "preparing"
+                    | "running"
+                    | "awaiting_confirmation"
+                    | "paused"
+                    | "verifying"
+            )
+        })
+        .map(|run| run.run_id.clone());
+    match run_id {
+        Some(run_id) => classified_run_get(vault, session, &run_id),
+        None => Ok(None),
+    }
+}
+
 /// Rebuild a classified Run policy request solely from CEF-persisted facts.
 pub(crate) fn classified_run_policy_request(
     vault: &Path,
@@ -886,6 +917,44 @@ pub(crate) fn classified_run_fail(
     Ok(Some(event))
 }
 
+/// Terminalize an unfinished classified Run after an unexpected background exit.
+///
+/// The returned events are already durably stored and must be emitted in order by
+/// the caller. Waiting-for-confirmation and paused Runs deliberately remain
+/// untouched: they are not live provider work and may be recovered safely later.
+pub(crate) fn classified_run_fail_unfinished(
+    vault: &Path,
+    session: &AssistantSessionRef,
+    run_id: &str,
+    code: crate::ai_runtime::run_contract::SafeRunErrorCode,
+) -> AppResult<Vec<AssistantRunEvent>> {
+    let snapshot = classified_run_get(vault, session, run_id)?
+        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+    if snapshot.run.state.is_terminal()
+        || matches!(
+            snapshot.run.state,
+            RunState::AwaitingConfirmation | RunState::Paused
+        )
+    {
+        return Ok(Vec::new());
+    }
+
+    let mut events = Vec::new();
+    let expected_state_version = if snapshot.run.state == RunState::Accepted {
+        let preparing = classified_run_mark_preparing(vault, session, run_id)?;
+        let version = preparing.state_version();
+        events.push(preparing);
+        version
+    } else {
+        snapshot.run.state_version
+    };
+    if let Some(failed) = classified_run_fail(vault, session, run_id, expected_state_version, code)?
+    {
+        events.push(failed);
+    }
+    Ok(events)
+}
+
 /// Read the originating user message from the CEF conversation only.
 pub(crate) fn classified_run_user_message(
     vault: &Path,
@@ -1003,6 +1072,9 @@ fn classified_safe_failure_message(
     match code {
         crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable => {
             "模型服务暂时不可用，请稍后重试"
+        }
+        crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderTimeout => {
+            "模型服务响应超时，请稍后重试"
         }
         crate::ai_runtime::run_contract::SafeRunErrorCode::InvalidRequest => {
             "请求无法按当前运行能力处理"
@@ -1537,6 +1609,61 @@ mod tests {
             .expect("cancelled run");
         assert_eq!(cancelled.run.state, RunState::Cancelled);
         assert_eq!(cancelled.events.len(), 2);
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn unfinished_classified_run_is_terminalized_with_safe_events() {
+        let _test_lock = crate::crypto::vault_key::VAULT_KEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        crate::crypto::vault_key::init_vault_key();
+        {
+            let mut key = VAULT_KEY
+                .get()
+                .expect("vault key initialized")
+                .write()
+                .expect("vault key write lock");
+            key.set_test_key(test_key());
+        }
+        let vault = std::env::temp_dir().join(format!("iris-classified-run-{}", Uuid::new_v4()));
+        fs::create_dir_all(&vault).unwrap();
+        let accepted = classified_run_accept(
+            &vault,
+            ClassifiedRunAcceptInput {
+                client_request_id: "classified-unfinished-request".into(),
+                session_key: None,
+                run_id: "019f0871-0000-7000-8000-000000000022".into(),
+                turn_id: "019f0871-0000-7000-8000-000000000023".into(),
+                message: "涉密问题".into(),
+                content_parts: None,
+                explicit_references: vec![],
+                explicit_action: None,
+                envelope: serde_json::json!({ "securityDomain": "classified" }),
+                effect: "answer".into(),
+            },
+        )
+        .unwrap();
+
+        let events = classified_run_fail_unfinished(
+            &vault,
+            &accepted.session,
+            &accepted.run_id,
+            crate::ai_runtime::run_contract::SafeRunErrorCode::PersistenceFailed,
+        )
+        .expect("terminalize unfinished run");
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            serde_json::to_value(&events[0]).unwrap()["type"],
+            "stage_changed"
+        );
+        assert_eq!(serde_json::to_value(&events[1]).unwrap()["type"], "failed");
+        let replay = classified_run_get(&vault, &accepted.session, &accepted.run_id)
+            .unwrap()
+            .expect("terminalized run");
+        assert_eq!(replay.run.state, RunState::Failed);
+        assert_eq!(replay.run.state_version, 2);
         fs::remove_dir_all(vault).unwrap();
     }
 

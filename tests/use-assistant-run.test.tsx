@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
 import {
   assistantRunControl,
+  assistantRunGet,
   assistantRunStart,
   listenAssistantRunEvent,
 } from "@/lib/ipc";
@@ -12,11 +13,13 @@ import type { AssistantRunStartRequest } from "@/types/ai";
 
 vi.mock("@/lib/ipc", () => ({
   assistantRunControl: vi.fn(),
+  assistantRunGet: vi.fn(),
   assistantRunStart: vi.fn(),
   listenAssistantRunEvent: vi.fn(),
 }));
 
 const mockAssistantRunControl = vi.mocked(assistantRunControl);
+const mockAssistantRunGet = vi.mocked(assistantRunGet);
 const mockAssistantRunStart = vi.mocked(assistantRunStart);
 const mockListenAssistantRunEvent = vi.mocked(listenAssistantRunEvent);
 
@@ -55,6 +58,7 @@ afterEach(() => {
   host = null;
   runApi = null;
   mockAssistantRunControl.mockReset();
+  mockAssistantRunGet.mockReset();
   mockAssistantRunStart.mockReset();
   mockListenAssistantRunEvent.mockReset();
 });
@@ -68,6 +72,7 @@ describe("useAssistantRun", () => {
       state: "accepted",
       stateVersion: 1,
     });
+    mockAssistantRunGet.mockResolvedValue(null);
     mockListenAssistantRunEvent.mockResolvedValue(() => undefined);
     mountProbe();
 
@@ -93,6 +98,7 @@ describe("useAssistantRun", () => {
       state: "accepted",
       stateVersion: 1,
     });
+    mockAssistantRunGet.mockResolvedValue(null);
     mockListenAssistantRunEvent.mockResolvedValue(() => undefined);
     mountProbe();
 
@@ -115,6 +121,7 @@ describe("useAssistantRun", () => {
       state: "accepted",
       stateVersion: 1,
     });
+    mockAssistantRunGet.mockResolvedValue(null);
     mockListenAssistantRunEvent.mockImplementation(async (handler) => {
       emit = handler;
       return () => undefined;
@@ -133,6 +140,30 @@ describe("useAssistantRun", () => {
         type: "stage_changed",
         payload: {
           kind: "stage_changed",
+          state: "preparing",
+          stage: "正在准备",
+        },
+      });
+      emit?.({
+        runId: "run-2",
+        seq: 3,
+        stateVersion: 3,
+        timestamp: "2026-07-13T12:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在处理",
+        },
+      });
+      emit?.({
+        runId: "run-2",
+        seq: 4,
+        stateVersion: 4,
+        timestamp: "2026-07-13T12:00:02.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
           state: "awaiting_confirmation",
           stage: "等待确认",
         },
@@ -142,7 +173,7 @@ describe("useAssistantRun", () => {
     expect(runApi?.runState).toBe("awaiting_confirmation");
     expect(runApi?.currentRun).toMatchObject({
       state: "awaiting_confirmation",
-      stateVersion: 2,
+      stateVersion: 4,
     });
     expect(runApi?.latestEvent).toMatchObject({
       runId: "run-2",

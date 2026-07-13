@@ -4,7 +4,7 @@ use reqwest::{
 };
 use serde::{Deserialize, Serialize};
 use std::error::Error as StdError;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
@@ -17,6 +17,12 @@ use super::{
     usage_impl::parse_usage,
     GatewayResponse,
 };
+
+/// A provider must acknowledge a streaming request promptly. This deadline covers
+/// waiting for response headers, which reqwest's per-read timeout does not bound.
+const STREAM_FIRST_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+/// Cancellation remains responsive even while a provider is still opening a stream.
+const ABORT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Streaming event emitted to frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -899,17 +905,43 @@ pub async fn send_streaming_request_to_observer(
         req_builder = apply_streaming_auth_headers(req_builder, endpoint_family, api_key);
     }
 
-    let response = req_builder.json(&body).send().await.map_err(|e| {
-        finish_stream_with_error(
+    let send = req_builder.json(&body).send();
+    tokio::pin!(send);
+    let first_response_deadline = tokio::time::sleep(STREAM_FIRST_RESPONSE_TIMEOUT);
+    tokio::pin!(first_response_deadline);
+    let abort_wait = wait_for_abort_signal(request_id);
+    tokio::pin!(abort_wait);
+    let response = tokio::select! {
+        result = &mut send => result.map_err(|e| {
+            finish_stream_with_error(
+                observer,
+                request_id,
+                format!("LLM streaming request failed: {e}"),
+                classified,
+                surface,
+                0,
+                emit_error_event,
+            )
+        }),
+        _ = &mut first_response_deadline => Err(finish_stream_with_error(
             observer,
             request_id,
-            format!("LLM streaming request failed: {e}"),
+            "llm_stream_first_response_timeout",
             classified,
             surface,
             0,
             emit_error_event,
-        )
-    })?;
+        )),
+        _ = &mut abort_wait => Err(finish_stream_with_error(
+            observer,
+            request_id,
+            "request aborted",
+            classified,
+            surface,
+            0,
+            true,
+        )),
+    }?;
 
     if !response.status().is_success() {
         let status = response.status();
@@ -981,8 +1013,6 @@ pub async fn send_streaming_request_to_observer(
     let mut sse_line_count: u64 = 0;
     let saw_done = false;
     const MAX_CARRY_BYTES: usize = 1_048_576;
-    const ABORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
-
     'stream: loop {
         // Race the next stream chunk against a periodic abort poll so a stalled
         // socket (no incoming chunks) can still be interrupted by the user
@@ -1401,6 +1431,15 @@ pub async fn send_streaming_request_to_observer(
             Some(full_reasoning)
         },
     })
+}
+
+async fn wait_for_abort_signal(request_id: &str) {
+    loop {
+        tokio::time::sleep(ABORT_POLL_INTERVAL).await;
+        if is_abort_requested(request_id) {
+            return;
+        }
+    }
 }
 
 impl StreamEventObserver for LegacyTauriStreamObserver<'_> {

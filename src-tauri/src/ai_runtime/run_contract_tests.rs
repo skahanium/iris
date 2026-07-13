@@ -132,7 +132,10 @@ fn state_machine_exhaustively_classifies_every_state_pair() {
                     | (RunState::Paused, RunState::Running)
                     | (
                         RunState::Verifying,
-                        RunState::Completed | RunState::Failed | RunState::Cancelled
+                        RunState::Paused
+                            | RunState::Completed
+                            | RunState::Failed
+                            | RunState::Cancelled
                     )
             ) {
                 assert_eq!(result, Ok(next));
@@ -224,6 +227,7 @@ fn safe_run_errors_serialize_as_stable_agent_run_codes() {
         SafeRunErrorCode::PermissionDenied,
         SafeRunErrorCode::ConfirmationExpired,
         SafeRunErrorCode::ProviderUnavailable,
+        SafeRunErrorCode::ProviderTimeout,
         SafeRunErrorCode::PersistenceFailed,
         SafeRunErrorCode::Cancelled,
     ] {
@@ -272,6 +276,24 @@ fn run_event_rejects_mismatched_type_and_payload_at_the_rust_boundary() {
         "payload": { "kind": "content_delta", "delta": "must not be accepted" },
     }));
     assert!(result.is_err());
+}
+
+#[test]
+fn run_event_exposes_its_persisted_state_version_without_serialization() {
+    let event = AssistantRunEvent::new(
+        "run-1",
+        3,
+        7,
+        RunEventType::StageChanged,
+        "2026-07-13T00:00:00Z",
+        RunEventPayload::StageChanged {
+            state: RunState::Running,
+            stage: "正在生成答复".into(),
+        },
+    )
+    .expect("valid event");
+
+    assert_eq!(event.state_version(), 7);
 }
 
 #[test]
@@ -402,7 +424,7 @@ fn run_control_and_get_dtos_use_only_run_and_session_identity() {
     };
     let get = AssistantRunGetRequest {
         session,
-        run_id: "run-1".into(),
+        run_id: Some("run-1".into()),
     };
 
     assert_eq!(

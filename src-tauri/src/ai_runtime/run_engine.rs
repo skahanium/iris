@@ -14,6 +14,7 @@ use crate::ai_runtime::run_contract::{
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
+use crate::{ai_runtime::direct_provider_route::DirectProviderRoute, ai_types::EndpointFamily};
 
 /// Provider adapter contract for one direct, normal-domain answer.
 pub(crate) trait DirectAnswerProvider {
@@ -81,6 +82,110 @@ impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider
             self.gateway
                 .send_streaming_request_to_observer(run_id, request, observer)
                 .await
+        })
+    }
+}
+
+/// Direct streaming adapter that retries only a safe, same-route failover candidate.
+/// It owns no credential beyond the one candidate currently being dispatched.
+pub(crate) struct FailoverStreamingDirectAnswerProvider<'a> {
+    route: DirectProviderRoute,
+    endpoint_family: EndpointFamily,
+    app_handle: AppHandle,
+    db: &'a Database,
+    session: &'a AssistantSessionRef,
+    sink: &'a dyn RunEventSink,
+}
+
+impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
+    pub(crate) fn new(
+        route: DirectProviderRoute,
+        endpoint_family: EndpointFamily,
+        app_handle: AppHandle,
+        db: &'a Database,
+        session: &'a AssistantSessionRef,
+        sink: &'a dyn RunEventSink,
+    ) -> Self {
+        Self {
+            route,
+            endpoint_family,
+            app_handle,
+            db,
+            session,
+            sink,
+        }
+    }
+}
+
+impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_> {
+    fn answer_streaming<'a>(
+        &'a self,
+        run_id: &'a str,
+        message: &'a str,
+        observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            let mut selected_index = 0;
+            loop {
+                let dispatch = self
+                    .route
+                    .hydrate_selected_text_streaming_no_tools_as_fast_dispatch(
+                        self.endpoint_family,
+                        selected_index,
+                    )?;
+                let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
+                    self.app_handle.clone(),
+                    vec![dispatch.provider.clone()],
+                )?;
+                let provider = ModelGatewayStreamingDirectAnswerProvider::new(
+                    &gateway,
+                    dispatch.provider,
+                    dispatch.max_output_tokens,
+                )?;
+                match provider.answer_streaming(run_id, message, observer).await {
+                    Ok(response) => return Ok(response),
+                    Err(error) => {
+                        let failure = classify_failover_failure(&error);
+                        let Some(next_index) = self.route.next_selected_index_after(
+                            self.endpoint_family,
+                            selected_index,
+                            failure,
+                        ) else {
+                            return Err(error);
+                        };
+                        let provider_id = self
+                            .route
+                            .selected_provider_id(self.endpoint_family, next_index)
+                            .ok_or_else(|| AppError::msg("agent_run_provider_unavailable"))?;
+                        let snapshot = AgentRunRepository::get_for_session(
+                            self.db,
+                            &self.session.session_key,
+                            run_id,
+                        )?
+                        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+                        let switched = AgentRunRepository::append_event(
+                            self.db,
+                            AppendRunEventInput {
+                                run_id: run_id.to_string(),
+                                state_version: snapshot.run.state_version,
+                                event_type: RunEventType::ProviderSwitched,
+                                payload: RunEventPayload::ProviderSwitched {
+                                    provider_id: provider_id.to_string(),
+                                    reason: failover_reason(failure).to_string(),
+                                },
+                            },
+                        )?;
+                        self.sink.emit(&switched)?;
+                        selected_index = next_index;
+                    }
+                }
+            }
         })
     }
 }
@@ -202,6 +307,97 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
 pub(crate) struct RunEngine;
 
 impl RunEngine {
+    /// Convert unfinished work left by a previous process into a replayable safe state.
+    /// Direct and tool-loop Runs cannot be resumed without their live provider stream,
+    /// so they fail deterministically. Durable work that reached `running` or
+    /// `verifying` is paused for later revalidation and explicit resume.
+    pub(crate) fn recover_interrupted_runs(db: &Database) -> AppResult<usize> {
+        let interrupted = db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_id, status, state_version, effort FROM agent_runs
+                 WHERE status IN ('accepted', 'preparing', 'running', 'verifying')",
+            )?;
+            let rows = statement
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, u64>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Into::into);
+            rows
+        })?;
+        let mut recovered = 0;
+        for (run_id, status, state_version, effort) in interrupted {
+            let state = serde_json::from_value::<RunState>(serde_json::Value::String(status))?;
+            let effort = serde_json::from_value::<crate::ai_runtime::run_contract::Effort>(
+                serde_json::Value::String(effort),
+            )?;
+            if effort == crate::ai_runtime::run_contract::Effort::Durable
+                && matches!(state, RunState::Running | RunState::Verifying)
+            {
+                let paused = AgentRunRepository::append_event(
+                    db,
+                    AppendRunEventInput {
+                        run_id,
+                        state_version,
+                        event_type: RunEventType::Paused,
+                        payload: RunEventPayload::Paused {
+                            reason: "应用关闭前的运行已暂停，恢复前将重新校验权限和上下文".into(),
+                        },
+                    },
+                )?;
+                let _ = paused;
+                recovered += 1;
+                continue;
+            }
+            if state == RunState::Accepted {
+                let preparing = AgentRunRepository::append_event(
+                    db,
+                    AppendRunEventInput {
+                        run_id: run_id.clone(),
+                        state_version,
+                        event_type: RunEventType::StageChanged,
+                        payload: RunEventPayload::StageChanged {
+                            state: RunState::Preparing,
+                            stage: "正在恢复运行状态".into(),
+                        },
+                    },
+                )?;
+                let _ = AgentRunRepository::append_event(
+                    db,
+                    AppendRunEventInput {
+                        run_id,
+                        state_version: preparing.state_version(),
+                        event_type: RunEventType::Failed,
+                        payload: RunEventPayload::Failed {
+                            code: SafeRunErrorCode::PersistenceFailed,
+                            message: "运行因应用关闭而中断，请重新提交请求".into(),
+                        },
+                    },
+                )?;
+            } else {
+                let _ = AgentRunRepository::append_event(
+                    db,
+                    AppendRunEventInput {
+                        run_id,
+                        state_version,
+                        event_type: RunEventType::Failed,
+                        payload: RunEventPayload::Failed {
+                            code: SafeRunErrorCode::PersistenceFailed,
+                            message: "运行因应用关闭而中断，请重新提交请求".into(),
+                        },
+                    },
+                )?;
+            }
+            recovered += 1;
+        }
+        Ok(recovered)
+    }
+
     /// Persist a policy denial before any Provider, credential, Web, or tool dispatch.
     ///
     /// A denied Run remains fully replayable: the policy event records the safe
@@ -272,7 +468,7 @@ impl RunEngine {
             db,
             AppendRunEventInput {
                 run_id: run_id.to_string(),
-                state_version: event_state_version(&preparing)?,
+                state_version: preparing.state_version(),
                 event_type: RunEventType::Failed,
                 payload: RunEventPayload::Failed {
                     code,
@@ -281,6 +477,54 @@ impl RunEngine {
             },
         )?;
         sink.emit(&failed)
+    }
+
+    /// Ensure a background execution error cannot leave a non-terminal Run behind.
+    ///
+    /// Provider and policy errors normally terminalize themselves. This guard is
+    /// deliberately idempotent and only covers unexpected orchestration exits.
+    /// It records a safe persistence failure instead of exposing the underlying
+    /// error, which may include provider or user-derived data.
+    pub(crate) fn fail_active_with_sink(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        sink: &impl RunEventSink,
+    ) -> AppResult<bool> {
+        let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
+            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        if snapshot.run.state.is_terminal()
+            || matches!(
+                snapshot.run.state,
+                RunState::AwaitingConfirmation | RunState::Paused
+            )
+        {
+            return Ok(false);
+        }
+        if snapshot.run.state == RunState::Accepted {
+            Self::fail_before_dispatch_with_sink(
+                db,
+                session,
+                run_id,
+                SafeRunErrorCode::PersistenceFailed,
+                sink,
+            )?;
+            return Ok(true);
+        }
+        let failed = AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: run_id.to_string(),
+                state_version: snapshot.run.state_version,
+                event_type: RunEventType::Failed,
+                payload: RunEventPayload::Failed {
+                    code: SafeRunErrorCode::PersistenceFailed,
+                    message: safe_failure_message(SafeRunErrorCode::PersistenceFailed).to_string(),
+                },
+            },
+        )?;
+        sink.emit(&failed)?;
+        Ok(true)
     }
 
     /// Drive accepted → preparing → running → completed for one direct answer.
@@ -330,7 +574,7 @@ impl RunEngine {
             db,
             AppendRunEventInput {
                 run_id: run_id.to_string(),
-                state_version: event_state_version(&preparing)?,
+                state_version: preparing.state_version(),
                 event_type: RunEventType::StageChanged,
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
@@ -346,7 +590,7 @@ impl RunEngine {
                     db,
                     AppendRunEventInput {
                         run_id: run_id.to_string(),
-                        state_version: event_state_version(&running)?,
+                        state_version: running.state_version(),
                         event_type: RunEventType::Failed,
                         payload: RunEventPayload::Failed {
                             code: SafeRunErrorCode::ProviderUnavailable,
@@ -362,7 +606,7 @@ impl RunEngine {
             db,
             FinalizeRunInput {
                 run_id: run_id.to_string(),
-                state_version: event_state_version(&running)?,
+                state_version: running.state_version(),
                 content: answer,
                 evidence_ids: vec![],
                 citation_map: serde_json::json!({}),
@@ -505,7 +749,7 @@ impl RunEngine {
             db,
             AppendRunEventInput {
                 run_id: run_id.to_string(),
-                state_version: event_state_version(&preparing)?,
+                state_version: preparing.state_version(),
                 event_type: RunEventType::StageChanged,
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
@@ -514,7 +758,7 @@ impl RunEngine {
             },
         )?;
         sink.emit(&running)?;
-        let running_state_version = event_state_version(&running)?;
+        let running_state_version = running.state_version();
         let defer_visible_deltas = domain_plan.is_some_and(
             crate::ai_runtime::domain_executor::DomainExecutionPlan::requires_output_verification,
         );
@@ -530,7 +774,8 @@ impl RunEngine {
             .await;
         let response = match response {
             Ok(response) => response,
-            Err(_) => {
+            Err(error) => {
+                let code = classify_provider_failure(&error);
                 let failed = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {
@@ -538,13 +783,13 @@ impl RunEngine {
                         state_version: running_state_version,
                         event_type: RunEventType::Failed,
                         payload: RunEventPayload::Failed {
-                            code: SafeRunErrorCode::ProviderUnavailable,
-                            message: "模型服务暂时不可用，请稍后重试".to_string(),
+                            code,
+                            message: safe_failure_message(code).to_string(),
                         },
                     },
                 )?;
                 sink.emit(&failed)?;
-                return Err(AppError::msg("agent_run_provider_unavailable"));
+                return Err(AppError::msg(code.as_str()));
             }
         };
         if !response.tool_calls.is_empty()
@@ -610,6 +855,7 @@ impl RunEngine {
 fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
     match code {
         SafeRunErrorCode::ProviderUnavailable => "模型服务暂时不可用，请稍后重试",
+        SafeRunErrorCode::ProviderTimeout => "模型服务响应超时，请稍后重试",
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
         SafeRunErrorCode::PermissionDenied => "当前请求不具备执行权限",
         SafeRunErrorCode::Cancelled => "运行已取消",
@@ -622,12 +868,74 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
     }
 }
 
-fn event_state_version(
-    event: &crate::ai_runtime::run_contract::AssistantRunEvent,
-) -> AppResult<u64> {
-    serde_json::to_value(event)?["stateVersion"]
-        .as_u64()
-        .ok_or_else(|| AppError::msg("agent_run_invalid_event"))
+/// Map transport diagnostics to a small safe public vocabulary. The raw provider
+/// error is deliberately neither persisted into the Run event nor shown to the user.
+fn classify_provider_failure(error: &AppError) -> SafeRunErrorCode {
+    let message = error.to_string().to_ascii_lowercase();
+    if message.contains("first_response_timeout")
+        || message.contains("stream_idle_timeout")
+        || message.contains("timed out")
+        || message.contains("timeout")
+        || message.contains("deadline")
+    {
+        SafeRunErrorCode::ProviderTimeout
+    } else {
+        SafeRunErrorCode::ProviderUnavailable
+    }
+}
+
+fn classify_failover_failure(
+    error: &AppError,
+) -> crate::ai_runtime::provider_router::ProviderFailure {
+    use crate::ai_runtime::provider_router::ProviderFailure;
+
+    let message = error.to_string().to_ascii_lowercase();
+    if message.contains("request aborted") || message.contains("partial_visible_stream_error") {
+        return ProviderFailure::Cancelled;
+    }
+    if message.contains("timeout") || message.contains("deadline") {
+        return ProviderFailure::Timeout;
+    }
+    if message.contains("429") || message.contains("too many requests") {
+        return ProviderFailure::HttpStatus(429);
+    }
+    if message.contains("500") {
+        return ProviderFailure::HttpStatus(500);
+    }
+    if message.contains("502") {
+        return ProviderFailure::HttpStatus(502);
+    }
+    if message.contains("503") || message.contains("service unavailable") {
+        return ProviderFailure::TemporarilyUnavailable;
+    }
+    if message.contains("connection") || message.contains("sending request") {
+        return ProviderFailure::Connection;
+    }
+    if message.contains("unauthorized") || message.contains("api key") {
+        return ProviderFailure::Unauthorized;
+    }
+    ProviderFailure::Unknown
+}
+
+fn failover_reason(failure: crate::ai_runtime::provider_router::ProviderFailure) -> &'static str {
+    use crate::ai_runtime::provider_router::ProviderFailure;
+
+    match failure {
+        ProviderFailure::Connection => "connection_failure",
+        ProviderFailure::Timeout => "timeout",
+        ProviderFailure::HttpStatus(429) => "rate_limited",
+        ProviderFailure::HttpStatus(500..=599) => "provider_http_failure",
+        ProviderFailure::TemporarilyUnavailable => "temporarily_unavailable",
+        ProviderFailure::Unauthorized
+        | ProviderFailure::Forbidden
+        | ProviderFailure::Schema
+        | ProviderFailure::ContextLimit
+        | ProviderFailure::Cancelled
+        | ProviderFailure::PolicyDenied
+        | ProviderFailure::SecurityDomainMismatch
+        | ProviderFailure::Unknown
+        | ProviderFailure::HttpStatus(_) => "provider_failure",
+    }
 }
 
 fn user_message_for_run(db: &Database, session_key: &str, run_id: &str) -> AppResult<String> {
