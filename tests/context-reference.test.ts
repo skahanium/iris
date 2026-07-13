@@ -81,17 +81,24 @@ describe("context references", () => {
     expect(display).not.toContain(content);
   });
 
-  it("serializes references through assistantExecute", () => {
-    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
+  it("does not keep active-editor text in sidecar routing or selection bridge state", () => {
+    const routing = read("src/hooks/useWorkspaceAssistantRouting.ts");
+    const bridge = read("src/hooks/useAiSidecarBridge.ts");
 
-    expect(tasks).toContain(
-      "const getContextReferencesForRequest = useCallback",
-    );
-    expect(tasks).toContain(
-      "contextReferences: getContextReferencesForRequest()",
-    );
-    expect(tasks).toContain("contextReferences: activeContextReferences");
-    expect(tasks).toContain('reference.kind === "selection"');
-    expect(tasks).not.toContain("contextReferences: []");
+    expect(routing).not.toContain("getLiveMarkdown");
+    expect(routing).not.toContain("getTabMarkdownCached");
+    expect(routing).not.toContain("RuntimeDocumentSnapshot");
+    expect(bridge).not.toContain("getNoteContent");
+    expect(bridge).not.toContain("content: classifiedSelection");
+  });
+  it("serializes references through the unified Run sender", () => {
+    const sender = read("src/components/ai/hooks/useUnifiedAssistantSend.ts");
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+
+    expect(sender).toContain("explicitReferences");
+    expect(sender).toContain("contextReferences.filter");
+    expect(sender).toContain("!reference.stale && !reference.invalidReason");
+    expect(panel).toContain("bubbleSelection.contextReferences");
+    expect(sender).not.toContain("assistantExecute");
   });
 });

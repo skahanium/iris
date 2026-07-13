@@ -13,7 +13,8 @@ use iris_lib::ai_runtime::retrieval_broker::{
 use iris_lib::ai_runtime::skills::{
     inject_into_prompt, SkillConfirmationStatus, SkillEntry, SkillScope,
 };
-use iris_lib::ai_runtime::{AiScene, CapabilitySlot, EndpointFamily};
+use iris_lib::ai_runtime::{CapabilitySlot, EndpointFamily};
+use iris_lib::ai_types::AgentIntent;
 use iris_lib::indexer::chunker::chunk_markdown;
 
 fn bench_sanitize_query(c: &mut Criterion) {
@@ -161,7 +162,7 @@ fn bench_skill_prompt_injection(c: &mut Criterion) {
             black_box(inject_into_prompt(
                 black_box(vault),
                 black_box(&skills),
-                AiScene::KnowledgeLookup,
+                AgentIntent::AskNotes,
                 black_box(user_message),
             ));
         })

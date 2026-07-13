@@ -475,7 +475,7 @@ impl VisibleStreamSanitizer {
             // Done or budget exhausted: use the full sanitize (which strips
             // leading meta paragraphs but won't suppress everything since
             // by this point the model has likely moved past meta content).
-            crate::ai_runtime::harness_support::sanitize_meta_analysis_prefix(&without_reasoning)
+            crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(&without_reasoning)
         } else {
             sanitize_meta_analysis_prefix_for_stream(&without_reasoning, done)
         };
@@ -493,7 +493,7 @@ fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool) -> String {
     if !done && looks_like_partial_meta_analysis_start(trimmed) {
         return String::new();
     }
-    crate::ai_runtime::harness_support::sanitize_meta_analysis_prefix(text)
+    crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(text)
 }
 
 fn looks_like_partial_meta_analysis_start(text: &str) -> bool {

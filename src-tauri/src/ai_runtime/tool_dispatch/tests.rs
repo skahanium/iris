@@ -1,5 +1,5 @@
 use super::*;
-use crate::ai_runtime::{skills::SkillScopeRule, AiScene};
+use crate::ai_runtime::skills::SkillScopeRule;
 use crate::ai_types::{SkillActivationItemSummary, SkillActivationPlanSummary};
 use crate::app::AppState;
 use std::sync::Arc;
@@ -80,7 +80,6 @@ fn dispatch_context_with_plan<'a>(
         crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
     ));
     ToolDispatchContext {
-        scene: AiScene::DraftingAssist,
         note_path: None,
         file_id: None,
         web_search_enabled: false,
@@ -270,10 +269,9 @@ async fn read_note_rejects_absolute_path() {
 fn write_tool_approval_applies_patch_with_cas() {
     let (state, _dir) = test_state();
     let base = "# Test\nHello world";
-    let base_hash = crate::ai_runtime::writing_workflow::compute_content_hash(base);
+    let base_hash = crate::cas::hash::content_hash_str(base);
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
-        scene: AiScene::DraftingAssist,
         note_path: Some("notes/test.md"),
         file_id: None,
         web_search_enabled: false,
@@ -314,7 +312,7 @@ fn write_tool_rejects_target_outside_active_skill_scope_before_apply() {
     let mut ctx = dispatch_context_with_plan(Some(&plan));
     ctx.note_path = Some("private/secret.md");
     let base = "# Secret\nHidden";
-    let base_hash = crate::ai_runtime::writing_workflow::compute_content_hash(base);
+    let base_hash = crate::cas::hash::content_hash_str(base);
 
     let result = markdown_impl::markdown_write_patch_apply(
         &state,
@@ -347,7 +345,6 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
     let (state, _dir) = test_state();
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
-        scene: AiScene::DraftingAssist,
         note_path: Some("notes/test.md"),
         file_id: None,
         web_search_enabled: false,

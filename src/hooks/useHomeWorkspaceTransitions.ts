@@ -26,7 +26,6 @@ const HOME_OPEN_WATCHDOG_MS = 15_000;
 
 interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
   activePathRef: CurrentRef<string | null>;
-  activateArtifact: (id: string) => void;
   activateTab: (path: string, options?: OpenNoteOptions) => MaybePromise<void>;
   handleNewNote: (options?: HomeNewNoteOpenOptions) => Promise<void>;
   openNote: (
@@ -35,17 +34,14 @@ interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
     options?: OpenNoteOptions,
   ) => Promise<void>;
   openTabs?: readonly { path: string }[];
-  setActiveArtifactId: (id: string | null) => void;
   setHomeActive: (active: boolean) => void;
 }
 
 export function useHomeWorkspaceTransitions<OpenNoteOptions>({
-  activateArtifact,
   activateTab,
   handleNewNote,
   openNote,
   openTabs = [],
-  setActiveArtifactId,
   setHomeActive,
 }: UseHomeWorkspaceTransitionsOptions<OpenNoteOptions>) {
   const homeOpenSequenceRef = useRef(0);
@@ -110,7 +106,6 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       if (openTabs.some((tab) => tab.path === path)) {
         cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
         const sequence = homeOpenSequenceRef.current;
-        setActiveArtifactId(null);
         return Promise.resolve(
           activateTab(path, {
             ...options,
@@ -139,14 +134,12 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
         startedAt: openTransitionNow(),
         title,
       };
-      setActiveArtifactId(null);
       setHomeActive(false);
       scheduleOpenWatchdog(pending);
       return openNote(path, titleHint, options)
         .then(() => {
           clearOpenWatchdog();
           if (homeOpenSequenceRef.current !== sequence) return;
-          setActiveArtifactId(null);
         })
         .catch((error: unknown) => {
           clearOpenWatchdog();
@@ -166,7 +159,6 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       openNote,
       openTabs,
       scheduleOpenWatchdog,
-      setActiveArtifactId,
       setHomeActive,
       setPendingOpen,
     ],
@@ -193,12 +185,6 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
   const handleActivateWorkspaceTab = useCallback(
     async (path: string) => {
       cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
-      if (path.startsWith("artifact:")) {
-        setHomeActive(false);
-        activateArtifact(path);
-        return;
-      }
-      setActiveArtifactId(null);
       await activateTab(path, {
         openBudgetKind: "hot",
         openTraceRequest: {
@@ -211,13 +197,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       } as OpenNoteOptions);
       setHomeActive(false);
     },
-    [
-      activateArtifact,
-      activateTab,
-      setActiveArtifactId,
-      setHomeActive,
-      setPendingOpen,
-    ],
+    [activateTab, setHomeActive, setPendingOpen],
   );
 
   const handleNewNoteLeavingHome = useCallback((): Promise<void> => {
@@ -238,14 +218,12 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       startedAt: openTransitionNow(),
       title,
     };
-    setActiveArtifactId(null);
     setHomeActive(false);
     scheduleOpenWatchdog(pending);
     return handleNewNote({ homeOpenSequence: sequence })
       .then(() => {
         clearOpenWatchdog();
         if (homeOpenSequenceRef.current !== sequence) return;
-        setActiveArtifactId(null);
       })
       .catch((error: unknown) => {
         clearOpenWatchdog();
@@ -262,7 +240,6 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     clearOpenWatchdog,
     handleNewNote,
     scheduleOpenWatchdog,
-    setActiveArtifactId,
     setHomeActive,
     setPendingOpen,
   ]);

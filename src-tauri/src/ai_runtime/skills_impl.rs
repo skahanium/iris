@@ -6,8 +6,6 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use crate::ai_runtime::AiScene;
-use crate::ai_types::SkillActivationPlanSummary;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -33,11 +31,10 @@ mod scan_impl;
 mod validation_impl;
 
 pub use activation_impl::{
-    active_skills_for_prompt, active_skills_for_task_prompt, build_skill_activation_plan,
-    build_skill_activation_plan_for_task, build_skill_activation_plan_for_task_with_runtime,
-    enrich_list_with_scene, enrich_list_with_task, filter_skill_content_to_injected_sections,
-    load_activation_index, rank_skills_for_scene, rank_skills_for_scene_with_index,
-    rank_skills_for_task, rerank_skills_with_vectors, skills_for_scene, skills_for_task,
+    active_skills_for_task_prompt, build_skill_activation_plan_for_task,
+    build_skill_activation_plan_for_task_with_runtime, enrich_list_with_task,
+    filter_skill_content_to_injected_sections, load_activation_index, rank_skills_for_task,
+    rerank_skills_with_vectors, skills_for_task,
 };
 pub use compatibility_impl::{
     blocked_capabilities_for_skill, fallback_guidance, normalize_external_capability,
@@ -105,31 +102,8 @@ pub fn normalize_skill_scope_arg(scope: Option<&str>) -> SkillScope {
     parse_scope(scope.unwrap_or("vault"))
 }
 
-pub fn list_skills(
-    db: &Database,
-    vault: &Path,
-    scene: Option<AiScene>,
-) -> AppResult<Vec<SkillListEntry>> {
-    let entries = scan_all_with_status(vault)?;
-    if let Some(scene) = scene {
-        enrich_list_with_scene(entries, scene, Some(db))
-    } else {
-        Ok(entries)
-    }
-}
-
-pub fn record_skill_activation_matched(
-    _db: &Database,
-    _plan: &SkillActivationPlanSummary,
-) -> AppResult<()> {
-    Ok(())
-}
-
-pub fn record_skill_activation_used(
-    _db: &Database,
-    _plan: &SkillActivationPlanSummary,
-) -> AppResult<()> {
-    Ok(())
+pub fn list_skills(_db: &Database, vault: &Path) -> AppResult<Vec<SkillListEntry>> {
+    scan_all_with_status(vault)
 }
 
 fn record_confirmed_skill_hash(
@@ -220,7 +194,7 @@ mod validation_tests;
 mod tests {
     use std::collections::HashMap;
 
-    use crate::ai_runtime::AiScene;
+    use crate::ai_types::AgentIntent;
 
     use super::*;
     // validate_subpath
@@ -611,7 +585,7 @@ Large instruction body."#,
         ));
     }
 
-    // skills_for_scene
+    // Task-intent matching
 
     fn make_skill(name: &str, legacy_trigger: Option<&str>, enabled: bool) -> SkillEntry {
         SkillEntry {
@@ -633,7 +607,7 @@ Large instruction body."#,
     #[test]
     fn no_trigger_matches_all_scenes() {
         let skills = vec![make_skill("universal", None, true)];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
+        let matched = skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].name, "universal");
     }
@@ -641,21 +615,21 @@ Large instruction body."#,
     #[test]
     fn legacy_trigger_matches_scene() {
         let skills = vec![make_skill("knowledge-skill", Some("knowledge"), true)];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
+        let matched = skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
         assert_eq!(matched.len(), 1);
     }
 
     #[test]
     fn legacy_trigger_wrong_scene_no_match() {
         let skills = vec![make_skill("writing-skill", Some("writing"), true)];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
+        let matched = skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
         assert!(matched.is_empty());
     }
 
     #[test]
     fn disabled_skill_excluded() {
         let skills = vec![make_skill("disabled", None, false)];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
+        let matched = skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
         assert!(matched.is_empty());
     }
 
@@ -718,7 +692,7 @@ Large instruction body."#,
             make_skill("b", Some("writing"), true),
             make_skill("c", None, true),
         ];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
+        let matched = skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
         assert_eq!(matched.len(), 2); // a + c (universal)
     }
     // BM25 scoring
@@ -729,7 +703,7 @@ Large instruction body."#,
             make_skill("universal", None, true),
             make_skill("knowledge-expert", Some("knowledge"), true),
         ];
-        let ranked = rank_skills_for_scene(&skills, AiScene::KnowledgeLookup);
+        let ranked = rank_skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
         assert_eq!(ranked.len(), 2);
         // knowledge-expert should score higher (trigger match + possible desc match)
         assert!(ranked[0].score >= ranked[1].score);
@@ -751,7 +725,7 @@ Large instruction body."#,
             confirmation_status: SkillConfirmationStatus::Confirmed,
             ..SkillEntry::default()
         }];
-        let ranked = rank_skills_for_scene(&skills, AiScene::ResearchSynthesis);
+        let ranked = rank_skills_for_task(&skills, AgentIntent::Research, "", &[], None);
         assert_eq!(ranked.len(), 1);
         assert!(ranked[0].score > 1.0); // More than just the universal base score
     }
@@ -772,7 +746,7 @@ Large instruction body."#,
             confirmation_status: SkillConfirmationStatus::Confirmed,
             ..SkillEntry::default()
         }];
-        let ranked = rank_skills_for_scene(&skills, AiScene::KnowledgeLookup);
+        let ranked = rank_skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
         assert_eq!(ranked.len(), 1);
         // Name contains "knowledge", so the score is boosted
         assert!(ranked[0].score > 2.0);
@@ -799,7 +773,7 @@ Large instruction body."#,
             confirmation_status: SkillConfirmationStatus::Confirmed,
             ..SkillEntry::default()
         }];
-        let ranked = rank_skills_for_scene(&skills, AiScene::ResearchSynthesis);
+        let ranked = rank_skills_for_task(&skills, AgentIntent::Research, "", &[], None);
         assert_eq!(ranked.len(), 1);
         // Keywords match, so the score is boosted
         assert!(ranked[0].score > 2.0);
@@ -959,7 +933,7 @@ description: Already new format
             make_skill("disabled-one", None, false),
             make_skill("enabled-two", None, true),
         ];
-        let prompt = inject_into_prompt(vault.path(), &skills, AiScene::KnowledgeLookup, "");
+        let prompt = inject_into_prompt(vault.path(), &skills, AgentIntent::AskNotes, "");
         assert!(prompt.contains("enabled-one"));
         assert!(prompt.contains("enabled-two"));
         assert!(!prompt.contains("disabled-one"));
@@ -969,7 +943,7 @@ description: Already new format
     fn inject_into_prompt_empty_when_no_skills() {
         let vault = tempfile::tempdir().unwrap();
         let skills: Vec<SkillEntry> = vec![];
-        let prompt = inject_into_prompt(vault.path(), &skills, AiScene::KnowledgeLookup, "");
+        let prompt = inject_into_prompt(vault.path(), &skills, AgentIntent::AskNotes, "");
         assert!(prompt.is_empty());
     }
 
@@ -979,7 +953,7 @@ description: Already new format
         let mut skill = make_skill("large-skill", None, true);
         skill.content = format!("start\n{}\nend", "x".repeat(80_000));
 
-        let prompt = inject_into_prompt(vault.path(), &[skill], AiScene::KnowledgeLookup, "");
+        let prompt = inject_into_prompt(vault.path(), &[skill], AgentIntent::AskNotes, "");
 
         assert!(prompt.contains("large-skill"));
         assert!(prompt.contains("start"));

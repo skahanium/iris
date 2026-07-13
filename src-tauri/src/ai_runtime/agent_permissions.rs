@@ -300,7 +300,7 @@ pub struct PermissionGrantRecord {
 /// Metadata-only audit input for user permission decisions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PermissionAuditInput<'a> {
-    pub request_id: &'a str,
+    pub run_id: &'a str,
     pub skill_id: Option<&'a str>,
     pub tool_name: &'a str,
     pub permission_name: &'a str,
@@ -478,7 +478,7 @@ pub fn find_permission_grant(
 
 /// Record a metadata-only audit row for a permission decision.
 pub fn record_permission_audit(db: &Database, input: &PermissionAuditInput<'_>) -> AppResult<()> {
-    validate_permission_storage_value(Some(input.request_id))?;
+    validate_permission_storage_value(Some(input.run_id))?;
     validate_permission_storage_value(input.skill_id)?;
     validate_permission_storage_value(Some(input.tool_name))?;
     validate_permission_storage_value(Some(input.permission_name))?;
@@ -489,11 +489,11 @@ pub fn record_permission_audit(db: &Database, input: &PermissionAuditInput<'_>) 
     db.with_conn(|conn| {
         conn.execute(
             "INSERT INTO agent_permission_audit (
-                request_id, skill_id, tool_name, permission_name, decision,
+                run_id, skill_id, tool_name, permission_name, decision,
                 scope_summary, risk_level, result_status
              ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
-                input.request_id,
+                input.run_id,
                 input.skill_id,
                 input.tool_name,
                 input.permission_name,

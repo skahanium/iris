@@ -1,15 +1,8 @@
-﻿import type { ChatLine } from "@/components/ai/AiMessageList";
+import type { ChatLine } from "@/components/ai/AiMessageList";
 import { assistantContentHash } from "@/lib/assistant-stream-buffer";
 
-export type AiPayloadKind =
-  | "assistant_message"
-  | "user_message"
-  | "task_event"
-  | "artifact_payload"
-  | "document_summary"
-  | "research_payload"
-  | "evidence_packet"
-  | "generic";
+/** Memory-store categories are presentation-neutral and never model an artifact or evidence payload. */
+export type AiPayloadKind = "assistant_message" | "user_message" | "generic";
 
 export interface AiPayloadRef {
   id: string;
@@ -264,7 +257,7 @@ export function sanitizePayloadForUi(
   if (typeof value === "string") {
     if (value.length <= maxInlineChars) return value;
     const projected = projectTextForUi(store, value, {
-      kind: "artifact_payload",
+      kind: "generic",
       maxInlineChars,
       maxPreviewChars,
     });

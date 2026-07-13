@@ -34,15 +34,19 @@ function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, "utf8"));
 }
 
-function walk(dir, predicate) {
+function walk(dir, predicate, shouldDescend = () => true) {
   const entries = [];
   try {
     for (const entry of readdirSync(dir)) {
       const full = path.join(dir, entry);
       const stat = statSync(full);
-      if (stat.isDirectory() && !entry.startsWith(".")) {
-        entries.push(...walk(full, predicate));
-      } else if (predicate(full)) {
+      if (
+        stat.isDirectory() &&
+        !entry.startsWith(".") &&
+        shouldDescend(full, entry)
+      ) {
+        entries.push(...walk(full, predicate, shouldDescend));
+      } else if (stat.isFile() && predicate(full)) {
         entries.push(full);
       }
     }
@@ -104,49 +108,36 @@ function checkVersionConsistency() {
 function checkMigrationCount() {
   const migrationsDir = path.join(root, "src-tauri", "migrations");
   const upFiles = readdirSync(migrationsDir).filter(
-    (f) => f.endsWith(".sql") && !f.endsWith(".down.sql"),
+    (file) => file.endsWith(".sql") && !file.endsWith(".down.sql"),
   );
-  const nums = upFiles
-    .map((f) => {
-      const m = f.match(/^(\d+)_/);
-      return m ? Number.parseInt(m[1], 10) : 0;
-    })
+  const numbers = upFiles
+    .map((file) => Number.parseInt(file.match(/^(\d+)_/)?.[1] ?? "0", 10))
     .filter(Boolean);
-  const maxNum = nums.length > 0 ? Math.max(...nums) : 0;
   const count = upFiles.length;
+  const maxNumber = numbers.length > 0 ? Math.max(...numbers) : 0;
 
-  const archPath = path.join(root, "ARCHITECTURE.md");
-  const archContent = readFileSync(archPath, "utf8");
-  const migrationLine = archContent
+  const architecture = readFileSync(path.join(root, "ARCHITECTURE.md"), "utf8");
+  const migrationLine = architecture
     .split("\n")
-    .find((line) => line.includes("增量迁移") && line.includes("`001`"));
+    .find((line) => line.includes("**") && line.includes("组**增量迁移"));
+  const match = migrationLine?.match(
+    /\*\*(\d+) 组\*\*增量迁移（`001` 至 `(\d+)`）/,
+  );
 
-  if (!migrationLine) {
-    fail("ARCHITECTURE.md missing migration count line");
+  if (!match) {
+    fail("ARCHITECTURE.md missing parseable migration count line");
     return;
   }
 
-  const countMatch = migrationLine.match(/(\d+)\s*组/);
-  const rangeMatch = migrationLine.match(/`0*1`\s*至\s*`(\d+)`/);
-
-  if (!countMatch || !rangeMatch) {
-    fail("ARCHITECTURE.md migration count line format not recognized");
-    return;
-  }
-
-  const docCount = Number.parseInt(countMatch[1], 10);
-  const docMax = Number.parseInt(rangeMatch[1], 10);
-
-  const expected = expectedMigrationGroups ?? count;
-  if (docCount !== expected || docMax !== maxNum) {
+  const documentedCount = Number.parseInt(match[1], 10);
+  const documentedMax = Number.parseInt(match[2], 10);
+  const expectedCount = expectedMigrationGroups ?? count;
+  if (documentedCount !== expectedCount || documentedMax !== maxNumber) {
     fail(
-      `ARCHITECTURE.md migration count: docs say ${docCount} 组 (001-${docMax}), actual is ${count} 组 (001-${maxNum})`,
+      `ARCHITECTURE.md migration count: docs say ${documentedCount} groups (001-${documentedMax}), actual is ${count} groups (001-${maxNumber})`,
     );
   }
 }
-
-// ── 3. Document links in docs/README.md ────────────────────
-
 function checkDocLinks() {
   const indexContent = readFileSync(
     path.join(root, "docs", "README.md"),
@@ -176,19 +167,20 @@ function checkForbiddenPhrases() {
   const phrases = forbiddenPhrases.length > 0 ? forbiddenPhrases : [];
 
   const docFiles = walk(path.join(root, "docs"), (f) => f.endsWith(".md"));
-  const rootMdFiles = walk(root, (f) => {
-    const rel = path.relative(root, f);
-    return (
-      f.endsWith(".md") &&
-      !rel.startsWith("node_modules") &&
-      !rel.startsWith("src-tauri") &&
-      !rel.startsWith("src") &&
-      !rel.startsWith(".git") &&
-      !rel.startsWith(".worktrees") &&
-      !rel.startsWith("iris-2.0-planning") &&
-      !rel.startsWith("target")
-    );
-  });
+  const excludedRootDirectories = new Set([
+    "node_modules",
+    "src-tauri",
+    "src",
+    ".git",
+    ".worktrees",
+    "iris-2.0-planning",
+    "target",
+  ]);
+  const rootMdFiles = walk(
+    root,
+    (f) => f.endsWith(".md"),
+    (_full, entry) => !excludedRootDirectories.has(entry),
+  );
 
   const allFiles = [...docFiles, ...rootMdFiles];
 

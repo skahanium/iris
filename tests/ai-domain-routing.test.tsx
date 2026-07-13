@@ -6,153 +6,62 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-describe("AI dual-domain routing contract", () => {
-  describe("normal document switching does not leak AI note content", () => {
-    it("useWorkspaceAssistantRouting uses deriveAiDomainState for domain-based gating", () => {
-      const src = read("src/hooks/useWorkspaceAssistantRouting.ts");
-      // deriveAiDomainState must be imported and used
-      expect(src).toContain(
-        'import { deriveAiDomainState } from "@/lib/ai-domain"',
-      );
-      expect(src).toContain("deriveAiDomainState(");
-      // domain-based gating replaces old nonNoteSurfaceActive ternary pattern
-      expect(src).toMatch(/isNormalDomain\s*&&\s*!\s*nonNoteSurfaceActive/);
-    });
+describe("AI security-domain and Run routing", () => {
+  it("derives the active security domain instead of a scene or task-plan route", () => {
+    const routing = read("src/hooks/useWorkspaceAssistantRouting.ts");
 
-    it("useAppEditorActions does not blanket-block classified editor AI actions", () => {
-      const src = read("src/hooks/useAppEditorActions.ts");
-      expect(src).toContain("void inlineAi.run(ed, action)");
-      expect(src).not.toContain("涉密笔记不能发送到 AI");
-      expect(src).not.toContain("isClassifiedVaultPath(path)");
-    });
-
-    it("App impl nulls out note path and content when classified note is active", () => {
-      const app = read("src/App.impl.tsx");
-      expect(app).toContain(
-        "activeArtifactTab || activeNoteIsClassified ? null : activePath",
-      );
-      expect(app).toContain(
-        'activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown()',
-      );
-    });
+    expect(routing).toContain(
+      'import { deriveAiDomainState } from "@/lib/ai-domain"',
+    );
+    expect(routing).toContain("deriveAiDomainState({");
+    expect(routing).toContain("aiDomain: domainState.domain");
+    expect(routing).not.toContain("activeArtifactTab");
+    expect(routing).toContain(
+      "classifiedPath: domainState.classifiedActivePath",
+    );
   });
 
-  describe("active classified note with unlocked vault yields classified domain", () => {
-    it("useWorkspaceAssistantRouting computes domain via deriveAiDomainState", () => {
-      const src = read("src/hooks/useWorkspaceAssistantRouting.ts");
-      expect(src).toContain("domainState.domain");
-      expect(src).toContain("classifiedActivePath");
-      // domain state is derived from the full set of inputs
-      expect(src).toMatch(/deriveAiDomainState\(\{/);
-      expect(src).toContain("activeNoteIsClassified");
-      expect(src).toContain("classifiedUnlocked");
-    });
+  it("passes only domain, classified path and mention candidates into the panel slot", () => {
+    const slot = read("src/components/layout/AppAiPanelSlot.tsx");
 
-    it("type definitions contain AiDomain union", () => {
-      const aiTypes = read("src/types/ai.ts");
-      expect(aiTypes).toContain("AiDomain");
-      expect(aiTypes).toMatch(
-        /type\s+AiDomain\s*=\s*["']normal["']\s*\|\s*["']classified["']/,
-      );
-    });
+    expect(slot).toContain("aiDomain={aiDomain}");
+    expect(slot).toContain("classifiedPath={classifiedPath}");
+    expect(slot).toContain(
+      "runtimeDocumentCandidates={mentionRuntimeCandidates}",
+    );
+    expect(slot).not.toContain("notePath=");
+    expect(slot).not.toContain("getNoteContent=");
+    expect(slot).not.toContain("getLiveMarkdown");
   });
 
-  describe("switching from classified to normal clears classified runtime state", () => {
-    it("App impl tracks activeNoteIsClassified as a reactive boolean", () => {
-      const app = read("src/App.impl.tsx");
-      expect(app).toContain("activeNoteIsClassified");
-    });
+  it("starts the panel through the Run controller with explicit references only", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const sender = read("src/components/ai/hooks/useUnifiedAssistantSend.ts");
 
-    it("IPC types carry AiDomain and classified thread types", () => {
-      const ipcTypes = read("src/types/ipc.ts");
-      expect(ipcTypes).toContain("ClassifiedAiThread");
-      expect(ipcTypes).toContain("ClassifiedAiMessage");
-    });
+    expect(panel).toContain("useAssistantRun()");
+    expect(panel).toContain("useUnifiedAssistantSend({");
+    expect(sender).toContain("explicitReferences");
+    expect(sender).toContain("securityDomain: aiDomain");
+    expect(sender).not.toContain("noteContent");
+    expect(sender).not.toContain("getNoteContent");
   });
 
-  describe("media/artifact tabs never inherit classified permissions", () => {
-    it("useWorkspaceAssistantRouting gates note content for non-note surfaces via domain model", () => {
-      const src = read("src/hooks/useWorkspaceAssistantRouting.ts");
-      // assistantNotePath is nulled for media/artifact surfaces and normal chat
-      // only receives the active note when explicit note context exists.
-      expect(src).toContain("activeMediaTab || activeArtifactTab");
-      expect(src).toContain("hasExplicitNoteContext");
-      expect(src).toMatch(
-        /hasExplicitNoteContext[\s\S]*assistantNotePathWithoutMedia/,
-      );
-      // assistantSelectionQuote is nulled for any non-note surface
-      expect(src).toContain(
-        "assistantSelectionQuote: nonNoteSurfaceActive ? null : selectionQuote",
-      );
-    });
+  it("keeps classified and normal conversations on opaque domain-safe session references", () => {
+    const types = read("src/types/ai.ts");
 
-    it("insert-to-editor blocks artifact/media but allows classified editor domain", () => {
-      const src = read("src/hooks/useWorkspaceAssistantRouting.ts");
-      const artifactBlock = src.indexOf(
-        "if (activeArtifactTab || activeMediaTab)",
-      );
-      expect(artifactBlock).toBeGreaterThan(0);
-      const insertBlock =
-        src
-          .split("const handleAssistantInsertToEditor")[1]
-          ?.split("return {")[0] ?? "";
-      expect(insertBlock).toContain("handleInsertToEditor(content)");
-      expect(insertBlock).not.toContain('domainState.domain === "classified"');
-    });
-
-    it("useWorkspaceAssistantRouting returns aiDomain and classifiedPath", () => {
-      const src = read("src/hooks/useWorkspaceAssistantRouting.ts");
-      expect(src).toContain("aiDomain: domainState.domain");
-      expect(src).toContain("classifiedPath: domainState.classifiedActivePath");
-    });
+    expect(types).toContain("export type SecurityDomain");
+    expect(types).toContain("export interface AssistantSessionRef");
+    expect(types).toContain("domain: SecurityDomain");
+    expect(types).toContain("sessionKey: string");
   });
 
-  describe("AppAiPanelSlot passes domain to UnifiedAssistantPanel", () => {
-    it("AppAiPanelSlot accepts and forwards aiDomain and classifiedPath", () => {
-      const slot = read("src/components/layout/AppAiPanelSlot.tsx");
-      expect(slot).toContain("aiDomain: AiDomain");
-      expect(slot).toContain("classifiedPath: string | null");
-      expect(slot).toContain("aiDomain={aiDomain}");
-      expect(slot).toContain("classifiedPath={classifiedPath}");
-    });
+  it("uses Run event streaming for both panel and inline editor actions", () => {
+    const inline = read("src/hooks/useInlineAi.ts");
+    const events = read("src/lib/ipc-events.ts");
 
-    it("UnifiedAssistantPanelProps includes domain fields", () => {
-      const types = read("src/components/ai/types.ts");
-      expect(types).toContain("aiDomain?: AiDomain");
-      expect(types).toContain("classifiedPath?: string | null");
-    });
-
-    it("assistant execution requests carry the active domain and strip normal context in classified mode", () => {
-      const hook = read("src/components/ai/hooks/useAssistantTasks.ts");
-      const aiTypes = read("src/types/ai.ts");
-      const backend = read("src-tauri/src/commands/assistant_commands.rs");
-      const harness = read("src-tauri/src/ai_harness/harness_task.rs");
-
-      expect(aiTypes).toContain('aiDomain?: "normal" | "classified"');
-      expect(hook).toContain("aiDomain,");
-      expect(hook).toContain('aiDomain === "classified" ? []');
-      expect(hook).toContain('if (aiDomain === "classified") return null');
-      expect(backend).toContain("pub ai_domain: AssistantAiDomain");
-      expect(backend).toContain("validate_assistant_domain_boundary");
-      expect(harness).toContain("run_classified_chat_task");
-      expect(harness).not.toContain(
-        "validate_ai_note_path(request.note_path.as_deref())?;",
-      );
-    });
-
-    it("classified assistant panel domain has visible chrome styles", () => {
-      const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
-      const css = read("src/styles/globals.css");
-
-      expect(panel).toContain("data-ai-domain={aiDomain}");
-      expect(css).toContain('[data-ai-domain="classified"]');
-      expect(css).toContain("--classified-accent");
-      expect(css).toContain("--ai-domain-accent");
-      expect(css).toContain("--ai-domain-ring");
-      expect(css).not.toContain("--ai-domain-accent: hsl(var(--warning))");
-      expect(css).toMatch(
-        /--ai-domain-ring:\s*hsl\(var\(--classified-accent\) \/ 0\.18\)/,
-      );
-    });
+    expect(inline).toContain("assistantRunStart");
+    expect(inline).toContain("listenAssistantRunEvent");
+    expect(inline).toContain('event.type === "content_delta"');
+    expect(events).toContain('ASSISTANT_RUN_EVENT: "assistant:run_event"');
   });
 });

@@ -15,9 +15,8 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
-use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
 use crate::ai_runtime::context_cache::ContextAssemblyCache;
-use crate::ai_types::{AiScene, AutonomyLevel, SkillActivationPlanSummary};
+use crate::ai_types::{AutonomyLevel, SkillActivationPlanSummary};
 use crate::security::brute_force::BruteForceProtection;
 
 const PENDING_TOOL_CALL_TTL: Duration = Duration::from_secs(30 * 60);
@@ -30,12 +29,10 @@ pub struct PendingToolCall {
     pub request_id: String,
     /// Owning session used for any Session-scoped permission grant.
     pub session_id: i64,
-    pub scene: AiScene,
     pub note_path: Option<String>,
     pub file_id: Option<i64>,
     pub web_search_enabled: bool,
     pub autonomy_level: AutonomyLevel,
-    pub task_policy: AgentTaskPolicy,
     pub depth: u32,
     pub skill_activation_plan: Option<SkillActivationPlanSummary>,
     pub created_at: Instant,
@@ -107,7 +104,6 @@ impl StorageState {
 /// storage-only command handlers.
 pub struct AiRuntimeState {
     pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
-    pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
     pub context_cache: Mutex<ContextAssemblyCache>,
     pub vector_index_ready: AtomicBool,
     embed_queue: OnceLock<EmbedQueue>,
@@ -157,7 +153,6 @@ impl AiRuntimeState {
     fn new(vector_ready: bool) -> Self {
         Self {
             pending_tool_calls: Mutex::new(HashMap::new()),
-            active_research: Mutex::new(HashMap::new()),
             context_cache: Mutex::new(ContextAssemblyCache::new(64, 30)),
             vector_index_ready: AtomicBool::new(vector_ready),
             embed_queue: OnceLock::new(),
@@ -216,15 +211,11 @@ impl AiRuntimeState {
         if let Ok(mut pending) = self.pending_tool_calls.lock() {
             pending.clear();
         }
-        if let Ok(mut research) = self.active_research.lock() {
-            research.clear();
-        }
+
         crate::llm::safe_lock(&self.context_cache).clear();
         self.vector_index_ready
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!(
-            "vault switch: cleared pending tool calls, active research, and vector index"
-        );
+        tracing::info!("vault switch: cleared pending tool calls and vector index");
     }
 }
 
@@ -282,11 +273,6 @@ impl AppState {
         if let Err(e) = crate::llm::fetch_web_page::cleanup_expired_web_cache(&state.db) {
             tracing::warn!("failed to cleanup expired web cache: {e}");
         }
-        if let Err(e) =
-            crate::ai_runtime::trace::TraceRecorder::expire_stale_tool_confirmations(&state.db, 30)
-        {
-            tracing::warn!("failed to expire stale tool confirmations: {e}");
-        }
 
         if let Some(v) = state.load_vault_setting()? {
             let path = PathBuf::from(v);
@@ -341,11 +327,6 @@ impl AppState {
     }
 
     fn clear_vault_setting(&self) -> AppResult<()> {
-        crate::ai_runtime::agent_task::AgentTaskRuntime::abort_recoverable_tasks(
-            &self.db,
-            "VAULT_RESET",
-            "Vault reset invalidated recoverable task state",
-        )?;
         {
             let mut guard = self.vault.lock().map_err(|_| AppError::msg("Lock error"))?;
             *guard = None;
@@ -444,33 +425,17 @@ impl AppState {
 #[cfg(test)]
 mod document_open_state_tests {
     use super::*;
-    use crate::ai_runtime::agent_task::AgentTaskKind;
-    use crate::ai_runtime::agent_task_policy::{
-        AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope,
-    };
-    use crate::ai_runtime::AgentIntent;
 
     fn pending_tool_call(id: usize, created_at: Instant) -> PendingToolCall {
-        let task_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
-            intent: AgentIntent::Write,
-            task_kind: AgentTaskKind::Lightweight,
-            scope: AgentTaskScope::Selection,
-            web_authorized: false,
-            has_attachments: false,
-            write_permission_required: false,
-            research_depth: 1,
-        });
         PendingToolCall {
             tool_name: format!("tool-{id}"),
             arguments: "{}".into(),
             request_id: format!("req-{id}"),
             session_id: id as i64,
-            scene: AiScene::KnowledgeLookup,
             note_path: None,
             file_id: None,
             web_search_enabled: false,
             autonomy_level: AutonomyLevel::L1,
-            task_policy,
             depth: 0,
             skill_activation_plan: None,
             created_at,

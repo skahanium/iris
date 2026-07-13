@@ -416,14 +416,14 @@ mod tests {
                     name: "Authority".into(),
                     path_prefix: "authority/".into(),
                     kind: "authority".into(),
-                    scenes: Vec::new(),
+                    intents: Vec::new(),
                 },
                 crate::knowledge::corpora::CorpusEntry {
                     id: "lookup".into(),
                     name: "Lookup".into(),
                     path_prefix: "lookup/".into(),
                     kind: "lookup".into(),
-                    scenes: Vec::new(),
+                    intents: Vec::new(),
                 },
             ],
         };

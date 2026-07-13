@@ -16,15 +16,14 @@ use crate::storage::db::Database;
 /// Input for evaluating whether a tool can enter dispatch.
 #[derive(Clone, Copy)]
 pub struct ToolExecutionGate<'a> {
-    pub request_id: &'a str,
-    /// Real session identity for Session-scoped grants; never substitute request_id.
+    pub run_id: &'a str,
+    /// Real session identity for Session-scoped grants; never substitute run_id.
     pub session_id: Option<i64>,
-    pub harness_round: u32,
+    pub run_step: u32,
     pub entry: &'a ToolCatalogEntry,
     pub args: &'a serde_json::Value,
     pub policy_ctx: &'a ToolPolicyContext,
     pub skill_id: Option<&'a str>,
-    pub scene: Option<&'a str>,
     pub subagent_depth: u32,
 }
 
@@ -44,7 +43,7 @@ pub fn evaluate_tool_execution(
     let decision = decide_tool_permission(
         db,
         PermissionDecisionRequest {
-            request_id: gate.request_id,
+            run_id: gate.run_id,
             session_id: gate.session_id,
             entry: gate.entry,
             args: gate.args,
@@ -54,20 +53,19 @@ pub fn evaluate_tool_execution(
     )?;
 
     if decision.decision == PermissionExecutionDecision::Denied {
-        record_permission_decision_audit(db, gate.request_id, gate.skill_id, &decision, "denied")?;
+        record_permission_decision_audit(db, gate.run_id, gate.skill_id, &decision, "denied")?;
         let result = denied_tool_result(gate.entry.name, decision.denied_reason.as_deref());
         record_audit(
             db,
             &ToolAuditInput {
-                request_id: gate.request_id,
-                harness_round: gate.harness_round,
+                run_id: gate.run_id,
+                run_step: gate.run_step,
                 tool_name: gate.entry.name,
                 arguments: gate.args,
                 result: &result.output,
                 error: result.error.as_deref(),
                 success: false,
                 duration_ms: result.duration_ms,
-                scene: gate.scene,
                 subagent_depth: gate.subagent_depth,
             },
         )?;
@@ -91,19 +89,18 @@ pub fn audit_dispatched_tool(
     result: &ToolCallResult,
 ) -> AppResult<()> {
     let status = if result.success { "executed" } else { "failed" };
-    record_permission_decision_audit(db, gate.request_id, gate.skill_id, decision, status)?;
+    record_permission_decision_audit(db, gate.run_id, gate.skill_id, decision, status)?;
     record_audit(
         db,
         &ToolAuditInput {
-            request_id: gate.request_id,
-            harness_round: gate.harness_round,
+            run_id: gate.run_id,
+            run_step: gate.run_step,
             tool_name: gate.entry.name,
             arguments: gate.args,
             result: &result.output,
             error: result.error.as_deref(),
             success: result.success,
             duration_ms: result.duration_ms,
-            scene: gate.scene,
             subagent_depth: gate.subagent_depth,
         },
     )

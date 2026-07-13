@@ -1,4 +1,4 @@
-use crate::ai_runtime::{AiScene, ToolAccessLevel};
+use crate::ai_runtime::ToolAccessLevel;
 
 use super::{ToolCatalogEntry, ToolImplementationStatus};
 
@@ -19,7 +19,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: true,
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
-            scene_affinity: &[AiScene::DraftingAssist, AiScene::ResearchSynthesis],
             max_results: None,
         },
         ToolCatalogEntry {
@@ -37,7 +36,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: true,
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
-            scene_affinity: &[AiScene::DraftingAssist, AiScene::ResearchSynthesis],
             max_results: None,
         },
         ToolCatalogEntry {
@@ -54,7 +52,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: true,
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
-            scene_affinity: &[],
             max_results: None,
         },
         ToolCatalogEntry {
@@ -72,7 +69,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: true,
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
-            scene_affinity: &[AiScene::DraftingAssist],
             max_results: None,
         },
         ToolCatalogEntry {
@@ -89,7 +85,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: false,
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
-            scene_affinity: &[AiScene::DraftingAssist],
             max_results: Some(50),
         },
     ]

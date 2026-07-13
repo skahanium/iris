@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use crate::ai_runtime::AiScene;
+use crate::ai_types::AgentIntent;
 
-use super::{skills_for_scene, SkillEntry};
+use super::{skills_for_task, SkillEntry};
 
 const MAX_SKILL_PROMPT_BODY_CHARS: usize = 12_000;
 
@@ -10,10 +10,10 @@ const MAX_SKILL_PROMPT_BODY_CHARS: usize = 12_000;
 pub fn inject_into_prompt(
     vault: &Path,
     skills: &[SkillEntry],
-    scene: AiScene,
+    intent: AgentIntent,
     user_message: &str,
 ) -> String {
-    let matched = skills_for_scene(skills, scene, user_message);
+    let matched = skills_for_task(skills, intent, user_message, &[], None);
     if matched.is_empty() {
         return String::new();
     }

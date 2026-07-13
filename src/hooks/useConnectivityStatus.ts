@@ -2,50 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import { connectivityStatus } from "@/lib/ipc";
 import { LLM_CONFIG_CHANGED_EVENT } from "@/lib/llm-events";
-import type { AiScene } from "@/types/ai";
 import type { ConnectivityStatus } from "@/types/llm";
 
-const ACTIVE_SCENE_KEY = "iris_active_ai_scene";
-
-export function setActiveAiScene(scene: AiScene): void {
-  try {
-    sessionStorage.setItem(ACTIVE_SCENE_KEY, scene);
-    window.dispatchEvent(
-      new CustomEvent(LLM_CONFIG_CHANGED_EVENT, { detail: { scene } }),
-    );
-  } catch {
-    /* ignore */
-  }
-}
-
-/** Read the harness scene last synced from assistant intent. */
-export function getActiveAiScene(): AiScene {
-  try {
-    const stored = sessionStorage.getItem(ACTIVE_SCENE_KEY);
-    if (
-      stored === "knowledge_lookup" ||
-      stored === "drafting_assist" ||
-      stored === "research_synthesis"
-    ) {
-      return stored;
-    }
-  } catch {
-    /* ignore */
-  }
-  return "knowledge_lookup";
-}
-
+/** Reads provider readiness independently of any assistant scenario or intent. */
 export function useConnectivityStatus() {
   const [status, setStatus] = useState<ConnectivityStatus | null>(null);
 
   const refresh = useCallback(async () => {
-    let scene: string | undefined;
-    try {
-      scene = getActiveAiScene();
-    } catch {
-      scene = undefined;
-    }
-    const next = await connectivityStatus(scene);
+    const next = await connectivityStatus();
     setStatus(next);
   }, []);
 

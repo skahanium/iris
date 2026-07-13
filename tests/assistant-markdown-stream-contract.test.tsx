@@ -23,7 +23,7 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-describe("assistant markdown-first message stream", () => {
+describe("assistant Run transcript rendering", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -38,146 +38,65 @@ describe("assistant markdown-first message stream", () => {
     host.remove();
   });
 
-  it("does not render research results as a custom message card", () => {
-    expect(read("src/components/ai/AiMessageList.tsx")).not.toContain(
-      "ResearchResultMessage",
+  it("uses the unified Run transcript projection instead of a research card or task hook", () => {
+    const list = read("src/components/ai/AiMessageList.tsx");
+    const transcript = read(
+      "src/components/ai/hooks/useAssistantRunTranscript.ts",
     );
-    expect(read("src/components/ai/AiMessageList.tsx")).not.toContain(
-      'kind?: "research"',
-    );
-    expect(read("src/components/ai/AiMessageList.tsx")).not.toContain(
-      "research?:",
-    );
-    expect(read("src/components/ai/hooks/useAssistantTasks.ts")).not.toContain(
-      'kind: "research"',
-    );
-  });
 
-  it("removes the dedicated research result message component", () => {
     expect(existsSync("src/components/ai/ResearchResultMessage.tsx")).toBe(
       false,
     );
-    expect(() => read("src/components/ai/ResearchResultMessage.tsx")).toThrow();
-  });
-
-  it("keeps research output as normal markdown text in the assistant stream", () => {
-    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
-
-    expect(tasks).toContain("result.summary.trim()");
-    expect(read("src/components/ai/AiMessageList.tsx")).not.toContain(
-      "artifactLinks",
+    expect(existsSync("src/components/ai/hooks/useAssistantTasks.ts")).toBe(
+      false,
     );
-    expect(tasks).toContain("研究已完成，但没有生成可展示正文。");
-    expect(read("src/components/ai/AiMessageList.tsx")).toContain(
-      "AiMessageBubble",
-    );
+    expect(list).not.toContain("ResearchResultMessage");
+    expect(transcript).toContain('case "content_delta"');
+    expect(transcript).toContain('case "completed"');
   });
 
-  it("keeps the latest assistant markdown bubble in streaming mode after content appears", async () => {
+  it("renders the current assistant bubble while a Run is streaming", async () => {
     await act(async () => {
       root.render(
         <AiMessageList
-          messages={[
-            {
-              role: "assistant",
-              content: "**正在生成**\n\n第一段内容",
-            },
-          ]}
+          messages={[{ role: "assistant", content: "initial Run fragment" }]}
           streaming={true}
         />,
       );
     });
 
-    const bubble = document.body.querySelector(
-      ".ai-message-bubble-assistant[data-streaming]",
-    );
-
-    expect(bubble).not.toBeNull();
-    expect(document.body.textContent).toContain("正在生成");
-    expect(document.body.textContent).toContain("第一段内容");
-  });
-
-  it("updates streaming assistant content when the message count is unchanged", async () => {
-    await act(async () => {
-      root.render(
-        <AiMessageList
-          messages={[{ role: "assistant", content: "initial token" }]}
-          streaming={true}
-        />,
-      );
-    });
-
-    expect(document.body.textContent).toContain("initial token");
-
-    await act(async () => {
-      root.render(
-        <AiMessageList
-          messages={[{ role: "assistant", content: "updated token" }]}
-          streaming={true}
-        />,
-      );
-    });
-
-    expect(document.body.textContent).not.toContain("initial token");
-    expect(document.body.textContent).toContain("updated token");
-  });
-
-  it("renders the complete final assistant content after streaming throttling", async () => {
-    const finalContent = `起${"中".repeat(210)}最终内容`;
-
-    await act(async () => {
-      root.render(
-        <AiMessageList
-          messages={[{ role: "assistant", content: "起" }]}
-          streaming={true}
-        />,
-      );
-    });
-
-    await act(async () => {
-      root.render(
-        <AiMessageList
-          messages={[{ role: "assistant", content: finalContent }]}
-          streaming={true}
-        />,
-      );
-    });
-
-    expect(document.body.textContent).not.toContain("最终内容");
-
-    await act(async () => {
-      root.render(
-        <AiMessageList
-          messages={[{ role: "assistant", content: finalContent }]}
-          streaming={false}
-        />,
-      );
-    });
-
-    expect(document.body.textContent).toContain("最终内容");
-  });
-
-  it("renders a research summary as a plain assistant markdown bubble", async () => {
-    await act(async () => {
-      root.render(
-        <AiMessageList
-          messages={[
-            {
-              role: "assistant",
-              content: "**研究摘要**\n\n- 普通文字流",
-            },
-          ]}
-          streaming={false}
-        />,
-      );
-    });
-
-    expect(document.body.textContent).toContain("研究摘要");
-    expect(document.body.textContent).toContain("普通文字流");
+    expect(document.body.textContent).toContain("initial Run fragment");
     expect(
-      document.body.querySelector('[data-testid="assistant-artifact-tags"]'),
-    ).toBeNull();
-    expect(document.body.textContent).not.toContain("证据矩阵");
-    expect(document.body.textContent).not.toContain("过程详情");
+      document.body.querySelector(
+        ".ai-message-bubble-assistant[data-streaming]",
+      ),
+    ).not.toBeNull();
+  });
+
+  it("updates the final assistant bubble without requiring a second message", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "first durable delta" }]}
+          streaming={true}
+        />,
+      );
+    });
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[
+            {
+              role: "assistant",
+              content: "first durable delta plus final content",
+            },
+          ]}
+          streaming={false}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("final content");
   });
 });

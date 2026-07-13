@@ -5,7 +5,7 @@ use iris_lib::ai_runtime::agent_permissions::{
 use iris_lib::ai_runtime::retrieval_scope::RetrievalScope;
 use iris_lib::ai_runtime::tool_catalog::{catalog_find, ToolImplementationStatus, TOOL_CATALOG};
 use iris_lib::ai_runtime::tool_dispatch::{dispatch_tool, ToolDispatchContext};
-use iris_lib::ai_runtime::{AiScene, SkillCapabilitySupportStatus};
+use iris_lib::ai_runtime::SkillCapabilitySupportStatus;
 use iris_lib::app::AppState;
 
 fn test_state() -> (std::sync::Arc<AppState>, tempfile::TempDir) {
@@ -25,7 +25,6 @@ fn dispatchable(name: &str) -> bool {
 fn ctx() -> ToolDispatchContext<'static> {
     let retrieval_scope = Box::leak(Box::new(RetrievalScope::default()));
     ToolDispatchContext {
-        scene: AiScene::DraftingAssist,
         note_path: None,
         file_id: None,
         web_search_enabled: false,
@@ -413,17 +412,33 @@ fn permission_grants_affect_preflight_without_storing_bodies() {
 #[test]
 fn permission_audit_records_decision_metadata_only() {
     let (state, _dir) = test_state();
-    iris_lib::ai_runtime::trace::TraceRecorder::start(
-        &state.db,
-        "perm-audit-1",
-        AiScene::DraftingAssist,
-    )
-    .unwrap();
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sessions (session_key, created_at, updated_at)
+                 VALUES ('permission-audit-session', datetime('now'), datetime('now'))",
+                [],
+            )?;
+            let session_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO agent_runs
+                 (run_id, client_request_id, session_id, turn_id, status, effect, effort,
+                  security_domain, risk, envelope_json, goal_summary, created_at, updated_at,
+                  explicit_action_json)
+                 VALUES ('perm-audit-run', 'perm-audit-client', ?1, 'perm-audit-turn',
+                  'accepted', 'answer', 'direct', 'normal', 'read_only', '{}', '',
+                  datetime('now'), datetime('now'), '{}')",
+                [session_id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
 
     iris_lib::ai_runtime::agent_permissions::record_permission_audit(
         &state.db,
         &iris_lib::ai_runtime::agent_permissions::PermissionAuditInput {
-            request_id: "perm-audit-1",
+            run_id: "perm-audit-run",
             skill_id: None,
             tool_name: "replace_selection",
             permission_name: "vault.write.patch",
@@ -439,7 +454,7 @@ fn permission_audit_records_decision_metadata_only() {
         .db
         .with_read_conn(|conn| {
             Ok(conn.query_row(
-                "SELECT permission_name, decision, scope_summary FROM agent_permission_audit WHERE request_id = 'perm-audit-1'",
+                "SELECT permission_name, decision, scope_summary FROM agent_permission_audit WHERE run_id = 'perm-audit-run'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?)

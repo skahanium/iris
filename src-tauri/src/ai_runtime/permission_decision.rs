@@ -15,7 +15,7 @@ use crate::storage::db::Database;
 /// Input for one permission decision.
 pub struct PermissionDecisionRequest<'a> {
     /// Stable request id used for request/session scoped grants and audit.
-    pub request_id: &'a str,
+    pub run_id: &'a str,
     /// Owning normal-domain session; required to consume a Session-scoped grant.
     pub session_id: Option<i64>,
     /// Catalog entry for the tool being evaluated.
@@ -86,7 +86,7 @@ pub fn decide_tool_permission(
         ToolPolicyVerdict::RequiresConfirmation => {
             let granted_by = granted_decision(
                 db,
-                request.request_id,
+                request.run_id,
                 request.session_id,
                 request.skill_id,
                 &preflight.effects,
@@ -108,7 +108,7 @@ pub fn decide_tool_permission(
 
     let granted_by = granted_decision(
         db,
-        request.request_id,
+        request.run_id,
         request.session_id,
         request.skill_id,
         &preflight.effects,
@@ -141,7 +141,7 @@ pub fn decide_tool_permission(
 /// Record metadata-only audit rows for all permission effects in an outcome.
 pub fn record_permission_decision_audit(
     db: &Database,
-    request_id: &str,
+    run_id: &str,
     skill_id: Option<&str>,
     outcome: &PermissionDecisionOutcome,
     result_status: &str,
@@ -150,7 +150,7 @@ pub fn record_permission_decision_audit(
         record_permission_audit(
             db,
             &PermissionAuditInput {
-                request_id,
+                run_id,
                 skill_id,
                 tool_name: outcome.tool_name.as_str(),
                 permission_name: effect.permission_name.as_str(),
@@ -166,7 +166,7 @@ pub fn record_permission_decision_audit(
 
 fn granted_decision(
     db: &Database,
-    request_id: &str,
+    run_id: &str,
     session_id: Option<i64>,
     skill_id: Option<&str>,
     effects: &[PermissionEffectSummary],
@@ -177,7 +177,7 @@ fn granted_decision(
 
     let mut granted = None;
     for effect in effects {
-        let Some(grant) = find_matching_grant(db, request_id, session_id, skill_id, effect)? else {
+        let Some(grant) = find_matching_grant(db, run_id, session_id, skill_id, effect)? else {
             return Ok(None);
         };
         match grant.decision {
@@ -192,14 +192,14 @@ fn granted_decision(
 
 fn find_matching_grant(
     db: &Database,
-    request_id: &str,
+    run_id: &str,
     session_id: Option<i64>,
     skill_id: Option<&str>,
     effect: &PermissionEffectSummary,
 ) -> AppResult<Option<crate::ai_runtime::agent_permissions::PermissionGrantRecord>> {
     let mut candidates = vec![(
         effect.scope_kind,
-        scope_value_for_effect(effect.scope_kind, request_id, session_id, skill_id),
+        scope_value_for_effect(effect.scope_kind, run_id, session_id, skill_id),
     )];
     if effect.scope_kind != PermissionScopeKind::Session {
         if let Some(session_id) = session_id {
@@ -226,12 +226,12 @@ fn find_matching_grant(
 
 fn scope_value_for_effect(
     scope_kind: PermissionScopeKind,
-    request_id: &str,
+    run_id: &str,
     session_id: Option<i64>,
     skill_id: Option<&str>,
 ) -> Option<String> {
     match scope_kind {
-        PermissionScopeKind::Request => Some(request_id.to_string()),
+        PermissionScopeKind::Request => Some(run_id.to_string()),
         PermissionScopeKind::Session => session_id.map(|id| id.to_string()),
         PermissionScopeKind::Skill => skill_id.map(ToString::to_string),
         PermissionScopeKind::Global | PermissionScopeKind::Vault | PermissionScopeKind::Folder => {
@@ -271,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn session_grant_is_keyed_by_session_id_not_request_id() {
+    fn session_grant_is_keyed_by_session_id_not_run_id() {
         let db = Database::open_in_memory().expect("database");
         upsert_permission_grant(
             &db,

@@ -3,9 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ai_types::{
-    AgentIntent, AiScene, CapabilityRouteSummary, CapabilitySlot, EndpointFamily, ProviderConfig,
-    ReasoningAdapter, ReasoningControl, ReasoningMode, ReasoningVisibility,
-    ResolvedReasoningRequest,
+    CapabilitySlot, EndpointFamily, ReasoningAdapter, ReasoningControl, ReasoningMode,
+    ReasoningVisibility, ResolvedReasoningRequest,
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
@@ -163,9 +162,12 @@ pub enum PrivacyPreference {
     LocalOnly,
 }
 
+/// Scene-free provider requirements for the unified Agent Run control plane.
+///
+/// New Harness code supplies these facts directly instead of adapting an intent.
 #[derive(Debug, Clone, Copy)]
-pub struct CapabilityRouteInput {
-    pub intent: AgentIntent,
+pub struct CapabilityRouteRequirements {
+    pub preferred_slot: CapabilitySlot,
     pub context_tokens: usize,
     pub has_images: bool,
     pub needs_tools: bool,
@@ -176,7 +178,6 @@ pub struct CapabilityRouteInput {
 #[derive(Debug, Clone)]
 pub struct ResolvedCapabilityRoute {
     pub resolved: ResolvedLlmConfig,
-    pub summary: CapabilityRouteSummary,
     pub failover_candidates: Vec<ResolvedLlmConfig>,
 }
 
@@ -698,40 +699,10 @@ fn ensure_slot_keys(config: &mut LlmRoutingConfig) {
         .retain(|_, route| !route.model.trim().is_empty());
 }
 
-fn route_input_for_scene(scene: AiScene) -> CapabilityRouteInput {
-    let intent = match scene {
-        AiScene::KnowledgeLookup => AgentIntent::AskNotes,
-        AiScene::DraftingAssist => AgentIntent::Write,
-        AiScene::ResearchSynthesis => AgentIntent::Research,
-        _ => AgentIntent::Write,
-    };
-    CapabilityRouteInput {
-        intent,
-        context_tokens: 0,
-        has_images: false,
-        needs_tools: false,
-        needs_reasoning: matches!(scene, AiScene::ResearchSynthesis),
-        privacy_preference: PrivacyPreference::ExternalAllowed,
-    }
-}
-
-pub fn resolve_capability_route(
+/// Resolve an ordered route from scene-free capability requirements without reading credentials.
+pub fn resolve_capability_route_for_requirements_without_secret(
     db: &Database,
-    input: CapabilityRouteInput,
-) -> AppResult<ResolvedCapabilityRoute> {
-    let mut route = resolve_capability_route_without_secret(db, input)?;
-    hydrate_resolved_api_key(db, &mut route.resolved)?;
-    Ok(route)
-}
-
-/// Resolve an ordered capability route without reading any provider credential.
-///
-/// The caller must hydrate only the candidate it is about to dispatch through
-/// the Provider Router. Legacy callers should continue using
-/// [`resolve_capability_route`] until they have migrated their dispatch path.
-pub fn resolve_capability_route_without_secret(
-    db: &Database,
-    input: CapabilityRouteInput,
+    requirements: CapabilityRouteRequirements,
 ) -> AppResult<ResolvedCapabilityRoute> {
     let routing = load(db)?;
     model_registry::clear_invalid_vision_validations(db)?;
@@ -739,38 +710,31 @@ pub fn resolve_capability_route_without_secret(
         &routing,
         model_registry::list_registry_entries(db)?,
     );
-    resolve_capability_route_with_registry(&routing, input, &registry)
+    resolve_capability_route_with_requirements_registry(&routing, requirements, &registry)
 }
 
 #[cfg(test)]
 fn resolve_capability_route_from_config(
     routing: &LlmRoutingConfig,
-    input: CapabilityRouteInput,
+    requirements: CapabilityRouteRequirements,
 ) -> AppResult<ResolvedCapabilityRoute> {
-    resolve_capability_route_with_registry(routing, input, &[])
+    resolve_capability_route_with_requirements_registry(routing, requirements, &[])
 }
 
-fn resolve_capability_route_for_status(
-    db: &Database,
-    input: CapabilityRouteInput,
-) -> AppResult<AppResult<ResolvedCapabilityRoute>> {
-    let routing = load(db)?;
-    model_registry::clear_invalid_vision_validations(db)?;
-    let registry = model_registry::entries_from_builtin_and_routing(
-        &routing,
-        model_registry::list_registry_entries(db)?,
-    );
-    Ok(resolve_capability_route_with_registry(
-        &routing, input, &registry,
-    ))
-}
-
+#[cfg(test)]
 fn resolve_capability_route_with_registry(
     routing: &LlmRoutingConfig,
-    input: CapabilityRouteInput,
+    requirements: CapabilityRouteRequirements,
     registry: &[ModelRegistryEntry],
 ) -> AppResult<ResolvedCapabilityRoute> {
-    let requested_slot = requested_slot(input);
+    resolve_capability_route_with_requirements_registry(routing, requirements, registry)
+}
+fn resolve_capability_route_with_requirements_registry(
+    routing: &LlmRoutingConfig,
+    requirements: CapabilityRouteRequirements,
+    registry: &[ModelRegistryEntry],
+) -> AppResult<ResolvedCapabilityRoute> {
+    let requested_slot = requested_slot_for_requirements(requirements);
     let fallback_chain = fallback_chain_for(requested_slot);
     let mut last_error = None;
 
@@ -779,37 +743,20 @@ fn resolve_capability_route_with_registry(
         let Some(route) = routing.slots.get(key) else {
             continue;
         };
-        if !route_satisfies_slot(route, *slot, input.privacy_preference, registry) {
+        if !route_satisfies_slot(route, *slot, requirements.privacy_preference, registry) {
             continue;
         }
 
         // Try to resolve this slot (checks base URL, API key, model spec).
         match resolve_route(routing, *slot, route.clone()) {
             Ok(resolved) => {
-                let degraded = *slot != requested_slot;
-                let reason = if degraded {
-                    format!(
-                        "Requested {requested_slot:?} but selected {slot:?} via fallback because the requested slot is unavailable or misconfigured."
-                    )
-                } else {
-                    format!("Selected {:?} for {:?}.", slot, input.intent)
-                };
                 let failover_candidates = resolve_slot_failover_candidates(
                     routing,
                     *slot,
-                    input.privacy_preference,
+                    requirements.privacy_preference,
                     registry,
                 );
                 return Ok(ResolvedCapabilityRoute {
-                    summary: CapabilityRouteSummary {
-                        slot: *slot,
-                        provider_id: route.provider_id.clone(),
-                        model: route.model.clone(),
-                        fallback_chain,
-                        reason,
-                        probe_status: "unknown".into(),
-                        degraded,
-                    },
                     resolved,
                     failover_candidates,
                 });
@@ -1193,32 +1140,20 @@ fn is_minimax_reasoning_risk(provider: &str, model: &str) -> bool {
     provider.contains("minimax") || model.contains("minimax") || model == "minimax-m3"
 }
 
-fn requested_slot(input: CapabilityRouteInput) -> CapabilitySlot {
-    if input.has_images || input.intent == AgentIntent::VisionChat {
+fn requested_slot_for_requirements(requirements: CapabilityRouteRequirements) -> CapabilitySlot {
+    if requirements.has_images {
         return CapabilitySlot::Vision;
     }
-    if input.needs_tools || input.intent == AgentIntent::SkillManagement {
+    if requirements.needs_tools {
         return CapabilitySlot::AgentTools;
     }
-    if input.context_tokens > 200_000 {
+    if requirements.context_tokens > MAX_INPUT_BUDGET_TOKENS {
         return CapabilitySlot::LongContext;
     }
-    match input.intent {
-        AgentIntent::RewriteSelection
-        | AgentIntent::Write
-        | AgentIntent::Chapter
-        | AgentIntent::DocumentCheck => CapabilitySlot::Writer,
-        AgentIntent::Research | AgentIntent::CitationCheck if input.needs_reasoning => {
-            CapabilitySlot::Reasoner
-        }
-        AgentIntent::Research | AgentIntent::CitationCheck => CapabilitySlot::Reasoner,
-        AgentIntent::Chat | AgentIntent::AskNotes | AgentIntent::Organize => CapabilitySlot::Fast,
-        AgentIntent::VisionChat | AgentIntent::SkillManagement => {
-            unreachable!(
-                "VisionChat and SkillManagement are handled by early returns in requested_slot()"
-            )
-        }
+    if requirements.needs_reasoning {
+        return CapabilitySlot::Reasoner;
     }
+    requirements.preferred_slot
 }
 
 fn fallback_chain_for(slot: CapabilitySlot) -> Vec<CapabilitySlot> {
@@ -1384,32 +1319,6 @@ pub fn resolve_for_provider_without_secret(
     Ok(resolved)
 }
 
-impl ResolvedLlmConfig {
-    pub fn to_provider_config(&self, scene: AiScene) -> ProviderConfig {
-        self.to_provider_config_for_slot(slot_for_legacy_scene(scene))
-    }
-
-    pub fn to_provider_config_for_slot(&self, slot: CapabilitySlot) -> ProviderConfig {
-        ProviderConfig {
-            name: self.provider_id.clone(),
-            base_url: self.base_url.clone(),
-            api_key: self.api_key.clone(),
-            model: self.model.clone(),
-            slot,
-            endpoint_family: self.endpoint_family,
-        }
-    }
-}
-
-fn slot_for_legacy_scene(scene: AiScene) -> CapabilitySlot {
-    match scene {
-        AiScene::KnowledgeLookup => CapabilitySlot::Fast,
-        AiScene::DraftingAssist => CapabilitySlot::Writer,
-        AiScene::ResearchSynthesis => CapabilitySlot::Reasoner,
-        _ => CapabilitySlot::Writer,
-    }
-}
-
 #[cfg(not(test))]
 fn hydrate_resolved_api_key(_db: &Database, resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
     if crate::llm::providers::requires_api_key(&resolved.provider_id) {
@@ -1459,12 +1368,18 @@ fn llm_credential_available_for_status(db: &Database, service: &str) -> AppResul
     })
 }
 
-pub fn connectivity_status(
-    db: &Database,
-    active_scene: AiScene,
-) -> AppResult<ConnectivityStatusDto> {
-    let route_result =
-        resolve_capability_route_for_status(db, route_input_for_scene(active_scene))?;
+pub fn connectivity_status(db: &Database) -> AppResult<ConnectivityStatusDto> {
+    let route_result = resolve_capability_route_for_requirements_without_secret(
+        db,
+        CapabilityRouteRequirements {
+            preferred_slot: CapabilitySlot::Fast,
+            context_tokens: 0,
+            has_images: false,
+            needs_tools: false,
+            needs_reasoning: false,
+            privacy_preference: PrivacyPreference::ExternalAllowed,
+        },
+    );
     let selected_web_provider =
         crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db).ok();
     let search_provider = SearchProviderConnectivityDto {
@@ -1481,7 +1396,7 @@ pub fn connectivity_status(
                     state: "misconfigured".into(),
                     provider_id: String::new(),
                     model: String::new(),
-                    scene: active_scene.profile().into(),
+                    scene: "fast".into(),
                     message: err.to_string(),
                 },
                 search_provider,
@@ -1511,28 +1426,11 @@ pub fn connectivity_status(
             state: llm_state.into(),
             provider_id: resolved.provider_id,
             model: resolved.model,
-            scene: active_scene.profile().into(),
+            scene: "fast".into(),
             message,
         },
         search_provider,
         usage_last,
-    })
-}
-
-pub fn save_usage_last(db: &Database, hit: u32, miss: u32) -> AppResult<()> {
-    let usage = LlmUsageLast {
-        prompt_cache_hit_tokens: hit,
-        prompt_cache_miss_tokens: miss,
-        updated_at: chrono::Utc::now().to_rfc3339(),
-    };
-    let json = serde_json::to_string(&usage)?;
-    db.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            rusqlite::params![USAGE_LAST_KEY, json],
-        )?;
-        Ok(())
     })
 }
 
@@ -1568,10 +1466,10 @@ mod tests {
     #[test]
     fn resolve_requires_user_configured_capability_slot() {
         let db = Database::open_in_memory().expect("mem db");
-        let err = resolve_capability_route(
+        let err = resolve_capability_route_for_requirements_without_secret(
             &db,
-            CapabilityRouteInput {
-                intent: AgentIntent::AskNotes,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Fast,
                 context_tokens: 0,
                 has_images: false,
                 needs_tools: false,
@@ -1626,7 +1524,7 @@ mod tests {
         )
         .expect("provider");
 
-        let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
+        let status = connectivity_status(&db).expect("status");
 
         assert_eq!(status.llm.state, "ready");
         assert!(status.search_provider.configured);
@@ -1670,8 +1568,8 @@ mod tests {
 
         let route = resolve_capability_route_from_config(
             &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::Chat,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Fast,
                 context_tokens: 1_000,
                 has_images: false,
                 needs_tools: false,
@@ -1720,10 +1618,10 @@ mod tests {
         );
         save(&db, &routing).expect("save routing");
 
-        let route = resolve_capability_route_without_secret(
+        let route = resolve_capability_route_for_requirements_without_secret(
             &db,
-            CapabilityRouteInput {
-                intent: AgentIntent::Chat,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Fast,
                 context_tokens: 1_000,
                 has_images: false,
                 needs_tools: false,
@@ -1772,7 +1670,7 @@ mod tests {
         .expect("validate model");
         mark_test_credential_available(&db, "iris.llm.custom").expect("mark llm");
 
-        let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
+        let status = connectivity_status(&db).expect("status");
 
         assert_eq!(status.llm.state, "ready");
         assert_eq!(status.llm.provider_id, "custom");
@@ -1811,7 +1709,7 @@ mod tests {
         )
         .expect("validate model");
 
-        let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
+        let status = connectivity_status(&db).expect("status");
 
         assert_eq!(status.llm.state, "missing_key");
         assert_eq!(status.llm.provider_id, "custom");
@@ -1843,7 +1741,7 @@ mod tests {
         );
         save(&db, &routing).expect("save routing");
 
-        let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
+        let status = connectivity_status(&db).expect("status");
 
         assert_eq!(status.llm.state, "misconfigured");
         assert!(status.llm.message.contains("Fast"));
@@ -1851,7 +1749,7 @@ mod tests {
     }
 
     #[test]
-    fn connectivity_status_propagates_invalid_routing_errors() {
+    fn connectivity_status_reports_invalid_routing_as_misconfigured() {
         let db = Database::open_in_memory().expect("mem db");
         db.with_conn(|conn| {
             conn.execute(
@@ -1862,10 +1760,12 @@ mod tests {
         })
         .expect("seed invalid routing");
 
-        let err = connectivity_status(&db, AiScene::KnowledgeLookup)
-            .expect_err("invalid routing should remain an error");
+        let status = connectivity_status(&db).expect("status should remain renderable");
 
-        assert!(err.to_string().contains("llm_routing"));
+        assert_eq!(status.llm.state, "misconfigured");
+        assert!(status.llm.message.contains("llm_routing"));
+        assert_eq!(status.llm.provider_id, "");
+        assert_eq!(status.llm.model, "");
     }
 
     #[test]
@@ -2016,8 +1916,8 @@ mod tests {
 
         let route = resolve_capability_route_from_config(
             &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::Research,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Reasoner,
                 context_tokens: 0,
                 has_images: false,
                 needs_tools: false,
@@ -2075,8 +1975,8 @@ mod tests {
 
         let route = resolve_capability_route_with_registry(
             &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::AskNotes,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Fast,
                 context_tokens: 0,
                 has_images: false,
                 needs_tools: false,
@@ -2149,8 +2049,8 @@ mod tests {
         }];
         let glm = resolve_capability_route_with_registry(
             &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::Research,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Reasoner,
                 context_tokens: 0,
                 has_images: false,
                 needs_tools: false,
@@ -2208,8 +2108,8 @@ mod tests {
 
         let qwen = resolve_capability_route_with_registry(
             &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::Research,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Reasoner,
                 context_tokens: 0,
                 has_images: false,
                 needs_tools: false,
@@ -2259,12 +2159,12 @@ mod tests {
 
         let route = resolve_capability_route_from_config(
             &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::VisionChat,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Vision,
                 context_tokens: 0,
                 has_images: true,
                 needs_tools: false,
-                needs_reasoning: true,
+                needs_reasoning: false,
                 privacy_preference: PrivacyPreference::ExternalAllowed,
             },
         )
@@ -2611,8 +2511,8 @@ mod tests {
         let routing = deepseek_defaults();
         let err = resolve_capability_route_from_config(
             &routing,
-            CapabilityRouteInput {
-                intent: crate::ai_types::AgentIntent::VisionChat,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Vision,
                 context_tokens: 1_000,
                 has_images: true,
                 needs_tools: false,
@@ -2665,39 +2565,40 @@ mod tests {
             user_confirmed_capabilities: Vec::new(),
         }];
 
-        let reasoner = resolve_capability_route_with_registry(
-            &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::Research,
-                context_tokens: 1_000,
-                has_images: false,
-                needs_tools: false,
-                needs_reasoning: true,
-                privacy_preference: PrivacyPreference::ExternalAllowed,
-            },
-            &registry,
-        )
-        .expect("text-validated model should route reasoner");
-        assert_eq!(reasoner.summary.slot, CapabilitySlot::Reasoner);
-        assert_eq!(reasoner.summary.model, "plain-text");
+        let reasoner_requirements = CapabilityRouteRequirements {
+            preferred_slot: CapabilitySlot::Reasoner,
+            context_tokens: 1_000,
+            has_images: false,
+            needs_tools: false,
+            needs_reasoning: true,
+            privacy_preference: PrivacyPreference::ExternalAllowed,
+        };
+        let reasoner =
+            resolve_capability_route_with_registry(&routing, reasoner_requirements, &registry)
+                .expect("text-validated model should route reasoner");
+        assert_eq!(
+            requested_slot_for_requirements(reasoner_requirements),
+            CapabilitySlot::Reasoner
+        );
+        assert_eq!(reasoner.resolved.model, "plain-text");
 
-        let long_context = resolve_capability_route_with_registry(
-            &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::AskNotes,
-                context_tokens: 240_000,
-                has_images: false,
-                needs_tools: false,
-                needs_reasoning: false,
-                privacy_preference: PrivacyPreference::ExternalAllowed,
-            },
-            &registry,
-        )
-        .expect("text-validated model should route long context");
-        assert_eq!(long_context.summary.slot, CapabilitySlot::LongContext);
-        assert_eq!(long_context.summary.model, "plain-text");
+        let long_context_requirements = CapabilityRouteRequirements {
+            preferred_slot: CapabilitySlot::Fast,
+            context_tokens: 240_000,
+            has_images: false,
+            needs_tools: false,
+            needs_reasoning: false,
+            privacy_preference: PrivacyPreference::ExternalAllowed,
+        };
+        let long_context =
+            resolve_capability_route_with_registry(&routing, long_context_requirements, &registry)
+                .expect("text-validated model should route long context");
+        assert_eq!(
+            requested_slot_for_requirements(long_context_requirements),
+            CapabilitySlot::LongContext
+        );
+        assert_eq!(long_context.resolved.model, "plain-text");
     }
-
     #[test]
     fn unknown_custom_reasoning_auto_only_enables_output_isolation() {
         let mut routing = deepseek_defaults();
@@ -2738,8 +2639,8 @@ mod tests {
 
         let route = resolve_capability_route_with_registry(
             &routing,
-            CapabilityRouteInput {
-                intent: AgentIntent::Research,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Reasoner,
                 context_tokens: 1_000,
                 has_images: false,
                 needs_tools: false,
@@ -2796,8 +2697,8 @@ mod tests {
         // Live probe result is authoritative — routing must succeed.
         let route = resolve_capability_route_with_registry(
             &routing,
-            CapabilityRouteInput {
-                intent: crate::ai_types::AgentIntent::VisionChat,
+            CapabilityRouteRequirements {
+                preferred_slot: CapabilitySlot::Vision,
                 context_tokens: 1_000,
                 has_images: true,
                 needs_tools: false,
@@ -2887,6 +2788,22 @@ mod tests {
                 .get("vision")
                 .map(|route| route.model.as_str()),
             Some("MiMo-V2.5-Pro")
+        );
+    }
+    #[test]
+    fn capability_requirements_select_fast_without_legacy_intent() {
+        let requirements = CapabilityRouteRequirements {
+            preferred_slot: CapabilitySlot::Fast,
+            context_tokens: 1_000,
+            has_images: false,
+            needs_tools: false,
+            needs_reasoning: false,
+            privacy_preference: PrivacyPreference::ExternalAllowed,
+        };
+
+        assert_eq!(
+            requested_slot_for_requirements(requirements),
+            CapabilitySlot::Fast
         );
     }
 }

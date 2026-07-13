@@ -10,8 +10,6 @@ use super::run_contract::{
     Freshness, MaterialNeed, Modality, RiskClass, RunEventPayload, RunEventType, RunState,
     SecurityDomain,
 };
-use crate::ai_runtime::session::SessionManager;
-use crate::ai_runtime::AiScene;
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan};
 use crate::storage::db::Database;
 
@@ -65,6 +63,7 @@ fn accept_input(session_id: i64, session_key: String) -> AcceptRunInput {
         message: "用户的完整提问只能保存到 session_messages".to_string(),
         content_parts: None,
         explicit_references: vec![explicit_reference()],
+        explicit_action: None,
         envelope: envelope(),
     }
 }
@@ -117,6 +116,20 @@ fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
     .expect("read accepted facts");
 }
 
+#[test]
+fn policy_request_rebuilds_only_persisted_envelope_and_reference_paths() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted run");
+
+    let request = AgentRunRepository::policy_request_for_session(&db, &session_key, "run-1")
+        .expect("read policy request")
+        .expect("run exists");
+
+    assert_eq!(request.envelope, envelope());
+    assert_eq!(request.explicit_reference_paths, vec!["notes/roadmap.md"]);
+    assert!(request.requested_capabilities.is_empty());
+}
 #[test]
 fn accept_is_idempotent_for_client_request_id_without_duplicate_message_or_event() {
     let (db, session_id, session_key) = setup();
@@ -171,19 +184,43 @@ fn normal_sqlite_repository_refuses_classified_run_before_any_write() {
 }
 
 #[test]
-fn normal_run_repository_refuses_legacy_scene_bound_session() {
-    let db = Database::open_in_memory().expect("database");
-    let session_id = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).expect("session");
-    let session_key = SessionManager::get_session(&db, session_id)
-        .expect("session lookup")
-        .expect("session exists")
-        .session_key;
+fn accept_persists_explicit_action_with_its_run() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key);
+    input.explicit_action = Some(super::run_contract::ExplicitAction {
+        effect: Effect::Draft,
+        target: Some(super::run_contract::ExplicitTarget {
+            reference_id: "ref-1".to_string(),
+            content_hash: "content-hash".to_string(),
+        }),
+        selection_snapshot: Some(super::run_contract::SelectionSnapshot {
+            reference_id: "ref-1".to_string(),
+            content_hash: "content-hash".to_string(),
+            utf8_range: SourceSpan { start: 4, end: 12 },
+            text: "只允许本次 Run 使用的明确选区".to_string(),
+        }),
+    });
 
-    let error = AgentRunRepository::accept(&db, accept_input(session_id, session_key))
-        .expect_err("legacy-bound sessions must not enter new Run repository");
-    assert_eq!(error.to_string(), "agent_run_session_not_found");
+    AgentRunRepository::accept(&db, input).expect("accepted run");
+    db.with_read_conn(|conn| {
+        let action_json: String = conn.query_row(
+            "SELECT explicit_action_json FROM agent_runs WHERE run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )?;
+        let action: super::run_contract::ExplicitAction = serde_json::from_str(&action_json)?;
+        assert_eq!(action.effect, Effect::Draft);
+        assert_eq!(
+            action
+                .selection_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.text.as_str()),
+            Some("只允许本次 Run 使用的明确选区")
+        );
+        Ok(())
+    })
+    .expect("action persisted");
 }
-
 #[test]
 fn failed_accept_rolls_back_message_run_and_event_together() {
     let (db, session_id, session_key) = setup();

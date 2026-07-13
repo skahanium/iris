@@ -4,10 +4,9 @@ use crate::error::{AppError, AppResult};
 use super::ToolDispatchContext;
 
 fn memory_session_scope(ctx: &ToolDispatchContext<'_>) -> String {
-    let scene = ctx.scene.profile();
     match ctx.note_path {
-        Some(path) if !path.is_empty() => format!("{scene}:{path}"),
-        _ => format!("{scene}:__global__"),
+        Some(path) if !path.is_empty() => format!("run:{path}"),
+        _ => "run:__global__".to_string(),
     }
 }
 

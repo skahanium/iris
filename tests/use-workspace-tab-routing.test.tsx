@@ -22,16 +22,12 @@ function Harness({
   tabs: Array<{ path: string; title: string }>;
 }) {
   apiRef.current = useWorkspaceTabRouting({
-    activeArtifactTab: null,
     activePath,
-    artifactTabs: [],
-    closeArtifact: vi.fn(),
     closeTab,
     currentNoteIsClassified: false,
-    handleActivateNoteOrArtifactTab: vi.fn(),
+    handleActivateNoteTab: vi.fn(),
     handleNewNoteLeavingHome: vi.fn(),
     openNoteLeavingHome: vi.fn(),
-    setActiveArtifactId: vi.fn(),
     setHomeActive,
     showHome,
     tabs,

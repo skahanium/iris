@@ -1675,12 +1675,8 @@ mod tests {
         apply_page_fetch(
             &mut item,
             PageFetchResult {
-                url: "https://example.com/a".into(),
                 title: "Fetched title".into(),
                 text: "Fetched body".into(),
-                truncated: false,
-                from_cache: false,
-                content_hash: "hash".into(),
             },
         );
 
@@ -1707,7 +1703,7 @@ mod tests {
         let packets = web_evidence_items_to_packets("apple最新的手表是什么？", &[item]);
         let prompt =
             crate::ai_runtime::model_gateway::ModelGateway::format_evidence_packets(&packets);
-        let estimated = crate::ai_runtime::harness_support::estimate_tokens(&prompt);
+        let estimated = crate::ai_runtime::text_support::estimate_tokens(&prompt);
 
         assert!(estimated < 55_808);
     }

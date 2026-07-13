@@ -28,12 +28,10 @@ import { saveWorkspaceSessionSnapshot } from "@/lib/workspace-session-snapshot";
 function Harness({ vaultPath }: { vaultPath: string | null }) {
   usePreparedWorkspaceTransitions({
     activePathRef: { current: null },
-    activateArtifact: vi.fn(),
     activateTab: vi.fn(),
     classifiedVaultStatus: "locked",
     handleNewNote: vi.fn(async () => undefined),
     openNote: vi.fn(async () => undefined),
-    setActiveArtifactId: vi.fn(),
     setHomeActive: vi.fn(),
     tabs: [],
     vaultPath,

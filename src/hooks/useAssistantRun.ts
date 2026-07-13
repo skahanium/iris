@@ -1,107 +1,148 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { AssistantIntent, AssistantTaskStatus } from "@/types/ai";
+import {
+  assistantRunControl,
+  assistantRunStart,
+  listenAssistantRunEvent,
+} from "@/lib/ipc";
+import type {
+  AssistantRunEvent,
+  AssistantRunStartRequest,
+  AssistantSessionRef,
+  RunState,
+} from "@/types/ai";
 
-/** Unified assistant run lifecycle (harness modernization). */
-export type AssistantRunState =
-  | "idle"
-  | "assembling_context"
-  | "awaiting_plan_approval"
-  | "running"
-  | "awaiting_tool_confirmation"
-  | "streaming_final"
-  | "completed"
-  | "error"
-  | "aborted";
+/** UI state is the persisted Run state, with `idle` before a Run exists. */
+export type AssistantRunState = RunState | "idle";
+
+export interface ActiveAssistantRun {
+  runId: string;
+  turnId: string;
+  session: AssistantSessionRef;
+  state: RunState;
+  stateVersion: number;
+}
 
 export interface AssistantRunSnapshot {
   runState: AssistantRunState;
-  intent: AssistantIntent;
   activityHint: string | null;
-  harnessRequestId: string | null;
+  currentRun: ActiveAssistantRun | null;
 }
 
-/** 是否阻塞模型/发送；工具确认等待不阻塞侧栏 chrome。 */
 export function isAssistantRunBusy(runState: AssistantRunState): boolean {
-  return [
-    "assembling_context",
-    "awaiting_plan_approval",
-    "running",
-    "streaming_final",
-  ].includes(runState);
+  return ["accepted", "preparing", "running", "verifying"].includes(runState);
 }
 
-function taskStatusToRunState(
-  status: AssistantTaskStatus,
-  activityHint: string | null,
-): AssistantRunState {
-  if (status === "awaiting_confirmation") {
-    return "awaiting_tool_confirmation";
-  }
-  if (status === "running") {
-    if (activityHint?.includes("组装")) return "assembling_context";
-    if (activityHint?.includes("计划")) return "awaiting_plan_approval";
-    if (activityHint?.includes("流式") || activityHint?.includes("最终")) {
-      return "streaming_final";
-    }
-    return "running";
-  }
-  if (status === "completed") return "completed";
-  if (status === "error") return "error";
-  return "idle";
+function stateFromEvent(
+  event: AssistantRunEvent,
+  previous: RunState,
+): RunState {
+  if (event.payload.kind === "stage_changed") return event.payload.state;
+  if (event.type === "completed") return "completed";
+  if (event.type === "failed") return "failed";
+  if (event.type === "cancelled") return "cancelled";
+  if (event.type === "paused") return "paused";
+  if (event.type === "resumed") return "running";
+  return previous;
 }
 
-export function useAssistantRun(initialIntent: AssistantIntent = "chat") {
-  const [intent, setIntent] = useState<AssistantIntent>(initialIntent);
-  const [taskStatus, setTaskStatus] = useState<AssistantTaskStatus>("idle");
+function activityHintFromEvent(event: AssistantRunEvent): string | null {
+  return event.payload.kind === "stage_changed" ? event.payload.stage : null;
+}
+
+function activeRunFromAccepted(
+  accepted: Awaited<ReturnType<typeof assistantRunStart>>,
+): ActiveAssistantRun {
+  return {
+    runId: accepted.runId,
+    turnId: accepted.turnId,
+    session: accepted.session,
+    state: accepted.state,
+    stateVersion: accepted.stateVersion,
+  };
+}
+
+/** One reducer-backed controller for the unified Agent Run lifecycle. */
+export function useAssistantRun() {
+  const [currentRun, setCurrentRun] = useState<ActiveAssistantRun | null>(null);
+  const [latestEvent, setLatestEvent] = useState<AssistantRunEvent | null>(
+    null,
+  );
   const [activityHint, setActivityHint] = useState<string | null>(null);
-  const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
-  const [evidenceRefreshNotice, setEvidenceRefreshNotice] = useState<
-    string | null
-  >(null);
+  const activeRunIdRef = useRef<string | null>(null);
+  activeRunIdRef.current = currentRun?.runId ?? activeRunIdRef.current;
 
-  const runState = useMemo(
-    () => taskStatusToRunState(taskStatus, activityHint),
-    [taskStatus, activityHint],
-  );
-
+  const runState: AssistantRunState = currentRun?.state ?? "idle";
   const snapshot: AssistantRunSnapshot = useMemo(
-    () => ({ runState, intent, activityHint, harnessRequestId }),
-    [runState, intent, activityHint, harnessRequestId],
+    () => ({ runState, activityHint, currentRun }),
+    [activityHint, currentRun, runState],
   );
+  const isBusy = isAssistantRunBusy(runState);
 
-  /** 阻塞输入/发送；工具确认由弹窗单独处理，不应锁死侧栏 chrome（历史、新对话）。 */
-  const isBusy = useMemo(() => isAssistantRunBusy(runState), [runState]);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listenAssistantRunEvent((event) => {
+      if (disposed || activeRunIdRef.current !== event.runId) return;
+      setLatestEvent(event);
+      setCurrentRun((previous) => {
+        if (!previous || previous.runId !== event.runId) return previous;
+        const state = stateFromEvent(event, previous.state);
+        return {
+          ...previous,
+          state,
+          stateVersion: event.stateVersion,
+        };
+      });
 
-  const setFromTaskStatus = useCallback(
-    (next: AssistantTaskStatus, nextIntent?: AssistantIntent) => {
-      if (nextIntent) setIntent(nextIntent);
-      setTaskStatus(next);
-    },
-    [],
-  );
+      const hint = activityHintFromEvent(event);
+      if (hint !== null) setActivityHint(hint);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  const start = useCallback(async (request: AssistantRunStartRequest) => {
+    const accepted = await assistantRunStart(request);
+    activeRunIdRef.current = accepted.runId;
+    setCurrentRun(activeRunFromAccepted(accepted));
+    setLatestEvent(null);
+    setActivityHint(null);
+    return accepted;
+  }, []);
+
+  const cancel = useCallback(async () => {
+    const run = currentRun;
+    if (!run) return;
+    await assistantRunControl({
+      session: run.session,
+      runId: run.runId,
+      expectedStateVersion: run.stateVersion,
+      action: { type: "cancel" },
+    });
+  }, [currentRun]);
 
   const reset = useCallback(() => {
-    setTaskStatus("idle");
     setActivityHint(null);
-    setHarnessRequestId(null);
-    setEvidenceRefreshNotice(null);
+    activeRunIdRef.current = null;
+    setCurrentRun(null);
+    setLatestEvent(null);
   }, []);
 
   return {
-    intent,
-    setIntent,
-    taskStatus,
     runState,
     snapshot,
     isBusy,
     activityHint,
-    setActivityHint,
-    harnessRequestId,
-    setHarnessRequestId,
-    evidenceRefreshNotice,
-    setEvidenceRefreshNotice,
-    setFromTaskStatus,
+    currentRun,
+    latestEvent,
+    start,
+    cancel,
     reset,
   };
 }

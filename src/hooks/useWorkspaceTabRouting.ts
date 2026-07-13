@@ -1,8 +1,7 @@
 import { useCallback, useMemo } from "react";
 
-import { useMediaTabs } from "@/hooks/useMediaTabs";
 import type { TabItem } from "@/components/layout/TabBar";
-import type { ArtifactTab } from "@/types/assistant-artifact";
+import { useMediaTabs } from "@/hooks/useMediaTabs";
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -14,36 +13,28 @@ interface NoteTabLike {
 }
 
 interface UseWorkspaceTabRoutingOptions<OpenOptions> {
-  activeArtifactTab: ArtifactTab | null;
   activePath: string | null;
-  artifactTabs: readonly ArtifactTab[];
-  closeArtifact: (id: string) => void;
   closeTab: (path: string) => MaybePromise<void>;
   currentNoteIsClassified: boolean;
-  handleActivateNoteOrArtifactTab: (path: string) => void;
+  handleActivateNoteTab: (path: string) => void;
   handleNewNoteLeavingHome: () => MaybePromise<void>;
   openNoteLeavingHome: (
     path: string,
     titleHint?: string,
     options?: OpenOptions,
   ) => MaybePromise<void>;
-  setActiveArtifactId: (id: string | null) => void;
   setHomeActive: (active: boolean) => void;
   showHome: () => void;
   tabs: readonly NoteTabLike[];
 }
 
 export function useWorkspaceTabRouting<OpenOptions>({
-  activeArtifactTab,
   activePath,
-  artifactTabs,
-  closeArtifact,
   closeTab,
   currentNoteIsClassified,
-  handleActivateNoteOrArtifactTab,
+  handleActivateNoteTab,
   handleNewNoteLeavingHome,
   openNoteLeavingHome,
-  setActiveArtifactId,
   setHomeActive,
   showHome,
   tabs,
@@ -58,7 +49,7 @@ export function useWorkspaceTabRouting<OpenOptions>({
   } = useMediaTabs();
 
   const activeNoteIsClassified = Boolean(
-    !activeArtifactTab && !activeMediaTab && currentNoteIsClassified,
+    !activeMediaTab && currentNoteIsClassified,
   );
 
   const openWorkspacePathLeavingHome = useCallback(
@@ -68,40 +59,26 @@ export function useWorkspaceTabRouting<OpenOptions>({
       options?: OpenOptions,
     ): Promise<void> => {
       if (openMediaPath(path, titleHint)) {
-        setActiveArtifactId(null);
         setHomeActive(false);
         return Promise.resolve();
       }
       setActiveMediaId(null);
       return Promise.resolve(openNoteLeavingHome(path, titleHint, options));
     },
-    [
-      openMediaPath,
-      openNoteLeavingHome,
-      setActiveArtifactId,
-      setActiveMediaId,
-      setHomeActive,
-    ],
+    [openMediaPath, openNoteLeavingHome, setActiveMediaId, setHomeActive],
   );
 
   const handleActivateWorkspaceTab = useCallback(
     (path: string) => {
       if (path.startsWith("media:")) {
-        setActiveArtifactId(null);
         setHomeActive(false);
         activateMedia(path);
         return;
       }
       setActiveMediaId(null);
-      handleActivateNoteOrArtifactTab(path);
+      handleActivateNoteTab(path);
     },
-    [
-      activateMedia,
-      handleActivateNoteOrArtifactTab,
-      setActiveArtifactId,
-      setActiveMediaId,
-      setHomeActive,
-    ],
+    [activateMedia, handleActivateNoteTab, setActiveMediaId, setHomeActive],
   );
 
   const handleNewWorkspaceNote = useCallback((): Promise<void> => {
@@ -115,30 +92,14 @@ export function useWorkspaceTabRouting<OpenOptions>({
         closeMedia(path);
         return;
       }
-      if (path.startsWith("artifact:")) {
-        closeArtifact(path);
-        return;
-      }
       const willCloseLastActiveNote =
-        activePath === path &&
-        tabs.length === 1 &&
-        mediaTabs.length === 0 &&
-        artifactTabs.length === 0;
+        activePath === path && tabs.length === 1 && mediaTabs.length === 0;
       const closeResult = closeTab(path);
       if (willCloseLastActiveNote) {
         Promise.resolve(closeResult).then(() => showHome());
       }
     },
-    [
-      activePath,
-      artifactTabs.length,
-      closeArtifact,
-      closeMedia,
-      closeTab,
-      mediaTabs.length,
-      showHome,
-      tabs.length,
-    ],
+    [activePath, closeMedia, closeTab, mediaTabs.length, showHome, tabs.length],
   );
 
   const workspaceTabs: TabItem[] = useMemo(
@@ -150,18 +111,11 @@ export function useWorkspaceTabRouting<OpenOptions>({
         kind: "media" as const,
         locked: true,
       })),
-      ...artifactTabs.map((tab) => ({
-        path: tab.id,
-        title: tab.title,
-        kind: "artifact" as const,
-        locked: true,
-      })),
     ],
-    [artifactTabs, mediaTabs, tabs],
+    [mediaTabs, tabs],
   );
 
-  const activeWorkspacePath =
-    activeArtifactTab?.id ?? activeMediaTab?.id ?? activePath;
+  const activeWorkspacePath = activeMediaTab?.id ?? activePath;
 
   return {
     activeMediaTab,

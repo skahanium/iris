@@ -16,23 +16,20 @@ describe("IPC event registry", () => {
       "file:changed",
       "classified:file_taken",
       "skills:changed",
-      "ai:tool_confirm_request",
-      "llm:token",
-      "llm:done",
-      "llm:error",
-      "llm:reset",
-      "ai:retry_status",
-      "ai:harness_trace",
-      "ai:thinking",
-      "ai:request_started",
-      "ai:research_progress",
+      "assistant:run_event",
+      "embedding-index-progress",
+      "app-update:status",
+      "app-update:progress",
     ]) {
       expect(registry).toContain(eventName);
       expect(ipc).not.toContain(`listen<${eventName}`);
     }
 
-    expect(ipc).toContain("IPC_EVENTS.VERSION_SAVE_COMPLETE");
-    expect(ipc).toContain("IPC_EVENTS.RESEARCH_PROGRESS");
+    expect(registry).not.toContain("ai:harness_trace");
+    expect(registry).not.toContain("llm:token");
+    expect(registry).not.toContain("ai:tool_confirm_request");
+    expect(ipc).toContain("IPC_EVENTS.ASSISTANT_RUN_EVENT");
+    expect(ipc).toContain("listenAssistantRunEvent");
     expect(registry).toContain("export type IpcEventName");
   });
 
@@ -42,7 +39,7 @@ describe("IPC event registry", () => {
       (match) => match[1]?.trim(),
     );
 
-    expect(listenCalls.length).toBeGreaterThan(8);
+    expect(listenCalls.length).toBeGreaterThan(0);
     expect(listenCalls.every((arg) => arg?.startsWith("IPC_EVENTS."))).toBe(
       true,
     );

@@ -36,7 +36,6 @@ pub(crate) fn capabilities_read_tool(
 #[cfg(test)]
 mod tests {
     use crate::ai_runtime::tool_dispatch::{dispatch_tool, ToolDispatchContext};
-    use crate::ai_runtime::AiScene;
     use crate::app::AppState;
     use std::sync::Arc;
 
@@ -55,7 +54,6 @@ mod tests {
         let (state, _dir) = test_state();
         let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
         let ctx = ToolDispatchContext {
-            scene: AiScene::KnowledgeLookup,
             note_path: Some("notes/test.md"),
             file_id: Some(7),
             web_search_enabled: true,

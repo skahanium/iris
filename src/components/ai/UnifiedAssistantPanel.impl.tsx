@@ -1,145 +1,56 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
-import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
 import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
-import { useDocSummaryStream } from "@/hooks/useDocSummaryStream";
-import { agentTaskAbort, harnessAbort } from "@/lib/ipc";
-import { legacySceneHintForTaskPlanIntent } from "@/lib/assistant-scene";
-import { buildActionState } from "./unified-assistant-panel-utils";
-import { AssistantComposerDock } from "./AssistantComposerDock";
-import { ConversationSurface } from "./ConversationSurface";
-import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
-import { useCitationClick } from "./hooks/useCitationClick";
-import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
-import { useAssistantConversation } from "./hooks/useAssistantConversation";
-import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
-import { useAssistantConfirmations } from "./hooks/useAssistantConfirmations";
-import { useAssistantArtifacts } from "./hooks/useAssistantArtifacts";
-import { useAssistantHarnessResume } from "./hooks/useAssistantHarnessResume";
-import { useAssistantPanelEffects } from "./hooks/useAssistantPanelEffects";
-import { useAssistantTasks } from "./hooks/useAssistantTasks";
-import { useAgentTaskStatus } from "./hooks/useAgentTaskStatus";
-import { useResearchControl } from "./hooks/useResearchControl";
+
+import type { ImageAttachment } from "./AiMessageList";
+import { AssistantComposerDock } from "./AssistantComposerDock";
 import { ContextScopeChips } from "./ContextScopeChips";
-import { AssistantTaskSurfaces } from "./AssistantTaskSurfaces";
-import { AgentTaskStatusPanel } from "./AgentTaskStatusPanel";
-import { AssistantConfirmDialogs } from "./AssistantConfirmDialogs";
-import { useAssistantRunPlan } from "./hooks/useAssistantRunPlan";
-import { useSelectionQuoteReference } from "./hooks/useSelectionQuoteReference";
-import { useAssistantPanelRuntimeState } from "./hooks/useAssistantPanelRuntimeState";
-import { AssistantErrorRecovery } from "./AssistantErrorRecovery";
+import { ConversationSurface } from "./ConversationSurface";
+import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
+import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
+import { useAssistantConversation } from "./hooks/useAssistantConversation";
+import { useAssistantRunTranscript } from "./hooks/useAssistantRunTranscript";
+import { useUnifiedAssistantSend } from "./hooks/useUnifiedAssistantSend";
 import type { UnifiedAssistantPanelProps } from "./types";
 
+/** Production assistant panel: one opaque conversation API and one Run lifecycle. */
 export function UnifiedAssistantPanel({
   aiDomain = "normal",
   classifiedPath = null,
-  notePath,
-  getNoteContent,
   runtimeDocumentCandidates = [],
-  runtimeDocumentSnapshots = [],
   webSearch = false,
   webSearchProviderName = null,
-  getWritingContext,
-  getParagraphText,
-  onPatchApplied,
-  onVaultRefresh,
   onInsertToEditor,
-  onOpenArtifact,
-  onOpenEvidenceSource,
-  onSessionDeleted,
-  selectionQuote,
-  prefillMessage,
-  onChromeChange,
 }: UnifiedAssistantPanelProps) {
-  const panelRuntime = useAssistantPanelRuntimeState();
-  const {
-    actionState,
-    activityHint,
-    agentTaskId,
-    currentTaskPlanIntent,
-    packets,
-    requestIdRef,
-    setActionState,
-    setActivityHint,
-    setAgentTaskId,
-    setContextStatusData,
-    setCurrentTaskPlanIntent,
-    setHarnessRequestId,
-    setPackets,
-    setPacketsOpen,
-    setPausedTaskId,
-    setProcessEvents,
-    setSelectedPacketIds,
-    setStreaming,
-    setWebSearchUsage,
-    streamBuf,
-    streaming,
-    textareaRef,
-  } = panelRuntime;
-  const bubbleSelection = useAiBubbleSelection();
-  const { pruneSelected } = bubbleSelection;
-  const runPlan = useAssistantRunPlan();
-  const assistantRun = useAssistantRun("chat");
   const { profile: promptProfile } = usePromptProfile();
+  const assistantRun = useAssistantRun();
   const aiRuntime = useAiDomainRuntime({
     domainState: {
       domain: aiDomain,
-      normalActivePath: aiDomain === "normal" ? notePath : null,
+      normalActivePath: null,
       classifiedActivePath: aiDomain === "classified" ? classifiedPath : null,
       classifiedUnlocked: aiDomain === "classified",
     },
   });
   const input = aiRuntime.activeDraft;
   const setInput = aiRuntime.setActiveDraft;
-  const { handleCitationClick, citationMiss, clearCitationMiss } =
-    useCitationClick(packets, () => setPacketsOpen(true), setSelectedPacketIds);
-  const {
-    assistantArtifacts,
-    citationResult,
-    clearTaskSurfaces: clearArtifactSurfaces,
-    handleAcceptPatch,
-    docIssues,
-    docSummary,
-    lastError,
-    organizeSelection,
-    organizeSuggestions,
-    researchResult,
-    researchState,
-    setAssistantArtifacts,
-    setCitationResult,
-    setDocIssues,
-    setDocSummary,
-    setLastError,
-    setOrganizeSelection,
-    setOrganizeSuggestions,
-    setResearchResult,
-    setResearchState,
-    setWritingPatches,
-    setWritingState,
-    writingState,
-    writingPatches,
-  } = useAssistantArtifacts({
-    getNoteContent,
-    onPatchApplied,
-    onVaultRefresh,
-  });
+  const bubbleSelection = useAiBubbleSelection();
+  const [streaming, setStreaming] = useState(false);
+  const [, setActivityHint] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<string | null>(null);
+  const [images, setImages] = useState<ImageAttachment[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
 
-  function clearTaskSurfaces() {
-    clearArtifactSurfaces();
-    panelRuntime.clearResearchProgressRef.current?.();
-    setProcessEvents([]);
-    setAgentTaskId(null);
-  }
+  const clearTaskSurfaces = useCallback(() => undefined, []);
 
   const {
-    appendAssistantSummary,
     appendUserMessage,
-    classifiedThreadId,
     ensureAssistantStreamSlot,
     handleCopySelected,
     handleExportSelected,
@@ -149,39 +60,20 @@ export function UnifiedAssistantPanel({
     handleQuoteToInput,
     handleRetract,
     messages,
-    saveClassifiedThread,
-    sessionId,
-    sessionTokenUsage,
+    runSession,
     setMessages,
-    setSessionId,
-    setSessionTokenUsage,
+    setRunSession,
   } = useAssistantConversation({
-    actionIntent: actionState.intent,
-    aiDomain,
     bubbleSelection,
-    clearCitationMiss,
     clearContextReferences: bubbleSelection.clearContextReferences,
     clearTaskSurfaces,
-    documentPath: classifiedPath ?? undefined,
-    forceNewSessionRef: panelRuntime.forceNewSessionRef,
     onInsertToEditor,
-    requestIdRef,
-    setActionState,
-    setActivityHint,
-    setHarnessRequestId,
     setInput,
-    setPackets,
-    setSelectedPacketIds,
     setStreaming,
-    streamBufRef: streamBuf,
     textareaRef,
-    streaming,
   });
-  useEffect(() => {
-    pruneSelected(messages.length);
-  }, [pruneSelected, messages.length]);
+
   const {
-    contextScope,
     handleComposerKeyDown,
     mentionCandidates,
     mentionHighlight,
@@ -201,220 +93,44 @@ export function UnifiedAssistantPanel({
     runtimeDocumentCandidates,
   });
 
-  const {
-    abortResearch,
-    clearResearchProgress,
-    researchRequestIdRef,
-    researchRunning,
-    setResearchPanelExpanded,
-    setResearchRunning,
-  } = useResearchControl({
-    researchResult,
-    setActionState,
-    setLastError,
+  useAssistantRunTranscript({
+    event: assistantRun.latestEvent,
     setMessages,
+    setStreaming,
+    setActivityHint,
+    setError: setLastError,
   });
-  panelRuntime.clearResearchProgressRef.current = clearResearchProgress;
 
-  useAssistantPanelEffects({
-    activityHint,
-    harnessRequestId: panelRuntime.harnessRequestId,
-    messages,
-    onChromeChange,
-    packets,
-    prefillMessage,
-    requestIdRef,
-    selectionQuote,
-    sessionTokenUsage,
-    setActionState,
-    setAgentTaskId,
-    setHarnessRequestId,
+  const { isStarting, send } = useUnifiedAssistantSend({
+    aiDomain,
+    input,
+    images,
+    composerDisabled: streaming || assistantRun.isBusy,
+    session: runSession,
+    contextReferences: bubbleSelection.contextReferences,
+    webSearch,
+    start: assistantRun.start,
+    appendUserMessage,
+    ensureAssistantStreamSlot,
+    clearContextReferences: bubbleSelection.clearContextReferences,
     setInput,
-    setSessionId,
-    streaming,
-  });
-
-  useAssistantLlmStream({
-    domain: aiDomain,
-    panelSendActiveRef: panelRuntime.panelSendActiveRef,
-    requestIdRef,
-    streamBufRef: streamBuf,
-    setActivityHint,
-    setMessages,
-    setProcessEvents,
+    setImages,
+    setSession: setRunSession,
     setStreaming,
-  });
-
-  useDocSummaryStream({
-    docStreamActiveRef: panelRuntime.docStreamActiveRef,
-    requestIdRef,
-    setDocSummary,
-  });
-
-  useSelectionQuoteReference({
-    quoteSelectionAsReference: bubbleSelection.quoteSelectionAsReference,
-    selectionQuote,
-  });
-
-  const handleHarnessResume = useAssistantHarnessResume({
-    ensureAssistantStreamSlot,
-    harnessRequestId: panelRuntime.harnessRequestId,
-    pausedTaskId: panelRuntime.pausedTaskId,
     setActivityHint,
-    setLastError,
-    setMessages,
-    setPackets,
-    setAgentTaskId,
-    setPausedTaskId,
-    setSessionTokenUsage,
-    setStreaming,
+    setError: setLastError,
   });
 
-  const agentTaskStatus = useAgentTaskStatus({
-    taskId: agentTaskId,
-    setLastError,
-    setPausedTaskId,
-  });
-
-  const {
-    closeRuleConfirm,
-    dismissToolConfirm,
-    handleRuleConfirm,
-    handleToolConfirm,
-    ruleConfirmRequest,
-    toolConfirmRequest,
-  } = useAssistantConfirmations({
-    actionIntent: actionState.intent,
-    activeSessionId: sessionId,
-    assistantRun,
-    buildActionState,
-    ensureAssistantStreamSlot,
-    requestIdRef,
-    setActionState,
-    setActivityHint,
-    setHarnessRequestId,
-    setMessages,
-    setPackets,
-    setSessionTokenUsage,
-    setStreaming,
-  });
-
-  const composerDisabled =
-    streaming || assistantRun.isBusy || toolConfirmRequest !== null;
-
-  const { send, images, setImages } = useAssistantTasks({
-    runtime: {
-      appendAssistantSummary,
-      appendUserMessage,
-      assistantRun,
-      clearCitationMiss,
-      clearTaskSurfaces,
-      clearContextReferences: bubbleSelection.clearContextReferences,
-      ensureAssistantStreamSlot,
-      runPlanControls: runPlan,
-      saveConversationSnapshot:
-        aiDomain === "classified" ? saveClassifiedThread : undefined,
-    },
-    context: {
-      aiDomain,
-      composerDisabled,
-      contextScope,
-      getNoteContent,
-      getParagraphText,
-      getWritingContext,
-      input,
-      messages,
-      notePath,
-      packets,
-      selectedPacketIds: panelRuntime.selectedPacketIds,
-      contextReferences: bubbleSelection.contextReferences,
-      runtimeDocumentSnapshots,
-      acceptWritingPatch: handleAcceptPatch,
-      selectionQuoteText: selectionQuote?.text,
-      sessionId,
-      webSearch,
-      writingPatches,
-    },
-    refs: {
-      forceNewSessionRef: panelRuntime.forceNewSessionRef,
-      panelSendActiveRef: panelRuntime.panelSendActiveRef,
-      requestIdRef,
-      researchRequestIdRef,
-      streamBufRef: streamBuf,
-      docStreamActiveRef: panelRuntime.docStreamActiveRef,
-    },
-    state: {
-      setActionState,
-      setActivityHint,
-      setAssistantArtifacts,
-      setCurrentTaskPlanIntent,
-      setCitationResult,
-      setContextStatusData,
-      setDocIssues,
-      setDocSummary,
-      setAgentTaskId,
-      setHarnessRequestId,
-      setInput,
-      setLastError,
-      setMessages,
-      setOrganizeSelection,
-      setOrganizeSuggestions,
-      setPackets,
-      setPacketsOpen,
-      setPausedTaskId,
-      setResearchPanelExpanded,
-      setResearchResult,
-      setResearchState,
-      setResearchRunning,
-      setSessionId,
-      setSessionTokenUsage,
-      setStreaming,
-      setWritingPatches,
-      setWritingState,
-      setWebSearchUsage,
-    },
-  });
-
-  function resetAssistantSessionState() {
-    setAgentTaskId(null);
-    setPausedTaskId(null);
-    setCurrentTaskPlanIntent(null);
-    setWebSearchUsage(null);
-    handleNewChat();
-  }
-  function loadSessionAndResetTaskPlan(
-    ...args: Parameters<typeof handleLoadSession>
-  ) {
-    setCurrentTaskPlanIntent(null);
-    setWebSearchUsage(null);
-    handleLoadSession(...args);
-  }
+  const composerDisabled = streaming || assistantRun.isBusy || isStarting;
   const stopStreaming = useCallback(() => {
-    const taskId = agentTaskId;
-    const id = requestIdRef.current;
-    if (taskId) {
-      void agentTaskAbort(taskId);
-    } else if (id) {
-      void harnessAbort(id);
-    }
-    panelRuntime.panelSendActiveRef.current = false;
-    setStreaming(false);
-    setActivityHint(null);
-  }, [
-    agentTaskId,
-    panelRuntime.panelSendActiveRef,
-    requestIdRef,
-    setActivityHint,
-    setStreaming,
-  ]);
-  const togglePacketSelection = (id: string) => {
-    setSelectedPacketIds((prev) =>
-      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
-    );
-  };
-  const currentScene = legacySceneHintForTaskPlanIntent(currentTaskPlanIntent);
-  const currentConversationId =
-    aiDomain === "classified" ? classifiedThreadId : sessionId;
+    void assistantRun.cancel();
+  }, [assistantRun]);
+  const resetAssistantSessionState = useCallback(() => {
+    assistantRun.reset();
+    setLastError(null);
+    handleNewChat();
+  }, [assistantRun, handleNewChat]);
+
   return (
     <div
       className="ai-sidecar flex h-full flex-col bg-ai-workspace"
@@ -422,81 +138,33 @@ export function UnifiedAssistantPanel({
       data-testid="unified-assistant-panel"
     >
       <AssistantPanelHeader
-        chromeActionsDisabled={streaming}
-        currentSessionId={currentConversationId}
+        chromeActionsDisabled={composerDisabled}
+        currentSession={runSession}
         domain={aiDomain}
-        scene={currentScene}
-        onDeletedSession={onSessionDeleted}
         onDeletedCurrentSession={resetAssistantSessionState}
         onNewChat={resetAssistantSessionState}
-        onSelectSession={loadSessionAndResetTaskPlan}
+        onSelectSession={handleLoadSession}
         profile={promptProfile}
-        taskPlanIntent={currentTaskPlanIntent}
-        taskStatus={actionState.status}
+        runState={assistantRun.runState}
         webSearch={webSearch}
         webSearchProviderName={webSearchProviderName}
-        webSearchUsage={panelRuntime.webSearchUsage}
       />
-      <ContextPacketDrawer
-        open={panelRuntime.packetsOpen}
-        onOpenChange={setPacketsOpen}
-        packets={packets}
-        selectedIds={panelRuntime.selectedPacketIds}
-        onSelect={togglePacketSelection}
-        onOpenSource={onOpenEvidenceSource}
-        contextStatus={panelRuntime.contextStatusData}
-        citationMiss={citationMiss}
-        sessionId={sessionId}
-        onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
-      />
-      <AssistantErrorRecovery
-        disabled={streaming}
-        harnessRequestId={panelRuntime.harnessRequestId}
-        lastError={lastError}
-        pausedTaskId={panelRuntime.pausedTaskId}
-        onResume={() => void handleHarnessResume()}
-      />
-      <ErrorBoundary scope="AI任务区">
-        <AssistantTaskSurfaces
-          assistantArtifacts={assistantArtifacts}
-          docSummary={docSummary}
-          docIssues={docIssues}
-          citationResult={citationResult}
-          organizeSuggestions={organizeSuggestions}
-          organizeSelection={organizeSelection}
-          evidenceRefreshNotice={assistantRun.evidenceRefreshNotice}
-          writingPatches={writingPatches}
-          writingState={writingState}
-          onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
-        />
-      </ErrorBoundary>
-      <ErrorBoundary scope="AI对话区">
+      {lastError ? (
+        <p className="border-b border-destructive/30 px-3 py-2 text-xs text-destructive">
+          {lastError}
+        </p>
+      ) : null}
+      <ErrorBoundary scope="AI 对话区">
         <ConversationSurface
           messages={messages}
           contextReferences={bubbleSelection.contextReferences}
           streaming={streaming}
-          processEvents={panelRuntime.processEvents}
-          selectedIndices={bubbleSelection.selected}
-          messageListRef={panelRuntime.messageListRef}
-          onCitationClick={handleCitationClick}
+          messageListRef={messageListRef}
+          onCitationClick={() => undefined}
           onRetract={handleRetract}
           onSelect={bubbleSelection.handleClick}
           onQuoteToInput={handleQuoteToInput}
           onRemoveContextReference={bubbleSelection.removeContextReference}
-        />
-      </ErrorBoundary>
-      <ErrorBoundary scope="AI任务状态">
-        <AgentTaskStatusPanel
-          task={agentTaskStatus.agentTask}
-          steps={agentTaskStatus.agentTaskSteps}
-          events={agentTaskStatus.agentTaskEvents}
-          intentDetection={runPlan.intentDetection}
-          onAbort={() => void agentTaskStatus.abortAgentTask()}
-          onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
-          onResume={() => void handleHarnessResume()}
-          permissionPreflightSummary={runPlan.permissionPreflightSummary}
-          researchState={researchState}
-          runPlanSummary={runPlan.runPlanSummary}
         />
       </ErrorBoundary>
       <SelectedMessagesActionDock
@@ -524,22 +192,9 @@ export function UnifiedAssistantPanel({
         onMentionHighlight={setMentionHighlight}
         onMentionSelect={selectMention}
         onSelect={syncMentionFromInput}
-        onStop={() => {
-          if (researchRunning) void abortResearch();
-          else if (streaming) stopStreaming();
-          else void agentTaskStatus.abortAgentTask();
-        }}
+        onStop={stopStreaming}
         onSubmit={() => void send()}
         onValueChange={setInput}
-      />
-      <AssistantConfirmDialogs
-        ruleConfirmRequest={ruleConfirmRequest}
-        toolConfirmRequest={toolConfirmRequest}
-        onRuleClose={closeRuleConfirm}
-        onRuleConfirm={handleRuleConfirm}
-        onRuleReject={closeRuleConfirm}
-        onToolClose={dismissToolConfirm}
-        onToolConfirm={handleToolConfirm}
       />
     </div>
   );

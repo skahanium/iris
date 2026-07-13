@@ -14,7 +14,7 @@ use crate::ai_types::{
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -43,6 +43,8 @@ pub(crate) struct AcceptRunInput {
     pub(crate) content_parts: Option<Vec<ContentPart>>,
     /// Explicit references whose persisted form excludes excerpts.
     pub(crate) explicit_references: Vec<ContextReferenceWire>,
+    /// Explicit editor action and snapshot scoped to this Run only.
+    pub(crate) explicit_action: Option<crate::ai_runtime::run_contract::ExplicitAction>,
     /// Already-resolved execution boundary for this Run.
     pub(crate) envelope: ExecutionEnvelope,
 }
@@ -97,6 +99,13 @@ pub(crate) enum FrozenConfirmationApproval {
     AlreadyApplied,
 }
 
+/// Result of rejecting a persisted confirmation through one idempotent control request.
+pub(crate) enum FrozenConfirmationRejection {
+    /// The pending plan was rejected and the Run durably resumed.
+    Resumed(AssistantRunEvent),
+    /// The same plan had already been rejected by an earlier identical control request.
+    AlreadyRejected,
+}
 /// Repository for normal-domain Run, Event and intake facts.
 pub(crate) struct AgentRunRepository;
 
@@ -131,6 +140,11 @@ impl AgentRunRepository {
                         .collect::<Vec<_>>(),
                 )?;
                 let envelope_json = serde_json::to_string(&input.envelope)?;
+                let explicit_action_json = input
+                    .explicit_action
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()?;
                 let effect = enum_wire(&input.envelope.effect)?;
                 let effort = enum_wire(&input.envelope.effort)?;
                 let security_domain = enum_wire(&input.envelope.security_domain)?;
@@ -162,9 +176,9 @@ impl AgentRunRepository {
                 conn.execute(
                     "INSERT INTO agent_runs
                  (run_id, client_request_id, session_id, turn_id, status, state_version,
-                  effect, effort, security_domain, risk, envelope_json, goal_summary,
-                  created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
+                  effect, effort, security_domain, risk, envelope_json, explicit_action_json,
+                  goal_summary, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
                     rusqlite::params![
                         input.run_id,
                         input.client_request_id,
@@ -175,6 +189,7 @@ impl AgentRunRepository {
                         security_domain,
                         risk,
                         envelope_json,
+                        explicit_action_json,
                         goal_summary,
                         now,
                     ],
@@ -596,6 +611,94 @@ impl AgentRunRepository {
         })
     }
 
+    /// Reject an exact pending plan and resume its Run without dispatching the plan.
+    pub(crate) fn reject_frozen_confirmation(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+        confirmation_id: &str,
+        expected_state_version: u64,
+        now_unix_ms: i64,
+    ) -> AppResult<FrozenConfirmationRejection> {
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let (status, stored_state_version): (String, u64) = conn
+                    .query_row(
+                        "SELECT r.status, r.state_version
+                         FROM agent_runs r JOIN sessions s ON s.id = r.session_id
+                         WHERE r.run_id = ?1 AND s.session_key = ?2",
+                        rusqlite::params![run_id, session_key],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(not_found_or_db)?;
+                let confirmation_status: String = conn
+                    .query_row(
+                        "SELECT status FROM agent_run_confirmations
+                         WHERE confirmation_id = ?1 AND run_id = ?2",
+                        rusqlite::params![confirmation_id, run_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|error| match error {
+                        rusqlite::Error::QueryReturnedNoRows => {
+                            AppError::msg("agent_run_confirmation_expired")
+                        }
+                        other => other.into(),
+                    })?;
+                if confirmation_status == "rejected" {
+                    return Ok(FrozenConfirmationRejection::AlreadyRejected);
+                }
+                if confirmation_status != "pending" {
+                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                }
+                if stored_state_version != expected_state_version {
+                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                }
+                if parse_wire::<RunState>(&status)? != RunState::AwaitingConfirmation {
+                    return Err(AppError::msg("agent_run_illegal_transition"));
+                }
+                let now = chrono::Utc::now().to_rfc3339();
+                let rejected = conn.execute(
+                    "UPDATE agent_run_confirmations
+                     SET status = 'rejected', consumed_at = ?1
+                     WHERE confirmation_id = ?2 AND run_id = ?3
+                       AND status = 'pending' AND expires_at >= ?4",
+                    rusqlite::params![now, confirmation_id, run_id, now_unix_ms],
+                )?;
+                if rejected != 1 {
+                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                }
+                let next_state_version = stored_state_version + 1;
+                let updated = conn.execute(
+                    "UPDATE agent_runs
+                     SET status = 'running', state_version = ?1, updated_at = ?2
+                     WHERE run_id = ?3 AND state_version = ?4",
+                    rusqlite::params![next_state_version, now, run_id, stored_state_version],
+                )?;
+                if updated != 1 {
+                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                }
+                let event_seq: u64 = conn.query_row(
+                    "SELECT COALESCE(MAX(event_seq), 0) + 1
+                     FROM agent_run_events WHERE run_id = ?1",
+                    [run_id],
+                    |row| row.get(0),
+                )?;
+                let event = AssistantRunEvent::new(
+                    run_id,
+                    event_seq,
+                    next_state_version,
+                    RunEventType::Resumed,
+                    &now,
+                    RunEventPayload::Resumed {
+                        reason: "变更计划已拒绝，正在继续处理".to_string(),
+                    },
+                )
+                .map_err(AppError::msg)?;
+                insert_event(conn, &event)?;
+                Ok(FrozenConfirmationRejection::Resumed(event))
+            })
+        })
+    }
     /// Return only the safe Run snapshot and ordered persisted events.
     pub(crate) fn get(db: &Database, run_id: &str) -> AppResult<Option<AssistantRunGetResponse>> {
         Self::get_scoped(db, run_id, None)
@@ -687,6 +790,93 @@ impl AgentRunRepository {
         })
     }
 
+    /// Rebuild immutable policy input from accepted normal-domain Run facts only.
+    ///
+    /// This query intentionally reads the persisted envelope and safe explicit
+    /// reference metadata, never the user message body, current editor state,
+    /// legacy scene, or an unscoped Run.
+    pub(crate) fn policy_request_for_session(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+    ) -> AppResult<Option<crate::ai_runtime::policy_decision_engine::RunPolicyRequest>> {
+        db.with_read_conn(|conn| {
+            let stored = conn
+                .query_row(
+                    "SELECT r.envelope_json, m.explicit_references_json
+                     FROM agent_runs r
+                     JOIN sessions s ON s.id = r.session_id
+                     JOIN session_messages m ON m.session_id = r.session_id AND m.turn_id = r.turn_id
+                     WHERE r.run_id = ?1 AND s.session_key = ?2 AND m.role = 'user'",
+                    rusqlite::params![run_id, session_key],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            let Some((envelope_json, references_json)) = stored else {
+                return Ok(None);
+            };
+            let envelope = serde_json::from_str(&envelope_json)?;
+            let references: Value = serde_json::from_str(&references_json)?;
+            let references = references
+                .as_array()
+                .ok_or_else(|| AppError::msg("agent_run_invalid_request"))?;
+            let explicit_reference_paths = references
+                .iter()
+                .filter_map(|reference| reference.get("filePath"))
+                .map(|path| {
+                    path.as_str()
+                        .filter(|path| !path.trim().is_empty())
+                        .map(str::to_string)
+                        .ok_or_else(|| AppError::msg("agent_run_invalid_request"))
+                })
+                .collect::<AppResult<Vec<_>>>()?;
+            Ok(Some(
+                crate::ai_runtime::policy_decision_engine::RunPolicyRequest {
+                    envelope,
+                    explicit_reference_paths,
+                    requested_capabilities: Vec::new(),
+                },
+            ))
+        })
+    }
+    /// Read persisted user message and explicit-reference metadata for one normal Run.
+    pub(crate) fn prompt_input_for_session(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+    ) -> AppResult<Option<RunPromptInput>> {
+        db.with_read_conn(|conn| {
+            let stored = conn
+                .query_row(
+                    "SELECT r.session_id, m.seq, m.content, m.explicit_references_json
+                     FROM agent_runs r
+                     JOIN sessions s ON s.id = r.session_id
+                     JOIN session_messages m ON m.session_id = r.session_id AND m.turn_id = r.turn_id
+                     WHERE r.run_id = ?1 AND s.session_key = ?2 AND m.role = 'user'",
+                    rusqlite::params![run_id, session_key],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let Some((session_id, message_seq_first, message, references_json)) = stored else {
+                return Ok(None);
+            };
+            let explicit_references = serde_json::from_str(&references_json)
+                .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+            Ok(Some(RunPromptInput {
+                session_id,
+                message_seq_first,
+                user_message: message,
+                explicit_references,
+            }))
+        })
+    }
     /// Read a Run only when its opaque normal-domain session key matches.
     pub(crate) fn get_for_session(
         db: &Database,
@@ -695,6 +885,26 @@ impl AgentRunRepository {
     ) -> AppResult<Option<AssistantRunGetResponse>> {
         Self::get_scoped(db, run_id, Some(session_key))
     }
+}
+
+/// Persisted explicit-reference facts that may be resolved for one Run.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct StoredExplicitReference {
+    pub(crate) file_path: Option<String>,
+    pub(crate) content_hash: Option<String>,
+    pub(crate) utf8_range: Option<SourceSpan>,
+    pub(crate) stale: bool,
+    pub(crate) invalid_reason: Option<String>,
+}
+
+/// Persisted inputs that may reach the scene-free Provider prompt builder.
+#[derive(Debug, Clone)]
+pub(crate) struct RunPromptInput {
+    pub(crate) session_id: i64,
+    pub(crate) message_seq_first: i64,
+    pub(crate) user_message: String,
+    pub(crate) explicit_references: Vec<StoredExplicitReference>,
 }
 
 #[derive(Serialize)]
@@ -751,8 +961,7 @@ fn in_immediate_transaction<T>(
 
 fn ensure_normal_session(conn: &Connection, session_id: i64, session_key: &str) -> AppResult<()> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sessions
-         WHERE id = ?1 AND session_key = ?2 AND scene = '' AND note_path IS NULL",
+        "SELECT COUNT(*) FROM sessions WHERE id = ?1 AND session_key = ?2",
         rusqlite::params![session_id, session_key],
         |row| row.get(0),
     )?;

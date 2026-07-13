@@ -185,15 +185,17 @@ describe("Iris Rail complete interface contracts", () => {
     expect(app).not.toContain("AiSystemCenterPanel");
   });
 
-  it("defines AI collaboration sidecar surfaces", () => {
-    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+  it("defines the Run-backed AI collaboration sidecar surfaces", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const sender = read("src/components/ai/hooks/useUnifiedAssistantSend.ts");
     const bubble = read("src/components/ai/AiMessageBubble.tsx");
     const composer = read("src/components/ui/ai-composer.tsx");
     const css = read("src/styles/globals.css");
 
     expect(panel).toContain("ai-sidecar");
-    expect(panel).toContain("ai-sidecar-header");
-    expect(panel).toContain("ai-task-surface");
+    expect(panel).toContain("useAssistantRun");
+    expect(sender).toContain("explicitReferences");
+    expect(sender).toContain("securityDomain: aiDomain");
     expect(bubble).toContain("ai-message-surface-assistant");
     expect(bubble).toContain("ai-message-surface-user");
     expect(composer).toContain("ai-composer-workbench");

@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::ai_runtime::{AiScene, ContextPacket, ContextStatus};
+use crate::ai_runtime::{ContextPacket, ContextStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextAssemblyCacheKey {
-    scene: AiScene,
     note_path: Option<String>,
     query: String,
     scope_json: String,
@@ -16,7 +15,6 @@ pub struct ContextAssemblyCacheKey {
 
 impl ContextAssemblyCacheKey {
     pub fn new(
-        scene: AiScene,
         note_path: Option<&str>,
         query: &str,
         scope_json: &str,
@@ -25,7 +23,6 @@ impl ContextAssemblyCacheKey {
         prompt_profile_fingerprint: &str,
     ) -> Self {
         Self {
-            scene,
             note_path: note_path.map(str::to_string),
             query: query.to_string(),
             scope_json: scope_json.to_string(),

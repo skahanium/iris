@@ -6,120 +6,78 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-describe("classified AI session store contract", () => {
-  describe("classified AI session APIs do not use ordinary session infrastructure", () => {
-    it("classified.rs does not import SessionManager::ensure", () => {
-      const src = read("src-tauri/src/commands/classified.rs");
-      expect(src).not.toContain("SessionManager::ensure");
-      expect(src).not.toContain("session_list");
-      expect(src).not.toContain("session_messages");
-    });
+describe("classified Agent Run storage contract", () => {
+  it("keeps classified note commands outside the normal SessionManager", () => {
+    const source = read("src-tauri/src/commands/classified.rs");
 
-    it("classified.rs does not call SessionManager at all", () => {
-      const src = read("src-tauri/src/commands/classified.rs");
-      expect(src).not.toContain("SessionManager");
-    });
-
-    it("ai_commands validate_ai_note_path blocks classified paths", () => {
-      const src = read("src-tauri/src/commands/ai_commands.rs");
-      expect(src).toContain("涉密笔记不能进入 AI 管道");
-      expect(src).toContain("validate_ai_note_path");
-      expect(src).toContain("is_user_note_path(path)");
-    });
+    expect(source).not.toContain("SessionManager");
+    expect(source).toContain("classified_io");
+    expect(source).toContain("encrypt_cef");
+    expect(source).toContain("decrypt_cef");
+    expect(source).toContain("VaultKey");
+    expect(source).toContain("require_unlocked");
   });
 
-  describe("encrypted payload APIs depend on classified_io and VaultKey", () => {
-    it("classified.rs imports classified_io for encrypt/decrypt", () => {
-      const src = read("src-tauri/src/commands/classified.rs");
-      expect(src).toContain("classified_io");
-      expect(src).toContain("encrypt_cef");
-      expect(src).toContain("decrypt_cef");
-    });
+  it("stores normal conversations behind opaque scene-free session keys", () => {
+    const source = read(
+      "src-tauri/src/ai_runtime/normal_session_repository.rs",
+    );
 
-    it("classified.rs uses VaultKey for key material", () => {
-      const src = read("src-tauri/src/commands/classified.rs");
-      expect(src).toContain("VaultKey");
-      expect(src).toContain("VAULT_KEY");
-      expect(src).toContain("require_unlocked");
-    });
-
-    it("classified_io module provides CEF magic detection", () => {
-      const src = read("src-tauri/src/commands/classified.rs");
-      expect(src).toContain("has_csef_magic");
-    });
+    expect(source).toContain("run_session:");
+    expect(source).toContain(
+      "INSERT INTO sessions (session_key, created_at, updated_at)",
+    );
+    expect(source).not.toContain("INSERT INTO sessions (session_key, scene");
+    expect(source).not.toContain("note_path");
+    expect(source).toContain("pub(crate) struct NormalSessionMessage");
+    expect(source).toContain("content_parts: Option<String>");
   });
 
-  describe("thread filenames do not leak classified paths or titles", () => {
-    it("session.rs uses uuid-based session keys", () => {
-      const src = read("src-tauri/src/ai_runtime/session.rs");
-      expect(src).toContain("uuid::Uuid::new_v4");
-      expect(src).toMatch(/format!\("{}#{}",\s*session_key\(/);
-    });
+  it("persists classified conversation lifecycle only in the CEF thread schema", () => {
+    const source = read("src-tauri/src/ai_runtime/classified_session.rs");
+    const schema =
+      source
+        .split("pub struct ClassifiedAiThread")[1]
+        ?.split("/// A single")[0] ?? "";
 
-    it("session_key uses scene prefix and note_path but not title", () => {
-      const src = read("src-tauri/src/ai_runtime/session.rs");
-      const sessionKeyFn =
-        src.split("pub fn session_key")[1]?.split("\n}")[0] ?? "";
-      expect(sessionKeyFn).toContain("scene_str");
-      // session_key does not include title
-      expect(sessionKeyFn).not.toContain("title");
-    });
-
-    it("classified paths are excluded from user note paths used by session system", () => {
-      const src = read("src-tauri/src/storage/paths.rs");
-      // is_user_note_path must reject .classified/ paths
-      // This is already tested in classified_vault.rs but we lock it here too
-      expect(src).toContain("is_user_note_path");
-    });
+    for (const field of [
+      "thread_id",
+      "messages",
+      "turns",
+      "runs",
+      "events",
+      "evidence",
+    ]) {
+      expect(schema).toContain(field);
+    }
+    expect(schema).not.toContain("document_path");
+    expect(source).toContain("CLASSIFIED_SESSION_SCHEMA_VERSION: u32 = 3");
+    expect(source).toContain("classified_run_accept");
+    expect(source).toContain("SecurityDomain::Classified");
   });
 
-  describe("ordinary sessions table contains no classified message content", () => {
-    it("session.rs SessionMessage struct has no classified-specific fields", () => {
-      const src = read("src-tauri/src/ai_runtime/session.rs");
-      expect(src).toContain("pub struct SessionMessage");
-      // No field for vault key, encryption key, or classified path
-      expect(src).not.toMatch(/SessionMessage[\s\S]*vault_key/);
-      expect(src).not.toMatch(/SessionMessage[\s\S]*encryption_key/);
-    });
+  it("uses UUID CEF filenames and verifies encrypted writes before replacement", () => {
+    const source = read("src-tauri/src/ai_runtime/classified_session.rs");
+    const pathFn =
+      source.split("fn thread_file_path")[1]?.split("\n}")[0] ?? "";
+    const atomicWrite = source.split("fn write_thread_atomically")[1] ?? "";
 
-    it("sessions table insert does not reference .classified paths", () => {
-      const src = read("src-tauri/src/ai_runtime/session.rs");
-      const createFresh = src.split("pub fn create_fresh")[1] ?? "";
-      expect(createFresh).not.toContain(".classified");
-    });
+    expect(pathFn).toContain("{thread_id}.cef");
+    expect(pathFn).not.toContain("title");
+    expect(source).toContain("Uuid::parse_str");
+    expect(atomicWrite).toContain("encrypt_cef");
+    expect(atomicWrite).toContain("decrypt_cef");
+    expect(atomicWrite).toContain("fs::rename");
   });
 
-  describe("classified AI thread store exists as separate module", () => {
-    it("classified_session.rs module exists in ai_runtime", () => {
-      const mod = read("src-tauri/src/ai_runtime/mod.rs");
-      // Contract: classified_session module must be declared
-      expect(mod).toContain("classified_session");
-    });
+  it("routes classified run start, replay, and history through the unified domain boundary", () => {
+    const commands = read("src-tauri/src/commands/assistant_commands.rs");
 
-    it("classified AI thread struct is defined", () => {
-      const src = read("src-tauri/src/ai_runtime/classified_session.rs");
-      // Contract: ClassifiedAiThread struct must exist
-      expect(src).toContain("ClassifiedAiThread");
-      expect(src).toContain("thread_id");
-      expect(src).toContain("document_path");
-      expect(src).toContain("messages");
-    });
-
-    it("classified AI thread uses classified_io for encryption", () => {
-      const src = read("src-tauri/src/ai_runtime/classified_session.rs");
-      // Contract: must use classified_io for encrypt/decrypt
-      expect(src).toContain("classified_io");
-      expect(src).toContain("encrypt_cef");
-      expect(src).toContain("decrypt_cef");
-    });
-
-    it("classified AI thread filenames are UUID-based", () => {
-      const src = read("src-tauri/src/ai_runtime/classified_session.rs");
-      // Contract: filenames must be UUID, not contain paths or titles
-      expect(src).toContain("Uuid");
-      const pathFn = src.split("fn thread_file_path")[1]?.split("\n}")[0] ?? "";
-      expect(pathFn).toContain("{thread_id}.cef");
-      expect(pathFn).not.toContain(".classified");
-    });
+    expect(commands).toContain("SecurityDomain::Classified =>");
+    expect(commands).toContain("RunIntake::start_classified");
+    expect(commands).toContain("classified_run_get");
+    expect(commands).toContain("classified_ai_thread_list");
+    expect(commands).not.toContain("assistant_execute");
+    expect(commands).not.toContain("harness_resume");
   });
 });

@@ -220,11 +220,12 @@ pub fn build_memory_prompt_messages(
     if let Some(memory) = ConversationMemory::latest_for_session(db, session_id)? {
         out.push(("system".to_string(), memory.to_prompt_fragment()));
     }
-    let recent = crate::ai_runtime::session::SessionManager::recent_messages(
-        db,
-        session_id,
-        recent_limit as u32,
-    )?;
+    let recent =
+        crate::ai_runtime::normal_session_repository::NormalSessionRepository::recent_messages(
+            db,
+            session_id,
+            recent_limit as u32,
+        )?;
     out.extend(
         recent
             .into_iter()
@@ -234,7 +235,7 @@ pub fn build_memory_prompt_messages(
     Ok(out)
 }
 
-/// Build only the memory system fragment for harness history augmentation.
+/// Build only the memory system fragment for Run history augmentation.
 pub fn build_memory_system_message(
     db: &Database,
     session_id: i64,

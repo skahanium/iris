@@ -1,15 +1,13 @@
-import type { ContextPacket } from "@/types/ai";
-
-/** Markdown 内联引用 → 可安全渲染的 hash 链接（DOMPurify 白名单友好） */
+/** Markdown 閸愬懓浠堝鏇犳暏 閳?閸欘垰鐣ㄩ崗銊﹁閺屾挾娈?hash 闁剧偓甯撮敍鍦朞MPurify 閻ц棄鎮曢崡鏇炲几婵傛枻绱?*/
 const IRIS_CITE_PREFIX = "#iris-cite-";
 
 const BAD_CITATION_LINK =
   /\[(citation:\d+)\]\((?:citation:\d+|iris-cite:[^)]*)\)/gi;
 
-/** 尚未成链接的方括号引用（含 citation:N、[C1]、纯数字等） */
+/** 鐏忔碍婀幋鎰版懠閹恒儳娈戦弬瑙勫閸欏嘲绱╅悽顭掔礄閸?citation:N閵嗕箷C1]閵嗕胶鍑介弫鏉跨摟缁涘绱?*/
 const BARE_CITATION = /(?<!\\)\[(citation:\d+|[CTFAWL]\d+|\d+)\](?!\()/gi;
 
-/** 模型复读的过度转义引用链接，如 `[\\[citation:4\\]](#iris-cite-...)` */
+/** 濡€崇€锋径宥堫嚢閻ㄥ嫯绻冩惔锕佹祮娑斿绱╅悽銊╂懠閹恒儻绱濇俊?`[\\[citation:4\\]](#iris-cite-...)` */
 const OVER_ESCAPED_CITE_LINK =
   /\[(?:\\+)+\[(citation:\d+)\](?:\\+)+\]\((#iris-cite-[^)]+)\)/gi;
 
@@ -30,12 +28,12 @@ export function citationHrefForLabel(label: string): string {
   return `${IRIS_CITE_PREFIX}${encodeCitationRef(label)}`;
 }
 
-/** 链接文案保留方括号，渲染为可点击的 `[citation:3]` */
+/** 闁剧偓甯撮弬鍥攳娣囨繄鏆€閺傝瀚崣鍑ょ礉濞撳弶鐓嬫稉鍝勫讲閻愮懓鍤惃?`[citation:3]` */
 export function citationMarkdownLink(label: string): string {
   return `[\\[${label}\\]](${citationHrefForLabel(label)})`;
 }
 
-/** 将过度转义的引用链接恢复为 marked 可解析的标准形式 */
+/** 鐏忓棜绻冩惔锕佹祮娑斿娈戝鏇犳暏闁剧偓甯撮幁銏狀槻娑?marked 閸欘垵袙閺嬫劗娈戦弽鍥у櫙瑜般垹绱?*/
 export function repairOverEscapedCitationLinks(markdown: string): string {
   return markdown.replace(OVER_ESCAPED_CITE_LINK, (_, label: string) => {
     return citationMarkdownLink(label);
@@ -43,8 +41,7 @@ export function repairOverEscapedCitationLinks(markdown: string): string {
 }
 
 /**
- * 将 `[citation:3]`、`[3]`、`[C1]` 等转为 Markdown 链接，避免 `citation:` 协议被清洗。
- */
+ * 鐏?`[citation:3]`閵嗕梗[3]`閵嗕梗[C1]` 缁涘娴嗘稉?Markdown 闁剧偓甯撮敍宀勪缉閸?`citation:` 閸楀繗顔呯悮顐ｇ濞叉ぜ鈧? */
 export function linkifyAiCitations(markdown: string): string {
   let text = repairOverEscapedCitationLinks(markdown);
   text = text.replace(BAD_CITATION_LINK, (_, label: string) => {
@@ -56,7 +53,7 @@ export function linkifyAiCitations(markdown: string): string {
   return text;
 }
 
-/** 为 marked 输出的引用链接补上 class，便于样式与点击识别 */
+/** 娑?marked 鏉堟挸鍤惃鍕穿閻劑鎽奸幒銉ㄋ夋稉?class閿涘奔绌舵禍搴㈢壉瀵繋绗岄悙鐟板毊鐠囧棗鍩?*/
 export function tagCitationLinksInHtml(html: string): string {
   return html.replace(
     /href="(#iris-cite-[^"]+)"/g,
@@ -97,72 +94,4 @@ export function postProcessCitations(html: string): string {
     return linkifyCitationsInTextSegment(part);
   });
   return tagCitationLinksInHtml(linked.join(""));
-}
-
-export function findPacketByCitationRef(
-  ref: string,
-  packets: ContextPacket[],
-): ContextPacket | undefined {
-  if (packets.length === 0) return undefined;
-
-  const trimmed = ref.trim();
-  const bracketed = trimmed.startsWith("[") ? trimmed : `[${trimmed}]`;
-  const inner = bracketed.replace(/^\[|\]$/g, "");
-
-  // 1) Direct label match
-  const byLabel = packets.find((p) => {
-    const label = p.citation_label;
-    const labelInner = label.replace(/^\[|\]$/g, "");
-    return (
-      label === bracketed ||
-      label === trimmed ||
-      labelInner === inner ||
-      labelInner === trimmed ||
-      `citation:${labelInner}` === trimmed ||
-      `citation:${labelInner}` === inner
-    );
-  });
-  if (byLabel) return byLabel;
-
-  // 2) citation:N position-based (1-indexed → 0-indexed)
-  const citeIndex = /^citation:(\d+)$/i.exec(trimmed);
-  if (citeIndex) {
-    const n = Number(citeIndex[1]);
-    // Try numeric match against packet label digits first
-    const numericMatch = packets.find((p) => {
-      const digits = p.citation_label.replace(/\D/g, "");
-      return digits === String(n);
-    });
-    if (numericMatch) return numericMatch;
-    // Fall back to position
-    const idx = n - 1;
-    if (idx >= 0 && idx < packets.length) return packets[idx];
-  }
-
-  // 3) Pure digit ref (e.g. "3" or "[3]")
-  if (/^\d+$/.test(inner)) {
-    const n = Number(inner);
-    const numericMatch = packets.find((p) => {
-      const digits = p.citation_label.replace(/\D/g, "");
-      return digits === String(n);
-    });
-    if (numericMatch) return numericMatch;
-    const idx = n - 1;
-    if (idx >= 0 && idx < packets.length) return packets[idx];
-  }
-
-  // 4) Letter+digit ref (e.g. "W0", "[W1]", "citation:W2")
-  const alphaNum = /^citation:([A-Za-z]\d+)$/i.exec(trimmed);
-  const bareAlphaNum = alphaNum
-    ? alphaNum[1]
-    : /^([A-Za-z]\d+)$/.exec(inner)?.[1];
-  if (bareAlphaNum) {
-    const byAlpha = packets.find((p) => {
-      const labelInner = p.citation_label.replace(/^\[|\]$/g, "");
-      return labelInner.toUpperCase() === bareAlphaNum.toUpperCase();
-    });
-    if (byAlpha) return byAlpha;
-  }
-
-  return undefined;
 }

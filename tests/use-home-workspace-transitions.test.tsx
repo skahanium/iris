@@ -43,12 +43,10 @@ function Harness({
 }) {
   apiRef.current = useHomeWorkspaceTransitions({
     activePathRef: { current: activePath },
-    activateArtifact: vi.fn(),
     activateTab,
     handleNewNote,
     openNote,
     openTabs,
-    setActiveArtifactId: vi.fn(),
     setHomeActive,
   });
   return null;

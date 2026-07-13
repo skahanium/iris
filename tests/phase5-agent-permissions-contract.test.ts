@@ -6,14 +6,15 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-describe("Phase5 Markdown Agent permission contract", () => {
-  it("mirrors permission atoms, decisions, risk, and scope summaries across Rust and TS", () => {
+describe("Run tool permission contract", () => {
+  it("mirrors permission atoms, decisions, risk, and scope summaries across Rust and TypeScript", () => {
     const aiTypes = read("src/types/ai.ts");
     const ipcTypes = read("src/types/ipc.ts");
-    const rustPermissions = read(
-      "src-tauri/src/ai_runtime/agent_permissions.rs",
+    const permissions = read("src-tauri/src/ai_runtime/agent_permissions.rs");
+    const pipeline = read(
+      "src-tauri/src/ai_runtime/tool_execution_pipeline.rs",
     );
-    const harnessRun = read("src-tauri/src/ai_harness/harness/run.rs");
+    const loop = read("src-tauri/src/ai_runtime/run_tool_loop.rs");
 
     for (const token of [
       "AgentPermissionAtom",
@@ -26,32 +27,38 @@ describe("Phase5 Markdown Agent permission contract", () => {
       "secret.read_plaintext",
     ]) {
       expect(aiTypes).toContain(token);
-      expect(rustPermissions).toContain(token);
+      expect(permissions).toContain(token);
     }
 
     expect(aiTypes).toContain("scopeSummary");
     expect(aiTypes).toContain("reversibleBy");
     expect(aiTypes).toContain("blockedReason");
-    expect(rustPermissions).toContain("scope_summary");
-    expect(rustPermissions).toContain("reversible_by");
-    expect(rustPermissions).toContain("blocked_reason");
     expect(ipcTypes).toContain("permissionEffects");
-    expect(harnessRun).toContain("preflight_tool_permission");
-    expect(harnessRun).toContain("permission_effects");
+    expect(ipcTypes).toContain("permissionDecision");
+    expect(permissions).toContain("preflight_tool_permission");
+    expect(pipeline).toContain("pub run_id: &'a str");
+    expect(pipeline).toContain("record_permission_decision_audit");
+    expect(loop).toContain("ToolExecutionGate");
+    expect(loop).toContain("accepted.run_id");
+    expect(loop).not.toContain("Harness");
   });
 
-  it("registers Phase5 permission storage with reversible migration scripts", () => {
+  it("migrates permission audit identity from request_id to run_id in the cutover", () => {
     const migrate = read("src-tauri/src/storage/migrate.rs");
-    const up = read("src-tauri/migrations/027_agent_permissions.sql");
-    const down = read("src-tauri/migrations/027_agent_permissions.down.sql");
+    const up = read("src-tauri/migrations/051_agent_harness_cutover.sql");
+    const down = read(
+      "src-tauri/migrations/051_agent_harness_cutover.down.sql",
+    );
 
-    expect(migrate).toContain("027_agent_permissions");
-    expect(up).toContain("agent_permission_grants");
-    expect(up).toContain("agent_permission_audit");
+    expect(migrate).toContain("051_agent_harness_cutover");
+    expect(up).toContain("agent_permission_audit__cutover");
+    expect(up).toContain(
+      "run_id            TEXT NOT NULL REFERENCES agent_runs(run_id)",
+    );
     expect(up).not.toContain("note_body");
     expect(up).not.toContain("clipboard_body");
     expect(up).not.toContain("api_key");
-    expect(down).toContain("DROP TABLE IF EXISTS agent_permission_audit");
-    expect(down).toContain("DROP TABLE IF EXISTS agent_permission_grants");
+    expect(down).toContain("agent_permission_audit__legacy");
+    expect(down).toContain("request_id");
   });
 });

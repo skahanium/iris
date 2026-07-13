@@ -4,27 +4,27 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SessionHistoryDropdown } from "@/components/ai/SessionHistoryDropdown";
 import {
-  sessionDelete,
-  sessionEvidenceList,
-  sessionList,
-  sessionLoad,
-  sessionRename,
+  assistantSessionDelete,
+  assistantSessionList,
+  assistantSessionLoad,
+  assistantSessionRename,
 } from "@/lib/ipc";
-import type { SessionMessageRecord, SessionSummary } from "@/types/ipc";
+import type {
+  AssistantSessionMessage,
+  AssistantSessionSummary,
+} from "@/types/ai";
 
 vi.mock("@/lib/ipc", () => ({
-  sessionDelete: vi.fn(),
-  sessionEvidenceList: vi.fn(),
-  sessionList: vi.fn(),
-  sessionLoad: vi.fn(),
-  sessionRename: vi.fn(),
+  assistantSessionDelete: vi.fn(),
+  assistantSessionList: vi.fn(),
+  assistantSessionLoad: vi.fn(),
+  assistantSessionRename: vi.fn(),
 }));
 
-const mockSessionDelete = vi.mocked(sessionDelete);
-const mockSessionEvidenceList = vi.mocked(sessionEvidenceList);
-const mockSessionList = vi.mocked(sessionList);
-const mockSessionLoad = vi.mocked(sessionLoad);
-const mockSessionRename = vi.mocked(sessionRename);
+const mockAssistantSessionDelete = vi.mocked(assistantSessionDelete);
+const mockAssistantSessionList = vi.mocked(assistantSessionList);
+const mockAssistantSessionLoad = vi.mocked(assistantSessionLoad);
+const mockAssistantSessionRename = vi.mocked(assistantSessionRename);
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -36,7 +36,7 @@ function renderHistory(onSelectSession = vi.fn()) {
   act(() => {
     root?.render(
       <SessionHistoryDropdown
-        currentSessionId={null}
+        domain="normal"
         onSelectSession={onSelectSession}
       />,
     );
@@ -57,35 +57,34 @@ afterEach(() => {
   host?.remove();
   root = null;
   host = null;
-  mockSessionDelete.mockReset();
-  mockSessionEvidenceList.mockReset();
-  mockSessionList.mockReset();
-  mockSessionLoad.mockReset();
-  mockSessionRename.mockReset();
+  for (const mock of [
+    mockAssistantSessionDelete,
+    mockAssistantSessionList,
+    mockAssistantSessionLoad,
+    mockAssistantSessionRename,
+  ]) {
+    mock.mockReset();
+  }
 });
 
 describe("SessionHistoryDropdown", () => {
-  it("restores session messages when the optional evidence ledger fails to load", async () => {
-    const summary: SessionSummary = {
-      id: 42,
-      title: "Restored session",
-      scene: "knowledge_lookup",
-      note_path: null,
-      message_count: 1,
-      created_at: "2026-06-22T08:00:00.000Z",
-      updated_at: "2026-06-22T08:01:00.000Z",
+  it("loads and restores opaque domain-safe conversations", async () => {
+    const summary: AssistantSessionSummary = {
+      session: { domain: "normal", sessionKey: "conversation-42" },
+      title: "Restored conversation",
+      messageCount: 1,
+      createdAt: "2026-06-22T08:00:00.000Z",
+      updatedAt: "2026-06-22T08:01:00.000Z",
     };
-    const record: SessionMessageRecord = {
-      id: 7,
-      session_id: 42,
+    const message: AssistantSessionMessage = {
       seq: 1,
       role: "user",
       content: "hello",
-      created_at: "2026-06-22T08:01:00.000Z",
+      explicitReferences: [],
+      createdAt: "2026-06-22T08:01:00.000Z",
     };
-    mockSessionList.mockResolvedValue([summary]);
-    mockSessionLoad.mockResolvedValue([record]);
-    mockSessionEvidenceList.mockRejectedValue(new Error("Database error"));
+    mockAssistantSessionList.mockResolvedValue([summary]);
+    mockAssistantSessionLoad.mockResolvedValue([message]);
     const onSelectSession = renderHistory();
 
     act(() => {
@@ -99,7 +98,7 @@ describe("SessionHistoryDropdown", () => {
 
     const sessionRow = Array.from(
       document.querySelectorAll<HTMLElement>('[role="button"]'),
-    ).find((element) => element.textContent?.includes("Restored session"));
+    ).find((element) => element.textContent?.includes("Restored conversation"));
     expect(sessionRow).toBeDefined();
 
     await act(async () => {
@@ -107,38 +106,15 @@ describe("SessionHistoryDropdown", () => {
       await Promise.resolve();
     });
 
-    expect(onSelectSession).toHaveBeenCalledWith(
-      42,
-      [
-        expect.objectContaining({
-          role: "user",
-          content: "hello",
-          seq: 1,
-        }),
-      ],
-      [],
-    );
-    expect(document.body.textContent).not.toContain("Database error");
-  });
-
-  it("loads all sessions without exposing a current-context filter", async () => {
-    mockSessionList.mockResolvedValue([]);
-    renderHistory();
-
-    act(() => {
-      document
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="session-history-trigger"]',
-        )
-        ?.click();
-    });
-    await flushPromises();
-
-    expect(mockSessionList).toHaveBeenCalledTimes(1);
-    expect(mockSessionList).toHaveBeenLastCalledWith({
+    expect(mockAssistantSessionList).toHaveBeenCalledWith({
+      domain: "normal",
       limit: 40,
     });
-    expect(document.body.textContent).toContain("显示全部历史会话");
-    expect(document.body.textContent).not.toContain("当前上下文");
+    expect(mockAssistantSessionLoad).toHaveBeenCalledWith({
+      session: summary.session,
+    });
+    expect(onSelectSession).toHaveBeenCalledWith(summary.session, [
+      { role: "user", content: "hello", seq: 1 },
+    ]);
   });
 });

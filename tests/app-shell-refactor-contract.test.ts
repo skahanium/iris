@@ -20,12 +20,12 @@ describe("App shell refactor contract", () => {
     const hook = read("src/hooks/useAiSidecarBridge.ts");
     const app = read("src/App.impl.tsx");
 
-    expect(hook).toContain("selectionQuote");
+    expect(hook).not.toContain("selectionQuote");
     expect(hook).toContain("prefillMessage");
     expect(hook).toContain("assistantChrome");
     expect(hook).toContain("webSearchEnabled");
     expect(app).toContain("useAiSidecarBridge");
-    expect(app).not.toContain("const [selectionQuote");
+    expect(app).not.toContain("selectionQuote");
     expect(app).not.toContain("const [assistantPrefill");
     expect(app).not.toContain("const [assistantChrome");
   });
@@ -88,7 +88,7 @@ describe("App shell refactor contract", () => {
     const app = read("src/App.impl.tsx");
 
     expect(component).toContain("UnifiedAssistantPanel");
-    expect(component).toContain("onPatchApplied");
+    expect(component).not.toContain("onPatchApplied");
     expect(app).toContain("<AppAiPanelSlot");
     expect(app).not.toContain("<UnifiedAssistantPanel");
   });

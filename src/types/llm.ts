@@ -1,4 +1,3 @@
-import type { AiScene } from "@/types/ai";
 import type { CapabilitySlot } from "@/types/ai";
 
 export type ContextStrategy = "hybrid" | "long_context";
@@ -66,7 +65,7 @@ export interface ProviderOverride {
   modelCapabilities?: Record<string, ModelCapabilityOverride>;
 }
 
-/** 设置页允许的自定义 OpenAI 兼容端点 ID（`custom` 或 `custom_*`）。 */
+/** 鐠佸墽鐤嗘い闈涘帒鐠佸摜娈戦懛顏勭暰娑?OpenAI 閸忕厧顔愮粩顖滃仯 ID閿涘潉custom` 閹?`custom_*`閿涘鈧?*/
 export function isCustomProviderId(providerId: string): boolean {
   return providerId === "custom" || providerId.startsWith("custom_");
 }
@@ -156,7 +155,6 @@ export interface ConnectivityStatus {
     state: LlmConnectivityState;
     providerId: string;
     model: string;
-    scene: AiScene;
     message: string;
   };
   searchProvider: {
@@ -195,7 +193,7 @@ export const USER_CONFIGURABLE_CAPABILITY_SLOTS = [
   "vision",
 ] satisfies CapabilitySlot[];
 
-/** 客户端回退默认（IPC 不可用或解析失败时） */
+/** 鐎广垺鍩涚粩顖氭礀闁偓姒涙顓婚敍鍦汸C 娑撳秴褰查悽銊﹀灗鐟欙絾鐎芥径杈Е閺冭绱?*/
 export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
   version: 1,
   schemaVersion: 4,

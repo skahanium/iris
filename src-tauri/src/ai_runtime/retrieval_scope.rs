@@ -5,7 +5,6 @@ use std::collections::HashSet;
 use rusqlite::{params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 
-use crate::ai_runtime::AiScene;
 use crate::knowledge::corpora::{self, CorpusConfig};
 
 /// User-provided scope from IPC (`@` mentions + optional corpus IDs).
@@ -88,10 +87,10 @@ impl RetrievalScope {
 /// Resolve retrieval scope.
 ///
 /// User-provided `@` paths, prefixes, or corpus IDs are a hard boundary: when
-/// present, scene defaults are not unioned in.
+/// present, intent defaults are not unioned in.
 pub fn resolve_retrieval_scope(
     vault_corpora: &CorpusConfig,
-    scene: AiScene,
+    intent: crate::ai_types::AgentIntent,
     user: &ContextScopeDto,
 ) -> RetrievalScope {
     let mut scope = RetrievalScope::default();
@@ -115,7 +114,7 @@ pub fn resolve_retrieval_scope(
             scope.push_required_tag(tag.clone());
         }
     } else {
-        for prefix in corpora::prefixes_for_scene(vault_corpora, scene) {
+        for prefix in corpora::prefixes_for_intent(vault_corpora, intent) {
             scope.push_prefix(prefix);
         }
     }
@@ -226,21 +225,21 @@ mod tests {
                     name: "制度".into(),
                     path_prefix: "制度/".into(),
                     kind: "authority".into(),
-                    scenes: vec!["knowledge_lookup".into()],
+                    intents: vec!["ask_notes".into()],
                 },
                 CorpusEntry {
                     id: "drafts".into(),
                     name: "草稿".into(),
                     path_prefix: "草稿/".into(),
                     kind: "lookup".into(),
-                    scenes: Vec::new(),
+                    intents: Vec::new(),
                 },
             ],
         }
     }
 
     #[test]
-    fn user_scope_is_hard_boundary_over_scene_defaults() {
+    fn user_scope_is_hard_boundary_over_intent_defaults() {
         let user = ContextScopeDto {
             paths: vec!["草稿/指定.md".into()],
             path_prefixes: vec!["项目/".into()],
@@ -248,7 +247,11 @@ mod tests {
             required_tags: Vec::new(),
         };
 
-        let scope = resolve_retrieval_scope(&corpus_config(), AiScene::KnowledgeLookup, &user);
+        let scope = resolve_retrieval_scope(
+            &corpus_config(),
+            crate::ai_types::AgentIntent::AskNotes,
+            &user,
+        );
 
         assert!(scope.matches_path("草稿/指定.md"));
         assert!(scope.matches_path("项目/计划.md"));
@@ -258,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_corpus_ids_are_hard_boundary_over_scene_defaults() {
+    fn explicit_corpus_ids_are_hard_boundary_over_intent_defaults() {
         let user = ContextScopeDto {
             paths: Vec::new(),
             path_prefixes: Vec::new(),
@@ -266,7 +269,11 @@ mod tests {
             required_tags: Vec::new(),
         };
 
-        let scope = resolve_retrieval_scope(&corpus_config(), AiScene::KnowledgeLookup, &user);
+        let scope = resolve_retrieval_scope(
+            &corpus_config(),
+            crate::ai_types::AgentIntent::AskNotes,
+            &user,
+        );
 
         assert!(scope.matches_path("草稿/备忘.md"));
         assert!(!scope.matches_path("制度/条例.md"));

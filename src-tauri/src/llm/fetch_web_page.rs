@@ -37,18 +37,13 @@ fn random_user_agent() -> &'static str {
 /// Result of fetching and extracting a web page.
 #[derive(Debug, Clone)]
 pub struct PageFetchResult {
-    pub url: String,
     pub title: String,
     pub text: String,
-    pub truncated: bool,
-    pub from_cache: bool,
-    pub content_hash: String,
 }
 
 struct CachedRow {
     title: Option<String>,
     body_text: String,
-    content_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -302,7 +297,7 @@ fn load_cache(
 ) -> AppResult<Option<CachedRow>> {
     db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT title, body_text, content_hash FROM web_page_cache
+            "SELECT title, body_text FROM web_page_cache
              WHERE url_hash = ?1
                AND ((vault_id IS NULL AND ?2 IS NULL) OR vault_id = ?2)
                AND provider_id = ?3
@@ -323,7 +318,6 @@ fn load_cache(
             Ok(Some(CachedRow {
                 title: row.get(0)?,
                 body_text: row.get(1)?,
-                content_hash: row.get(2)?,
             }))
         } else {
             Ok(None)
@@ -392,15 +386,6 @@ fn store_cache(
     })
 }
 
-/// 清除所有网页缓存（供前端 IPC 调用）。
-pub fn clear_web_cache(db: &Database) -> AppResult<usize> {
-    db.with_conn(|conn| {
-        let deleted = conn.execute("DELETE FROM web_page_cache", [])?;
-        Ok(deleted)
-    })
-}
-
-/// 清理过期网页缓存。
 pub fn cleanup_expired_web_cache(db: &Database) -> AppResult<usize> {
     db.with_conn(|conn| {
         let deleted = conn.execute(
@@ -456,15 +441,10 @@ pub async fn fetch_web_page(
             from_cache = true,
             "web_fetch_complete"
         );
-        let truncated = cached.body_text.chars().count() > max_chars;
         let text: String = cached.body_text.chars().take(max_chars).collect();
         return Ok(PageFetchResult {
-            url: url.to_string(),
             title: cached.title.unwrap_or_default(),
             text,
-            truncated,
-            from_cache: true,
-            content_hash: cached.content_hash,
         });
     }
 
@@ -534,8 +514,7 @@ pub async fn fetch_web_page(
         &scope,
     )?;
 
-    let truncated = text.chars().count() > max_chars;
-    if truncated {
+    if text.chars().count() > max_chars {
         text = text.chars().take(max_chars).collect();
     }
 
@@ -547,12 +526,8 @@ pub async fn fetch_web_page(
     );
 
     Ok(PageFetchResult {
-        url: url.to_string(),
         title: title_opt.unwrap_or_default(),
         text,
-        truncated,
-        from_cache: false,
-        content_hash: full_hash,
     })
 }
 

@@ -630,7 +630,7 @@ pub fn folder_create(state: State<'_, Arc<AppState>>, path: String) -> AppResult
     Ok(())
 }
 
-/// Rename/move a folder. Cascades wikilink and session updates for all affected files.
+/// Rename/move a folder and cascade wikilink updates for all affected files.
 #[tauri::command]
 pub async fn folder_rename(
     state: State<'_, Arc<AppState>>,
@@ -662,7 +662,7 @@ pub async fn folder_rename(
             Ok(rows.flatten().collect())
         })?;
 
-        // Step 1: rewrite wikilinks and sessions while old paths still exist on disk.
+        // Step 1: rewrite wikilinks while old paths still exist on disk.
         let mut all_modified_sources: Vec<String> = Vec::new();
         for file_path in &affected_files {
             let rel_old = file_path.as_str();
@@ -690,7 +690,6 @@ pub async fn folder_rename(
                     "folder_rename: skipped wikilink cascade for child"
                 ),
             }
-            cascade_rename_sessions(&state, rel_old, &rel_new)?;
         }
 
         // Step 2: rename the folder on disk.
@@ -962,8 +961,6 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
         }
     };
 
-    cascade_rename_sessions(&state, &path, &new_path)?;
-
     fs::rename(&abs, &new_abs)?;
     let hash = crate::indexer::scan::file_hash(&new_abs)?;
     state.storage.write_guard.mark(&new_path, &hash);
@@ -1107,72 +1104,6 @@ fn cascade_rewrite_wikilinks_on_disk(
     Ok(modified)
 }
 
-/// Best-effort update of AI session references from old to new path.
-///
-/// User notes on disk are the source of truth. Session/evidence references are
-/// runtime state, so a constraint conflict here must not block a file move.
-fn cascade_rename_sessions(state: &Arc<AppState>, old_path: &str, new_path: &str) -> AppResult<()> {
-    state.db.with_conn(|conn| {
-        conn.execute_batch("BEGIN IMMEDIATE")?;
-        let result = (|| -> AppResult<(usize, usize, usize)> {
-            let updated_note = conn.execute(
-                "UPDATE sessions SET note_path = ?1 WHERE note_path = ?2",
-                rusqlite::params![new_path, old_path],
-            )?;
-
-            let updated_key = conn.execute(
-                "UPDATE sessions SET session_key = scene || ':' || ?1
-                 WHERE session_key = scene || ':' || ?2",
-                rusqlite::params![new_path, old_path],
-            )?;
-
-            let updated_evidence =
-                crate::ai_runtime::session_evidence::update_local_evidence_source_path(
-                    conn, old_path, new_path,
-                )?;
-
-            Ok((updated_note, updated_key, updated_evidence))
-        })();
-
-        let (updated_note, updated_key, updated_evidence) = match result {
-            Ok(updates) => {
-                conn.execute_batch("COMMIT")?;
-                updates
-            }
-            Err(err) => {
-                if let Err(rollback_err) = conn.execute_batch("ROLLBACK") {
-                    tracing::error!(
-                        old = %old_path,
-                        new = %new_path,
-                        rollback_error = %rollback_err,
-                        "cascade_rename: failed to roll back session rename transaction"
-                    );
-                    return Err(rollback_err.into());
-                }
-                tracing::warn!(
-                    old = %old_path,
-                    new = %new_path,
-                    error = %err,
-                    "cascade_rename: skipped session/evidence reference update"
-                );
-                return Ok(());
-            }
-        };
-
-        if updated_note > 0 || updated_key > 0 || updated_evidence > 0 {
-            tracing::info!(
-                old = %old_path,
-                new = %new_path,
-                note_updated = updated_note,
-                key_updated = updated_key,
-                evidence_updated = updated_evidence,
-                "cascade_rename: updated session and evidence references"
-            );
-        }
-        Ok(())
-    })
-}
-
 #[tauri::command]
 pub async fn file_create(
     state: State<'_, Arc<AppState>>,
@@ -1246,14 +1177,6 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
     }
     let state = state.inner().clone();
     state.set_vault(p)?;
-
-    if let Err(e) = crate::ai_runtime::agent_task::AgentTaskRuntime::abort_recoverable_tasks(
-        &state.db,
-        "VAULT_SWITCH",
-        "Vault switch invalidated recoverable task state",
-    ) {
-        tracing::warn!("vault_set: failed to abort recoverable AI tasks: {e}");
-    }
 
     // Clear in-memory AI state to prevent data leakage between vaults
     state.clear_ai_state();
@@ -1586,166 +1509,6 @@ Body",
     fn query_is_locked_defaults_false_when_missing() {
         let db = Database::open_in_memory().unwrap();
         assert!(!query_is_locked(&db, "missing.md").unwrap());
-    }
-
-    #[test]
-    fn cascade_rename_sessions_keeps_history_when_evidence_update_fails() {
-        let dir = tempdir().unwrap();
-        let state = AppState::new(dir.path().join("data")).unwrap();
-
-        state
-            .db
-            .with_conn(|conn| {
-                migrate_up(conn)?;
-                conn.execute(
-                    "INSERT INTO sessions (id, session_key, scene, note_path, created_at, updated_at)
-                     VALUES (42, 'chat:old.md', 'chat', 'old.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-                    [],
-                )?;
-                conn.execute(
-                    "INSERT INTO session_evidence
-                     (session_id, citation_index, citation_label, packet_key, message_seq_first,
-                      source_type, title, source_path, created_at)
-                     VALUES (42, 1, '[C1]', 'local:old.md', 1, 'local', 'Old', 'old.md', '2026-01-01T00:00:00Z')",
-                    [],
-                )?;
-                conn.execute_batch(
-                    "CREATE TRIGGER fail_evidence_rename
-                     BEFORE UPDATE OF source_path ON session_evidence
-                     BEGIN
-                       SELECT RAISE(ABORT, 'simulated evidence failure');
-                     END;",
-                )?;
-                Ok(())
-            })
-            .unwrap();
-
-        cascade_rename_sessions(&state, "old.md", "new.md").unwrap();
-
-        state
-            .db
-            .with_read_conn(|conn| {
-                let (note_path, session_key): (String, String) = conn.query_row(
-                    "SELECT note_path, session_key FROM sessions WHERE id = 42",
-                    [],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )?;
-                let source_path: String = conn.query_row(
-                    "SELECT source_path FROM session_evidence WHERE session_id = 42",
-                    [],
-                    |row| row.get(0),
-                )?;
-
-                assert_eq!(note_path, "old.md");
-                assert_eq!(session_key, "chat:old.md");
-                assert_eq!(source_path, "old.md");
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn cascade_rename_sessions_keeps_history_when_target_session_key_exists() {
-        let dir = tempdir().unwrap();
-        let state = AppState::new(dir.path().join("data")).unwrap();
-
-        state
-            .db
-            .with_conn(|conn| {
-                migrate_up(conn)?;
-                conn.execute_batch(
-                    "INSERT INTO sessions (id, session_key, scene, note_path, created_at, updated_at)
-                     VALUES (42, 'chat:old.md', 'chat', 'old.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-                            (43, 'chat:new.md', 'chat', 'new.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');",
-                )?;
-                Ok(())
-            })
-            .unwrap();
-
-        cascade_rename_sessions(&state, "old.md", "new.md").unwrap();
-
-        state
-            .db
-            .with_read_conn(|conn| {
-                let rows = conn
-                    .prepare("SELECT id, note_path, session_key FROM sessions ORDER BY id")?
-                    .query_map([], |row| {
-                        Ok((
-                            row.get::<_, i64>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, String>(2)?,
-                        ))
-                    })?
-                    .collect::<Result<Vec<_>, _>>()?;
-
-                assert_eq!(
-                    rows,
-                    vec![
-                        (42, "old.md".to_string(), "chat:old.md".to_string()),
-                        (43, "new.md".to_string(), "chat:new.md".to_string())
-                    ]
-                );
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn file_rename_inner_moves_note_when_session_key_conflicts() {
-        let dir = tempdir().unwrap();
-        let vault = dir.path().join("vault");
-        fs::create_dir_all(&vault).unwrap();
-        fs::write(
-            vault.join("old.md"),
-            "# Old
-
-Body",
-        )
-        .unwrap();
-        let state = AppState::new(dir.path().join("data")).unwrap();
-        state.set_vault(vault.clone()).unwrap();
-        state
-            .db
-            .with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &vault.join("old.md"), IndexEmbeddingMode::Skip)?;
-                conn.execute_batch(
-                    "INSERT INTO sessions (id, session_key, scene, note_path, created_at, updated_at)
-                     VALUES (42, 'chat:old.md', 'chat', 'old.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-                            (43, 'chat:new.md', 'chat', 'new.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');",
-                )?;
-                Ok(())
-            })
-            .unwrap();
-
-        let entry =
-            file_rename_inner(state.clone(), "old.md".to_string(), "new.md".to_string()).unwrap();
-
-        assert_eq!(entry.path, "new.md");
-        assert!(!vault.join("old.md").exists());
-        assert_eq!(
-            fs::read_to_string(vault.join("new.md")).unwrap(),
-            "# Old
-
-Body"
-        );
-        state
-            .db
-            .with_read_conn(|conn| {
-                let old_session: String = conn.query_row(
-                    "SELECT session_key FROM sessions WHERE id = 42",
-                    [],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(old_session, "chat:old.md");
-                let indexed_count: i64 = conn.query_row(
-                    "SELECT COUNT(*) FROM files WHERE path = 'new.md'",
-                    [],
-                    |row| row.get(0),
-                )?;
-                assert_eq!(indexed_count, 1);
-                Ok(())
-            })
-            .unwrap();
     }
 
     #[test]

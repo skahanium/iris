@@ -1,4 +1,4 @@
-﻿import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Check, Copy, RotateCcw } from "lucide-react";
@@ -12,11 +12,7 @@ import {
   restoreChatLineContent,
   type AiPayloadRef,
 } from "@/lib/ai-payload-store";
-import {
-  citationRecordsFromContextPackets,
-  replaceAiCitationsForDocument,
-} from "@/lib/ai/evidence-citations";
-import type { ContentPart, ContextPacket, ToolCallInfo } from "@/types/ai";
+import type { ContentPart, ToolCallInfo } from "@/types/ai";
 
 export interface ImageAttachment {
   id: string;
@@ -40,8 +36,6 @@ export interface ChatLine {
   seq?: number;
   created_at?: string;
   toolCalls?: ToolCallInfo[];
-  /** 历史会话恢复用：该助手消息产生的证据包。 */
-  evidencePackets?: ContextPacket[];
 }
 
 export interface AssistantProcessEvent {
@@ -379,14 +373,7 @@ export const AiMessageList = memo(function AiMessageList({
 
   const handleCopyMessage = useCallback(
     async (message: ChatLine) => {
-      const ledger = citationRecordsFromContextPackets(message.evidencePackets);
-      const content =
-        message.role === "assistant"
-          ? replaceAiCitationsForDocument(
-              restoreChatLineContent(message),
-              ledger,
-            ).markdown
-          : restoreChatLineContent(message);
+      const content = restoreChatLineContent(message);
       try {
         if (!navigator.clipboard?.writeText) {
           throw new Error("Clipboard API is unavailable");

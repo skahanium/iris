@@ -150,6 +150,27 @@ impl EffectiveDocumentScope {
     }
 }
 
+/// Immutable policy inputs for one new Agent Run dispatch attempt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RunPolicyRequest {
+    /// Envelope resolved entirely from explicit request facts.
+    pub(crate) envelope: crate::ai_runtime::run_contract::ExecutionEnvelope,
+    /// Explicit vault-relative documents the user selected for this Run.
+    pub(crate) explicit_reference_paths: Vec<String>,
+    /// Stable capabilities requested by the executor before dispatch.
+    pub(crate) requested_capabilities: Vec<crate::ai_runtime::run_contract::CapabilityId>,
+}
+
+/// Immutable result from the only Run policy decision point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RunPolicyDecision {
+    /// Capabilities this Run may request after policy evaluation.
+    pub(crate) allowed_capabilities: Vec<crate::ai_runtime::run_contract::CapabilityId>,
+    /// Requested capabilities rejected by policy.
+    pub(crate) denied_capabilities: Vec<crate::ai_runtime::run_contract::CapabilityId>,
+    /// Stable safe denial code when any required rule failed.
+    pub(crate) denial_code: Option<crate::ai_runtime::run_contract::SafeRunErrorCode>,
+}
 /// Role that determines how a folder's material may be used as evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MaterialRole {
@@ -241,6 +262,62 @@ impl PolicyDecisionEngine {
         EffectiveDocumentScope { decisions, sources }
     }
 
+    /// Evaluate all capability and explicit-reference constraints for one Run.
+    ///
+    /// This pure method never reads a database, current editor state, a legacy
+    /// scene, user content, or a tool response. A caller must re-evaluate the
+    /// same immutable request immediately before any future capability dispatch.
+    pub(crate) fn evaluate_run(&self, request: RunPolicyRequest) -> RunPolicyDecision {
+        use crate::ai_runtime::run_contract::{
+            Effect, Freshness, SafeRunErrorCode, SecurityDomain,
+        };
+
+        let mut requested = request.envelope.required_capabilities.clone();
+        for capability in request.requested_capabilities {
+            if !requested.contains(&capability) {
+                requested.push(capability);
+            }
+        }
+
+        let reference_denied = request.explicit_reference_paths.iter().any(|path| {
+            let scope = self.effective_document_scope(path);
+            scope.decision_for(DocumentCapability::Read) == CapabilityDecision::Deny
+                || scope.decision_for(DocumentCapability::SendToModel) == CapabilityDecision::Deny
+        });
+        let mut denied = Vec::new();
+        for capability in &requested {
+            let name = capability.as_str();
+            let denied_by_domain = request.envelope.security_domain == SecurityDomain::Classified
+                && (name.starts_with("web.")
+                    || name.starts_with("mcp.")
+                    || name.starts_with("vault.")
+                    || name.starts_with("evidence."));
+            let denied_by_freshness =
+                request.envelope.freshness == Freshness::Offline && name.starts_with("web.");
+            let denied_by_effect = match request.envelope.effect {
+                Effect::Answer => name.starts_with("note."),
+                Effect::Draft => name == "note.apply_patch",
+                Effect::Apply => false,
+            };
+            if denied_by_domain || denied_by_freshness || denied_by_effect || reference_denied {
+                denied.push(capability.clone());
+            }
+        }
+
+        if reference_denied || !denied.is_empty() {
+            return RunPolicyDecision {
+                allowed_capabilities: Vec::new(),
+                denied_capabilities: requested,
+                denial_code: Some(SafeRunErrorCode::PermissionDenied),
+            };
+        }
+
+        RunPolicyDecision {
+            allowed_capabilities: requested,
+            denied_capabilities: denied,
+            denial_code: None,
+        }
+    }
     /// Parses canonical and legacy folder roles without granting unknown roles authority.
     pub(crate) fn parse_material_role(value: &str) -> MaterialRoleResolution {
         let role = match value {
@@ -327,7 +404,7 @@ fn folder_applies_to_document(folder_path: &str, document_path: &str) -> bool {
 mod tests {
     use super::{
         CapabilityDecision, DocumentCapability, DocumentPolicy, DocumentPolicySource, MaterialRole,
-        PolicyDecisionEngine, PolicyDiagnostic,
+        PolicyDecisionEngine, PolicyDiagnostic, RunPolicyRequest,
     };
 
     fn policy(rules: &[(DocumentCapability, CapabilityDecision)]) -> DocumentPolicy {
@@ -451,6 +528,92 @@ mod tests {
         );
     }
 
+    fn run_envelope(
+        security_domain: crate::ai_runtime::run_contract::SecurityDomain,
+        freshness: crate::ai_runtime::run_contract::Freshness,
+    ) -> crate::ai_runtime::run_contract::ExecutionEnvelope {
+        crate::ai_runtime::run_contract::ExecutionEnvelope {
+            effect: crate::ai_runtime::run_contract::Effect::Answer,
+            context: crate::ai_runtime::run_contract::ContextMode::None,
+            freshness,
+            effort: crate::ai_runtime::run_contract::Effort::Direct,
+            security_domain,
+            risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,
+            modalities: vec![crate::ai_runtime::run_contract::Modality::Text],
+            material_needs: Vec::new(),
+            required_capabilities: Vec::new(),
+            explicit_constraints: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn run_policy_denies_web_when_offline_or_classified() {
+        use crate::ai_runtime::run_contract::{CapabilityId, Freshness, SecurityDomain};
+
+        let engine = PolicyDecisionEngine::new(DocumentPolicy::allow_all());
+        let offline = engine.evaluate_run(RunPolicyRequest {
+            envelope: run_envelope(SecurityDomain::Normal, Freshness::Offline),
+            explicit_reference_paths: Vec::new(),
+            requested_capabilities: vec![CapabilityId::new("web.search")],
+        });
+        let classified = engine.evaluate_run(RunPolicyRequest {
+            envelope: run_envelope(SecurityDomain::Classified, Freshness::WebPreferred),
+            explicit_reference_paths: Vec::new(),
+            requested_capabilities: vec![CapabilityId::new("web.search")],
+        });
+
+        assert_eq!(
+            offline.denial_code,
+            Some(crate::ai_runtime::run_contract::SafeRunErrorCode::PermissionDenied)
+        );
+        assert_eq!(
+            classified.denial_code,
+            Some(crate::ai_runtime::run_contract::SafeRunErrorCode::PermissionDenied)
+        );
+        assert!(offline.allowed_capabilities.is_empty());
+        assert!(classified.allowed_capabilities.is_empty());
+    }
+
+    #[test]
+    fn run_policy_does_not_allow_an_explicit_reference_to_override_send_to_model_deny() {
+        use crate::ai_runtime::run_contract::{CapabilityId, Freshness, SecurityDomain};
+
+        let mut engine = PolicyDecisionEngine::new(DocumentPolicy::allow_all());
+        engine.set_document_policy(
+            "notes/restricted.md",
+            policy(&[(DocumentCapability::SendToModel, CapabilityDecision::Deny)]),
+        );
+
+        let decision = engine.evaluate_run(RunPolicyRequest {
+            envelope: run_envelope(SecurityDomain::Normal, Freshness::Offline),
+            explicit_reference_paths: vec!["notes/restricted.md".into()],
+            requested_capabilities: vec![CapabilityId::new("model.text")],
+        });
+
+        assert_eq!(
+            decision.denial_code,
+            Some(crate::ai_runtime::run_contract::SafeRunErrorCode::PermissionDenied)
+        );
+        assert!(decision.allowed_capabilities.is_empty());
+    }
+
+    #[test]
+    fn run_policy_allows_normal_direct_text_answer() {
+        use crate::ai_runtime::run_contract::{CapabilityId, Freshness, SecurityDomain};
+
+        let engine = PolicyDecisionEngine::new(DocumentPolicy::allow_all());
+        let decision = engine.evaluate_run(RunPolicyRequest {
+            envelope: run_envelope(SecurityDomain::Normal, Freshness::Offline),
+            explicit_reference_paths: Vec::new(),
+            requested_capabilities: vec![CapabilityId::new("model.text")],
+        });
+
+        assert!(decision.denial_code.is_none());
+        assert_eq!(
+            decision.allowed_capabilities,
+            vec![CapabilityId::new("model.text")]
+        );
+    }
     #[test]
     fn unknown_material_role_downgrades_to_lookup_with_diagnostic() {
         let resolution = PolicyDecisionEngine::parse_material_role("administrator");

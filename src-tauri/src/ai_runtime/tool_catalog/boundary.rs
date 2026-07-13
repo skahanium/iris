@@ -21,7 +21,6 @@ fn planned(
         requires_confirmation,
         implementation: ToolImplementationStatus::Planned,
         default_enabled_without_skill: false,
-        scene_affinity: &[],
         max_results: None,
     }
 }
@@ -41,7 +40,6 @@ fn dispatchable(
         requires_confirmation,
         implementation: ToolImplementationStatus::Dispatchable,
         default_enabled_without_skill: false,
-        scene_affinity: &[],
         max_results: None,
     }
 }
@@ -233,7 +231,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: false,
             implementation: Impl::Dispatchable,
             default_enabled_without_skill: false,
-            scene_affinity: &[],
             max_results: None,
         },
         ToolCatalogEntry {
@@ -250,7 +247,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: false,
             implementation: Impl::Dispatchable,
             default_enabled_without_skill: false,
-            scene_affinity: &[],
             max_results: None,
         },
         ToolCatalogEntry {
@@ -267,7 +263,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: false,
             implementation: Impl::Dispatchable,
             default_enabled_without_skill: false,
-            scene_affinity: &[],
             max_results: None,
         },
         ToolCatalogEntry {
@@ -284,7 +279,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             requires_confirmation: false,
             implementation: Impl::Dispatchable,
             default_enabled_without_skill: false,
-            scene_affinity: &[],
             max_results: None,
         },
     ]);

@@ -1,13 +1,8 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
-
-vi.mock("@/lib/ipc", () => ({
-  listenSkillsChanged: vi.fn(async () => () => {}),
-  skillsList: vi.fn(async () => []),
-}));
 
 describe("AgentStatusBadge", () => {
   let host: HTMLDivElement;
@@ -24,61 +19,35 @@ describe("AgentStatusBadge", () => {
     host.remove();
   });
 
-  it("shows the selected web search provider instead of a generic enabled state", async () => {
-    await act(async () => {
+  it("shows the unified Run state and selected web provider without a scene", () => {
+    act(() => {
       root.render(
         <AgentStatusBadge
           webSearchEnabled
           webSearchProviderName="AnySearch"
-          webSearchUsage={{
-            successfulSearchRequests: { mcp: 1 },
-          }}
-          scene="knowledge_lookup"
-          taskStatus="completed"
+          runState="running"
         />,
       );
     });
 
-    await act(async () => {
-      document
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="agent-status-trigger"]',
-        )
-        ?.click();
-    });
-
-    expect(document.body.textContent).toContain("联网搜索");
-    expect(document.body.textContent).toContain("AnySearch");
-    expect(document.body.textContent).not.toContain("已开启");
-    expect(document.body.textContent).not.toContain("MCP");
-    expect(document.body.textContent).not.toContain("DDG");
-    expect(document.body.textContent).not.toContain("次");
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-status-trigger"]',
+    );
+    expect(trigger?.textContent).toContain("正在回答");
+    expect(trigger?.title).toContain("AnySearch");
   });
 
-  it("shows a closed web search state without provider statistics", async () => {
-    await act(async () => {
+  it("shows a closed web search state without legacy task statistics", () => {
+    act(() => {
       root.render(
-        <AgentStatusBadge
-          webSearchEnabled={false}
-          webSearchUsage={{
-            successfulSearchRequests: { mcp: 0 },
-          }}
-          scene="knowledge_lookup"
-          taskStatus="completed"
-        />,
+        <AgentStatusBadge webSearchEnabled={false} runState="idle" />,
       );
     });
 
-    await act(async () => {
-      document
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="agent-status-trigger"]',
-        )
-        ?.click();
-    });
-
-    expect(document.body.textContent).toContain("未开启");
-    expect(document.body.textContent).not.toContain("MCP 0");
-    expect(document.body.textContent).not.toContain("DDG");
+    const trigger = document.querySelector<HTMLButtonElement>(
+      '[data-testid="agent-status-trigger"]',
+    );
+    expect(trigger?.textContent).toContain("准备就绪");
+    expect(trigger?.title).toContain("联网：已关闭");
   });
 });

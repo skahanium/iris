@@ -319,7 +319,7 @@ pub fn all_catalog_tools_as_specs() -> Vec<ToolSpec> {
             access_level: entry.access_level,
             requires_confirmation: entry.requires_confirmation,
             max_results: entry.max_results,
-            scene_affinity: entry.scene_affinity.to_vec(),
+            capability_affinity: entry.capability_affinity(),
         })
         .collect()
 }

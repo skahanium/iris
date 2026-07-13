@@ -1,17 +1,12 @@
 import type { Editor } from "@tiptap/react";
 import { useCallback, useMemo, type RefObject } from "react";
 
-import type { WritingEditorContext } from "@/types/ai";
 import { runEditorAction } from "@/lib/editor-action-executor";
 import { insertAssistantMarkdownAtCursor } from "@/lib/editor-insert";
 
 interface InlineAiPort {
   run: (editor: Editor, action: string) => Promise<void>;
-  runSlash: (
-    editor: Editor,
-    command: string,
-    markdown: string,
-  ) => Promise<void>;
+  runSlash: (editor: Editor, command: string) => Promise<void>;
 }
 
 interface UseAppEditorActionsParams {
@@ -29,39 +24,12 @@ export function useAppEditorActions({
   activeNoteIsClassified: _activeNoteIsClassified,
   activePathRef,
   editorRef,
-  getLiveMarkdown,
+  getLiveMarkdown: _getLiveMarkdown,
   inlineAi,
   scheduleUndoRedoStateRefresh,
   sendSelectionToAi,
   setAiStatus,
 }: UseAppEditorActionsParams) {
-  const getWritingContext = useCallback((): WritingEditorContext | null => {
-    const ed = editorRef.current;
-    const path = activePathRef.current;
-    if (!ed || !path) return null;
-    const { from, to } = ed.state.selection;
-    const selection =
-      from !== to ? ed.state.doc.textBetween(from, to, "\n") : "";
-    return {
-      selection,
-      cursorContext: getLiveMarkdown(),
-    };
-  }, [activePathRef, editorRef, getLiveMarkdown]);
-
-  const getParagraphText = useCallback((): string | null => {
-    const ed = editorRef.current;
-    const path = activePathRef.current;
-    if (!ed || !path) return null;
-    const { from, to } = ed.state.selection;
-    if (from !== to) {
-      return ed.state.doc.textBetween(from, to, "\n");
-    }
-    const $from = ed.state.doc.resolve(from);
-    const start = $from.start($from.depth);
-    const end = $from.end($from.depth);
-    return ed.state.doc.textBetween(start, end, "\n");
-  }, [activePathRef, editorRef]);
-
   const runInlineAi = useCallback(
     (action: string) => {
       const ed = editorRef.current;
@@ -74,9 +42,9 @@ export function useAppEditorActions({
   const handleSlashCommand = useCallback(
     (command: string) => {
       if (!editorRef.current) return;
-      void inlineAi.runSlash(editorRef.current, command, getLiveMarkdown());
+      void inlineAi.runSlash(editorRef.current, command);
     },
-    [editorRef, getLiveMarkdown, inlineAi],
+    [editorRef, inlineAi],
   );
 
   const editorActionHandlers = useMemo(
@@ -122,8 +90,6 @@ export function useAppEditorActions({
   }, [editorRef, scheduleUndoRedoStateRefresh]);
 
   return {
-    getParagraphText,
-    getWritingContext,
     handleInsertToEditor,
     handleRedo,
     handleUndo,

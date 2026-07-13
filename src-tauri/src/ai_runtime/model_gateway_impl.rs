@@ -1,5 +1,5 @@
 pub use crate::ai_types::{
-    AiScene, CapabilitySlot, ContextPacket, EndpointFamily, FunctionCall, LlmMessage, MessageRole,
+    CapabilitySlot, ContextPacket, EndpointFamily, FunctionCall, LlmMessage, MessageRole,
     ProviderConfig, TokenUsage, ToolCall, ToolSpec,
 };
 use crate::error::{AppError, AppResult};
@@ -17,8 +17,6 @@ mod body_impl;
 mod http_backend_impl;
 #[path = "model_gateway/messages.rs"]
 mod messages_impl;
-#[path = "model_gateway/prompts.rs"]
-mod prompts_impl;
 #[path = "model_gateway/streaming.rs"]
 mod streaming_impl;
 #[path = "model_gateway/usage.rs"]
@@ -34,8 +32,6 @@ pub use messages_impl::{
     insert_missing_tool_result_stubs, messages_for_api, prepare_tool_api_messages,
     remove_orphan_tool_messages, repair_tool_api_messages, tool_api_message_chain_valid,
 };
-use prompts_impl::is_rule_applicable_for_scene;
-pub use prompts_impl::{build_citation_prompt, build_drafting_prompt};
 pub use streaming_impl::{
     emit_stream_reset, emit_stream_reset_with_reason, emit_stream_reset_with_surface,
     LegacyTauriStreamObserver, StreamEvent, StreamEventData, StreamEventObserver, StreamEventType,
@@ -187,187 +183,6 @@ impl ModelGateway {
     ) -> Option<ProviderConfig> {
         select_failover_provider_from_routes(&self.providers, failed_provider, error_message)
     }
-    pub fn slot_for_scene(scene: AiScene) -> CapabilitySlot {
-        match scene {
-            AiScene::KnowledgeLookup => CapabilitySlot::Fast,
-            AiScene::DraftingAssist => CapabilitySlot::Writer,
-            AiScene::ResearchSynthesis => CapabilitySlot::Reasoner,
-            _ => CapabilitySlot::Writer,
-        }
-    }
-
-    /// Load active user rules from the DB, filtered by scene relevance.
-    pub fn load_active_rules_for_scene(
-        db: &crate::storage::db::Database,
-        scene: AiScene,
-    ) -> crate::error::AppResult<Vec<String>> {
-        let mut rules = Vec::new();
-
-        db.with_conn(|conn| {
-            let mut stmt = conn
-                .prepare("SELECT key, value FROM user_profile WHERE is_active = 1 ORDER BY key")?;
-
-            let rows = stmt.query_map([], |row| {
-                let key: String = row.get(0)?;
-                let json_str: String = row.get(1)?;
-                Ok((key, json_str))
-            })?;
-
-            for row in rows {
-                let (key, json_str) = row?;
-                if !is_rule_applicable_for_scene(&key, scene) {
-                    continue;
-                }
-
-                // Extract human-readable rule text from JSON value
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                    let rule_text = match &value {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Object(obj) => {
-                            if let Some(desc) = obj.get("description").and_then(|v| v.as_str()) {
-                                desc.to_string()
-                            } else {
-                                format!("{key}: {value}")
-                            }
-                        }
-                        other => format!("{key}: {other}"),
-                    };
-                    if !rule_text.is_empty() {
-                        rules.push(rule_text);
-                    }
-                }
-            }
-
-            Ok(())
-        })?;
-
-        Ok(rules)
-    }
-
-    /// Build system prompt for a scene with context packets.
-    pub fn build_system_prompt(
-        scene: AiScene,
-        packets: &[ContextPacket],
-        user_rules: &[String],
-        web_search_enabled: bool,
-    ) -> String {
-        Self::build_system_prompt_with_profile(
-            scene,
-            packets,
-            user_rules,
-            web_search_enabled,
-            &crate::ai_runtime::prompt_profile::PromptProfile::default(),
-        )
-    }
-
-    /// Build system prompt with an explicit user prompt profile.
-    pub fn build_system_prompt_with_profile(
-        scene: AiScene,
-        packets: &[ContextPacket],
-        user_rules: &[String],
-        web_search_enabled: bool,
-        profile: &crate::ai_runtime::prompt_profile::PromptProfile,
-    ) -> String {
-        let mut prompt = String::new();
-
-        let resolved = crate::ai_runtime::persona_resolver::resolve_persona(
-            profile,
-            scene,
-            web_search_enabled,
-        );
-        prompt.push_str(&crate::ai_runtime::persona_resolver::render_persona(
-            &resolved,
-        ));
-
-        // Inject context packets as evidence
-        if !packets.is_empty() {
-            prompt.push_str("\n## 证据包\n\n");
-            prompt.push_str("以下是检索到的证据材料，回答时必须引用来源：\n\n");
-            for packet in packets {
-                prompt.push_str(&format!(
-                    "### {} ({})\n",
-                    packet.citation_label, packet.title
-                ));
-                if let Some(path) = &packet.source_path {
-                    prompt.push_str(&format!("来源: {}\n", path));
-                }
-                if let Some(corpus) = &packet.corpus {
-                    prompt.push_str(&format!(
-                        "语料角色: {}（{}）\n使用边界: {}\n",
-                        corpus.label, corpus.name, corpus.instruction
-                    ));
-                }
-                if let Some(heading) = &packet.heading_path {
-                    prompt.push_str(&format!("章节: {}\n", heading));
-                }
-                prompt.push_str(&format!("相关度: {:.0}%\n", packet.score * 100.0));
-                prompt.push_str(&format!("{}\n\n", packet.excerpt));
-            }
-        }
-
-        // Inject user rules
-        if !user_rules.is_empty() {
-            prompt.push_str("\n## 用户规则\n\n");
-            for rule in user_rules {
-                prompt.push_str(&format!("- {}\n", rule));
-            }
-        }
-
-        prompt
-    }
-
-    /// Stable prefix messages for cache-friendly layouts (persona + rules + evidence).
-    pub fn build_stable_prefix(
-        scene: AiScene,
-        packets: &[ContextPacket],
-        user_rules: &[String],
-        web_search: bool,
-    ) -> Vec<LlmMessage> {
-        let persona = Self::unified_persona(scene, web_search);
-        let mut messages = vec![LlmMessage {
-            role: MessageRole::System,
-            content: persona.into(),
-            tool_call_id: None,
-            tool_calls: None,
-            ..Default::default()
-        }];
-
-        if !user_rules.is_empty() {
-            let mut rules = String::from("## 用户规则\n\n");
-            for rule in user_rules {
-                rules.push_str(&format!("- {rule}\n"));
-            }
-            messages.push(LlmMessage {
-                role: MessageRole::System,
-                content: rules.into(),
-                tool_call_id: None,
-                tool_calls: None,
-                ..Default::default()
-            });
-        }
-
-        if !packets.is_empty() {
-            messages.push(LlmMessage {
-                role: MessageRole::System,
-                content: Self::format_evidence_packets(packets).into(),
-                tool_call_id: None,
-                tool_calls: None,
-                ..Default::default()
-            });
-        }
-
-        messages
-    }
-
-    /// Unified assistant persona with scene-specific capability focus.
-    pub fn unified_persona(scene: AiScene, web_search_enabled: bool) -> String {
-        use crate::ai_runtime::persona_resolver::{render_persona, resolve_persona};
-        use crate::ai_runtime::prompt_profile::PromptProfile;
-        let profile = PromptProfile::default();
-        let resolved = resolve_persona(&profile, scene, web_search_enabled);
-        render_persona(&resolved)
-    }
-
     /// Format context packets as markdown evidence block.
     pub fn format_evidence_packets(packets: &[ContextPacket]) -> String {
         let mut evidence = String::from("## 本地证据包\n\n");

@@ -1,10 +1,10 @@
-//! Vault corpus definitions (`.iris/corpora.toml`) for scene-scoped retrieval.
+//! Vault corpus definitions (`.iris/corpora.toml`) for intent-scoped retrieval.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai_types::{AiScene, CorpusPacketMeta};
+use crate::ai_types::{AgentIntent, CorpusPacketMeta};
 use crate::error::{AppError, AppResult};
 
 /// Relative path inside the vault for corpus configuration.
@@ -24,7 +24,7 @@ pub struct CorpusEntry {
     #[serde(default = "default_kind")]
     pub kind: String,
     #[serde(default)]
-    pub scenes: Vec<String>,
+    pub intents: Vec<String>,
 }
 
 fn default_kind() -> String {
@@ -68,15 +68,16 @@ pub fn normalize_prefix(prefix: &str) -> String {
     }
 }
 
-/// Path prefixes bound to a scene via `scenes = [...]`.
-pub fn prefixes_for_scene(config: &CorpusConfig, scene: AiScene) -> Vec<String> {
-    let scene_key = scene.profile();
+/// Path prefixes bound to a task intent via `intents = [...]`.
+pub fn prefixes_for_intent(config: &CorpusConfig, intent: AgentIntent) -> Vec<String> {
+    let intent_key = serde_json::to_string(&intent).unwrap_or_default();
+    let intent_key = intent_key.trim_matches('"');
     config
         .corpus
         .iter()
-        .filter(|c| c.scenes.iter().any(|s| s == scene_key))
-        .map(|c| normalize_prefix(&c.path_prefix))
-        .filter(|p| !p.is_empty())
+        .filter(|corpus| corpus.intents.iter().any(|value| value == intent_key))
+        .map(|corpus| normalize_prefix(&corpus.path_prefix))
+        .filter(|prefix| !prefix.is_empty())
         .collect()
 }
 
@@ -195,7 +196,7 @@ id = "party_discipline"
 name = "党纪法规"
 path_prefix = "党纪法规/"
 kind = "regulation"
-scenes = ["knowledge_lookup"]
+intents = ["ask_notes"]
 "#;
         let config: CorpusConfig = toml::from_str(raw).unwrap();
         assert_eq!(config.corpus.len(), 1);
@@ -203,19 +204,19 @@ scenes = ["knowledge_lookup"]
     }
 
     #[test]
-    fn prefixes_for_scene_filters() {
+    fn prefixes_for_intent_filters() {
         let config = CorpusConfig {
             corpus: vec![CorpusEntry {
                 id: "a".into(),
                 name: "A".into(),
                 path_prefix: "党纪法规/".into(),
                 kind: "regulation".into(),
-                scenes: vec!["knowledge_lookup".into()],
+                intents: vec!["ask_notes".into()],
             }],
         };
-        let prefixes = prefixes_for_scene(&config, AiScene::KnowledgeLookup);
+        let prefixes = prefixes_for_intent(&config, AgentIntent::AskNotes);
         assert_eq!(prefixes, vec!["党纪法规/"]);
-        assert!(prefixes_for_scene(&config, AiScene::DraftingAssist).is_empty());
+        assert!(prefixes_for_intent(&config, AgentIntent::Write).is_empty());
     }
 
     #[test]
@@ -237,14 +238,14 @@ scenes = ["knowledge_lookup"]
                     name: "Root".into(),
                     path_prefix: "materials/".into(),
                     kind: "lookup".into(),
-                    scenes: vec!["knowledge_lookup".into()],
+                    intents: vec!["ask_notes".into()],
                 },
                 CorpusEntry {
                     id: "nested".into(),
                     name: "Nested".into(),
                     path_prefix: "materials/rules/".into(),
                     kind: "authority".into(),
-                    scenes: vec!["knowledge_lookup".into()],
+                    intents: vec!["ask_notes".into()],
                 },
             ],
         };

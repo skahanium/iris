@@ -94,7 +94,23 @@ pub(super) fn markdown_write_patch_apply(
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &target_path)?;
     let current = std::fs::read_to_string(&abs)?;
-    let applied = match crate::ai_runtime::writing_workflow::apply_patch(&patch, &current) {
+    let current_hash = crate::cas::hash::content_hash_str(&current);
+    if current_hash != base_content_hash {
+        let result = PatchApplyResult {
+            success: false,
+            new_content_hash: None,
+            error: Some("base content hash does not match the current note".into()),
+            warnings: vec![],
+        };
+        return Ok(serde_json::json!({
+            "type": "patch_apply",
+            "tool_name": tool_name,
+            "target_path": target_path,
+            "patch_id": patch.id,
+            "result": result,
+        }));
+    }
+    let applied = match crate::cas::patch::apply_patch(&patch, &current) {
         Ok(content) => content,
         Err(e) => {
             let result = PatchApplyResult {
@@ -141,7 +157,7 @@ pub(super) fn markdown_write_patch_apply(
         let _ = crate::security::secure_delete::secure_delete(&tmp);
         return Err(e.into());
     }
-    let hash = crate::ai_runtime::writing_workflow::compute_content_hash(&applied);
+    let hash = crate::cas::hash::content_hash_str(&applied);
     state.storage.write_guard.mark(&target_path, &hash);
     let mut warnings = Vec::new();
     let entry = match state.db.with_conn(|conn| {

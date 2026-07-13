@@ -1,14 +1,11 @@
 use std::sync::Arc;
 
-use crate::ai_runtime::{
-    retrieval_scope::RetrievalScope, AiScene, ContextPacket, RuntimeDocumentSnapshot,
-};
+use crate::ai_runtime::{retrieval_scope::RetrievalScope, ContextPacket, RuntimeDocumentSnapshot};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 pub struct ToolDispatchContext<'a> {
-    pub scene: AiScene,
     pub note_path: Option<&'a str>,
     pub file_id: Option<i64>,
     pub web_search_enabled: bool,

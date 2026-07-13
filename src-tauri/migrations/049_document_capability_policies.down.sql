@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_document_capability_policies_scope;
+DROP TABLE IF EXISTS document_capability_policies;

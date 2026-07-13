@@ -1,10 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import { useCallback, useEffect, useRef } from "react";
 
-import {
-  buildInlineAiSelectionReferentPrompt,
-  buildInlineAiUserMessage,
-} from "@/lib/inline-ai-prompts";
 import { createContextReference } from "@/lib/context-reference";
 import { getEditorSelectionSnapshot } from "@/lib/iris-clipboard";
 import {
@@ -12,48 +8,45 @@ import {
   parseSlashActionId,
   slashActionId,
 } from "@/lib/slash-command-prompts";
+import { buildInlineAiUserMessage } from "@/lib/inline-ai-prompts";
 import {
-  assistantExecute,
-  listenLlmDone,
-  listenLlmError,
-  listenLlmToken,
-  llmAbort,
-  llmGenerate,
+  assistantRunControl,
+  assistantRunStart,
+  listenAssistantRunEvent,
 } from "@/lib/ipc";
-import type { ChatMessage } from "@/types/ipc";
-import type { AiDomain, ContextReference } from "@/types/ai";
+import type {
+  AiDomain,
+  AssistantSessionRef,
+  ContextReference,
+} from "@/types/ai";
 
 export const INLINE_AI_INSERT_AFTER_SELECTION = "insert_after_selection";
 export const INLINE_AI_REPLACE_SELECTION = "replace_selection";
 
 export interface UseInlineAiOptions {
-  provider?: string;
   domain?: AiDomain;
-  notePath?: string | null;
-  getNoteContent?: () => string;
   onStatus?: (status: string) => void;
 }
 
 export interface AiStreamRequest {
   action: string;
   originalText: string;
-  messages: ChatMessage[];
-  system?: string;
+  message: string;
 }
 
-export function getActiveAiStreamAttrs(editor: Editor): {
-  originalText: string;
-  action: string;
-} | null {
+export function getActiveAiStreamAttrs(
+  editor: Editor,
+): { originalText: string; action: string } | null {
   let result: { originalText: string; action: string } | null = null;
   editor.state.doc.descendants((node) => {
-    if (node.type.name === "aiStream" && result === null) {
-      const raw = node.attrs as { originalText?: unknown; action?: unknown };
-      const action = typeof raw.action === "string" ? raw.action : "";
-      if (!action) return;
-      const originalText =
-        typeof raw.originalText === "string" ? raw.originalText : "";
-      result = { originalText, action };
+    if (node.type.name !== "aiStream" || result) return;
+    const attrs = node.attrs as { originalText?: unknown; action?: unknown };
+    if (typeof attrs.action === "string" && attrs.action) {
+      result = {
+        action: attrs.action,
+        originalText:
+          typeof attrs.originalText === "string" ? attrs.originalText : "",
+      };
     }
   });
   return result;
@@ -63,218 +56,135 @@ export function buildRetryRequest(ctx: {
   originalText: string;
   action: string;
 }): AiStreamRequest {
-  const slashCmd = parseSlashActionId(ctx.action);
-  if (slashCmd) {
-    return {
-      action: ctx.action,
-      originalText: ctx.originalText,
-      messages: [{ role: "user", content: buildSlashCommandMessage(slashCmd) }],
-    };
-  }
+  const slash = parseSlashActionId(ctx.action);
   return {
     action: ctx.action,
     originalText: ctx.originalText,
-    messages: [
-      {
-        role: "user",
-        content: buildInlineAiUserMessage(ctx.action, ctx.originalText),
-      },
-    ],
+    message: slash
+      ? buildSlashCommandMessage(slash)
+      : buildInlineAiUserMessage(ctx.action, ctx.originalText),
   };
 }
 
+/** Builds a Run reference from exactly the text the user selected, never editor-wide state. */
 export function buildInlineSelectionReference(
   editor: Editor,
-  filePath: string | null,
 ): ContextReference | null {
   const snapshot = getEditorSelectionSnapshot(editor);
-  if (!snapshot) return null;
-  return createContextReference({
-    kind: "selection",
-    filePath,
-    content: snapshot.content,
-    utf8Range: null,
-    editorRange: snapshot.editorRange,
-  });
+  return snapshot
+    ? createContextReference({
+        kind: "selection",
+        filePath: null,
+        content: snapshot.text,
+        utf8Range: null,
+        editorRange: null,
+      })
+    : null;
 }
 
-/**
- * 内联 AI：选区 → ai-stream 流式生成；支持接受 / 回退 / 重试；`/` 命令写入 ai-stream。
- */
+interface ActiveInlineRun {
+  runId: string;
+  stateVersion: number;
+  session: AssistantSessionRef;
+}
+
+/** Inline AI presents the same persistent Run lifecycle as the assistant panel. */
 export function useInlineAi({
-  provider = "openai",
   domain = "normal",
-  notePath = null,
-  getNoteContent,
   onStatus,
 }: UseInlineAiOptions = {}) {
-  const requestIdRef = useRef<string | null>(null);
-  const streamBufRef = useRef("");
-  const rafRef = useRef<number | undefined>(undefined);
-  const unlistenRef = useRef<Array<() => void>>([]);
-  const slashSystemRef = useRef<string | undefined>(undefined);
+  const activeRef = useRef<ActiveInlineRun | null>(null);
+  const bufferRef = useRef("");
+  const rafRef = useRef<number | null>(null);
+  const unlistenRef = useRef<(() => void) | null>(null);
 
-  const detachListeners = useCallback(() => {
-    if (rafRef.current !== undefined) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = undefined;
-    }
-    for (const u of unlistenRef.current) u();
-    unlistenRef.current = [];
+  const detach = useCallback(() => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    unlistenRef.current?.();
+    unlistenRef.current = null;
   }, []);
 
-  const flushStreamToEditor = useCallback((editor: Editor) => {
-    if (rafRef.current !== undefined) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = undefined;
-    }
-    editor.commands.updateAiStream(streamBufRef.current);
+  const flush = useCallback((editor: Editor) => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+    editor.commands.updateAiStream(bufferRef.current);
   }, []);
 
-  const markStreamReady = useCallback(
-    (editor: Editor) => {
-      flushStreamToEditor(editor);
-      editor.commands.setAiStreamStatus("ready");
-      onStatus?.("AI 空闲");
-    },
-    [flushStreamToEditor, onStatus],
-  );
-
-  const attachListeners = useCallback(
-    async (editor: Editor) => {
-      detachListeners();
-      const unlistenToken = await listenLlmToken((ev) => {
-        if (!requestIdRef.current && ev.request_id) {
-          requestIdRef.current = ev.request_id;
-        } else if (
-          requestIdRef.current &&
-          ev.request_id &&
-          ev.request_id !== requestIdRef.current
-        ) {
-          return;
-        }
-        streamBufRef.current += ev.token;
-        if (rafRef.current === undefined) {
-          rafRef.current = requestAnimationFrame(() => {
-            rafRef.current = undefined;
-            editor.commands.updateAiStream(streamBufRef.current);
-          });
-        }
-      });
-      const unlistenDone = await listenLlmDone((ev) => {
-        if (
-          requestIdRef.current &&
-          ev.request_id &&
-          ev.request_id !== requestIdRef.current
-        ) {
-          return;
-        }
-        markStreamReady(editor);
-      });
-      const unlistenError = await listenLlmError((ev) => {
-        if (
-          requestIdRef.current &&
-          ev.request_id &&
-          ev.request_id !== requestIdRef.current
-        ) {
-          return;
-        }
-        flushStreamToEditor(editor);
-        editor.commands.setAiStreamStatus("error");
-        onStatus?.(`AI 错误: ${ev.error ?? "未知错误"}`);
-      });
-      unlistenRef.current = [unlistenToken, unlistenDone, unlistenError];
-    },
-    [detachListeners, flushStreamToEditor, markStreamReady, onStatus],
-  );
-
-  const streamIntoAiNode = useCallback(
-    async (editor: Editor, request: AiStreamRequest) => {
-      streamBufRef.current = "";
+  const start = useCallback(
+    async (
+      editor: Editor,
+      request: AiStreamRequest,
+      reference?: ContextReference | null,
+    ) => {
+      detach();
+      bufferRef.current = "";
       editor.commands.clearAiStreamContent();
       editor.commands.setAiStreamStatus("streaming");
-      onStatus?.("AI 处理中…");
-
-      await attachListeners(editor);
-
-      const system =
-        request.system ??
-        (parseSlashActionId(request.action)
-          ? slashSystemRef.current
-          : undefined);
+      onStatus?.("AI 正在处理…");
 
       try {
-        if (requestIdRef.current) {
-          await llmAbort(requestIdRef.current);
-        }
-        requestIdRef.current = null;
-        const rid = await llmGenerate({
-          provider,
-          messages: request.messages,
-          system,
-          stream: true,
+        const accepted = await assistantRunStart({
+          clientRequestId: crypto.randomUUID(),
+          message: request.message,
+          explicitReferences: reference ? [reference] : [],
+          explicitAction: reference
+            ? {
+                effect: "draft",
+                target: reference.contentHash
+                  ? {
+                      referenceId: reference.id,
+                      contentHash: reference.contentHash,
+                    }
+                  : undefined,
+              }
+            : { effect: "draft" },
+          webEnabled: false,
+          securityDomain: domain,
         });
-        requestIdRef.current = rid;
-        // llmGenerate 在流结束后才 resolve；若 llm:done 因 request_id 竞态未触发，此处兜底
-        markStreamReady(editor);
-      } catch (e) {
+        activeRef.current = {
+          runId: accepted.runId,
+          stateVersion: accepted.stateVersion,
+          session: accepted.session,
+        };
+        unlistenRef.current = await listenAssistantRunEvent((event) => {
+          const active = activeRef.current;
+          if (!active || event.runId !== active.runId) return;
+          active.stateVersion = event.stateVersion;
+          if (event.type === "content_delta") {
+            bufferRef.current += event.payload.delta;
+            if (rafRef.current === null) {
+              rafRef.current = requestAnimationFrame(() => {
+                rafRef.current = null;
+                editor.commands.updateAiStream(bufferRef.current);
+              });
+            }
+            return;
+          }
+          if (event.type === "completed") {
+            flush(editor);
+            editor.commands.setAiStreamStatus("ready");
+            onStatus?.("AI 空闲");
+            return;
+          }
+          if (event.type === "failed" || event.type === "cancelled") {
+            flush(editor);
+            editor.commands.setAiStreamStatus("error");
+            onStatus?.(
+              event.type === "failed"
+                ? `AI 错误: ${event.payload.message}`
+                : "AI 已取消",
+            );
+          }
+        });
+      } catch (error) {
         editor.commands.setAiStreamStatus("error");
-        onStatus?.(`AI 错误: ${e instanceof Error ? e.message : String(e)}`);
-        throw e;
+        onStatus?.(
+          `AI 错误: ${error instanceof Error ? error.message : "无法启动 Run"}`,
+        );
       }
     },
-    [provider, onStatus, attachListeners, markStreamReady],
-  );
-
-  const runClassifiedAssistantIntoAiNode = useCallback(
-    async (editor: Editor, request: AiStreamRequest) => {
-      if (!notePath) {
-        editor.commands.setAiStreamStatus("error");
-        onStatus?.("AI 错误: 缺少涉密文档路径");
-        return;
-      }
-
-      streamBufRef.current = "";
-      editor.commands.clearAiStreamContent();
-      editor.commands.setAiStreamStatus("streaming");
-      onStatus?.("涉密 AI 处理中…");
-
-      try {
-        const hasSelection = request.originalText.trim().length > 0;
-        const selectionReference = hasSelection
-          ? buildInlineSelectionReference(editor, notePath)
-          : null;
-        const response = await assistantExecute({
-          aiDomain: "classified",
-          agentIntent: hasSelection ? "rewrite_selection" : "chat",
-          intent: hasSelection ? "writing" : "chat",
-          message: hasSelection
-            ? buildInlineAiSelectionReferentPrompt(request.action)
-            : (request.messages[0]?.content ?? ""),
-          notePath,
-          noteContent: null,
-          contextReferences: selectionReference ? [selectionReference] : [],
-          selection: hasSelection ? request.originalText : null,
-          cursorContext: getNoteContent?.() ?? null,
-          webAuthorized: false,
-        });
-        const content =
-          response.kind === "writing"
-            ? (response.payload.patches[0]?.replacement_text ?? "")
-            : response.kind === "chat"
-              ? (response.payload.content ?? "")
-              : "";
-        streamBufRef.current = content;
-        editor.commands.updateAiStream(content);
-        editor.commands.setAiStreamStatus("ready");
-        onStatus?.("AI 空闲");
-      } catch (e) {
-        editor.commands.setAiStreamStatus("error");
-        onStatus?.(`AI 错误: ${e instanceof Error ? e.message : String(e)}`);
-        throw e;
-      }
-    },
-    [getNoteContent, notePath, onStatus],
+    [detach, domain, flush, onStatus],
   );
 
   const run = useCallback(
@@ -282,99 +192,67 @@ export function useInlineAi({
       const { from, to } = editor.state.selection;
       const originalText = editor.state.doc.textBetween(from, to, "\n").trim();
       if (!originalText) return;
-
       editor.commands.insertAiStreamForSelection({ originalText, action });
-      const request = {
-        action,
-        originalText,
-        messages: [
-          {
-            role: "user",
-            content: buildInlineAiUserMessage(action, originalText),
-          },
-        ],
-      };
-      if (domain === "classified") {
-        await runClassifiedAssistantIntoAiNode(editor, request);
-      } else {
-        await streamIntoAiNode(editor, request);
-      }
+      await start(
+        editor,
+        {
+          action,
+          originalText,
+          message: buildInlineAiUserMessage(action, originalText),
+        },
+        buildInlineSelectionReference(editor),
+      );
     },
-    [domain, runClassifiedAssistantIntoAiNode, streamIntoAiNode],
+    [start],
   );
 
   const runSlash = useCallback(
-    async (editor: Editor, command: string, noteMarkdown: string) => {
-      slashSystemRef.current = noteMarkdown.slice(0, 8000) || undefined;
+    async (editor: Editor, command: string) => {
       const action = slashActionId(command);
-
-      editor.commands.insertAiStreamAtCursor({
-        originalText: "",
+      editor.commands.insertAiStreamAtCursor({ originalText: "", action });
+      await start(editor, {
         action,
+        originalText: "",
+        message: buildSlashCommandMessage(command),
       });
-
-      const request = {
-        action,
-        originalText: "",
-        messages: [
-          { role: "user", content: buildSlashCommandMessage(command) },
-        ],
-        system: slashSystemRef.current,
-      };
-      if (domain === "classified") {
-        await runClassifiedAssistantIntoAiNode(editor, request);
-      } else {
-        await streamIntoAiNode(editor, request);
-      }
     },
-    [domain, runClassifiedAssistantIntoAiNode, streamIntoAiNode],
+    [start],
   );
 
   const retry = useCallback(
     async (editor: Editor) => {
-      const ctx = getActiveAiStreamAttrs(editor);
-      if (!ctx) return;
-      const request = buildRetryRequest(ctx);
-      if (parseSlashActionId(ctx.action) && slashSystemRef.current) {
-        request.system = slashSystemRef.current;
-      }
-      if (domain === "classified") {
-        await runClassifiedAssistantIntoAiNode(editor, request);
-      } else {
-        await streamIntoAiNode(editor, request);
-      }
+      const context = getActiveAiStreamAttrs(editor);
+      if (!context) return;
+      await start(
+        editor,
+        buildRetryRequest(context),
+        context.originalText ? buildInlineSelectionReference(editor) : null,
+      );
     },
-    [domain, runClassifiedAssistantIntoAiNode, streamIntoAiNode],
+    [start],
   );
 
   const abort = useCallback(async () => {
-    if (requestIdRef.current) {
-      await llmAbort(requestIdRef.current);
-      requestIdRef.current = null;
-    }
-    detachListeners();
-  }, [detachListeners]);
+    const active = activeRef.current;
+    if (!active) return;
+    await assistantRunControl({
+      session: active.session,
+      runId: active.runId,
+      expectedStateVersion: active.stateVersion,
+      action: { type: "cancel" },
+    });
+  }, []);
 
-  const dismiss = useCallback(
-    (_editor: Editor) => {
-      void abort();
-    },
-    [abort],
-  );
+  const dismiss = useCallback((_editor?: Editor) => void abort(), [abort]);
 
   const finish = useCallback(() => {
-    requestIdRef.current = null;
-    streamBufRef.current = "";
-    detachListeners();
+    activeRef.current = null;
+    bufferRef.current = "";
+    detach();
     onStatus?.("AI 空闲");
-  }, [detachListeners, onStatus]);
+  }, [detach, onStatus]);
 
-  useEffect(
-    () => () => {
-      detachListeners();
-    },
-    [detachListeners],
-  );
+  useEffect(() => () => detach(), [detach]);
 
   return { run, runSlash, retry, abort, dismiss, finish };
 }

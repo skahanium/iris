@@ -90,11 +90,11 @@ fn classified_ai_thread_load_fails_while_locked() {
 
 #[test]
 fn ordinary_sessions_table_has_no_classified_content() {
-    // Read the session module source to verify no classified content
+    // Read the normal-domain session repository source to verify no classified content
     // can leak into the sessions/session_messages tables
-    let session_src = include_str!("../src/ai_runtime/session.rs");
+    let session_src = include_str!("../src/ai_runtime/normal_session_repository.rs");
 
-    // SessionMessage should not have any classified-specific fields
+    // Normal session persistence must not have classified-specific fields
     assert!(
         !session_src.contains("vault_key"),
         "SessionMessage must not contain vault_key field"
@@ -106,16 +106,6 @@ fn ordinary_sessions_table_has_no_classified_content() {
     assert!(
         !session_src.contains(".classified"),
         "Session insert must not reference .classified paths"
-    );
-
-    // The create_fresh function should not accept classified paths
-    let create_section = session_src
-        .split("pub fn create_fresh")
-        .nth(1)
-        .unwrap_or("");
-    assert!(
-        !create_section.contains("classified"),
-        "create_fresh must not have classified path handling"
     );
 }
 
@@ -156,33 +146,27 @@ fn trace_log_safe_metadata_leaks_no_classified_plaintext() {
         "AiTrace must not store body content"
     );
 
-    // TraceRecorder methods should not accept note paths
+    // legacy trace recording must not accept note paths
     let start_section = trace_src.split("pub fn start").nth(1).unwrap_or("");
     assert!(
         !start_section.contains("note_path"),
-        "TraceRecorder::start must not accept note_path parameter"
+        "legacy trace start API must not accept note_path parameter"
     );
 }
 
 #[test]
-fn classified_path_isolation_from_ai_commands() {
-    let ai_commands_src = include_str!("../src/commands/ai_commands.rs");
+fn classified_run_intake_stays_outside_normal_session_storage() {
+    let assistant_src = include_str!("../src/commands/assistant_commands.rs");
 
-    // validate_ai_note_path must exist and block classified paths
+    assert!(assistant_src.contains("SecurityDomain::Classified"));
+    assert!(assistant_src.contains("RunIntake::start_classified"));
+    assert!(assistant_src.contains("spawn_classified_direct_run"));
+    assert!(assistant_src.contains("execute_classified_direct_streaming_with_sink"));
     assert!(
-        ai_commands_src.contains("validate_ai_note_path"),
-        "ai_commands.rs must have validate_ai_note_path function"
-    );
-    assert!(
-        ai_commands_src.contains("涉密笔记不能进入 AI 管道"),
-        "validate_ai_note_path must reject classified notes with Chinese error message"
-    );
-    assert!(
-        ai_commands_src.contains("is_user_note_path"),
-        "validate_ai_note_path must use is_user_note_path for classification"
+        !assistant_src.contains("SessionManager"),
+        "classified Run intake must not write ordinary session storage"
     );
 }
-
 #[test]
 fn classified_io_provides_cef_encryption_for_threads() {
     let classified_src = include_str!("../src/commands/classified.rs");
@@ -257,163 +241,19 @@ fn ordinary_session_messages_table_has_no_sentinel_after_save() {
 }
 
 #[test]
-fn trace_rows_do_not_contain_classified_paths() {
-    let db = Database::open_in_memory().expect("in-memory db");
+fn classified_run_uses_direct_streaming_without_ordinary_session_writes() {
+    let assistant_src = include_str!("../src/commands/assistant_commands.rs");
 
-    // Create ai_traces table
-    db.with_conn(|conn| {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS ai_traces (
-                request_id TEXT PRIMARY KEY,
-                scene TEXT NOT NULL,
-                status TEXT NOT NULL,
-                model_slot TEXT,
-                provider TEXT,
-                tool_names TEXT,
-                packet_ids TEXT,
-                latency_ms INTEGER,
-                token_input INTEGER,
-                token_output INTEGER,
-                error_code TEXT,
-                checkpoint TEXT,
-                created_at TEXT NOT NULL
-            );",
-        )?;
-        Ok(())
-    })
-    .unwrap();
-
-    // Simulate a trace record that was created for a classified request.
-    // Use the redaction function path.
-    use iris_lib::ai_runtime::trace::{redact_classified_leaks, TraceRecorder, TraceStatus};
-
-    let rid = "classified-trace-test-001";
-    TraceRecorder::start(&db, rid, iris_lib::ai_runtime::AiScene::KnowledgeLookup).unwrap();
-
-    // Complete with an error that contains classified path
-    let unsafe_error = "failed to load .classified/ai-threads/sensitive.cst: not found";
-    let safe_error = redact_classified_leaks(unsafe_error);
-    assert!(
-        !safe_error.contains(".classified/"),
-        "redacted error must not contain .classified/ path"
-    );
-
-    TraceRecorder::complete(
-        &db,
-        rid,
-        TraceStatus::Failed,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(&safe_error),
-    )
-    .unwrap();
-
-    let traces = TraceRecorder::recent(&db, 10).unwrap();
-    let t = &traces[0];
-    let error_str = t.error_code.as_deref().unwrap_or("");
-    assert!(
-        !error_str.contains(".classified/"),
-        "stored trace error must not contain .classified/ path: {error_str}"
-    );
-}
-
-#[test]
-fn trace_rows_do_not_contain_document_title_or_sentinel() {
-    let db = Database::open_in_memory().expect("in-memory db");
-
-    db.with_conn(|conn| {
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS ai_traces (
-                request_id TEXT PRIMARY KEY,
-                scene TEXT NOT NULL,
-                status TEXT NOT NULL,
-                model_slot TEXT,
-                provider TEXT,
-                tool_names TEXT,
-                packet_ids TEXT,
-                latency_ms INTEGER,
-                token_input INTEGER,
-                token_output INTEGER,
-                error_code TEXT,
-                checkpoint TEXT,
-                created_at TEXT NOT NULL
-            );",
-        )?;
-        Ok(())
-    })
-    .unwrap();
-
-    use iris_lib::ai_runtime::trace::{redact_classified_leaks, TraceRecorder, TraceStatus};
-
-    let rid = "sentinel-trace-001";
-    TraceRecorder::start(&db, rid, iris_lib::ai_runtime::AiScene::KnowledgeLookup).unwrap();
-
-    // Error message containing sentinel phrase must be redacted
-    let unsafe_error = format!("request failed for document containing {SENTINEL_PHRASE}");
-    let safe_error = redact_classified_leaks(&unsafe_error);
-    // The sentinel is not a path, so redact_classified_leaks won't remove it.
-    // But trace.rs must NOT store raw classified content — the caller is responsible.
-    // This test verifies the redaction function exists and paths are stripped.
-
-    TraceRecorder::complete(
-        &db,
-        rid,
-        TraceStatus::Failed,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        Some(&safe_error),
-    )
-    .unwrap();
-
-    let traces = TraceRecorder::recent(&db, 10).unwrap();
-    let error_str = traces[0].error_code.as_deref().unwrap_or("");
-    assert!(
-        !error_str.contains(".classified/"),
-        "trace error must not contain classified path"
-    );
-}
-
-#[test]
-fn classified_chat_uses_streaming_without_ordinary_session_writes() {
-    let harness_src = include_str!("../src/ai_harness/harness_task.rs");
-    let classified_fn = harness_src
-        .split("async fn run_classified_chat_task")
+    let classified_run = assistant_src
+        .split("fn spawn_classified_direct_run")
         .nth(1)
-        .and_then(|src| src.split("fn legacy_intent_wire").next())
         .unwrap_or("");
-
+    assert!(classified_run.contains("execute_classified_direct_streaming_with_sink"));
     assert!(
-        classified_fn.contains("\"ai:request_started\""),
-        "classified chat must publish request id before model work"
-    );
-    assert!(
-        classified_fn.contains("send_classified_streaming_request"),
-        "classified chat must use streaming gateway"
-    );
-    assert!(
-        classified_fn.contains("stream: true"),
-        "classified chat GatewayRequest must opt into streaming"
-    );
-    assert!(
-        !classified_fn.contains("send_request("),
-        "classified chat must not use one-shot send_request"
-    );
-    assert!(
-        !classified_fn.contains("SessionManager::append_message"),
-        "classified chat must not write ordinary session_messages"
+        !classified_run.contains("SessionManager::append_message"),
+        "classified Run must not write ordinary session_messages"
     );
 }
-
 #[test]
 fn classified_stream_events_and_abort_use_unified_gateway_contract() {
     let gateway_src = include_str!("../src/ai_runtime/model_gateway_impl.rs");

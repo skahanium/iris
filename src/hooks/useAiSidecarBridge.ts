@@ -7,8 +7,6 @@ import {
   type RefObject,
 } from "react";
 
-import type { AssistantSelectionQuote } from "@/components/ai/UnifiedAssistantPanel";
-import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { getEditorSelectionSnapshot } from "@/lib/iris-clipboard";
 import {
   getWebSearchAvailability,
@@ -21,16 +19,12 @@ import {
 } from "@/types/assistant-chrome";
 
 interface UseAiSidecarBridgeParams {
-  activePathRef: RefObject<string | null>;
   editorRef: RefObject<Editor | null>;
-  getNoteContent: () => string;
   setAiStatus: (message: string) => void;
 }
 
 export function useAiSidecarBridge({
-  activePathRef,
   editorRef,
-  getNoteContent,
   setAiStatus,
 }: UseAiSidecarBridgeParams) {
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
@@ -43,8 +37,6 @@ export function useAiSidecarBridge({
   >(null);
   const [webSearchProvidersLoaded, setWebSearchProvidersLoaded] =
     useState(false);
-  const [selectionQuote, setSelectionQuote] =
-    useState<AssistantSelectionQuote | null>(null);
   const [prefillMessage, setPrefillMessage] = useState<string | null>(null);
   const [assistantChrome, setAssistantChrome] =
     useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
@@ -142,31 +134,20 @@ export function useAiSidecarBridge({
   const sendSelectionToAi = useCallback(
     (options?: { prefill?: string }) => {
       const ed = editorRef.current;
-      const path = activePathRef.current;
-      if (!ed || !path) return;
-      const snapshot = getEditorSelectionSnapshot(ed);
-      if (!snapshot) {
+      if (!ed || !getEditorSelectionSnapshot(ed)) {
         setAiStatus("请先在编辑器中选中文本");
         return;
       }
-      const classifiedSelection = isClassifiedVaultPath(path);
-      setSelectionQuote({
-        filePath: path,
-        text: snapshot.text,
-        content: classifiedSelection ? snapshot.text : getNoteContent(),
-        editorRange: snapshot.editorRange,
-      });
       setPrefillMessage(options?.prefill ?? null);
       setAiPanelOpen(true);
     },
-    [activePathRef, editorRef, getNoteContent, setAiStatus],
+    [editorRef, setAiStatus],
   );
 
   return {
     aiPanelOpen,
     assistantChrome,
     prefillMessage,
-    selectionQuote,
     setAiPanelOpen,
     setAssistantChrome,
     setWebSearch,

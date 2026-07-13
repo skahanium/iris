@@ -15,68 +15,6 @@ use serde::{Deserialize, Serialize};
 /// Legacy AI scene used for compatibility metadata and persisted sessions.
 ///
 /// New Agent Task Runtime policy decisions are based on [`AgentIntent`] and
-/// capability slots; this enum remains only to decode old scene-shaped state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LegacyAiScene {
-    /// 知识查阅 — 法规条款、笔记关联
-    KnowledgeLookup,
-    /// 文稿学习 — 范文结构、表达特征
-    ExemplarLearning,
-    /// 文稿创作 — 写作辅助
-    DraftingAssist,
-    /// 学术研究 — 多材料交叉论证
-    ResearchSynthesis,
-}
-
-impl LegacyAiScene {
-    /// Parse the stable IPC wire value without constructing ad-hoc JSON.
-    pub fn parse_wire(value: &str) -> Option<Self> {
-        match value.trim() {
-            "knowledge_lookup" => Some(LegacyAiScene::KnowledgeLookup),
-            "exemplar_learning" => Some(LegacyAiScene::ExemplarLearning),
-            "drafting_assist" => Some(LegacyAiScene::DraftingAssist),
-            "research_synthesis" => Some(LegacyAiScene::ResearchSynthesis),
-            _ => None,
-        }
-    }
-
-    /// 场景对应的默认自治等级。
-    pub fn autonomy_level(&self) -> AutonomyLevel {
-        match self {
-            LegacyAiScene::KnowledgeLookup => AutonomyLevel::L1,
-            LegacyAiScene::ExemplarLearning => AutonomyLevel::L1,
-            LegacyAiScene::DraftingAssist => AutonomyLevel::L2,
-            LegacyAiScene::ResearchSynthesis => AutonomyLevel::L3,
-        }
-    }
-
-    /// 场景的 runtime profile 标识。
-    pub fn profile(&self) -> &'static str {
-        match self {
-            LegacyAiScene::KnowledgeLookup => "knowledge_lookup",
-            LegacyAiScene::ExemplarLearning => "exemplar_learning",
-            LegacyAiScene::DraftingAssist => "drafting_assist",
-            LegacyAiScene::ResearchSynthesis => "research_synthesis",
-        }
-    }
-
-    /// 场景默认的会话范围是否为库级（不绑定笔记）。
-    pub fn default_global_scope(&self) -> bool {
-        matches!(
-            self,
-            LegacyAiScene::KnowledgeLookup | LegacyAiScene::ResearchSynthesis
-        )
-    }
-}
-
-pub type AiScene = LegacyAiScene;
-
-// ─── Phase 2 Agent Intent ────────────────────────────────
-
-/// User-facing Phase 2 assistant intent.
-///
-/// This replaces visible scene selection while keeping [`LegacyAiScene`] as a
 /// compatibility layer for existing workflows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -208,108 +146,6 @@ pub struct PermissionPreflightSummary {
     pub missing_user_grants: Vec<String>,
     pub exposed_tools: Vec<String>,
     pub degraded: bool,
-}
-
-/// Minimal run-plan summary that is safe for UI display.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentRunPlanSummary {
-    pub request_id: String,
-    pub detected_intent: AgentIntent,
-    pub legacy_scene: AiScene,
-    pub context_summary: Vec<String>,
-    pub tool_summary: String,
-    pub permission_summary: String,
-    pub progress_state: String,
-    pub blocked_reasons: Vec<String>,
-    pub degraded: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_route: Option<CapabilityRouteSummary>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub persona_layers: Vec<PersonaLayerSummary>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill_activation_plan: Option<SkillActivationPlanSummary>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub audit_summary: Option<AgentAuditSummary>,
-}
-
-impl AgentRunPlanSummary {
-    /// Build a summary from metadata only; never include note bodies or secrets.
-    pub fn for_intent(
-        request_id: String,
-        detected_intent: AgentIntent,
-        legacy_scene: AiScene,
-        context_summary: Vec<String>,
-        tool_summary: String,
-    ) -> Self {
-        Self {
-            request_id,
-            detected_intent,
-            legacy_scene,
-            context_summary,
-            tool_summary,
-            permission_summary: "按当前 ToolPolicy 预检；需要确认的工具会暂停等待用户决定".into(),
-            progress_state: "completed".into(),
-            blocked_reasons: Vec::new(),
-            degraded: false,
-            model_route: None,
-            persona_layers: Vec::new(),
-            skill_activation_plan: None,
-            blocked_capabilities: Vec::new(),
-            audit_summary: None,
-        }
-    }
-
-    /// Attach execution state derived from the harness result.
-    pub fn with_execution_state(
-        mut self,
-        progress_state: impl Into<String>,
-        permission_summary: String,
-        blocked_reasons: Vec<String>,
-        degraded: bool,
-    ) -> Self {
-        self.progress_state = progress_state.into();
-        self.permission_summary = permission_summary;
-        self.blocked_reasons = blocked_reasons;
-        self.degraded = degraded;
-        self
-    }
-
-    /// Attach the selected model route summary without exposing credentials.
-    pub fn with_model_route(mut self, model_route: CapabilityRouteSummary) -> Self {
-        self.model_route = Some(model_route);
-        self
-    }
-
-    /// Attach prompt persona layer summaries without rendering sensitive prompt bodies.
-    pub fn with_persona_layers(mut self, persona_layers: Vec<PersonaLayerSummary>) -> Self {
-        self.persona_layers = persona_layers;
-        self
-    }
-
-    /// Attach the per-run skill activation plan.
-    pub fn with_skill_activation_plan(mut self, plan: SkillActivationPlanSummary) -> Self {
-        self.degraded = self.degraded || plan.degraded;
-        self.blocked_capabilities
-            .extend(plan.blocked_capabilities.clone());
-        self.skill_activation_plan = Some(plan);
-        self
-    }
-
-    /// Attach blocked capability summaries not owned by one plan.
-    pub fn with_blocked_capabilities(mut self, blocked: Vec<BlockedCapabilitySummary>) -> Self {
-        self.degraded = self.degraded || !blocked.is_empty();
-        self.blocked_capabilities.extend(blocked);
-        self
-    }
-
-    /// Attach safe audit summary metadata.
-    pub fn with_audit_summary(mut self, audit_summary: AgentAuditSummary) -> Self {
-        self.audit_summary = Some(audit_summary);
-        self
-    }
 }
 
 /// Provider API family used by the model gateway adapter layer.
@@ -671,74 +507,6 @@ pub struct SourceSpan {
     pub end: usize,
 }
 
-/// Per-turn assistant task intent produced by the TaskPlan contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskPlanIntent {
-    Chat,
-    AskNotes,
-    CreativeWrite,
-    RewriteSelection,
-    CitationCheck,
-    Research,
-    Organize,
-    DocumentCheck,
-    Chapter,
-    VisionChat,
-    SkillManagement,
-}
-
-/// Confidence bucket for a TaskPlan routing decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TaskPlanConfidence {
-    High,
-    Medium,
-    Low,
-}
-
-/// Retrieval strategy selected for this assistant turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RetrievalMode {
-    None,
-    CurrentReference,
-    LocalNotes,
-    ScopedNotes,
-    LongDocument,
-}
-
-/// Web evidence mode visible at the assistant boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WebMode {
-    Disabled,
-    Brokered,
-}
-
-/// Execution shape derived from the TaskPlan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExecutionMode {
-    DirectAnswer,
-    ContextAnswer,
-    WritingCandidate,
-    PatchProposal,
-    StructuredTask,
-    LongTask,
-    Clarification,
-}
-
-/// Output surface selected for the assistant turn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OutputMode {
-    MarkdownMessage,
-    ArtifactBackedMessage,
-    ConfirmationRequired,
-    Diagnostic,
-}
-
 /// Lightweight context reference kind carried instead of full note content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -758,7 +526,7 @@ pub struct EditorRangeWire {
     pub to: usize,
 }
 
-/// Wire-safe context reference passed through `assistant_execute`.
+/// Wire-safe context reference passed through `assistant_run_start`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextReferenceWire {
@@ -788,94 +556,6 @@ pub struct RuntimeDocumentSnapshot {
     pub content: String,
     #[serde(default)]
     pub is_locked: bool,
-}
-
-/// Artifact family proposed by the TaskPlan value gate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ArtifactPlanKind {
-    EvidenceSources,
-    WritingChange,
-    StructuredResult,
-    TaskProcess,
-}
-
-/// Planned artifact candidate; later tasks decide whether to materialize it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ArtifactPlanItemWire {
-    pub kind: ArtifactPlanKind,
-    pub reason: String,
-    pub value_gate: String,
-}
-
-/// Source content used for a controlled Markdown edit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EditTargetSource {
-    Selection,
-    Conversation,
-    Prompt,
-}
-
-/// Placement strategy for a controlled Markdown edit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EditTargetPlacement {
-    ReplaceSelection,
-    Cursor,
-    AppendDocument,
-    AfterHeading,
-    InsertHeadingAtOrdinal,
-}
-
-/// Contract describing where a writing task may propose Markdown changes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EditTarget {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target_path: Option<String>,
-    pub source: EditTargetSource,
-    pub placement: EditTargetPlacement,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub heading_text: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub heading_level: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ordinal: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub range: Option<SourceSpan>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub base_content_hash: Option<String>,
-}
-
-/// Per-turn TaskPlan summary exchanged over the assistant IPC boundary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TaskPlanSummary {
-    pub intent: TaskPlanIntent,
-    pub confidence: TaskPlanConfidence,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub evidence_need: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub context_need: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub operation_kind: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub output_shape: Option<String>,
-    pub context_references: Vec<ContextReferenceWire>,
-    pub retrieval_mode: RetrievalMode,
-    pub web_mode: WebMode,
-    pub model_slot: CapabilitySlot,
-    pub execution_mode: ExecutionMode,
-    pub output_mode: OutputMode,
-    pub artifact_plan: Vec<ArtifactPlanItemWire>,
-    pub requires_clarification: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clarification_question: Option<String>,
-    pub source_hints: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub edit_target: Option<EditTarget>,
 }
 
 /// 证据信任等级，按可信度从高到低排列。
@@ -943,24 +623,12 @@ pub struct ToolSpec {
     pub access_level: ToolAccessLevel,
     pub requires_confirmation: bool,
     pub max_results: Option<u32>,
-    /// Scenes where this tool is naturally relevant.
-    /// Empty means universally available.
+    /// Capabilities this tool contributes to; empty means universally available.
     #[serde(default)]
-    pub scene_affinity: Vec<AiScene>,
+    pub capability_affinity: Vec<ToolCapabilityAffinity>,
 }
 
 // ─── Request / Response types ────────────────────────────
-
-/// AI 请求，从前端发起。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AiRequest {
-    pub scene: AiScene,
-    pub note_path: Option<String>,
-    pub note_content_hash: Option<String>,
-    pub query: String,
-    pub session_id: Option<i64>,
-    pub selected_packet_ids: Option<Vec<String>>,
-}
 
 // ─── Tool Confirmation ───────────────────────────────────
 
@@ -1185,8 +853,6 @@ pub struct WritingTaskInput {
     pub cursor_context: String,
     pub writing_goal: String,
     pub web_authorized: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub edit_target: Option<EditTarget>,
 }
 
 /// 写作任务结果。
@@ -1654,157 +1320,6 @@ pub trait EmbedBackend: Send + Sync {
     /// Batch-embed multiple texts (default: sequential calls to [`embed`]).
     fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, String> {
         texts.iter().map(|t| self.embed(t)).collect()
-    }
-}
-
-#[cfg(test)]
-mod phase2_agent_intent_tests {
-    use super::*;
-
-    #[test]
-    fn agent_intent_legacy_mapping_keeps_old_assistant_values_compatible() {
-        assert_eq!(
-            AgentIntent::from_legacy_assistant_intent("knowledge"),
-            AgentIntent::AskNotes
-        );
-        assert_eq!(
-            AgentIntent::from_legacy_assistant_intent("writing"),
-            AgentIntent::RewriteSelection
-        );
-        assert_eq!(
-            AgentIntent::from_legacy_assistant_intent("citation"),
-            AgentIntent::CitationCheck
-        );
-        assert_eq!(
-            AgentIntent::from_legacy_assistant_intent("document"),
-            AgentIntent::DocumentCheck
-        );
-        assert_eq!(
-            AgentIntent::from_legacy_assistant_intent("unknown"),
-            AgentIntent::Chat
-        );
-    }
-
-    #[test]
-    fn run_plan_summary_does_not_store_sensitive_content_fields() {
-        let summary = AgentRunPlanSummary::for_intent(
-            "req-1".to_string(),
-            AgentIntent::AskNotes,
-            AiScene::KnowledgeLookup,
-            vec!["当前笔记".to_string()],
-            "读取当前笔记摘要，必要时检索知识库".to_string(),
-        );
-
-        let json = serde_json::to_string(&summary).unwrap();
-        assert!(json.contains("ask_notes"));
-        assert!(!json.contains("note_content"));
-        assert!(!json.contains("api_key"));
-        assert!(!json.contains("base64"));
-        assert!(!json.contains("clipboard"));
-    }
-
-    #[test]
-    fn run_plan_summary_uses_harness_status_and_permission_state() {
-        let summary = AgentRunPlanSummary::for_intent(
-            "req-2".to_string(),
-            AgentIntent::Chat,
-            AiScene::KnowledgeLookup,
-            vec!["无额外上下文".to_string()],
-            "chat tools".to_string(),
-        )
-        .with_execution_state(
-            "pending_confirmation",
-            "等待工具确认".to_string(),
-            vec!["shell tool needs approval".to_string()],
-            true,
-        );
-
-        assert_eq!(summary.progress_state, "pending_confirmation");
-        assert_eq!(summary.permission_summary, "等待工具确认");
-        assert_eq!(
-            summary.blocked_reasons,
-            vec!["shell tool needs approval".to_string()]
-        );
-        assert!(summary.degraded);
-    }
-}
-
-#[cfg(test)]
-mod phase3_model_persona_route_tests {
-    use super::*;
-
-    #[test]
-    fn capability_slot_serializes_all_phase3_slots() {
-        let slots = [
-            (CapabilitySlot::Fast, "fast"),
-            (CapabilitySlot::Writer, "writer"),
-            (CapabilitySlot::Reasoner, "reasoner"),
-            (CapabilitySlot::LongContext, "long_context"),
-            (CapabilitySlot::Vision, "vision"),
-            (CapabilitySlot::AgentTools, "agent_tools"),
-            (CapabilitySlot::Embedding, "embedding"),
-            (CapabilitySlot::Reranker, "reranker"),
-            (CapabilitySlot::LocalPrivate, "local_private"),
-        ];
-
-        for (slot, wire) in slots {
-            assert_eq!(serde_json::to_value(slot).unwrap(), serde_json::json!(wire));
-            assert_eq!(
-                serde_json::from_value::<CapabilitySlot>(serde_json::json!(wire)).unwrap(),
-                slot
-            );
-        }
-    }
-
-    #[test]
-    fn ai_scene_parse_wire_accepts_only_stable_scene_values() {
-        assert_eq!(
-            AiScene::parse_wire("knowledge_lookup"),
-            Some(AiScene::KnowledgeLookup)
-        );
-        assert_eq!(
-            AiScene::parse_wire(" drafting_assist "),
-            Some(AiScene::DraftingAssist)
-        );
-        assert_eq!(AiScene::parse_wire("\"knowledge_lookup\""), None);
-        assert_eq!(AiScene::parse_wire("unknown"), None);
-    }
-
-    #[test]
-    fn run_plan_summary_includes_safe_model_and_persona_metadata() {
-        let summary = AgentRunPlanSummary::for_intent(
-            "req-phase3".to_string(),
-            AgentIntent::VisionChat,
-            AiScene::KnowledgeLookup,
-            vec!["包含图片附件摘要".to_string()],
-            "工具策略不变".to_string(),
-        )
-        .with_model_route(CapabilityRouteSummary {
-            slot: CapabilitySlot::Vision,
-            provider_id: "openai".to_string(),
-            model: "gpt-4o".to_string(),
-            fallback_chain: vec![CapabilitySlot::Vision],
-            reason: "vision_chat requires image-aware model".to_string(),
-            probe_status: "unknown".to_string(),
-            degraded: false,
-        })
-        .with_persona_layers(vec![
-            PersonaLayerSummary::new("safety_overlay", "最高优先级安全边界"),
-            PersonaLayerSummary::new("identity", "PromptProfile identity"),
-            PersonaLayerSummary::new("style", "PromptProfile style"),
-            PersonaLayerSummary::new("task_overlay", "vision_chat task guidance"),
-            PersonaLayerSummary::new("skill_overlay", "active skill guidance"),
-        ]);
-
-        let json = serde_json::to_string(&summary).unwrap();
-        assert!(json.contains("modelRoute"));
-        assert!(json.contains("personaLayers"));
-        assert!(json.contains("vision"));
-        assert!(json.contains("safety_overlay"));
-        assert!(!json.contains("api_key"));
-        assert!(!json.contains("base64"));
-        assert!(!json.contains("clipboard"));
-        assert!(!json.contains("note_content"));
     }
 }
 

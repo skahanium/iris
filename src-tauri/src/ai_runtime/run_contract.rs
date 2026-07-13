@@ -14,6 +14,10 @@ impl CapabilityId {
     pub(crate) fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
+    /// Return the stable capability identifier without exposing storage internals.
+    pub(crate) fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 /// User-visible effect the current Run may produce.

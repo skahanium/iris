@@ -32,7 +32,6 @@ interface UsePreparedWorkspaceTransitionsOptions<
   OpenOptions extends OpenPreparedNoteOptions,
 > {
   activePathRef: CurrentRef<string | null>;
-  activateArtifact: (id: string) => void;
   activateTab: (path: string) => MaybePromise<void>;
   classifiedVaultStatus: ClassifiedStatus;
   handleNewNote: () => Promise<void>;
@@ -41,7 +40,6 @@ interface UsePreparedWorkspaceTransitionsOptions<
     titleHint?: string,
     options?: OpenOptions,
   ) => Promise<void>;
-  setActiveArtifactId: (id: string | null) => void;
   setHomeActive: (active: boolean) => void;
   tabs: readonly OpenTabLike[];
   vaultPath: string | null;
@@ -51,12 +49,10 @@ export function usePreparedWorkspaceTransitions<
   OpenOptions extends OpenPreparedNoteOptions,
 >({
   activePathRef,
-  activateArtifact,
   activateTab,
   classifiedVaultStatus,
   handleNewNote,
   openNote,
-  setActiveArtifactId,
   setHomeActive,
   tabs,
   vaultPath,
@@ -96,12 +92,10 @@ export function usePreparedWorkspaceTransitions<
 
   const transitions = useHomeWorkspaceTransitions<OpenOptions>({
     activePathRef,
-    activateArtifact,
     activateTab,
     handleNewNote,
     openNote: openPreparedNote,
     openTabs: tabs,
-    setActiveArtifactId,
     setHomeActive,
   });
 

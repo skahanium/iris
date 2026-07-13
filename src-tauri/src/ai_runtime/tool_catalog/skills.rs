@@ -14,7 +14,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         requires_confirmation: false,
         implementation: ToolImplementationStatus::Dispatchable,
         default_enabled_without_skill: true,
-        scene_affinity: &[],
         max_results: None,
     }]
 }

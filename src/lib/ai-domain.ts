@@ -13,22 +13,18 @@ export function deriveAiDomainState(input: {
   activePath: string | null;
   activeNoteIsClassified: boolean;
   classifiedUnlocked: boolean;
-  activeArtifactTab: unknown | null;
   activeMediaTab: unknown | null;
 }): AiDomainState {
   const canUseClassified =
     input.activeNoteIsClassified &&
     input.classifiedUnlocked &&
-    !input.activeArtifactTab &&
     !input.activeMediaTab &&
     input.activePath !== null;
 
   return {
     domain: canUseClassified ? "classified" : "normal",
     normalActivePath:
-      !input.activeNoteIsClassified &&
-      !input.activeArtifactTab &&
-      !input.activeMediaTab
+      !input.activeNoteIsClassified && !input.activeMediaTab
         ? input.activePath
         : null,
     classifiedActivePath: canUseClassified ? input.activePath : null,

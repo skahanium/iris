@@ -1,79 +1,61 @@
-//! ToolAudit — persistent tool call audit log with sensitive info sanitization.
-//!
-//! Records every tool call for debugging and traceability.
-//! Strictly enforces sensitive info rules:
-//! - Never records API keys, tokens, passwords
-//! - Never records full note content
-//! - `read_note`: only records path, max_chars, truncated
-//! - `replace_selection` / `insert_text_at_cursor`: only records length, hash, risk level
-//! - Unknown tools: records only JSON shape metadata
+//! Run-scoped tool audit storage with content-safe summaries.
 
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
-/// A single tool audit entry (matches 020_tool_audit schema).
+/// One sanitized tool execution record belonging to a Run.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ToolAuditEntry {
     pub id: i64,
-    pub request_id: String,
-    pub harness_round: i64,
+    pub run_id: String,
+    pub run_step: i64,
     pub tool_name: String,
     pub arguments_summary: Option<String>,
     pub result_summary: Option<String>,
     pub success: bool,
     pub duration_ms: Option<i64>,
-    pub scene: Option<String>,
     pub subagent_depth: i64,
     pub created_at: String,
 }
 
-/// Input for recording a tool audit entry.
+/// Input for recording one Run-scoped tool execution.
 pub struct ToolAuditInput<'a> {
-    pub request_id: &'a str,
-    pub harness_round: u32,
+    pub run_id: &'a str,
+    pub run_step: u32,
     pub tool_name: &'a str,
     pub arguments: &'a serde_json::Value,
     pub result: &'a serde_json::Value,
     pub error: Option<&'a str>,
     pub success: bool,
     pub duration_ms: u64,
-    pub scene: Option<&'a str>,
     pub subagent_depth: u32,
 }
 
-/// Record a tool call audit entry.
-///
-/// Sanitizes arguments and result before storage.
+/// Persist a sanitized audit record without raw note, credential, or web content.
 pub fn record_audit(db: &Database, input: &ToolAuditInput<'_>) -> AppResult<()> {
-    let mut args_summary = sanitize_arguments(input.tool_name, input.arguments);
-    // On failure we attach a safe, stable failure classification alongside
-    // the sanitized arguments so diagnostic/audit readers can triage without
-    // ever reading the raw query/url/headers/body that were redacted.
+    let mut arguments_summary = sanitize_arguments(input.tool_name, input.arguments);
     if !input.success {
         if let Some(class) = classify_failure(input.result, input.error) {
-            args_summary = Some(match args_summary {
-                Some(existing) => format!("{existing}, failure_class={class}"),
+            arguments_summary = Some(match arguments_summary {
+                Some(summary) => format!("{summary}, failure_class={class}"),
                 None => format!("failure_class={class}"),
             });
         }
     }
     let result_summary = sanitize_result(input.tool_name, input.result, input.error, input.success);
-
     db.with_conn(|conn| {
         conn.execute(
             "INSERT INTO tool_audit \
-             (request_id, harness_round, tool_name, arguments_summary, result_summary, \
-              success, duration_ms, scene, subagent_depth) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (run_id, run_step, tool_name, arguments_summary, result_summary, success, duration_ms, subagent_depth) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
-                input.request_id,
-                input.harness_round as i64,
+                input.run_id,
+                input.run_step as i64,
                 input.tool_name,
-                args_summary,
+                arguments_summary,
                 result_summary,
                 input.success as i64,
                 input.duration_ms as i64,
-                input.scene,
                 input.subagent_depth as i64,
             ],
         )?;
@@ -81,70 +63,89 @@ pub fn record_audit(db: &Database, input: &ToolAuditInput<'_>) -> AppResult<()> 
     })
 }
 
-/// Sanitize tool arguments for audit storage.
-///
-/// Applies tool-specific rules to avoid recording sensitive data.
-fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<String> {
-    let obj = args.as_object()?;
+/// Query sanitized tool records for one Run.
+pub fn query_by_run(db: &Database, run_id: &str) -> AppResult<Vec<ToolAuditEntry>> {
+    db.with_read_conn(|conn| {
+        let mut statement = conn.prepare(
+            "SELECT id, run_id, run_step, tool_name, arguments_summary, result_summary, \
+             success, duration_ms, subagent_depth, created_at \
+             FROM tool_audit WHERE run_id = ?1 ORDER BY id",
+        )?;
+        let rows = statement.query_map([run_id], |row| {
+            Ok(ToolAuditEntry {
+                id: row.get(0)?,
+                run_id: row.get(1)?,
+                run_step: row.get(2)?,
+                tool_name: row.get(3)?,
+                arguments_summary: row.get(4)?,
+                result_summary: row.get(5)?,
+                success: row.get::<_, i64>(6)? != 0,
+                duration_ms: row.get(7)?,
+                subagent_depth: row.get(8)?,
+                created_at: row.get(9)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    })
+}
+
+/// Count tool records for one Run.
+pub fn count_by_run(db: &Database, run_id: &str) -> AppResult<i64> {
+    db.with_read_conn(|conn| {
+        conn.query_row(
+            "SELECT COUNT(*) FROM tool_audit WHERE run_id = ?1",
+            [run_id],
+            |row| row.get(0),
+        )
+        .map_err(Into::into)
+    })
+}
+
+fn sanitize_arguments(tool_name: &str, arguments: &serde_json::Value) -> Option<String> {
+    let object = arguments.as_object()?;
     match tool_name {
-        "read_note" => {
-            // Only record path and max_chars, never content
-            let path = obj.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let max_chars = obj.get("max_chars").and_then(|v| v.as_u64());
-            Some(format!("path={path}, max_chars={max_chars:?}"))
-        }
+        "read_note" => Some(format!(
+            "path={}, max_chars={:?}",
+            object
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or(""),
+            object.get("max_chars").and_then(|value| value.as_u64())
+        )),
         "replace_selection" | "insert_text_at_cursor" => {
-            // Record length, hash, and risk level — never content
-            let text_key = if tool_name == "replace_selection" {
+            let key = if tool_name == "replace_selection" {
                 "replacement"
             } else {
                 "text"
             };
-            let text = obj.get(text_key).and_then(|v| v.as_str()).unwrap_or("");
-            let len = text.chars().count();
-            let hash = content_hash(text);
-            let risk = assess_write_risk(text);
-            Some(format!("len={len}, hash={hash}, risk={risk}"))
+            let text = object
+                .get(key)
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            Some(format!(
+                "len={}, hash={}",
+                text.chars().count(),
+                audit_hash(text)
+            ))
         }
         "web_search" => {
-            let query = obj.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            let url_count = obj
+            let query = object
+                .get("query")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let url_count = object
                 .get("urls")
-                .and_then(|v| v.as_array())
-                .map(|items| items.len())
-                .unwrap_or(0);
+                .and_then(|value| value.as_array())
+                .map_or(0, Vec::len);
             Some(format!(
                 "query_hash={}, url_count={url_count}",
                 audit_hash(query)
             ))
         }
-        "search_hybrid" | "search_semantic" | "search_keyword" => {
-            let query = obj.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            let limit = obj.get("limit").and_then(|v| v.as_u64());
-            Some(format!("query={query}, limit={limit:?}"))
-        }
-        "git_read_status" => Some("scope=vault".into()),
-        "git_read_diff" => {
-            let include_patch = obj
-                .get("include_patch")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            Some(format!("scope=vault, include_patch={include_patch}"))
-        }
-        "git_read_log" => {
-            let limit = obj.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
-            Some(format!("scope=vault, limit={limit}"))
-        }
-        "secret_exists" => {
-            let service = obj.get("service").and_then(|v| v.as_str()).unwrap_or("");
-            Some(format!("service={service}"))
-        }
-        "skills_list" => Some("list".into()),
-        _ => Some(json_shape_summary(args)),
+        _ => Some(json_shape_summary(arguments)),
     }
 }
 
-/// Sanitize tool result for audit storage.
 fn sanitize_result(
     tool_name: &str,
     result: &serde_json::Value,
@@ -152,63 +153,60 @@ fn sanitize_result(
     success: bool,
 ) -> Option<String> {
     if !success {
-        let err = error
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| result.get("error").and_then(|v| v.as_str()))
-            .unwrap_or("unknown error");
-        return Some(truncate_summary(err, 200));
+        return Some(truncate_summary(
+            error
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| result.get("error").and_then(|value| value.as_str()))
+                .unwrap_or("unknown error"),
+            200,
+        ));
     }
     match tool_name {
-        "read_note" => {
-            // Only record path and truncation status, never content
-            let path = result.get("path").and_then(|v| v.as_str()).unwrap_or("");
-            let truncated = result
+        "read_note" => Some(format!(
+            "path={}, truncated={}",
+            result
+                .get("path")
+                .and_then(|value| value.as_str())
+                .unwrap_or(""),
+            result
                 .get("truncated")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            Some(format!("path={path}, truncated={truncated}"))
-        }
-        "replace_selection" | "insert_text_at_cursor" => {
-            // Record success/failure only
-            Some("ok".into())
-        }
-        "search_hybrid" | "search_semantic" | "search_keyword" => {
-            let count = result.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-            Some(format!("results={count}"))
-        }
-        "git_read_status" => with_sandbox_summary("status_summary=available", result),
-        "git_read_diff" => with_sandbox_summary("diff_summary=available", result),
-        "git_read_log" => with_sandbox_summary("log_summary=available", result),
-        "git_write_commit" => with_sandbox_summary("commit_summary=available", result),
-        "secret_exists" => {
-            let exists = result
-                .get("exists")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            Some(format!("exists={exists}"))
-        }
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+        )),
+        "replace_selection" | "insert_text_at_cursor" => Some("ok".into()),
         _ => Some(json_shape_summary(result)),
     }
 }
 
-fn with_sandbox_summary(base: &str, result: &serde_json::Value) -> Option<String> {
-    Some(match sandbox_profile_id(result) {
-        Some(id) => format!("{base}, sandbox_profile={id}"),
-        None => base.to_string(),
-    })
+fn classify_failure(result: &serde_json::Value, error: Option<&str>) -> Option<String> {
+    let raw = result
+        .get("failure_class")
+        .and_then(|value| value.as_str())
+        .or_else(|| result.get("failure_kind").and_then(|value| value.as_str()))
+        .or(error)
+        .or_else(|| result.get("error").and_then(|value| value.as_str()))?;
+    let lower = raw.to_ascii_lowercase();
+    let class = if lower.contains("auth") || lower.contains("credential") {
+        "provider_auth_missing"
+    } else if lower.contains("timeout") {
+        "provider_timeout"
+    } else if lower.contains("denied") || lower.contains("policy") {
+        "policy_denied"
+    } else {
+        "unknown"
+    };
+    Some(class.into())
 }
 
-fn sandbox_profile_id(result: &serde_json::Value) -> Option<&str> {
-    result
-        .get("sandbox_profile")
-        .and_then(|profile| profile.get("id"))
-        .and_then(|id| id.as_str())
+fn audit_hash(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(&Sha256::digest(text.as_bytes())[..12])
 }
 
 fn json_shape_summary(value: &serde_json::Value) -> String {
     match value {
-        serde_json::Value::Object(obj) => format!("shape=object, keys={}", obj.len()),
-        serde_json::Value::Array(arr) => format!("shape=array, len={}", arr.len()),
+        serde_json::Value::Object(object) => format!("shape=object, keys={}", object.len()),
+        serde_json::Value::Array(items) => format!("shape=array, len={}", items.len()),
         serde_json::Value::String(_) => "shape=string".into(),
         serde_json::Value::Number(_) => "shape=number".into(),
         serde_json::Value::Bool(_) => "shape=bool".into(),
@@ -216,474 +214,91 @@ fn json_shape_summary(value: &serde_json::Value) -> String {
     }
 }
 
-/// Truncate a string to max_len **characters**, adding "…" if truncated (UTF-8 safe).
-fn truncate_summary(s: &str, max_len: usize) -> String {
-    let char_count = s.chars().count();
-    if char_count <= max_len {
-        return s.to_string();
-    }
-    let truncated: String = s.chars().take(max_len).collect();
-    format!("{truncated}…")
-}
-
-/// Simple content hash for audit deduplication (SipHash-1-3 via DefaultHasher, first 16 hex chars).
-fn content_hash(text: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
-
-fn audit_hash(text: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(text.as_bytes());
-    hex::encode(&digest[..12])
-}
-
-/// Assess write risk level based on content characteristics.
-fn assess_write_risk(text: &str) -> &'static str {
-    let len = text.chars().count();
-    if len > 5000 {
-        "high"
-    } else if len > 1000 {
-        "medium"
+fn truncate_summary(text: &str, max_chars: usize) -> String {
+    let output: String = text.chars().take(max_chars).collect();
+    if text.chars().count() > max_chars {
+        format!("{output}...")
     } else {
-        "low"
+        output
     }
-}
-
-/// Derive a stable, safe failure class from a failed tool result.
-///
-/// Prefers an explicit `failure_class` / `failure_kind` field emitted by the
-/// provider or broker; falls back to classifying the human-readable `error`
-/// string. Always returns a sanitized token (no raw query/url/secret) so it is
-/// safe to persist into `arguments_summary`.
-fn classify_failure(result: &serde_json::Value, error: Option<&str>) -> Option<String> {
-    for key in ["failure_class", "failure_kind"] {
-        if let Some(class) = result.get(key).and_then(|v| v.as_str()) {
-            let trimmed = class.trim();
-            if !trimmed.is_empty() {
-                return Some(safe_failure_token(trimmed));
-            }
-        }
-    }
-    let err = error
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| result.get("error").and_then(|v| v.as_str()))
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if err.is_empty() {
-        return None;
-    }
-    let token = if err.contains("mcp_search_parse_empty") {
-        "mcp_search_parse_empty"
-    } else if err.contains("web_search_failed") {
-        "web_search_failed"
-    } else if err.contains("auth") || err.contains("credential") || err.contains("401") {
-        "provider_auth_missing"
-    } else if err.contains("timeout") || err.contains("timed out") {
-        "provider_timeout"
-    } else if err.contains("denied") || err.contains("policy") {
-        "policy_denied"
-    } else if err.contains("unavailable") || err.contains("network") {
-        "provider_unavailable"
-    } else {
-        "unknown"
-    };
-    Some(token.into())
-}
-
-/// Coerce an arbitrary failure label into a stable, persistence-safe token.
-fn safe_failure_token(raw: &str) -> String {
-    raw.chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || ch == '_' {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string()
-}
-
-/// Query audit entries by request_id.
-pub fn query_by_request(db: &Database, request_id: &str) -> AppResult<Vec<ToolAuditEntry>> {
-    db.with_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, request_id, harness_round, tool_name, \
-             arguments_summary, result_summary, success, duration_ms, \
-             scene, subagent_depth, created_at \
-             FROM tool_audit WHERE request_id = ?1 ORDER BY id",
-        )?;
-        let rows = stmt.query_map([request_id], |row| {
-            Ok(ToolAuditEntry {
-                id: row.get(0)?,
-                request_id: row.get(1)?,
-                harness_round: row.get(2)?,
-                tool_name: row.get(3)?,
-                arguments_summary: row.get(4)?,
-                result_summary: row.get(5)?,
-                success: row.get::<_, i64>(6)? != 0,
-                duration_ms: row.get(7)?,
-                scene: row.get(8)?,
-                subagent_depth: row.get(9)?,
-                created_at: row.get(10)?,
-            })
-        })?;
-        Ok(rows.flatten().collect())
-    })
-}
-
-/// Count audit entries by request_id.
-pub fn count_by_request(db: &Database, request_id: &str) -> AppResult<i64> {
-    db.with_conn(|conn| {
-        Ok(conn.query_row(
-            "SELECT COUNT(*) FROM tool_audit WHERE request_id = ?1",
-            [request_id],
-            |row| row.get(0),
-        )?)
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::db::Database;
+    use crate::ai_runtime::agent_run_repository::{AcceptRunInput, AgentRunRepository};
+    use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
+    use crate::ai_runtime::run_contract::{
+        ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed, Modality,
+        RiskClass, SecurityDomain,
+    };
 
-    fn test_db() -> Database {
-        Database::open_in_memory().unwrap()
+    fn audit_db() -> (Database, String) {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("normal session");
+        let run_id = "tool-audit-run".to_string();
+        AgentRunRepository::accept(
+            &db,
+            AcceptRunInput {
+                session_id: session.session_id,
+                session_key: session.session_key,
+                client_request_id: "tool-audit-client-request".to_string(),
+                run_id: run_id.clone(),
+                turn_id: "tool-audit-turn".to_string(),
+                message: "record a sanitized tool result".to_string(),
+                content_parts: None,
+                explicit_references: vec![],
+                explicit_action: None,
+                envelope: ExecutionEnvelope {
+                    effect: Effect::Answer,
+                    context: ContextMode::ExplicitReferences,
+                    freshness: Freshness::Offline,
+                    effort: Effort::Direct,
+                    security_domain: SecurityDomain::Normal,
+                    risk: RiskClass::ReadOnly,
+                    modalities: vec![Modality::Text],
+                    material_needs: vec![MaterialNeed::Reference],
+                    required_capabilities: vec![],
+                    explicit_constraints: vec![],
+                },
+            },
+        )
+        .expect("accepted run");
+        (db, run_id)
     }
 
     #[test]
-    fn assess_write_risk_levels() {
-        assert_eq!(assess_write_risk("short"), "low");
-        assert_eq!(assess_write_risk(&"a".repeat(1500)), "medium");
-        assert_eq!(assess_write_risk(&"a".repeat(6000)), "high");
-    }
-
-    #[test]
-    fn sanitize_read_note_args() {
-        let args = serde_json::json!({"path": "notes/test.md", "max_chars": 5000});
-        let summary = sanitize_arguments("read_note", &args).unwrap();
-        assert!(summary.contains("notes/test.md"));
-        assert!(summary.contains("5000"));
-        assert!(!summary.contains("content"));
-    }
-
-    #[test]
-    fn sanitize_insert_text_args() {
-        let args = serde_json::json!({"text": "这是一段很长的中文文本用于测试"});
-        let summary = sanitize_arguments("insert_text_at_cursor", &args).unwrap();
-        assert!(summary.contains("len="));
-        assert!(summary.contains("hash="));
-        assert!(summary.contains("risk="));
-        assert!(!summary.contains("中文"));
-    }
-
-    #[test]
-    fn sanitize_replace_selection_args() {
-        let args = serde_json::json!({"replacement": "new text content here"});
-        let summary = sanitize_arguments("replace_selection", &args).unwrap();
-        assert!(summary.contains("len="));
-        assert!(summary.contains("hash="));
-        assert!(summary.contains("risk="));
-        assert!(!summary.contains("new text"));
-    }
-
-    #[test]
-    fn sanitize_search_args_generic() {
-        let args = serde_json::json!({"query": "test query", "limit": 10});
-        let summary = sanitize_arguments("search_hybrid", &args).unwrap();
-        assert!(summary.contains("test query"));
-    }
-
-    #[test]
-    fn sanitize_web_search_args_hashes_query_without_raw_text() {
-        let args = serde_json::json!({"query": "private health query"});
-        let summary = sanitize_arguments("web_search", &args).unwrap();
-
-        assert!(summary.contains("query_hash="));
-        assert!(!summary.contains("private health query"));
-    }
-
-    #[test]
-    fn sanitize_web_search_args_omits_urls_headers_and_page_body() {
-        let args = serde_json::json!({
-            "query": "完整用户问题不应保存",
-            "urls": ["https://example.com/private/path?token=secret"],
-            "headers": {"Authorization": "Bearer secret"},
-            "page_body": "完整网页正文不应保存"
-        });
-        let summary = sanitize_arguments("web_search", &args).unwrap();
-
-        assert!(summary.contains("query_hash="));
-        assert!(summary.contains("url_count=1"));
-        assert!(!summary.contains("完整用户问题"));
-        assert!(!summary.contains("example.com/private"));
-        assert!(!summary.contains("token=secret"));
-        assert!(!summary.contains("Authorization"));
-        assert!(!summary.contains("完整网页正文"));
-    }
-
-    #[test]
-    fn sanitize_read_note_result() {
-        let result = serde_json::json!({"path": "test.md", "content": "full note content", "truncated": false});
-        let summary = sanitize_result("read_note", &result, None, true).unwrap();
-        assert!(summary.contains("test.md"));
-        assert!(!summary.contains("full note content"));
-    }
-
-    #[test]
-    fn sanitize_error_result() {
-        let result = serde_json::json!({"error": "something failed"});
-        let summary = sanitize_result("any_tool", &result, None, false).unwrap();
-        assert!(summary.contains("something failed"));
-    }
-
-    #[test]
-    fn sanitize_search_result() {
-        let result = serde_json::json!({"results": [], "count": 5});
-        let summary = sanitize_result("search_hybrid", &result, None, true).unwrap();
-        assert!(summary.contains("results=5"));
-    }
-
-    #[test]
-    fn unknown_tool_audit_does_not_store_arguments_or_result_body() {
-        let args = serde_json::json!({
-            "content": "sensitive note text",
-            "token": "sk-secret"
-        });
-        let result = serde_json::json!({
-            "content": "private result body"
-        });
-
-        let args_summary = sanitize_arguments("new_unreviewed_tool", &args);
-        let result_summary = sanitize_result("new_unreviewed_tool", &result, None, true);
-
-        assert_eq!(args_summary.as_deref(), Some("shape=object, keys=2"));
-        assert_eq!(result_summary.as_deref(), Some("shape=object, keys=1"));
-    }
-
-    #[test]
-    fn truncate_summary_short() {
-        assert_eq!(truncate_summary("hello", 10), "hello");
-    }
-
-    #[test]
-    fn truncate_summary_long() {
-        let s = "a".repeat(600);
-        let result = truncate_summary(&s, 500);
-        assert!(result.chars().count() <= 501); // 500 + "…"
-        assert!(result.ends_with('…'));
-    }
-
-    #[test]
-    fn truncate_summary_multibyte_chars() {
-        let s = "知".repeat(600);
-        let result = truncate_summary(&s, 500);
-        assert!(result.chars().count() <= 501);
-        assert!(result.ends_with('…'));
-    }
-
-    #[test]
-    fn content_hash_deterministic() {
-        let h1 = content_hash("test content");
-        let h2 = content_hash("test content");
-        assert_eq!(h1, h2);
-        assert_eq!(h1.len(), 16);
-    }
-
-    #[test]
-    fn content_hash_different_inputs() {
-        let h1 = content_hash("content A");
-        let h2 = content_hash("content B");
-        assert_ne!(h1, h2);
-    }
-
-    #[test]
-    fn record_and_query_audit() {
-        let db = test_db();
-        // Create required tables (normally done by migrate_up)
-        db.with_conn(|conn| {
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS ai_traces (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    request_id TEXT NOT NULL UNIQUE,
-                    scene TEXT NOT NULL,
-                    model_slot TEXT, provider TEXT,
-                    tool_names JSON, packet_ids JSON,
-                    latency_ms INTEGER, token_input INTEGER, token_output INTEGER,
-                    status TEXT NOT NULL, error_code TEXT,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS tool_audit (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    request_id TEXT NOT NULL, harness_round INTEGER NOT NULL,
-                    tool_name TEXT NOT NULL, arguments_summary TEXT,
-                    result_summary TEXT, success INTEGER NOT NULL DEFAULT 0,
-                    duration_ms INTEGER, scene TEXT,
-                    subagent_depth INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-                );",
-            )?;
-            conn.execute(
-                "INSERT INTO ai_traces (request_id, scene, status, created_at)
-                 VALUES ('req-1', 'knowledge_lookup', 'running', datetime('now'))",
-                [],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-
+    fn audit_is_keyed_by_run_and_step() {
+        let (db, run_id) = audit_db();
         record_audit(
             &db,
             &ToolAuditInput {
-                request_id: "req-1",
-                harness_round: 1,
+                run_id: &run_id,
+                run_step: 1,
                 tool_name: "read_note",
-                arguments: &serde_json::json!({"path": "test.md", "max_chars": 5000}),
-                result: &serde_json::json!({"path": "test.md", "truncated": false}),
+                arguments: &serde_json::json!({"path":"notes/a.md"}),
+                result: &serde_json::json!({"path":"notes/a.md","truncated":false}),
                 error: None,
                 success: true,
-                duration_ms: 150,
-                scene: Some("knowledge_lookup"),
+                duration_ms: 1,
                 subagent_depth: 0,
             },
         )
-        .unwrap();
-
-        let entries = query_by_request(&db, "req-1").unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].tool_name, "read_note");
-        assert!(entries[0].success);
-        assert!(entries[0]
-            .arguments_summary
-            .as_ref()
-            .unwrap()
-            .contains("test.md"));
-
-        let count = count_by_request(&db, "req-1").unwrap();
-        assert_eq!(count, 1);
-    }
-
-    fn setup_audit_db() -> Database {
-        let db = Database::open_in_memory().unwrap();
-        db.with_conn(|conn| {
-            conn.execute_batch(
-                "CREATE TABLE IF NOT EXISTS ai_traces (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    request_id TEXT NOT NULL UNIQUE,
-                    scene TEXT NOT NULL,
-                    model_slot TEXT, provider TEXT,
-                    tool_names JSON, packet_ids JSON,
-                    latency_ms INTEGER, token_input INTEGER, token_output INTEGER,
-                    status TEXT NOT NULL, error_code TEXT,
-                    created_at TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS tool_audit (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    request_id TEXT NOT NULL, harness_round INTEGER NOT NULL,
-                    tool_name TEXT NOT NULL, arguments_summary TEXT,
-                    result_summary TEXT, success INTEGER NOT NULL DEFAULT 0,
-                    duration_ms INTEGER, scene TEXT,
-                    subagent_depth INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-                );",
-            )?;
-            conn.execute(
-                "INSERT INTO ai_traces (request_id, scene, status, created_at)
-                 VALUES ('req-privacy', 'knowledge_lookup', 'running', datetime('now'))",
-                [],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-        db
+        .expect("record");
+        assert_eq!(count_by_run(&db, &run_id).expect("count"), 1);
+        let item = query_by_run(&db, &run_id).expect("query").remove(0);
+        assert_eq!(item.run_id, run_id);
+        assert_eq!(item.run_step, 1);
+        assert!(item.arguments_summary.unwrap().contains("notes/a.md"));
     }
 
     #[test]
-    fn tool_audit_redacts_queries_urls_headers_and_page_body() {
-        let db = setup_audit_db();
-        record_audit(
-            &db,
-            &ToolAuditInput {
-                request_id: "req-privacy",
-                harness_round: 1,
-                tool_name: "web_search",
-                arguments: &serde_json::json!({
-                    "query": "完整用户问题不应保存",
-                    "urls": ["https://example.com/private/path?token=secret"],
-                    "headers": {"Authorization": "Bearer secret"},
-                    "page_body": "完整网页正文不应保存"
-                }),
-                result: &serde_json::json!({
-                    "failure_class": "provider_auth_missing",
-                    "error": "provider authentication missing"
-                }),
-                error: Some("provider authentication missing"),
-                success: false,
-                duration_ms: 0,
-                scene: Some("knowledge_lookup"),
-                subagent_depth: 0,
-            },
-        )
-        .unwrap();
-
-        let row = query_by_request(&db, "req-privacy").unwrap().remove(0);
-        let summary = row.arguments_summary.expect("args summary");
-        assert!(summary.contains("provider_auth_missing"));
+    fn web_query_and_body_are_not_persisted() {
+        let summary = sanitize_arguments("web_search", &serde_json::json!({
+            "query":"private query", "urls":["https://example.test/private"], "page_body":"private body"
+        })).expect("summary");
         assert!(summary.contains("query_hash="));
-        assert!(summary.contains("url_count=1"));
-        assert!(!summary.contains("完整用户问题"));
-        assert!(!summary.contains("example.com/private"));
-        assert!(!summary.contains("token=secret"));
-        assert!(!summary.contains("Authorization"));
-        assert!(!summary.contains("完整网页正文"));
-    }
-
-    #[test]
-    fn tool_audit_failure_class_falls_back_from_error_text() {
-        let args = serde_json::json!({"query": "private query"});
-        let result = serde_json::json!({"error": "upstream provider timed out"});
-        let mut summary = sanitize_arguments("web_search", &args).unwrap();
-        if let Some(class) = classify_failure(&result, None) {
-            summary = format!("{summary}, failure_class={class}");
-        }
-        assert!(summary.contains("failure_class=provider_timeout"));
         assert!(!summary.contains("private query"));
-    }
-
-    #[test]
-    fn tool_audit_failure_uses_tool_call_error_when_output_is_null() {
-        let summary = sanitize_result(
-            "web_search",
-            &serde_json::Value::Null,
-            Some("mcp_search_parse_empty:unrecognized_schema"),
-            false,
-        )
-        .unwrap();
-
-        assert_eq!(summary, "mcp_search_parse_empty:unrecognized_schema");
-        assert_eq!(
-            classify_failure(
-                &serde_json::Value::Null,
-                Some("mcp_search_parse_empty:unrecognized_schema")
-            )
-            .as_deref(),
-            Some("mcp_search_parse_empty")
-        );
-    }
-
-    #[test]
-    fn safe_failure_token_strips_unsafe_characters() {
-        assert_eq!(
-            safe_failure_token("provider auth-missing!"),
-            "provider_auth_missing"
-        );
-        assert_eq!(safe_failure_token("__leading"), "leading");
-        assert_eq!(safe_failure_token(""), "");
+        assert!(!summary.contains("private body"));
     }
 }

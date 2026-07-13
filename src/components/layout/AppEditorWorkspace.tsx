@@ -1,8 +1,7 @@
-﻿import type { Editor } from "@tiptap/react";
+import type { Editor } from "@tiptap/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction, ReactNode } from "react";
 
-import { ArtifactWorkspaceView } from "@/components/layout/ArtifactWorkspaceView";
 import { DocumentOpenLoadingSurface } from "@/components/layout/DocumentOpenLoadingSurface";
 import { EditorFindReplaceBar } from "@/components/editor/EditorFindReplaceBar";
 import { EditorOutline } from "@/components/editor/EditorOutline";
@@ -15,7 +14,6 @@ import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
 import { documentOpenEnd } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import type { ArtifactTab } from "@/types/assistant-artifact";
 import type { MediaTab } from "@/hooks/useMediaTabs";
 import type { HomePendingOpen } from "@/lib/home-open-transition";
 import type {
@@ -74,7 +72,6 @@ const READY_SURFACE_RETAIN_LIMIT = 8;
 
 interface AppEditorWorkspaceProps {
   activeFileLocked: boolean;
-  activeArtifactTab: ArtifactTab | null;
   activeMediaTab: MediaTab | null;
   activeNoteIsClassified: boolean;
   activePath: string | null;
@@ -91,7 +88,6 @@ interface AppEditorWorkspaceProps {
   handleEditorReady: (editor: Editor | null) => void;
   handleLockToggle: (locked: boolean) => Promise<void>;
   handleNewNoteLeavingHome: () => void | Promise<void>;
-  getNoteContent: () => string;
   homeActive: boolean;
   inlineAi: {
     retry: (editor: Editor) => Promise<void>;
@@ -132,8 +128,6 @@ interface AppEditorWorkspaceProps {
     characterCount: number;
     readingMinutes: number;
   }) => void;
-  onPatchApplied?: (newContent: string) => void;
-  onVaultRefresh?: () => void;
   vaultIndexEpoch: number;
   vaultPath: string | null;
   warmPreparedNotes?: readonly PreparedNoteOpen[] | null;
@@ -200,7 +194,6 @@ function retainedSurfaceRecords(
 
 export function AppEditorWorkspace({
   activeFileLocked,
-  activeArtifactTab,
   activeMediaTab,
   activeNoteIsClassified,
   activePath,
@@ -217,7 +210,6 @@ export function AppEditorWorkspace({
   handleEditorReady,
   handleLockToggle,
   handleNewNoteLeavingHome,
-  getNoteContent,
   homeActive,
   inlineAi,
   onOutlineOpenChange,
@@ -236,8 +228,6 @@ export function AppEditorWorkspace({
   setFindReplaceMode,
   setFindReplaceOpen,
   updateEditorStats,
-  onPatchApplied,
-  onVaultRefresh,
   vaultIndexEpoch,
   vaultPath,
   warmPreparedNotes,
@@ -273,7 +263,6 @@ export function AppEditorWorkspace({
       !effectiveNotePath ||
       (homeActive && !pendingNoteOpen) ||
       hideCurrentSurfaceForPendingOpen ||
-      activeArtifactTab ||
       activeMediaTab
     ) {
       return null;
@@ -295,7 +284,6 @@ export function AppEditorWorkspace({
       title: effectiveTitle ?? displayTitleFromPath(effectiveNotePath),
     };
   }, [
-    activeArtifactTab,
     activeMediaTab,
     editorContentTick,
     editorTitleSlot,
@@ -494,7 +482,6 @@ export function AppEditorWorkspace({
   );
   const pendingOpenLoading = Boolean(
     !homeActive &&
-    !activeArtifactTab &&
     !activeMediaTab &&
     pendingOpen &&
     !pendingOpen.error &&
@@ -515,7 +502,6 @@ export function AppEditorWorkspace({
     !pendingOpen || pendingOpen.loadingPolicy !== "disabled";
   const showDocumentLoading = Boolean(
     loadingPolicyAllowsSurface &&
-    !activeArtifactTab &&
     !activeMediaTab &&
     !homeActive &&
     (currentEditorSurface || pendingOpenLoadingIdentity) &&
@@ -850,14 +836,7 @@ export function AppEditorWorkspace({
         outlineOpen && !zen && effectiveNotePath && "iris-editor-outline-open",
       )}
     >
-      {activeArtifactTab && !homeActive ? (
-        <ArtifactWorkspaceView
-          tab={activeArtifactTab}
-          getNoteContent={getNoteContent}
-          onPatchApplied={onPatchApplied}
-          onVaultRefresh={onVaultRefresh}
-        />
-      ) : activeMediaTab && !homeActive ? (
+      {activeMediaTab && !homeActive ? (
         <MediaWorkspaceView tab={activeMediaTab} />
       ) : currentEditorSurface || pendingOpenLoading ? (
         renderEditorStack()
@@ -892,7 +871,7 @@ export function AppEditorWorkspace({
       <EditorFindReplaceBar
         editor={editorInstance}
         mode={findReplaceMode}
-        open={findReplaceOpen && Boolean(activePath) && !activeArtifactTab}
+        open={findReplaceOpen && Boolean(activePath) && !activeMediaTab}
         onClose={() => setFindReplaceOpen(false)}
         onModeChange={setFindReplaceMode}
       />

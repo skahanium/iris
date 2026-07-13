@@ -1,5 +1,5 @@
 use iris_lib::ai_runtime::context_cache::{ContextAssemblyCache, ContextAssemblyCacheKey};
-use iris_lib::ai_runtime::{AiScene, ContextStatus};
+use iris_lib::ai_runtime::ContextStatus;
 
 fn status(tokens: usize) -> ContextStatus {
     ContextStatus {
@@ -15,7 +15,6 @@ fn status(tokens: usize) -> ContextStatus {
 fn context_cache_hits_and_expires_by_ttl() {
     let mut cache = ContextAssemblyCache::new(2, 1);
     let key = ContextAssemblyCacheKey::new(
-        AiScene::KnowledgeLookup,
         Some("notes/a.md"),
         "query",
         "{}",
@@ -34,9 +33,9 @@ fn context_cache_hits_and_expires_by_ttl() {
 #[test]
 fn context_cache_evicts_lru_entry() {
     let mut cache = ContextAssemblyCache::new(2, 60);
-    let a = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "a", "{}", "fast", 1, "p");
-    let b = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "b", "{}", "fast", 1, "p");
-    let c = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "c", "{}", "fast", 1, "p");
+    let a = ContextAssemblyCacheKey::new(None, "a", "{}", "fast", 1, "p");
+    let b = ContextAssemblyCacheKey::new(None, "b", "{}", "fast", 1, "p");
+    let c = ContextAssemblyCacheKey::new(None, "c", "{}", "fast", 1, "p");
 
     cache.insert(a.clone(), vec![], status(1));
     cache.insert(b.clone(), vec![], status(2));
@@ -51,10 +50,8 @@ fn context_cache_evicts_lru_entry() {
 #[test]
 fn context_cache_key_separates_prompt_profiles() {
     let mut cache = ContextAssemblyCache::new(2, 60);
-    let default_profile =
-        ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "q", "{}", "fast", 1, "a");
-    let strict_profile =
-        ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "q", "{}", "fast", 1, "b");
+    let default_profile = ContextAssemblyCacheKey::new(None, "q", "{}", "fast", 1, "a");
+    let strict_profile = ContextAssemblyCacheKey::new(None, "q", "{}", "fast", 1, "b");
 
     cache.insert(default_profile.clone(), vec![], status(11));
 

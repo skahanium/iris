@@ -213,7 +213,7 @@ fn estimate_message_input_tokens(message: &LlmMessage) -> u32 {
 }
 
 fn estimate_text_tokens(text: &str) -> u32 {
-    crate::ai_runtime::harness_support::estimate_tokens(text).min(u32::MAX as usize) as u32
+    crate::ai_runtime::text_support::estimate_tokens(text).min(u32::MAX as usize) as u32
 }
 
 fn build_chat_completions_body_inner(request: &GatewayRequest) -> serde_json::Value {

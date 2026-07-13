@@ -1,4 +1,4 @@
-﻿import { act, useEffect } from "react";
+import { act, useEffect } from "react";
 import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,10 +60,6 @@ vi.mock("@/components/layout/WelcomeEmpty", () => ({
   WelcomeEmpty: () => <div data-testid="home-workbench" />,
 }));
 
-vi.mock("@/components/layout/ArtifactWorkspaceView", () => ({
-  ArtifactWorkspaceView: () => <div data-testid="artifact-workspace" />,
-}));
-
 vi.mock("@/components/layout/MediaWorkspaceView", () => ({
   MediaWorkspaceView: ({ tab }: { tab: { path: string } }) => (
     <div data-testid="media-workspace" data-path={tab.path} />
@@ -85,7 +81,6 @@ import type { HomePendingOpen } from "@/lib/home-open-transition";
 function baseProps() {
   return {
     activeFileLocked: false,
-    activeArtifactTab: null,
     activeMediaTab: null,
     activeNoteIsClassified: false,
     activePath: "old.md",

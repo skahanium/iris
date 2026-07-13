@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::ai_runtime::{AiScene, ToolAccessLevel};
+use crate::ai_runtime::ToolAccessLevel;
 
 #[path = "tool_catalog/boundary.rs"]
 mod boundary_impl;
@@ -38,8 +38,6 @@ pub struct ToolCatalogEntry {
     pub requires_confirmation: bool,
     pub implementation: ToolImplementationStatus,
     pub default_enabled_without_skill: bool,
-    /// Legacy scenes; new policy uses [`ToolCatalogEntry::capability_affinity`].
-    pub scene_affinity: &'static [AiScene],
     pub max_results: Option<u32>,
 }
 

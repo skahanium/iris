@@ -160,9 +160,7 @@ fn provider_candidate_from_resolved(resolved: ResolvedLlmConfig) -> ProviderCand
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_types::{
-        CapabilityRouteSummary, CapabilitySlot, EndpointFamily, ResolvedReasoningRequest,
-    };
+    use crate::ai_types::{CapabilitySlot, EndpointFamily, ResolvedReasoningRequest};
     use crate::llm::config::{ResolvedCapabilityRoute, ResolvedLlmConfig};
 
     fn resolved(
@@ -190,15 +188,6 @@ mod tests {
     ) -> ResolvedCapabilityRoute {
         ResolvedCapabilityRoute {
             resolved: resolved("openai", "primary-model", primary_endpoint),
-            summary: CapabilityRouteSummary {
-                slot: CapabilitySlot::Writer,
-                provider_id: "openai".into(),
-                model: "primary-model".into(),
-                fallback_chain: vec![CapabilitySlot::Writer],
-                reason: "test route".into(),
-                probe_status: "unknown".into(),
-                degraded: false,
-            },
             failover_candidates: failover_endpoints
                 .into_iter()
                 .enumerate()

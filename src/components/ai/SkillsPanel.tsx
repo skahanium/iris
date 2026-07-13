@@ -1,4 +1,4 @@
-﻿import { Search } from "lucide-react";
+import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { SkillCard } from "@/components/ai/skills/SkillCard";
@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { getActiveAiScene } from "@/hooks/useConnectivityStatus";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   listenSkillsChanged,
@@ -20,7 +19,6 @@ import {
 interface SkillsPanelProps {
   open: boolean;
   onClose: () => void;
-  scene?: import("@/types/ai").AiScene;
 }
 
 type SkillScope = "global" | "vault";
@@ -49,13 +47,7 @@ function confirmationState(skill: SkillListEntryDto): {
   };
 }
 
-export function SkillsPanelBody({
-  open,
-  scene,
-}: {
-  open: boolean;
-  scene?: import("@/types/ai").AiScene;
-}) {
+export function SkillsPanelBody({ open }: { open: boolean }) {
   const [skills, setSkills] = useState<SkillListEntryDto[]>([]);
   const [query, setQuery] = useState("");
   const [draftName, setDraftName] = useState("");
@@ -66,16 +58,14 @@ export function SkillsPanelBody({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const legacySceneHint = scene ?? getActiveAiScene();
-
   const refresh = useCallback(async () => {
     try {
-      const nextSkills = await skillsList(legacySceneHint);
+      const nextSkills = await skillsList();
       setSkills(nextSkills);
     } catch (nextError) {
       setError(invokeErrorMessage(nextError));
     }
-  }, [legacySceneHint]);
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -290,10 +280,10 @@ export function SkillsPanelBody({
   );
 }
 
-export function SkillsPanel({ open, onClose, scene }: SkillsPanelProps) {
+export function SkillsPanel({ open, onClose }: SkillsPanelProps) {
   return (
     <IrisOverlay open={open} onClose={onClose} title="AI Skills" size="command">
-      <SkillsPanelBody open={open} scene={scene} />
+      <SkillsPanelBody open={open} />
     </IrisOverlay>
   );
 }

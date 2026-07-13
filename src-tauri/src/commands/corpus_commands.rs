@@ -16,7 +16,7 @@ pub struct CorpusListItem {
     pub name: String,
     pub path_prefix: String,
     pub kind: String,
-    pub scenes: Vec<String>,
+    pub intents: Vec<String>,
 }
 
 #[tauri::command]
@@ -31,7 +31,7 @@ pub fn corpus_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<CorpusListI
             name: c.name,
             path_prefix: c.path_prefix,
             kind: c.kind,
-            scenes: c.scenes,
+            intents: c.intents,
         })
         .collect())
 }
@@ -43,7 +43,7 @@ pub struct CorpusUpsertPayload {
     pub name: String,
     pub path_prefix: String,
     pub kind: String,
-    pub scenes: Vec<String>,
+    pub intents: Vec<String>,
 }
 
 /// Insert or replace a corpus entry in `.iris/corpora.toml`.
@@ -56,7 +56,7 @@ pub fn corpus_upsert(state: State<'_, Arc<AppState>>, entry: CorpusUpsertPayload
         name: entry.name,
         path_prefix: entry.path_prefix,
         kind: entry.kind,
-        scenes: entry.scenes,
+        intents: entry.intents,
     };
     if let Some(existing) = config.corpus.iter_mut().find(|c| c.id == new_entry.id) {
         *existing = new_entry;

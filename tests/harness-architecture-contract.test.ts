@@ -98,3 +98,14 @@ describe("AI harness architecture contracts", () => {
     expect(connectivity.toLowerCase()).not.toContain(removedVendor);
   });
 });
+
+describe("Run runtime module ownership", () => {
+  it("does not retain the legacy ai_harness module or helper namespace", () => {
+    const runtime = read("src-tauri/src/ai_runtime/mod.rs");
+    const lib = read("src-tauri/src/lib.rs");
+
+    expect(runtime).not.toContain("ai_harness");
+    expect(runtime).not.toContain("harness_support");
+    expect(lib).not.toContain("ai_harness");
+  });
+});

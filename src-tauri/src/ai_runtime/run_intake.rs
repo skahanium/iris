@@ -1,17 +1,14 @@
-//! Explicit Request Intake for the scene-free normal-domain Run path.
-//!
-//! This minimal Phase 4 surface accepts and persists a Run before any routing,
-//! context assembly, Skill activation, legacy Task, Trace, or Harness work.
+//! Deterministic, scene-free Request Intake for unified Agent Runs.
 
 use crate::ai_runtime::agent_run_repository::{
-    AcceptRunInput, AgentRunRepository, FrozenConfirmationApproval,
+    AcceptRunInput, AgentRunRepository, FrozenConfirmationApproval, FrozenConfirmationRejection,
 };
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetResponse,
-    AssistantRunStartRequest, AssistantSessionRef, ContextMode, Effect, Effort, ExecutionEnvelope,
-    Freshness, MaterialNeed, Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType,
-    SecurityDomain,
+    AssistantRunStartRequest, AssistantSessionRef, CapabilityId, ContextMode, Effect, Effort,
+    ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed, Modality, RiskClass,
+    RunControlAction, RunEventPayload, RunEventType, SecurityDomain,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -19,56 +16,151 @@ use crate::storage::db::Database;
 const MAX_CLIENT_REQUEST_ID_CHARS: usize = 160;
 const MAX_USER_MESSAGE_CHARS: usize = 16_000;
 
-/// Scene-free normal-domain Request Intake.
+/// The only normal-domain request admission boundary.
 pub(crate) struct RunIntake;
 
 impl RunIntake {
-    /// Resolve the deliberately small Phase 4 envelope without inferring UI state.
-    pub(crate) fn resolve_minimal_envelope(
+    /// Resolve the immutable execution envelope from request facts only.
+    pub(crate) fn resolve_envelope(
         request: &AssistantRunStartRequest,
     ) -> AppResult<ExecutionEnvelope> {
         validate_start_request(request)?;
-        if request.web_enabled {
-            return Err(AppError::msg("agent_run_web_not_available"));
-        }
-        if request
-            .explicit_action
-            .as_ref()
-            .is_some_and(|action| action.effect != Effect::Answer)
-        {
-            return Err(AppError::msg("agent_run_effect_not_available"));
-        }
-        let context = if !request.explicit_references.is_empty() {
-            ContextMode::ExplicitReferences
-        } else if request.explicit_action.is_some() {
+        let message = request.message.to_ascii_lowercase();
+        let local_only = contains_any(
+            &message,
+            &[
+                "local only",
+                "offline only",
+                "do not use web",
+                "\u{53ea}\u{7528}\u{672c}\u{5730}",
+                "\u{4ec5}\u{7528}\u{672c}\u{5730}",
+            ],
+        );
+        let do_not_modify = contains_any(
+            &message,
+            &[
+                "do not modify",
+                "don't modify",
+                "rewrite only",
+                "\u{4e0d}\u{8981}\u{4fee}\u{6539}",
+                "\u{4e0d}\u{4fee}\u{6539}",
+            ],
+        );
+        let effect = if do_not_modify {
+            Effect::Answer
+        } else {
+            request
+                .explicit_action
+                .as_ref()
+                .map_or(Effect::Answer, |action| action.effect)
+        };
+        let context = if request.explicit_action.is_some() {
             ContextMode::ExplicitScope
+        } else if !request.explicit_references.is_empty() {
+            ContextMode::ExplicitReferences
+        } else if is_novel_writing_request(&message) {
+            ContextMode::Conversation
         } else {
             ContextMode::None
         };
+        let freshness = if !request.web_enabled || local_only || is_novel_writing_request(&message)
+        {
+            Freshness::Offline
+        } else if request.security_domain == SecurityDomain::Classified
+            || requires_web_verification(&message)
+        {
+            Freshness::WebRequired
+        } else if concerns_external_verifiable_fact(&message) {
+            Freshness::WebPreferred
+        } else {
+            Freshness::Offline
+        };
+        let has_images = request.content_parts.as_ref().is_some_and(|parts| {
+            parts
+                .iter()
+                .any(|part| matches!(part, crate::ai_types::ContentPart::ImageUrl { .. }))
+        });
+        let effort = match effect {
+            Effect::Apply => Effort::Durable,
+            _ if freshness != Freshness::Offline => Effort::ToolLoop,
+            _ => Effort::Direct,
+        };
+        let risk = match effect {
+            Effect::Apply => RiskClass::BoundedWrite,
+            Effect::Answer | Effect::Draft => RiskClass::ReadOnly,
+        };
+        let mut material_needs = Vec::new();
+        if !request.explicit_references.is_empty() {
+            material_needs.push(MaterialNeed::Reference);
+        }
+        if is_official_writing_request(&message) {
+            material_needs.push(MaterialNeed::Exemplar);
+        }
+        if needs_authority_material(&message) {
+            material_needs.push(MaterialNeed::Authority);
+        }
+        if freshness != Freshness::Offline {
+            material_needs.push(MaterialNeed::Web);
+        }
+        material_needs.sort_by_key(|need| match need {
+            MaterialNeed::Exemplar => 0,
+            MaterialNeed::Authority => 1,
+            MaterialNeed::Reference => 2,
+            MaterialNeed::Web => 3,
+        });
+        material_needs.dedup();
+        let mut required_capabilities = vec![CapabilityId::new("model.text")];
+        if has_images {
+            required_capabilities.push(CapabilityId::new("model.vision"));
+        }
+        if freshness != Freshness::Offline {
+            required_capabilities.push(CapabilityId::new("web.search"));
+        }
+        match effect {
+            Effect::Draft => required_capabilities.push(CapabilityId::new("note.propose_patch")),
+            Effect::Apply => required_capabilities.push(CapabilityId::new("note.apply_patch")),
+            Effect::Answer => {}
+        }
+        let mut explicit_constraints = Vec::new();
+        if local_only {
+            explicit_constraints.push(ExplicitConstraint {
+                kind: "local_only".into(),
+                value: None,
+            });
+        }
+        if do_not_modify {
+            explicit_constraints.push(ExplicitConstraint {
+                kind: "do_not_modify".into(),
+                value: None,
+            });
+        }
         Ok(ExecutionEnvelope {
-            effect: Effect::Answer,
+            effect,
             context,
-            freshness: Freshness::Offline,
-            effort: Effort::Direct,
-            security_domain: SecurityDomain::Normal,
-            risk: RiskClass::ReadOnly,
-            modalities: vec![Modality::Text],
-            material_needs: if request.explicit_references.is_empty() {
-                vec![]
+            freshness,
+            effort,
+            security_domain: request.security_domain,
+            risk,
+            modalities: if has_images {
+                vec![Modality::Text, Modality::Image]
             } else {
-                vec![MaterialNeed::Reference]
+                vec![Modality::Text]
             },
-            required_capabilities: vec![],
-            explicit_constraints: vec![],
+            material_needs,
+            required_capabilities,
+            explicit_constraints,
         })
     }
 
-    /// Atomically accept a new normal-domain Run before any execution work begins.
+    /// Atomically accept a normal-domain Run before routing or context assembly.
     pub(crate) fn start(
         db: &Database,
         request: AssistantRunStartRequest,
     ) -> AppResult<AssistantRunAccepted> {
-        let envelope = Self::resolve_minimal_envelope(&request)?;
+        let envelope = Self::resolve_envelope(&request)?;
+        if envelope.security_domain != SecurityDomain::Normal {
+            return Err(AppError::msg("agent_run_classified_domain_not_supported"));
+        }
         let session = resolve_normal_session(db, request.session.as_ref())?;
         AgentRunRepository::accept(
             db,
@@ -81,12 +173,66 @@ impl RunIntake {
                 message: request.message,
                 content_parts: request.content_parts,
                 explicit_references: request.explicit_references,
+                explicit_action: request.explicit_action,
                 envelope,
             },
         )
     }
 
-    /// Accept a Run then emit its already-committed accepted event on the shared sink.
+    /// Accept a classified Run in CEF only; classified execution remains direct and offline.
+    pub(crate) fn start_classified(
+        vault: &std::path::Path,
+        request: AssistantRunStartRequest,
+    ) -> AppResult<AssistantRunAccepted> {
+        let envelope = Self::resolve_envelope(&request)?;
+        if envelope.security_domain != SecurityDomain::Classified {
+            return Err(AppError::msg("agent_run_invalid_request"));
+        }
+        if envelope.freshness != Freshness::Offline
+            || envelope.effort != Effort::Direct
+            || envelope.effect != Effect::Answer
+        {
+            return Err(AppError::msg("agent_run_permission_denied"));
+        }
+        let session_key = match request.session.as_ref() {
+            Some(session) if session.domain != SecurityDomain::Classified => {
+                return Err(AppError::msg("agent_run_session_not_found"))
+            }
+            Some(session) => Some(session.session_key.clone()),
+            None => None,
+        };
+        let effect = serde_json::to_value(envelope.effect)?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| AppError::msg("agent_run_invalid_request"))?;
+        crate::ai_runtime::classified_session::classified_run_accept(
+            vault,
+            crate::ai_runtime::classified_session::ClassifiedRunAcceptInput {
+                client_request_id: request.client_request_id,
+                session_key,
+                run_id: uuid::Uuid::new_v4().to_string(),
+                turn_id: uuid::Uuid::new_v4().to_string(),
+                message: request.message,
+                content_parts: request
+                    .content_parts
+                    .map(serde_json::to_value)
+                    .transpose()?,
+                explicit_references: request
+                    .explicit_references
+                    .into_iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()?,
+                explicit_action: request
+                    .explicit_action
+                    .map(serde_json::to_value)
+                    .transpose()?,
+                envelope: serde_json::to_value(envelope)?,
+                effect,
+            },
+        )
+    }
+
+    /// Accept and emit the already durable accepted event.
     pub(crate) fn start_with_sink(
         db: &Database,
         request: AssistantRunStartRequest,
@@ -104,7 +250,7 @@ impl RunIntake {
         Ok(accepted)
     }
 
-    /// Read a persisted Run only through its explicit owning session.
+    /// Read only through the owning normal-domain session reference.
     pub(crate) fn get(
         db: &Database,
         session: &AssistantSessionRef,
@@ -116,13 +262,13 @@ impl RunIntake {
         AgentRunRepository::get_for_session(db, &session.session_key, run_id)
     }
 
-    /// Handle a control action without touching legacy Harness state.
+    /// Apply an explicit lifecycle control without legacy task state.
     pub(crate) fn control(db: &Database, request: AssistantRunControlRequest) -> AppResult<()> {
         let _ = Self::control_event(db, request)?;
         Ok(())
     }
 
-    /// Handle a control action and emit its durable event when it changes state.
+    /// Apply and emit a durable lifecycle event.
     pub(crate) fn control_with_sink(
         db: &Database,
         request: AssistantRunControlRequest,
@@ -158,7 +304,7 @@ impl RunIntake {
                         state_version: request.expected_state_version,
                         event_type: RunEventType::Cancelled,
                         payload: RunEventPayload::Cancelled {
-                            reason: "用户取消运行".to_string(),
+                            reason: "user_cancelled".into(),
                         },
                     },
                 )?;
@@ -180,23 +326,85 @@ impl RunIntake {
                 FrozenConfirmationApproval::Resumed(event) => Ok(Some(event)),
                 FrozenConfirmationApproval::AlreadyApplied => Ok(None),
             },
-            RunControlAction::RejectChange { .. } | RunControlAction::Resume => {
-                Err(AppError::msg("agent_run_control_not_available"))
+            RunControlAction::RejectChange { confirmation_id } => {
+                match AgentRunRepository::reject_frozen_confirmation(
+                    db,
+                    &request.session.session_key,
+                    &request.run_id,
+                    &confirmation_id,
+                    request.expected_state_version,
+                    chrono::Utc::now().timestamp_millis(),
+                )? {
+                    FrozenConfirmationRejection::Resumed(event) => Ok(Some(event)),
+                    FrozenConfirmationRejection::AlreadyRejected => Ok(None),
+                }
             }
+            RunControlAction::Resume => Err(AppError::msg("agent_run_control_not_available")),
         }
     }
 }
 
 fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
-    if request.security_domain != SecurityDomain::Normal {
-        return Err(AppError::msg("agent_run_classified_domain_not_supported"));
-    }
     if request.client_request_id.trim().is_empty()
         || request.client_request_id.chars().count() > MAX_CLIENT_REQUEST_ID_CHARS
         || request.message.trim().is_empty()
         || request.message.chars().count() > MAX_USER_MESSAGE_CHARS
     {
         return Err(AppError::msg("agent_run_invalid_request"));
+    }
+    validate_explicit_action(request)
+}
+
+fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()> {
+    let Some(action) = request.explicit_action.as_ref() else {
+        return Ok(());
+    };
+    let valid_reference = |id: &str, hash: &str| {
+        request.explicit_references.iter().any(|reference| {
+            reference.id == id
+                && reference.content_hash.as_deref() == Some(hash)
+                && !reference.stale
+                && reference.invalid_reason.is_none()
+        })
+    };
+    if let Some(target) = action.target.as_ref() {
+        if target.reference_id.trim().is_empty()
+            || target.content_hash.trim().is_empty()
+            || !valid_reference(&target.reference_id, &target.content_hash)
+        {
+            return Err(AppError::msg("agent_run_invalid_request"));
+        }
+    }
+    if let Some(snapshot) = action.selection_snapshot.as_ref() {
+        let length = snapshot
+            .utf8_range
+            .end
+            .checked_sub(snapshot.utf8_range.start)
+            .ok_or_else(|| AppError::msg("agent_run_invalid_request"))?;
+        let range_matches = request.explicit_references.iter().any(|reference| {
+            reference.id == snapshot.reference_id
+                && reference.content_hash.as_deref() == Some(snapshot.content_hash.as_str())
+                && reference.utf8_range.as_ref().is_some_and(|range| {
+                    range.start == snapshot.utf8_range.start && range.end == snapshot.utf8_range.end
+                })
+        });
+        if snapshot.reference_id.trim().is_empty()
+            || snapshot.content_hash.trim().is_empty()
+            || snapshot.text.is_empty()
+            || snapshot.text.chars().count() > MAX_USER_MESSAGE_CHARS
+            || length != snapshot.text.len()
+            || !valid_reference(&snapshot.reference_id, &snapshot.content_hash)
+            || !range_matches
+        {
+            return Err(AppError::msg("agent_run_invalid_request"));
+        }
+        if let Some(target) = action.target.as_ref() {
+            if target.reference_id != snapshot.reference_id
+                || target.content_hash != snapshot.content_hash
+            {
+                return Err(AppError::msg("agent_run_invalid_request"));
+            }
+        }
     }
     Ok(())
 }
@@ -213,4 +421,70 @@ fn resolve_normal_session(
             .ok_or_else(|| AppError::msg("agent_run_session_not_found")),
         None => NormalSessionRepository::create(db),
     }
+}
+fn contains_any(message: &str, markers: &[&str]) -> bool {
+    markers.iter().any(|marker| message.contains(marker))
+}
+fn requires_web_verification(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "latest",
+            "current",
+            "price",
+            "verify",
+            "search",
+            "http://",
+            "https://",
+            "url",
+            "\u{6700}\u{65b0}",
+            "\u{8054}\u{7f51}",
+            "\u{6838}\u{5b9e}",
+            "\u{641c}\u{7d22}",
+        ],
+    )
+}
+fn concerns_external_verifiable_fact(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "what is",
+            "who is",
+            "when did",
+            "where is",
+            "how many",
+            "facts",
+            "statistics",
+            "history",
+            "definition",
+            "public record",
+        ],
+    )
+}
+fn is_novel_writing_request(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "chapter",
+            "novel",
+            "fiction",
+            "write a story",
+            "\u{5c0f}\u{8bf4}",
+        ],
+    )
+}
+fn is_official_writing_request(message: &str) -> bool {
+    contains_any(message, &["memo", "brief", "official notice"])
+}
+fn needs_authority_material(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "regulation",
+            "compliance",
+            "policy",
+            "procedure",
+            "responsibility",
+        ],
+    )
 }

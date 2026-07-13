@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use crate::ai_runtime::AiScene;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::llm::config::{
@@ -65,12 +64,8 @@ pub fn llm_config_apply_deepseek_defaults(
 }
 
 #[tauri::command]
-pub fn connectivity_status(
-    state: State<'_, Arc<AppState>>,
-    scene: Option<String>,
-) -> AppResult<ConnectivityStatusDto> {
-    let scene = parse_scene(scene)?;
-    config::connectivity_status(&state.db, scene)
+pub fn connectivity_status(state: State<'_, Arc<AppState>>) -> AppResult<ConnectivityStatusDto> {
+    config::connectivity_status(&state.db)
 }
 
 #[derive(Debug, Serialize)]
@@ -79,7 +74,6 @@ pub struct LlmConfigTestResult {
     pub ok: bool,
     pub message: String,
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ModelListValidationCheck {
     Matched,
@@ -696,16 +690,6 @@ async fn probe_chat_minimal(
     let text = truncate_error_text(&response.text().await.unwrap_or_default());
     Err(AppError::msg(format!("HTTP {status}: {text}")))
 }
-
-fn parse_scene(scene: Option<String>) -> AppResult<AiScene> {
-    match scene {
-        Some(s) => {
-            AiScene::parse_wire(&s).ok_or_else(|| AppError::msg(format!("invalid scene: {s}")))
-        }
-        None => Ok(AiScene::KnowledgeLookup),
-    }
-}
-
 fn validate_routing(routing: &LlmRoutingConfig) -> AppResult<()> {
     for route in routing.slots.values() {
         validate_route(&route.provider_id, &route.model, routing)?;

@@ -3,54 +3,40 @@ import { MessageSquarePlus } from "lucide-react";
 import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
 import { AssistantPersonaDisplay } from "@/components/ai/AssistantPersonaDisplay";
 import { Button } from "@/components/ui/button";
+import type { AssistantRunState } from "@/hooks/useAssistantRun";
 import type { PromptProfileDto } from "@/lib/ipc";
-import type {
-  AiDomain,
-  AiScene,
-  AssistantTaskStatus,
-  TaskPlanIntent,
-  WebSearchUsage,
-} from "@/types/ai";
+import type { AiDomain, AssistantSessionRef } from "@/types/ai";
 
 import type { ChatLine } from "./AiMessageList";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 
 interface AssistantPanelHeaderProps {
   chromeActionsDisabled: boolean;
-  currentSessionId: number | string | null;
+  currentSession: AssistantSessionRef | null;
   domain?: AiDomain;
-  scene: AiScene;
   onDeletedCurrentSession: () => void;
-  onDeletedSession?: (sessionId: number | string) => void;
+  onDeletedSession?: (session: AssistantSessionRef) => void;
   onNewChat: () => void;
-  onSelectSession: (
-    id: number | string,
-    messages: ChatLine[],
-    ledgerPackets?: ChatLine["evidencePackets"],
-  ) => void;
+  onSelectSession: (session: AssistantSessionRef, messages: ChatLine[]) => void;
   profile: PromptProfileDto;
-  taskPlanIntent?: TaskPlanIntent | null;
-  taskStatus: AssistantTaskStatus;
+  runState: AssistantRunState;
   webSearch: boolean;
   webSearchProviderName?: string | null;
-  webSearchUsage?: WebSearchUsage | null;
 }
 
+/** Header actions use opaque conversation references and the unified Run state only. */
 export function AssistantPanelHeader({
   chromeActionsDisabled,
-  currentSessionId,
+  currentSession,
   domain = "normal",
-  scene,
   onDeletedCurrentSession,
   onDeletedSession,
   onNewChat,
   onSelectSession,
   profile,
-  taskPlanIntent,
-  taskStatus,
+  runState,
   webSearch,
   webSearchProviderName,
-  webSearchUsage,
 }: AssistantPanelHeaderProps) {
   return (
     <header className="ai-sidecar-header shrink-0 border-b border-border/60 px-3 py-1.5">
@@ -62,20 +48,20 @@ export function AssistantPanelHeader({
           <AgentStatusBadge
             webSearchEnabled={webSearch}
             webSearchProviderName={webSearchProviderName}
-            webSearchUsage={webSearchUsage}
-            scene={scene}
-            taskPlanIntent={taskPlanIntent}
-            taskStatus={taskStatus}
+            runState={runState}
             disabled={chromeActionsDisabled}
           />
           <SessionHistoryDropdown
-            currentSessionId={currentSessionId}
+            currentSession={currentSession}
             disabled={chromeActionsDisabled}
             domain={domain}
             onSelectSession={onSelectSession}
-            onDeleted={(id) => {
-              onDeletedSession?.(id);
-              if (currentSessionId === id) {
+            onDeleted={(session) => {
+              onDeletedSession?.(session);
+              if (
+                currentSession?.domain === session.domain &&
+                currentSession.sessionKey === session.sessionKey
+              ) {
                 onDeletedCurrentSession();
               }
             }}
@@ -85,12 +71,12 @@ export function AssistantPanelHeader({
             variant="outline"
             size="sm"
             className="h-8 gap-1 px-2 text-xs"
-            title="新对话（不加载本笔记下的历史会话）"
+            title="New conversation"
             onClick={onNewChat}
             disabled={chromeActionsDisabled}
           >
             <MessageSquarePlus className="h-3.5 w-3.5" />
-            新对话
+            New chat
           </Button>
         </div>
       </div>

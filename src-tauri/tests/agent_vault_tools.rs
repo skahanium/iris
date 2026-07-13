@@ -3,7 +3,7 @@ use iris_lib::ai_runtime::tool_catalog::catalog_find;
 use iris_lib::ai_runtime::tool_dispatch::{
     dispatch_tool, ToolDispatchContext, DISPATCHABLE_TOOL_NAMES,
 };
-use iris_lib::ai_runtime::{writing_workflow, AiScene};
+
 use iris_lib::app::AppState;
 use iris_lib::indexer::scan::IndexEmbeddingMode;
 
@@ -25,7 +25,6 @@ fn ctx_with_scope<'a>(
     retrieval_scope: &'a RetrievalScope,
 ) -> ToolDispatchContext<'a> {
     ToolDispatchContext {
-        scene: AiScene::DraftingAssist,
         note_path,
         file_id: None,
         web_search_enabled: false,
@@ -91,7 +90,7 @@ async fn markdown_patch_tool_creates_pre_write_snapshot() {
     index_note(&state, "notes/test.md", "# Test\nHello world");
 
     let base = "# Test\nHello world";
-    let base_hash = writing_workflow::compute_content_hash(base);
+    let base_hash = iris_lib::cas::hash::content_hash_str(base);
     let result = dispatch_tool(
         &state,
         &ctx(Some("notes/test.md")),
@@ -284,7 +283,7 @@ async fn markdown_patch_rejects_hash_mismatch_without_writing() {
 async fn markdown_patch_rejects_out_of_vault_target_without_creating_file() {
     let (state, dir) = test_state();
     index_note(&state, "notes/test.md", "# Test\nHello world");
-    let base_hash = writing_workflow::compute_content_hash("# Test\nHello world");
+    let base_hash = iris_lib::cas::hash::content_hash_str("# Test\nHello world");
 
     let result = dispatch_tool(
         &state,

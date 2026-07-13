@@ -86,18 +86,14 @@ describe("classified editor AI parity contract", () => {
       expect(src).not.toContain("涉密笔记不能接收 AI 插入");
     });
 
-    it("send selection to AI accepts classified selections without sending the full note as normal context", () => {
+    it("send selection to AI only opens the Run panel after an explicit selection", () => {
       const src = read("src/hooks/useAiSidecarBridge.ts");
-      expect(src).not.toContain("涉密笔记不能发送到 AI");
-      expect(src).toContain("isClassifiedVaultPath(path)");
-      expect(src).toContain("snapshot.text : getNoteContent()");
-      expect(src).toContain("setSelectionQuote({");
-    });
-
-    it("App patch handler no longer blocks classified rewrite by path alone", () => {
-      const app = read("src/App.impl.tsx");
-      expect(app).toContain("applyMarkdownToEditor(newContent)");
-      expect(app).not.toContain("涉密笔记不能接收 AI 改写");
+      expect(src).toContain("getEditorSelectionSnapshot");
+      expect(src).toContain("setAiPanelOpen(true)");
+      expect(src).not.toContain("isClassifiedVaultPath");
+      expect(src).not.toContain("getNoteContent");
+      expect(src).not.toContain("setSelectionQuote");
+      expect(src).not.toContain("content: classifiedSelection");
     });
 
     it("classified context menu handler blocks editing actions when locked", () => {

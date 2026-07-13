@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use crate::error::{AppError, AppResult};
 
@@ -121,6 +121,16 @@ const MIGRATION_047_DOWN: &str = include_str!("../../migrations/047_agent_run_fo
 const MIGRATION_048_UP: &str = include_str!("../../migrations/048_agent_run_confirmations.sql");
 const MIGRATION_048_DOWN: &str =
     include_str!("../../migrations/048_agent_run_confirmations.down.sql");
+const MIGRATION_049_UP: &str =
+    include_str!("../../migrations/049_document_capability_policies.sql");
+const MIGRATION_049_DOWN: &str =
+    include_str!("../../migrations/049_document_capability_policies.down.sql");
+const MIGRATION_050_UP: &str = include_str!("../../migrations/050_agent_run_explicit_action.sql");
+const MIGRATION_050_DOWN: &str =
+    include_str!("../../migrations/050_agent_run_explicit_action.down.sql");
+const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
+const MIGRATION_051_DOWN: &str =
+    include_str!("../../migrations/051_agent_harness_cutover.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -132,6 +142,286 @@ fn is_applied(conn: &Connection, name: &str) -> bool {
     .unwrap_or(false)
 }
 
+/// Convert historical packet metadata into evidence-ledger IDs before dropping
+/// the duplicate packet column. Only metadata survives; text excerpts and bodies
+/// are intentionally ignored.
+fn migrate_legacy_evidence_packets(conn: &Connection) -> AppResult<()> {
+    let mut statement = conn.prepare(
+        "SELECT id, session_id, seq, evidence_packets, evidence_refs_json
+         FROM session_messages
+         WHERE evidence_packets IS NOT NULL AND trim(evidence_packets) != ''",
+    )?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+
+    for (message_id, session_id, sequence, packet_json, existing_refs_json) in rows {
+        let Ok(serde_json::Value::Array(items)) =
+            serde_json::from_str::<serde_json::Value>(&packet_json)
+        else {
+            continue;
+        };
+
+        let mut refs = existing_refs_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<Vec<serde_json::Value>>(value).ok())
+            .unwrap_or_default();
+
+        for (packet_index, item) in items.iter().enumerate() {
+            let Some(object) = item.as_object() else {
+                continue;
+            };
+            let web = object.get("web").and_then(serde_json::Value::as_object);
+            let source_kind = if object
+                .get("source_type")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| value.eq_ignore_ascii_case("web"))
+                || web.is_some()
+            {
+                "web"
+            } else {
+                "local"
+            };
+            let title = object
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("Historical evidence");
+            let source_path = (source_kind == "local")
+                .then(|| {
+                    object
+                        .get("source_path")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .flatten();
+            let span = object
+                .get("source_span")
+                .and_then(serde_json::Value::as_object);
+            let span_start = span
+                .and_then(|value| value.get("start"))
+                .and_then(serde_json::Value::as_i64);
+            let span_end = span
+                .and_then(|value| value.get("end"))
+                .and_then(serde_json::Value::as_i64);
+            let heading_path = object
+                .get("heading_path")
+                .and_then(serde_json::Value::as_str);
+            let content_hash = (source_kind == "local")
+                .then(|| {
+                    object
+                        .get("content_hash")
+                        .and_then(serde_json::Value::as_str)
+                })
+                .flatten();
+            let retrieval_reason = object
+                .get("retrieval_reason")
+                .and_then(serde_json::Value::as_str);
+            let score = object.get("score").and_then(serde_json::Value::as_f64);
+            let url = web
+                .and_then(|value| value.get("url"))
+                .and_then(serde_json::Value::as_str)
+                .or_else(|| object.get("url").and_then(serde_json::Value::as_str));
+            let normalized_url = url.map(|value| value.trim().to_ascii_lowercase());
+            let identity = if source_kind == "web" {
+                normalized_url
+                    .clone()
+                    .unwrap_or_else(|| format!("message:{message_id}:packet:{packet_index}"))
+            } else {
+                format!(
+                    "{}:{}:{}:{}",
+                    source_path.unwrap_or(""),
+                    span_start.unwrap_or(-1),
+                    span_end.unwrap_or(-1),
+                    content_hash.unwrap_or("")
+                )
+            };
+            let packet_key = format!("historical:{source_kind}:{identity}");
+            let existing = conn.query_row(
+                "SELECT id, citation_label FROM session_evidence
+                 WHERE session_id = ?1 AND packet_key = ?2",
+                params![session_id, packet_key],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            );
+            let (evidence_id, citation_label) = match existing {
+                Ok(existing) => existing,
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    let citation_index: i64 = conn.query_row(
+                        "SELECT COALESCE(MAX(citation_index), 0) + 1
+                         FROM session_evidence WHERE session_id = ?1",
+                        [session_id],
+                        |row| row.get(0),
+                    )?;
+                    let citation_label = format!("[C{citation_index}]");
+                    conn.execute(
+                        "INSERT INTO session_evidence
+                         (session_id, citation_index, citation_label, packet_key, message_seq_first,
+                          source_type, title, source_path, source_span_start, source_span_end,
+                          heading_path, content_hash, retrieval_reason, score, url, normalized_url,
+                          created_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5,
+                                 ?6, ?7, ?8, ?9, ?10,
+                                 ?11, ?12, ?13, ?14, ?15, ?16,
+                                 ?17)",
+                        params![
+                            session_id,
+                            citation_index,
+                            citation_label,
+                            packet_key,
+                            sequence,
+                            source_kind,
+                            title,
+                            source_path,
+                            span_start,
+                            span_end,
+                            heading_path,
+                            content_hash,
+                            retrieval_reason,
+                            score,
+                            url,
+                            normalized_url,
+                            chrono::Utc::now().to_rfc3339(),
+                        ],
+                    )?;
+                    (conn.last_insert_rowid(), citation_label)
+                }
+                Err(error) => return Err(error.into()),
+            };
+            let evidence_id = evidence_id.to_string();
+            if refs.iter().any(|entry| {
+                entry.get("evidenceId").and_then(serde_json::Value::as_str)
+                    == Some(evidence_id.as_str())
+            }) {
+                continue;
+            }
+            refs.push(serde_json::json!({
+                "evidenceId": evidence_id,
+                "sourceKind": source_kind,
+                "title": title,
+                "displayLabel": citation_label,
+                "stale": false,
+            }));
+        }
+
+        conn.execute(
+            "UPDATE session_messages SET evidence_refs_json = ?1 WHERE id = ?2",
+            params![serde_json::to_string(&refs)?, message_id],
+        )?;
+    }
+    Ok(())
+}
+
+/// Apply the one-way legacy AI persistence cutover in a single transaction.
+fn apply_agent_harness_cutover(conn: &Connection) -> AppResult<()> {
+    const NAME: &str = "051_agent_harness_cutover";
+    if is_applied(conn, NAME) {
+        return Ok(());
+    }
+
+    let foreign_keys_enabled: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    conn.execute_batch("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE")?;
+    let result = (|| -> AppResult<()> {
+        migrate_legacy_evidence_packets(conn)?;
+        conn.execute_batch(MIGRATION_051_UP)?;
+        let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(AppError::msg(format!(
+                "migration '{}' integrity check failed: {integrity}",
+                NAME
+            )));
+        }
+        let foreign_key_issues: i64 =
+            conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if foreign_key_issues != 0 {
+            return Err(AppError::msg(format!(
+                "migration '{}' foreign key check failed: {foreign_key_issues} issues",
+                NAME
+            )));
+        }
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES (?1, datetime('now'))",
+            [NAME],
+        )?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            if foreign_keys_enabled != 0 {
+                conn.execute_batch("PRAGMA foreign_keys = ON")?;
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            if foreign_keys_enabled != 0 {
+                let _ = conn.execute_batch("PRAGMA foreign_keys = ON");
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Restore a legacy-readable schema without reactivating cancelled Runs.
+fn rollback_agent_harness_cutover(conn: &Connection) -> AppResult<()> {
+    const NAME: &str = "051_agent_harness_cutover";
+    if !is_applied(conn, NAME) {
+        return Ok(());
+    }
+
+    let foreign_keys_enabled: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    conn.execute_batch("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE")?;
+    let result = (|| -> AppResult<()> {
+        conn.execute_batch(MIGRATION_051_DOWN)?;
+        let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        if integrity != "ok" {
+            return Err(AppError::msg(format!(
+                "rollback '{}' integrity check failed: {integrity}",
+                NAME
+            )));
+        }
+        let foreign_key_issues: i64 =
+            conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })?;
+        if foreign_key_issues != 0 {
+            return Err(AppError::msg(format!(
+                "rollback '{}' foreign key check failed: {foreign_key_issues} issues",
+                NAME
+            )));
+        }
+        conn.execute("DELETE FROM _migrations WHERE name = ?1", [NAME])?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            if foreign_keys_enabled != 0 {
+                conn.execute_batch("PRAGMA foreign_keys = ON")?;
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            if foreign_keys_enabled != 0 {
+                let _ = conn.execute_batch("PRAGMA foreign_keys = ON");
+            }
+            Err(error)
+        }
+    }
+}
 fn apply_migration(conn: &Connection, name: &str, sql: &str, best_effort: bool) -> AppResult<()> {
     if is_applied(conn, name) {
         return Ok(());
@@ -267,6 +557,19 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "046_auxiliary_embeddings_v2", MIGRATION_046_UP, false)?;
     apply_migration(conn, "047_agent_run_foundation", MIGRATION_047_UP, false)?;
     apply_migration(conn, "048_agent_run_confirmations", MIGRATION_048_UP, false)?;
+    apply_migration(
+        conn,
+        "049_document_capability_policies",
+        MIGRATION_049_UP,
+        false,
+    )?;
+    apply_migration(
+        conn,
+        "050_agent_run_explicit_action",
+        MIGRATION_050_UP,
+        false,
+    )?;
+    apply_agent_harness_cutover(conn)?;
 
     Ok(())
 }
@@ -278,6 +581,9 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_agent_harness_cutover(conn)?;
+    rollback_migration(conn, "050_agent_run_explicit_action", MIGRATION_050_DOWN);
+    rollback_migration(conn, "049_document_capability_policies", MIGRATION_049_DOWN);
     rollback_migration(conn, "048_agent_run_confirmations", MIGRATION_048_DOWN);
     rollback_migration(conn, "047_agent_run_foundation", MIGRATION_047_DOWN);
     rollback_migration(conn, "046_auxiliary_embeddings_v2", MIGRATION_046_DOWN);
@@ -563,70 +869,6 @@ mod tests {
     }
 
     #[test]
-    fn migration_009_creates_ai_runtime_tables() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        let has_sessions: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)
-            .unwrap();
-        assert!(has_sessions, "missing sessions table");
-
-        let has_traces: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_traces'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)
-            .unwrap();
-        assert!(has_traces, "missing ai_traces table");
-
-        let has_profile: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='user_profile'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)
-            .unwrap();
-        assert!(has_profile, "missing user_profile table");
-
-        let has_deposits: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='knowledge_deposits'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)
-            .unwrap();
-        assert!(has_deposits, "missing knowledge_deposits table");
-
-        // Verify files extended columns exist
-        let col_exists = |table: &str, col: &str| -> bool {
-            let mut stmt = conn
-                .prepare(&format!("PRAGMA table_info({table})"))
-                .expect("pragma");
-            let names: Vec<String> = stmt
-                .query_map([], |row| row.get(1))
-                .expect("query")
-                .flatten()
-                .collect();
-            names.iter().any(|n| n == col)
-        };
-        assert!(col_exists("files", "genre"), "missing files.genre");
-        assert!(
-            col_exists("chunks", "embedding_model"),
-            "missing chunks.embedding_model"
-        );
-    }
-
-    #[test]
     fn migration_009_roundtrip() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
@@ -817,54 +1059,6 @@ mod tests {
     }
 
     #[test]
-    fn migration_027_creates_agent_permission_tables() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        for table in ["agent_permission_grants", "agent_permission_audit"] {
-            let has: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
-                    [table],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map(|c| c > 0)
-                .unwrap();
-            assert!(has, "missing {table}");
-        }
-
-        conn.execute(
-            "INSERT INTO ai_traces (request_id, scene, status, created_at)
-             VALUES ('req-perm-1', 'drafting_assist', 'running', datetime('now'))",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO agent_permission_grants
-             (permission_name, decision, scope_kind, scope_value, risk_level, skill_id)
-             VALUES ('vault.write.patch', 'allow_session', 'vault', 'current', 'medium', NULL)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO agent_permission_audit
-             (request_id, skill_id, tool_name, permission_name, decision, scope_summary, risk_level, result_status)
-             VALUES ('req-perm-1', NULL, 'replace_selection', 'vault.write.patch', 'allow_once', 'path=notes/a.md', 'medium', 'pending')",
-            [],
-        )
-        .unwrap();
-
-        let summary: String = conn
-            .query_row(
-                "SELECT scope_summary FROM agent_permission_audit WHERE request_id = 'req-perm-1'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(summary, "path=notes/a.md");
-    }
-
-    #[test]
     fn migration_027_roundtrip() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
@@ -965,172 +1159,6 @@ mod tests {
     }
 
     #[test]
-    fn migration_036_adds_session_message_evidence_packets() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        let has_column: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE name = 'evidence_packets'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|count| count > 0)
-            .unwrap();
-
-        assert!(has_column, "missing evidence_packets on session_messages");
-    }
-    #[test]
-    fn migration_037_creates_session_evidence_without_body_snapshots() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        let table_exists: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session_evidence'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|count| count > 0)
-            .unwrap();
-        assert!(table_exists, "missing session_evidence table");
-
-        let columns = conn
-            .prepare("PRAGMA table_info(session_evidence)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .flatten()
-            .collect::<Vec<_>>();
-
-        for required in [
-            "session_id",
-            "citation_index",
-            "citation_label",
-            "packet_key",
-            "message_seq_first",
-            "source_type",
-            "title",
-            "source_path",
-            "source_span_start",
-            "source_span_end",
-            "heading_path",
-            "content_hash",
-            "retrieval_reason",
-            "score",
-            "confidence",
-            "url",
-            "normalized_url",
-            "domain",
-            "retrieved_at",
-            "search_backend",
-            "source_rank",
-            "failure_reason",
-            "retired_at",
-        ] {
-            assert!(
-                columns.contains(&required.to_string()),
-                "missing {required}"
-            );
-        }
-
-        for forbidden in [
-            "body",
-            "content",
-            "excerpt",
-            "snapshot",
-            "note_content",
-            "page_body",
-            "page_excerpt",
-            "web_snapshot",
-        ] {
-            assert!(
-                !columns.contains(&forbidden.to_string()),
-                "session_evidence must not store {forbidden}"
-            );
-        }
-
-        let foreign_keys = conn
-            .prepare("PRAGMA foreign_key_list(session_evidence)")
-            .unwrap()
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(6)?,
-                ))
-            })
-            .unwrap()
-            .flatten()
-            .collect::<Vec<_>>();
-        assert!(
-            foreign_keys.iter().any(|(table, from, to, on_delete)| {
-                table == "sessions"
-                    && from == "session_id"
-                    && to == "id"
-                    && on_delete.eq_ignore_ascii_case("CASCADE")
-            }),
-            "session_evidence.session_id must cascade with sessions.id"
-        );
-
-        conn.execute(
-            "INSERT INTO sessions (session_key, scene, created_at, updated_at)
-             VALUES ('evidence-session', 'knowledge_lookup', datetime('now'), datetime('now'))",
-            [],
-        )
-        .unwrap();
-        let session_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO session_evidence
-             (session_id, citation_index, citation_label, packet_key, message_seq_first,
-              source_type, title, source_path, content_hash, created_at)
-             VALUES (?1, 1, '[C1]', 'local:path:hash', 2,
-                     'local', 'Source', 'source.md', 'hash', datetime('now'))",
-            [session_id],
-        )
-        .unwrap();
-
-        let duplicate_label = conn.execute(
-            "INSERT INTO session_evidence
-             (session_id, citation_index, citation_label, packet_key, message_seq_first,
-              source_type, title, created_at)
-             VALUES (?1, 2, '[C1]', 'local:other:hash', 2,
-                     'local', 'Other', datetime('now'))",
-            [session_id],
-        );
-        assert!(
-            duplicate_label.is_err(),
-            "citation_label must be unique per session"
-        );
-
-        let duplicate_packet = conn.execute(
-            "INSERT INTO session_evidence
-             (session_id, citation_index, citation_label, packet_key, message_seq_first,
-              source_type, title, created_at)
-             VALUES (?1, 2, '[C2]', 'local:path:hash', 2,
-                     'local', 'Duplicate', datetime('now'))",
-            [session_id],
-        );
-        assert!(
-            duplicate_packet.is_err(),
-            "packet_key must be unique per session"
-        );
-
-        conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])
-            .unwrap();
-        let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM session_evidence", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(
-            remaining, 0,
-            "session_evidence must cascade on session delete"
-        );
-    }
-
-    #[test]
     fn migration_038_creates_attachment_refs() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
@@ -1209,214 +1237,6 @@ mod tests {
     }
 
     #[test]
-    fn migration_032_creates_agent_task_tables_with_session_lifecycle() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        for table in ["agent_tasks", "agent_task_steps", "agent_task_events"] {
-            let has: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
-                    [table],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map(|c| c > 0)
-                .unwrap();
-            assert!(has, "missing {table}");
-        }
-
-        conn.execute(
-            "INSERT INTO sessions (session_key, scene, created_at, updated_at)
-             VALUES ('task-session', 'knowledge_lookup', datetime('now'), datetime('now'))",
-            [],
-        )
-        .unwrap();
-        let session_id = conn.last_insert_rowid();
-
-        conn.execute(
-            "INSERT INTO agent_tasks
-             (task_id, request_id, session_id, kind, status, user_goal_summary, budget_policy_json, created_at, updated_at)
-             VALUES ('task-1', 'req-task-1', ?1, 'lightweight', 'running', 'short summary', '{}', datetime('now'), datetime('now'))",
-            [session_id],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO agent_task_steps
-             (task_id, step_seq, kind, status, input_summary, output_summary, checkpoint_json, created_at, updated_at)
-             VALUES ('task-1', 1, 'respond', 'completed', 'input summary', 'output summary',
-                     '{\"summary\":\"safe\",\"packet_ids\":[]}', datetime('now'), datetime('now'))",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO agent_task_events
-             (task_id, event_type, message, payload_json, created_at)
-             VALUES ('task-1', 'status', 'started', '{}', datetime('now'))",
-            [],
-        )
-        .unwrap();
-
-        conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])
-            .unwrap();
-
-        for table in ["agent_tasks", "agent_task_steps", "agent_task_events"] {
-            let count: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
-                .unwrap();
-            assert_eq!(count, 0, "{table} should cascade with its session task");
-        }
-    }
-
-    #[test]
-    fn migration_032_agent_task_checkpoint_is_summary_shaped() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        let mut columns = conn
-            .prepare("PRAGMA table_info(agent_task_steps)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .flatten()
-            .collect::<Vec<_>>();
-        columns.sort();
-
-        assert!(columns.contains(&"checkpoint_json".to_string()));
-        assert!(columns.contains(&"input_summary".to_string()));
-        assert!(columns.contains(&"output_summary".to_string()));
-        assert!(!columns.contains(&"full_prompt".to_string()));
-        assert!(!columns.contains(&"full_messages".to_string()));
-        assert!(!columns.contains(&"note_content".to_string()));
-    }
-
-    #[test]
-    fn migration_047_creates_unified_agent_run_schema_without_legacy_routing_fields() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        for table in ["agent_runs", "agent_run_steps", "agent_run_events"] {
-            let exists: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                    [table],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map(|count| count > 0)
-                .unwrap();
-            assert!(exists, "missing {table}");
-        }
-
-        let run_columns = conn
-            .prepare("PRAGMA table_info(agent_runs)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .flatten()
-            .collect::<Vec<_>>();
-        for required in [
-            "run_id",
-            "client_request_id",
-            "session_id",
-            "turn_id",
-            "status",
-            "state_version",
-            "effect",
-            "effort",
-            "security_domain",
-            "risk",
-            "envelope_json",
-            "goal_summary",
-            "budget_policy_json",
-            "provider_route_summary_json",
-            "stage_metrics_json",
-            "token_input",
-            "token_output",
-            "error_code",
-            "safe_error_message",
-            "created_at",
-            "updated_at",
-            "completed_at",
-        ] {
-            assert!(
-                run_columns.contains(&required.to_string()),
-                "missing {required}"
-            );
-        }
-        for forbidden in ["scene", "note_path", "document_path", "checkpoint"] {
-            assert!(
-                !run_columns.contains(&forbidden.to_string()),
-                "agent_runs must not contain legacy {forbidden}"
-            );
-        }
-
-        conn.execute(
-            "INSERT INTO sessions (session_key, scene, created_at, updated_at)
-             VALUES ('run-schema-session', 'knowledge_lookup', datetime('now'), datetime('now'))",
-            [],
-        )
-        .unwrap();
-        let session_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO agent_runs
-             (run_id, client_request_id, session_id, turn_id, status, state_version,
-              effect, effort, security_domain, risk, envelope_json, goal_summary,
-              budget_policy_json, provider_route_summary_json, stage_metrics_json,
-              token_input, token_output, created_at, updated_at)
-             VALUES ('run-1', 'request-1', ?1, 'turn-1', 'accepted', 0,
-                     'answer', 'direct', 'normal', 'read_only', '{}', 'summary',
-                     '{}', '{}', '{}', 0, 0, datetime('now'), datetime('now'))",
-            [session_id],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO agent_run_events
-             (run_id, event_seq, state_version, event_type, payload_json, created_at)
-             VALUES ('run-1', 1, 0, 'accepted', '{}', datetime('now'))",
-            [],
-        )
-        .unwrap();
-        assert!(conn
-            .execute(
-                "INSERT INTO agent_run_events
-                 (run_id, event_seq, state_version, event_type, payload_json, created_at)
-                 VALUES ('run-1', 1, 0, 'accepted', '{}', datetime('now'))",
-                [],
-            )
-            .is_err());
-
-        let evidence_columns = conn
-            .prepare("PRAGMA table_info(session_evidence)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .flatten()
-            .collect::<Vec<_>>();
-        for required in ["origin_run_id", "material_role", "stale", "bounded_excerpt"] {
-            assert!(
-                evidence_columns.contains(&required.to_string()),
-                "missing session_evidence.{required}"
-            );
-        }
-
-        conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])
-            .unwrap();
-        let events: i64 = conn
-            .query_row("SELECT COUNT(*) FROM agent_run_events", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(events, 0, "run events must cascade with their session");
-        let foreign_key_issues: i64 = conn
-            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(foreign_key_issues, 0);
-    }
-
-    #[test]
     fn migration_047_roundtrips_and_preserves_database_integrity() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
@@ -1478,134 +1298,6 @@ mod tests {
                 "missing {required}"
             );
         }
-    }
-
-    #[test]
-    fn migration_033_creates_summary_shaped_memory_and_deliberation_tables() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        for table in ["conversation_summaries", "deliberation_states"] {
-            let has: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
-                    [table],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map(|c| c > 0)
-                .unwrap();
-            assert!(has, "missing {table}");
-
-            let columns = conn
-                .prepare(&format!("PRAGMA table_info({table})"))
-                .unwrap()
-                .query_map([], |row| row.get::<_, String>(1))
-                .unwrap()
-                .flatten()
-                .collect::<Vec<_>>();
-            assert!(!columns.contains(&"full_prompt".to_string()));
-            assert!(!columns.contains(&"full_messages".to_string()));
-            assert!(!columns.contains(&"note_content".to_string()));
-        }
-
-        conn.execute(
-            "INSERT INTO sessions (session_key, scene, created_at, updated_at)
-             VALUES ('memory-session', 'knowledge_lookup', datetime('now'), datetime('now'))",
-            [],
-        )
-        .unwrap();
-        let session_id = conn.last_insert_rowid();
-        conn.execute(
-            "INSERT INTO ai_traces (request_id, scene, status, created_at)
-             VALUES ('req-deliberation', 'knowledge_lookup', 'running', datetime('now'))",
-            [],
-        )
-        .unwrap();
-
-        conn.execute(
-            "INSERT INTO conversation_summaries
-             (session_id, seq_start, seq_end, content_hash, goal_summary,
-              preference_summary, decision_summary, open_threads_summary, created_at, updated_at)
-             VALUES (?1, 1, 48,
-                     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-                     'goal', 'preference', 'decision', 'open', datetime('now'), datetime('now'))",
-            [session_id],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO deliberation_states
-             (request_id, session_id, current_goal, plan_outline_json, assumptions_json,
-              open_questions_json, evidence_gaps_json, verification_json, status, created_at, updated_at)
-             VALUES ('req-deliberation', ?1, 'goal', '[]', '[]', '[]', '[]',
-                     '{\"passed\":true,\"items\":[]}', 'verified', datetime('now'), datetime('now'))",
-            [session_id],
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn migration_034_creates_summary_shaped_writing_and_research_state_tables() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        for table in ["writing_states", "research_states"] {
-            let has: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
-                    [table],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map(|c| c > 0)
-                .unwrap();
-            assert!(has, "missing {table}");
-
-            let columns = conn
-                .prepare(&format!("PRAGMA table_info({table})"))
-                .unwrap()
-                .query_map([], |row| row.get::<_, String>(1))
-                .unwrap()
-                .flatten()
-                .collect::<Vec<_>>();
-            assert!(!columns.contains(&"full_content".to_string()));
-            assert!(!columns.contains(&"note_content".to_string()));
-            assert!(!columns.contains(&"raw_selection".to_string()));
-            assert!(!columns.contains(&"raw_web_page".to_string()));
-        }
-
-        conn.execute(
-            "INSERT INTO ai_traces (request_id, scene, status, created_at)
-             VALUES ('req-writing-state', 'drafting_assist', 'completed', datetime('now'))",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO ai_traces (request_id, scene, status, created_at)
-             VALUES ('req-research-state', 'research_synthesis', 'completed', datetime('now'))",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO writing_states
-             (request_id, target_path, draft_version_hash, document_goal, audience, genre,
-              structure_outline_json, key_arguments_json, material_packet_ids_json,
-              citation_labels_json, style_constraints_json, revision_records_json,
-              created_at, updated_at)
-             VALUES ('req-writing-state', 'Drafts/report.md', 'hash', 'goal', 'audience', 'memo',
-                     '[]', '[]', '[\"ev-1\"]', '[\"S1\"]', '[\"style\"]', '[]',
-                     datetime('now'), datetime('now'))",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO research_states
-             (request_id, research_question, sub_questions_json, sources_json,
-              credibility_summary, freshness_summary, conflicts_json, counter_arguments_json,
-              evidence_gaps_json, preliminary_conclusions_json, created_at, updated_at)
-             VALUES ('req-research-state', 'topic', '[]', '[]', 'cred', 'fresh',
-                     '[]', '[]', '[]', '[]', datetime('now'), datetime('now'))",
-            [],
-        )
-        .unwrap();
     }
 
     #[test]
@@ -1685,6 +1377,317 @@ mod tests {
             )
             .unwrap_err();
         assert!(err.to_string().contains("CHECK constraint failed"));
+    }
+    #[test]
+    fn migration_049_creates_document_capability_policies_with_rollback() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let columns = conn
+            .prepare("PRAGMA table_info(document_capability_policies)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            columns,
+            vec![
+                "id",
+                "scope_kind",
+                "scope_path",
+                "capability",
+                "decision",
+                "created_at",
+                "updated_at",
+            ]
+        );
+        let denied = conn
+            .execute(
+                "INSERT INTO document_capability_policies
+                 (scope_kind, scope_path, capability, decision)
+                 VALUES ('document', 'notes/restricted.md', 'send_to_model', 'deny')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(denied, 1);
+        let invalid = conn.execute(
+            "INSERT INTO document_capability_policies
+             (scope_kind, scope_path, capability, decision)
+             VALUES ('invalid', 'notes/a.md', 'read', 'allow')",
+            [],
+        );
+        assert!(invalid.is_err());
+
+        migrate_down(&conn).unwrap();
+        let exists: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'document_capability_policies'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(exists, 0);
+    }
+    #[test]
+    fn migration_050_persists_explicit_actions_with_rollback() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        let columns = conn
+            .prepare("PRAGMA table_info(agent_runs)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(columns.contains(&"explicit_action_json".to_string()));
+
+        migrate_down(&conn).unwrap();
+        let columns = conn
+            .prepare("PRAGMA table_info(agent_runs)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(!columns.contains(&"explicit_action_json".to_string()));
+    }
+    #[test]
+    fn migration_051_cutover_migrates_legacy_fixture_and_roundtrips_safely() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        rollback_agent_harness_cutover(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO sessions
+             (session_key, scene, note_path, title, retention_policy, created_at, updated_at)
+             VALUES ('legacy:note', 'drafting_assist', 'notes/legacy.md', 'Legacy', 'user_clearable',
+                     datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let session_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, evidence_packets, created_at)
+             VALUES (?1, 1, 'assistant', 'legacy answer', ?2, datetime('now'))",
+            rusqlite::params![
+                session_id,
+                r#"[{
+                    "id":"packet-1","source_type":"note","source_path":"notes/legacy.md",
+                    "title":"legacy source","heading_path":"section",
+                    "source_span":{"start":0,"end":2},"content_hash":"legacy-hash",
+                    "retrieval_reason":"legacy","score":0.8,"trust_level":"user_note",
+                    "citation_label":"[L1]","stale":false
+                }]"#,
+            ],
+        )
+        .unwrap();
+
+        for (request_id, status) in [
+            ("legacy-request-complete", "completed"),
+            ("legacy-request-running", "running"),
+        ] {
+            conn.execute(
+                "INSERT INTO ai_traces
+                 (request_id, scene, token_input, token_output, status, created_at)
+                 VALUES (?1, 'drafting_assist', 12, 34, ?2, datetime('now'))",
+                rusqlite::params![request_id, status],
+            )
+            .unwrap();
+        }
+        for (task_id, request_id, status) in [
+            (
+                "legacy-task-complete",
+                "legacy-request-complete",
+                "completed",
+            ),
+            ("legacy-task-running", "legacy-request-running", "running"),
+        ] {
+            conn.execute(
+                "INSERT INTO agent_tasks
+                 (task_id, request_id, session_id, kind, status, user_goal_summary,
+                  budget_policy_json, created_at, updated_at, completed_at)
+                 VALUES (?1, ?2, ?3, 'legacy', ?4, 'goal summary', '{}',
+                         datetime('now'), datetime('now'), datetime('now'))",
+                rusqlite::params![task_id, request_id, session_id, status],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO agent_task_steps
+             (task_id, step_seq, kind, status, input_summary, output_summary, checkpoint_json,
+              created_at, updated_at)
+             VALUES ('legacy-task-complete', 1, 'answer', 'completed', 'input', 'output',
+                     '{\"unsafe\":\"checkpoint\"}', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tool_audit
+             (request_id, harness_round, tool_name, arguments_summary, success)
+             VALUES ('legacy-request-complete', 1, 'read_note', 'path=notes/legacy.md', 1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_permission_audit
+             (request_id, tool_name, permission_name, decision, scope_summary, risk_level, result_status)
+             VALUES ('legacy-request-complete', 'read_note', 'vault.read', 'allow',
+                     'path=notes/legacy.md', 'low', 'executed')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO writing_states
+             (request_id, target_path, draft_version_hash, document_goal, created_at, updated_at)
+             VALUES ('legacy-request-complete', 'notes/legacy.md', 'hash', 'history',
+                     datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO research_states
+             (request_id, research_question, created_at, updated_at)
+             VALUES ('legacy-request-complete', 'history', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO deliberation_states
+             (request_id, session_id, current_goal, plan_outline_json, assumptions_json,
+              open_questions_json, evidence_gaps_json, verification_json, status, created_at, updated_at)
+             VALUES ('legacy-request-complete', ?1, 'history', '[]', '[]', '[]', '[]',
+                     '{}', 'completed', datetime('now'), datetime('now'))",
+            [session_id],
+        )
+        .unwrap();
+
+        apply_agent_harness_cutover(&conn).unwrap();
+
+        let session_columns = conn
+            .prepare("PRAGMA table_info(sessions)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(!session_columns.contains(&"scene".to_string()));
+        assert!(!session_columns.contains(&"note_path".to_string()));
+        for table in [
+            "ai_traces",
+            "agent_tasks",
+            "agent_task_steps",
+            "agent_task_events",
+            "deliberation_states",
+            "writing_states",
+            "research_states",
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 0, "{table} must be removed by the cutover");
+        }
+
+        let (completed_status, token_input, token_output): (String, i64, i64) = conn
+            .query_row(
+                "SELECT status, token_input, token_output FROM agent_runs
+                 WHERE run_id = 'legacy-task:legacy-task-complete'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(completed_status, "completed");
+        assert_eq!((token_input, token_output), (12, 34));
+
+        let (running_status, cancellation_code): (String, String) = conn
+            .query_row(
+                "SELECT status, error_code FROM agent_runs
+                 WHERE run_id = 'legacy-task:legacy-task-running'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(running_status, "cancelled");
+        assert_eq!(cancellation_code, "cancelled_legacy");
+
+        let (turn_id, evidence_refs): (String, String) = conn
+            .query_row(
+                "SELECT turn_id, evidence_refs_json FROM session_messages WHERE session_id = ?1",
+                [session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(turn_id, "legacy-message:1");
+        assert!(evidence_refs.contains("evidenceId"));
+        assert!(!evidence_refs.contains("excerpt"));
+
+        let tool_audit_target: String = conn
+            .query_row("PRAGMA foreign_key_list(tool_audit)", [], |row| row.get(2))
+            .unwrap();
+        assert_eq!(tool_audit_target, "agent_runs");
+        let permission_audit_target: String = conn
+            .query_row(
+                "PRAGMA foreign_key_list(agent_permission_audit)",
+                [],
+                |row| row.get(2),
+            )
+            .unwrap();
+        assert_eq!(permission_audit_target, "agent_runs");
+        assert_eq!(
+            conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+
+        rollback_agent_harness_cutover(&conn).unwrap();
+        let (scene, note_path, message_count): (String, Option<String>, i64) = conn
+            .query_row(
+                "SELECT scene, note_path,
+                        (SELECT COUNT(*) FROM session_messages WHERE session_id = sessions.id)
+                 FROM sessions WHERE id = ?1",
+                [session_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(scene, "legacy");
+        assert_eq!(note_path, None);
+        assert_eq!(message_count, 1);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM agent_tasks WHERE status = 'completed'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+
+        apply_agent_harness_cutover(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
+                .unwrap(),
+            "ok"
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
     }
     #[test]
     fn migration_registry_covers_all_sql_files() {
@@ -1831,56 +1834,6 @@ mod tests {
             .map(|c| c > 0)
             .unwrap();
         assert!(!gone);
-    }
-
-    #[test]
-    fn migration_020_creates_tool_audit() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        let has: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_audit'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)
-            .unwrap();
-        assert!(has, "missing tool_audit table");
-
-        // Verify can insert
-        conn.execute(
-            "INSERT INTO ai_traces (request_id, scene, status, created_at)
-             VALUES ('req-1', 'knowledge_lookup', 'running', datetime('now'))",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO tool_audit (request_id, harness_round, tool_name, arguments_summary, success)
-             VALUES ('req-1', 1, 'read_note', 'path=test.md', 1)",
-            [],
-        )
-        .unwrap();
-
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM tool_audit WHERE request_id = 'req-1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn migration_020_tool_audit_references_ai_traces() {
-        let conn = Connection::open_in_memory().unwrap();
-        migrate_up(&conn).unwrap();
-
-        let target_table: String = conn
-            .query_row("PRAGMA foreign_key_list(tool_audit)", [], |row| row.get(2))
-            .unwrap();
-        assert_eq!(target_table, "ai_traces");
     }
 
     #[test]

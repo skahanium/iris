@@ -1,63 +1,9 @@
 import { UnifiedAssistantPanel as UnifiedAssistantPanelImpl } from "./UnifiedAssistantPanel.impl";
-import type {
-  AssistantSelectionQuote,
-  UnifiedAssistantPanelProps,
-} from "./types";
+import type { UnifiedAssistantPanelProps } from "./types";
 
-export type { AssistantSelectionQuote, UnifiedAssistantPanelProps };
+export type { UnifiedAssistantPanelProps };
 
-/*
-Source contract anchors for thin facade tests:
-AssistantActionState
-AssistantIntent
-usePromptProfile
-AssistantPersonaDisplay
-AgentStatusBadge
-AiComposer
-AiMessageList
-ContextPacketDrawer
-onOpenArtifact
-AssistantTaskSurfaces
-getNoteContent: () => string
-parseMentionTokens
-assistantExecute(
-agentIntent
-runPlanSummary
-intentDetection
-abortResearch
-assembleContextForChat
-executeKnowledgeChat
-toolConfirmIpc
-已拒绝，正在生成替代回答
-webAuthorized: webSearch
-webSearch
-harnessAbort(id)
-pausedTaskId
-assistantRun.setFromTaskStatus("running"
-assistantRun.setFromTaskStatus("running", "writing")
-assistantRun.setFromTaskStatus("running", "citation")
-assistantRun.setFromTaskStatus("running", "organize")
-assistantRun.setFromTaskStatus("running", "research")
-assistantRun.setFromTaskStatus("running", "chapter")
-assistantRun.setFromTaskStatus("running", "document")
-toolConfirmInFlightRef
-toolConfirmSettledRef
-toolConfirmInFlightRef.current.has(confirmKey)
-toolConfirmSettledRef.current.has(confirmKey)
-toolConfirmSettledRef.current.add(confirmKey)
-mentionOpen ? buildMentionCandidates(vaultFiles, mentionQuery) : []
-const handleQuoteToInput = useCallback
-onQuoteToInput={handleQuoteToInput}
-unified-assistant-panel
-data-testid="unified-assistant-panel"
-data-testid="ai-input"
-ai-sidecar
-ai-sidecar-header
-ai-task-surface
-onChromeChange
-AiComposerContextMenu
-*/
-
+/** Public assistant panel facade. Execution is owned by the unified Run controller. */
 export function UnifiedAssistantPanel(props: UnifiedAssistantPanelProps) {
   return <UnifiedAssistantPanelImpl {...props} />;
 }

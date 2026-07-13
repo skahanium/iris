@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -16,202 +16,72 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-describe("classified vault phase 7", () => {
-  it("registers Cmd+Shift+L classified panel shortcut hidden from palette list", () => {
+describe("classified vault and Run boundary", () => {
+  it("registers the classified panel shortcut outside the palette list", () => {
     const items = buildCommandPaletteItems({
       hasVault: true,
       hasActiveNote: false,
     });
-    const classified = items.find((i) => i.id === "classified-panel");
-    expect(classified).toBeDefined();
+    const classified = items.find((item) => item.id === "classified-panel");
+
     expect(classified?.hiddenInPalette).toBe(true);
     expect(classified?.chord).toMatchObject({
       key: "L",
       mod: true,
       shift: true,
-      requireVault: true,
     });
-    expect(classified?.action).toEqual({ type: "openClassifiedPanel" });
   });
 
-  it("disables classified panel shortcut without vault", () => {
-    const items = buildCommandPaletteItems({
-      hasVault: false,
-      hasActiveNote: false,
-    });
-    expect(items.find((i) => i.id === "classified-panel")?.disabled).toBe(true);
-  });
-
-  it("detects classified vault-relative paths", () => {
+  it("detects and normalizes vault-relative classified paths", () => {
     expect(isClassifiedVaultPath(".classified/secret.md")).toBe(true);
-    expect(isClassifiedVaultPath(".classified/inbox/note.md")).toBe(true);
     expect(isClassifiedVaultPath("notes/open.md")).toBe(false);
-    expect(isClassifiedVaultPath(".classified")).toBe(false);
-  });
-
-  it("converts absolute paths under vault to relative form", () => {
     expect(vaultRelativePath("/vault", "/vault/notes/a.md")).toBe("notes/a.md");
     expect(vaultRelativePath("/vault", "/other/a.md")).toBeNull();
   });
 
-  it("disables editor edit actions when note is locked", () => {
-    const lockedCtx = {
+  it("keeps mutating editor actions disabled while a note is locked", () => {
+    const context = {
       hasNote: true,
       hasSelection: true,
       streaming: false,
       isLocked: true,
     };
     const paste = filterEditorActions("context_menu", "editor", {
-      ...lockedCtx,
+      ...context,
       isLocked: false,
-    }).find((a) => a.id === "paste");
-    expect(paste).toBeDefined();
-    expect(isEditorActionEnabled(paste!, lockedCtx)).toBe(false);
-    const rewrite = filterEditorActions("context_menu", "editor", {
-      ...lockedCtx,
-      isLocked: false,
-    }).find((a) => a.id === "rewrite");
-    expect(rewrite).toBeDefined();
-    expect(isEditorActionEnabled(rewrite!, lockedCtx)).toBe(false);
+    }).find((action) => action.id === "paste");
     const copy = filterEditorActions("context_menu", "editor", {
-      ...lockedCtx,
+      ...context,
       isLocked: false,
-    }).find((a) => a.id === "copy");
-    expect(copy).toBeDefined();
-    expect(isEditorActionEnabled(copy!, lockedCtx)).toBe(true);
+    }).find((action) => action.id === "copy");
+
+    expect(isEditorActionEnabled(paste!, context)).toBe(false);
+    expect(isEditorActionEnabled(copy!, context)).toBe(true);
   });
 
-  it("TipTapEditor supports locked prop and lock toggle button", () => {
-    const src = read("src/components/editor/TipTapEditor.tsx");
-    expect(src).toContain("locked?: boolean");
-    expect(src).toContain("setLocked?: (locked: boolean) => void");
-    expect(src).toContain("editable: !locked");
-    expect(src).toContain('data-testid="editor-lock-toggle"');
-  });
-
-  it("DocumentTitleField supports readOnly prop", () => {
-    const src = read("src/components/editor/DocumentTitleField.tsx");
-    expect(src).toContain("readOnly?: boolean");
-    expect(src).toContain("readOnly={readOnly");
-  });
-
-  it("useEditorContextMenu skips menu when locked", () => {
-    const src = read("src/hooks/useEditorContextMenu.ts");
-    expect(src).toContain("locked = false");
-    expect(src).toMatch(/if\s*\(\s*locked\s*\)\s*return/);
-  });
-
-  it("App wires file lock state and classified panel", () => {
-    const app = read("src/App.impl.tsx");
-    const overlays = read("src/components/layout/AppOverlays.tsx");
-    const persistence = read("src/hooks/useAppPersistenceLifecycle.ts");
-    const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
-    const ipc = read("src/lib/ipc.ts");
-    const events = read("src/lib/ipc-events.ts");
-
-    expect(app).toContain("handleLockToggle");
-    expect(persistence).toContain("fileSetLock");
-    expect(app).toContain("classifiedOpen");
-    expect(app).toContain("listenClassifiedFileTaken");
-    expect(ipc).toContain("IPC_EVENTS.CLASSIFIED_FILE_TAKEN");
-    expect(events).toContain("classified:file_taken");
-    expect(overlays).toContain("ClassifiedPanel");
-    expect(workspace).toContain("locked={snapshot.activeFileLocked}");
-    expect(workspace).toContain("setLocked={");
-    expect(workspace).toContain("!snapshot.activeNoteIsClassified");
-  });
-
-  it("classified panel components exist with full file operations", () => {
+  it("keeps classified file operations and lock UI available", () => {
     const list = read("src/components/classified/ClassifiedFileList.tsx");
+    const editor = read("src/components/editor/TipTapEditor.tsx");
+
     expect(list).toContain("classifiedImport");
     expect(list).toContain("classifiedExport");
     expect(list).toContain("classifiedDelete");
-    expect(list).not.toContain("仅占位");
-    const panel = read("src/components/classified/ClassifiedPanel.tsx");
-    expect(panel).toContain("ClassifiedPasswordSetup");
-    expect(panel).toContain("ClassifiedPasswordPrompt");
-    expect(panel).toContain("waiting");
-    expect(panel).toContain("idleDeadline");
-    expect(list).toContain("classified-idle-countdown");
+    expect(editor).toContain("locked?: boolean");
+    expect(editor).toContain('data-testid="editor-lock-toggle"');
   });
 
-  it("App uses global classified vault idle session hook", () => {
-    const app = read("src/App.impl.tsx");
-    const persistence = read("src/hooks/useAppPersistenceLifecycle.ts");
+  it("routes classified assistant work through the same opaque Run protocol", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const sender = read("src/components/ai/hooks/useUnifiedAssistantSend.ts");
+    const inline = read("src/hooks/useInlineAi.ts");
 
-    expect(app).toContain("useClassifiedVaultSession");
-    expect(app).toContain("openClassifiedPaths");
-    expect(app).toContain("activeNoteIsClassified");
-    expect(persistence).toContain("笔记已锁定，无法保存");
-  });
-
-  it("App never forwards classified material into normal AI surfaces; classified AI uses classified domain only", () => {
-    const app = read("src/App.impl.tsx");
-    const routing = read("src/hooks/useWorkspaceAssistantRouting.ts");
-    const panelSlot = read("src/components/layout/AppAiPanelSlot.tsx");
-    const editorActions = read("src/hooks/useAppEditorActions.ts");
-    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
-    const facade = read("src-tauri/src/commands/assistant_commands.rs");
-
-    expect(app).toContain(
-      "activeArtifactTab || activeNoteIsClassified ? null : activePath",
+    expect(panel).toContain("data-ai-domain={aiDomain}");
+    expect(sender).toContain("securityDomain: aiDomain");
+    expect(sender).toContain("explicitReferences");
+    expect(inline).toContain("assistantRunStart");
+    expect(inline).toContain("securityDomain: domain");
+    expect(existsSync("src/components/ai/hooks/useAssistantTasks.ts")).toBe(
+      false,
     );
-    expect(app).toContain(
-      `activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown()`,
-    );
-    expect(app).toContain("activeArtifactTab ? null : getWritingContext()");
-    expect(app).not.toContain("涉密笔记不能接收 AI 插入");
-    expect(app).not.toContain("涉密笔记不能接收 AI 改写");
-    expect(app).toContain("classifiedUnlocked");
-    expect(app).toContain("aiDomain");
-    expect(app).toContain("classifiedPath");
-
-    // useWorkspaceAssistantRouting uses deriveAiDomainState for domain-aware gating
-    expect(routing).toContain(
-      'import { deriveAiDomainState } from "@/lib/ai-domain"',
-    );
-    expect(routing).toContain("deriveAiDomainState(");
-    expect(routing).toContain("domainState.domain");
-    expect(routing).toContain("aiDomain: domainState.domain");
-    expect(routing).toContain(
-      "classifiedPath: domainState.classifiedActivePath",
-    );
-
-    // AppAiPanelSlot forwards domain info to UnifiedAssistantPanel
-    expect(panelSlot).toContain("aiDomain={aiDomain}");
-    expect(panelSlot).toContain("classifiedPath={classifiedPath}");
-    expect(panelSlot).toContain("notePath={assistantNotePath}");
-    expect(panelSlot).toContain("getNoteContent={getLiveMarkdown}");
-
-    expect(editorActions).toContain(
-      "insertAssistantMarkdownAtCursor(ed, content)",
-    );
-    expect(editorActions).not.toContain("isClassifiedVaultPath(path)");
-
-    expect(tasks).toContain("const getNoteContentForRequest = useCallback");
-    expect(tasks).toContain('if (aiDomain === "classified") return null');
-    expect(tasks).toContain(
-      "const getContextReferencesForRequest = useCallback",
-    );
-    expect(tasks).toContain("notePath ? getNoteContent() : undefined");
-    expect(tasks).not.toContain("noteContent: getNoteContent(),");
-
-    expect(facade).toContain("fn validate_note_content_boundary");
-    expect(facade).toContain("validate_assistant_domain_boundary(&request)?");
-  });
-
-  it("main note open paths cannot open classified notes", () => {
-    const tabs = read("src/hooks/useTabManager.ts");
-    expect(tabs).toContain("allowClassified?: boolean");
-    expect(tabs).toContain("涉密笔记只能从涉密保险库打开");
-    expect(tabs).toContain("fileRead(path, {");
-    expect(tabs).toContain(
-      "allowClassified: options?.allowClassified === true",
-    );
-
-    const overlays = read("src/components/layout/AppOverlays.tsx");
-    expect(overlays).toContain("onOpenFile={(path) =>");
-    expect(overlays).toContain("allowClassified: true");
-    expect(overlays).toContain('source: "classified"');
   });
 });

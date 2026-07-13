@@ -25,6 +25,6 @@ pub(super) async fn skills_list_tool(
 ) -> AppResult<serde_json::Value> {
     let _ = ctx;
     let vault = state.vault_path()?;
-    let entries = crate::ai_runtime::skills::list_skills(&state.db, &vault, None)?;
+    let entries = crate::ai_runtime::skills::list_skills(&state.db, &vault)?;
     Ok(serde_json::to_value(&entries).unwrap_or_default())
 }

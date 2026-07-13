@@ -48,9 +48,7 @@ import { useEditorStats } from "@/hooks/useEditorStats";
 import { useEditorUndoRedoState } from "@/hooks/useEditorUndoRedoState";
 import { useInlineAi } from "@/hooks/useInlineAi";
 import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
-import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
-import { useArtifactTabs } from "@/hooks/useArtifactTabs";
 import { usePreparedWorkspaceTransitions } from "@/hooks/usePreparedWorkspaceTransitions";
 import { usePreparedNoteInvalidationCallbacks } from "@/hooks/usePreparedNoteInvalidationCallbacks";
 import { useWorkspaceAssistantRouting } from "@/hooks/useWorkspaceAssistantRouting";
@@ -137,7 +135,6 @@ function App() {
   const editorRef = useRef<Editor | null>(null);
   const editorReadyForPersistenceRef = useRef(false);
   const overlays = useOverlayManager();
-  const { provider: llmProvider } = useLlmProvider();
   const { status: connectivityStatus } = useConnectivityStatus();
 
   useEffect(() => {
@@ -197,23 +194,9 @@ function App() {
 
   useWorkspaceSessionSnapshot({ activePath, tabs, vaultPath });
   const {
-    activateArtifact,
-    activeArtifactTab,
-    artifactTabs,
-    closeArtifact,
-    closeAllEvidenceArtifacts,
-    closeEvidenceArtifactsForSession,
-    openArtifact,
-    setActiveArtifactId,
-  } = useArtifactTabs();
-
-  const {
     aiPanelOpen,
     assistantChrome,
-    prefillMessage: assistantPrefill,
-    selectionQuote,
     setAiPanelOpen,
-    setAssistantChrome,
     setWebSearch,
     setWebSearchProviderId,
     sendSelectionToAi,
@@ -224,9 +207,7 @@ function App() {
     webSearchProviderId,
     webSearchProviders,
   } = useAiSidecarBridge({
-    activePathRef,
     editorRef,
-    getNoteContent: () => markdownRef.current,
     setAiStatus,
   });
 
@@ -260,7 +241,7 @@ function App() {
 
   const {
     clearPendingOpenFromWorkspace,
-    handleActivateWorkspaceTab: handleActivateNoteOrArtifactTab,
+    handleActivateWorkspaceTab: handleActivateNoteTab,
     handleNewNoteLeavingHome,
     invalidatePreparedNote,
     openNoteLeavingHome,
@@ -274,12 +255,10 @@ function App() {
     NonNullable<Parameters<typeof openNote>[2]>
   >({
     activePathRef,
-    activateArtifact,
     activateTab,
     classifiedVaultStatus,
     handleNewNote,
     openNote,
-    setActiveArtifactId,
     setHomeActive,
     tabs,
     vaultPath,
@@ -298,16 +277,12 @@ function App() {
     openWorkspacePathLeavingHome,
     workspaceTabs,
   } = useWorkspaceTabRouting<NonNullable<Parameters<typeof openNote>[2]>>({
-    activeArtifactTab,
     activePath,
-    artifactTabs,
-    closeArtifact,
     closeTab,
     currentNoteIsClassified,
-    handleActivateNoteOrArtifactTab,
+    handleActivateNoteTab,
     handleNewNoteLeavingHome,
     openNoteLeavingHome,
-    setActiveArtifactId,
     setHomeActive,
     showHome,
     tabs,
@@ -326,16 +301,12 @@ function App() {
   const inlineAiDomain =
     activeNoteIsClassified &&
     classifiedUnlocked &&
-    !activeArtifactTab &&
     !activeMediaTab &&
     activePath
       ? "classified"
       : "normal";
   const inlineAi = useInlineAi({
-    provider: llmProvider,
     domain: inlineAiDomain,
-    notePath: inlineAiDomain === "classified" ? activePath : null,
-    getNoteContent: () => getLiveMarkdownRef.current(),
     onStatus: setAiStatus,
   });
 
@@ -614,23 +585,17 @@ function App() {
     [noteTitle, handleTitleChange, onTitleBlur, editorRef, activeFileLocked],
   );
 
-  const {
-    getParagraphText,
-    getWritingContext,
-    handleInsertToEditor,
-    handleRedo,
-    handleUndo,
-    runEditorActionById,
-  } = useAppEditorActions({
-    activeNoteIsClassified,
-    activePathRef,
-    editorRef,
-    getLiveMarkdown,
-    inlineAi,
-    scheduleUndoRedoStateRefresh,
-    sendSelectionToAi,
-    setAiStatus,
-  });
+  const { handleInsertToEditor, handleRedo, handleUndo, runEditorActionById } =
+    useAppEditorActions({
+      activeNoteIsClassified,
+      activePathRef,
+      editorRef,
+      getLiveMarkdown,
+      inlineAi,
+      scheduleUndoRedoStateRefresh,
+      sendSelectionToAi,
+      setAiStatus,
+    });
 
   const editorContextMenu = useEditorContextMenu(
     editorInstance,
@@ -675,57 +640,21 @@ function App() {
   });
 
   const activeDocumentTitle =
-    activePath && displayTitleForChrome(activePath, noteTitle); // AI domain gating lives in useWorkspaceAssistantRouting: activeArtifactTab || activeNoteIsClassified ? null : activePath; activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown(); activeArtifactTab ? null : getWritingContext()
+    activePath && displayTitleForChrome(activePath, noteTitle);
   const {
     aiDomain,
-    assistantNotePath,
     assistantRuntimeDocumentCandidates,
-    assistantRuntimeDocumentSnapshots,
-    assistantSelectionQuote,
     classifiedPath,
-    getAssistantLiveMarkdown,
-    getAssistantParagraphText,
-    getAssistantWritingContext,
     handleAssistantInsertToEditor,
   } = useWorkspaceAssistantRouting({
-    activeArtifactTab,
     activeMediaTab,
     activeNoteIsClassified,
     activePath,
     classifiedUnlocked,
-    getLiveMarkdown,
-    getParagraphText,
-    getTabMarkdownCached,
-    getWritingContext,
     handleInsertToEditor,
-    selectionQuote,
     setAiStatus,
     tabs,
   });
-  const handlePatchApplied = useCallback(
-    (newContent: string) => {
-      applyMarkdownToEditor(newContent);
-      markdownRef.current = newContent;
-      dirtyRef.current = false;
-      const path = activePathRef.current;
-      if (path) {
-        invalidatePreparedNote(path);
-        syncTabMarkdownCache(path, newContent);
-        markClean(path, activeDocumentTitle ?? noteTitle);
-      }
-    },
-    [
-      activeDocumentTitle,
-      activePathRef,
-      applyMarkdownToEditor,
-      invalidatePreparedNote,
-      markClean,
-      markdownRef,
-      noteTitle,
-      syncTabMarkdownCache,
-    ],
-  );
-
   if (!isTauriRuntime()) {
     return <BrowserRuntimeNotice />;
   }
@@ -773,7 +702,6 @@ function App() {
         editor={
           <AppEditorWorkspace
             activeFileLocked={activeFileLocked}
-            activeArtifactTab={activeArtifactTab}
             activeMediaTab={activeMediaTab}
             activeNoteIsClassified={activeNoteIsClassified}
             activePath={activePath}
@@ -789,7 +717,6 @@ function App() {
             handleEditorReady={handleEditorReady}
             handleLockToggle={handleLockToggle}
             handleNewNoteLeavingHome={handleNewWorkspaceNote}
-            getNoteContent={getLiveMarkdown}
             homeActive={homeActive}
             inlineAi={inlineAi}
             onOutlineOpenChange={(open) => {
@@ -811,8 +738,6 @@ function App() {
             setFindReplaceMode={setFindReplaceMode}
             setFindReplaceOpen={setFindReplaceOpen}
             updateEditorStats={updateEditorStats}
-            onPatchApplied={handlePatchApplied}
-            onVaultRefresh={bumpVaultIndex}
             vaultIndexEpoch={vaultIndexEpoch}
             vaultPath={vaultPath}
             warmPreparedNotes={warmPreparedNotes}
@@ -823,24 +748,9 @@ function App() {
         aiPanel={
           <AppAiPanelSlot
             aiDomain={aiDomain}
-            assistantNotePath={assistantNotePath}
-            assistantPrefill={assistantPrefill}
-            bumpVaultIndex={bumpVaultIndex}
             classifiedPath={classifiedPath}
-            getLiveMarkdown={getAssistantLiveMarkdown}
             runtimeDocumentCandidates={assistantRuntimeDocumentCandidates}
-            runtimeDocumentSnapshots={assistantRuntimeDocumentSnapshots}
-            getParagraphText={getAssistantParagraphText}
-            getWritingContext={getAssistantWritingContext}
             handleInsertToEditor={handleAssistantInsertToEditor}
-            onOpenArtifact={openArtifact}
-            openNoteLeavingHome={openWorkspacePathLeavingHome}
-            onPrepareNotePath={prepareNotePath}
-            onSessionDeleted={closeEvidenceArtifactsForSession}
-            onSessionsCleared={closeAllEvidenceArtifacts}
-            onPatchApplied={handlePatchApplied}
-            selectionQuote={assistantSelectionQuote}
-            setAssistantChrome={setAssistantChrome}
             webSearch={webSearch}
             webSearchProviderName={
               webSearchAvailability.effectiveProvider?.name ?? null
@@ -849,16 +759,12 @@ function App() {
         }
         statusBar={
           <AppStatusBarSlot
-            activePath={activeArtifactTab || activeMediaTab ? null : activePath}
+            activePath={activeMediaTab ? null : activePath}
             activeDocumentTitle={
-              activeArtifactTab
-                ? activeArtifactTab.title
-                : activeMediaTab
-                  ? activeMediaTab.title
-                  : activeDocumentTitle
+              activeMediaTab ? activeMediaTab.title : activeDocumentTitle
             }
             unsaved={
-              activeArtifactTab || activeMediaTab
+              activeMediaTab
                 ? false
                 : (tabs.find((t) => t.path === activePath)?.dirty ?? false)
             }

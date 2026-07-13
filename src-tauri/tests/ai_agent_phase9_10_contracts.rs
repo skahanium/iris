@@ -17,12 +17,10 @@ fn high_risk_tools_have_honest_sandbox_profiles() {
 }
 
 #[test]
-fn subprocess_sources_apply_l1_constraints_without_claiming_l2_or_skill_install_runtime() {
+fn subprocess_sources_apply_l1_constraints_and_run_audit_identity() {
     let boundary = include_str!("../src/ai_runtime/tool_dispatch/boundary.rs");
     let skills = include_str!("../src/ai_runtime/skills_impl.rs");
-    let confirm = include_str!("../src/ai_harness/harness/run.rs");
     let audit = include_str!("../src/ai_runtime/tool_audit.rs");
-    let cert = include_str!("../src/network/cert_pinning.rs");
 
     assert!(boundary.contains("core.hooksPath=/dev/null"));
     assert!(boundary.contains("filter.lfs.smudge="));
@@ -32,34 +30,8 @@ fn subprocess_sources_apply_l1_constraints_without_claiming_l2_or_skill_install_
     assert!(!skills.contains("SAFE_GIT_CLONE_ARGS"));
     assert!(!skills.contains("run_git_clone_with_timeout"));
     assert!(!skills.contains("Command::new(\"git\")"));
-    assert!(confirm.contains("\"sandboxProfile\""));
-    assert!(audit.contains("sandbox_profile_id"));
-    assert!(audit.contains("sandbox_profile="));
-    assert!(cert.contains("无证书固定"));
-    assert!(!cert.contains("已实现证书固定"));
+    assert!(audit.contains("pub run_id: String"));
+    assert!(audit.contains("pub run_step: i64"));
     assert!(!boundary.contains("seccomp"));
     assert!(!boundary.contains("chroot"));
-}
-
-#[test]
-fn frontend_task_surfaces_expose_deliberation_and_verification_state() {
-    let ipc_types = include_str!("../../src/types/ipc.ts");
-    let panel = include_str!("../../src/components/ai/AgentTaskStatusPanel.tsx");
-    let surfaces = include_str!("../../src/components/ai/AssistantTaskSurfaces.tsx");
-    let workspace = include_str!("../../src/components/layout/ArtifactWorkspaceView.tsx");
-
-    assert!(ipc_types.contains("deliberation_state?: DeliberationState | null"));
-    assert!(ipc_types.contains("verification_summary?: VerificationSummary | null"));
-    assert!(panel.contains("task.deliberation_state"));
-    assert!(panel.contains("task.verification_summary"));
-    assert!(panel.contains("evidence_gaps"));
-    assert!(panel.contains("data-testid=\"agent-task-deliberation\""));
-    assert!(surfaces.contains("AssistantArtifactTagStrip"));
-    assert!(!surfaces.contains("WritingStatePanel"));
-    assert!(!surfaces.contains("ResearchStatePanel"));
-    assert!(workspace.contains("WritingChangeArtifactView"));
-    assert!(workspace.contains("EvidenceSourcesArtifactView"));
-    assert!(!panel.contains("checkpoint_json"));
-    assert!(!panel.contains("noteContent"));
-    assert!(!panel.contains("apiKey"));
 }

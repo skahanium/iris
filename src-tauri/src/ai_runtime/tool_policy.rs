@@ -1,92 +1,70 @@
-//! ToolPolicy 閳?hard security boundary for tool exposure and execution.
+//! Stateless policy boundary for a future Run tool pipeline.
 //!
-//! Computes the set of tools available for a given request by intersecting:
-//!
-//! ```text
-//! implemented/harness-only hard gate
-//!   閳?task capability affinity
-//!   閳?autonomy level
-//!   閳?web_search_enabled
-//!   閳?user settings
-//! ```
-//!
-//! Key invariants:
-//! - Skills are prompt-only and cannot widen the tool surface.
-//! - Skills cannot bypass `requires_confirmation`.
-//! - Skills cannot auto-execute write tools at L1 autonomy.
-//! - The 8 core read-only tools are always available.
+//! Policy input is explicit Run capability data. It intentionally has no
+//! deprecated routing metadata or implicit execution-state fallback.
 
 use crate::ai_runtime::tool_catalog::{
     catalog_find, ToolCatalogEntry, ToolImplementationStatus, TOOL_CATALOG,
 };
-use crate::ai_runtime::{
-    agent_task::AgentTaskKind,
-    agent_task_policy::{
-        intent_from_legacy_scene, AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope,
-    },
-    AiScene, AutonomyLevel, ToolAccessLevel, ToolCapabilityAffinity,
-};
+use crate::ai_runtime::{AutonomyLevel, ToolAccessLevel, ToolCapabilityAffinity};
 
-/// Evaluation context for a single tool policy decision.
-#[derive(Debug, Clone)]
+/// Explicit capabilities authorized for one Run.
+#[derive(Debug, Clone, Copy)]
 pub struct ToolPolicyContext {
-    pub task_policy: Option<AgentTaskPolicy>,
-    /// Legacy scene hint for old callers that have not moved to task policy.
-    pub scene: AiScene,
     pub autonomy_level: AutonomyLevel,
     pub web_search_enabled: bool,
-    /// Depth of sub-agent nesting (閳?2 hides `spawn_subagent`).
-    pub depth: u32,
+    pub allow_writes: bool,
+    pub allow_research: bool,
+    pub allow_skill_management: bool,
 }
 
-/// Result of evaluating a single tool against the policy.
+impl Default for ToolPolicyContext {
+    fn default() -> Self {
+        Self {
+            autonomy_level: AutonomyLevel::L0,
+            web_search_enabled: false,
+            allow_writes: false,
+            allow_research: false,
+            allow_skill_management: false,
+        }
+    }
+}
+/// Result of evaluating a tool against the Run policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolPolicyVerdict {
-    /// Tool is available and can be auto-executed (no confirmation needed).
     AutoAllowed,
-    /// Tool is available but requires user confirmation before execution.
     RequiresConfirmation,
-    /// Tool is not available for this request.
     Denied(DenialReason),
 }
 
-/// Why a tool was denied.
+/// Reason a tool cannot enter a Run pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DenialReason {
-    /// Not in the catalog or marked as Planned.
     NotImplemented,
-    /// Not relevant to the current task capability requirements.
     CapabilityMismatch,
-    /// Autonomy level too low for this access level.
     InsufficientAutonomy,
-    /// Network tool but web_search is disabled.
     WebSearchDisabled,
-    /// Sub-agent depth 閳?2 hides spawn_subagent.
-    DepthLimit,
 }
 
-/// User-facing hint when a tool is denied (also written into tool-role messages).
+/// User-safe explanation for a denied tool request.
 pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
     match reason {
-        DenialReason::WebSearchDisabled => format!(
-            "Web search is disabled, so {tool_name} cannot be used. Use local notes or ask the user to enable web evidence collection."
-        ),
+        DenialReason::WebSearchDisabled => {
+            format!("Web search is disabled, so {tool_name} cannot be used.")
+        }
         DenialReason::NotImplemented => format!("tool {tool_name} is not implemented"),
         DenialReason::CapabilityMismatch => {
-            format!("tool {tool_name} is not available for this task")
+            format!("tool {tool_name} is not authorized for this Run")
         }
         DenialReason::InsufficientAutonomy => {
             format!("current autonomy level is too low to use {tool_name}")
         }
-        DenialReason::DepthLimit => {
-            format!("tool {tool_name} is unavailable at this sub-agent depth")
-        }
     }
 }
-/// Core meta tools for prompt-only skill awareness.
+
 const META_SKILL_TOOLS: &[&str] = &["skills_list"];
 
-/// Evaluate the policy verdict for a single tool.
+/// Evaluate one catalog tool using only explicit Run capabilities.
 pub fn evaluate_tool(tool_name: &str, ctx: &ToolPolicyContext) -> ToolPolicyVerdict {
     let Some(entry) = catalog_find(tool_name) else {
         return ToolPolicyVerdict::Denied(DenialReason::NotImplemented);
@@ -94,53 +72,28 @@ pub fn evaluate_tool(tool_name: &str, ctx: &ToolPolicyContext) -> ToolPolicyVerd
     evaluate_entry(entry, ctx)
 }
 
-fn is_meta_skill_tool(name: &str) -> bool {
-    META_SKILL_TOOLS.contains(&name)
-}
-
-/// Evaluate the policy verdict for a catalog entry.
 fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPolicyVerdict {
-    // 1. Hard gate: must be implemented or harness-only
     if entry.implementation == ToolImplementationStatus::Planned {
         return ToolPolicyVerdict::Denied(DenialReason::NotImplemented);
     }
-
-    // 2. Depth limit: spawn_subagent hidden at depth 閳?2
-    if entry.name == "spawn_subagent" && ctx.depth >= 2 {
-        return ToolPolicyVerdict::Denied(DenialReason::DepthLimit);
-    }
-
-    // 3. Web search gating
     if entry.access_level == ToolAccessLevel::Network && !ctx.web_search_enabled {
         return ToolPolicyVerdict::Denied(DenialReason::WebSearchDisabled);
     }
-
-    // 4. Meta skill tools bypass task capability gates.
-    if is_meta_skill_tool(entry.name) {
-        return if entry.requires_confirmation {
-            ToolPolicyVerdict::RequiresConfirmation
-        } else {
-            ToolPolicyVerdict::AutoAllowed
-        };
-    }
-
-    let task_policy = effective_task_policy(ctx);
-
-    // 5. Capability affinity: task policy and permission preflight decide exposure.
-    // Legacy scene affinity is metadata only.
-    let capability_affinity = entry.capability_affinity();
-    if !capability_allowed_for_task(entry, &capability_affinity, &task_policy, ctx) {
+    if !META_SKILL_TOOLS.contains(&entry.name)
+        && !entry
+            .capability_affinity()
+            .iter()
+            .copied()
+            .any(|capability| capability_allowed(capability, ctx))
+        && !is_default_read_tool(entry)
+    {
         return ToolPolicyVerdict::Denied(DenialReason::CapabilityMismatch);
     }
-
-    // 6. Autonomy level check
     if let Some(required) = required_autonomy(entry) {
         if ctx.autonomy_level < required {
             return ToolPolicyVerdict::Denied(DenialReason::InsufficientAutonomy);
         }
     }
-
-    // 7. Confirmation check
     if entry.requires_confirmation {
         ToolPolicyVerdict::RequiresConfirmation
     } else {
@@ -148,101 +101,46 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
     }
 }
 
-/// Minimum autonomy level required for a tool's access level.
-fn required_autonomy(entry: &ToolCatalogEntry) -> Option<AutonomyLevel> {
-    if entry.name == "web_search" {
-        return Some(AutonomyLevel::L1);
-    }
-
-    match entry.access_level {
-        ToolAccessLevel::ReadIndex
-        | ToolAccessLevel::ReadNoteSpan
-        | ToolAccessLevel::ReadProfile => {
-            None // Always allowed at any autonomy
-        }
-        ToolAccessLevel::Network => Some(AutonomyLevel::L2),
-        ToolAccessLevel::WriteCache => Some(AutonomyLevel::L2),
-        ToolAccessLevel::WriteMarkdown => Some(AutonomyLevel::L2),
-        ToolAccessLevel::WriteSettings => Some(AutonomyLevel::L2),
-        ToolAccessLevel::ManageSkills => None,
-    }
-}
-
-fn effective_task_policy(ctx: &ToolPolicyContext) -> AgentTaskPolicy {
-    ctx.task_policy.clone().unwrap_or_else(|| {
-        let intent = intent_from_legacy_scene(ctx.scene);
-        AgentTaskPolicy::from_input(AgentTaskPolicyInput {
-            intent,
-            task_kind: match ctx.scene {
-                AiScene::ResearchSynthesis => AgentTaskKind::Complex,
-                _ => AgentTaskKind::Lightweight,
-            },
-            scope: AgentTaskScope::Vault,
-            web_authorized: ctx.web_search_enabled,
-            has_attachments: false,
-            write_permission_required: matches!(ctx.scene, AiScene::DraftingAssist),
-            research_depth: matches!(ctx.scene, AiScene::ResearchSynthesis) as u32,
-        })
-    })
-}
-
-fn capability_allowed_for_task(
-    entry: &ToolCatalogEntry,
-    capability_affinity: &[ToolCapabilityAffinity],
-    policy: &AgentTaskPolicy,
-    ctx: &ToolPolicyContext,
-) -> bool {
-    if entry.default_enabled_without_skill
+fn is_default_read_tool(entry: &ToolCatalogEntry) -> bool {
+    entry.default_enabled_without_skill
         && matches!(
             entry.access_level,
             ToolAccessLevel::ReadIndex
                 | ToolAccessLevel::ReadNoteSpan
                 | ToolAccessLevel::ReadProfile
         )
-    {
-        return true;
-    }
-
-    capability_affinity
-        .iter()
-        .copied()
-        .any(|capability| capability_allowed(capability, policy, ctx.web_search_enabled))
 }
 
-fn capability_allowed(
-    capability: ToolCapabilityAffinity,
-    policy: &AgentTaskPolicy,
-    web_search_enabled: bool,
-) -> bool {
-    use crate::ai_runtime::AgentIntent;
-    use ToolCapabilityAffinity::*;
+fn required_autonomy(entry: &ToolCatalogEntry) -> Option<AutonomyLevel> {
+    match entry.access_level {
+        ToolAccessLevel::ReadIndex
+        | ToolAccessLevel::ReadNoteSpan
+        | ToolAccessLevel::ReadProfile => None,
+        ToolAccessLevel::Network
+        | ToolAccessLevel::WriteCache
+        | ToolAccessLevel::WriteMarkdown
+        | ToolAccessLevel::WriteSettings => Some(AutonomyLevel::L2),
+        ToolAccessLevel::ManageSkills => None,
+    }
+}
 
+fn capability_allowed(capability: ToolCapabilityAffinity, ctx: &ToolPolicyContext) -> bool {
+    use ToolCapabilityAffinity::*;
     match capability {
         ReadNotes | SearchNotes => true,
-        WebFetch => policy.web_authorized && web_search_enabled,
-        ResearchSynthesis => {
-            policy.research_depth > 0
-                || matches!(
-                    policy.intent,
-                    AgentIntent::Research | AgentIntent::CitationCheck | AgentIntent::DocumentCheck
-                )
-        }
-        SkillManagement => matches!(policy.intent, AgentIntent::SkillManagement),
-        WriteNotes | PatchDocument => policy.write_permission_required,
-        VaultOrganize => matches!(policy.intent, AgentIntent::Organize),
+        WebFetch => ctx.web_search_enabled && ctx.allow_research,
+        ResearchSynthesis => ctx.allow_research,
+        SkillManagement => ctx.allow_skill_management,
+        WriteNotes | PatchDocument => ctx.allow_writes,
+        VaultOrganize => false,
     }
 }
 
-/// Compute the set of tool names available for the given context.
-/// Returns (auto_allowed, requires_confirmation) 閳?both subsets of exposable tools.
+/// Return the tool names that are usable now and those requiring confirmation.
 pub fn compute_available_tools(ctx: &ToolPolicyContext) -> (Vec<String>, Vec<String>) {
     let mut auto_allowed = Vec::new();
     let mut requires_confirmation = Vec::new();
-
     for entry in TOOL_CATALOG.iter() {
-        if entry.implementation == ToolImplementationStatus::Planned {
-            continue;
-        }
         match evaluate_entry(entry, ctx) {
             ToolPolicyVerdict::AutoAllowed => auto_allowed.push(entry.name.to_string()),
             ToolPolicyVerdict::RequiresConfirmation => {
@@ -251,184 +149,46 @@ pub fn compute_available_tools(ctx: &ToolPolicyContext) -> (Vec<String>, Vec<Str
             ToolPolicyVerdict::Denied(_) => {}
         }
     }
-
     (auto_allowed, requires_confirmation)
 }
 
-/// Check whether a tool should be exposed to the model in the given context.
-/// This is the top-level filter used by `tools_for_surface`.
+/// Whether a tool may be shown to a Run executor.
 pub fn is_tool_exposed(tool_name: &str, ctx: &ToolPolicyContext) -> bool {
-    let verdict = evaluate_tool(tool_name, ctx);
-    !matches!(verdict, ToolPolicyVerdict::Denied(_))
+    !matches!(evaluate_tool(tool_name, ctx), ToolPolicyVerdict::Denied(_))
 }
 
-/// Whether the tool requires user confirmation in the given context.
+/// Whether a shown tool requires explicit user confirmation.
 pub fn tool_requires_confirmation(tool_name: &str, ctx: &ToolPolicyContext) -> bool {
-    let verdict = evaluate_tool(tool_name, ctx);
-    matches!(verdict, ToolPolicyVerdict::RequiresConfirmation)
+    matches!(
+        evaluate_tool(tool_name, ctx),
+        ToolPolicyVerdict::RequiresConfirmation
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_runtime::{
-        agent_task::AgentTaskKind,
-        agent_task_policy::{AgentTaskPolicyInput, AgentTaskScope},
-        AgentIntent, AutonomyLevel,
-    };
 
-    fn policy_for(intent: AgentIntent, write_permission_required: bool) -> AgentTaskPolicy {
-        AgentTaskPolicy::from_input(AgentTaskPolicyInput {
-            intent,
-            task_kind: if matches!(
-                intent,
-                AgentIntent::Research | AgentIntent::CitationCheck | AgentIntent::DocumentCheck
-            ) {
-                AgentTaskKind::Complex
-            } else {
-                AgentTaskKind::Lightweight
-            },
-            scope: AgentTaskScope::Vault,
-            web_authorized: true,
-            has_attachments: false,
-            write_permission_required,
-            research_depth: matches!(intent, AgentIntent::Research | AgentIntent::CitationCheck)
-                as u32,
-        })
-    }
-
-    fn default_ctx() -> ToolPolicyContext {
-        let task_policy = policy_for(AgentIntent::AskNotes, false);
+    fn read_context() -> ToolPolicyContext {
         ToolPolicyContext {
-            task_policy: Some(task_policy.clone()),
-            scene: AiScene::KnowledgeLookup,
-            autonomy_level: task_policy.autonomy_level,
-            web_search_enabled: true,
-            depth: 0,
-        }
-    }
-
-    fn drafting_ctx() -> ToolPolicyContext {
-        let task_policy = policy_for(AgentIntent::Write, true);
-        ToolPolicyContext {
-            task_policy: Some(task_policy.clone()),
-            scene: AiScene::DraftingAssist,
-            autonomy_level: task_policy.autonomy_level,
-            web_search_enabled: true,
-            depth: 0,
-        }
-    }
-
-    fn chat_ctx(web_search_enabled: bool) -> ToolPolicyContext {
-        let task_policy = policy_for(AgentIntent::Chat, false);
-        ToolPolicyContext {
-            task_policy: Some(task_policy.clone()),
-            scene: AiScene::KnowledgeLookup,
-            autonomy_level: task_policy.autonomy_level,
-            web_search_enabled,
-            depth: 0,
-        }
-    }
-
-    // 閳光偓閳光偓 Hard gate 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn meta_skill_tools_always_available_without_skill_tool_policy() {
-        let ctx = ToolPolicyContext {
-            task_policy: None,
-            scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
-            web_search_enabled: true,
-            depth: 0,
-        };
-        assert_eq!(
-            evaluate_tool("skills_list", &ctx),
-            ToolPolicyVerdict::AutoAllowed
-        );
-        for legacy in [
-            "mcp_runtime_profiles_list",
-            "mcp_runtime_tools_list",
-            "mcp_runtime_health_check",
-            "mcp_runtime_capability_call",
-            "mcp_runtime_profile_upsert",
-            "mcp_runtime_profile_toggle",
-            "mcp_runtime_profile_delete",
-        ] {
-            assert_eq!(
-                evaluate_tool(legacy, &ctx),
-                ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
-            );
+            ..ToolPolicyContext::default()
         }
     }
 
     #[test]
-    fn meta_skill_tools_available_when_web_search_disabled() {
+    fn read_tools_are_available_from_explicit_capabilities() {
+        assert!(is_tool_exposed("search_hybrid", &read_context()));
+        assert!(is_tool_exposed("read_note", &read_context()));
+        assert!(!is_tool_exposed("insert_text_at_cursor", &read_context()));
+    }
+
+    #[test]
+    fn write_capability_requires_explicit_authorization_and_confirmation() {
         let ctx = ToolPolicyContext {
-            web_search_enabled: false,
-            ..default_ctx()
+            allow_writes: true,
+            ..read_context()
         };
-        assert_eq!(
-            evaluate_tool("skills_list", &ctx),
-            ToolPolicyVerdict::AutoAllowed
-        );
-        assert_eq!(
-            evaluate_tool("removed_skill_install_tool", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
-        );
-    }
-
-    #[test]
-    fn nonexistent_tool_denied() {
-        let ctx = default_ctx();
-        assert_eq!(
-            evaluate_tool("nonexistent", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
-        );
-    }
-
-    // 閳光偓閳光偓 Capability affinity 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn ask_notes_policy_allows_search_notes() {
-        let ctx = default_ctx();
-        assert!(is_tool_exposed("search_hybrid", &ctx));
-    }
-
-    #[test]
-    fn ask_notes_policy_denies_write_without_write_permission() {
-        let ctx = default_ctx();
-        assert!(!is_tool_exposed("insert_text_at_cursor", &ctx));
-    }
-
-    #[test]
-    fn write_policy_allows_insert_text() {
-        let ctx = drafting_ctx();
-        assert!(is_tool_exposed("insert_text_at_cursor", &ctx));
-    }
-
-    #[test]
-    fn search_notes_capability_available_without_legacy_scene_affinity() {
-        let ctx = default_ctx();
-        assert!(is_tool_exposed("search_semantic", &ctx));
-    }
-
-    // 閳光偓閳光偓 Autonomy level 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn write_tool_denied_at_l1() {
-        let ctx = ToolPolicyContext {
-            autonomy_level: AutonomyLevel::L1,
-            ..drafting_ctx()
-        };
-        assert_eq!(
-            evaluate_tool("insert_text_at_cursor", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::InsufficientAutonomy)
-        );
-    }
-
-    #[test]
-    fn write_tool_allowed_at_l2() {
-        let ctx = drafting_ctx();
         assert_eq!(
             evaluate_tool("insert_text_at_cursor", &ctx),
             ToolPolicyVerdict::RequiresConfirmation
@@ -436,233 +196,14 @@ mod tests {
     }
 
     #[test]
-    fn chat_with_web_authorized_exposes_web_search_at_l1() {
-        let ctx = chat_ctx(true);
-
-        assert_eq!(ctx.autonomy_level, AutonomyLevel::L1);
+    fn network_capability_requires_explicit_research_authorization() {
+        let blocked = ToolPolicyContext {
+            web_search_enabled: false,
+            ..read_context()
+        };
         assert_eq!(
-            evaluate_tool("web_search", &ctx),
-            ToolPolicyVerdict::AutoAllowed
-        );
-    }
-
-    #[test]
-    fn chat_without_web_authorization_does_not_expose_web_search() {
-        let ctx = chat_ctx(false);
-
-        assert_eq!(
-            evaluate_tool("web_search", &ctx),
+            evaluate_tool("web_search", &blocked),
             ToolPolicyVerdict::Denied(DenialReason::WebSearchDisabled)
         );
-    }
-
-    #[test]
-    fn chat_does_not_auto_expose_page_fetch_tools() {
-        let ctx = chat_ctx(true);
-
-        assert!(!is_tool_exposed("fetch_web_page", &ctx));
-        assert!(!is_tool_exposed("web_fetch_batch", &ctx));
-        assert!(!is_tool_exposed("readability_fetch", &ctx));
-        assert!(!is_tool_exposed("rendered_fetch", &ctx));
-    }
-
-    #[test]
-    fn page_fetch_tool_is_not_implemented() {
-        let ctx = ToolPolicyContext {
-            autonomy_level: AutonomyLevel::L1,
-            ..default_ctx()
-        };
-        assert_eq!(
-            evaluate_tool("fetch_web_page", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
-        );
-    }
-
-    #[test]
-    fn read_tool_allowed_at_l0() {
-        let ctx = ToolPolicyContext {
-            autonomy_level: AutonomyLevel::L0,
-            ..default_ctx()
-        };
-        assert!(is_tool_exposed("search_hybrid", &ctx));
-    }
-
-    // 閳光偓閳光偓 Web search gating 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn web_search_denied_when_disabled() {
-        let ctx = ToolPolicyContext {
-            web_search_enabled: false,
-            ..default_ctx()
-        };
-        assert_eq!(
-            evaluate_tool("web_search", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::WebSearchDisabled)
-        );
-    }
-
-    #[test]
-    fn fetch_web_page_is_not_implemented_even_when_web_disabled() {
-        let ctx = ToolPolicyContext {
-            web_search_enabled: false,
-            ..default_ctx()
-        };
-        assert_eq!(
-            evaluate_tool("fetch_web_page", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
-        );
-    }
-
-    // 閳光偓閳光偓 Confirmation 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn read_tool_auto_allowed() {
-        let ctx = default_ctx();
-        assert_eq!(
-            evaluate_tool("read_note", &ctx),
-            ToolPolicyVerdict::AutoAllowed
-        );
-    }
-
-    #[test]
-    fn write_tool_requires_confirmation() {
-        let ctx = drafting_ctx();
-        assert_eq!(
-            evaluate_tool("insert_text_at_cursor", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
-        );
-    }
-
-    #[test]
-    fn conclude_reasoning_auto_allowed() {
-        let ctx = default_ctx();
-        assert_eq!(
-            evaluate_tool("conclude_reasoning", &ctx),
-            ToolPolicyVerdict::AutoAllowed
-        );
-    }
-
-    // 閳光偓閳光偓 Depth limit 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn spawn_subagent_hidden_at_depth_2() {
-        let ctx = ToolPolicyContext {
-            depth: 2,
-            ..default_ctx()
-        };
-        assert_eq!(
-            evaluate_tool("spawn_subagent", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::DepthLimit)
-        );
-    }
-
-    #[test]
-    fn spawn_subagent_allowed_at_depth_1() {
-        let ctx = ToolPolicyContext {
-            depth: 1,
-            ..default_ctx()
-        };
-        assert!(is_tool_exposed("spawn_subagent", &ctx));
-    }
-
-    // 閳光偓閳光偓 Skill allowlist 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn non_default_tool_denied_without_task_permission() {
-        let ctx = default_ctx();
-        assert!(!is_tool_exposed("insert_text_at_cursor", &ctx));
-    }
-
-    #[test]
-    fn write_policy_enables_write_tools_without_skill_allowlist() {
-        let ctx = ToolPolicyContext {
-            task_policy: Some(policy_for(AgentIntent::Write, true)),
-            scene: AiScene::DraftingAssist,
-            ..default_ctx()
-        };
-        assert!(is_tool_exposed("insert_text_at_cursor", &ctx));
-    }
-
-    // 閳光偓閳光偓 compute_available_tools 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn compute_available_includes_core_defaults() {
-        let ctx = default_ctx();
-        let (auto, confirm) = compute_available_tools(&ctx);
-        for name in [
-            "search_hybrid",
-            "read_note",
-            "list_vault",
-            "get_outline",
-            "get_backlinks",
-        ] {
-            assert!(
-                auto.contains(&name.to_string()),
-                "{name} should be auto-allowed"
-            );
-        }
-        assert!(!confirm.contains(&"fetch_web_page".to_string()));
-    }
-
-    #[test]
-    fn compute_available_excludes_denied() {
-        let ctx = default_ctx();
-        let (auto, confirm) = compute_available_tools(&ctx);
-        assert!(!auto.contains(&"insert_text_at_cursor".to_string()));
-        assert!(!confirm.contains(&"insert_text_at_cursor".to_string()));
-    }
-
-    // 閳光偓閳光偓 Core default tools invariant 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn core_defaults_always_available_without_skills() {
-        let required_auto = [
-            "search_hybrid",
-            "search_semantic",
-            "search_keyword",
-            "read_note",
-            "list_vault",
-            "get_outline",
-            "get_backlinks",
-        ];
-        let ctx = default_ctx();
-        let (auto, _) = compute_available_tools(&ctx);
-        for name in required_auto {
-            assert!(
-                auto.contains(&name.to_string()),
-                "core tool '{name}' must be auto-allowed"
-            );
-        }
-    }
-
-    #[test]
-    fn conclude_reasoning_always_available() {
-        let ctx = default_ctx();
-        let (auto, _) = compute_available_tools(&ctx);
-        assert!(auto.contains(&"conclude_reasoning".to_string()));
-    }
-
-    // 閳光偓閳光偓 Writing task specifics 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn write_policy_write_tools_need_confirmation() {
-        let ctx = drafting_ctx();
-        let (auto, confirm) = compute_available_tools(&ctx);
-        assert!(confirm.contains(&"insert_text_at_cursor".to_string()));
-        assert!(confirm.contains(&"replace_selection".to_string()));
-        // Read tools still auto
-        assert!(auto.contains(&"search_hybrid".to_string()));
-    }
-
-    // 閳光偓閳光偓 Ask-notes task specifics 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
-
-    #[test]
-    fn ask_notes_policy_no_write_tools() {
-        let ctx = default_ctx();
-        let (auto, confirm) = compute_available_tools(&ctx);
-        assert!(!auto.contains(&"insert_text_at_cursor".to_string()));
-        assert!(!confirm.contains(&"insert_text_at_cursor".to_string()));
-        assert!(!auto.contains(&"replace_selection".to_string()));
-        assert!(!confirm.contains(&"replace_selection".to_string()));
     }
 }

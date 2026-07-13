@@ -64,47 +64,6 @@ fn failover_rejects_auth_context_and_user_abort_errors() {
 }
 
 #[test]
-fn build_system_prompt_includes_packets() {
-    let packets = vec![ContextPacket {
-        id: "pkt-1".into(),
-        source_type: SourceType::Regulation,
-        source_path: Some("regulations/discipline.md".into()),
-        title: "纪律处分条例".into(),
-        heading_path: Some("第三章 违纪行为".into()),
-        source_span: None,
-        content_hash: "abc123".into(),
-        excerpt: "违反组织纪律的行为包括...".into(),
-        retrieval_reason: "semantic".into(),
-        score: 0.95,
-        trust_level: TrustLevel::UserNote,
-        citation_label: "[1]".into(),
-        stale: false,
-        web: None,
-        corpus: None,
-    }];
-
-    let prompt = ModelGateway::build_system_prompt(AiScene::KnowledgeLookup, &packets, &[], false);
-    assert!(prompt.contains("砚"));
-    assert!(prompt.contains("知识查阅"));
-    assert!(prompt.contains("[1]"));
-    assert!(prompt.contains("纪律处分条例"));
-}
-
-#[test]
-fn build_system_prompt_includes_user_rules() {
-    let rules = vec![
-        "引用法规时使用条/款格式".to_string(),
-        "输出使用中文".to_string(),
-    ];
-
-    let prompt = ModelGateway::build_system_prompt(AiScene::DraftingAssist, &[], &rules, false);
-
-    assert!(prompt.contains("砚"));
-    assert!(prompt.contains("文稿创作"));
-    assert!(prompt.contains("引用法规时使用条/款格式"));
-}
-
-#[test]
 fn format_evidence_packets_labels_lookup_role_as_non_authoritative() {
     let packets = vec![ContextPacket {
         id: "pkt-lookup".into(),
@@ -346,17 +305,6 @@ fn prepare_repairs_legacy_assistant_before_orphan_cleanup() {
 }
 
 #[test]
-fn slot_for_scene_mapping() {
-    for (scene, slot) in [
-        (AiScene::KnowledgeLookup, CapabilitySlot::Fast),
-        (AiScene::DraftingAssist, CapabilitySlot::Writer),
-        (AiScene::ResearchSynthesis, CapabilitySlot::Reasoner),
-    ] {
-        assert_eq!(ModelGateway::slot_for_scene(scene), slot);
-    }
-}
-
-#[test]
 fn format_busy_service_error() {
     let body = r#"{"error":{"type":"service_unavailable_error","message":"Service is too busy"}}"#;
     let msg = super::format_llm_http_error(reqwest::StatusCode::SERVICE_UNAVAILABLE, body);
@@ -377,7 +325,7 @@ fn tools_to_llm_format_conversion() {
         access_level: crate::ai_runtime::ToolAccessLevel::ReadIndex,
         requires_confirmation: false,
         max_results: Some(20),
-        scene_affinity: vec![],
+        capability_affinity: vec![],
     }];
 
     let llm_tools = ModelGateway::tools_to_llm_format(&tools);

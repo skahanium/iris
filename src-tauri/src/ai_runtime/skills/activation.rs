@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::ai_runtime::{agent_task_policy::intent_from_legacy_scene, AiScene};
 use crate::ai_types::{AgentIntent, SkillActivationItemSummary, SkillActivationPlanSummary};
 use crate::embedding::engine::{cosine_similarity, embed_text};
 use crate::error::AppResult;
@@ -47,24 +46,6 @@ fn parse_embedding_json(raw: &str) -> Option<Vec<f32>> {
 }
 
 /// Filter and rank enabled skills by task intent and capability affinity.
-///
-/// When `skill_activation_index` rows are supplied, keywords/description from the
-/// index take precedence over file metadata for matching.
-pub fn skills_for_scene(
-    skills: &[SkillEntry],
-    scene: AiScene,
-    user_message: &str,
-) -> Vec<SkillEntry> {
-    skills_for_task(
-        skills,
-        intent_from_legacy_scene(scene),
-        user_message,
-        &[],
-        None,
-    )
-}
-
-/// Filter and rank enabled skills by task intent and capability affinity.
 pub fn skills_for_task(
     skills: &[SkillEntry],
     intent: AgentIntent,
@@ -82,32 +63,6 @@ pub fn skills_for_task(
     .take(3)
     .map(|s| s.skill.clone())
     .collect()
-}
-
-/// Legacy scored version of `skills_for_scene`; retained for migration-only callers.
-pub fn rank_skills_for_scene<'a>(skills: &'a [SkillEntry], scene: AiScene) -> Vec<ScoredSkill<'a>> {
-    rank_skills_for_task(
-        skills,
-        intent_from_legacy_scene(scene),
-        scene.profile(),
-        &[],
-        None,
-    )
-}
-
-/// Legacy scored ranking with optional activation-index overlay.
-pub fn rank_skills_for_scene_with_index<'a>(
-    skills: &'a [SkillEntry],
-    scene: AiScene,
-    index: Option<&ActivationIndexMap>,
-) -> Vec<ScoredSkill<'a>> {
-    rank_skills_for_task(
-        skills,
-        intent_from_legacy_scene(scene),
-        scene.profile(),
-        &[],
-        index,
-    )
 }
 
 /// Scored ranking with optional activation-index overlay.
@@ -366,29 +321,9 @@ fn activation_reason(
     None
 }
 
-/// Build a safe, per-run skill activation plan.
-pub fn build_skill_activation_plan(
-    skills: &[SkillEntry],
-    scene: AiScene,
-    agent_intent: AgentIntent,
-    user_message: &str,
-    source_hints: &[String],
-    index: Option<&ActivationIndexMap>,
-) -> SkillActivationPlanSummary {
-    build_skill_activation_plan_for_task(
-        skills,
-        agent_intent,
-        user_message,
-        source_hints,
-        index,
-        Some(scene),
-    )
-}
-
 #[derive(Clone, Copy)]
 struct SkillActivationBuildOptions<'a> {
     index: Option<&'a ActivationIndexMap>,
-    legacy_scene_hint: Option<AiScene>,
     db: Option<&'a Database>,
     enable_manifest_gating: bool,
 }
@@ -399,7 +334,6 @@ pub fn build_skill_activation_plan_for_task(
     user_message: &str,
     source_hints: &[String],
     index: Option<&ActivationIndexMap>,
-    legacy_scene_hint: Option<AiScene>,
 ) -> SkillActivationPlanSummary {
     build_skill_activation_plan_for_task_inner(
         skills,
@@ -408,7 +342,6 @@ pub fn build_skill_activation_plan_for_task(
         source_hints,
         SkillActivationBuildOptions {
             index,
-            legacy_scene_hint,
             db: None,
             enable_manifest_gating: false,
         },
@@ -422,7 +355,6 @@ pub fn build_skill_activation_plan_for_task_with_runtime(
     user_message: &str,
     source_hints: &[String],
     index: Option<&ActivationIndexMap>,
-    legacy_scene_hint: Option<AiScene>,
     db: Option<&Database>,
 ) -> SkillActivationPlanSummary {
     build_skill_activation_plan_for_task_inner(
@@ -432,7 +364,6 @@ pub fn build_skill_activation_plan_for_task_with_runtime(
         source_hints,
         SkillActivationBuildOptions {
             index,
-            legacy_scene_hint,
             db,
             enable_manifest_gating: true,
         },
@@ -489,13 +420,7 @@ fn build_skill_activation_plan_for_task_inner(
         let skill = scored.skill;
         let reason = activation_reason(skill, agent_intent, user_message, source_hints)
             .map(|(_, reason)| reason)
-            .unwrap_or_else(|| {
-                if options.legacy_scene_hint.is_some() {
-                    "legacy_scene_or_vector_match".into()
-                } else {
-                    "task_prompt_or_vector_match".into()
-                }
-            });
+            .unwrap_or_else(|| "task_prompt_or_vector_match".into());
         let _ = (options.enable_manifest_gating, options.db);
         activated.push(SkillActivationItemSummary {
             name: skill.name.clone(),
@@ -524,22 +449,6 @@ fn build_skill_activation_plan_for_task_inner(
         blocked_capabilities: Vec::new(),
     }
 }
-/// Load enabled skills for prompt injection after metadata matching.
-pub fn active_skills_for_prompt(
-    vault: &Path,
-    scene: AiScene,
-    db: Option<&Database>,
-    user_message: &str,
-) -> AppResult<Vec<SkillEntry>> {
-    active_skills_for_task_prompt(
-        vault,
-        intent_from_legacy_scene(scene),
-        db,
-        user_message,
-        &[],
-    )
-}
-
 /// Load enabled skills for prompt injection after task/capability matching.
 pub fn active_skills_for_task_prompt(
     vault: &Path,
@@ -577,21 +486,6 @@ pub fn active_skills_for_task_prompt(
     Ok(out)
 }
 
-/// Legacy wrapper for annotating list entries from a scene-shaped request.
-pub fn enrich_list_with_scene(
-    entries: Vec<SkillListEntry>,
-    scene: AiScene,
-    db: Option<&Database>,
-) -> AppResult<Vec<SkillListEntry>> {
-    enrich_list_with_task(
-        entries,
-        intent_from_legacy_scene(scene),
-        scene.profile(),
-        &[],
-        db,
-    )
-}
-
 /// Annotate list entries with task affinity when an intent is provided.
 pub fn enrich_list_with_task(
     mut entries: Vec<SkillListEntry>,
@@ -626,272 +520,4 @@ pub fn enrich_list_with_task(
         entry.task_score = score_map.get(&key).copied();
     }
     Ok(entries)
-}
-
-#[cfg(test)]
-mod phase4_tests {
-    use std::collections::HashMap;
-
-    use super::*;
-    use crate::ai_runtime::skills::SkillScopeRule;
-
-    fn skill(name: &str) -> SkillEntry {
-        SkillEntry {
-            name: name.into(),
-            description: format!("{name} research helper"),
-            license: Some("AGPL-3.0".into()),
-            compatibility: Some("hermes".into()),
-            metadata: HashMap::new(),
-            content: "Use this skill carefully.".into(),
-            scope: SkillScope::Vault,
-            enabled: true,
-            file_path: format!("/tmp/{name}/SKILL.md"),
-            confirmation_status: SkillConfirmationStatus::Confirmed,
-            legacy_trigger: None,
-            ..SkillEntry::default()
-        }
-    }
-
-    #[test]
-    fn build_skill_activation_plan_prioritizes_explicit_skill_mention() {
-        let skills = vec![skill("citation-helper"), skill("generic-helper")];
-
-        let plan = build_skill_activation_plan(
-            &skills,
-            AiScene::KnowledgeLookup,
-            AgentIntent::AskNotes,
-            "Use citation-helper on this note",
-            &[],
-            None,
-        );
-
-        assert_eq!(plan.activated_skills[0].name, "citation-helper");
-        assert_eq!(
-            plan.activated_skills[0].match_reason,
-            "explicit_skill_mention"
-        );
-    }
-
-    #[test]
-    fn build_skill_activation_plan_ignores_unconfirmed_skill() {
-        let mut unconfirmed = skill("citation-helper");
-        unconfirmed.confirmation_status = SkillConfirmationStatus::NeedsConfirmation;
-
-        let plan = build_skill_activation_plan(
-            &[unconfirmed],
-            AiScene::KnowledgeLookup,
-            AgentIntent::AskNotes,
-            "Use citation-helper on this note",
-            &[],
-            None,
-        );
-
-        assert!(plan.activated_skills.is_empty());
-        assert!(plan.requested_tools.is_empty());
-    }
-
-    #[test]
-    fn build_skill_activation_plan_carries_scope_rules_for_dispatch_gate() {
-        let mut scoped = skill("daily-helper");
-        scoped.scope_rules = vec![SkillScopeRule {
-            kind: "glob".into(),
-            pattern: "Daily/*.md".into(),
-        }];
-
-        let plan = build_skill_activation_plan(
-            &[scoped],
-            AiScene::DraftingAssist,
-            AgentIntent::Write,
-            "Use daily-helper",
-            &[],
-            None,
-        );
-
-        assert_eq!(plan.activated_skills.len(), 1);
-        assert_eq!(plan.activated_skills[0].scope_rules.len(), 1);
-        assert_eq!(plan.activated_skills[0].scope_rules[0].kind, "glob");
-        assert_eq!(
-            plan.activated_skills[0].scope_rules[0].pattern,
-            "Daily/*.md"
-        );
-    }
-
-    #[test]
-    fn build_skill_activation_plan_does_not_request_tools_from_skills() {
-        let plan = build_skill_activation_plan(
-            &[skill("scripted-helper")],
-            AiScene::KnowledgeLookup,
-            AgentIntent::AskNotes,
-            "Use scripted-helper",
-            &[],
-            None,
-        );
-
-        assert!(!plan.degraded);
-        assert!(plan.requested_tools.is_empty());
-        assert!(plan.confirmation_required_tools.is_empty());
-        assert!(plan.blocked_capabilities.is_empty());
-    }
-
-    #[test]
-    fn build_skill_activation_plan_rejects_legacy_runtime_sections() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = dir.path().join("vault");
-        let skill_root = vault.join(".iris/skills/prompt-helper");
-        std::fs::create_dir_all(skill_root.join("sections")).unwrap();
-        std::fs::write(
-            skill_root.join("SKILL.md"),
-            "---\nname: prompt-helper\ndescription: prompt helper\n---\n\nFallback",
-        )
-        .unwrap();
-        std::fs::write(skill_root.join("sections/behavior.md"), "BEHAVIOR ONLY").unwrap();
-        std::fs::write(skill_root.join("sections/web.md"), "WEB ONLY").unwrap();
-        std::fs::write(
-            skill_root.join("iris.skill.toml"),
-            r#"
-schema_version = "1"
-name = "prompt-helper"
-kind = "prompt_only"
-
-[prompt]
-default_sections = ["behavior"]
-
-[[prompt.sections]]
-id = "behavior"
-source = "sections/behavior.md"
-"#,
-        )
-        .unwrap();
-
-        let db = Database::open_in_memory().unwrap();
-        let mut entry = skill("prompt-helper");
-        entry.file_path = skill_root.join("SKILL.md").to_string_lossy().into_owned();
-        let plan = build_skill_activation_plan_for_task_with_runtime(
-            &[entry],
-            AgentIntent::AskNotes,
-            "Use prompt-helper",
-            &[],
-            None,
-            Some(AiScene::KnowledgeLookup),
-            Some(&db),
-        );
-
-        let activated = &plan.activated_skills[0];
-        assert_eq!(
-            activated.injected_sections,
-            vec!["skill_overlay".to_string()]
-        );
-        assert!(activated.degraded_reasons.is_empty());
-        assert!(!plan.degraded);
-    }
-
-    #[test]
-    fn build_skill_activation_plan_uses_prompt_only_overlay_for_sectioned_manifest() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = dir.path().join("vault");
-        let skill_root = vault.join(".iris/skills/search-helper");
-        std::fs::create_dir_all(skill_root.join("sections")).unwrap();
-        std::fs::write(
-            skill_root.join("SKILL.md"),
-            "---\nname: search-helper\ndescription: search helper\n---\n\nFallback",
-        )
-        .unwrap();
-        std::fs::write(skill_root.join("sections/behavior.md"), "BEHAVIOR ONLY").unwrap();
-        std::fs::write(skill_root.join("sections/search.md"), "SEARCH ONLY").unwrap();
-        std::fs::write(
-            skill_root.join("iris.skill.toml"),
-            r#"
-schema_version = "1"
-name = "search-helper"
-kind = "prompt_only"
-
-[prompt]
-default_sections = ["behavior"]
-
-[[prompt.sections]]
-id = "behavior"
-source = "sections/behavior.md"
-
-"#,
-        )
-        .unwrap();
-
-        let mut entry = skill("search-helper");
-        entry.file_path = skill_root.join("SKILL.md").to_string_lossy().into_owned();
-        let plan = build_skill_activation_plan_for_task_with_runtime(
-            &[entry],
-            AgentIntent::AskNotes,
-            "Use search-helper",
-            &[],
-            None,
-            Some(AiScene::KnowledgeLookup),
-            Some(&Database::open_in_memory().unwrap()),
-        );
-
-        let activated = &plan.activated_skills[0];
-        assert_eq!(
-            activated.injected_sections,
-            vec!["skill_overlay".to_string()]
-        );
-        assert!(activated.degraded_reasons.is_empty());
-        assert!(!plan.degraded);
-    }
-    #[test]
-    fn active_skills_prompt_skips_unconfirmed_skill_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = dir.path().join("vault");
-        let skill_root = vault.join(".iris/skills/prompt-helper");
-        std::fs::create_dir_all(skill_root.join("sections")).unwrap();
-        std::fs::write(
-            skill_root.join("SKILL.md"),
-            "---\nname: prompt-helper\ndescription: prompt helper\n---\n\nFallback",
-        )
-        .unwrap();
-        std::fs::write(skill_root.join("sections/behavior.md"), "BEHAVIOR ONLY").unwrap();
-        std::fs::write(skill_root.join("sections/web.md"), "WEB ONLY").unwrap();
-        std::fs::write(
-            skill_root.join("iris.skill.toml"),
-            r#"
-schema_version = "1"
-name = "prompt-helper"
-kind = "prompt_only"
-
-[prompt]
-default_sections = ["behavior"]
-
-[[prompt.sections]]
-id = "behavior"
-source = "sections/behavior.md"
-
-"#,
-        )
-        .unwrap();
-
-        let db = Database::open_in_memory().unwrap();
-        let active = active_skills_for_task_prompt(
-            &vault,
-            AgentIntent::AskNotes,
-            Some(&db),
-            "Use prompt-helper",
-            &[],
-        )
-        .unwrap();
-
-        assert!(active.is_empty());
-    }
-    #[test]
-    fn build_skill_activation_plan_uses_prompt_overlay_only() {
-        let plan = build_skill_activation_plan(
-            &[skill("overlay-helper")],
-            AiScene::KnowledgeLookup,
-            AgentIntent::AskNotes,
-            "Use overlay-helper",
-            &[],
-            None,
-        );
-
-        let activated = &plan.activated_skills[0];
-        assert_eq!(activated.injected_sections, vec!["skill_overlay"]);
-        assert!(activated.degraded_reasons.is_empty());
-    }
 }
