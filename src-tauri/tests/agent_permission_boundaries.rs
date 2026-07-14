@@ -10,6 +10,11 @@ use iris_lib::app::AppState;
 
 fn test_state() -> (std::sync::Arc<AppState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
+    // App initialization normally configures this process-scoped path before
+    // credential access. Keep this integration harness equivalent so the
+    // `secret_exists` boundary exercises the encrypted backend, not a missing
+    // bootstrap environment variable.
+    std::env::set_var("IRIS_DATA_DIR", dir.path());
     let vault = dir.path().join("vault");
     std::fs::create_dir_all(&vault).unwrap();
     let state = AppState::new(dir.path().to_path_buf()).unwrap();

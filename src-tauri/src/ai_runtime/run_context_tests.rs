@@ -288,6 +288,7 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
         session_id: 1,
         message_seq_first: 1,
         user_message: "请结合制度写一份请示".into(),
+        content_parts: None,
         envelope: ExecutionEnvelope {
             material_needs: vec![MaterialNeed::Authority, MaterialNeed::Exemplar],
             ..envelope()

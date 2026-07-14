@@ -67,7 +67,7 @@ pub(crate) async fn execute_classified_direct_streaming_with_sink(
             return Err(AppError::msg(code.as_str()));
         }
     };
-    if !response.tool_calls.is_empty() || response.content.as_deref().map_or(true, str::is_empty) {
+    if !response.tool_calls.is_empty() || response.content.as_deref().is_none_or(str::is_empty) {
         if let Some(failed) =
             classified_run_fail(vault, session, run_id, 2, SafeRunErrorCode::InvalidRequest)?
         {

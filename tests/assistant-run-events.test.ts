@@ -49,6 +49,46 @@ function reduce(events: readonly AssistantRunEvent[]) {
 }
 
 describe("Assistant Run 前端合同", () => {
+  it("keeps routing preferences and structured run diagnostics forward-compatible", () => {
+    const request = {
+      clientRequestId: "client-request-routing-001",
+      message: "Find current MCP guidance",
+      explicitReferences: [],
+      webEnabled: true,
+      securityDomain: "normal",
+      routingPolicy: "quality",
+      modelOverride: { providerId: "openai", modelId: "gpt-5" },
+    } satisfies AssistantRunStartRequest;
+
+    const diagnostics = [
+      {
+        kind: "provider_switched",
+        providerId: "openai",
+        modelId: "gpt-5",
+        reasonCode: "transient_failure",
+      },
+      {
+        kind: "confirmation_required",
+        confirmationId: "confirmation-routing-001",
+        planHash: "sha256:plan",
+        summary: "Update one note",
+        effect: "apply",
+        targets: [
+          { kind: "note", label: "notes/agent.md", risk: "bounded_write" },
+        ],
+        expiresAt: "2026-07-15T00:00:00.000Z",
+      },
+      {
+        kind: "failed",
+        code: "agent_run_no_capable_model",
+        message: "No model satisfies the requested capabilities.",
+      },
+    ] satisfies AssistantRunEvent["payload"][];
+
+    expect(request.routingPolicy).toBe("quality");
+    expect(diagnostics).toHaveLength(3);
+  });
+
   it("以正交 ExecutionEnvelope 保留 Run 的安全执行边界", () => {
     const envelope = {
       effect: "draft",
@@ -227,6 +267,55 @@ describe("Assistant Run 前端合同", () => {
 });
 
 describe("Assistant Run 事件归约", () => {
+  it("preserves structured confirmation and provider diagnostics while accepting legacy events", () => {
+    const state = reduce([
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(2, "stage_changed", {
+        kind: "stage_changed",
+        state: "preparing",
+        stage: "Preparing",
+      }),
+      event(3, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "Running",
+      }),
+      event(4, "provider_switched", {
+        kind: "provider_switched",
+        providerId: "openai",
+        modelId: "gpt-5",
+        reasonCode: "transient_failure",
+      }),
+      event(5, "confirmation_required", {
+        kind: "confirmation_required",
+        confirmationId: "confirmation-001",
+        planHash: "sha256:plan",
+        summary: "Update one note",
+        effect: "apply",
+        targets: [
+          { kind: "note", label: "notes/agent.md", risk: "bounded_write" },
+        ],
+        expiresAt: "2026-07-15T00:00:00.000Z",
+      }),
+    ]);
+
+    expect(state.provider).toEqual({
+      providerId: "openai",
+      modelId: "gpt-5",
+      reasonCode: "transient_failure",
+    });
+    expect(state.pendingConfirmation).toMatchObject({
+      confirmationId: "confirmation-001",
+      effect: "apply",
+      targets: [{ label: "notes/agent.md" }],
+    });
+    expect(state.state).toBe("awaiting_confirmation");
+  });
+
   it("拒绝运行时收到的 type 与 payload kind 错配事件", () => {
     const state = reduceAssistantRunEvent(createAssistantRunEventState(runId), {
       runId,

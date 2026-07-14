@@ -176,4 +176,19 @@ mod tests {
             .iter()
             .any(|tool| tool.name == "insert_text_at_cursor"));
     }
+
+    #[test]
+    fn harness_only_controls_are_never_exposed_to_the_model() {
+        let registry = ToolRegistry::new();
+        let surface = registry.tools_for_surface(ToolSurfaceFilter {
+            web_search_enabled: true,
+            allow_writes: true,
+            allow_research: true,
+            allow_skill_management: true,
+            only_auto: false,
+        });
+
+        assert!(!surface.iter().any(|tool| tool.name == "spawn_subagent"));
+        assert!(!surface.iter().any(|tool| tool.name == "conclude_reasoning"));
+    }
 }

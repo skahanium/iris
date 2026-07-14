@@ -12,8 +12,17 @@ use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use rmcp::{
+    model::{CallToolRequestParams, ClientInfo, Tool},
+    transport::{
+        streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
+        TokioChildProcess,
+    },
+    ServiceExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::Digest;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
@@ -139,8 +148,11 @@ struct McpStdioToolCallLaunch {
     max_stderr_bytes: usize,
     tool_name: String,
     arguments: serde_json::Value,
+    #[allow(dead_code)]
     provider_id: String,
+    #[allow(dead_code)]
     use_session_pool: bool,
+    #[allow(dead_code)]
     session_idle_timeout: Duration,
 }
 
@@ -153,6 +165,84 @@ struct JsonRpcEnvelope {
 
 fn runtime_error(kind: McpRuntimeFailureKind, message: impl Into<String>) -> AppError {
     AppError::msg(format!("{}: {}", kind.as_str(), message.into()))
+}
+
+fn rmcp_client_info() -> ClientInfo {
+    let mut client_info = ClientInfo::default();
+    client_info.client_info.name = "iris".to_string();
+    client_info.client_info.version = env!("CARGO_PKG_VERSION").to_string();
+    client_info
+}
+
+fn mcp_tool_definition_from_rmcp(tool: Tool) -> McpToolDefinition {
+    let input_schema = tool.schema_as_json_value();
+    let output_schema = tool
+        .output_schema
+        .as_ref()
+        .map(|schema| serde_json::Value::Object((**schema).clone()));
+    McpToolDefinition {
+        name: tool.name.to_string(),
+        title: tool.title,
+        description: tool.description.map(|value| value.to_string()),
+        input_schema,
+        output_schema,
+    }
+}
+
+fn rmcp_headers(
+    headers: &[(String, String)],
+) -> AppResult<std::collections::HashMap<http::HeaderName, http::HeaderValue>> {
+    headers
+        .iter()
+        .map(|(name, value)| {
+            let name = http::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+                runtime_error(
+                    McpRuntimeFailureKind::PolicyDenied,
+                    "MCP provider configured an invalid HTTP header name",
+                )
+            })?;
+            if matches!(
+                name.as_str(),
+                "accept"
+                    | "content-type"
+                    | "mcp-session-id"
+                    | "mcp-protocol-version"
+                    | "last-event-id"
+            ) {
+                return Err(runtime_error(
+                    McpRuntimeFailureKind::PolicyDenied,
+                    "MCP provider may not override protocol-managed HTTP headers",
+                ));
+            }
+            let value = http::HeaderValue::from_str(value).map_err(|_| {
+                runtime_error(
+                    McpRuntimeFailureKind::PolicyDenied,
+                    "MCP provider configured an invalid HTTP header value",
+                )
+            })?;
+            Ok((name, value))
+        })
+        .collect()
+}
+
+fn rmcp_client_error() -> AppError {
+    // Do not surface SDK transport strings: a remote error may echo credentials
+    // or provider content. The typed runtime boundary records only this safe code.
+    runtime_error(
+        McpRuntimeFailureKind::Unavailable,
+        "official MCP client request failed",
+    )
+}
+
+fn rmcp_tool_call_arguments(
+    arguments: serde_json::Value,
+) -> AppResult<serde_json::Map<String, serde_json::Value>> {
+    arguments.as_object().cloned().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::SchemaMismatch,
+            "MCP tool arguments must be a JSON object",
+        )
+    })
 }
 fn http_host_is_localhost_or_loopback(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
@@ -270,6 +360,7 @@ fn json_rpc_envelope_from_value(value: serde_json::Value) -> AppResult<JsonRpcEn
     })
 }
 
+#[allow(dead_code)]
 async fn write_json_line<W>(writer: &mut W, value: serde_json::Value) -> AppResult<()>
 where
     W: AsyncWriteExt + Unpin,
@@ -281,6 +372,7 @@ where
     Ok(())
 }
 
+#[allow(dead_code)]
 async fn read_capped_json_line<R>(
     reader: &mut R,
     max_line_bytes: usize,
@@ -524,94 +616,6 @@ fn object_section<'a>(
     value.get(section).and_then(|item| item.as_object())
 }
 
-fn legacy_env_bindings(
-    value: &serde_json::Value,
-) -> Option<&serde_json::Map<String, serde_json::Value>> {
-    let object = value.as_object()?;
-    if object.contains_key("headers") || object.contains_key("env") {
-        None
-    } else {
-        Some(object)
-    }
-}
-
-#[cfg(test)]
-fn resolve_env_bindings_with_lookup<F>(
-    env_bindings_json: &str,
-    lookup_credential: F,
-) -> AppResult<Vec<(String, String)>>
-where
-    F: FnMut(&str) -> AppResult<String>,
-{
-    resolve_env_bindings_with_lookup_and_config(env_bindings_json, lookup_credential, |_| Ok(false))
-}
-
-fn resolve_env_bindings_with_lookup_and_config<F, C>(
-    env_bindings_json: &str,
-    mut lookup_credential: F,
-    mut credential_available: C,
-) -> AppResult<Vec<(String, String)>>
-where
-    F: FnMut(&str) -> AppResult<String>,
-    C: FnMut(&str) -> AppResult<bool>,
-{
-    let value = parse_json_object(env_bindings_json, McpRuntimeFailureKind::AuthMissing)?;
-    let Some(bindings) = object_section(&value, "env").or_else(|| legacy_env_bindings(&value))
-    else {
-        return Ok(Vec::new());
-    };
-    let mut env = Vec::new();
-    for (env_name, binding) in bindings {
-        let service = credential_service_from_binding(binding)?.ok_or_else(|| {
-            runtime_error(
-                McpRuntimeFailureKind::AuthMissing,
-                "MCP env binding omitted named credential service",
-            )
-        })?;
-        let configured = credential_available(&service)?;
-        let value = match lookup_credential(&service) {
-            Ok(value) => value,
-            Err(_) if credential_binding_optional(binding, &service) && !configured => continue,
-            Err(_) => return Err(credential_missing_error(&service, configured)),
-        };
-        env.push((env_name.clone(), value));
-    }
-    Ok(env)
-}
-
-fn resolve_env_bindings(
-    db: &Database,
-    env_bindings_json: &str,
-) -> AppResult<Vec<(String, String)>> {
-    resolve_env_bindings_with_lookup_and_config(
-        env_bindings_json,
-        |service| Ok(crate::credentials::get_runtime_secret(service)?.to_string()),
-        |service| credential_available_for_binding(db, service),
-    )
-}
-
-fn resolve_plain_env_bindings(transport_config_json: &str) -> AppResult<Vec<(String, String)>> {
-    let value = parse_json_object(
-        transport_config_json,
-        McpRuntimeFailureKind::InvalidResponse,
-    )?;
-    let Some(bindings) = object_section(&value, "env") else {
-        return Ok(Vec::new());
-    };
-    let mut env = Vec::new();
-    for (env_name, value) in bindings {
-        let Some(value) = value
-            .as_str()
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-        else {
-            continue;
-        };
-        env.push((env_name.clone(), value.to_string()));
-    }
-    Ok(env)
-}
-
 #[cfg(test)]
 fn resolve_http_header_bindings_with_lookup<F>(
     credential_refs_json: &str,
@@ -710,6 +714,11 @@ fn load_remote_provider(db: &Database, provider_id: &str) -> AppResult<StoredRem
                 "unsupported_transport: MCP provider is not HTTPS",
             ));
         }
+        crate::ai_runtime::mcp_runtime_registry::validate_mcp_runtime_transport_security(
+            &transport,
+            &transport_config_json,
+            &credential_refs_json,
+        )?;
         let config: serde_json::Value = serde_json::from_str(&transport_config_json)?;
         let url = config_string(&config, "url").ok_or_else(|| {
             runtime_error(
@@ -767,6 +776,11 @@ fn load_stdio_provider(db: &Database, provider_id: &str) -> AppResult<StoredStdi
                 "MCP provider is not stdio",
             ));
         }
+        crate::ai_runtime::mcp_runtime_registry::validate_mcp_runtime_transport_security(
+            &transport,
+            &transport_config_json,
+            &credential_refs_json,
+        )?;
         let config: serde_json::Value = serde_json::from_str(&transport_config_json)?;
         let command = config_string(&config, "command").ok_or_else(|| {
             runtime_error(
@@ -778,12 +792,10 @@ fn load_stdio_provider(db: &Database, provider_id: &str) -> AppResult<StoredStdi
             .get("args")
             .map(serde_json::Value::to_string)
             .unwrap_or_else(|| "[]".to_string());
-        let mut env = resolve_plain_env_bindings(&transport_config_json)?;
-        env.extend(resolve_env_bindings(db, &credential_refs_json)?);
         Ok(StoredStdioProvider {
             command: PathBuf::from(command),
             args: parse_stdio_args(&args_json)?,
-            env,
+            env: Vec::new(),
         })
     })
 }
@@ -815,6 +827,7 @@ where
     sanitize_runtime_output(&String::from_utf8_lossy(&collected))
 }
 
+#[allow(dead_code)]
 async fn kill_child(child: &mut Child) {
     match child.try_wait() {
         Ok(Some(_)) => {}
@@ -899,6 +912,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 fn parse_http_json_rpc_response(
     raw: &str,
     max_response_bytes: usize,
@@ -939,57 +953,99 @@ fn parse_http_json_rpc_response(
     ))
 }
 
-async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDiscovery> {
-    let parsed = validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
-    let url = parsed.to_string();
-    let headers = launch.headers.clone();
-    let max_response_bytes = launch.max_response_bytes;
-    let mut builder = reqwest::Client::builder()
-        .use_rustls_tls()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(launch.request_timeout);
-    if !launch.allow_localhost_dev {
-        builder = builder.https_only(true);
+async fn discover_http_tools_with_rmcp(launch: McpHttpLaunch) -> AppResult<McpStdioDiscovery> {
+    validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
+    if launch.max_response_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP HTTP response cap must be greater than zero",
+        ));
     }
-    let client = builder.build()?;
-    discover_http_tools_with_sender(launch, move |request| {
-        let client = client.clone();
-        let url = url.clone();
-        let headers = headers.clone();
-        async move {
-            let mut request_builder = client
-                .post(&url)
-                .header(reqwest::header::CONTENT_TYPE, "application/json");
-            for (name, value) in &headers {
-                request_builder = request_builder.header(name.as_str(), value.as_str());
-            }
-            let response = request_builder.json(&request).send().await?;
-            let status = response.status();
-            if status.is_redirection() {
-                return Err(runtime_error(
-                    McpRuntimeFailureKind::NetworkDenied,
-                    "MCP HTTP redirect denied",
-                ));
-            }
-            if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN
-            {
-                return Err(runtime_error(
-                    McpRuntimeFailureKind::AuthFailed,
-                    "MCP HTTP authentication failed",
-                ));
-            }
-            if !status.is_success() {
-                return Err(runtime_error(
-                    McpRuntimeFailureKind::Unavailable,
-                    format!("MCP HTTP server returned status {status}"),
-                ));
-            }
-            let text = response.text().await?;
-            parse_http_json_rpc_response(&text, max_response_bytes)
-        }
-    })
-    .await
+
+    let config = StreamableHttpClientTransportConfig::with_uri(launch.url.clone())
+        .custom_headers(rmcp_headers(&launch.headers)?);
+    let transport = StreamableHttpClientTransport::from_config(config);
+    let run = async move {
+        let client = rmcp_client_info()
+            .serve(transport)
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let peer_info = client.peer_info();
+        let tools = client
+            .list_all_tools()
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let _ = client.cancel().await;
+        let peer_info = peer_info.ok_or_else(|| {
+            runtime_error(
+                McpRuntimeFailureKind::InvalidResponse,
+                "MCP server did not return initialize metadata",
+            )
+        })?;
+        let tools = tools
+            .into_iter()
+            .map(mcp_tool_definition_from_rmcp)
+            .collect::<Vec<_>>();
+        ensure_json_value_under_cap(&serde_json::to_value(&tools)?, launch.max_response_bytes)?;
+        Ok::<_, AppError>(McpStdioDiscovery {
+            protocol_version: peer_info.protocol_version.to_string(),
+            server_name: peer_info.server_info.name.clone(),
+            server_version: Some(peer_info.server_info.version.clone()),
+            tools,
+            stderr_summary: None,
+        })
+    };
+    match timeout(launch.request_timeout, run).await {
+        Ok(result) => result,
+        Err(_) => Err(runtime_error(
+            McpRuntimeFailureKind::Timeout,
+            "MCP HTTP request timed out",
+        )),
+    }
+}
+
+async fn call_http_tool_with_rmcp(
+    launch: McpHttpLaunch,
+    tool_name: String,
+    arguments: serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
+    if launch.max_response_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP HTTP response cap must be greater than zero",
+        ));
+    }
+
+    let config = StreamableHttpClientTransportConfig::with_uri(launch.url.clone())
+        .custom_headers(rmcp_headers(&launch.headers)?);
+    let transport = StreamableHttpClientTransport::from_config(config);
+    let arguments = rmcp_tool_call_arguments(arguments)?;
+    let run = async move {
+        let client = rmcp_client_info()
+            .serve(transport)
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let result = client
+            .call_tool(CallToolRequestParams::new(tool_name).with_arguments(arguments))
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let _ = client.cancel().await;
+        let result = serde_json::to_value(result)?;
+        ensure_json_value_under_cap(&result, launch.max_response_bytes)?;
+        Ok::<_, AppError>(result)
+    };
+    match timeout(launch.request_timeout, run).await {
+        Ok(result) => result,
+        Err(_) => Err(runtime_error(
+            McpRuntimeFailureKind::Timeout,
+            "MCP HTTP tool call timed out",
+        )),
+    }
+}
+
+async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDiscovery> {
+    discover_http_tools_with_rmcp(launch).await
 }
 
 async fn call_http_tool_with_sender<F, Fut>(
@@ -1065,58 +1121,10 @@ async fn call_http_tool(
     tool_name: String,
     arguments: serde_json::Value,
 ) -> AppResult<serde_json::Value> {
-    let parsed = validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
-    let url = parsed.to_string();
-    let headers = launch.headers.clone();
-    let max_response_bytes = launch.max_response_bytes;
-    let mut builder = reqwest::Client::builder()
-        .use_rustls_tls()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(launch.request_timeout);
-    if !launch.allow_localhost_dev {
-        builder = builder.https_only(true);
-    }
-    let client = builder.build()?;
-    call_http_tool_with_sender(launch, tool_name, arguments, move |request| {
-        let client = client.clone();
-        let url = url.clone();
-        let headers = headers.clone();
-        async move {
-            let mut request_builder = client
-                .post(&url)
-                .header(reqwest::header::CONTENT_TYPE, "application/json");
-            for (name, value) in &headers {
-                request_builder = request_builder.header(name.as_str(), value.as_str());
-            }
-            let response = request_builder.json(&request).send().await?;
-            let status = response.status();
-            if status.is_redirection() {
-                return Err(runtime_error(
-                    McpRuntimeFailureKind::NetworkDenied,
-                    "MCP HTTP redirect denied",
-                ));
-            }
-            if status == reqwest::StatusCode::UNAUTHORIZED
-                || status == reqwest::StatusCode::FORBIDDEN
-            {
-                return Err(runtime_error(
-                    McpRuntimeFailureKind::AuthFailed,
-                    "MCP HTTP authentication failed",
-                ));
-            }
-            if !status.is_success() {
-                return Err(runtime_error(
-                    McpRuntimeFailureKind::Unavailable,
-                    format!("MCP HTTP server returned status {status}"),
-                ));
-            }
-            let text = response.text().await?;
-            parse_http_json_rpc_response(&text, max_response_bytes)
-        }
-    })
-    .await
+    call_http_tool_with_rmcp(launch, tool_name, arguments).await
 }
 
+#[cfg(test)]
 fn build_stdio_child_env<I>(
     host_env: I,
     provider_env: &[(String, String)],
@@ -1129,6 +1137,9 @@ where
     env
 }
 
+// The following deterministic stdio fixture remains compiled for protocol
+// regression tests; production connections use the official rmcp transport.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct McpStdioSessionKey {
     provider_id: String,
@@ -1139,6 +1150,7 @@ struct McpStdioSessionKey {
     max_stderr_bytes: usize,
 }
 
+#[allow(dead_code)]
 impl McpStdioSessionKey {
     fn from_launch(launch: &McpStdioToolCallLaunch) -> Self {
         Self {
@@ -1152,6 +1164,7 @@ impl McpStdioSessionKey {
     }
 }
 
+#[allow(dead_code)]
 fn stdio_env_fingerprint(env: &[(String, String)]) -> u64 {
     let mut sorted = env.to_vec();
     sorted.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
@@ -1160,6 +1173,7 @@ fn stdio_env_fingerprint(env: &[(String, String)]) -> u64 {
     hasher.finish()
 }
 
+#[allow(dead_code)]
 struct McpStdioSession {
     child: Child,
     stdin: ChildStdin,
@@ -1169,6 +1183,7 @@ struct McpStdioSession {
     last_used: Instant,
 }
 
+#[allow(dead_code)]
 impl McpStdioSession {
     fn is_idle_expired(&self, idle_timeout: Duration) -> bool {
         self.last_used.elapsed() > idle_timeout
@@ -1226,14 +1241,17 @@ impl McpStdioSession {
     }
 }
 
+#[allow(dead_code)]
 type SharedMcpStdioSession = Arc<Mutex<McpStdioSession>>;
 
+#[allow(dead_code)]
 fn stdio_session_pool() -> &'static Mutex<HashMap<McpStdioSessionKey, SharedMcpStdioSession>> {
     static POOL: OnceLock<Mutex<HashMap<McpStdioSessionKey, SharedMcpStdioSession>>> =
         OnceLock::new();
     POOL.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+#[allow(dead_code)]
 async fn spawn_initialized_stdio_session(
     launch: &McpStdioToolCallLaunch,
 ) -> AppResult<McpStdioSession> {
@@ -1249,8 +1267,10 @@ async fn spawn_initialized_stdio_session(
     if let Some(cwd) = &launch.cwd {
         command.current_dir(cwd);
     }
-    let child_env = build_stdio_child_env(std::env::vars(), &launch.env);
-    command.envs(child_env.iter());
+    // Never inherit the parent environment: it can contain API keys or tokens
+    // that a configured MCP process must not receive implicitly.
+    command.env_clear();
+    command.envs(launch.env.iter().map(|(key, value)| (key, value)));
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -1341,6 +1361,7 @@ async fn spawn_initialized_stdio_session(
     }
 }
 
+#[allow(dead_code)]
 async fn remove_stdio_session(key: &McpStdioSessionKey, session: &SharedMcpStdioSession) {
     let mut map = stdio_session_pool().lock().await;
     if map
@@ -1351,6 +1372,7 @@ async fn remove_stdio_session(key: &McpStdioSessionKey, session: &SharedMcpStdio
     }
 }
 
+#[allow(dead_code)]
 async fn acquire_stdio_session(
     key: &McpStdioSessionKey,
     launch: &McpStdioToolCallLaunch,
@@ -1376,6 +1398,7 @@ async fn acquire_stdio_session(
     Ok(session)
 }
 
+#[allow(dead_code)]
 async fn call_stdio_tool_with_pool(
     launch: McpStdioToolCallLaunch,
 ) -> AppResult<(serde_json::Value, Option<String>)> {
@@ -1404,6 +1427,7 @@ async fn call_stdio_tool_with_pool(
     }))
 }
 
+#[allow(dead_code)]
 async fn discover_stdio_tools_inner(
     launch: McpStdioLaunch,
     env: &[(String, String)],
@@ -1420,8 +1444,8 @@ async fn discover_stdio_tools_inner(
     if let Some(cwd) = &launch.cwd {
         command.current_dir(cwd);
     }
-    let child_env = build_stdio_child_env(std::env::vars(), env);
-    command.envs(child_env.iter());
+    command.env_clear();
+    command.envs(env.iter().map(|(key, value)| (key, value)));
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -1533,6 +1557,7 @@ async fn discover_stdio_tools_inner(
     Ok(discovery)
 }
 
+#[allow(dead_code)]
 async fn call_stdio_tool_once(
     launch: McpStdioToolCallLaunch,
 ) -> AppResult<(serde_json::Value, Option<String>)> {
@@ -1548,8 +1573,8 @@ async fn call_stdio_tool_once(
     if let Some(cwd) = &launch.cwd {
         command.current_dir(cwd);
     }
-    let child_env = build_stdio_child_env(std::env::vars(), &launch.env);
-    command.envs(child_env.iter());
+    command.env_clear();
+    command.envs(launch.env.iter().map(|(key, value)| (key, value)));
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -1656,6 +1681,7 @@ async fn call_stdio_tool_once(
     }
 }
 
+#[allow(dead_code)]
 async fn call_stdio_tool(
     launch: McpStdioToolCallLaunch,
 ) -> AppResult<(serde_json::Value, Option<String>)> {
@@ -1664,6 +1690,154 @@ async fn call_stdio_tool(
     } else {
         call_stdio_tool_once(launch).await
     }
+}
+
+fn spawn_rmcp_stdio_transport(
+    command_path: PathBuf,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+    cwd: Option<PathBuf>,
+    max_stderr_bytes: usize,
+) -> AppResult<(TokioChildProcess, Option<tokio::task::JoinHandle<String>>)> {
+    let mut command = Command::new(command_path);
+    command.args(args);
+    if let Some(cwd) = cwd {
+        command.current_dir(cwd);
+    }
+    // An MCP process receives only explicitly permitted configuration. In
+    // particular it never inherits an LLM provider key from Iris itself.
+    command.env_clear();
+    command.envs(env);
+    command.kill_on_drop(true);
+    let (transport, stderr) = TokioChildProcess::builder(command)
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| {
+            runtime_error(
+                McpRuntimeFailureKind::Unavailable,
+                "failed to start official MCP stdio process",
+            )
+        })?;
+    let stderr_task = stderr.map(|stderr| tokio::spawn(drain_stderr(stderr, max_stderr_bytes)));
+    Ok((transport, stderr_task))
+}
+
+async fn finish_rmcp_stdio_stderr(
+    stderr_task: Option<tokio::task::JoinHandle<String>>,
+) -> Option<String> {
+    let summary = match stderr_task {
+        Some(task) => task.await.unwrap_or_default(),
+        None => String::new(),
+    };
+    (!summary.is_empty()).then_some(summary)
+}
+
+async fn discover_stdio_tools_with_rmcp(
+    launch: McpStdioLaunch,
+    env: Vec<(String, String)>,
+) -> AppResult<McpStdioDiscovery> {
+    if launch.max_stdout_line_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP stdout cap must be greater than zero",
+        ));
+    }
+    let request_timeout = launch.request_timeout;
+    let max_response_bytes = launch.max_stdout_line_bytes;
+    let (transport, stderr_task) = spawn_rmcp_stdio_transport(
+        launch.command,
+        launch.args,
+        env,
+        launch.cwd,
+        launch.max_stderr_bytes,
+    )?;
+    let run = async move {
+        let client = rmcp_client_info()
+            .serve(transport)
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let peer_info = client.peer_info();
+        let tools = client
+            .list_all_tools()
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let _ = client.cancel().await;
+        let peer_info = peer_info.ok_or_else(|| {
+            runtime_error(
+                McpRuntimeFailureKind::InvalidResponse,
+                "MCP server did not return initialize metadata",
+            )
+        })?;
+        let tools = tools
+            .into_iter()
+            .map(mcp_tool_definition_from_rmcp)
+            .collect::<Vec<_>>();
+        ensure_json_value_under_cap(&serde_json::to_value(&tools)?, max_response_bytes)?;
+        Ok::<_, AppError>(McpStdioDiscovery {
+            protocol_version: peer_info.protocol_version.to_string(),
+            server_name: peer_info.server_info.name.clone(),
+            server_version: Some(peer_info.server_info.version.clone()),
+            tools,
+            stderr_summary: None,
+        })
+    };
+    let result = match timeout(request_timeout, run).await {
+        Ok(result) => result,
+        Err(_) => Err(runtime_error(
+            McpRuntimeFailureKind::Timeout,
+            "MCP stdio request timed out",
+        )),
+    };
+    let stderr_summary = finish_rmcp_stdio_stderr(stderr_task).await;
+    result.map(|mut discovery| {
+        discovery.stderr_summary = stderr_summary;
+        discovery
+    })
+}
+
+async fn call_stdio_tool_with_rmcp(
+    launch: McpStdioToolCallLaunch,
+) -> AppResult<(serde_json::Value, Option<String>)> {
+    if launch.max_stdout_line_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP stdout cap must be greater than zero",
+        ));
+    }
+    let request_timeout = launch.request_timeout;
+    let max_response_bytes = launch.max_stdout_line_bytes;
+    let (transport, stderr_task) = spawn_rmcp_stdio_transport(
+        launch.command,
+        launch.args,
+        launch.env,
+        launch.cwd,
+        launch.max_stderr_bytes,
+    )?;
+    let tool_name = launch.tool_name;
+    let arguments = rmcp_tool_call_arguments(launch.arguments)?;
+    let run = async move {
+        let client = rmcp_client_info()
+            .serve(transport)
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let result = client
+            .call_tool(CallToolRequestParams::new(tool_name).with_arguments(arguments))
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let _ = client.cancel().await;
+        let result = serde_json::to_value(result)?;
+        ensure_json_value_under_cap(&result, max_response_bytes)?;
+        Ok::<_, AppError>(result)
+    };
+    let result = match timeout(request_timeout, run).await {
+        Ok(result) => result,
+        Err(_) => Err(runtime_error(
+            McpRuntimeFailureKind::Timeout,
+            "MCP stdio tool call timed out",
+        )),
+    };
+    let stderr_summary = finish_rmcp_stdio_stderr(stderr_task).await;
+    result.map(|result| (result, stderr_summary))
 }
 
 pub async fn call_provider_stdio_tool(
@@ -1679,7 +1853,7 @@ pub async fn call_provider_stdio_tool(
         ));
     }
     let loaded_provider = load_stdio_provider(db, &provider.profile_id)?;
-    let (result, stderr_summary) = call_stdio_tool(McpStdioToolCallLaunch {
+    let (result, stderr_summary) = call_stdio_tool_with_rmcp(McpStdioToolCallLaunch {
         command: loaded_provider.command,
         args: loaded_provider.args,
         env: loaded_provider.env,
@@ -1807,7 +1981,7 @@ pub async fn discover_provider_stdio_tools(
 ) -> AppResult<McpStdioDiscovery> {
     let provider = load_stdio_provider(db, provider_id)?;
     let env = provider.env;
-    discover_stdio_tools_inner(
+    discover_stdio_tools_with_rmcp(
         McpStdioLaunch {
             command: provider.command,
             args: provider.args,
@@ -1816,7 +1990,7 @@ pub async fn discover_provider_stdio_tools(
             max_stdout_line_bytes: options.max_stdout_line_bytes,
             max_stderr_bytes: options.max_stderr_bytes,
         },
-        &env,
+        env,
     )
     .await
 }
@@ -1850,7 +2024,8 @@ pub async fn discover_provider_tools(
     provider_id: &str,
     options: McpHostRuntimeOptions,
 ) -> AppResult<McpStdioDiscovery> {
-    match load_provider_transport(db, provider_id)?.as_str() {
+    let started = Instant::now();
+    let result = match load_provider_transport(db, provider_id)?.as_str() {
         "stdio" => discover_provider_stdio_tools(db, provider_id, options).await,
         "https" => {
             let provider = load_remote_provider(db, provider_id)?;
@@ -1867,7 +2042,57 @@ pub async fn discover_provider_tools(
             McpRuntimeFailureKind::PolicyDenied,
             format!("unsupported_transport: {other}"),
         )),
+    };
+    match &result {
+        Ok(discovery) => {
+            let tool_schema_hash = {
+                let tools = discovery
+                    .tools
+                    .iter()
+                    .map(|tool| {
+                        serde_json::json!({
+                            "name": tool.name,
+                            "inputSchema": tool.input_schema,
+                            "outputSchema": tool.output_schema,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                let digest = sha2::Sha256::digest(serde_json::to_string(&tools)?.as_bytes());
+                hex::encode(&digest[..12])
+            };
+            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_discovery(
+                db,
+                provider_id,
+                &discovery.protocol_version,
+                &discovery.server_name,
+                discovery.server_version.as_deref(),
+                &tool_schema_hash,
+            );
+            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+                db,
+                provider_id,
+                true,
+                started.elapsed().as_millis() as u64,
+                None,
+            );
+        }
+        Err(error) => {
+            let code = error
+                .to_string()
+                .split(':')
+                .next()
+                .unwrap_or("unavailable")
+                .to_string();
+            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+                db,
+                provider_id,
+                false,
+                started.elapsed().as_millis() as u64,
+                Some(&code),
+            );
+        }
     }
+    result
 }
 
 #[cfg(test)]
@@ -1922,6 +2147,50 @@ mod tests {
         assert!(debug.contains("Authorization"));
         assert!(!debug.contains("as_sk_secret_value"), "{debug}");
         assert!(!debug.contains("Bearer"), "{debug}");
+    }
+
+    #[test]
+    fn rmcp_client_identifies_iris_without_enabling_extra_capabilities() {
+        let info = rmcp_client_info();
+
+        assert_eq!(info.client_info.name, "iris");
+        assert_eq!(info.client_info.version, env!("CARGO_PKG_VERSION"));
+        assert!(info.capabilities.roots.is_none());
+    }
+
+    #[test]
+    fn rmcp_header_conversion_rejects_protocol_owned_headers() {
+        let error = rmcp_headers(&[("Mcp-Session-Id".into(), "forged".into())])
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("protocol-managed"), "{error}");
+    }
+
+    #[test]
+    fn rmcp_header_conversion_preserves_authorization_without_logging_value() {
+        let headers =
+            rmcp_headers(&[("Authorization".into(), "Bearer test-secret".into())]).unwrap();
+
+        assert_eq!(headers.len(), 1);
+        assert!(headers
+            .keys()
+            .any(|name| name.as_str().eq_ignore_ascii_case("authorization")));
+    }
+
+    #[test]
+    fn rmcp_tool_conversion_preserves_declared_schemas() {
+        let input_schema = serde_json::Map::from_iter([(
+            "type".into(),
+            serde_json::Value::String("object".into()),
+        )]);
+        let tool = Tool::new("web_search", "Search the web", input_schema);
+
+        let converted = mcp_tool_definition_from_rmcp(tool);
+
+        assert_eq!(converted.name, "web_search");
+        assert_eq!(converted.description.as_deref(), Some("Search the web"));
+        assert_eq!(converted.input_schema["type"], "object");
     }
 
     #[test]
@@ -2012,38 +2281,31 @@ mod tests {
     }
 
     #[test]
-    fn resolves_plain_and_secret_stdio_env_without_mixing_values() {
-        let plain =
-            resolve_plain_env_bindings(r#"{"env":{"SEARXNG_URL":"https://search.example"}}"#)
-                .unwrap();
-        let secret = resolve_env_bindings_with_lookup(
-            r#"{"env":{"BRAVE_API_KEY":"credential://iris.mcp.codex_stdio_present"}}"#,
-            |service| match service {
-                "iris.mcp.codex_stdio_present" => Ok("test-stdio-key".into()),
-                _ => missing_test_credential(service),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            plain,
-            vec![("SEARXNG_URL".into(), "https://search.example".into())]
+    fn stdio_security_rejects_credential_and_plain_environment_bindings() {
+        let credential_err =
+            crate::ai_runtime::mcp_runtime_registry::validate_mcp_runtime_transport_security(
+                "stdio",
+                r#"{"command":"mcp-server"}"#,
+                r#"{"env":{"API_KEY":"credential://iris.mcp.test"}}"#,
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(
+            credential_err.contains("stdio providers cannot"),
+            "{credential_err}"
         );
-        assert_eq!(
-            secret,
-            vec![("BRAVE_API_KEY".into(), "test-stdio-key".into())]
+        let plain_err =
+            crate::ai_runtime::mcp_runtime_registry::validate_mcp_runtime_transport_security(
+                "stdio",
+                r#"{"command":"mcp-server","env":{"MODE":"test"}}"#,
+                "{}",
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(
+            plain_err.contains("must not define environment"),
+            "{plain_err}"
         );
-    }
-
-    #[test]
-    fn optional_secret_stdio_env_is_skipped_when_key_is_missing() {
-        let env = resolve_env_bindings_with_lookup(
-            r#"{"env":{"OPTIONAL_API_KEY":{"credential":"credential://iris.mcp.codex_optional_env_missing","optional":true}}}"#,
-            missing_test_credential,
-        )
-        .unwrap();
-
-        assert!(env.is_empty(), "{env:?}");
     }
 
     #[test]
@@ -2093,7 +2355,7 @@ mod tests {
         assert_ne!(first_key, second_key);
     }
     #[test]
-    fn stdio_env_inherits_host_env_and_overrides_provider_entries() {
+    fn stdio_child_environment_contains_only_explicit_values() {
         let host = vec![
             ("PATH".to_string(), "/usr/local/bin:/usr/bin".to_string()),
             ("HOME".to_string(), "/Users/iris".to_string()),
@@ -2106,13 +2368,15 @@ mod tests {
 
         let env = build_stdio_child_env(host, &provider);
 
-        assert_eq!(
-            env.get("PATH").map(String::as_str),
-            Some("/usr/local/bin:/usr/bin")
-        );
-        assert_eq!(env.get("HOME").map(String::as_str), Some("/Users/iris"));
+        // The process launcher calls env_clear; this helper is retained for
+        // deterministic session-key tests only and must not be used to inherit
+        // the host process environment.
+        let explicit = build_stdio_child_env(Vec::new(), &provider);
+        assert!(!explicit.contains_key("PATH"));
+        assert!(!explicit.contains_key("HOME"));
+        assert_eq!(explicit.get("API_KEY").map(String::as_str), Some("new"));
+        assert_eq!(explicit.get("CUSTOM_FLAG").map(String::as_str), Some("1"));
         assert_eq!(env.get("API_KEY").map(String::as_str), Some("new"));
-        assert_eq!(env.get("CUSTOM_FLAG").map(String::as_str), Some("1"));
     }
 
     #[test]

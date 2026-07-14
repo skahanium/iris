@@ -1,6 +1,8 @@
 import type {
   AssistantRunEvent,
   AssistantRunEventPayload,
+  PendingConfirmation,
+  ProviderSwitchReasonCode,
   RunState,
 } from "@/types/ai";
 
@@ -12,6 +14,12 @@ export interface AssistantRunEventState {
   state: RunState | null;
   stage: string | null;
   summary: string | null;
+  pendingConfirmation: PendingConfirmation | null;
+  provider: {
+    providerId: string;
+    modelId: string | null;
+    reasonCode: ProviderSwitchReasonCode | null;
+  } | null;
   content: string;
   events: readonly AssistantRunEvent[];
   pendingEvents: readonly AssistantRunEvent[];
@@ -32,6 +40,8 @@ export function createAssistantRunEventState(
     state: null,
     stage: null,
     summary: null,
+    pendingConfirmation: null,
+    provider: null,
     content: "",
     events: [],
     pendingEvents: [],
@@ -126,11 +136,41 @@ function applyEvent(
     state: nextState,
     stage: payload.kind === "stage_changed" ? payload.stage : state.stage,
     summary: summaryForPayload(payload) ?? state.summary,
+    pendingConfirmation:
+      payload.kind === "confirmation_required"
+        ? confirmationForPayload(payload)
+        : payload.kind === "resumed" ||
+            payload.kind === "completed" ||
+            payload.kind === "failed" ||
+            payload.kind === "cancelled"
+          ? null
+          : state.pendingConfirmation,
+    provider:
+      payload.kind === "provider_switched"
+        ? {
+            providerId: payload.providerId,
+            modelId: payload.modelId ?? null,
+            reasonCode: payload.reasonCode ?? null,
+          }
+        : state.provider,
     content:
       payload.kind === "content_delta"
         ? `${state.content}${payload.delta}`
         : state.content,
     events: [...state.events, event],
+  };
+}
+
+function confirmationForPayload(
+  payload: Extract<AssistantRunEventPayload, { kind: "confirmation_required" }>,
+): PendingConfirmation {
+  return {
+    confirmationId: payload.confirmationId,
+    planHash: payload.planHash,
+    summary: payload.summary,
+    ...(payload.effect ? { effect: payload.effect } : {}),
+    ...(payload.targets ? { targets: payload.targets } : {}),
+    ...(payload.expiresAt ? { expiresAt: payload.expiresAt } : {}),
   };
 }
 

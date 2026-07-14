@@ -55,6 +55,36 @@ pub struct WebEvidenceProviderMappingSummary {
     pub web_fetch_mapping_json: Option<String>,
 }
 
+/// Persisted, non-sensitive state obtained during an MCP initialization and
+/// `tools/list` discovery.  It deliberately contains no tool descriptions or
+/// server output: those can contain untrusted or user-controlled text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceProviderRuntimeSummary {
+    pub provider_id: String,
+    pub protocol_version: String,
+    pub server_name: String,
+    pub server_version: Option<String>,
+    pub capabilities_hash: String,
+    pub mapping_hash: String,
+    pub status: String,
+    pub reason_code: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceProviderHealthSummary {
+    pub provider_id: String,
+    pub success_count: i64,
+    pub failure_count: i64,
+    pub consecutive_failures: i64,
+    pub latency_ewma_ms: Option<f64>,
+    pub success_ewma: Option<f64>,
+    pub last_failure_code: Option<String>,
+    pub updated_at: String,
+}
+
 fn provider_config_hash(input: &WebEvidenceProviderInput) -> String {
     let raw = serde_json::json!({
         "id": input.id,
@@ -66,6 +96,11 @@ fn provider_config_hash(input: &WebEvidenceProviderInput) -> String {
         "web_fetch_mapping_json": input.web_fetch_mapping_json,
     });
     let digest = Sha256::digest(raw.to_string().as_bytes());
+    hex::encode(&digest[..12])
+}
+
+fn short_hash(value: &serde_json::Value) -> String {
+    let digest = Sha256::digest(value.to_string().as_bytes());
     hex::encode(&digest[..12])
 }
 
@@ -180,6 +215,118 @@ fn validate_optional_mapping(label: &str, raw: &Option<String>) -> AppResult<()>
     validate_provider_json(label, raw)
 }
 
+fn object_from_json(
+    label: &str,
+    raw: &str,
+) -> AppResult<serde_json::Map<String, serde_json::Value>> {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .map_err(|err| AppError::msg(format!("invalid {label} JSON: {err}")))?
+        .as_object()
+        .cloned()
+        .ok_or_else(|| AppError::msg(format!("{label} must be a JSON object")))
+}
+
+/// Reject transport configuration that could make an MCP process inherit or
+/// receive credentials before examining any values within that configuration.
+///
+/// Structural transport restrictions deliberately take precedence over the
+/// generic raw-secret scan so an invalid `env` section is rejected as an
+/// environment binding even when a value happens to resemble a secret.
+fn validate_mcp_transport_config_security(
+    transport_kind: &str,
+    transport_config_json: &str,
+) -> AppResult<()> {
+    let transport = object_from_json("transport config", transport_config_json)?;
+    match transport_kind {
+        "stdio" if transport.contains_key("env") => Err(AppError::msg(
+            "MCP stdio transport config must not define environment variables",
+        )),
+        "https" if transport.contains_key("env") || transport.contains_key("headers") => {
+            Err(AppError::msg(
+                "MCP HTTPS transport config must not contain env or headers; use credential refs.headers",
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+pub(crate) fn validate_mcp_runtime_transport_security(
+    transport_kind: &str,
+    transport_config_json: &str,
+    credential_refs_json: &str,
+) -> AppResult<()> {
+    validate_mcp_transport_config_security(transport_kind, transport_config_json)?;
+    let credentials = object_from_json("credential refs", credential_refs_json)?;
+    match transport_kind {
+        "stdio" => {
+            if !credentials.is_empty() {
+                return Err(AppError::msg(
+                    "MCP stdio providers cannot use credential or environment bindings; use HTTPS header credentials instead",
+                ));
+            }
+        }
+        "https" => {
+            if credentials.contains_key("env") {
+                return Err(AppError::msg(
+                    "MCP HTTPS providers only support credential refs.headers, not environment bindings",
+                ));
+            }
+            if credentials.keys().any(|key| key != "headers") {
+                return Err(AppError::msg(
+                    "MCP HTTPS credential refs may only contain headers",
+                ));
+            }
+            if let Some(headers) = credentials.get("headers") {
+                let headers = headers.as_object().ok_or_else(|| {
+                    AppError::msg("MCP HTTPS credential refs.headers must be an object")
+                })?;
+                for (name, binding) in headers {
+                    let header =
+                        reqwest::header::HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+                            AppError::msg("MCP HTTPS credential header name is invalid")
+                        })?;
+                    if matches!(
+                        header.as_str(),
+                        "host"
+                            | "content-length"
+                            | "connection"
+                            | "transfer-encoding"
+                            | "mcp-protocol-version"
+                    ) {
+                        return Err(AppError::msg("MCP HTTPS credential header is reserved"));
+                    }
+                    let service = match binding {
+                        serde_json::Value::String(value) => value,
+                        serde_json::Value::Object(object) => object
+                            .get("credential")
+                            .or_else(|| object.get("service"))
+                            .or_else(|| object.get("ref"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or_default(),
+                        _ => "",
+                    };
+                    if !is_credential_ref_string(service) {
+                        return Err(AppError::msg(
+                            "MCP HTTPS header credentials must use credential://iris.* references",
+                        ));
+                    }
+                    if let Some(scheme) = binding
+                        .as_object()
+                        .and_then(|object| object.get("scheme"))
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        if scheme.contains(['\r', '\n']) {
+                            return Err(AppError::msg("MCP HTTPS credential scheme is invalid"));
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn normalize_provider_input(
     input: &WebEvidenceProviderInput,
 ) -> AppResult<WebEvidenceProviderInput> {
@@ -206,10 +353,24 @@ fn normalize_provider_input(
             "MCP provider must use stdio or https transport",
         ));
     }
+    if kind == "mcp" {
+        validate_mcp_transport_config_security(
+            &transport_kind,
+            input.transport_config_json.trim(),
+        )?;
+    }
     validate_provider_json("transport config", &input.transport_config_json)?;
     validate_provider_json("credential refs", &input.credential_refs_json)?;
     validate_optional_mapping("web.search mapping", &input.web_search_mapping_json)?;
     validate_optional_mapping("web.fetch mapping", &input.web_fetch_mapping_json)?;
+
+    if kind == "mcp" {
+        validate_mcp_runtime_transport_security(
+            &transport_kind,
+            input.transport_config_json.trim(),
+            input.credential_refs_json.trim(),
+        )?;
+    }
 
     Ok(WebEvidenceProviderInput {
         id,
@@ -271,8 +432,130 @@ pub fn upsert_web_evidence_provider(
                 config_hash
             ],
         )?;
+        conn.execute(
+            "DELETE FROM web_evidence_provider_runtime WHERE provider_id = ?1",
+            [input.id.as_str()],
+        )?;
+        conn.execute(
+            "DELETE FROM web_evidence_provider_health WHERE provider_id = ?1",
+            [input.id.as_str()],
+        )?;
         Ok(())
     })
+}
+
+pub fn record_web_evidence_provider_discovery(
+    db: &Database,
+    provider_id: &str,
+    protocol_version: &str,
+    server_name: &str,
+    server_version: Option<&str>,
+    tool_schema_hash: &str,
+) -> AppResult<()> {
+    let provider_id = validate_provider_identifier("provider id", provider_id)?;
+    let mapping_hash = db.with_read_conn(|conn| {
+        let (kind, transport_kind, web_search, web_fetch): (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+        ) = conn.query_row(
+            "SELECT kind, transport_kind, web_search_mapping_json, web_fetch_mapping_json
+             FROM web_evidence_providers WHERE id = ?1",
+            [provider_id.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        Ok(short_hash(&serde_json::json!({
+            "providerId": provider_id,
+            "kind": kind,
+            "transport": transport_kind,
+            "webSearch": web_search,
+            "webFetch": web_fetch,
+        })))
+    })?;
+    let capabilities_hash = short_hash(&serde_json::json!({"tools": tool_schema_hash}));
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO web_evidence_provider_runtime
+             (provider_id, protocol_version, server_name, server_version, capabilities_hash, mapping_hash, status, reason_code, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'ready', 'discovered', datetime('now'))
+             ON CONFLICT(provider_id) DO UPDATE SET protocol_version=excluded.protocol_version, server_name=excluded.server_name,
+               server_version=excluded.server_version, capabilities_hash=excluded.capabilities_hash, mapping_hash=excluded.mapping_hash,
+               status='ready', reason_code='discovered', updated_at=datetime('now')",
+            params![provider_id, protocol_version, server_name, server_version, capabilities_hash, mapping_hash],
+        )?;
+        Ok(())
+    })
+}
+
+pub fn record_web_evidence_provider_call(
+    db: &Database,
+    provider_id: &str,
+    success: bool,
+    latency_ms: u64,
+    failure_code: Option<&str>,
+) -> AppResult<()> {
+    let provider_id = validate_provider_identifier("provider id", provider_id)?;
+    let failure_code = failure_code
+        .map(str::trim)
+        .filter(|code| {
+            !code.is_empty()
+                && code.len() <= 64
+                && code
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '_')
+        })
+        .map(str::to_string)
+        .or_else(|| (!success).then(|| "unavailable".to_string()));
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO web_evidence_provider_health
+             (provider_id, success_count, failure_count, consecutive_failures, latency_ewma_ms, success_ewma, last_failure_code, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, datetime('now'))
+             ON CONFLICT(provider_id) DO UPDATE SET
+               success_count = success_count + excluded.success_count,
+               failure_count = failure_count + excluded.failure_count,
+               consecutive_failures = CASE WHEN excluded.success_count = 1 THEN 0 ELSE consecutive_failures + 1 END,
+               latency_ewma_ms = CASE WHEN latency_ewma_ms IS NULL THEN excluded.latency_ewma_ms ELSE latency_ewma_ms * 0.8 + excluded.latency_ewma_ms * 0.2 END,
+               success_ewma = CASE WHEN success_ewma IS NULL THEN excluded.success_ewma ELSE success_ewma * 0.8 + excluded.success_ewma * 0.2 END,
+               last_failure_code = excluded.last_failure_code,
+               updated_at = datetime('now')",
+            params![provider_id, if success { 1 } else { 0 }, if success { 0 } else { 1 }, if success { 0 } else { 1 }, latency_ms as f64, if success { 1.0 } else { 0.0 }, failure_code.as_deref()],
+        )?;
+        conn.execute(
+            "UPDATE web_evidence_provider_runtime
+             SET status = CASE WHEN ?2 = 1 THEN 'ready' ELSE 'degraded' END,
+                 reason_code = CASE WHEN ?2 = 1 THEN 'call_succeeded' ELSE COALESCE(?3, 'call_failed') END,
+                 updated_at = datetime('now')
+             WHERE provider_id = ?1",
+            params![provider_id, if success { 1 } else { 0 }, failure_code.as_deref()],
+        )?;
+        Ok(())
+    })
+}
+
+pub fn web_evidence_provider_runtime(
+    db: &Database,
+    provider_id: &str,
+) -> AppResult<Option<WebEvidenceProviderRuntimeSummary>> {
+    let provider_id = validate_provider_identifier("provider id", provider_id)?;
+    db.with_read_conn(|conn| conn.query_row(
+        "SELECT provider_id, protocol_version, server_name, server_version, capabilities_hash, mapping_hash, status, reason_code, updated_at FROM web_evidence_provider_runtime WHERE provider_id=?1",
+        [provider_id],
+        |row| Ok(WebEvidenceProviderRuntimeSummary { provider_id: row.get(0)?, protocol_version: row.get(1)?, server_name: row.get(2)?, server_version: row.get(3)?, capabilities_hash: row.get(4)?, mapping_hash: row.get(5)?, status: row.get(6)?, reason_code: row.get(7)?, updated_at: row.get(8)? }),
+    ).optional().map_err(Into::into))
+}
+
+pub fn web_evidence_provider_health(
+    db: &Database,
+    provider_id: &str,
+) -> AppResult<Option<WebEvidenceProviderHealthSummary>> {
+    let provider_id = validate_provider_identifier("provider id", provider_id)?;
+    db.with_read_conn(|conn| conn.query_row(
+        "SELECT provider_id, success_count, failure_count, consecutive_failures, latency_ewma_ms, success_ewma, last_failure_code, updated_at FROM web_evidence_provider_health WHERE provider_id=?1",
+        [provider_id],
+        |row| Ok(WebEvidenceProviderHealthSummary { provider_id: row.get(0)?, success_count: row.get(1)?, failure_count: row.get(2)?, consecutive_failures: row.get(3)?, latency_ewma_ms: row.get(4)?, success_ewma: row.get(5)?, last_failure_code: row.get(6)?, updated_at: row.get(7)? }),
+    ).optional().map_err(Into::into))
 }
 
 pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidenceProviderSummary>> {
@@ -518,18 +801,83 @@ mod tests {
     }
 
     #[test]
-    fn web_evidence_provider_accepts_structured_header_and_env_refs() {
+    fn web_evidence_provider_allows_https_header_refs_but_rejects_env_refs() {
         let db = Database::open_in_memory().unwrap();
         let mut input = provider();
         input.transport_kind = "https".into();
         input.transport_config_json =
             r#"{"url":"https://api.anysearch.com/mcp","allow_localhost_dev":false}"#.into();
-        input.credential_refs_json = r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.anysearch"}},"env":{"ANYSEARCH_API_KEY":"iris.mcp.anysearch"}}"#.into();
+        input.credential_refs_json = r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.anysearch"}}}"#.into();
 
         upsert_web_evidence_provider(&db, &input).unwrap();
 
         let stored = list_web_evidence_providers(&db).unwrap();
         assert_eq!(stored[0].credential_refs_json, input.credential_refs_json);
+
+        input.credential_refs_json =
+            r#"{"env":{"ANYSEARCH_API_KEY":"credential://iris.mcp.anysearch"}}"#.into();
+        let err = upsert_web_evidence_provider(&db, &input).unwrap_err();
+        assert!(err.to_string().contains("only support"), "{err}");
+    }
+
+    #[test]
+    fn web_evidence_provider_rejects_stdio_environment_bindings() {
+        let db = Database::open_in_memory().unwrap();
+        let mut input = provider();
+        input.credential_refs_json = r#"{"env":{"API_KEY":"credential://iris.mcp.test"}}"#.into();
+        let err = upsert_web_evidence_provider(&db, &input).unwrap_err();
+        assert!(err.to_string().contains("stdio providers cannot"), "{err}");
+
+        input.credential_refs_json = "{}".into();
+        input.transport_config_json = r#"{"command":"test","env":{"API_KEY":"nope"}}"#.into();
+        let err = upsert_web_evidence_provider(&db, &input).unwrap_err();
+        assert!(
+            err.to_string().contains("must not define environment"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn runtime_discovery_and_health_are_persisted_without_payloads() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        record_web_evidence_provider_discovery(
+            &db,
+            "anysearch",
+            "2025-11-25",
+            "AnySearch",
+            Some("1.2.3"),
+            "tool-schema-hash",
+        )
+        .unwrap();
+        record_web_evidence_provider_call(&db, "anysearch", true, 120, None).unwrap();
+        record_web_evidence_provider_call(&db, "anysearch", false, 240, Some("timeout")).unwrap();
+
+        let runtime = web_evidence_provider_runtime(&db, "anysearch")
+            .unwrap()
+            .unwrap();
+        assert_eq!(runtime.protocol_version, "2025-11-25");
+        assert_eq!(runtime.server_name, "AnySearch");
+        assert_eq!(runtime.status, "degraded");
+        assert_eq!(runtime.reason_code, "timeout");
+        let health = web_evidence_provider_health(&db, "anysearch")
+            .unwrap()
+            .unwrap();
+        assert_eq!(health.success_count, 1);
+        assert_eq!(health.failure_count, 1);
+        assert_eq!(health.consecutive_failures, 1);
+        assert_eq!(health.last_failure_code.as_deref(), Some("timeout"));
+        assert!(health.latency_ewma_ms.is_some());
+
+        let mut changed = provider();
+        changed.web_search_mapping_json = Some(r#"{"tool":"search_v2"}"#.into());
+        upsert_web_evidence_provider(&db, &changed).unwrap();
+        assert!(web_evidence_provider_runtime(&db, "anysearch")
+            .unwrap()
+            .is_none());
+        assert!(web_evidence_provider_health(&db, "anysearch")
+            .unwrap()
+            .is_none());
     }
 
     #[test]

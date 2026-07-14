@@ -9,7 +9,9 @@ use std::fmt;
 
 use zeroize::Zeroizing;
 
-use crate::ai_types::{CapabilitySlot, EndpointFamily, ProviderConfig};
+use crate::ai_types::{
+    CapabilitySlot, EndpointFamily, ProviderConfig, ResolvedReasoningRequest, RoutingPolicy,
+};
 use crate::error::AppResult;
 
 /// Security boundary in which a provider candidate may run.
@@ -41,6 +43,45 @@ pub(crate) enum CandidateHealth {
     Unhealthy,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RoutingWeights {
+    quality: u16,
+    latency: u16,
+    cost: u16,
+    reliability: u16,
+}
+
+impl RoutingPolicy {
+    fn weights(self) -> RoutingWeights {
+        match self {
+            Self::Balanced => RoutingWeights {
+                quality: 40,
+                latency: 20,
+                cost: 20,
+                reliability: 20,
+            },
+            Self::HighQuality => RoutingWeights {
+                quality: 65,
+                latency: 10,
+                cost: 10,
+                reliability: 15,
+            },
+            Self::LowLatency => RoutingWeights {
+                quality: 20,
+                latency: 55,
+                cost: 10,
+                reliability: 15,
+            },
+            Self::LowCost => RoutingWeights {
+                quality: 20,
+                latency: 10,
+                cost: 55,
+                reliability: 15,
+            },
+        }
+    }
+}
+
 /// Secret-free provider metadata that can safely participate in selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderCandidate {
@@ -52,6 +93,8 @@ pub(crate) struct ProviderCandidate {
     pub(crate) base_url: String,
     /// Adapter protocol family.
     pub(crate) endpoint_family: EndpointFamily,
+    /// Configured capability slot that selected this model.
+    pub(crate) slot: CapabilitySlot,
     /// Whether the candidate supports streaming responses.
     pub(crate) supports_streaming: bool,
     /// Whether the candidate supports tool calls.
@@ -70,6 +113,16 @@ pub(crate) struct ProviderCandidate {
     pub(crate) availability: CandidateAvailability,
     /// Recent provider health from diagnostics/request outcomes.
     pub(crate) health: CandidateHealth,
+    /// Normalized model quality signal (0..=1000); 500 means unknown.
+    pub(crate) quality_score_millis: u16,
+    /// Normalized low-latency signal (0..=1000); 500 means unknown.
+    pub(crate) latency_score_millis: u16,
+    /// Normalized low-cost signal (0..=1000); 500 means unknown.
+    pub(crate) cost_score_millis: u16,
+    /// Resolved reasoning controls retained through the dispatch boundary.
+    pub(crate) reasoning: ResolvedReasoningRequest,
+    /// Legacy adapter flag derived from the resolved reasoning request.
+    pub(crate) thinking: bool,
     /// Non-secret encrypted-store service identifier, if this adapter needs one.
     pub(crate) credential_service: Option<String>,
 }
@@ -78,7 +131,7 @@ pub(crate) struct ProviderCandidate {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ProviderRequirements {
     /// Required adapter protocol family.
-    pub(crate) endpoint_family: EndpointFamily,
+    pub(crate) endpoint_family: Option<EndpointFamily>,
     /// Whether the request requires streaming.
     pub(crate) streaming: bool,
     /// Whether the request requires tool calls.
@@ -162,13 +215,13 @@ impl HydratedProviderCandidate {
 
     /// Consume the short-lived credential and produce one dispatch configuration.
     ///
-    /// Callers must dispatch the returned configuration immediately and must not
-    /// retain it alongside unselected candidates.
+    /// The credential remains [`Zeroizing`] until the HTTP adapter has consumed
+    /// the configuration. It must never be converted into a plain `String`.
     pub(crate) fn into_provider_config(self, slot: CapabilitySlot) -> ProviderConfig {
         ProviderConfig {
             name: self.candidate.provider_id,
             base_url: self.candidate.base_url,
-            api_key: self.credential.map(|credential| credential.to_string()),
+            api_key: self.credential,
             model: self.candidate.model,
             slot,
             endpoint_family: self.candidate.endpoint_family,
@@ -216,6 +269,36 @@ impl ProviderRouter {
             .collect()
     }
 
+    /// Return matching candidates ranked by the selected policy.
+    ///
+    /// Capability, budget, domain, availability, and health filtering always
+    /// happens before scoring. Stable configured order is retained for equal
+    /// scores, which makes failover deterministic.
+    pub(crate) fn select_ranked_candidates(
+        &self,
+        requirements: &ProviderRequirements,
+        policy: RoutingPolicy,
+    ) -> Vec<&ProviderCandidate> {
+        let weights = policy.weights();
+        let mut candidates = self
+            .candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| candidate_satisfies(candidate, requirements))
+            .collect::<Vec<_>>();
+        candidates.sort_by(|(left_index, left), (right_index, right)| {
+            candidate_score(right, weights)
+                .cmp(&candidate_score(left, weights))
+                .then_with(|| left_index.cmp(right_index))
+                .then_with(|| left.provider_id.cmp(&right.provider_id))
+                .then_with(|| left.model.cmp(&right.model))
+        });
+        candidates
+            .into_iter()
+            .map(|(_, candidate)| candidate)
+            .collect()
+    }
+
     /// Hydrate this candidate's credential only for its immediate dispatch.
     pub(crate) fn hydrate_candidate(
         &self,
@@ -259,7 +342,9 @@ impl ProviderRouter {
 }
 
 fn candidate_satisfies(candidate: &ProviderCandidate, requirements: &ProviderRequirements) -> bool {
-    candidate.endpoint_family == requirements.endpoint_family
+    requirements
+        .endpoint_family
+        .is_none_or(|endpoint_family| candidate.endpoint_family == endpoint_family)
         && (!requirements.streaming || candidate.supports_streaming)
         && (!requirements.tools || candidate.supports_tools)
         && (!requirements.vision || candidate.supports_vision)
@@ -271,9 +356,55 @@ fn candidate_satisfies(candidate: &ProviderCandidate, requirements: &ProviderReq
         && candidate.health != CandidateHealth::Unhealthy
 }
 
+fn candidate_score(candidate: &ProviderCandidate, weights: RoutingWeights) -> u32 {
+    let reliability = match candidate.health {
+        CandidateHealth::Healthy => 1_000,
+        CandidateHealth::Unknown => 500,
+        CandidateHealth::Unhealthy => 0,
+    };
+    u32::from(candidate.quality_score_millis.min(1_000)) * u32::from(weights.quality)
+        + u32::from(candidate.latency_score_millis.min(1_000)) * u32::from(weights.latency)
+        + u32::from(candidate.cost_score_millis.min(1_000)) * u32::from(weights.cost)
+        + reliability * u32::from(weights.reliability)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routing_presets_score_eligible_candidates_with_deterministic_ties() {
+        let router = ProviderRouter::new(vec![
+            ProviderCandidate {
+                quality_score_millis: 850,
+                latency_score_millis: 300,
+                cost_score_millis: 900,
+                ..candidate("economical", "economical-model")
+            },
+            ProviderCandidate {
+                quality_score_millis: 400,
+                latency_score_millis: 1_000,
+                cost_score_millis: 500,
+                ..candidate("responsive", "responsive-model")
+            },
+            ProviderCandidate {
+                quality_score_millis: 1_000,
+                latency_score_millis: 650,
+                cost_score_millis: 350,
+                ..candidate("premium", "premium-model")
+            },
+        ]);
+
+        for (policy, expected_first) in [
+            (RoutingPolicy::Balanced, "premium"),
+            (RoutingPolicy::HighQuality, "premium"),
+            (RoutingPolicy::LowLatency, "responsive"),
+            (RoutingPolicy::LowCost, "economical"),
+        ] {
+            let selected = router.select_ranked_candidates(&requirements(), policy);
+            assert_eq!(selected[0].provider_id, expected_first, "{policy:?}");
+        }
+    }
 
     fn candidate(provider_id: &str, model: &str) -> ProviderCandidate {
         ProviderCandidate {
@@ -281,6 +412,7 @@ mod tests {
             model: model.into(),
             base_url: format!("https://{provider_id}.example/v1"),
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            slot: CapabilitySlot::Fast,
             supports_streaming: true,
             supports_tools: true,
             supports_vision: false,
@@ -290,13 +422,18 @@ mod tests {
             security_domain: SecurityDomain::External,
             availability: CandidateAvailability::Available,
             health: CandidateHealth::Healthy,
+            quality_score_millis: 500,
+            latency_score_millis: 500,
+            cost_score_millis: 500,
+            reasoning: ResolvedReasoningRequest::disabled(),
+            thinking: false,
             credential_service: Some(format!("iris.llm.{provider_id}")),
         }
     }
 
     fn requirements() -> ProviderRequirements {
         ProviderRequirements {
-            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            endpoint_family: Some(EndpointFamily::OpenAiCompatibleChatCompletions),
             streaming: true,
             tools: true,
             vision: false,

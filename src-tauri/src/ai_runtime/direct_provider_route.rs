@@ -4,7 +4,7 @@ use crate::ai_runtime::provider_router::{
     CandidateAvailability, CandidateHealth, ProviderCandidate, ProviderFailure,
     ProviderRequirements, ProviderRouter, SecurityDomain,
 };
-use crate::ai_types::{CapabilitySlot, EndpointFamily, ProviderConfig};
+use crate::ai_types::{EndpointFamily, ProviderConfig, ResolvedReasoningRequest, RoutingPolicy};
 use crate::error::{AppError, AppResult};
 use crate::llm::config::{ResolvedCapabilityRoute, ResolvedLlmConfig};
 
@@ -16,6 +16,8 @@ use crate::llm::config::{ResolvedCapabilityRoute, ResolvedLlmConfig};
 #[derive(Debug, Clone)]
 pub(crate) struct DirectProviderRoute {
     router: ProviderRouter,
+    routing_policy: RoutingPolicy,
+    model_override: Option<(String, String)>,
 }
 
 /// One immediately dispatchable direct-provider configuration and its output cap.
@@ -25,12 +27,16 @@ pub(crate) struct DirectProviderRoute {
 pub(crate) struct DirectProviderDispatch {
     pub(crate) provider: ProviderConfig,
     pub(crate) max_output_tokens: u32,
+    /// The resolved reasoning controls for this candidate, preserved through routing.
+    pub(crate) reasoning: ResolvedReasoningRequest,
+    /// Legacy adapter flag derived from the same resolved reasoning request.
+    pub(crate) thinking: bool,
 }
 
 impl DirectProviderRoute {
     /// Assemble primary and same-slot failover candidates from the secret-free resolver.
     pub(crate) fn from_secret_free_route(route: ResolvedCapabilityRoute) -> AppResult<Self> {
-        ensure_route_is_secret_free(&route)?;
+        let routing_policy = route.routing_policy;
 
         let candidates = std::iter::once(route.resolved)
             .chain(route.failover_candidates)
@@ -39,7 +45,28 @@ impl DirectProviderRoute {
 
         Ok(Self {
             router: ProviderRouter::new(candidates),
+            routing_policy,
+            model_override: None,
         })
+    }
+
+    /// Return the persisted ranking policy carried by the resolved route.
+    pub(crate) fn routing_policy(&self) -> RoutingPolicy {
+        self.routing_policy
+    }
+
+    /// Apply the user-selected per-Run ranking preference after all hard
+    /// capability filtering has already been fixed by the resolver.
+    pub(crate) fn with_routing_policy(mut self, policy: RoutingPolicy) -> Self {
+        self.routing_policy = policy;
+        self
+    }
+
+    /// Restrict this Run to one explicit configured provider/model. Capability
+    /// filtering still happens before the selected candidate is hydrated.
+    pub(crate) fn with_model_override(mut self, provider_id: String, model_id: String) -> Self {
+        self.model_override = Some((provider_id, model_id));
+        self
     }
 
     /// Select external direct text-streaming candidates that intentionally do not expose tools.
@@ -47,8 +74,8 @@ impl DirectProviderRoute {
         &self,
         endpoint_family: EndpointFamily,
     ) -> Vec<&ProviderCandidate> {
-        self.router.select_candidates(&ProviderRequirements {
-            endpoint_family,
+        self.filter_model_override(self.router.select_candidates(&ProviderRequirements {
+            endpoint_family: Some(endpoint_family),
             streaming: true,
             tools: false,
             vision: false,
@@ -56,7 +83,94 @@ impl DirectProviderRoute {
             min_input_budget_tokens: 0,
             min_output_budget_tokens: 0,
             security_domain: SecurityDomain::External,
-        })
+        }))
+    }
+
+    /// Select ordered streaming candidates for actual Run requirements.
+    ///
+    /// Unlike the legacy direct helper this preserves tool, vision, and reasoning
+    /// requirements. The gateway supports each candidate's own endpoint family,
+    /// so no protocol family is imposed here.
+    pub(crate) fn select_streaming_for_requirements(
+        &self,
+        requirements: ProviderRequirements,
+        policy: RoutingPolicy,
+    ) -> Vec<&ProviderCandidate> {
+        self.filter_model_override(self.router.select_ranked_candidates(&requirements, policy))
+    }
+
+    fn filter_model_override<'a>(
+        &self,
+        candidates: Vec<&'a ProviderCandidate>,
+    ) -> Vec<&'a ProviderCandidate> {
+        let Some((provider_id, model_id)) = &self.model_override else {
+            return candidates;
+        };
+        candidates
+            .into_iter()
+            .filter(|candidate| {
+                candidate.provider_id == *provider_id && candidate.model == *model_id
+            })
+            .collect()
+    }
+
+    /// Hydrate one selected generic streaming candidate for immediate dispatch.
+    ///
+    /// Only the selected candidate's credential is read. Its reasoning settings
+    /// remain tied to the exact provider/model chosen by the ranking phase.
+    pub(crate) fn hydrate_selected_streaming_dispatch_with<F>(
+        &self,
+        requirements: ProviderRequirements,
+        policy: RoutingPolicy,
+        selected_index: usize,
+        read_credential: F,
+    ) -> AppResult<DirectProviderDispatch>
+    where
+        F: FnMut(&str) -> AppResult<zeroize::Zeroizing<String>>,
+    {
+        let candidate = self
+            .select_streaming_for_requirements(requirements, policy)
+            .get(selected_index)
+            .copied()
+            .ok_or_else(|| AppError::msg("agent_run_no_capable_model"))?;
+        self.router
+            .hydrate_candidate_with(candidate, read_credential)
+            .map(|candidate| {
+                let reasoning = candidate.candidate().reasoning;
+                let thinking = candidate.candidate().thinking;
+                let max_output_tokens = candidate.candidate().output_budget_tokens;
+                let slot = candidate.candidate().slot;
+                DirectProviderDispatch {
+                    provider: candidate.into_provider_config(slot),
+                    max_output_tokens,
+                    reasoning,
+                    thinking,
+                }
+            })
+    }
+
+    /// Hydrate one generic streaming candidate from the encrypted credential store.
+    pub(crate) fn hydrate_selected_streaming_dispatch(
+        &self,
+        requirements: ProviderRequirements,
+        policy: RoutingPolicy,
+        selected_index: usize,
+    ) -> AppResult<DirectProviderDispatch> {
+        self.hydrate_selected_streaming_dispatch_with(
+            requirements,
+            policy,
+            selected_index,
+            crate::credentials::get_runtime_secret,
+        )
+    }
+
+    /// Hydrate a generic candidate using the route's persisted ranking policy.
+    pub(crate) fn hydrate_selected_streaming_dispatch_for_configured_policy(
+        &self,
+        requirements: ProviderRequirements,
+        selected_index: usize,
+    ) -> AppResult<DirectProviderDispatch> {
+        self.hydrate_selected_streaming_dispatch(requirements, self.routing_policy, selected_index)
     }
 
     /// Hydrate one indexed direct selection and immediately convert it for Fast dispatch.
@@ -72,17 +186,21 @@ impl DirectProviderRoute {
     where
         F: FnMut(&str) -> AppResult<zeroize::Zeroizing<String>>,
     {
-        let candidate = self
-            .select_text_streaming_no_tools(endpoint_family)
-            .get(selected_index)
-            .copied()
-            .ok_or_else(|| AppError::msg("no matching direct text streaming provider candidate"))?;
-        self.router
-            .hydrate_candidate_with(candidate, read_credential)
-            .map(|candidate| DirectProviderDispatch {
-                max_output_tokens: candidate.candidate().output_budget_tokens,
-                provider: candidate.into_provider_config(CapabilitySlot::Fast),
-            })
+        self.hydrate_selected_streaming_dispatch_with(
+            ProviderRequirements {
+                endpoint_family: Some(endpoint_family),
+                streaming: true,
+                tools: false,
+                vision: false,
+                reasoning: false,
+                min_input_budget_tokens: 0,
+                min_output_budget_tokens: 0,
+                security_domain: SecurityDomain::External,
+            },
+            RoutingPolicy::Balanced,
+            selected_index,
+            read_credential,
+        )
     }
 
     /// Hydrate the indexed direct selection with the encrypted credential store.
@@ -128,20 +246,36 @@ impl DirectProviderRoute {
             .get(selected_index)
             .map(|candidate| candidate.provider_id.as_str())
     }
-}
 
-fn ensure_route_is_secret_free(route: &ResolvedCapabilityRoute) -> AppResult<()> {
-    if route.resolved.api_key.is_some()
-        || route
-            .failover_candidates
-            .iter()
-            .any(|candidate| candidate.api_key.is_some())
-    {
-        return Err(AppError::msg(
-            "direct provider route requires a secret-free capability resolution",
-        ));
+    /// Return the next ranked generic candidate after a strictly transient failure.
+    pub(crate) fn next_selected_index_after_for_requirements(
+        &self,
+        requirements: ProviderRequirements,
+        policy: RoutingPolicy,
+        attempted_index: usize,
+        failure: ProviderFailure,
+    ) -> Option<usize> {
+        let selected = self.select_streaming_for_requirements(requirements, policy);
+        self.router
+            .next_candidate_after(selected.as_slice(), attempted_index, failure)
+            .and_then(|next| {
+                selected
+                    .iter()
+                    .position(|candidate| std::ptr::eq(*candidate, next))
+            })
     }
-    Ok(())
+
+    /// Return the selected generic candidate's safe provider identifier.
+    pub(crate) fn selected_provider_id_for_requirements(
+        &self,
+        requirements: ProviderRequirements,
+        policy: RoutingPolicy,
+        selected_index: usize,
+    ) -> Option<&str> {
+        self.select_streaming_for_requirements(requirements, policy)
+            .get(selected_index)
+            .map(|candidate| candidate.provider_id.as_str())
+    }
 }
 
 fn provider_candidate_from_resolved(resolved: ResolvedLlmConfig) -> ProviderCandidate {
@@ -153,25 +287,33 @@ fn provider_candidate_from_resolved(resolved: ResolvedLlmConfig) -> ProviderCand
         model: resolved.model,
         base_url: resolved.base_url,
         endpoint_family: resolved.endpoint_family,
-        // The direct adapter has a text streaming-only contract. It never exposes tools,
-        // vision, or reasoning controls through this route.
-        supports_streaming: true,
-        supports_tools: false,
-        supports_vision: false,
-        supports_reasoning: false,
+        supports_streaming: resolved.supports_streaming,
+        supports_tools: resolved.supports_tools,
+        supports_vision: resolved.supports_vision,
+        supports_reasoning: resolved.supports_reasoning,
         input_budget_tokens: resolved.input_budget,
         output_budget_tokens: resolved.output_budget,
         security_domain: SecurityDomain::External,
         availability: CandidateAvailability::Available,
         health: CandidateHealth::Unknown,
+        quality_score_millis: 500,
+        latency_score_millis: 500,
+        cost_score_millis: 500,
         credential_service,
+        slot: resolved.capability_slot,
+        reasoning: resolved.reasoning,
+        thinking: resolved.thinking || resolved.reasoning.requested,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_types::{CapabilitySlot, EndpointFamily, ResolvedReasoningRequest};
+    use crate::ai_runtime::provider_router::{ProviderRequirements, SecurityDomain};
+    use crate::ai_types::{
+        CapabilitySlot, EndpointFamily, ReasoningAdapter, ReasoningControl, ReasoningMode,
+        ResolvedReasoningRequest, RoutingPolicy,
+    };
     use crate::llm::config::{ResolvedCapabilityRoute, ResolvedLlmConfig};
 
     fn resolved(
@@ -180,16 +322,20 @@ mod tests {
         endpoint_family: EndpointFamily,
     ) -> ResolvedLlmConfig {
         ResolvedLlmConfig {
+            capability_slot: CapabilitySlot::Fast,
             provider_id: provider_id.into(),
             model: model.into(),
             base_url: format!("https://{provider_id}.example/v1"),
-            api_key: None,
             thinking: false,
             reasoning: ResolvedReasoningRequest::default(),
             input_budget: 16_000,
             output_budget: 2_000,
             context_strategy: crate::ai_types::ContextStrategy::Hybrid,
             endpoint_family,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: true,
+            supports_reasoning: true,
         }
     }
 
@@ -210,6 +356,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            routing_policy: RoutingPolicy::Balanced,
         }
     }
 
@@ -245,7 +392,10 @@ mod tests {
         assert_eq!(provider.provider.name, "openai");
         assert_eq!(provider.provider.model, "primary-model");
         assert_eq!(provider.provider.slot, CapabilitySlot::Fast);
-        assert_eq!(provider.provider.api_key.as_deref(), Some("primary-secret"));
+        assert_eq!(
+            provider.provider.api_key.as_deref().map(String::as_str),
+            Some("primary-secret")
+        );
         assert_eq!(provider.max_output_tokens, 2_000);
         assert_eq!(reads, vec!["iris.llm.openai"]);
     }
@@ -312,14 +462,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_route_that_was_not_resolved_without_credentials() {
-        let mut resolved_route = route(EndpointFamily::OpenAiCompatibleChatCompletions, []);
-        resolved_route.resolved.api_key = Some("must-not-cross-boundary".into());
-
-        assert!(DirectProviderRoute::from_secret_free_route(resolved_route).is_err());
-    }
-
-    #[test]
     fn exposes_a_production_hydrator_for_an_indexed_fast_dispatch() {
         let _hydrate: fn(
             &DirectProviderRoute,
@@ -327,5 +469,87 @@ mod tests {
             usize,
         ) -> crate::error::AppResult<DirectProviderDispatch> =
             DirectProviderRoute::hydrate_selected_text_streaming_no_tools_as_fast_dispatch;
+    }
+
+    #[test]
+    fn generic_dispatch_preserves_real_capabilities_reasoning_and_zeroizing_credential() {
+        let mut resolved_route = route(
+            EndpointFamily::OpenAiCompatibleChatCompletions,
+            [EndpointFamily::OpenAiCompatibleChatCompletions],
+        );
+        resolved_route.resolved.capability_slot = CapabilitySlot::AgentTools;
+        resolved_route.resolved.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Medium,
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: crate::ai_types::ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+        let route = DirectProviderRoute::from_secret_free_route(resolved_route)
+            .expect("assemble generic route");
+        let requirements = ProviderRequirements {
+            endpoint_family: None,
+            streaming: true,
+            tools: true,
+            vision: false,
+            reasoning: true,
+            min_input_budget_tokens: 1,
+            min_output_budget_tokens: 1,
+            security_domain: SecurityDomain::External,
+        };
+
+        let dispatch = route
+            .hydrate_selected_streaming_dispatch_with(
+                requirements,
+                RoutingPolicy::Balanced,
+                0,
+                |_| Ok(zeroize::Zeroizing::new("secret".to_string())),
+            )
+            .expect("hydrate generic candidate");
+
+        assert_eq!(dispatch.provider.slot, CapabilitySlot::AgentTools);
+        assert!(dispatch.thinking);
+        assert_eq!(dispatch.reasoning.mode, ReasoningMode::Medium);
+        assert_eq!(
+            dispatch.provider.api_key.as_deref().map(String::as_str),
+            Some("secret")
+        );
+    }
+
+    #[test]
+    fn model_override_restricts_selection_before_any_credential_is_read() {
+        let route = DirectProviderRoute::from_secret_free_route(route(
+            EndpointFamily::OpenAiCompatibleChatCompletions,
+            [EndpointFamily::OpenAiCompatibleChatCompletions],
+        ))
+        .expect("assemble route")
+        .with_model_override("deepseek".into(), "backup-0-model".into());
+        let requirements = ProviderRequirements {
+            endpoint_family: None,
+            streaming: true,
+            tools: true,
+            vision: false,
+            reasoning: false,
+            min_input_budget_tokens: 1,
+            min_output_budget_tokens: 1,
+            security_domain: SecurityDomain::External,
+        };
+        let mut reads = Vec::new();
+        let dispatch = route
+            .hydrate_selected_streaming_dispatch_with(
+                requirements,
+                RoutingPolicy::Balanced,
+                0,
+                |service| {
+                    reads.push(service.to_string());
+                    Ok(zeroize::Zeroizing::new("override-secret".to_string()))
+                },
+            )
+            .expect("hydrate override only");
+
+        assert_eq!(dispatch.provider.name, "deepseek");
+        assert_eq!(dispatch.provider.model, "backup-0-model");
+        assert_eq!(reads, vec!["iris.llm.deepseek"]);
     }
 }

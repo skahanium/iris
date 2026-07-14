@@ -80,6 +80,47 @@ impl FrozenChangePlan {
         Ok(canonical_json(&plan_value(&self.input)))
     }
 
+    /// Rehydrate a stored plan and recompute its canonical identity before execution.
+    ///
+    /// The database is not trusted as an execution authority: callers must use
+    /// this constructor after loading `plan_json` so an altered payload cannot be
+    /// dispatched under a previously approved hash.
+    pub(crate) fn from_persisted_plan_json(plan_json: &str) -> AppResult<Self> {
+        let value: Value = serde_json::from_str(plan_json)
+            .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+        let input = FrozenChangePlanInput {
+            confirmation_id: required_string(&value, "confirmationId")?,
+            run_id: required_string(&value, "runId")?,
+            session_id: value
+                .get("sessionId")
+                .and_then(Value::as_i64)
+                .filter(|session_id| *session_id > 0)
+                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?,
+            request_id: required_string(&value, "requestId")?,
+            tool_call_id: required_string(&value, "toolCallId")?,
+            vault_id: required_string(&value, "vaultId")?,
+            relative_paths: required_string_array(&value, "relativePaths")?,
+            operation: required_string(&value, "operation")?,
+            base_content_hashes: required_hash_pairs(&value)?,
+            change: value
+                .get("change")
+                .cloned()
+                .filter(Value::is_object)
+                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?,
+            affected_file_count: value
+                .get("affectedFileCount")
+                .and_then(Value::as_u64)
+                .and_then(|count| usize::try_from(count).ok())
+                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?,
+            rollback_summary: required_string(&value, "rollbackSummary")?,
+            expires_at_unix_ms: value
+                .get("expiresAtUnixMs")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?,
+        };
+        Self::freeze(input)
+    }
+
     /// Validate approval identity, exact plan hash, and expiry before dispatch.
     pub(crate) fn validate_approval(
         &self,
@@ -95,6 +136,81 @@ impl FrozenChangePlan {
         }
         Ok(())
     }
+
+    /// Tool identity that must be dispatched after approval.
+    pub(crate) fn operation(&self) -> &str {
+        &self.input.operation
+    }
+
+    /// Exact model-produced arguments that were shown in the frozen plan.
+    pub(crate) fn change(&self) -> &Value {
+        &self.input.change
+    }
+
+    /// Original provider tool-call identifier; it binds the completion event.
+    pub(crate) fn tool_call_id(&self) -> &str {
+        &self.input.tool_call_id
+    }
+
+    /// Targets affected by the exact frozen operation.
+    pub(crate) fn relative_paths(&self) -> &[String] {
+        &self.input.relative_paths
+    }
+
+    /// Optimistic content identities captured before confirmation.
+    pub(crate) fn base_content_hashes(&self) -> &[(String, String)] {
+        &self.input.base_content_hashes
+    }
+}
+
+fn required_string(value: &Value, field: &str) -> AppResult<String> {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|item| !item.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))
+}
+
+fn required_string_array(value: &Value, field: &str) -> AppResult<Vec<String>> {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .filter(|items| !items.is_empty())
+        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .filter(|item| !item.trim().is_empty())
+                .map(str::to_owned)
+                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))
+        })
+        .collect()
+}
+
+fn required_hash_pairs(value: &Value) -> AppResult<Vec<(String, String)>> {
+    let pairs = value
+        .get("baseContentHashes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+    pairs
+        .iter()
+        .map(|pair| {
+            let pair = pair
+                .as_array()
+                .filter(|pair| pair.len() == 2)
+                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+            let path = pair[0]
+                .as_str()
+                .filter(|path| !path.trim().is_empty())
+                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+            let hash = pair[1]
+                .as_str()
+                .filter(|hash| !hash.trim().is_empty())
+                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+            Ok((path.to_owned(), hash.to_owned()))
+        })
+        .collect()
 }
 
 fn plan_value(input: &FrozenChangePlanInput) -> Value {

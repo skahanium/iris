@@ -16,6 +16,16 @@ use crate::storage::db::Database;
 const MAX_CLIENT_REQUEST_ID_CHARS: usize = 160;
 const MAX_USER_MESSAGE_CHARS: usize = 16_000;
 
+/// Outcome of one normal-domain control request after its durable event is written.
+/// Commands use this to start post-approval execution exactly once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NormalRunControlOutcome {
+    Applied,
+    ConfirmationApproved,
+    ConfirmationRejected,
+    Noop,
+}
+
 /// The only normal-domain request admission boundary.
 pub(crate) struct RunIntake;
 
@@ -82,7 +92,7 @@ impl RunIntake {
         });
         let effort = match effect {
             Effect::Apply => Effort::Durable,
-            _ if freshness != Freshness::Offline => Effort::ToolLoop,
+            _ if freshness != Freshness::Offline || has_images => Effort::ToolLoop,
             _ => Effort::Direct,
         };
         let risk = match effect {
@@ -132,6 +142,18 @@ impl RunIntake {
             explicit_constraints.push(ExplicitConstraint {
                 kind: "do_not_modify".into(),
                 value: None,
+            });
+        }
+        if let Some(policy) = request.routing_policy {
+            explicit_constraints.push(ExplicitConstraint {
+                kind: "routing_policy".into(),
+                value: Some(serde_json::to_string(&policy)?),
+            });
+        }
+        if let Some(model_override) = request.model_override.as_ref() {
+            explicit_constraints.push(ExplicitConstraint {
+                kind: "model_override".into(),
+                value: Some(serde_json::to_string(model_override)?),
             });
         }
         Ok(ExecutionEnvelope {
@@ -284,17 +306,21 @@ impl RunIntake {
         db: &Database,
         request: AssistantRunControlRequest,
         sink: &impl crate::ai_runtime::run_engine::RunEventSink,
-    ) -> AppResult<()> {
-        if let Some(event) = Self::control_event(db, request)? {
+    ) -> AppResult<NormalRunControlOutcome> {
+        let (outcome, event) = Self::control_event(db, request)?;
+        if let Some(event) = event {
             sink.emit(&event)?;
         }
-        Ok(())
+        Ok(outcome)
     }
 
     fn control_event(
         db: &Database,
         request: AssistantRunControlRequest,
-    ) -> AppResult<Option<crate::ai_runtime::run_contract::AssistantRunEvent>> {
+    ) -> AppResult<(
+        NormalRunControlOutcome,
+        Option<crate::ai_runtime::run_contract::AssistantRunEvent>,
+    )> {
         if request.session.domain != SecurityDomain::Normal {
             return Err(AppError::msg("agent_run_classified_domain_not_supported"));
         }
@@ -304,7 +330,7 @@ impl RunIntake {
         if snapshot.run.state == crate::ai_runtime::run_contract::RunState::Cancelled
             && matches!(&request.action, RunControlAction::Cancel)
         {
-            return Ok(None);
+            return Ok((NormalRunControlOutcome::Noop, None));
         }
         match request.action {
             RunControlAction::Cancel => {
@@ -320,7 +346,7 @@ impl RunIntake {
                     },
                 )?;
                 crate::ai_runtime::model_gateway::request_abort(&request.run_id);
-                Ok(Some(event))
+                Ok((NormalRunControlOutcome::Applied, Some(event)))
             }
             RunControlAction::ApproveChange {
                 confirmation_id,
@@ -334,8 +360,12 @@ impl RunIntake {
                 request.expected_state_version,
                 chrono::Utc::now().timestamp_millis(),
             )? {
-                FrozenConfirmationApproval::Resumed(event) => Ok(Some(event)),
-                FrozenConfirmationApproval::AlreadyApplied => Ok(None),
+                FrozenConfirmationApproval::Resumed(event) => {
+                    Ok((NormalRunControlOutcome::ConfirmationApproved, Some(event)))
+                }
+                FrozenConfirmationApproval::AlreadyApplied => {
+                    Ok((NormalRunControlOutcome::Noop, None))
+                }
             },
             RunControlAction::RejectChange { confirmation_id } => {
                 match AgentRunRepository::reject_frozen_confirmation(
@@ -346,8 +376,12 @@ impl RunIntake {
                     request.expected_state_version,
                     chrono::Utc::now().timestamp_millis(),
                 )? {
-                    FrozenConfirmationRejection::Resumed(event) => Ok(Some(event)),
-                    FrozenConfirmationRejection::AlreadyRejected => Ok(None),
+                    FrozenConfirmationRejection::Resumed(event) => {
+                        Ok((NormalRunControlOutcome::ConfirmationRejected, Some(event)))
+                    }
+                    FrozenConfirmationRejection::AlreadyRejected => {
+                        Ok((NormalRunControlOutcome::Noop, None))
+                    }
                 }
             }
             RunControlAction::Resume => Err(AppError::msg("agent_run_control_not_available")),
@@ -361,6 +395,11 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
         || request.message.trim().is_empty()
         || request.message.chars().count() > MAX_USER_MESSAGE_CHARS
     {
+        return Err(AppError::msg("agent_run_invalid_request"));
+    }
+    if request.model_override.as_ref().is_some_and(|override_| {
+        override_.provider_id.trim().is_empty() || override_.model_id.trim().is_empty()
+    }) {
         return Err(AppError::msg("agent_run_invalid_request"));
     }
     validate_explicit_action(request)
@@ -469,6 +508,17 @@ fn concerns_external_verifiable_fact(message: &str) -> bool {
             "history",
             "definition",
             "public record",
+            "\u{4ec0}\u{4e48}\u{662f}",
+            "\u{8c01}\u{662f}",
+            "\u{4f55}\u{65f6}",
+            "\u{54ea}\u{91cc}",
+            "\u{591a}\u{5c11}",
+            "\u{5386}\u{53f2}",
+            "\u{6570}\u{636e}",
+            "\u{7edf}\u{8ba1}",
+            "\u{5b9a}\u{4e49}",
+            "\u{4ecb}\u{7ecd}",
+            "\u{80cc}\u{666f}",
         ],
     )
 }

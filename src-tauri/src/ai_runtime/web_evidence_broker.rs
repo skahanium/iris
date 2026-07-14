@@ -480,7 +480,8 @@ async fn call_mcp_search_provider(
         } else {
             false
         };
-    let call = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
+    let started = Instant::now();
+    let call_result = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
         db,
         provider,
         arguments,
@@ -494,7 +495,35 @@ async fn call_mcp_search_provider(
                 crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         },
     )
-    .await?;
+    .await;
+    let call = match call_result {
+        Ok(call) => {
+            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+                db,
+                &provider.profile_id,
+                true,
+                started.elapsed().as_millis() as u64,
+                None,
+            );
+            call
+        }
+        Err(error) => {
+            let code = error
+                .to_string()
+                .split(':')
+                .next()
+                .unwrap_or("unavailable")
+                .to_string();
+            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+                db,
+                &provider.profile_id,
+                false,
+                started.elapsed().as_millis() as u64,
+                Some(&code),
+            );
+            return Err(error);
+        }
+    };
     Ok(McpSearchProviderProbe {
         provider_id: call.provider_id.clone(),
         tool_name: provider.tool_name.clone(),
@@ -1299,6 +1328,7 @@ async fn collect_mcp_page_fetch(
     crate::llm::fetch_web_page::validate_fetch_url(url)?;
     ensure_provider_circuit_allows(provider_id)?;
     let (provider, mapping_json) = resolve_mcp_provider_mapping(db, provider_id, "web.fetch")?;
+    let started = Instant::now();
     let call_result = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
         db,
         &provider,
@@ -1316,10 +1346,30 @@ async fn collect_mcp_page_fetch(
     .await;
     let call = match call_result {
         Ok(call) => {
+            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+                db,
+                provider_id,
+                true,
+                started.elapsed().as_millis() as u64,
+                None,
+            );
             record_provider_success(provider_id);
             call
         }
         Err(error) => {
+            let code = error
+                .to_string()
+                .split(':')
+                .next()
+                .unwrap_or("unavailable")
+                .to_string();
+            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+                db,
+                provider_id,
+                false,
+                started.elapsed().as_millis() as u64,
+                Some(&code),
+            );
             record_provider_failure(provider_id);
             return Err(error);
         }

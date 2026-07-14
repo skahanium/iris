@@ -1089,20 +1089,37 @@ pub enum CapabilitySlot {
     LocalPrivate,
 }
 
-/// LLM provider configuration (from settings or registry).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// User-selected preference for ordering candidates that already meet hard requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingPolicy {
+    /// Balance answer quality, latency, cost, and recent reliability.
+    #[default]
+    Balanced,
+    /// Prefer answer quality while retaining a reliability floor.
+    #[serde(rename = "quality", alias = "high_quality")]
+    HighQuality,
+    /// Prefer low latency while retaining a reliability floor.
+    #[serde(rename = "latency", alias = "low_latency")]
+    LowLatency,
+    /// Prefer lower cost while retaining a reliability floor.
+    #[serde(rename = "cost", alias = "low_cost")]
+    LowCost,
+}
+
+/// LLM provider configuration prepared for one immediate dispatch.
+///
+/// Configuration stored in settings and model registries is deliberately
+/// secret-free. The API key is hydrated only after routing and stays in a
+/// zeroizing container until the request adapter consumes it.
+#[derive(Debug, Clone)]
 pub struct ProviderConfig {
     pub name: String,
     pub base_url: String,
-    pub api_key: Option<String>,
+    pub api_key: Option<zeroize::Zeroizing<String>>,
     pub model: String,
     pub slot: CapabilitySlot,
-    #[serde(default = "default_endpoint_family")]
     pub endpoint_family: EndpointFamily,
-}
-
-fn default_endpoint_family() -> EndpointFamily {
-    EndpointFamily::OpenAiCompatibleChatCompletions
 }
 
 /// LLM 对话消息角色。

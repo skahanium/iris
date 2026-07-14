@@ -3,6 +3,8 @@ import { useCallback, useState } from "react";
 import type { ImageAttachment } from "../AiMessageList";
 import type {
   AssistantRunAccepted,
+  AgentModelOverride,
+  AgentRoutingPolicy,
   AssistantRunStartRequest,
   AssistantSessionRef,
   ContextReference,
@@ -17,6 +19,8 @@ export interface UnifiedAssistantSendOptions {
   session: AssistantSessionRef | null;
   contextReferences: ContextReference[];
   webSearch: boolean;
+  routingPolicy?: AgentRoutingPolicy;
+  modelOverride?: AgentModelOverride | null;
   start: (request: AssistantRunStartRequest) => Promise<AssistantRunAccepted>;
   appendUserMessage: (message: string, images?: ImageAttachment[]) => void;
   ensureAssistantStreamSlot: () => void;
@@ -55,6 +59,8 @@ export function useUnifiedAssistantSend({
   session,
   contextReferences,
   webSearch,
+  routingPolicy,
+  modelOverride,
   start,
   appendUserMessage,
   ensureAssistantStreamSlot,
@@ -100,6 +106,8 @@ export function useUnifiedAssistantSend({
         explicitReferences,
         webEnabled: webSearch,
         securityDomain: aiDomain,
+        ...(routingPolicy ? { routingPolicy } : {}),
+        ...(modelOverride ? { modelOverride } : {}),
       });
       setSession(accepted.session);
       setInput("");
@@ -124,6 +132,7 @@ export function useUnifiedAssistantSend({
     input,
     isStarting,
     session,
+    routingPolicy,
     setActivityHint,
     setError,
     setImages,
@@ -132,6 +141,7 @@ export function useUnifiedAssistantSend({
     setStreaming,
     start,
     webSearch,
+    modelOverride,
   ]);
 
   return { isStarting, send };

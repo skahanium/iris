@@ -118,6 +118,15 @@ export type ContextMode =
   | "explicit_scope";
 export type Freshness = "offline" | "web_preferred" | "web_required";
 export type Effort = "direct" | "tool_loop" | "durable";
+/** User-facing routing preference; capability requirements remain authoritative. */
+export type AgentRoutingPolicy = "balanced" | "quality" | "latency" | "cost";
+
+/** An explicit, one-Run model choice. The backend must reject an incapable override. */
+export interface AgentModelOverride {
+  providerId: string;
+  modelId: string;
+}
+
 export type RiskClass =
   | "read_only"
   | "bounded_write"
@@ -230,6 +239,10 @@ export interface AssistantRunStartRequest {
   };
   webEnabled: boolean;
   securityDomain: SecurityDomain;
+  /** Optional until the backend has migrated to the capability-scored router. */
+  routingPolicy?: AgentRoutingPolicy;
+  /** Optional until the backend accepts an explicit one-Run model override. */
+  modelOverride?: AgentModelOverride;
 }
 
 export interface AssistantRunAccepted {
@@ -278,7 +291,41 @@ export type AssistantRunErrorCode =
   | "agent_run_persistence_failed"
   | "agent_run_provider_unavailable"
   | "agent_run_provider_timeout"
+  | "agent_run_no_capable_model"
+  | "agent_run_tool_loop_limit"
+  | "agent_run_tool_invalid_arguments"
+  | "agent_run_mcp_unavailable"
+  | "agent_run_web_evidence_required"
   | "agent_run_cancelled";
+
+export type ProviderSwitchReasonCode =
+  | "transient_failure"
+  | "provider_timeout"
+  | "rate_limited"
+  | "health_circuit_open"
+  | "capability_fallback"
+  | "manual_override_rejected"
+  | "unknown";
+
+/** Safe confirmation target projection. It must never contain source body or tool arguments. */
+export interface ConfirmationTargetSummary {
+  kind: "note" | "file" | "external" | "process" | "other";
+  label: string;
+  risk: RiskClass;
+  detail?: string | null;
+}
+
+export interface PendingConfirmation {
+  confirmationId: string;
+  planHash: string;
+  summary: string;
+  /** Absent on events emitted by pre-maturity backends. */
+  effect?: Effect;
+  /** Absent on events emitted by pre-maturity backends. */
+  targets?: ConfirmationTargetSummary[];
+  /** ISO 8601 timestamp, absent on events emitted by pre-maturity backends. */
+  expiresAt?: string;
+}
 
 export type AssistantRunEventPayload =
   | { kind: "accepted"; turnId: string; sessionKey: string }
@@ -293,16 +340,28 @@ export type AssistantRunEventPayload =
     }
   | {
       kind: "confirmation_required";
-      confirmationId: string;
-      planHash: string;
-      summary: string;
+      confirmationId: PendingConfirmation["confirmationId"];
+      planHash: PendingConfirmation["planHash"];
+      summary: PendingConfirmation["summary"];
+      effect?: PendingConfirmation["effect"];
+      targets?: PendingConfirmation["targets"];
+      expiresAt?: PendingConfirmation["expiresAt"];
     }
   | {
       kind: "permission_denied";
       code: AssistantRunErrorCode;
       message: string;
     }
-  | { kind: "provider_switched"; providerId: string; reason: string }
+  | {
+      kind: "provider_switched";
+      providerId: string;
+      /** Absent on events emitted by pre-maturity backends. */
+      modelId?: string;
+      /** Structured replacement for the legacy human-readable `reason`. */
+      reasonCode?: ProviderSwitchReasonCode;
+      /** Kept while older backends still emit unstructured switch reasons. */
+      reason?: string;
+    }
   | { kind: "evidence_registered"; evidenceId: string }
   | { kind: "paused"; reason: string }
   | { kind: "resumed"; reason: string }
@@ -350,10 +409,7 @@ export interface AssistantRunSnapshot {
   state: RunState;
   stateVersion: number;
   finalMessageId?: string | null;
-  pendingConfirmation?: {
-    confirmationId: string;
-    summary: string;
-  } | null;
+  pendingConfirmation?: PendingConfirmation | null;
   recovery?: {
     code: AssistantRunErrorCode;
     message: string;

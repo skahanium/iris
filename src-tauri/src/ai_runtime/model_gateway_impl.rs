@@ -258,18 +258,7 @@ impl ModelGateway {
             .await
             .map_err(|e| AppError::msg(format!("Failed to read LLM response body: {}", e)))?;
 
-        let json: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
-            let preview: String = response_text.chars().take(500).collect();
-            let suffix = if response_text.chars().count() > 500 {
-                "…"
-            } else {
-                ""
-            };
-            AppError::msg(format!(
-                "Failed to parse LLM response: {}. Body preview: {}{}",
-                e, preview, suffix
-            ))
-        })?;
+        let json = parse_gateway_json(&response_text)?;
 
         Ok(parse_gateway_response(
             request.provider.endpoint_family,
@@ -340,6 +329,10 @@ impl ModelGateway {
     }
 }
 
+fn parse_gateway_json(response_text: &str) -> AppResult<serde_json::Value> {
+    serde_json::from_str(response_text).map_err(|_| AppError::msg("llm_response_invalid_json"))
+}
+
 fn llm_endpoint_url(provider: &ProviderConfig) -> String {
     let base = provider.base_url.trim_end_matches('/');
     match provider.endpoint_family {
@@ -367,7 +360,7 @@ fn apply_auth_headers(
             crate::llm::providers::ANTHROPIC_API_VERSION,
         ),
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
-            builder.header("Authorization", format!("Bearer {api_key}"))
+            builder.header("Authorization", format!("Bearer {}", api_key))
         }
     }
 }

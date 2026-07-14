@@ -43,7 +43,8 @@ pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
 pub const HARNESS_ONLY_TOOL_NAMES: &[&str] = &["spawn_subagent", "conclude_reasoning"];
 pub fn is_exposable_tool(name: &str) -> bool {
     crate::ai_runtime::tool_catalog::catalog_find(name).is_some_and(|entry| {
-        entry.implementation != crate::ai_runtime::tool_catalog::ToolImplementationStatus::Planned
+        entry.implementation
+            == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable
     })
 }
 

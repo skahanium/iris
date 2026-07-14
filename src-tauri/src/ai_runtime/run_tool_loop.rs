@@ -5,31 +5,45 @@
 //! records the safe Run events/audit rows, and registers bounded Web evidence before the model is
 //! called. Direct/offline Runs return before catalog lookup or collector invocation.
 
+use std::collections::BTreeSet;
 use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
 use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
 use crate::ai_runtime::run_context::RunContext;
-use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, Effort, Freshness, RunEventPayload, RunEventType,
-};
+use crate::ai_runtime::run_contract::{AssistantRunAccepted, RunEventPayload, RunEventType};
+#[cfg(test)]
+use crate::ai_runtime::run_contract::{Effort, Freshness};
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::tool_catalog::catalog_find;
+use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
 use crate::ai_runtime::tool_execution_pipeline::{
-    audit_dispatched_tool, evaluate_tool_execution, ToolExecutionGate,
+    audit_dispatched_tool, audit_tool_confirmation_requested, evaluate_tool_execution,
+    ToolExecutionGate,
 };
 use crate::ai_runtime::tool_policy::ToolPolicyContext;
-use crate::ai_runtime::{AutonomyLevel, ToolCallResult};
+#[cfg(test)]
+use crate::ai_runtime::AutonomyLevel;
+use crate::ai_runtime::ToolCallResult;
+use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 const WEB_TOOL_NAME: &str = "web_search";
 const MAX_WEB_EVIDENCE_PER_RUN: usize = 8;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
+/// Internal control-flow signal: the Run was durably moved to confirmation,
+/// so the model loop must stop without terminalizing it.
+pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
+const CHANGE_CONFIRMATION_TTL_MS: i64 = 10 * 60 * 1_000;
 
 /// Transient result produced by the bounded Run Web loop.
+#[cfg(test)]
 #[derive(Debug, Clone, Default)]
 pub(crate) struct RunWebEvidence {
     /// Ledger IDs that must be attached to the final assistant message.
@@ -38,11 +52,605 @@ pub(crate) struct RunWebEvidence {
     pub(crate) prompt_addendum: String,
 }
 
+/// Concrete normal-domain executor for the model tool loop.
+///
+/// It owns no policy decisions: every call re-enters the catalog, permission
+/// gate and audit trail before it reaches the existing typed dispatcher.
+pub(crate) struct NormalRunToolExecutor<'a> {
+    state: &'a Arc<AppState>,
+    app_handle: tauri::AppHandle,
+    accepted: &'a AssistantRunAccepted,
+    context: &'a RunContext,
+    policy_ctx: ToolPolicyContext,
+    sink: &'a dyn RunEventSink,
+    retrieval_scope: crate::ai_runtime::retrieval_scope::RetrievalScope,
+    cold_start_packets: Vec<crate::ai_runtime::ContextPacket>,
+    runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot>,
+    evidence_ids: Mutex<Vec<i64>>,
+}
+
+impl<'a> NormalRunToolExecutor<'a> {
+    /// Create a Run-bound executor for the already-authorized normal domain.
+    pub(crate) fn new(
+        state: &'a Arc<AppState>,
+        app_handle: tauri::AppHandle,
+        accepted: &'a AssistantRunAccepted,
+        context: &'a RunContext,
+        policy_ctx: ToolPolicyContext,
+        sink: &'a dyn RunEventSink,
+    ) -> Self {
+        Self {
+            state,
+            app_handle,
+            accepted,
+            context,
+            policy_ctx,
+            sink,
+            retrieval_scope: Default::default(),
+            cold_start_packets: Vec::new(),
+            runtime_documents: Vec::new(),
+            evidence_ids: Mutex::new(Vec::new()),
+        }
+    }
+
+    async fn execute_web_search(
+        &self,
+        args: &serde_json::Value,
+        state_version: u64,
+    ) -> AppResult<ToolCallResult> {
+        let query = args
+            .get("query")
+            .and_then(serde_json::Value::as_str)
+            .filter(|query| !query.trim().is_empty())
+            .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
+        let urls = args
+            .get("urls")
+            .and_then(serde_json::Value::as_array)
+            .map(|urls| {
+                urls.iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let remaining = MAX_WEB_EVIDENCE_PER_RUN.saturating_sub(self.evidence_ids().len());
+        if remaining == 0 {
+            return Ok(failed_tool_call(
+                WEB_TOOL_NAME,
+                "web_evidence_budget_exhausted",
+            ));
+        }
+        let output = match crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(
+            &self.state.db,
+            crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
+                query: query.to_owned(),
+                urls,
+                enabled: self.policy_ctx.web_search_enabled,
+                max_search_results: remaining,
+                max_fetches: remaining,
+            },
+        )
+        .await
+        {
+            Ok(output) => output,
+            Err(_) => {
+                return Ok(failed_tool_call(
+                    WEB_TOOL_NAME,
+                    "web_evidence_collection_failed",
+                ))
+            }
+        };
+        let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets(
+            query,
+            &output.items,
+        );
+        let evidence_ids = register_model_web_evidence(
+            &self.state.db,
+            self.accepted,
+            self.context,
+            self.sink,
+            state_version,
+            &output.items,
+            remaining,
+        )?;
+        if evidence_ids.is_empty() {
+            return Ok(failed_tool_call(WEB_TOOL_NAME, "web_evidence_unavailable"));
+        }
+        self.evidence_ids
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?
+            .extend(evidence_ids.iter().copied());
+        Ok(ToolCallResult {
+            tool_name: WEB_TOOL_NAME.to_string(),
+            success: true,
+            output: serde_json::json!({
+                "results": packets,
+                "evidenceIds": evidence_ids,
+                "count": evidence_ids.len(),
+                "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
+                "webUsage": output.usage,
+            }),
+            duration_ms: 0,
+            tokens_used: None,
+            error: None,
+        })
+    }
+
+    fn request_change_confirmation(
+        &self,
+        call: &crate::ai_runtime::ToolCall,
+        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
+        args: &serde_json::Value,
+        gate: &ToolExecutionGate<'_>,
+        decision: &crate::ai_runtime::permission_decision::PermissionDecisionOutcome,
+        state_version: u64,
+    ) -> AppResult<()> {
+        let plan = self.freeze_change_plan(call, entry, args)?;
+        let summary = format!(
+            "等待确认：{} 将修改 {} 个目标",
+            entry.name,
+            plan.relative_paths().len()
+        );
+        let event = AgentRunRepository::request_frozen_confirmation(
+            &self.state.db,
+            &plan,
+            state_version,
+            &summary,
+        )?;
+        // The state transition is authoritative. The audit uses only the catalog
+        // capability and preflight metadata, never the frozen arguments.
+        audit_tool_confirmation_requested(&self.state.db, gate, decision)?;
+        self.sink.emit(&event)
+    }
+
+    fn freeze_change_plan(
+        &self,
+        call: &crate::ai_runtime::ToolCall,
+        entry: &crate::ai_runtime::tool_catalog::ToolCatalogEntry,
+        args: &serde_json::Value,
+    ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangePlan> {
+        let relative_paths = frozen_relative_paths(entry.name, args, self.context);
+        let base_content_hashes = frozen_base_content_hashes(args, self.context, &relative_paths);
+        let vault_id = self
+            .state
+            .vault_path()
+            .map(|vault| crate::cas::hash::content_hash_str(&vault.to_string_lossy()))
+            .unwrap_or_else(|_| format!("normal-session:{}", self.context.session_id));
+        crate::ai_runtime::frozen_change_plan::FrozenChangePlan::freeze(
+            crate::ai_runtime::frozen_change_plan::FrozenChangePlanInput {
+                confirmation_id: uuid::Uuid::new_v4().to_string(),
+                run_id: self.accepted.run_id.clone(),
+                session_id: self.context.session_id,
+                request_id: self.accepted.run_id.clone(),
+                tool_call_id: call.id.clone(),
+                vault_id,
+                affected_file_count: relative_paths.len(),
+                relative_paths,
+                operation: entry.name.to_string(),
+                base_content_hashes,
+                change: args.clone(),
+                rollback_summary: rollback_summary(entry.name),
+                expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
+                    + CHANGE_CONFIRMATION_TTL_MS,
+            },
+        )
+    }
+
+    /// Dispatch one previously approved, hash-bound plan without contacting the model.
+    pub(crate) async fn execute_confirmed_frozen_change(
+        &self,
+        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+    ) -> AppResult<ToolCallResult> {
+        if plan.run_id() != self.accepted.run_id || plan.session_id() != self.context.session_id {
+            return Err(AppError::msg("agent_run_confirmation_expired"));
+        }
+        plan.validate_approval(
+            plan.confirmation_id(),
+            plan.plan_hash(),
+            chrono::Utc::now().timestamp_millis(),
+        )?;
+        let entry = catalog_find(plan.operation())
+            .filter(|entry| {
+                entry.requires_confirmation
+                    && entry.implementation
+                        == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable
+            })
+            .ok_or_else(|| AppError::msg("agent_run_confirmation_expired"))?;
+        let args = plan.change();
+        let actual_paths = frozen_relative_paths(entry.name, args, self.context);
+        if actual_paths != plan.relative_paths() {
+            return Err(AppError::msg("agent_run_confirmation_expired"));
+        }
+        revalidate_frozen_base_hashes(self.state.as_ref(), plan)?;
+        let snapshot = AgentRunRepository::get_for_session(
+            &self.state.db,
+            &self.accepted.session.session_key,
+            &self.accepted.run_id,
+        )?
+        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        if snapshot.run.state != crate::ai_runtime::run_contract::RunState::Running {
+            return Err(AppError::msg("agent_run_illegal_transition"));
+        }
+        let gate = ToolExecutionGate {
+            run_id: &self.accepted.run_id,
+            session_id: Some(self.context.session_id),
+            run_step: 1,
+            entry,
+            args,
+            policy_ctx: &self.policy_ctx,
+            skill_id: None,
+            subagent_depth: 0,
+        };
+        let gate_outcome = evaluate_tool_execution(&self.state.db, gate)?;
+        let result = if let Some(result) = gate_outcome.tool_result {
+            result
+        } else {
+            self.dispatch_non_web_tool(entry.name, args).await
+        };
+        audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+        append_model_tool_completed(
+            &self.state.db,
+            self.accepted,
+            snapshot.run.state_version,
+            self.sink,
+            entry.name,
+            plan.tool_call_id(),
+            if result.success {
+                "已执行已确认的变更"
+            } else {
+                "已确认的变更未执行"
+            },
+        )?;
+        Ok(result)
+    }
+
+    async fn dispatch_non_web_tool(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> ToolCallResult {
+        let dispatch_context = ToolDispatchContext {
+            note_path: None,
+            file_id: None,
+            web_search_enabled: self.policy_ctx.web_search_enabled,
+            max_web_fetches: 5,
+            cold_start_packets: &self.cold_start_packets,
+            retrieval_scope: &self.retrieval_scope,
+            runtime_documents: &self.runtime_documents,
+            app_handle: Some(self.app_handle.clone()),
+            attachment_count: 0,
+            skill_activation_plan: None,
+            embedding_state: Some(self.state),
+        };
+        dispatch_tool_with_retry(self.state.as_ref(), &dispatch_context, tool_name, args).await
+    }
+}
+
+impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
+    fn execute<'a>(
+        &'a self,
+        run_id: &'a str,
+        call: &'a crate::ai_runtime::ToolCall,
+        step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async move {
+            let Some(entry) = catalog_find(&call.function.name) else {
+                return Ok(failed_tool_call(
+                    &call.function.name,
+                    "tool_not_in_run_surface",
+                ));
+            };
+            let args = match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+                Ok(value) if value.is_object() => value,
+                _ => {
+                    return Ok(failed_tool_call(
+                        &call.function.name,
+                        "tool_arguments_invalid",
+                    ))
+                }
+            };
+            let gate = ToolExecutionGate {
+                run_id,
+                session_id: Some(self.context.session_id),
+                run_step: step,
+                entry,
+                args: &args,
+                policy_ctx: &self.policy_ctx,
+                skill_id: None,
+                subagent_depth: 0,
+            };
+            let gate_outcome = match evaluate_tool_execution(&self.state.db, gate) {
+                Ok(outcome) => outcome,
+                Err(_) => return Err(AppError::msg("tool_permission_check_failed")),
+            };
+            let state_version = match append_model_tool_started(
+                &self.state.db,
+                self.accepted,
+                self.sink,
+                &call.function.name,
+                &call.id,
+            ) {
+                Ok(version) => version,
+                Err(_) => return Err(AppError::msg("tool_event_persistence_failed")),
+            };
+            let result = if let Some(result) = gate_outcome.tool_result {
+                result
+            } else if entry.requires_confirmation {
+                self.request_change_confirmation(
+                    call,
+                    entry,
+                    &args,
+                    &gate,
+                    &gate_outcome.decision,
+                    state_version,
+                )?;
+                return Err(AppError::msg(CONFIRMATION_PENDING_ERROR));
+            } else if !gate_outcome.decision.can_execute_now() {
+                failed_tool_call(&call.function.name, "tool_confirmation_required")
+            } else if call.function.name == WEB_TOOL_NAME {
+                self.execute_web_search(&args, state_version).await?
+            } else {
+                self.dispatch_non_web_tool(&call.function.name, &args).await
+            };
+            audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+            let summary = if result.success {
+                "工具调用完成"
+            } else {
+                "工具调用未完成"
+            };
+            append_model_tool_completed(
+                &self.state.db,
+                self.accepted,
+                state_version,
+                self.sink,
+                &call.function.name,
+                &call.id,
+                summary,
+            )?;
+            Ok(result)
+        })
+    }
+
+    fn evidence_ids(&self) -> Vec<i64> {
+        self.evidence_ids
+            .lock()
+            .map(|ids| ids.clone())
+            .unwrap_or_default()
+    }
+
+    fn has_web_evidence(&self) -> bool {
+        !self.evidence_ids().is_empty()
+    }
+}
+
+fn frozen_relative_paths(
+    tool_name: &str,
+    args: &serde_json::Value,
+    context: &RunContext,
+) -> Vec<String> {
+    let mut paths = BTreeSet::new();
+    for key in ["target_path", "path", "new_path", "note_path"] {
+        if let Some(path) = args
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|path| !path.trim().is_empty())
+        {
+            paths.insert(path.trim().replace('\\', "/"));
+        }
+    }
+    if paths.is_empty() && matches!(tool_name, "insert_text_at_cursor" | "replace_selection") {
+        if let Some(material) = context.materials.first() {
+            paths.insert(material.source_path.clone());
+        }
+    }
+    if paths.is_empty() {
+        let target = match tool_name {
+            "memory_write" => args
+                .get("key")
+                .and_then(serde_json::Value::as_str)
+                .map(|key| format!("application://memory/{key}")),
+            "scheduled_task_create" => Some("application://scheduled-tasks/new".to_string()),
+            "scheduled_task_delete" => args
+                .get("id")
+                .and_then(serde_json::Value::as_i64)
+                .map(|id| format!("application://scheduled-tasks/{id}")),
+            _ => Some(format!("application://tool/{tool_name}")),
+        };
+        if let Some(target) = target {
+            paths.insert(target);
+        }
+    }
+    paths.into_iter().collect()
+}
+
+fn frozen_base_content_hashes(
+    args: &serde_json::Value,
+    context: &RunContext,
+    relative_paths: &[String],
+) -> Vec<(String, String)> {
+    let mut hashes = BTreeSet::new();
+    if let Some(base_hash) = args
+        .get("base_content_hash")
+        .and_then(serde_json::Value::as_str)
+        .filter(|hash| !hash.trim().is_empty())
+    {
+        if let Some(path) = relative_paths.first() {
+            hashes.insert((path.clone(), base_hash.to_string()));
+        }
+    }
+    for material in &context.materials {
+        if relative_paths.contains(&material.source_path) {
+            hashes.insert((material.source_path.clone(), material.content_hash.clone()));
+        }
+    }
+    hashes.into_iter().collect()
+}
+
+fn rollback_summary(tool_name: &str) -> String {
+    match tool_name {
+        "vault_delete_to_trash" => "可从回收站恢复".to_string(),
+        "vault_rename_move" => "可重命名或移动回原位置".to_string(),
+        "memory_write" | "scheduled_task_create" | "scheduled_task_delete" => {
+            "可通过应用设置撤销或更新".to_string()
+        }
+        _ => "可通过版本历史或后续编辑撤销".to_string(),
+    }
+}
+
+fn revalidate_frozen_base_hashes(
+    state: &AppState,
+    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+) -> AppResult<()> {
+    if plan.base_content_hashes().is_empty() {
+        return Ok(());
+    }
+    let vault = state
+        .vault_path()
+        .map_err(|_| AppError::msg("agent_run_confirmation_expired"))?;
+    for (path, expected_hash) in plan.base_content_hashes() {
+        if path.starts_with("application://") {
+            continue;
+        }
+        let resolved = crate::storage::paths::resolve_vault_path(&vault, path)
+            .map_err(|_| AppError::msg("agent_run_confirmation_expired"))?;
+        let current = std::fs::read_to_string(resolved)
+            .map_err(|_| AppError::msg("agent_run_confirmation_expired"))?;
+        if crate::cas::hash::content_hash_str(&current) != *expected_hash {
+            return Err(AppError::msg("agent_run_confirmation_expired"));
+        }
+    }
+    Ok(())
+}
+
+fn failed_tool_call(tool_name: &str, code: &str) -> ToolCallResult {
+    ToolCallResult {
+        tool_name: tool_name.to_string(),
+        success: false,
+        output: serde_json::json!({ "error": code }),
+        duration_ms: 0,
+        tokens_used: None,
+        error: Some(code.to_string()),
+    }
+}
+
+fn append_model_tool_started(
+    db: &Database,
+    accepted: &AssistantRunAccepted,
+    sink: &dyn RunEventSink,
+    capability: &str,
+    tool_call_id: &str,
+) -> AppResult<u64> {
+    let snapshot =
+        AgentRunRepository::get_for_session(db, &accepted.session.session_key, &accepted.run_id)?
+            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+    let event = AgentRunRepository::append_event(
+        db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: snapshot.run.state_version,
+            event_type: RunEventType::ToolStarted,
+            payload: RunEventPayload::ToolStarted {
+                capability: capability.to_string(),
+                tool_call_id: tool_call_id.to_string(),
+            },
+        },
+    )?;
+    sink.emit(&event)?;
+    Ok(snapshot.run.state_version)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_model_tool_completed(
+    db: &Database,
+    accepted: &AssistantRunAccepted,
+    state_version: u64,
+    sink: &dyn RunEventSink,
+    capability: &str,
+    tool_call_id: &str,
+    summary: &str,
+) -> AppResult<()> {
+    let event = AgentRunRepository::append_event(
+        db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version,
+            event_type: RunEventType::ToolCompleted,
+            payload: RunEventPayload::ToolCompleted {
+                capability: capability.to_string(),
+                tool_call_id: tool_call_id.to_string(),
+                summary: summary.to_string(),
+            },
+        },
+    )?;
+    sink.emit(&event)
+}
+
+fn register_model_web_evidence(
+    db: &Database,
+    accepted: &AssistantRunAccepted,
+    context: &RunContext,
+    sink: &dyn RunEventSink,
+    state_version: u64,
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    limit: usize,
+) -> AppResult<Vec<i64>> {
+    let mut evidence_ids = Vec::new();
+    for item in items
+        .iter()
+        .filter(|item| item.failure_reason.is_none())
+        .filter(|item| {
+            item.url.starts_with("https://") && item.canonical_url.starts_with("https://")
+        })
+        .filter_map(bounded_page_evidence)
+        .take(limit)
+    {
+        let registered = AgentEvidenceRepository::register_web(
+            db,
+            WebEvidenceInput {
+                session_id: context.session_id,
+                run_id: accepted.run_id.clone(),
+                message_seq_first: context.message_seq_first,
+                material_role: MaterialRole::Lookup,
+                title: item.title,
+                url: item.url,
+                normalized_url: item.canonical_url,
+                domain: item.domain,
+                retrieved_at: chrono::Utc::now().to_rfc3339(),
+                provider_id: item.provider_id,
+                provider_kind: item.provider_kind,
+                raw_result_hash: item.raw_result_hash,
+                extraction_method: item.extraction_method,
+                bounded_excerpt: item.excerpt,
+                retrieval_reason: Some(WEB_TOOL_NAME.to_string()),
+                score: None,
+                source_rank: None,
+                conflict_group: item.conflict_group,
+                failure_reason: None,
+            },
+        )?;
+        let event = AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version,
+                event_type: RunEventType::EvidenceRegistered,
+                payload: RunEventPayload::EvidenceRegistered {
+                    evidence_id: registered.evidence_id.to_string(),
+                },
+            },
+        )?;
+        sink.emit(&event)?;
+        evidence_ids.push(registered.evidence_id);
+    }
+    Ok(evidence_ids)
+}
+
 /// Execute the sole automatic read-only Web capability permitted by a Run envelope.
 ///
 /// `collector` is intentionally injected: production binds it to the typed Web broker while
 /// tests exercise required/preferred/offline behavior without a network dependency.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) async fn collect_web_evidence_for_run<F, Fut>(
     db: &Database,
     accepted: &AssistantRunAccepted,
@@ -211,19 +819,7 @@ where
     })
 }
 
-/// Bind the typed native/MCP Web broker to the Run pipeline.
-pub(crate) async fn collect_web_evidence_with_broker(
-    db: &Database,
-    accepted: &AssistantRunAccepted,
-    context: &RunContext,
-    sink: &impl RunEventSink,
-) -> AppResult<RunWebEvidence> {
-    collect_web_evidence_for_run(db, accepted, context, sink, |input| async move {
-        crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(db, input).await
-    })
-    .await
-}
-
+#[cfg(test)]
 fn should_schedule_web(envelope: &crate::ai_runtime::run_contract::ExecutionEnvelope) -> bool {
     matches!(envelope.effort, Effort::ToolLoop)
         || matches!(
@@ -232,6 +828,7 @@ fn should_schedule_web(envelope: &crate::ai_runtime::run_contract::ExecutionEnve
         )
 }
 
+#[cfg(test)]
 fn append_tool_started(
     db: &Database,
     accepted: &AssistantRunAccepted,
@@ -256,6 +853,7 @@ fn append_tool_started(
     Ok(snapshot.run.state_version)
 }
 
+#[cfg(test)]
 fn append_tool_completed(
     db: &Database,
     accepted: &AssistantRunAccepted,
@@ -279,6 +877,7 @@ fn append_tool_completed(
     sink.emit(&event)
 }
 
+#[cfg(test)]
 fn required_or_preferred_failure(
     db: &Database,
     accepted: &AssistantRunAccepted,
@@ -293,6 +892,7 @@ fn required_or_preferred_failure(
     required_or_preferred_result(context, result)
 }
 
+#[cfg(test)]
 fn required_or_preferred_result(
     context: &RunContext,
     _result: ToolCallResult,
@@ -307,6 +907,7 @@ fn required_or_preferred_result(
     }
 }
 
+#[cfg(test)]
 fn failed_web_result(reason: &str) -> ToolCallResult {
     ToolCallResult {
         tool_name: WEB_TOOL_NAME.to_string(),
@@ -353,6 +954,7 @@ fn bounded_page_evidence(
     })
 }
 
+#[cfg(test)]
 fn render_prompt_addendum(items: &[(String, String, String)]) -> String {
     let mut prompt = String::from("\n\n<web_evidence untrusted=\"true\">\n");
     for (label, title, excerpt) in items {

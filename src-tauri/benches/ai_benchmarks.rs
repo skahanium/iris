@@ -16,6 +16,7 @@ use iris_lib::ai_runtime::skills::{
 use iris_lib::ai_runtime::{CapabilitySlot, EndpointFamily};
 use iris_lib::ai_types::AgentIntent;
 use iris_lib::indexer::chunker::chunk_markdown;
+use zeroize::Zeroizing;
 
 fn bench_sanitize_query(c: &mut Criterion) {
     let queries = vec![
@@ -51,7 +52,7 @@ fn sample_provider() -> ProviderConfig {
     ProviderConfig {
         name: "deepseek".to_string(),
         base_url: "https://api.deepseek.com".to_string(),
-        api_key: Some("bench-key".to_string()),
+        api_key: Some(Zeroizing::new("bench-key".to_string())),
         model: "deepseek-chat".to_string(),
         slot: CapabilitySlot::Reasoner,
         endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,

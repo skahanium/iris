@@ -149,7 +149,7 @@ fn apply_streaming_auth_headers(
             crate::llm::providers::ANTHROPIC_API_VERSION,
         ),
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
-            builder.header("Authorization", format!("Bearer {api_key}"))
+            builder.header("Authorization", format!("Bearer {}", api_key))
         }
     }
 }
@@ -590,7 +590,7 @@ fn find_next_reasoning_open_for_stream(
     let mut best: Option<ReasoningOpenForStream> = None;
     for (open, close) in TAGS {
         if let Some(start) = find_ascii_case_insensitive_for_stream(content, open, from) {
-            if best.map_or(true, |candidate| start < candidate.start) {
+            if best.is_none_or(|candidate| start < candidate.start) {
                 best = Some(ReasoningOpenForStream {
                     start,
                     open_len: open.len(),

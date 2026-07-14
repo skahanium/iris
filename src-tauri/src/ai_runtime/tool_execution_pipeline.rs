@@ -106,6 +106,24 @@ pub fn audit_dispatched_tool(
     )
 }
 
+/// Record a confirmed-only tool request that was frozen before dispatch.
+///
+/// The plan itself is the authorization artifact; no effect has run yet, so
+/// this deliberately does not pretend that the tool completed.
+pub fn audit_tool_confirmation_requested(
+    db: &Database,
+    gate: &ToolExecutionGate<'_>,
+    decision: &PermissionDecisionOutcome,
+) -> AppResult<()> {
+    record_permission_decision_audit(
+        db,
+        gate.run_id,
+        gate.skill_id,
+        decision,
+        "pending_confirmation",
+    )
+}
+
 fn denied_tool_result(tool_name: &str, reason: Option<&str>) -> ToolCallResult {
     let message = reason.unwrap_or("tool execution denied");
     ToolCallResult {

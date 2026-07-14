@@ -552,6 +552,107 @@ fn frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption() {
 }
 
 #[test]
+fn atomic_confirmation_request_binds_the_pending_plan_to_awaiting_state() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted run");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "preparing".to_string(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "running".to_string(),
+            },
+        },
+    )
+    .expect("running");
+    let started = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: running.state_version(),
+            event_type: RunEventType::ToolStarted,
+            payload: RunEventPayload::ToolStarted {
+                capability: "memory_write".to_string(),
+                tool_call_id: "tool-1".to_string(),
+            },
+        },
+    )
+    .expect("tool started");
+    let plan = FrozenChangePlan::freeze(FrozenChangePlanInput {
+        confirmation_id: "confirmation-atomic".to_string(),
+        run_id: "run-1".to_string(),
+        session_id,
+        request_id: "request-1".to_string(),
+        tool_call_id: "tool-1".to_string(),
+        vault_id: "vault-1".to_string(),
+        relative_paths: vec!["application://memory/profile".to_string()],
+        operation: "memory_write".to_string(),
+        base_content_hashes: vec![],
+        change: serde_json::json!({ "key": "profile", "content": "approved" }),
+        affected_file_count: 1,
+        rollback_summary: "can update later".to_string(),
+        expires_at_unix_ms: i64::MAX,
+    })
+    .expect("frozen plan");
+
+    let awaiting = AgentRunRepository::request_frozen_confirmation(
+        &db,
+        &plan,
+        started.state_version(),
+        "Awaiting confirmation: memory_write affects 1 target",
+    )
+    .expect("atomic confirmation request");
+    assert_eq!(awaiting.state_version(), started.state_version() + 1);
+    let snapshot = AgentRunRepository::get_for_session(&db, &session_key, "run-1")
+        .expect("snapshot")
+        .expect("run");
+    assert_eq!(snapshot.run.state, RunState::AwaitingConfirmation);
+
+    let approval = AgentRunRepository::approve_frozen_confirmation(
+        &db,
+        &session_key,
+        "run-1",
+        plan.confirmation_id(),
+        plan.plan_hash(),
+        awaiting.state_version(),
+        0,
+    )
+    .expect("approve exact plan");
+    assert!(matches!(
+        approval,
+        super::agent_run_repository::FrozenConfirmationApproval::Resumed(_)
+    ));
+    let consumed = AgentRunRepository::consumed_frozen_confirmation_for_session(
+        &db,
+        &session_key,
+        "run-1",
+        plan.confirmation_id(),
+    )
+    .expect("consumed plan");
+    let restored = FrozenChangePlan::from_persisted_plan_json(&consumed.plan_json)
+        .expect("restore exact plan");
+    assert_eq!(restored.plan_hash(), consumed.plan_hash);
+    assert_eq!(restored.change()["content"], "approved");
+}
+
+#[test]
 fn frozen_confirmation_cannot_be_saved_for_a_different_session() {
     let (db, session_id, session_key) = setup();
     AgentRunRepository::accept(&db, accept_input(session_id, session_key)).expect("accepted run");

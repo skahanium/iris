@@ -191,6 +191,7 @@ export const USER_CONFIGURABLE_CAPABILITY_SLOTS = [
   "reasoner",
   "long_context",
   "vision",
+  "agent_tools",
 ] satisfies CapabilitySlot[];
 
 /** 鐎广垺鍩涚粩顖氭礀闁偓姒涙顓婚敍鍦汸C 娑撳秴褰查悽銊﹀灗鐟欙絾鐎芥径杈Е閺冭绱?*/

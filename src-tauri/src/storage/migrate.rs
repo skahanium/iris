@@ -128,6 +128,10 @@ const MIGRATION_049_DOWN: &str =
 const MIGRATION_050_UP: &str = include_str!("../../migrations/050_agent_run_explicit_action.sql");
 const MIGRATION_050_DOWN: &str =
     include_str!("../../migrations/050_agent_run_explicit_action.down.sql");
+const MIGRATION_052_UP: &str =
+    include_str!("../../migrations/052_web_evidence_provider_runtime.sql");
+const MIGRATION_052_DOWN: &str =
+    include_str!("../../migrations/052_web_evidence_provider_runtime.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -570,6 +574,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         false,
     )?;
     apply_agent_harness_cutover(conn)?;
+    apply_migration(
+        conn,
+        "052_web_evidence_provider_runtime",
+        MIGRATION_052_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -581,6 +591,11 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(
+        conn,
+        "052_web_evidence_provider_runtime",
+        MIGRATION_052_DOWN,
+    );
     rollback_agent_harness_cutover(conn)?;
     rollback_migration(conn, "050_agent_run_explicit_action", MIGRATION_050_DOWN);
     rollback_migration(conn, "049_document_capability_policies", MIGRATION_049_DOWN);
@@ -1314,6 +1329,21 @@ mod tests {
             .map(|count| count > 0)
             .unwrap();
         assert!(provider_exists, "missing web_evidence_providers table");
+
+        for table in [
+            "web_evidence_provider_runtime",
+            "web_evidence_provider_health",
+        ] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count > 0)
+                .unwrap();
+            assert!(exists, "missing {table}");
+        }
 
         for table in [
             "mcp_tool_inventory",

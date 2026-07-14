@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai_types::{
     CapabilitySlot, EndpointFamily, ReasoningAdapter, ReasoningControl, ReasoningMode,
-    ReasoningVisibility, ResolvedReasoningRequest,
+    ReasoningVisibility, ResolvedReasoningRequest, RoutingPolicy,
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
@@ -41,6 +41,9 @@ pub struct LlmRoutingConfig {
     pub scenes: std::collections::HashMap<String, SceneRoute>,
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub context_strategy: std::collections::HashMap<String, ContextStrategy>,
+    /// Candidate ranking preference; hard capability checks always happen first.
+    #[serde(default)]
+    pub routing_policy: RoutingPolicy,
 }
 
 fn default_schema_version() -> u32 {
@@ -125,11 +128,11 @@ pub use crate::ai_types::ContextStrategy;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedLlmConfig {
+    /// The configured capability slot that selected this provider/model.
+    pub capability_slot: CapabilitySlot,
     pub provider_id: String,
     pub model: String,
     pub base_url: String,
-    #[serde(skip)]
-    pub api_key: Option<String>,
     pub thinking: bool,
     #[serde(default)]
     pub reasoning: ResolvedReasoningRequest,
@@ -137,21 +140,30 @@ pub struct ResolvedLlmConfig {
     pub output_budget: u32,
     pub context_strategy: ContextStrategy,
     pub endpoint_family: EndpointFamily,
+    /// Capability facts preserved from the selected model profile for dispatch-time filtering.
+    pub supports_streaming: bool,
+    pub supports_tools: bool,
+    pub supports_vision: bool,
+    pub supports_reasoning: bool,
 }
 
 impl std::fmt::Debug for ResolvedLlmConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ResolvedLlmConfig")
+            .field("capability_slot", &self.capability_slot)
             .field("provider_id", &self.provider_id)
             .field("model", &self.model)
             .field("base_url", &self.base_url)
-            .field("api_key", &"[REDACTED]")
             .field("thinking", &self.thinking)
             .field("reasoning", &self.reasoning)
             .field("input_budget", &self.input_budget)
             .field("output_budget", &self.output_budget)
             .field("context_strategy", &self.context_strategy)
             .field("endpoint_family", &self.endpoint_family)
+            .field("supports_streaming", &self.supports_streaming)
+            .field("supports_tools", &self.supports_tools)
+            .field("supports_vision", &self.supports_vision)
+            .field("supports_reasoning", &self.supports_reasoning)
             .finish()
     }
 }
@@ -179,6 +191,8 @@ pub struct CapabilityRouteRequirements {
 pub struct ResolvedCapabilityRoute {
     pub resolved: ResolvedLlmConfig,
     pub failover_candidates: Vec<ResolvedLlmConfig>,
+    /// Persisted preference used only to rank already-capable candidates.
+    pub routing_policy: RoutingPolicy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -411,6 +425,7 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
         slot_failover: std::collections::HashMap::new(),
         scenes: std::collections::HashMap::new(),
         context_strategy: std::collections::HashMap::new(),
+        routing_policy: RoutingPolicy::Balanced,
     }
 }
 
@@ -747,18 +762,26 @@ fn resolve_capability_route_with_requirements_registry(
             continue;
         }
 
-        // Try to resolve this slot (checks base URL, API key, model spec).
-        match resolve_route(routing, *slot, route.clone()) {
+        // Resolve the model profile, then apply the Run's hard capabilities and budgets.
+        match resolve_route(routing, *slot, route.clone())
+            .map(|resolved| apply_live_capability_evidence(resolved, route, registry))
+        {
             Ok(resolved) => {
+                if !resolved_satisfies_requirements(&resolved, requirements) {
+                    last_error = Some(AppError::msg("agent_run_no_capable_model"));
+                    continue;
+                }
                 let failover_candidates = resolve_slot_failover_candidates(
                     routing,
                     *slot,
                     requirements.privacy_preference,
                     registry,
+                    requirements,
                 );
                 return Ok(ResolvedCapabilityRoute {
                     resolved,
                     failover_candidates,
+                    routing_policy: routing.routing_policy,
                 });
             }
             Err(e) => {
@@ -781,6 +804,7 @@ fn resolve_slot_failover_candidates(
     slot: CapabilitySlot,
     privacy_preference: PrivacyPreference,
     registry: &[ModelRegistryEntry],
+    requirements: CapabilityRouteRequirements,
 ) -> Vec<ResolvedLlmConfig> {
     let key = slot_key(slot);
     routing
@@ -799,8 +823,22 @@ fn resolve_slot_failover_candidates(
                 );
                 return None;
             }
-            match resolve_route(routing, slot, route.clone()) {
-                Ok(resolved) => Some(resolved),
+            match resolve_route(routing, slot, route.clone())
+                .map(|resolved| apply_live_capability_evidence(resolved, route, registry))
+            {
+                Ok(resolved) if resolved_satisfies_requirements(&resolved, requirements) => {
+                    Some(resolved)
+                }
+                Ok(_) => {
+                    tracing::warn!(
+                        slot = ?slot,
+                        provider_id = %route.provider_id,
+                        model = %route.model,
+                        reason_code = "provider_failover_candidate_capability_mismatch",
+                        "Ignoring failover candidate that does not satisfy Run requirements"
+                    );
+                    None
+                }
                 Err(error) => {
                     tracing::warn!(
                         slot = ?slot,
@@ -815,6 +853,43 @@ fn resolve_slot_failover_candidates(
             }
         })
         .collect()
+}
+
+fn resolved_satisfies_requirements(
+    resolved: &ResolvedLlmConfig,
+    requirements: CapabilityRouteRequirements,
+) -> bool {
+    resolved.supports_streaming
+        && resolved.input_budget >= requirements.context_tokens
+        && (!requirements.has_images || resolved.supports_vision)
+        && (!requirements.needs_tools || resolved.supports_tools)
+        && (!requirements.needs_reasoning || resolved.supports_reasoning)
+}
+
+/// Apply capability facts established by successful live probes.
+///
+/// Catalog metadata is only a fallback. A successful image probe proves that
+/// the exact provider/model pair accepts vision input, so it must be reflected
+/// in the resolved route before the Run's hard capability requirements are
+/// evaluated. The `built_in` sentinel is catalog-derived rather than a probe,
+/// and deliberately does not override the catalog here.
+fn apply_live_capability_evidence(
+    mut resolved: ResolvedLlmConfig,
+    route: &SlotRoute,
+    registry: &[ModelRegistryEntry],
+) -> ResolvedLlmConfig {
+    let has_live_vision_probe = registry.iter().any(|entry| {
+        entry.provider_id == route.provider_id
+            && entry.model_id == route.model
+            && entry
+                .vision_verified_at
+                .as_deref()
+                .is_some_and(|timestamp| timestamp != "built_in")
+    });
+    if has_live_vision_probe {
+        resolved.supports_vision = true;
+    }
+    resolved
 }
 
 fn resolve_route(
@@ -856,16 +931,21 @@ fn resolve_route(
     };
 
     Ok(ResolvedLlmConfig {
+        capability_slot: slot,
         provider_id: route.provider_id,
         model: route.model,
         base_url,
-        api_key: None,
         thinking,
         reasoning,
         input_budget,
         output_budget,
         context_strategy,
         endpoint_family: model_spec.endpoint_family,
+        supports_streaming: model_spec.supports_streaming,
+        supports_tools: model_spec.supports_tools,
+        supports_vision: model_spec.supports_vision,
+        supports_reasoning: !matches!(reasoning.adapter, ReasoningAdapter::None)
+            && !matches!(reasoning.control, ReasoningControl::None),
     })
 }
 
@@ -1267,9 +1347,7 @@ pub fn resolve_for_provider(
     provider_id: &str,
     model: Option<&str>,
 ) -> AppResult<ResolvedLlmConfig> {
-    let mut resolved = resolve_for_provider_without_secret(db, provider_id, model)?;
-    hydrate_resolved_api_key(db, &mut resolved)?;
-    Ok(resolved)
+    resolve_for_provider_without_secret(db, provider_id, model)
 }
 
 pub fn resolve_for_provider_without_secret(
@@ -1305,32 +1383,22 @@ pub fn resolve_for_provider_without_secret(
     let model_spec = find_model(&model_id).unwrap_or_else(|| fallback_model(provider_id));
 
     let resolved = ResolvedLlmConfig {
+        capability_slot: CapabilitySlot::Fast,
         provider_id: provider_id.to_string(),
         model: model_id,
         base_url,
-        api_key: None,
         thinking: false,
         reasoning: ResolvedReasoningRequest::disabled(),
         input_budget: (model_spec.context_window as f32 * 0.75) as usize,
         output_budget: model_spec.max_output,
         context_strategy: ContextStrategy::Hybrid,
         endpoint_family: model_spec.endpoint_family,
+        supports_streaming: model_spec.supports_streaming,
+        supports_tools: model_spec.supports_tools,
+        supports_vision: model_spec.supports_vision,
+        supports_reasoning: model_spec.reasoning_capability().is_some(),
     };
     Ok(resolved)
-}
-
-#[cfg(not(test))]
-fn hydrate_resolved_api_key(_db: &Database, resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
-    if crate::llm::providers::requires_api_key(&resolved.provider_id) {
-        let service = credential_service(&resolved.provider_id);
-        resolved.api_key = Some(crate::credentials::get_runtime_secret(&service)?.to_string());
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn hydrate_resolved_api_key(_db: &Database, _resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
-    Ok(())
 }
 
 #[cfg(not(test))]
@@ -1631,11 +1699,8 @@ mod tests {
         )
         .expect("secret-free route");
 
-        assert!(route.resolved.api_key.is_none());
-        assert!(route
-            .failover_candidates
-            .iter()
-            .all(|candidate| candidate.api_key.is_none()));
+        assert_eq!(route.resolved.provider_id, "deepseek");
+        assert_eq!(route.failover_candidates.len(), 1);
     }
     #[test]
     fn connectivity_status_accepts_live_validated_custom_text_model() {
@@ -2528,7 +2593,7 @@ mod tests {
     }
 
     #[test]
-    fn custom_text_validated_model_can_route_reasoner_and_long_context_slots() {
+    fn custom_text_model_is_rejected_when_run_requires_reasoning_or_long_context() {
         let mut routing = deepseek_defaults();
         routing.providers.insert(
             "custom".into(),
@@ -2575,12 +2640,12 @@ mod tests {
         };
         let reasoner =
             resolve_capability_route_with_registry(&routing, reasoner_requirements, &registry)
-                .expect("text-validated model should route reasoner");
+                .expect_err("text validation must not imply reasoning controls");
         assert_eq!(
             requested_slot_for_requirements(reasoner_requirements),
             CapabilitySlot::Reasoner
         );
-        assert_eq!(reasoner.resolved.model, "plain-text");
+        assert_eq!(reasoner.to_string(), "agent_run_no_capable_model");
 
         let long_context_requirements = CapabilityRouteRequirements {
             preferred_slot: CapabilitySlot::Fast,
@@ -2592,15 +2657,15 @@ mod tests {
         };
         let long_context =
             resolve_capability_route_with_registry(&routing, long_context_requirements, &registry)
-                .expect("text-validated model should route long context");
+                .expect_err("context budget must be a hard constraint");
         assert_eq!(
             requested_slot_for_requirements(long_context_requirements),
             CapabilitySlot::LongContext
         );
-        assert_eq!(long_context.resolved.model, "plain-text");
+        assert_eq!(long_context.to_string(), "agent_run_no_capable_model");
     }
     #[test]
-    fn unknown_custom_reasoning_auto_only_enables_output_isolation() {
+    fn unknown_custom_reasoning_is_not_treated_as_a_capability() {
         let mut routing = deepseek_defaults();
         routing.providers.insert(
             "custom".into(),
@@ -2637,7 +2702,7 @@ mod tests {
             user_confirmed_capabilities: Vec::new(),
         }];
 
-        let route = resolve_capability_route_with_registry(
+        let error = resolve_capability_route_with_registry(
             &routing,
             CapabilityRouteRequirements {
                 preferred_slot: CapabilitySlot::Reasoner,
@@ -2649,12 +2714,9 @@ mod tests {
             },
             &registry,
         )
-        .expect("text-validated model should route");
+        .expect_err("unknown reasoning controls must not satisfy a hard requirement");
 
-        assert_eq!(route.resolved.reasoning.mode, ReasoningMode::Auto);
-        assert_eq!(route.resolved.reasoning.adapter, ReasoningAdapter::None);
-        assert!(!route.resolved.reasoning.requested);
-        assert!(route.resolved.reasoning.isolate_output);
+        assert_eq!(error.to_string(), "agent_run_no_capable_model");
     }
     #[test]
     fn vision_route_respects_live_probe_over_catalog_non_vision_model() {
@@ -2711,6 +2773,7 @@ mod tests {
 
         assert_eq!(route.resolved.provider_id, "deepseek");
         assert_eq!(route.resolved.model, "deepseek-v4-flash");
+        assert!(route.resolved.supports_vision);
     }
 
     #[test]

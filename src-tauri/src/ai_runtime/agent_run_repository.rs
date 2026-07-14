@@ -6,8 +6,8 @@
 
 use crate::ai_runtime::run_contract::{
     transition_to, AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse,
-    AssistantRunSnapshot, AssistantSessionRef, ExecutionEnvelope, RunEventPayload, RunEventType,
-    RunState, SecurityDomain,
+    AssistantRunSnapshot, AssistantSessionRef, ConfirmationTargetSummary, Effect,
+    ExecutionEnvelope, RiskClass, RunEventPayload, RunEventType, RunState, SecurityDomain,
 };
 use crate::ai_types::{
     ContentPart, ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan,
@@ -105,6 +105,15 @@ pub(crate) enum FrozenConfirmationRejection {
     Resumed(AssistantRunEvent),
     /// The same plan had already been rejected by an earlier identical control request.
     AlreadyRejected,
+}
+
+/// Exact consumed confirmation data that may enter the post-approval executor.
+///
+/// This is intentionally storage-shaped and never crosses the IPC boundary.
+#[derive(Debug, Clone)]
+pub(crate) struct ConsumedFrozenConfirmation {
+    pub(crate) plan_hash: String,
+    pub(crate) plan_json: String,
 }
 /// Repository for normal-domain Run, Event and intake facts.
 pub(crate) struct AgentRunRepository;
@@ -495,6 +504,136 @@ impl AgentRunRepository {
         })
     }
 
+    /// Atomically persist a frozen plan and transition its running Run to the
+    /// single matching confirmation event. A process crash can therefore never
+    /// leave a pending plan without an awaiting-confirmation Run state.
+    pub(crate) fn request_frozen_confirmation(
+        db: &Database,
+        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+        state_version: u64,
+        summary: &str,
+    ) -> AppResult<AssistantRunEvent> {
+        if summary.trim().is_empty() || summary.chars().count() > MAX_SAFE_EVENT_TEXT_CHARS {
+            return Err(AppError::msg("agent_run_invalid_change_plan"));
+        }
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let (status, stored_version, session_id): (String, u64, i64) = conn
+                    .query_row(
+                        "SELECT status, state_version, session_id FROM agent_runs WHERE run_id = ?1",
+                        [plan.run_id()],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .map_err(not_found_or_db)?;
+                if session_id != plan.session_id() {
+                    return Err(AppError::msg("agent_run_session_not_found"));
+                }
+                if parse_wire::<RunState>(&status)? != RunState::Running {
+                    return Err(AppError::msg("agent_run_illegal_transition"));
+                }
+                if stored_version != state_version {
+                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                }
+                let pending_count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM agent_run_confirmations
+                     WHERE run_id = ?1 AND status = 'pending'",
+                    [plan.run_id()],
+                    |row| row.get(0),
+                )?;
+                if pending_count != 0 {
+                    return Err(AppError::msg("agent_run_confirmation_pending"));
+                }
+                let now = chrono::Utc::now().to_rfc3339();
+                conn.execute(
+                    "INSERT INTO agent_run_confirmations
+                     (confirmation_id, run_id, plan_hash, plan_json, expires_at, status, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+                    rusqlite::params![
+                        plan.confirmation_id(),
+                        plan.run_id(),
+                        plan.plan_hash(),
+                        plan.persisted_plan_json()?,
+                        plan.expires_at_unix_ms(),
+                        now,
+                    ],
+                )?;
+                let next_state = transition_to(RunState::Running, RunState::AwaitingConfirmation)
+                    .map_err(|_| AppError::msg("agent_run_illegal_transition"))?;
+                let next_state_version = stored_version + 1;
+                let updated = conn.execute(
+                    "UPDATE agent_runs
+                     SET status = ?1, state_version = ?2, updated_at = ?3
+                     WHERE run_id = ?4 AND state_version = ?5",
+                    rusqlite::params![
+                        enum_wire(&next_state)?,
+                        next_state_version,
+                        now,
+                        plan.run_id(),
+                        stored_version,
+                    ],
+                )?;
+                if updated != 1 {
+                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                }
+                let event_seq: u64 = conn.query_row(
+                    "SELECT COALESCE(MAX(event_seq), 0) + 1
+                     FROM agent_run_events WHERE run_id = ?1",
+                    [plan.run_id()],
+                    |row| row.get(0),
+                )?;
+                let event = AssistantRunEvent::new(
+                    plan.run_id(),
+                    event_seq,
+                    next_state_version,
+                    RunEventType::ConfirmationRequired,
+                    &now,
+                    RunEventPayload::ConfirmationRequired {
+                        confirmation_id: plan.confirmation_id().to_string(),
+                        plan_hash: plan.plan_hash().to_string(),
+                        summary: summary.to_string(),
+                        effect: Some(Effect::Apply),
+                        targets: Some(redacted_confirmation_targets(plan.relative_paths())),
+                        expires_at: chrono::DateTime::from_timestamp_millis(
+                            plan.expires_at_unix_ms(),
+                        )
+                        .map(|timestamp| timestamp.to_rfc3339()),
+                    },
+                )
+                .map_err(AppError::msg)?;
+                insert_event(conn, &event)?;
+                Ok(event)
+            })
+        })
+    }
+
+    /// Load the exact plan that was atomically consumed by a successful approval.
+    /// The session join makes this safe for the caller that owns the Run.
+    pub(crate) fn consumed_frozen_confirmation_for_session(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+        confirmation_id: &str,
+    ) -> AppResult<ConsumedFrozenConfirmation> {
+        db.with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT c.plan_hash, c.plan_json
+                 FROM agent_run_confirmations c
+                 JOIN agent_runs r ON r.run_id = c.run_id
+                 JOIN sessions s ON s.id = r.session_id
+                 WHERE c.run_id = ?1 AND c.confirmation_id = ?2
+                   AND c.status = 'consumed' AND s.session_key = ?3",
+                rusqlite::params![run_id, confirmation_id, session_key],
+                |row| {
+                    Ok(ConsumedFrozenConfirmation {
+                        plan_hash: row.get(0)?,
+                        plan_json: row.get(1)?,
+                    })
+                },
+            )
+            .map_err(not_found_or_db)
+        })
+    }
+
     /// Atomically consume exactly one unexpired plan with its original hash.
     pub(crate) fn consume_frozen_confirmation(
         db: &Database,
@@ -872,7 +1011,7 @@ impl AgentRunRepository {
         db.with_read_conn(|conn| {
             let stored = conn
                 .query_row(
-                    "SELECT r.session_id, m.seq, m.content, m.explicit_references_json
+                    "SELECT r.session_id, m.seq, m.content, m.content_parts, m.explicit_references_json
                      FROM agent_runs r
                      JOIN sessions s ON s.id = r.session_id
                      JOIN session_messages m ON m.session_id = r.session_id AND m.turn_id = r.turn_id
@@ -883,12 +1022,13 @@ impl AgentRunRepository {
                             row.get::<_, i64>(0)?,
                             row.get::<_, i64>(1)?,
                             row.get::<_, String>(2)?,
-                            row.get::<_, String>(3)?,
+                            row.get::<_, Option<String>>(3)?,
+                            row.get::<_, String>(4)?,
                         ))
                     },
                 )
                 .optional()?;
-            let Some((session_id, message_seq_first, message, references_json)) = stored else {
+            let Some((session_id, message_seq_first, message, content_parts_json, references_json)) = stored else {
                 return Ok(None);
             };
             let explicit_references = serde_json::from_str(&references_json)
@@ -897,6 +1037,9 @@ impl AgentRunRepository {
                 session_id,
                 message_seq_first,
                 user_message: message,
+                content_parts: content_parts_json
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()?,
                 explicit_references,
             }))
         })
@@ -928,6 +1071,7 @@ pub(crate) struct RunPromptInput {
     pub(crate) session_id: i64,
     pub(crate) message_seq_first: i64,
     pub(crate) user_message: String,
+    pub(crate) content_parts: Option<Vec<ContentPart>>,
     pub(crate) explicit_references: Vec<StoredExplicitReference>,
 }
 
@@ -1028,15 +1172,39 @@ fn pending_confirmation_summary(
         RunEventPayload::ConfirmationRequired {
             confirmation_id: event_confirmation_id,
             summary,
+            effect,
+            targets,
+            expires_at,
             ..
         } if event_confirmation_id == confirmation_id => Ok(Some(
             crate::ai_runtime::run_contract::PendingConfirmationSummary {
                 confirmation_id,
                 summary,
+                effect,
+                targets,
+                expires_at,
             },
         )),
         _ => Err(AppError::msg("agent_run_confirmation_missing")),
     }
+}
+
+fn redacted_confirmation_targets(paths: &[String]) -> Vec<ConfirmationTargetSummary> {
+    paths
+        .iter()
+        .enumerate()
+        .map(|(index, path)| ConfirmationTargetSummary {
+            kind: if path.starts_with("application://") {
+                "other".to_string()
+            } else if path.ends_with(".md") {
+                "note".to_string()
+            } else {
+                "file".to_string()
+            },
+            label: format!("目标 {}", index + 1),
+            risk: RiskClass::BoundedWrite,
+        })
+        .collect()
 }
 
 fn accepted_for_client_request(

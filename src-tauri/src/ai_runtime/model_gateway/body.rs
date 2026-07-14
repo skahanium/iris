@@ -509,7 +509,7 @@ mod phase3_adapter_contract_tests {
             provider: ProviderConfig {
                 name: "test".into(),
                 base_url: "https://api.example.com".into(),
-                api_key: Some("secret".into()),
+                api_key: Some(zeroize::Zeroizing::new("secret".to_string())),
                 model: "model-a".into(),
                 slot: CapabilitySlot::Fast,
                 endpoint_family,
@@ -585,7 +585,7 @@ mod phase3_adapter_contract_tests {
             provider: ProviderConfig {
                 name: "anthropic".into(),
                 base_url: "https://api.anthropic.com".into(),
-                api_key: Some("key".into()),
+                api_key: Some(zeroize::Zeroizing::new("key".to_string())),
                 model: "claude-3-5-haiku".into(),
                 slot: CapabilitySlot::Vision,
                 endpoint_family: EndpointFamily::AnthropicMessages,

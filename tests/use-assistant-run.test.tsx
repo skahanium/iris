@@ -108,6 +108,88 @@ describe("useAssistantRun", () => {
 
     expect(mockListenAssistantRunEvent).toHaveBeenCalledTimes(1);
   });
+
+  it("submits the persisted confirmation identity and optimistic state version", async () => {
+    let emit:
+      | ((
+          event: Parameters<Parameters<typeof listenAssistantRunEvent>[0]>[0],
+        ) => void)
+      | null = null;
+    mockAssistantRunStart.mockResolvedValue({
+      runId: "run-confirmation",
+      turnId: "turn-confirmation",
+      session: { domain: "normal", sessionKey: "session-confirmation" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    mockAssistantRunGet.mockResolvedValue(null);
+    mockListenAssistantRunEvent.mockImplementation(async (handler) => {
+      emit = handler;
+      return () => undefined;
+    });
+    mountProbe();
+
+    await act(async () => {
+      await runApi?.start(request());
+    });
+    act(() => {
+      emit?.({
+        runId: "run-confirmation",
+        seq: 2,
+        stateVersion: 2,
+        timestamp: "2026-07-14T00:00:00.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "preparing",
+          stage: "Preparing",
+        },
+      });
+      emit?.({
+        runId: "run-confirmation",
+        seq: 3,
+        stateVersion: 3,
+        timestamp: "2026-07-14T00:00:00.000Z",
+        type: "stage_changed",
+        payload: { kind: "stage_changed", state: "running", stage: "Running" },
+      });
+      emit?.({
+        runId: "run-confirmation",
+        seq: 4,
+        stateVersion: 4,
+        timestamp: "2026-07-14T00:00:00.000Z",
+        type: "confirmation_required",
+        payload: {
+          kind: "confirmation_required",
+          confirmationId: "confirmation-001",
+          planHash: "sha256:plan",
+          summary: "Update one note",
+          effect: "apply",
+          targets: [
+            { kind: "note", label: "notes/agent.md", risk: "bounded_write" },
+          ],
+          expiresAt: "2026-07-15T00:00:00.000Z",
+        },
+      });
+    });
+
+    expect(runApi?.pendingConfirmation?.confirmationId).toBe(
+      "confirmation-001",
+    );
+    await act(async () => {
+      await runApi?.approveChange();
+    });
+    expect(mockAssistantRunControl).toHaveBeenCalledWith({
+      session: { domain: "normal", sessionKey: "session-confirmation" },
+      runId: "run-confirmation",
+      expectedStateVersion: 4,
+      action: {
+        type: "approve_change",
+        confirmationId: "confirmation-001",
+        planHash: "sha256:plan",
+      },
+    });
+  });
   it("reduces replayable events to the authoritative Run state and version", async () => {
     let emit:
       | ((

@@ -231,6 +231,15 @@ pub(crate) struct ExplicitAction {
     pub(crate) selection_snapshot: Option<SelectionSnapshot>,
 }
 
+/// Explicit per-Run model choice. It is accepted only if the model still
+/// satisfies every hard capability requirement at dispatch time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelOverride {
+    pub(crate) provider_id: String,
+    pub(crate) model_id: String,
+}
+
 /// Request accepted by `assistant_run_start`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -252,6 +261,12 @@ pub struct AssistantRunStartRequest {
     pub(crate) explicit_action: Option<ExplicitAction>,
     /// User's Web toggle for this Run.
     pub(crate) web_enabled: bool,
+    /// Per-Run ordering preference for already-capable model candidates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) routing_policy: Option<crate::ai_types::RoutingPolicy>,
+    /// Optional provider/model override, revalidated against the Run route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) model_override: Option<ModelOverride>,
     /// Domain in which this Run must execute and persist.
     pub(crate) security_domain: SecurityDomain,
 }
@@ -306,6 +321,27 @@ pub struct PendingConfirmationSummary {
     pub(crate) confirmation_id: String,
     /// Business-facing change summary.
     pub(crate) summary: String,
+    /// Safe effect category projected from the immutable change plan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) effect: Option<Effect>,
+    /// Counted and redacted change targets; never source paths or arguments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) targets: Option<Vec<ConfirmationTargetSummary>>,
+    /// RFC 3339 expiry of the immutable approval window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expires_at: Option<String>,
+}
+
+/// Redacted target metadata shown before approving a frozen change plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ConfirmationTargetSummary {
+    /// Broad target kind, never a source path.
+    pub(crate) kind: String,
+    /// Ordinal-only display label that contains no user data.
+    pub(crate) label: String,
+    /// Maximum risk class of the planned effect.
+    pub(crate) risk: RiskClass,
 }
 
 /// Safe recovery information returned by a Run snapshot.
@@ -492,6 +528,15 @@ pub(crate) enum RunEventPayload {
         plan_hash: String,
         /// Business-facing description of the intended change.
         summary: String,
+        /// Safe effect category projected from the frozen plan.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect: Option<Effect>,
+        /// Counted and redacted change targets; never paths or arguments.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        targets: Option<Vec<ConfirmationTargetSummary>>,
+        /// RFC 3339 expiry of the frozen approval window.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at: Option<String>,
     },
     /// A safe policy denial.
     PermissionDenied {

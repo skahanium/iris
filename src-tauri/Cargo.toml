@@ -5,7 +5,7 @@ description = "Local-first AI-native Markdown notes"
 authors = ["Iris Contributors"]
 license = "AGPL-3.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 
 [lib]
 name = "iris_lib"
@@ -36,7 +36,9 @@ zeroize = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 notify = "8"
 notify-debouncer-full = "0.6"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream"] }
+rmcp = { version = "2.2.0", default-features = false, features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client-reqwest"] }
+http = "1"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 webpki-roots = "0.26"
 futures-util = "0.3"

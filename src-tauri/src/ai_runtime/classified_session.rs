@@ -1217,7 +1217,7 @@ fn retract_thread(thread: &mut ClassifiedAiThread, from_seq: i64) -> AppResult<u
     thread.evidence.retain(|item| {
         item.origin_run_id
             .as_ref()
-            .map_or(true, |run_id| !removed_run_ids.contains(run_id))
+            .is_none_or(|run_id| !removed_run_ids.contains(run_id))
     });
     if removed_message_count > 0 {
         thread.updated_at = chrono::Utc::now().to_rfc3339();

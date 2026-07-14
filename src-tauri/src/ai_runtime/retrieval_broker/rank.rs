@@ -135,9 +135,9 @@ fn select_exact_packets(packets: Vec<ContextPacket>, max_results: usize) -> Vec<
     for mut packet in packets {
         packet.score = 1.0;
         let key = canonical_evidence_key(&packet);
-        let replace = unique.get(&key).map_or(true, |existing| {
-            raw_quality(&packet) > raw_quality(existing)
-        });
+        let replace = unique
+            .get(&key)
+            .is_none_or(|existing| raw_quality(&packet) > raw_quality(existing));
         if replace {
             unique.insert(key, packet);
         }

@@ -58,3 +58,24 @@ fn expired_plan_cannot_be_approved() {
         "agent_run_confirmation_expired"
     );
 }
+
+#[test]
+fn persisted_plan_recomputes_the_hash_and_rejects_tampered_arguments() {
+    let plan = FrozenChangePlan::freeze(input(serde_json::json!({
+        "replacement": "approved"
+    })))
+    .expect("freeze");
+    let persisted = plan.persisted_plan_json().expect("serialize plan");
+    let restored = FrozenChangePlan::from_persisted_plan_json(&persisted).expect("restore plan");
+    assert_eq!(restored.plan_hash(), plan.plan_hash());
+    assert_eq!(restored.operation(), "note.apply_patch");
+    assert_eq!(restored.change()["replacement"], "approved");
+
+    let mut tampered: serde_json::Value = serde_json::from_str(&persisted).expect("plan json");
+    tampered["change"]["replacement"] = serde_json::json!("tampered");
+    let tampered = FrozenChangePlan::from_persisted_plan_json(
+        &serde_json::to_string(&tampered).expect("tampered json"),
+    )
+    .expect("parse tampered plan");
+    assert_ne!(tampered.plan_hash(), plan.plan_hash());
+}

@@ -14,6 +14,9 @@ pub mod agent_permissions;
 pub(crate) mod agent_run_repository;
 #[cfg(test)]
 mod agent_run_repository_tests;
+pub(crate) mod agent_tool_loop;
+#[cfg(test)]
+mod agent_tool_loop_tests;
 pub mod capability_resolver;
 pub mod circuit_breaker;
 pub(crate) mod classified_document_policy_repository;

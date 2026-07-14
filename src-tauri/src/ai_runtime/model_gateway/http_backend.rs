@@ -45,7 +45,7 @@ impl crate::ai_types::LlmBackend for HttpLlmBackend {
             .post(&url)
             .header("Content-Type", "application/json");
         if let Some(api_key) = &provider.api_key {
-            req = req.header("Authorization", format!("Bearer {api_key}"));
+            req = req.header("Authorization", format!("Bearer {}", api_key.as_str()));
         }
 
         let response = req

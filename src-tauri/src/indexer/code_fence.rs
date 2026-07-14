@@ -37,7 +37,7 @@ impl FenceState {
 
         // Check for opening fence
         for (ch, min_len) in &[('`', 3), ('~', 3)] {
-            let prefix: String = std::iter::repeat(*ch).take(*min_len).collect();
+            let prefix: String = std::iter::repeat_n(*ch, *min_len).collect();
             if let Some(rest) = trimmed.strip_prefix(&prefix) {
                 let count = prefix.len() + rest.chars().take_while(|c| *c == *ch).count();
                 let after: String = trimmed.chars().skip(count).collect();

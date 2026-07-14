@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
+import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
@@ -25,6 +26,8 @@ export function UnifiedAssistantPanel({
   runtimeDocumentCandidates = [],
   webSearch = false,
   webSearchProviderName = null,
+  routingPolicy,
+  modelOverride = null,
   onInsertToEditor,
 }: UnifiedAssistantPanelProps) {
   const { profile: promptProfile } = usePromptProfile();
@@ -44,6 +47,7 @@ export function UnifiedAssistantPanel({
   const [, setActivityHint] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [confirming, setConfirming] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
 
@@ -105,10 +109,15 @@ export function UnifiedAssistantPanel({
     aiDomain,
     input,
     images,
-    composerDisabled: streaming || assistantRun.isBusy,
+    composerDisabled:
+      streaming ||
+      assistantRun.isBusy ||
+      assistantRun.pendingConfirmation !== null,
     session: runSession,
     contextReferences: bubbleSelection.contextReferences,
     webSearch,
+    routingPolicy,
+    modelOverride,
     start: assistantRun.start,
     appendUserMessage,
     ensureAssistantStreamSlot,
@@ -121,7 +130,11 @@ export function UnifiedAssistantPanel({
     setError: setLastError,
   });
 
-  const composerDisabled = streaming || assistantRun.isBusy || isStarting;
+  const composerDisabled =
+    streaming ||
+    assistantRun.isBusy ||
+    isStarting ||
+    assistantRun.pendingConfirmation !== null;
   const stopStreaming = useCallback(() => {
     void assistantRun.cancel();
   }, [assistantRun]);
@@ -130,6 +143,23 @@ export function UnifiedAssistantPanel({
     setLastError(null);
     handleNewChat();
   }, [assistantRun, handleNewChat]);
+  const handleConfirmation = useCallback(
+    (decision: "approve" | "reject") => {
+      setConfirming(true);
+      const action =
+        decision === "approve"
+          ? assistantRun.approveChange()
+          : assistantRun.rejectChange();
+      void action
+        .catch(() => {
+          setLastError("确认操作未能提交，请稍后重试。");
+        })
+        .finally(() => {
+          setConfirming(false);
+        });
+    },
+    [assistantRun],
+  );
 
   return (
     <div
@@ -156,6 +186,25 @@ export function UnifiedAssistantPanel({
       {lastError ? (
         <p className="border-b border-destructive/30 px-3 py-2 text-xs text-destructive">
           {lastError}
+        </p>
+      ) : null}
+      {assistantRun.pendingConfirmation ? (
+        <AssistantRunConfirmation
+          confirmation={assistantRun.pendingConfirmation}
+          disabled={confirming}
+          onApprove={() => handleConfirmation("approve")}
+          onReject={() => handleConfirmation("reject")}
+        />
+      ) : null}
+      {assistantRun.eventState?.provider ? (
+        <p
+          className="border-b border-border/60 px-3 py-1 text-[11px] text-muted-foreground"
+          data-testid="assistant-run-provider-diagnostic"
+        >
+          当前模型：{assistantRun.eventState.provider.providerId}
+          {assistantRun.eventState.provider.modelId
+            ? ` / ${assistantRun.eventState.provider.modelId}`
+            : ""}
         </p>
       ) : null}
       <ErrorBoundary scope="AI 对话区">

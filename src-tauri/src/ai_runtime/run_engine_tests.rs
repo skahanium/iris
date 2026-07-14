@@ -110,6 +110,8 @@ fn request() -> AssistantRunStartRequest {
         explicit_references: vec![],
         explicit_action: None,
         web_enabled: false,
+        routing_policy: None,
+        model_override: None,
         security_domain: SecurityDomain::Normal,
     }
 }
@@ -596,7 +598,7 @@ fn direct_gateway_request_separates_fixed_boundary_from_user_data() {
         ProviderConfig {
             name: "provider".to_string(),
             base_url: "https://provider.example/v1".to_string(),
-            api_key: Some("test-key".to_string()),
+            api_key: Some(zeroize::Zeroizing::new("test-key".to_string())),
             model: "model".to_string(),
             slot: CapabilitySlot::Fast,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,

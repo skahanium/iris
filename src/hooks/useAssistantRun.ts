@@ -17,6 +17,7 @@ import type {
   AssistantRunGetResponse,
   AssistantRunStartRequest,
   AssistantSessionRef,
+  PendingConfirmation,
   RunState,
 } from "@/types/ai";
 
@@ -35,6 +36,11 @@ export interface AssistantRunSnapshot {
   runState: AssistantRunState;
   activityHint: string | null;
   currentRun: ActiveAssistantRun | null;
+}
+
+export interface AssistantRunConfirmation extends PendingConfirmation {
+  runId: string;
+  stateVersion: number;
 }
 
 export function isAssistantRunBusy(runState: AssistantRunState): boolean {
@@ -89,6 +95,16 @@ export function useAssistantRun() {
     [activityHint, currentRun, runState],
   );
   const isBusy = isAssistantRunBusy(runState);
+  const pendingConfirmation = useMemo<AssistantRunConfirmation | null>(() => {
+    if (!currentRun || runState !== "awaiting_confirmation") return null;
+    const confirmation = eventState?.pendingConfirmation;
+    if (!confirmation) return null;
+    return {
+      ...confirmation,
+      runId: currentRun.runId,
+      stateVersion: currentRun.stateVersion,
+    };
+  }, [currentRun, eventState?.pendingConfirmation, runState]);
 
   const replay = useCallback(async (run: ActiveAssistantRun) => {
     if (resyncingRef.current.has(run.runId)) return;
@@ -184,6 +200,37 @@ export function useAssistantRun() {
     });
   }, [currentRun]);
 
+  const approveChange = useCallback(async () => {
+    const run = currentRun;
+    const confirmation = pendingConfirmation;
+    if (!run || !confirmation) return;
+    await assistantRunControl({
+      session: run.session,
+      runId: run.runId,
+      expectedStateVersion: run.stateVersion,
+      action: {
+        type: "approve_change",
+        confirmationId: confirmation.confirmationId,
+        planHash: confirmation.planHash,
+      },
+    });
+  }, [currentRun, pendingConfirmation]);
+
+  const rejectChange = useCallback(async () => {
+    const run = currentRun;
+    const confirmation = pendingConfirmation;
+    if (!run || !confirmation) return;
+    await assistantRunControl({
+      session: run.session,
+      runId: run.runId,
+      expectedStateVersion: run.stateVersion,
+      action: {
+        type: "reject_change",
+        confirmationId: confirmation.confirmationId,
+      },
+    });
+  }, [currentRun, pendingConfirmation]);
+
   const recover = useCallback((persisted: AssistantRunGetResponse) => {
     const run: ActiveAssistantRun = {
       runId: persisted.run.runId,
@@ -214,8 +261,11 @@ export function useAssistantRun() {
     currentRun,
     latestEvent,
     eventState,
+    pendingConfirmation,
     start,
     cancel,
+    approveChange,
+    rejectChange,
     recover,
     reset,
   };

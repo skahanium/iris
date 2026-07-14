@@ -7,13 +7,17 @@ use tauri::{AppHandle, State};
 
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetRequest,
-    AssistantRunGetResponse, AssistantRunStartRequest, AssistantSessionRef, SecurityDomain,
+    AssistantRunGetResponse, AssistantRunStartRequest, AssistantSessionRef, Effect, Effort,
+    Freshness, Modality, SecurityDomain,
 };
 use crate::ai_runtime::run_engine::{
-    FailoverStreamingDirectAnswerProvider, ModelGatewayStreamingDirectAnswerProvider, RunEngine,
-    RunEventSink, TauriRunEventSink,
+    FailoverStreamingDirectAnswerProvider, FailoverStreamingToolLoopProvider,
+    ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink, TauriRunEventSink,
 };
-use crate::ai_runtime::run_intake::RunIntake;
+use crate::ai_runtime::run_intake::{NormalRunControlOutcome, RunIntake};
+use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
+use crate::ai_runtime::tool_executor::ToolRegistry;
+use crate::ai_runtime::tool_policy::ToolPolicyContext;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 /// List request for the unified, domain-routed conversation history API.
@@ -287,7 +291,7 @@ pub async fn assistant_run_start(
         SecurityDomain::Normal => {
             let accepted = RunIntake::start_with_sink(&state.db, request, &sink)?;
             spawn_normal_direct_run(
-                Arc::clone(&state.db),
+                Arc::clone(&state),
                 app_handle,
                 accepted.clone(),
                 state.vault_path().ok(),
@@ -320,7 +324,39 @@ pub async fn assistant_run_control(
 ) -> AppResult<()> {
     let sink = TauriRunEventSink::new(&app_handle);
     match request.session.domain {
-        SecurityDomain::Normal => RunIntake::control_with_sink(&state.db, request, &sink),
+        SecurityDomain::Normal => {
+            let session = request.session.clone();
+            let run_id = request.run_id.clone();
+            let action = request.action.clone();
+            let outcome = RunIntake::control_with_sink(&state.db, request, &sink)?;
+            match (outcome, action) {
+                (
+                    NormalRunControlOutcome::ConfirmationApproved,
+                    crate::ai_runtime::run_contract::RunControlAction::ApproveChange {
+                        confirmation_id,
+                        ..
+                    },
+                ) => spawn_confirmed_change_execution(
+                    Arc::clone(&state),
+                    app_handle,
+                    session,
+                    run_id,
+                    confirmation_id,
+                    state.vault_path().ok(),
+                ),
+                (
+                    NormalRunControlOutcome::ConfirmationRejected,
+                    crate::ai_runtime::run_contract::RunControlAction::RejectChange { .. },
+                ) => spawn_rejected_change_finalization(
+                    Arc::clone(&state.db),
+                    app_handle,
+                    session,
+                    run_id,
+                ),
+                _ => {}
+            }
+            Ok(())
+        }
         SecurityDomain::Classified => {
             if !matches!(
                 &request.action,
@@ -386,18 +422,152 @@ fn evaluate_normal_run_policy(
     let engine = crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?;
     Ok(engine.evaluate_run(request))
 }
+
+/// Resume exactly one consumed frozen change plan. This path intentionally has
+/// no Provider construction or model invocation: approval authorizes the
+/// immutable arguments that were already produced during the original Run.
+fn spawn_confirmed_change_execution(
+    state: Arc<AppState>,
+    app_handle: AppHandle,
+    session: AssistantSessionRef,
+    run_id: String,
+    confirmation_id: String,
+    vault: Option<std::path::PathBuf>,
+) {
+    tauri::async_runtime::spawn(async move {
+        let sink = TauriRunEventSink::new(&app_handle);
+        let db = Arc::clone(&state.db);
+        let fail = || {
+            RunEngine::fail_active_with_sink(&db, &session, &run_id, &sink)
+                .map(|_| ())
+                .ok();
+        };
+        let consumed = match crate::ai_runtime::agent_run_repository::AgentRunRepository::consumed_frozen_confirmation_for_session(
+            &db,
+            &session.session_key,
+            &run_id,
+            &confirmation_id,
+        ) {
+            Ok(plan) => plan,
+            Err(_) => {
+                fail();
+                return;
+            }
+        };
+        let plan =
+            match crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
+                &consumed.plan_json,
+            ) {
+                Ok(plan) if plan.plan_hash() == consumed.plan_hash => plan,
+                _ => {
+                    fail();
+                    return;
+                }
+            };
+        if plan.confirmation_id() != confirmation_id || plan.run_id() != run_id {
+            fail();
+            return;
+        }
+        let policy = match evaluate_normal_run_policy(
+            &db,
+            &AssistantRunAccepted {
+                run_id: run_id.clone(),
+                turn_id: String::new(),
+                session: session.clone(),
+                state: crate::ai_runtime::run_contract::RunState::Running,
+                state_version: 0,
+            },
+        ) {
+            Ok(policy) if policy.denial_code.is_none() => policy,
+            _ => {
+                fail();
+                return;
+            }
+        };
+        let _ = policy;
+        let context = match crate::ai_runtime::run_context::RunContextAssembler::assemble(
+            &db,
+            vault.as_deref(),
+            &session.session_key,
+            &run_id,
+        ) {
+            Ok(context)
+                if context.envelope.effort == Effort::Durable
+                    && context.envelope.effect == Effect::Apply =>
+            {
+                context
+            }
+            _ => {
+                fail();
+                return;
+            }
+        };
+        let accepted = AssistantRunAccepted {
+            run_id: run_id.clone(),
+            turn_id: String::new(),
+            session: session.clone(),
+            state: crate::ai_runtime::run_contract::RunState::Running,
+            state_version: 0,
+        };
+        let tool_policy = ToolPolicyContext {
+            autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
+            web_search_enabled: context.envelope.freshness != Freshness::Offline,
+            allow_writes: true,
+            allow_research: context.envelope.freshness != Freshness::Offline,
+            allow_skill_management: false,
+        };
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            app_handle.clone(),
+            &accepted,
+            &context,
+            tool_policy,
+            &sink,
+        );
+        match executor.execute_confirmed_frozen_change(&plan).await {
+            Ok(result) if result.success => {
+                if RunEngine::finalize_confirmed_change_with_sink(
+                    &db, &session, &run_id, &sink, true,
+                )
+                .is_err()
+                {
+                    fail();
+                }
+            }
+            Ok(_) | Err(_) => fail(),
+        }
+    });
+}
+
+/// A rejected frozen plan ends the Run without dispatching a tool or calling a model.
+fn spawn_rejected_change_finalization(
+    db: Arc<crate::storage::db::Database>,
+    app_handle: AppHandle,
+    session: AssistantSessionRef,
+    run_id: String,
+) {
+    tauri::async_runtime::spawn(async move {
+        let sink = TauriRunEventSink::new(&app_handle);
+        if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, &sink, false)
+            .is_err()
+        {
+            let _ = RunEngine::fail_active_with_sink(&db, &session, &run_id, &sink);
+        }
+    });
+}
 /// Start normal-domain execution after its accepted event exists.
 ///
 /// Context, policy and bounded Web evidence are prepared from persisted Run
 /// facts before the streaming Provider is dispatched. The Run Engine remains
 /// the sole owner of lifecycle persistence and terminalization.
 fn spawn_normal_direct_run(
-    db: Arc<crate::storage::db::Database>,
+    state: Arc<AppState>,
     app_handle: AppHandle,
     accepted: AssistantRunAccepted,
     vault: Option<std::path::PathBuf>,
 ) {
     tauri::async_runtime::spawn(async move {
+        let db = Arc::clone(&state.db);
         let sink = TauriRunEventSink::new(&app_handle);
         let policy = match evaluate_normal_run_policy(&db, &accepted) {
             Ok(policy) => policy,
@@ -441,8 +611,8 @@ fn spawn_normal_direct_run(
             }
         };
         let domain_plan = context.domain_plan();
-        let mut prompt = context.prompt_with_domain_plan(&domain_plan);
-        let mut evidence_ids =
+        let prompt = context.prompt_with_domain_plan(&domain_plan);
+        let evidence_ids =
             match crate::ai_runtime::run_context::RunContextAssembler::register_evidence(
                 &db,
                 &accepted.run_id,
@@ -460,25 +630,109 @@ fn spawn_normal_direct_run(
                     return;
                 }
             };
-        let web_evidence = match crate::ai_runtime::run_tool_loop::collect_web_evidence_with_broker(
-            &db, &accepted, &context, &sink,
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                let _ = RunEngine::fail_before_dispatch_with_sink(
+        if matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable) {
+            let tool_policy = ToolPolicyContext {
+                autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
+                web_search_enabled: context.envelope.freshness != Freshness::Offline,
+                allow_writes: context.envelope.effort == Effort::Durable,
+                allow_research: context.envelope.freshness != Freshness::Offline,
+                allow_skill_management: false,
+            };
+            let tools = ToolRegistry::new()
+                .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable);
+            let route_result = crate::llm::config::resolve_capability_route_for_requirements_without_secret(
+                &db,
+                crate::llm::config::CapabilityRouteRequirements {
+                    preferred_slot: crate::ai_types::CapabilitySlot::AgentTools,
+                    context_tokens: crate::ai_runtime::text_support::estimate_tokens(&prompt),
+                    has_images: context.envelope.modalities.contains(&Modality::Image),
+                    needs_tools: true,
+                    needs_reasoning: false,
+                    privacy_preference: crate::llm::config::PrivacyPreference::ExternalAllowed,
+                },
+            )
+            .and_then(crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route)
+            .map(|route| {
+                let route = context
+                    .routing_policy()
+                    .map_or(route.clone(), |policy| route.with_routing_policy(policy));
+                context.model_override().map_or(route.clone(), |override_| {
+                    route.with_model_override(override_.provider_id, override_.model_id)
+                })
+            });
+            let route = match route_result {
+                Ok(route) => route,
+                Err(_) => {
+                    let _ = RunEngine::fail_before_dispatch_with_sink(
+                        &db,
+                        &accepted.session,
+                        &accepted.run_id,
+                        crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                        &sink,
+                    );
+                    return;
+                }
+            };
+            let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+                endpoint_family: None,
+                streaming: true,
+                tools: true,
+                vision: context.envelope.modalities.contains(&Modality::Image),
+                reasoning: false,
+                min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(&prompt),
+                min_output_budget_tokens: 1,
+                security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
+            };
+            let provider = FailoverStreamingToolLoopProvider::new(
+                route,
+                requirements,
+                app_handle.clone(),
+                &db,
+                &accepted.session,
+                &sink,
+            );
+            let executor = NormalRunToolExecutor::new(
+                &state,
+                app_handle.clone(),
+                &accepted,
+                &context,
+                tool_policy,
+                &sink,
+            );
+            let messages = context.messages_with_domain_plan(&domain_plan);
+            if RunEngine::execute_tool_loop_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                messages,
+                tools,
+                &evidence_ids,
+                context.envelope.freshness
+                    == crate::ai_runtime::run_contract::Freshness::WebRequired,
+                Some(&domain_plan),
+                &provider,
+                &executor,
+                &sink,
+            )
+            .await
+            .is_err()
+            {
+                tracing::warn!(
+                    run_id = %accepted.run_id,
+                    "normal Agent tool loop exited without a successful result"
+                );
+                let _ = RunEngine::fail_active_with_sink(
                     &db,
                     &accepted.session,
                     &accepted.run_id,
-                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
                     &sink,
                 );
-                return;
             }
-        };
-        evidence_ids.extend(web_evidence.evidence_ids);
-        prompt.push_str(&web_evidence.prompt_addendum);
+            if crate::ai_runtime::model_gateway::is_abort_requested(&accepted.run_id) {
+                crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
+            }
+            return;
+        }
         let route_result = crate::llm::config::resolve_capability_route_for_requirements_without_secret(
             &db,
             crate::llm::config::CapabilityRouteRequirements {
@@ -495,7 +749,15 @@ fn spawn_normal_direct_run(
             crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route(
                 route,
             )
-            .map(|route| (route, endpoint_family))
+            .map(|route| {
+                let route = context
+                    .routing_policy()
+                    .map_or(route.clone(), |policy| route.with_routing_policy(policy));
+                let route = context.model_override().map_or(route.clone(), |override_| {
+                    route.with_model_override(override_.provider_id, override_.model_id)
+                });
+                (route, endpoint_family)
+            })
         });
 
         let (route, endpoint_family) = match route_result {

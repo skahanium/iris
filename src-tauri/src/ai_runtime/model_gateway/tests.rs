@@ -5,11 +5,20 @@ fn test_provider(name: &str, slot: CapabilitySlot) -> ProviderConfig {
     ProviderConfig {
         name: name.into(),
         base_url: format!("https://{name}.example/v1"),
-        api_key: Some("test".into()),
+        api_key: Some(zeroize::Zeroizing::new("test".to_string())),
         model: format!("{name}-model"),
         slot,
         endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
     }
+}
+
+#[test]
+fn invalid_provider_json_uses_safe_error_code_without_response_preview() {
+    let malformed = "{ user note content must never surface";
+    let error = super::parse_gateway_json(malformed).expect_err("malformed response should fail");
+
+    assert_eq!(error.to_string(), "llm_response_invalid_json");
+    assert!(!error.to_string().contains("user note content"));
 }
 
 #[test]
@@ -122,7 +131,7 @@ fn resume_after_tool_confirm_body_preserves_reasoning_and_thinking() {
         name: "deepseek".into(),
         base_url: "https://api.deepseek.com".into(),
         model: "deepseek-reasoner".into(),
-        api_key: Some("test".into()),
+        api_key: Some(zeroize::Zeroizing::new("test".to_string())),
         slot: CapabilitySlot::Reasoner,
         endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
     };

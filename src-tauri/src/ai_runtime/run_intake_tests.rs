@@ -21,6 +21,8 @@ fn request() -> AssistantRunStartRequest {
         explicit_references: vec![],
         explicit_action: None,
         web_enabled: false,
+        routing_policy: None,
+        model_override: None,
         security_domain: SecurityDomain::Normal,
     }
 }
@@ -528,6 +530,9 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
                 confirmation_id: plan.confirmation_id().to_string(),
                 plan_hash: plan.plan_hash().to_string(),
                 summary: "更新 1 个笔记".to_string(),
+                effect: None,
+                targets: None,
+                expires_at: None,
             },
         },
     )
@@ -724,6 +729,9 @@ fn accepted_run_awaiting_frozen_change_confirmation() -> (
                 confirmation_id: plan.confirmation_id().to_string(),
                 plan_hash: plan.plan_hash().to_string(),
                 summary: "更新 1 个笔记".to_string(),
+                effect: None,
+                targets: None,
+                expires_at: None,
             },
         },
     )
@@ -754,6 +762,24 @@ fn web_enabled_pure_rewrite_remains_direct_without_tool_loop() {
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.effort, Effort::Direct);
     assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn web_enabled_external_question_enters_tool_loop_without_fixed_prefetch() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.message =
+        "\u{4ecb}\u{7ecd}\u{4e00}\u{4e0b}\u{8fd9}\u{5bb6}\u{673a}\u{6784}\u{7684}\u{80cc}\u{666f}"
+            .to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));

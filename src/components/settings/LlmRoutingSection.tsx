@@ -125,6 +125,10 @@ const SLOT_META: Record<
   reasoner: { label: "Reasoner", detail: "研究、引用核查、复杂论证" },
   long_context: { label: "Long context", detail: "长文档与大上下文分析" },
   vision: { label: "Vision", detail: "图片输入与视觉问答" },
+  agent_tools: {
+    label: "Agent tools",
+    detail: "需要模型主动调用 Iris 工具的任务",
+  },
 };
 
 const REASONING_LABELS: Record<ReasoningMode, string> = {
@@ -282,6 +286,9 @@ function modelSupportsSlot(
     // "built_in" sentinel (backward compatibility) or no data at all.
     return Boolean(probeTimestamp);
   }
+  if (slot === "agent_tools") {
+    return Boolean(model.catalog?.supportsTools);
+  }
   if (
     slot === "fast" ||
     slot === "writer" ||
@@ -291,6 +298,10 @@ function modelSupportsSlot(
     return textValidatedModel(model);
   }
   return false;
+}
+
+function slotSupportsReasoning(slot: CapabilitySlot): boolean {
+  return slot !== "vision" && slot !== "agent_tools";
 }
 
 function modelCapabilitySummary(
@@ -1853,6 +1864,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         <div className="space-y-2">
           {USER_CONFIGURABLE_CAPABILITY_SLOTS.map((slot) => {
             const route = routing.slots[slot];
+            const supportsReasoning = slotSupportsReasoning(slot);
             const routeProviderOptions = providersForSlot(slot);
             const routeProviderIds = routeProviderOptions.map(
               (provider) => provider.id,
@@ -1870,7 +1882,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
             const routeModelInvalid =
               Boolean(route?.model) && route?.model !== selectedModel;
             const reasoningCapability =
-              slot !== "vision" && providerId && selectedModel
+              supportsReasoning && providerId && selectedModel
                 ? reasoningCapabilityForModel(slot, providerId, selectedModel)
                 : UNSUPPORTED_REASONING_CAPABILITY;
             const selectedReasoning = clampReasoningForModel(
@@ -1879,14 +1891,12 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
               selectedModel,
               normalizeReasoningSlot(route),
             ).mode;
-            const reasoningSwitchOptions =
-              slot !== "vision"
-                ? reasoningSwitchOptionsForModel(reasoningCapability)
-                : [];
-            const reasoningStrengthOptions =
-              slot !== "vision"
-                ? reasoningStrengthOptionsForModel(reasoningCapability)
-                : [];
+            const reasoningSwitchOptions = supportsReasoning
+              ? reasoningSwitchOptionsForModel(reasoningCapability)
+              : [];
+            const reasoningStrengthOptions = supportsReasoning
+              ? reasoningStrengthOptionsForModel(reasoningCapability)
+              : [];
             const selectedReasoningSwitch =
               reasoningSwitchValueForMode(selectedReasoning);
             const selectedReasoningStrength = reasoningStrengthOptions.includes(
@@ -1989,7 +1999,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     </SelectContent>
                   </Select>
                 )}
-                {slot === "vision" ? (
+                {!supportsReasoning ? (
                   <>
                     <div className="self-center text-[11px] text-muted-foreground" />
                     <div className="self-center text-[11px] text-muted-foreground" />
@@ -2034,7 +2044,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     </SelectContent>
                   </Select>
                 )}
-                {slot === "vision" ? null : strengthDisabled ? (
+                {!supportsReasoning ? null : strengthDisabled ? (
                   <Input
                     aria-label={`${SLOT_META[slot].label} 推理强度`}
                     className="h-8 text-xs"
