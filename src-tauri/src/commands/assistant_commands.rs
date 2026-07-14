@@ -640,39 +640,50 @@ fn spawn_normal_direct_run(
             };
             let tools = ToolRegistry::new()
                 .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable);
-            let route_result = crate::llm::config::resolve_capability_route_for_requirements_without_secret(
+            let route_result = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
                 &db,
-                crate::llm::config::CapabilityRouteRequirements {
-                    preferred_slot: crate::ai_types::CapabilitySlot::AgentTools,
+                crate::llm::config::ModelPoolRequirements {
                     context_tokens: crate::ai_runtime::text_support::estimate_tokens(&prompt),
                     has_images: context.envelope.modalities.contains(&Modality::Image),
                     needs_tools: true,
                     needs_reasoning: false,
-                    privacy_preference: crate::llm::config::PrivacyPreference::ExternalAllowed,
                 },
             )
             .and_then(crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route)
             .map(|route| {
-                let route = context
-                    .routing_policy()
-                    .map_or(route.clone(), |policy| route.with_routing_policy(policy));
                 context.model_override().map_or(route.clone(), |override_| {
                     route.with_model_override(override_.provider_id, override_.model_id)
                 })
             });
             let route = match route_result {
                 Ok(route) => route,
-                Err(_) => {
+                Err(error) => {
                     let _ = RunEngine::fail_before_dispatch_with_sink(
                         &db,
                         &accepted.session,
                         &accepted.run_id,
-                        crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                        dispatch_failure_code(&error),
                         &sink,
                     );
                     return;
                 }
             };
+            if context.envelope.freshness != Freshness::Offline
+                && crate::ai_runtime::capability_resolver::resolve_required_capability_app(
+                    &db,
+                    "web.search",
+                )
+                .is_err()
+            {
+                let _ = RunEngine::fail_before_dispatch_with_sink(
+                    &db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderUnavailable,
+                    &sink,
+                );
+                return;
+            }
             let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
                 endpoint_family: None,
                 streaming: true,
@@ -733,41 +744,44 @@ fn spawn_normal_direct_run(
             }
             return;
         }
-        let route_result = crate::llm::config::resolve_capability_route_for_requirements_without_secret(
+        let direct_requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+            endpoint_family: None,
+            streaming: true,
+            tools: false,
+            vision: context.envelope.modalities.contains(&Modality::Image),
+            reasoning: false,
+            min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(&prompt),
+            min_output_budget_tokens: 1,
+            security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
+        };
+        let route_result = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
             &db,
-            crate::llm::config::CapabilityRouteRequirements {
-                preferred_slot: crate::ai_types::CapabilitySlot::Fast,
-                context_tokens: 0,
-                has_images: false,
+            crate::llm::config::ModelPoolRequirements {
+                context_tokens: direct_requirements.min_input_budget_tokens,
+                has_images: direct_requirements.vision,
                 needs_tools: false,
                 needs_reasoning: false,
-                privacy_preference: crate::llm::config::PrivacyPreference::ExternalAllowed,
             },
         )
         .and_then(|route| {
-            let endpoint_family = route.resolved.endpoint_family;
             crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route(
                 route,
             )
             .map(|route| {
-                let route = context
-                    .routing_policy()
-                    .map_or(route.clone(), |policy| route.with_routing_policy(policy));
-                let route = context.model_override().map_or(route.clone(), |override_| {
+                context.model_override().map_or(route.clone(), |override_| {
                     route.with_model_override(override_.provider_id, override_.model_id)
-                });
-                (route, endpoint_family)
+                })
             })
         });
 
-        let (route, endpoint_family) = match route_result {
+        let route = match route_result {
             Ok(route) => route,
-            Err(_) => {
+            Err(error) => {
                 let _ = RunEngine::fail_before_dispatch_with_sink(
                     &db,
                     &accepted.session,
                     &accepted.run_id,
-                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                    dispatch_failure_code(&error),
                     &sink,
                 );
                 return;
@@ -775,17 +789,18 @@ fn spawn_normal_direct_run(
         };
         let provider = FailoverStreamingDirectAnswerProvider::new(
             route,
-            endpoint_family,
+            direct_requirements,
             app_handle.clone(),
             &db,
             &accepted.session,
             &sink,
         );
-        if RunEngine::execute_direct_streaming_with_prompt_evidence_and_domain_plan_with_sink(
+        let messages = context.messages_with_domain_plan(&domain_plan);
+        if RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
             &db,
             &accepted.session,
             &accepted.run_id,
-            &prompt,
+            &messages,
             &evidence_ids,
             &domain_plan,
             &provider,
@@ -810,6 +825,14 @@ fn spawn_normal_direct_run(
     });
 }
 
+fn dispatch_failure_code(error: &AppError) -> crate::ai_runtime::run_contract::SafeRunErrorCode {
+    if error.to_string() == "agent_run_no_capable_model" {
+        crate::ai_runtime::run_contract::SafeRunErrorCode::NoCapableModel
+    } else {
+        crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable
+    }
+}
+
 /// Start a CEF-only direct execution after its accepted event exists.
 fn spawn_classified_direct_run(
     db: Arc<crate::storage::db::Database>,
@@ -819,24 +842,34 @@ fn spawn_classified_direct_run(
 ) {
     tauri::async_runtime::spawn(async move {
         let sink = TauriRunEventSink::new(&app_handle);
-        let route_result = crate::llm::config::resolve_capability_route_for_requirements_without_secret(
+        let route_result = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
             &db,
-            crate::llm::config::CapabilityRouteRequirements {
-                preferred_slot: crate::ai_types::CapabilitySlot::Fast,
+            crate::llm::config::ModelPoolRequirements {
                 context_tokens: 0,
                 has_images: false,
                 needs_tools: false,
                 needs_reasoning: false,
-                privacy_preference: crate::llm::config::PrivacyPreference::ExternalAllowed,
             },
         )
         .and_then(|route| {
-            let endpoint_family = route.resolved.endpoint_family;
             crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route(
                 route,
             )
             .and_then(|route| {
-                route.hydrate_selected_text_streaming_no_tools_as_fast_dispatch(endpoint_family, 0)
+                route.hydrate_selected_streaming_dispatch(
+                    crate::ai_runtime::provider_router::ProviderRequirements {
+                        endpoint_family: None,
+                        streaming: true,
+                        tools: false,
+                        vision: false,
+                        reasoning: false,
+                        min_input_budget_tokens: 0,
+                        min_output_budget_tokens: 1,
+                        security_domain:
+                            crate::ai_runtime::provider_router::SecurityDomain::External,
+                    },
+                    0,
+                )
             })
         });
         let dispatch = match route_result {

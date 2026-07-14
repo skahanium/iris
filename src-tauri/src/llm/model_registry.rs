@@ -1,7 +1,8 @@
-use rusqlite::{params, OptionalExtension};
+use rusqlite::params;
+#[cfg(test)]
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 
-use crate::ai_types::CapabilitySlot;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -35,7 +36,6 @@ pub struct ModelRegistryEntry {
     pub last_refreshed_at: Option<String>,
     pub text_verified_at: Option<String>,
     pub vision_verified_at: Option<String>,
-    pub user_confirmed_capabilities: Vec<CapabilitySlot>,
 }
 
 impl ModelRegistrySource {
@@ -59,22 +59,10 @@ impl ModelRegistrySource {
     }
 }
 
-fn parse_capabilities(raw: &str) -> AppResult<Vec<CapabilitySlot>> {
-    serde_json::from_str(raw).map_err(Into::into)
-}
-
-fn serialize_capabilities(capabilities: &[CapabilitySlot]) -> AppResult<String> {
-    serde_json::to_string(capabilities).map_err(Into::into)
-}
-
 fn map_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelRegistryEntry> {
     let source_raw: String = row.get(3)?;
-    let capabilities_raw: String = row.get(10)?;
     let source = ModelRegistrySource::from_db(&source_raw).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
-    })?;
-    let user_confirmed_capabilities = parse_capabilities(&capabilities_raw).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(10, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
     Ok(ModelRegistryEntry {
@@ -88,7 +76,6 @@ fn map_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<ModelRegistryEntry> {
         last_refreshed_at: row.get(7)?,
         text_verified_at: row.get(8)?,
         vision_verified_at: row.get(9)?,
-        user_confirmed_capabilities,
     })
 }
 
@@ -125,8 +112,8 @@ where
             conn.execute(
                 "INSERT INTO llm_model_registry
                  (provider_id, model_id, display_name, source, stale, first_seen_at, last_seen_at,
-                  last_refreshed_at, user_confirmed_capabilities)
-                 VALUES (?1, ?2, ?2, ?3, 0, datetime('now'), datetime('now'), datetime('now'), '[]')
+                  last_refreshed_at)
+                 VALUES (?1, ?2, ?2, ?3, 0, datetime('now'), datetime('now'), datetime('now'))
                  ON CONFLICT(provider_id, model_id) DO UPDATE SET
                     display_name = excluded.display_name,
                     source = excluded.source,
@@ -159,7 +146,7 @@ pub fn delete_provider_entries(db: &Database, provider_id: &str) -> AppResult<us
 pub fn list_registry_entries(db: &Database) -> AppResult<Vec<ModelRegistryEntry>> {
     let sql = "SELECT provider_id, model_id, display_name, source, stale,
                      first_seen_at, last_seen_at, last_refreshed_at,
-                     text_verified_at, vision_verified_at, user_confirmed_capabilities
+                     text_verified_at, vision_verified_at
               FROM llm_model_registry";
     db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(&format!("{sql} ORDER BY provider_id, model_id"))?;
@@ -202,66 +189,6 @@ pub fn clear_invalid_vision_validations(db: &Database) -> AppResult<usize> {
     })
 }
 
-/// Mark a model as user-confirmed for a capability slot.
-pub fn confirm_capability(
-    db: &Database,
-    provider_id: &str,
-    model_id: &str,
-    slot: CapabilitySlot,
-) -> AppResult<ModelRegistryEntry> {
-    let entry = db.with_conn(|conn| {
-        let existing: Option<String> = conn
-            .query_row(
-                "SELECT user_confirmed_capabilities
-                 FROM llm_model_registry
-                 WHERE provider_id = ?1 AND model_id = ?2",
-                params![provider_id, model_id],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        let mut capabilities = existing
-            .as_deref()
-            .map(parse_capabilities)
-            .transpose()?
-            .unwrap_or_default();
-        if !capabilities.contains(&slot) {
-            capabilities.push(slot);
-        }
-        let capabilities_json = serialize_capabilities(&capabilities)?;
-
-        conn.execute(
-            "INSERT INTO llm_model_registry
-             (provider_id, model_id, display_name, source, stale, first_seen_at, last_seen_at,
-              last_refreshed_at, text_verified_at, vision_verified_at, user_confirmed_capabilities)
-             VALUES (?1, ?2, ?2, ?3, 0, datetime('now'), datetime('now'), datetime('now'),
-                     NULL,
-                     NULL,
-                     ?4)
-             ON CONFLICT(provider_id, model_id) DO UPDATE SET
-                user_confirmed_capabilities = excluded.user_confirmed_capabilities",
-            params![
-                provider_id,
-                model_id,
-                ModelRegistrySource::Manual.as_str(),
-                capabilities_json,
-            ],
-        )?;
-
-        let entry = conn.query_row(
-            "SELECT provider_id, model_id, display_name, source, stale,
-                    first_seen_at, last_seen_at, last_refreshed_at,
-                    text_verified_at, vision_verified_at, user_confirmed_capabilities
-             FROM llm_model_registry
-             WHERE provider_id = ?1 AND model_id = ?2",
-            params![provider_id, model_id],
-            map_entry,
-        )?;
-        Ok(entry)
-    })?;
-    Ok(entry)
-}
-
 /// Mark a model as successfully validated by a live probe.
 pub fn mark_model_validated(
     db: &Database,
@@ -273,11 +200,10 @@ pub fn mark_model_validated(
         conn.execute(
             "INSERT INTO llm_model_registry
              (provider_id, model_id, display_name, source, stale, first_seen_at, last_seen_at,
-              last_refreshed_at, text_verified_at, vision_verified_at, user_confirmed_capabilities)
+              last_refreshed_at, text_verified_at, vision_verified_at)
              VALUES (?1, ?2, ?2, ?3, 0, datetime('now'), datetime('now'), datetime('now'),
                      CASE WHEN ?4 = 1 THEN datetime('now') ELSE NULL END,
-                     CASE WHEN ?4 = 2 THEN datetime('now') ELSE NULL END,
-                     '[]')
+                     CASE WHEN ?4 = 2 THEN datetime('now') ELSE NULL END)
              ON CONFLICT(provider_id, model_id) DO UPDATE SET
                 text_verified_at = CASE
                     WHEN ?4 = 1 THEN datetime('now')
@@ -302,7 +228,7 @@ pub fn mark_model_validated(
         let entry = conn.query_row(
             "SELECT provider_id, model_id, display_name, source, stale,
                     first_seen_at, last_seen_at, last_refreshed_at,
-                    text_verified_at, vision_verified_at, user_confirmed_capabilities
+                    text_verified_at, vision_verified_at
              FROM llm_model_registry
              WHERE provider_id = ?1 AND model_id = ?2",
             params![provider_id, model_id],
@@ -311,23 +237,6 @@ pub fn mark_model_validated(
         Ok(entry)
     })?;
     Ok(entry)
-}
-
-/// Return whether a registry row supports the requested capability slot.
-pub fn supports_model_for_slot(entry: &ModelRegistryEntry, slot: CapabilitySlot) -> bool {
-    match slot {
-        CapabilitySlot::Fast
-        | CapabilitySlot::Writer
-        | CapabilitySlot::LongContext
-        | CapabilitySlot::Reasoner => {
-            entry.text_verified_at.is_some() || entry.vision_verified_at.is_some()
-        }
-        CapabilitySlot::Vision => entry.vision_verified_at.is_some(),
-        CapabilitySlot::AgentTools
-        | CapabilitySlot::Embedding
-        | CapabilitySlot::Reranker
-        | CapabilitySlot::LocalPrivate => false,
-    }
 }
 
 pub fn entries_from_builtin_and_routing(
@@ -353,7 +262,6 @@ pub fn entries_from_builtin_and_routing(
                 last_refreshed_at: None,
                 text_verified_at: Some("built_in".into()),
                 vision_verified_at: model.supports_vision.then(|| "built_in".into()),
-                user_confirmed_capabilities: Vec::new(),
             });
         }
     }
@@ -378,7 +286,6 @@ pub fn entries_from_builtin_and_routing(
                         last_refreshed_at: None,
                         text_verified_at: None,
                         vision_verified_at: None,
-                        user_confirmed_capabilities: Vec::new(),
                     });
                 }
             }
@@ -393,6 +300,7 @@ pub fn entries_from_builtin_and_routing(
     registry
 }
 
+#[cfg(test)]
 fn registry_entry(
     db: &Database,
     provider_id: &str,
@@ -402,7 +310,7 @@ fn registry_entry(
         conn.query_row(
             "SELECT provider_id, model_id, display_name, source, stale,
                     first_seen_at, last_seen_at, last_refreshed_at,
-                    text_verified_at, vision_verified_at, user_confirmed_capabilities
+                    text_verified_at, vision_verified_at
              FROM llm_model_registry
              WHERE provider_id = ?1 AND model_id = ?2",
             params![provider_id, model_id],
@@ -413,21 +321,9 @@ fn registry_entry(
     })
 }
 
-#[allow(dead_code)]
-fn confirmed_capabilities(
-    db: &Database,
-    provider_id: &str,
-    model_id: &str,
-) -> AppResult<Vec<CapabilitySlot>> {
-    Ok(registry_entry(db, provider_id, model_id)?
-        .map(|entry| entry.user_confirmed_capabilities)
-        .unwrap_or_default())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_types::CapabilitySlot;
     use crate::storage::db::Database;
 
     fn migrated_db() -> Database {
@@ -441,10 +337,9 @@ mod tests {
         upsert_provider_discovered_models(&db, "openai-compatible", vec!["unknown-vl".to_string()])
             .unwrap();
 
-        assert!(!supports_model_for_slot(
-            &list_registry_entries(&db).unwrap()[0],
-            CapabilitySlot::Vision,
-        ));
+        assert!(list_registry_entries(&db).unwrap()[0]
+            .vision_verified_at
+            .is_none());
 
         let entry = mark_model_validated(
             &db,
@@ -454,55 +349,23 @@ mod tests {
         )
         .unwrap();
 
-        assert!(supports_model_for_slot(&entry, CapabilitySlot::Vision));
         assert!(entry.vision_verified_at.is_some());
     }
 
     #[test]
-    fn live_validated_text_models_support_all_text_slots() {
+    fn live_validation_records_explicit_model_facts() {
         let db = migrated_db();
 
         let text_entry =
             mark_model_validated(&db, "custom", "plain-text", ModelValidationKind::Text).unwrap();
 
-        for slot in [
-            CapabilitySlot::Fast,
-            CapabilitySlot::Writer,
-            CapabilitySlot::Reasoner,
-            CapabilitySlot::LongContext,
-        ] {
-            assert!(supports_model_for_slot(&text_entry, slot), "{slot:?}");
-        }
-        assert!(!supports_model_for_slot(
-            &text_entry,
-            CapabilitySlot::Vision
-        ));
+        assert!(text_entry.text_verified_at.is_some());
+        assert!(text_entry.vision_verified_at.is_none());
 
         let vision_entry =
             mark_model_validated(&db, "custom", "multi-modal", ModelValidationKind::Vision)
                 .unwrap();
-        for slot in [
-            CapabilitySlot::Fast,
-            CapabilitySlot::Writer,
-            CapabilitySlot::Reasoner,
-            CapabilitySlot::LongContext,
-            CapabilitySlot::Vision,
-        ] {
-            assert!(supports_model_for_slot(&vision_entry, slot), "{slot:?}");
-        }
-    }
-    #[test]
-    fn confirm_capability_does_not_mark_model_as_live_validated() {
-        let db = migrated_db();
-        upsert_provider_discovered_models(&db, "custom", vec!["model-a".to_string()]).unwrap();
-
-        let entry = confirm_capability(&db, "custom", "model-a", CapabilitySlot::Vision).unwrap();
-
-        assert!(entry
-            .user_confirmed_capabilities
-            .contains(&CapabilitySlot::Vision));
-        assert!(entry.text_verified_at.is_none());
-        assert!(entry.vision_verified_at.is_none());
+        assert!(vision_entry.vision_verified_at.is_some());
     }
 
     #[test]
@@ -530,37 +393,7 @@ mod tests {
         // (1 in this case: catalog says no vision, but a live probe succeeded).
         assert_eq!(conflicts, 1);
         assert!(entry.vision_verified_at.is_some());
-        assert!(supports_model_for_slot(&entry, CapabilitySlot::Vision));
-    }
-
-    #[test]
-    fn confirm_capability_preserves_existing_slots_and_deduplicates() {
-        let db = migrated_db();
-        upsert_provider_discovered_models(&db, "custom", vec!["model-a".to_string()]).unwrap();
-
-        confirm_capability(&db, "custom", "model-a", CapabilitySlot::Writer).unwrap();
-        confirm_capability(&db, "custom", "model-a", CapabilitySlot::Vision).unwrap();
-        confirm_capability(&db, "custom", "model-a", CapabilitySlot::Vision).unwrap();
-
-        let entries = list_registry_entries(&db).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(
-            entries[0].user_confirmed_capabilities,
-            vec![CapabilitySlot::Writer, CapabilitySlot::Vision]
-        );
-    }
-
-    #[test]
-    fn confirm_capability_creates_manual_entry_when_missing() {
-        let db = migrated_db();
-
-        let entry =
-            confirm_capability(&db, "custom", "manual-vision", CapabilitySlot::Vision).unwrap();
-
-        assert_eq!(entry.provider_id, "custom");
-        assert_eq!(entry.model_id, "manual-vision");
-        assert_eq!(entry.source, ModelRegistrySource::Manual);
-        assert!(!supports_model_for_slot(&entry, CapabilitySlot::Vision));
+        assert!(entry.vision_verified_at.is_some());
     }
 
     #[test]

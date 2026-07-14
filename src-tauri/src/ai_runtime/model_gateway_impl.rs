@@ -1,11 +1,10 @@
 pub use crate::ai_types::{
-    CapabilitySlot, ContextPacket, EndpointFamily, FunctionCall, LlmMessage, MessageRole,
-    ProviderConfig, TokenUsage, ToolCall, ToolSpec,
+    ContextPacket, EndpointFamily, FunctionCall, LlmMessage, MessageRole, ProviderConfig,
+    TokenUsage, ToolCall, ToolSpec,
 };
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tauri::AppHandle;
 #[path = "model_gateway/abort.rs"]
 mod abort_impl;
@@ -54,17 +53,7 @@ pub struct GatewayResponse {
 pub struct ModelGateway {
     app_handle: AppHandle,
     client: Client,
-    providers: HashMap<CapabilitySlot, Vec<ProviderConfig>>,
-}
-
-fn build_provider_routes(
     providers: Vec<ProviderConfig>,
-) -> HashMap<CapabilitySlot, Vec<ProviderConfig>> {
-    let mut routes: HashMap<CapabilitySlot, Vec<ProviderConfig>> = HashMap::new();
-    for provider in providers {
-        routes.entry(provider.slot).or_default().push(provider);
-    }
-    routes
 }
 
 fn extract_http_status_code(message: &str) -> Option<u16> {
@@ -126,15 +115,14 @@ fn is_provider_level_failover_error(message: &str) -> bool {
         || lower.contains("妯″瀷鏈嶅姟绻佸繖")
 }
 
-fn select_failover_provider_from_routes(
-    routes: &HashMap<CapabilitySlot, Vec<ProviderConfig>>,
+fn select_failover_provider(
+    candidates: &[ProviderConfig],
     failed_provider: &ProviderConfig,
     error_message: &str,
 ) -> Option<ProviderConfig> {
     if !is_provider_level_failover_error(error_message) {
         return None;
     }
-    let candidates = routes.get(&failed_provider.slot)?;
     let failed_index = candidates.iter().position(|candidate| {
         candidate.name == failed_provider.name
             && candidate.model == failed_provider.model
@@ -153,7 +141,7 @@ impl ModelGateway {
         Self {
             app_handle,
             client,
-            providers: build_provider_routes(providers),
+            providers,
         }
     }
 
@@ -163,25 +151,13 @@ impl ModelGateway {
         Ok(Self::new(app_handle, client, providers))
     }
 
-    /// Get provider for a capability slot.
-    pub fn get_provider(&self, slot: CapabilitySlot) -> Option<&ProviderConfig> {
-        self.providers
-            .get(&slot)
-            .and_then(|providers| providers.first())
-    }
-
-    /// Get ordered explicit provider candidates for a capability slot.
-    pub fn provider_candidates(&self, slot: CapabilitySlot) -> &[ProviderConfig] {
-        self.providers.get(&slot).map(Vec::as_slice).unwrap_or(&[])
-    }
-
-    /// Select the next same-slot provider only for provider-level failures.
+    /// Select the next configured model only for provider-level failures.
     pub fn failover_provider_after(
         &self,
         failed_provider: &ProviderConfig,
         error_message: &str,
     ) -> Option<ProviderConfig> {
-        select_failover_provider_from_routes(&self.providers, failed_provider, error_message)
+        select_failover_provider(&self.providers, failed_provider, error_message)
     }
     /// Format context packets as markdown evidence block.
     pub fn format_evidence_packets(packets: &[ContextPacket]) -> String {

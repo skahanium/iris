@@ -22,7 +22,7 @@ use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEvent
 use crate::ai_runtime::model_gateway::{
     StreamEvent, StreamEventData, StreamEventObserver, StreamEventType, StreamSurface,
 };
-use crate::ai_types::{CapabilitySlot, EndpointFamily, MessageRole, ProviderConfig};
+use crate::ai_types::{EndpointFamily, MessageRole, ProviderConfig};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -64,7 +64,7 @@ impl StreamingDirectAnswerProvider for MockStreamingProvider {
     fn answer_streaming<'a>(
         &'a self,
         run_id: &'a str,
-        _message: &'a str,
+        _messages: &'a [crate::ai_runtime::LlmMessage],
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<
@@ -110,7 +110,6 @@ fn request() -> AssistantRunStartRequest {
         explicit_references: vec![],
         explicit_action: None,
         web_enabled: false,
-        routing_policy: None,
         model_override: None,
         security_domain: SecurityDomain::Normal,
     }
@@ -600,7 +599,6 @@ fn direct_gateway_request_separates_fixed_boundary_from_user_data() {
             base_url: "https://provider.example/v1".to_string(),
             api_key: Some(zeroize::Zeroizing::new("test-key".to_string())),
             model: "model".to_string(),
-            slot: CapabilitySlot::Fast,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
         },
         "只回答这条消息",
@@ -621,6 +619,103 @@ fn direct_gateway_request_separates_fixed_boundary_from_user_data() {
     assert_eq!(request.max_tokens, Some(1024));
 }
 
+#[tokio::test]
+async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider() {
+    struct CapturingProvider {
+        messages: std::sync::Mutex<Vec<crate::ai_runtime::LlmMessage>>,
+    }
+
+    impl StreamingDirectAnswerProvider for CapturingProvider {
+        fn answer_streaming<'a>(
+            &'a self,
+            _run_id: &'a str,
+            messages: &'a [crate::ai_runtime::LlmMessage],
+            _observer: &'a mut dyn StreamEventObserver,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            self.messages
+                .lock()
+                .expect("capture lock")
+                .extend_from_slice(messages);
+            Box::pin(async {
+                Ok(crate::ai_runtime::model_gateway::GatewayResponse {
+                    content: Some("已分析图片".into()),
+                    tool_calls: Vec::new(),
+                    usage: Default::default(),
+                    finish_reason: "stop".into(),
+                    reasoning_content: None,
+                })
+            })
+        }
+    }
+
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let plan = DomainExecutor::plan(
+        &super::run_contract::ExecutionEnvelope {
+            effect: super::run_contract::Effect::Answer,
+            context: super::run_contract::ContextMode::None,
+            freshness: super::run_contract::Freshness::Offline,
+            effort: super::run_contract::Effort::Direct,
+            security_domain: SecurityDomain::Normal,
+            risk: super::run_contract::RiskClass::ReadOnly,
+            modalities: vec![super::run_contract::Modality::Image],
+            material_needs: Vec::new(),
+            required_capabilities: vec![CapabilityId::new("model.vision")],
+            explicit_constraints: Vec::new(),
+        },
+        "描述图片",
+        &[],
+        &[],
+    );
+    let provider = CapturingProvider {
+        messages: std::sync::Mutex::new(Vec::new()),
+    };
+    let sink = RecordingSink::default();
+    let messages = vec![crate::ai_runtime::LlmMessage {
+        role: MessageRole::User,
+        content: crate::ai_types::MessageContent::Parts(vec![
+            crate::ai_types::ContentPart::Text {
+                text: "描述图片".into(),
+            },
+            crate::ai_types::ContentPart::ImageUrl {
+                image_url: crate::ai_types::ImageUrlPayload {
+                    url: "data:image/png;base64,AA==".into(),
+                    detail: Some("low".into()),
+                },
+            },
+        ]),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }];
+
+    RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &messages,
+        &[],
+        &plan,
+        &provider,
+        &sink,
+    )
+    .await
+    .expect("multimodal direct run");
+
+    let captured = provider.messages.lock().expect("capture lock");
+    assert!(matches!(
+        captured[0].content,
+        crate::ai_types::MessageContent::Parts(ref parts)
+            if parts.iter().any(|part| matches!(part, crate::ai_types::ContentPart::ImageUrl { .. }))
+    ));
+}
+
 fn event_state_version(event: &super::run_contract::AssistantRunEvent) -> u64 {
     serde_json::to_value(event).expect("serialize event")["stateVersion"]
         .as_u64()
@@ -633,7 +728,7 @@ impl StreamingDirectAnswerProvider for LeakingStreamingProvider {
     fn answer_streaming<'a>(
         &'a self,
         run_id: &'a str,
-        _message: &'a str,
+        _messages: &'a [crate::ai_runtime::LlmMessage],
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<

@@ -500,9 +500,7 @@ fn build_anthropic_messages_body_inner(request: &GatewayRequest) -> serde_json::
 #[cfg(test)]
 mod phase3_adapter_contract_tests {
     use super::*;
-    use crate::ai_types::{
-        CapabilitySlot, EndpointFamily, MessageRole, ReasoningControl, ReasoningVisibility,
-    };
+    use crate::ai_types::{EndpointFamily, MessageRole, ReasoningControl, ReasoningVisibility};
 
     fn request_for(endpoint_family: EndpointFamily) -> GatewayRequest {
         GatewayRequest {
@@ -511,7 +509,6 @@ mod phase3_adapter_contract_tests {
                 base_url: "https://api.example.com".into(),
                 api_key: Some(zeroize::Zeroizing::new("secret".to_string())),
                 model: "model-a".into(),
-                slot: CapabilitySlot::Fast,
                 endpoint_family,
             },
             messages: vec![LlmMessage {
@@ -587,7 +584,6 @@ mod phase3_adapter_contract_tests {
                 base_url: "https://api.anthropic.com".into(),
                 api_key: Some(zeroize::Zeroizing::new("key".to_string())),
                 model: "claude-3-5-haiku".into(),
-                slot: CapabilitySlot::Vision,
                 endpoint_family: EndpointFamily::AnthropicMessages,
             },
             messages: vec![LlmMessage {

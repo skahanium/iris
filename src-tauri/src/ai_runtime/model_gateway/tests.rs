@@ -1,13 +1,12 @@
 use super::*;
 use crate::ai_runtime::{CorpusPacketMeta, SourceType, TrustLevel};
 
-fn test_provider(name: &str, slot: CapabilitySlot) -> ProviderConfig {
+fn test_provider(name: &str) -> ProviderConfig {
     ProviderConfig {
         name: name.into(),
         base_url: format!("https://{name}.example/v1"),
         api_key: Some(zeroize::Zeroizing::new("test".to_string())),
         model: format!("{name}-model"),
-        slot,
         endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
     }
 }
@@ -22,41 +21,24 @@ fn invalid_provider_json_uses_safe_error_code_without_response_preview() {
 }
 
 #[test]
-fn provider_routes_keep_ordered_same_slot_candidates() {
-    let primary = test_provider("primary", CapabilitySlot::Reasoner);
-    let backup = test_provider("backup", CapabilitySlot::Reasoner);
-    let writer = test_provider("writer", CapabilitySlot::Writer);
-
-    let routes = build_provider_routes(vec![primary.clone(), backup.clone(), writer]);
-    let reasoner = routes.get(&CapabilitySlot::Reasoner).unwrap();
-
-    assert_eq!(reasoner[0].name, primary.name);
-    assert_eq!(reasoner[1].name, backup.name);
-}
-
-#[test]
-fn failover_selects_next_same_slot_provider_for_provider_level_failure() {
-    let primary = test_provider("primary", CapabilitySlot::Reasoner);
-    let backup = test_provider("backup", CapabilitySlot::Reasoner);
-    let writer = test_provider("writer", CapabilitySlot::Writer);
-    let routes = build_provider_routes(vec![primary.clone(), backup.clone(), writer]);
-
-    let selected = select_failover_provider_from_routes(
-        &routes,
+fn failover_selects_next_model_pool_candidate_for_provider_level_failure() {
+    let primary = test_provider("primary");
+    let backup = test_provider("backup");
+    let unrelated = test_provider("unrelated");
+    let selected = select_failover_provider(
+        &[primary.clone(), backup.clone(), unrelated],
         &primary,
         "LLM streaming request failed: connection reset by peer",
     )
     .unwrap();
 
     assert_eq!(selected.name, backup.name);
-    assert_eq!(selected.slot, CapabilitySlot::Reasoner);
 }
 
 #[test]
 fn failover_rejects_auth_context_and_user_abort_errors() {
-    let primary = test_provider("primary", CapabilitySlot::Reasoner);
-    let backup = test_provider("backup", CapabilitySlot::Reasoner);
-    let routes = build_provider_routes(vec![primary.clone(), backup]);
+    let primary = test_provider("primary");
+    let backup = test_provider("backup");
 
     for message in [
         "invalid_api_key: check API key",
@@ -66,7 +48,8 @@ fn failover_rejects_auth_context_and_user_abort_errors() {
         "partial_visible_stream_error: after visible content",
     ] {
         assert!(
-            select_failover_provider_from_routes(&routes, &primary, message).is_none(),
+            select_failover_provider(&[primary.clone(), backup.clone()], &primary, message)
+                .is_none(),
             "unexpected failover for {message}"
         );
     }
@@ -125,14 +108,11 @@ fn messages_for_api_includes_reasoning_content_with_tool_calls() {
 
 #[test]
 fn resume_after_tool_confirm_body_preserves_reasoning_and_thinking() {
-    use crate::ai_types::CapabilitySlot;
-
     let provider = ProviderConfig {
         name: "deepseek".into(),
         base_url: "https://api.deepseek.com".into(),
         model: "deepseek-reasoner".into(),
         api_key: Some(zeroize::Zeroizing::new("test".to_string())),
-        slot: CapabilitySlot::Reasoner,
         endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
     };
     let messages = vec![

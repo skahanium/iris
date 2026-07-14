@@ -1,6 +1,3 @@
-import type { CapabilitySlot } from "@/types/ai";
-
-export type ContextStrategy = "hybrid" | "long_context";
 export type EndpointFamily =
   | "open_ai_compatible_chat_completions"
   | "anthropic_messages"
@@ -42,10 +39,6 @@ export type ReasoningVisibility =
   | "content_tag"
   | "plain_content_risk";
 
-export interface ReasoningSlotConfig {
-  mode: ReasoningMode;
-}
-
 export interface ModelCapabilityOverride {
   reasoningAdapter?: ReasoningAdapter | null;
   reasoningControl?: ReasoningControl | null;
@@ -65,26 +58,22 @@ export interface ProviderOverride {
   modelCapabilities?: Record<string, ModelCapabilityOverride>;
 }
 
+/** A configured model in the global routing pool. */
+export interface ModelReference {
+  providerId: string;
+  modelId: string;
+}
+
 /** 鐠佸墽鐤嗘い闈涘帒鐠佸摜娈戦懛顏勭暰娑?OpenAI 閸忕厧顔愮粩顖滃仯 ID閿涘潉custom` 閹?`custom_*`閿涘鈧?*/
 export function isCustomProviderId(providerId: string): boolean {
   return providerId === "custom" || providerId.startsWith("custom_");
 }
 
-export interface SceneRoute {
-  providerId: string;
-  model: string;
-  thinking?: boolean;
-  reasoning?: ReasoningSlotConfig | null;
-}
-
-export type SlotRoute = SceneRoute;
-
 export interface LlmRoutingConfig {
   version: number;
   schemaVersion?: number;
   providers: Record<string, ProviderOverride>;
-  slots: Partial<Record<CapabilitySlot, SlotRoute>>;
-  contextStrategy: Record<string, ContextStrategy>;
+  defaultModel?: ModelReference | null;
 }
 
 export interface ModelCatalogEntry {
@@ -117,19 +106,12 @@ export interface ModelRegistryEntry {
   lastRefreshedAt: string | null;
   textVerifiedAt: string | null;
   visionVerifiedAt: string | null;
-  userConfirmedCapabilities: CapabilitySlot[];
 }
 
 export interface LlmModelRegistryRefreshResult {
   providerId: string;
   modelCount: number;
   message: string;
-}
-
-export interface ModelCapabilityConfirmRequest {
-  providerId: string;
-  modelId: string;
-  slot: CapabilitySlot;
 }
 
 export interface LlmConfigGetResponse {
@@ -173,32 +155,10 @@ export interface LlmConfigTestResult {
   message: string;
 }
 
-export const CAPABILITY_SLOTS: CapabilitySlot[] = [
-  "fast",
-  "writer",
-  "reasoner",
-  "long_context",
-  "vision",
-  "agent_tools",
-  "embedding",
-  "reranker",
-  "local_private",
-];
-
-export const USER_CONFIGURABLE_CAPABILITY_SLOTS = [
-  "fast",
-  "writer",
-  "reasoner",
-  "long_context",
-  "vision",
-  "agent_tools",
-] satisfies CapabilitySlot[];
-
 /** 鐎广垺鍩涚粩顖氭礀闁偓姒涙顓婚敍鍦汸C 娑撳秴褰查悽銊﹀灗鐟欙絾鐎芥径杈Е閺冭绱?*/
 export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
   version: 1,
-  schemaVersion: 4,
+  schemaVersion: 5,
   providers: {},
-  slots: {},
-  contextStrategy: {},
+  defaultModel: null,
 };

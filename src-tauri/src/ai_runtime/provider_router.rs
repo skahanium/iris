@@ -9,9 +9,7 @@ use std::fmt;
 
 use zeroize::Zeroizing;
 
-use crate::ai_types::{
-    CapabilitySlot, EndpointFamily, ProviderConfig, ResolvedReasoningRequest, RoutingPolicy,
-};
+use crate::ai_types::{EndpointFamily, ProviderConfig, ResolvedReasoningRequest};
 use crate::error::AppResult;
 
 /// Security boundary in which a provider candidate may run.
@@ -43,45 +41,6 @@ pub(crate) enum CandidateHealth {
     Unhealthy,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct RoutingWeights {
-    quality: u16,
-    latency: u16,
-    cost: u16,
-    reliability: u16,
-}
-
-impl RoutingPolicy {
-    fn weights(self) -> RoutingWeights {
-        match self {
-            Self::Balanced => RoutingWeights {
-                quality: 40,
-                latency: 20,
-                cost: 20,
-                reliability: 20,
-            },
-            Self::HighQuality => RoutingWeights {
-                quality: 65,
-                latency: 10,
-                cost: 10,
-                reliability: 15,
-            },
-            Self::LowLatency => RoutingWeights {
-                quality: 20,
-                latency: 55,
-                cost: 10,
-                reliability: 15,
-            },
-            Self::LowCost => RoutingWeights {
-                quality: 20,
-                latency: 10,
-                cost: 55,
-                reliability: 15,
-            },
-        }
-    }
-}
-
 /// Secret-free provider metadata that can safely participate in selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProviderCandidate {
@@ -93,8 +52,6 @@ pub(crate) struct ProviderCandidate {
     pub(crate) base_url: String,
     /// Adapter protocol family.
     pub(crate) endpoint_family: EndpointFamily,
-    /// Configured capability slot that selected this model.
-    pub(crate) slot: CapabilitySlot,
     /// Whether the candidate supports streaming responses.
     pub(crate) supports_streaming: bool,
     /// Whether the candidate supports tool calls.
@@ -113,12 +70,6 @@ pub(crate) struct ProviderCandidate {
     pub(crate) availability: CandidateAvailability,
     /// Recent provider health from diagnostics/request outcomes.
     pub(crate) health: CandidateHealth,
-    /// Normalized model quality signal (0..=1000); 500 means unknown.
-    pub(crate) quality_score_millis: u16,
-    /// Normalized low-latency signal (0..=1000); 500 means unknown.
-    pub(crate) latency_score_millis: u16,
-    /// Normalized low-cost signal (0..=1000); 500 means unknown.
-    pub(crate) cost_score_millis: u16,
     /// Resolved reasoning controls retained through the dispatch boundary.
     pub(crate) reasoning: ResolvedReasoningRequest,
     /// Legacy adapter flag derived from the resolved reasoning request.
@@ -217,13 +168,12 @@ impl HydratedProviderCandidate {
     ///
     /// The credential remains [`Zeroizing`] until the HTTP adapter has consumed
     /// the configuration. It must never be converted into a plain `String`.
-    pub(crate) fn into_provider_config(self, slot: CapabilitySlot) -> ProviderConfig {
+    pub(crate) fn into_provider_config(self) -> ProviderConfig {
         ProviderConfig {
             name: self.candidate.provider_id,
             base_url: self.candidate.base_url,
             api_key: self.credential,
             model: self.candidate.model,
-            slot,
             endpoint_family: self.candidate.endpoint_family,
         }
     }
@@ -266,36 +216,6 @@ impl ProviderRouter {
         self.candidates
             .iter()
             .filter(|candidate| candidate_satisfies(candidate, requirements))
-            .collect()
-    }
-
-    /// Return matching candidates ranked by the selected policy.
-    ///
-    /// Capability, budget, domain, availability, and health filtering always
-    /// happens before scoring. Stable configured order is retained for equal
-    /// scores, which makes failover deterministic.
-    pub(crate) fn select_ranked_candidates(
-        &self,
-        requirements: &ProviderRequirements,
-        policy: RoutingPolicy,
-    ) -> Vec<&ProviderCandidate> {
-        let weights = policy.weights();
-        let mut candidates = self
-            .candidates
-            .iter()
-            .enumerate()
-            .filter(|(_, candidate)| candidate_satisfies(candidate, requirements))
-            .collect::<Vec<_>>();
-        candidates.sort_by(|(left_index, left), (right_index, right)| {
-            candidate_score(right, weights)
-                .cmp(&candidate_score(left, weights))
-                .then_with(|| left_index.cmp(right_index))
-                .then_with(|| left.provider_id.cmp(&right.provider_id))
-                .then_with(|| left.model.cmp(&right.model))
-        });
-        candidates
-            .into_iter()
-            .map(|(_, candidate)| candidate)
             .collect()
     }
 
@@ -354,203 +274,4 @@ fn candidate_satisfies(candidate: &ProviderCandidate, requirements: &ProviderReq
         && candidate.security_domain == requirements.security_domain
         && candidate.availability == CandidateAvailability::Available
         && candidate.health != CandidateHealth::Unhealthy
-}
-
-fn candidate_score(candidate: &ProviderCandidate, weights: RoutingWeights) -> u32 {
-    let reliability = match candidate.health {
-        CandidateHealth::Healthy => 1_000,
-        CandidateHealth::Unknown => 500,
-        CandidateHealth::Unhealthy => 0,
-    };
-    u32::from(candidate.quality_score_millis.min(1_000)) * u32::from(weights.quality)
-        + u32::from(candidate.latency_score_millis.min(1_000)) * u32::from(weights.latency)
-        + u32::from(candidate.cost_score_millis.min(1_000)) * u32::from(weights.cost)
-        + reliability * u32::from(weights.reliability)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn routing_presets_score_eligible_candidates_with_deterministic_ties() {
-        let router = ProviderRouter::new(vec![
-            ProviderCandidate {
-                quality_score_millis: 850,
-                latency_score_millis: 300,
-                cost_score_millis: 900,
-                ..candidate("economical", "economical-model")
-            },
-            ProviderCandidate {
-                quality_score_millis: 400,
-                latency_score_millis: 1_000,
-                cost_score_millis: 500,
-                ..candidate("responsive", "responsive-model")
-            },
-            ProviderCandidate {
-                quality_score_millis: 1_000,
-                latency_score_millis: 650,
-                cost_score_millis: 350,
-                ..candidate("premium", "premium-model")
-            },
-        ]);
-
-        for (policy, expected_first) in [
-            (RoutingPolicy::Balanced, "premium"),
-            (RoutingPolicy::HighQuality, "premium"),
-            (RoutingPolicy::LowLatency, "responsive"),
-            (RoutingPolicy::LowCost, "economical"),
-        ] {
-            let selected = router.select_ranked_candidates(&requirements(), policy);
-            assert_eq!(selected[0].provider_id, expected_first, "{policy:?}");
-        }
-    }
-
-    fn candidate(provider_id: &str, model: &str) -> ProviderCandidate {
-        ProviderCandidate {
-            provider_id: provider_id.into(),
-            model: model.into(),
-            base_url: format!("https://{provider_id}.example/v1"),
-            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
-            slot: CapabilitySlot::Fast,
-            supports_streaming: true,
-            supports_tools: true,
-            supports_vision: false,
-            supports_reasoning: true,
-            input_budget_tokens: 32_000,
-            output_budget_tokens: 4_000,
-            security_domain: SecurityDomain::External,
-            availability: CandidateAvailability::Available,
-            health: CandidateHealth::Healthy,
-            quality_score_millis: 500,
-            latency_score_millis: 500,
-            cost_score_millis: 500,
-            reasoning: ResolvedReasoningRequest::disabled(),
-            thinking: false,
-            credential_service: Some(format!("iris.llm.{provider_id}")),
-        }
-    }
-
-    fn requirements() -> ProviderRequirements {
-        ProviderRequirements {
-            endpoint_family: Some(EndpointFamily::OpenAiCompatibleChatCompletions),
-            streaming: true,
-            tools: true,
-            vision: false,
-            reasoning: true,
-            min_input_budget_tokens: 16_000,
-            min_output_budget_tokens: 2_000,
-            security_domain: SecurityDomain::External,
-        }
-    }
-
-    #[test]
-    fn select_candidates_filters_by_capability_domain_availability_and_health_without_hydration() {
-        let router = ProviderRouter::new(vec![
-            ProviderCandidate {
-                supports_tools: false,
-                ..candidate("no-tools", "no-tools-model")
-            },
-            ProviderCandidate {
-                security_domain: SecurityDomain::Local,
-                ..candidate("local", "local-model")
-            },
-            ProviderCandidate {
-                availability: CandidateAvailability::Unavailable,
-                ..candidate("offline", "offline-model")
-            },
-            ProviderCandidate {
-                health: CandidateHealth::Unhealthy,
-                ..candidate("unhealthy", "unhealthy-model")
-            },
-            ProviderCandidate {
-                health: CandidateHealth::Unknown,
-                ..candidate("unknown", "unknown-model")
-            },
-            candidate("primary", "primary-model"),
-            candidate("backup", "backup-model"),
-        ]);
-
-        let selected = router.select_candidates(&requirements());
-
-        assert_eq!(
-            selected
-                .iter()
-                .map(|candidate| candidate.provider_id.as_str())
-                .collect::<Vec<_>>(),
-            vec!["unknown", "primary", "backup"]
-        );
-        assert!(selected
-            .iter()
-            .all(|candidate| candidate.credential_service.is_some()));
-    }
-
-    #[test]
-    fn hydrate_candidate_reads_only_the_dispatched_candidate_credential() {
-        let router = ProviderRouter::new(vec![candidate("primary", "primary-model")]);
-        let selected = router.select_candidates(&requirements());
-        let mut read_services = Vec::new();
-
-        let hydrated = router
-            .hydrate_candidate_with(selected[0], |service| {
-                read_services.push(service.to_string());
-                Ok(zeroize::Zeroizing::new("secret".to_string()))
-            })
-            .expect("hydrate selected candidate");
-
-        assert_eq!(read_services, vec!["iris.llm.primary"]);
-        assert_eq!(hydrated.candidate().provider_id, "primary");
-        assert!(hydrated.has_credential());
-        assert!(!format!("{hydrated:?}").contains("secret"));
-    }
-
-    #[test]
-    fn retryable_failures_are_limited_to_transient_transport_and_server_conditions() {
-        for failure in [
-            ProviderFailure::Connection,
-            ProviderFailure::Timeout,
-            ProviderFailure::HttpStatus(429),
-            ProviderFailure::HttpStatus(500),
-            ProviderFailure::HttpStatus(599),
-            ProviderFailure::TemporarilyUnavailable,
-        ] {
-            assert!(failure.is_retryable(), "{failure:?} should be retryable");
-        }
-
-        for failure in [
-            ProviderFailure::HttpStatus(400),
-            ProviderFailure::HttpStatus(401),
-            ProviderFailure::HttpStatus(403),
-            ProviderFailure::HttpStatus(408),
-            ProviderFailure::Unauthorized,
-            ProviderFailure::Forbidden,
-            ProviderFailure::Schema,
-            ProviderFailure::ContextLimit,
-            ProviderFailure::Cancelled,
-            ProviderFailure::PolicyDenied,
-            ProviderFailure::SecurityDomainMismatch,
-            ProviderFailure::Unknown,
-        ] {
-            assert!(!failure.is_retryable(), "{failure:?} must not retry");
-        }
-    }
-
-    #[test]
-    fn next_candidate_requires_a_retryable_failure_and_preserves_order() {
-        let router = ProviderRouter::new(vec![
-            candidate("primary", "primary-model"),
-            candidate("backup", "backup-model"),
-        ]);
-        let selected = router.select_candidates(&requirements());
-
-        assert_eq!(
-            router
-                .next_candidate_after(&selected, 0, ProviderFailure::Timeout)
-                .map(|candidate| candidate.provider_id.as_str()),
-            Some("backup")
-        );
-        assert!(router
-            .next_candidate_after(&selected, 0, ProviderFailure::HttpStatus(401))
-            .is_none());
-    }
 }

@@ -7,29 +7,27 @@ function read(path: string): string {
 }
 
 describe("model routing and Run execution contracts", () => {
-  it("keeps capability-slot routing types for configured providers", () => {
+  it("uses one enabled-model pool with an explicit default model", () => {
     const llmTypes = read("src/types/llm.ts");
 
-    for (const slot of [
-      "fast",
-      "writer",
-      "reasoner",
-      "long_context",
-      "vision",
-    ]) {
-      expect(llmTypes).toContain(slot);
-    }
-    expect(llmTypes).toContain("USER_CONFIGURABLE_CAPABILITY_SLOTS");
+    expect(llmTypes).toContain("defaultModel?: ModelReference | null");
+    expect(llmTypes).toContain("enabledModels?: string[] | null");
+    expect(llmTypes).not.toContain("CapabilitySlot");
+    expect(llmTypes).not.toContain("slotFailover");
     expect(llmTypes).toContain("EndpointFamily");
   });
 
-  it("renders provider configuration before capability slot routing", () => {
+  it("renders provider configuration and the global model-pool default", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
 
-    expect(section).toContain("USER_CONFIGURABLE_CAPABILITY_SLOTS.map");
+    expect(section).toContain('data-section="llm-model-pool"');
+    expect(section).toContain(
+      "defaultModel: { providerId: parsed[0], modelId: parsed[1] }",
+    );
     expect(section).toContain("AddModelWizard");
     expect(section).toContain("addProviderModel");
     expect(section).toContain("removeProviderModel");
+    expect(section).not.toContain("USER_CONFIGURABLE_CAPABILITY_SLOTS");
     expect(section).not.toContain("AI_SCENES.map");
   });
 

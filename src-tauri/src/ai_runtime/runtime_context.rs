@@ -4,7 +4,7 @@ use chrono::{Datelike, Local, Timelike};
 use serde::Serialize;
 use std::path::Path;
 
-use crate::ai_runtime::{CapabilitySlot, ToolSpec};
+use crate::ai_runtime::ToolSpec;
 use crate::app::AppState;
 use crate::error::AppResult;
 use crate::llm::providers::credential_service;
@@ -56,21 +56,19 @@ pub struct ToolCapabilitySnapshot {
 }
 
 #[derive(Debug, Clone, Serialize)]
-/// Safe model-slot summary that never exposes API key material.
-pub struct ModelSlotSnapshot {
-    pub slot: String,
+/// Safe enabled-model summary that never exposes API key material.
+pub struct ModelPoolEntrySnapshot {
     pub provider_id: String,
     pub model: String,
     pub configured: bool,
 }
 
+/// Current AI capability summary, including tools and configured model-pool entries.
 #[derive(Debug, Clone, Serialize)]
-/// Current AI capability summary, including tools and configured model slots.
 pub struct CapabilitySnapshot {
     pub kind: &'static str,
     pub web_search_enabled: bool,
-    pub vision: ModelSlotSnapshot,
-    pub slots: Vec<ModelSlotSnapshot>,
+    pub models: Vec<ModelPoolEntrySnapshot>,
     pub tools: Vec<ToolCapabilitySnapshot>,
 }
 
@@ -115,16 +113,16 @@ pub fn build_runtime_context_prompt(
         .selection_excerpt
         .filter(|excerpt| !excerpt.trim().is_empty())
         .map(|excerpt| excerpt.chars().take(120).collect::<String>());
-    let configured_slots = capabilities
-        .slots
+    let configured_models = capabilities
+        .models
         .iter()
-        .map(|slot| {
+        .map(|model| {
             format!(
                 "{}={}@{}({})",
-                slot.slot,
-                slot.model,
-                slot.provider_id,
-                if slot.configured {
+                "model",
+                model.model,
+                model.provider_id,
+                if model.configured {
                     "已配置"
                 } else {
                     "未配置 Key"
@@ -152,8 +150,7 @@ pub fn build_runtime_context_prompt(
          - Iris 版本: {}\n\
          - 当前 vault: {} (`{}`)\n\
          - 联网工具: {}\n\
-         - Vision 模型: {}\n\
-         - 模型槽位: {}\n\
+         - 已配置模型池: {}\n\
          - 可自动调用的只读工具: {}\n\
          - 附件: {} 个\n",
         time.local_date,
@@ -171,18 +168,10 @@ pub fn build_runtime_context_prompt(
         } else {
             "未启用"
         },
-        if capabilities.vision.configured {
-            format!(
-                "已配置 {}@{}",
-                capabilities.vision.model, capabilities.vision.provider_id
-            )
-        } else {
-            "未配置".into()
-        },
-        if configured_slots.is_empty() {
+        if configured_models.is_empty() {
             "(无)".into()
         } else {
-            configured_slots
+            configured_models
         },
         if default_tools.is_empty() {
             "(无)".into()
@@ -234,22 +223,10 @@ pub fn capability_snapshot(
     web_search_enabled: bool,
     tools: &[ToolSpec],
 ) -> CapabilitySnapshot {
-    let slots = model_slot_snapshots(db);
-    let vision = slots
-        .iter()
-        .find(|slot| slot.slot == "vision")
-        .cloned()
-        .unwrap_or_else(|| ModelSlotSnapshot {
-            slot: "vision".into(),
-            provider_id: String::new(),
-            model: String::new(),
-            configured: false,
-        });
     CapabilitySnapshot {
         kind: "capabilities",
         web_search_enabled,
-        vision,
-        slots,
+        models: model_pool_snapshots(db),
         tools: tools
             .iter()
             .map(|tool| ToolCapabilitySnapshot {
@@ -261,23 +238,25 @@ pub fn capability_snapshot(
     }
 }
 
-fn model_slot_snapshots(db: &Database) -> Vec<ModelSlotSnapshot> {
+fn model_pool_snapshots(db: &Database) -> Vec<ModelPoolEntrySnapshot> {
     let Ok(config) = crate::llm::config::load(db) else {
         return Vec::new();
     };
     config
-        .slots
+        .providers
         .iter()
-        .map(|(slot, route)| {
-            let service = credential_service(&route.provider_id);
-            let configured = crate::credentials::credential_available(&service).unwrap_or(false)
-                || !crate::llm::providers::requires_api_key(&route.provider_id);
-            ModelSlotSnapshot {
-                slot: slot.clone(),
-                provider_id: route.provider_id.clone(),
-                model: route.model.clone(),
-                configured,
-            }
+        .flat_map(|(provider_id, provider)| {
+            provider.enabled_models.iter().flatten().map(move |model| {
+                let service = credential_service(provider_id);
+                let configured = crate::credentials::credential_available(&service)
+                    .unwrap_or(false)
+                    || !crate::llm::providers::requires_api_key(provider_id);
+                ModelPoolEntrySnapshot {
+                    provider_id: provider_id.clone(),
+                    model: model.clone(),
+                    configured,
+                }
+            })
         })
         .collect()
 }
@@ -322,19 +301,4 @@ pub fn all_catalog_tools_as_specs() -> Vec<ToolSpec> {
             capability_affinity: entry.capability_affinity(),
         })
         .collect()
-}
-
-#[allow(dead_code)]
-fn _slot_wire(slot: CapabilitySlot) -> &'static str {
-    match slot {
-        CapabilitySlot::Fast => "fast",
-        CapabilitySlot::Writer => "writer",
-        CapabilitySlot::Reasoner => "reasoner",
-        CapabilitySlot::LongContext => "long_context",
-        CapabilitySlot::Vision => "vision",
-        CapabilitySlot::AgentTools => "agent_tools",
-        CapabilitySlot::Embedding => "embedding",
-        CapabilitySlot::Reranker => "reranker",
-        CapabilitySlot::LocalPrivate => "local_private",
-    }
 }

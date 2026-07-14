@@ -45,16 +45,6 @@ pub(crate) struct RunContext {
 }
 
 impl RunContext {
-    /// Return the persisted per-Run provider ranking preference, if supplied.
-    pub(crate) fn routing_policy(&self) -> Option<crate::ai_types::RoutingPolicy> {
-        self.envelope
-            .explicit_constraints
-            .iter()
-            .find(|constraint| constraint.kind == "routing_policy")
-            .and_then(|constraint| constraint.value.as_deref())
-            .and_then(|value| serde_json::from_str(value).ok())
-    }
-
     /// Return the immutable provider/model override admitted for this Run.
     pub(crate) fn model_override(&self) -> Option<crate::ai_runtime::run_contract::ModelOverride> {
         self.envelope

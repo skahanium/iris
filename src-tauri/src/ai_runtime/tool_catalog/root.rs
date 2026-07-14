@@ -32,7 +32,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "capabilities_read",
-            description: "读取当前 AI 能力摘要，包括联网开关、模型槽位配置状态、Vision 状态与可用工具；不读取凭据明文。",
+            description: "读取当前 AI 能力摘要，包括联网开关、已启用模型池与可用工具；不读取凭据明文。",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {}

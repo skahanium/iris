@@ -24,11 +24,8 @@ import {
   llmModelValidate,
 } from "@/lib/ipc";
 import { notifyLlmConfigChanged } from "@/lib/llm-events";
-import type { CapabilitySlot } from "@/types/ai";
 import {
-  CAPABILITY_SLOTS,
   DEFAULT_LLM_ROUTING,
-  USER_CONFIGURABLE_CAPABILITY_SLOTS,
   isCustomProviderId,
   type LlmConfigGetResponse,
   type LlmRoutingConfig,
@@ -36,9 +33,7 @@ import {
   type ModelCatalogEntry,
   type ReasoningControl,
   type ReasoningMode,
-  type ReasoningSlotConfig,
   type ProviderOverride,
-  type SlotRoute,
 } from "@/types/llm";
 
 const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = [
@@ -116,32 +111,6 @@ const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = [
   },
 ];
 
-const SLOT_META: Record<
-  (typeof USER_CONFIGURABLE_CAPABILITY_SLOTS)[number],
-  { label: string; detail: string }
-> = {
-  fast: { label: "Fast", detail: "短问答、轻量检索、默认对话" },
-  writer: { label: "Writer", detail: "改写、续写、章节与文档写作" },
-  reasoner: { label: "Reasoner", detail: "研究、引用核查、复杂论证" },
-  long_context: { label: "Long context", detail: "长文档与大上下文分析" },
-  vision: { label: "Vision", detail: "图片输入与视觉问答" },
-  agent_tools: {
-    label: "Agent tools",
-    detail: "需要模型主动调用 Iris 工具的任务",
-  },
-};
-
-const REASONING_LABELS: Record<ReasoningMode, string> = {
-  off: "关闭",
-  on: "开启",
-  auto: "自动",
-  minimal: "极简",
-  low: "低",
-  medium: "中",
-  high: "高",
-  xhigh: "极高",
-};
-
 const REASONING_STRENGTH_OPTIONS: ReasoningMode[] = [
   "off",
   "auto",
@@ -177,16 +146,6 @@ const REASONING_EFFORT_OPTIONS: ReasoningMode[] = [
 ];
 
 const REASONING_SWITCH_OPTIONS: ReasoningMode[] = ["off", "on", "auto"];
-const REASONING_SWITCH_VALUES = ["off", "on", "auto"] as const;
-
-type ReasoningSwitchValue = (typeof REASONING_SWITCH_VALUES)[number];
-
-const REASONING_SWITCH_LABELS: Record<ReasoningSwitchValue, string> = {
-  off: "关闭",
-  on: "开启",
-  auto: "自动",
-};
-
 const UNSUPPORTED_REASONING_CAPABILITY: ReasoningUiCapability = {
   supported: false,
   control: "none",
@@ -205,7 +164,6 @@ interface VisibleProvider {
   id: string;
   name: string;
   enabledModels: string[];
-  usedSlots: string[];
   configured: boolean;
   custom: boolean;
   endpointManaged: "builtin" | "custom";
@@ -252,6 +210,10 @@ function registryKey(providerId: string, modelId: string): string {
   return `${providerId}:${modelId}`;
 }
 
+function modelReferenceValue(providerId: string, modelId: string): string {
+  return JSON.stringify([providerId, modelId]);
+}
+
 function findModelCatalogForProvider(
   catalog: ModelCatalogEntry[] | undefined,
   providerId: string,
@@ -272,36 +234,11 @@ function textValidatedModel(model: EnabledProviderModel): boolean {
   );
 }
 
-function modelSupportsSlot(
-  model: EnabledProviderModel,
-  slot: CapabilitySlot,
-): boolean {
-  if (slot === "vision") {
-    // Live probe results (real timestamps, not the "built_in" catalog sentinel)
-    // are authoritative — they reflect actual API capability, not static defaults.
-    const probeTimestamp = model.registry?.visionVerifiedAt;
-    if (probeTimestamp && probeTimestamp !== "built_in") return true;
-    // Catalog is fallback when no live probe exists.
-    if (model.catalog) return model.catalog.supportsVision;
-    // "built_in" sentinel (backward compatibility) or no data at all.
-    return Boolean(probeTimestamp);
-  }
-  if (slot === "agent_tools") {
-    return Boolean(model.catalog?.supportsTools);
-  }
-  if (
-    slot === "fast" ||
-    slot === "writer" ||
-    slot === "reasoner" ||
-    slot === "long_context"
-  ) {
-    return textValidatedModel(model);
-  }
-  return false;
-}
-
-function slotSupportsReasoning(slot: CapabilitySlot): boolean {
-  return slot !== "vision" && slot !== "agent_tools";
+function modelSupportsVision(model: EnabledProviderModel): boolean {
+  const probeTimestamp = model.registry?.visionVerifiedAt;
+  if (probeTimestamp && probeTimestamp !== "built_in") return true;
+  if (model.catalog) return model.catalog.supportsVision;
+  return Boolean(probeTimestamp);
 }
 
 function modelCapabilitySummary(
@@ -312,7 +249,7 @@ function modelCapabilitySummary(
   if (result) return result.message;
   const textReady = textValidatedModel(model);
   if (!textReady) return "未验证";
-  const visionReady = modelSupportsSlot(model, "vision");
+  const visionReady = modelSupportsVision(model);
   // When a live probe confirmed vision but the catalog disagrees,
   // surface the probe result with a clarifying label.
   const probeVision =
@@ -326,13 +263,6 @@ function modelCapabilitySummary(
     : "视觉不支持";
   const base = `文本可用 · ${visionLabel}`;
   return `${base} · ${reasoningSummary}`;
-}
-
-function normalizeReasoningSlot(
-  route: Pick<SlotRoute, "thinking" | "reasoning"> | undefined,
-): ReasoningSlotConfig {
-  if (route?.reasoning?.mode) return route.reasoning;
-  return { mode: route?.thinking ? "auto" : "off" };
 }
 
 function modelLooksTagReasoningRisk(
@@ -584,89 +514,6 @@ function reasoningCapabilitySummary(capability: ReasoningUiCapability): string {
   return `推理可用（${detail}，${source}）`;
 }
 
-function reasoningSwitchOptionsForModel(
-  capability: ReasoningUiCapability,
-): ReasoningSwitchValue[] {
-  if (!capability.supported) return ["off"];
-  return [...REASONING_SWITCH_VALUES];
-}
-
-function reasoningStrengthOptionsForModel(
-  capability: ReasoningUiCapability,
-): ReasoningMode[] {
-  if (!capability.supported) return [];
-  if (
-    capability.control !== "effort" &&
-    capability.control !== "budget" &&
-    capability.control !== "level"
-  ) {
-    return [];
-  }
-  return reasoningOptionsForCapability(capability).filter(
-    (mode) => mode !== "off",
-  );
-}
-
-function reasoningModeHasStrengthControl(
-  capability: ReasoningUiCapability,
-): boolean {
-  return (
-    capability.control === "effort" ||
-    capability.control === "budget" ||
-    capability.control === "level"
-  );
-}
-
-function reasoningSwitchValueForMode(
-  mode: ReasoningMode,
-): ReasoningSwitchValue {
-  if (mode === "off") return "off";
-  if (mode === "auto") return "auto";
-  return "on";
-}
-
-function defaultStrengthModeForCapability(
-  capability: ReasoningUiCapability,
-): ReasoningMode {
-  const strengthOptions = reasoningStrengthOptionsForModel(capability);
-  if (
-    capability.defaultMode !== "off" &&
-    capability.defaultMode !== "auto" &&
-    strengthOptions.includes(capability.defaultMode)
-  ) {
-    return capability.defaultMode;
-  }
-  const firstExplicit = strengthOptions.find((mode) => mode !== "auto");
-  return firstExplicit ?? (strengthOptions.includes("auto") ? "auto" : "off");
-}
-
-function reasoningModeForSwitchValue(
-  value: ReasoningSwitchValue,
-  capability: ReasoningUiCapability,
-  currentMode: ReasoningMode,
-): ReasoningMode {
-  if (value === "off") return "off";
-  if (value === "auto") return "auto";
-  if (!capability.supported || capability.source === "unknown") return "auto";
-  if (!reasoningModeHasStrengthControl(capability)) {
-    return capability.defaultMode === "off" ? "auto" : capability.defaultMode;
-  }
-  if (currentMode !== "off" && currentMode !== "auto") return currentMode;
-  return defaultStrengthModeForCapability(capability);
-}
-
-function reasoningLabelForModel(
-  mode: ReasoningMode,
-  providerId: string,
-  modelId: string,
-): string {
-  if (modelLooksDeepSeekReasoning(providerId, modelId)) {
-    if (mode === "high") return "High";
-    if (mode === "xhigh") return "Max";
-  }
-  return REASONING_LABELS[mode];
-}
-
 export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   const [data, setData] = useState<LlmConfigGetResponse | null>(null);
   const [routing, setRouting] = useState<LlmRoutingConfig | null>(null);
@@ -824,17 +671,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     for (const [id, provider] of Object.entries(normalized.providers)) {
       providers[id] = sanitizeProviderOverride(provider, id);
     }
-    const slots: LlmRoutingConfig["slots"] = {};
-    for (const slot of CAPABILITY_SLOTS) {
-      const route = normalized.slots[slot];
-      if (!route?.providerId || !route.model) continue;
-      slots[slot] = route;
-    }
     return {
       ...normalized,
       providers,
-      slots,
-      contextStrategy: normalized.contextStrategy,
+      defaultModel: normalized.defaultModel ?? null,
     };
   };
 
@@ -1076,29 +916,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     }
   };
 
-  const updateSlot = (
-    slot: CapabilitySlot,
-    patch: Partial<{
-      providerId: string;
-      model: string;
-      thinking: boolean;
-      reasoning: ReasoningSlotConfig;
-    }>,
-  ) => {
-    if (!routing) return;
-    const current = routing.slots[slot];
-    if (!current && (!patch.providerId || !patch.model)) return;
-    const nextRoute = { ...current, ...patch };
-    const nextSlots: LlmRoutingConfig["slots"] = {
-      ...routing.slots,
-      [slot]: nextRoute as SlotRoute,
-    };
-    applyRouting({
-      ...routing,
-      slots: nextSlots,
-    });
-  };
-
   const saveRouting = async () => {
     if (!routing) return;
     setSaving(true);
@@ -1108,7 +925,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       await llmConfigSet(sanitized);
       applyRouting(sanitized);
       setLoadError(null);
-      setMessage("能力槽路由已保存");
+      setMessage("模型池设置已保存");
       notifyLlmConfigChanged();
     } finally {
       setSaving(false);
@@ -1132,28 +949,11 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     }));
   };
 
-  const isProviderConfiguredForRouting = (providerId: string): boolean => {
-    const override = routing?.providers[providerId];
-    return Boolean(
-      (override && override?.enabledModels?.length) ||
-      override?.defaultModel?.trim(),
-    );
-  };
-
-  const modelsForSlot = (
-    slot: CapabilitySlot,
-    providerId: string,
-  ): EnabledProviderModel[] =>
-    enabledModelsForProvider(providerId).filter((model) =>
-      modelSupportsSlot(model, slot),
-    );
-
   const reasoningCapabilityForModel = (
-    slot: CapabilitySlot,
     providerId: string,
     modelId: string,
   ): ReasoningUiCapability => {
-    if (slot === "vision" || !providerId || !modelId) {
+    if (!providerId || !modelId) {
       return UNSUPPORTED_REASONING_CAPABILITY;
     }
     const override =
@@ -1219,49 +1019,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     );
   };
 
-  const reasoningOptionsForModel = (
-    slot: CapabilitySlot,
-    providerId: string,
-    modelId: string,
-  ): ReasoningMode[] => {
-    const capability = reasoningCapabilityForModel(slot, providerId, modelId);
-    if (capability.source === "unknown") return REASONING_SWITCH_OPTIONS;
-    if (!capability.supported) return ["off"];
-    const strengthOptions = reasoningStrengthOptionsForModel(capability);
-    if (strengthOptions.length === 0) return REASONING_SWITCH_OPTIONS;
-    return Array.from(
-      new Set([...REASONING_SWITCH_OPTIONS, ...strengthOptions]),
-    );
-  };
-
-  const clampReasoningForModel = (
-    slot: CapabilitySlot,
-    providerId: string,
-    modelId: string,
-    current?: ReasoningSlotConfig,
-  ): ReasoningSlotConfig => {
-    const options = reasoningOptionsForModel(slot, providerId, modelId);
-    if (options.length === 0) return { mode: "off" };
-    const capability = reasoningCapabilityForModel(slot, providerId, modelId);
-    const mode = current?.mode ?? capability.defaultMode;
-    return {
-      mode: options.includes(mode) ? mode : capability.defaultMode,
-    };
-  };
-
-  const providersForSlot = (slot: CapabilitySlot): VisibleProvider[] =>
-    visibleProviders.filter(
-      (provider) =>
-        isProviderConfiguredForRouting(provider.id) &&
-        modelsForSlot(slot, provider.id).length > 0,
-    );
-
-  const modelUsageLabels = (providerId: string, modelId: string) =>
-    USER_CONFIGURABLE_CAPABILITY_SLOTS.filter((slot) => {
-      const route = routing?.slots[slot];
-      return route?.providerId === providerId && route.model === modelId;
-    }).map((slot) => SLOT_META[slot].label);
-
   const addProviderModel = (providerId: string) => {
     if (!routing) return;
     const additions = parseModelIds(newModelInputs[providerId] ?? "");
@@ -1278,21 +1035,18 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
 
   const removeProviderModel = (providerId: string, modelId: string) => {
     if (!routing) return;
-    const usage = modelUsageLabels(providerId, modelId);
-    if (usage.length > 0) {
-      setMessage(
-        `模型 ${modelId} 正在用于 ${usage.join(" / ")}，请先调整路由。`,
-      );
+    if (
+      routing.defaultModel?.providerId === providerId &&
+      routing.defaultModel.modelId === modelId
+    ) {
+      setMessage(`模型 ${modelId} 是当前默认模型，请先选择其他默认模型。`);
       return;
     }
     const enabled = enabledModelIdsForProvider(providerId);
     const nextEnabled = enabled.filter((id) => id !== modelId);
     updateProviderOverride(providerId, {
       enabledModels: nextEnabled,
-      defaultModel:
-        routing.providers[providerId]?.defaultModel === modelId
-          ? (nextEnabled[0] ?? null)
-          : routing.providers[providerId]?.defaultModel,
+      defaultModel: routing.providers[providerId]?.defaultModel,
     });
   };
 
@@ -1301,27 +1055,32 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     const configuredProviderIds = Object.keys(routing.providers);
     const providers = configuredProviderIds.map((providerId) => {
       const override = routing.providers[providerId];
-      const usedSlots = USER_CONFIGURABLE_CAPABILITY_SLOTS.filter((slot) => {
-        const route = routing.slots[slot];
-        return route?.providerId === providerId;
-      }).map((slot) => SLOT_META[slot].label);
       return {
         id: providerId,
         name: providerName(providerId),
         enabledModels: enabledModelIdsForProvider(providerId),
-        usedSlots,
         configured: Boolean(override),
         custom: isCustomProviderId(providerId),
         endpointManaged: providerInfo(providerId)?.endpointManaged ?? "custom",
       };
     });
 
-    return providers.sort((a, b) => {
-      const score = (provider: VisibleProvider) =>
-        provider.usedSlots.length > 0 ? 0 : provider.configured ? 1 : 2;
-      return score(a) - score(b) || a.name.localeCompare(b.name);
-    });
+    return providers.sort((a, b) => a.name.localeCompare(b.name));
   })();
+
+  const enabledModelReferences = visibleProviders.flatMap((provider) =>
+    provider.enabledModels.map((modelId) => ({
+      providerId: provider.id,
+      modelId,
+      label: `${provider.name} · ${modelId}`,
+    })),
+  );
+  const selectedDefaultModel = routing?.defaultModel
+    ? modelReferenceValue(
+        routing.defaultModel.providerId,
+        routing.defaultModel.modelId,
+      )
+    : "";
 
   const testProvider = async (provider: VisibleProvider) => {
     const apiKeyOverride = keyInputsRef.current[provider.id]?.trim();
@@ -1349,13 +1108,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   };
 
   const deleteProvider = async (provider: VisibleProvider) => {
-    if (provider.usedSlots.length > 0) {
-      setMessage(
-        provider.name +
-          " is used by " +
-          provider.usedSlots.join(" / ") +
-          "; adjust routing before deleting it.",
-      );
+    if (routing?.defaultModel?.providerId === provider.id) {
+      setMessage(`${provider.name} 包含当前默认模型，请先选择其他默认模型。`);
       return;
     }
     const confirmed = confirm(
@@ -1481,7 +1235,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       const reasoningFromValidation = text.message.includes("推理：")
         ? text.message.slice(text.message.indexOf("推理："))
         : reasoningCapabilitySummary(
-            reasoningCapabilityForModel("writer", provider.id, model.id),
+            reasoningCapabilityForModel(provider.id, model.id),
           );
       const message = vision.ok
         ? `文本可用 · 视觉可用 · ${reasoningFromValidation}`
@@ -1599,9 +1353,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {providerModels.length} 个已启用模型
-                      {provider.usedSlots.length > 0
-                        ? ` · 用于 ${provider.usedSlots.join(" / ")}`
-                        : ""}
                     </p>
                     {isCustomProviderId(provider.id) ? (
                       <Input
@@ -1767,14 +1518,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                       providerModels.map((model) => {
                         const key = registryKey(provider.id, model.id);
                         const result = testResults[key];
-                        const usage = modelUsageLabels(provider.id, model.id);
                         const modelTesting = testing === key;
                         const reasoningSummary = reasoningCapabilitySummary(
-                          reasoningCapabilityForModel(
-                            "writer",
-                            provider.id,
-                            model.id,
-                          ),
+                          reasoningCapabilityForModel(provider.id, model.id),
                         );
                         const summary = modelCapabilitySummary(
                           model,
@@ -1795,11 +1541,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                                   {model.catalog?.displayName ? (
                                     <span className="block truncate text-[11px] text-muted-foreground">
                                       {model.catalog.displayName}
-                                    </span>
-                                  ) : null}
-                                  {usage.length > 0 ? (
-                                    <span className="block text-[11px] text-muted-foreground">
-                                      用于 {usage.join(" / ")}
                                     </span>
                                   ) : null}
                                 </span>
@@ -1854,248 +1595,55 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         )}
       </section>
 
-      <section className="space-y-2" data-section="llm-capability-routing">
+      <section className="space-y-2" data-section="llm-model-pool">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-medium text-muted-foreground">
-            能力槽模型路由
+            模型池与默认模型
           </p>
         </div>
-
-        <div className="space-y-2">
-          {USER_CONFIGURABLE_CAPABILITY_SLOTS.map((slot) => {
-            const route = routing.slots[slot];
-            const supportsReasoning = slotSupportsReasoning(slot);
-            const routeProviderOptions = providersForSlot(slot);
-            const routeProviderIds = routeProviderOptions.map(
-              (provider) => provider.id,
-            );
-            const providerId =
-              route && routeProviderIds.includes(route.providerId)
-                ? route.providerId
-                : "";
-            const routeProviderInvalid =
-              Boolean(route?.providerId) && route?.providerId !== providerId;
-            const models = providerId ? modelsForSlot(slot, providerId) : [];
-            const modelIds = models.map((model) => model.id);
-            const selectedModel =
-              route && modelIds.includes(route.model) ? route.model : "";
-            const routeModelInvalid =
-              Boolean(route?.model) && route?.model !== selectedModel;
-            const reasoningCapability =
-              supportsReasoning && providerId && selectedModel
-                ? reasoningCapabilityForModel(slot, providerId, selectedModel)
-                : UNSUPPORTED_REASONING_CAPABILITY;
-            const selectedReasoning = clampReasoningForModel(
-              slot,
-              providerId,
-              selectedModel,
-              normalizeReasoningSlot(route),
-            ).mode;
-            const reasoningSwitchOptions = supportsReasoning
-              ? reasoningSwitchOptionsForModel(reasoningCapability)
-              : [];
-            const reasoningStrengthOptions = supportsReasoning
-              ? reasoningStrengthOptionsForModel(reasoningCapability)
-              : [];
-            const selectedReasoningSwitch =
-              reasoningSwitchValueForMode(selectedReasoning);
-            const selectedReasoningStrength = reasoningStrengthOptions.includes(
-              selectedReasoning,
-            )
-              ? selectedReasoning
-              : reasoningStrengthOptions.includes("auto")
-                ? "auto"
-                : (reasoningStrengthOptions[0] ?? "auto");
-            const strengthDisabled =
-              selectedReasoningSwitch === "off" ||
-              reasoningStrengthOptions.length === 0;
-            return (
-              <div
-                key={slot}
-                className="grid gap-2 rounded-md border border-border/50 bg-background/60 p-2 xl:grid-cols-[minmax(8rem,0.85fr)_1fr_1.2fr_0.8fr_0.8fr_1fr]"
-              >
-                <div className="min-w-0 self-center">
-                  <p className="text-xs font-medium text-foreground">
-                    {SLOT_META[slot].label}
-                  </p>
-                  <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    {SLOT_META[slot].detail}
-                  </p>
-                </div>
-                {routeProviderOptions.length === 0 ? (
-                  <Input
-                    className="h-8 text-xs"
-                    placeholder={
-                      slot === "vision" ? "无可用视觉模型" : "无可用供应商"
-                    }
-                    value=""
-                    disabled
-                  />
-                ) : (
-                  <Select
-                    value={providerId}
-                    onValueChange={(value) =>
-                      updateSlot(slot, {
-                        providerId: value,
-                        model: modelsForSlot(slot, value)[0]?.id ?? "",
-                        reasoning: clampReasoningForModel(
-                          slot,
-                          value,
-                          modelsForSlot(slot, value)[0]?.id ?? "",
-                        ),
-                      })
-                    }
-                  >
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue placeholder="选择供应商" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {routeProviderOptions.map((provider) => (
-                        <SelectItem key={provider.id} value={provider.id}>
-                          {provider.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                {models.length === 0 ? (
-                  <Input
-                    className="h-8 text-xs"
-                    placeholder={
-                      slot === "vision"
-                        ? "无可用视觉模型"
-                        : providerId
-                          ? "先在供应商配置中添加模型"
-                          : "先选择供应商"
-                    }
-                    value=""
-                    disabled
-                  />
-                ) : (
-                  <Select
-                    value={selectedModel}
-                    onValueChange={(value) =>
-                      updateSlot(slot, {
-                        providerId,
-                        model: value,
-                        reasoning: clampReasoningForModel(
-                          slot,
-                          providerId,
-                          value,
-                          normalizeReasoningSlot(route),
-                        ),
-                      })
-                    }
-                  >
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue placeholder="模型" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {models.map((model) => (
-                        <SelectItem key={model.id} value={model.id}>
-                          {model.id}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                {!supportsReasoning ? (
-                  <>
-                    <div className="self-center text-[11px] text-muted-foreground" />
-                    <div className="self-center text-[11px] text-muted-foreground" />
-                  </>
-                ) : reasoningSwitchOptions.length <= 1 ? (
-                  <Input
-                    aria-label={`${SLOT_META[slot].label} 推理开关`}
-                    className="h-8 text-xs"
-                    value="不支持"
-                    disabled
-                    readOnly
-                  />
-                ) : (
-                  <Select
-                    value={selectedReasoningSwitch}
-                    onValueChange={(value) =>
-                      updateSlot(slot, {
-                        providerId,
-                        model: selectedModel,
-                        reasoning: {
-                          mode: reasoningModeForSwitchValue(
-                            value as ReasoningSwitchValue,
-                            reasoningCapability,
-                            selectedReasoning,
-                          ),
-                        },
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      aria-label={`${SLOT_META[slot].label} 推理开关`}
-                      className="h-8 text-xs"
-                    >
-                      <SelectValue placeholder="推理开关" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {reasoningSwitchOptions.map((mode) => (
-                        <SelectItem key={mode} value={mode}>
-                          {REASONING_SWITCH_LABELS[mode]}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                {!supportsReasoning ? null : strengthDisabled ? (
-                  <Input
-                    aria-label={`${SLOT_META[slot].label} 推理强度`}
-                    className="h-8 text-xs"
-                    value="不可配置"
-                    disabled
-                    readOnly
-                  />
-                ) : (
-                  <Select
-                    value={selectedReasoningStrength}
-                    onValueChange={(value) =>
-                      updateSlot(slot, {
-                        providerId,
-                        model: selectedModel,
-                        reasoning: { mode: value as ReasoningMode },
-                      })
-                    }
-                  >
-                    <SelectTrigger
-                      aria-label={`${SLOT_META[slot].label} 推理强度`}
-                      className="h-8 text-xs"
-                    >
-                      <SelectValue placeholder="推理强度" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {reasoningStrengthOptions.map((mode) => (
-                        <SelectItem key={mode} value={mode}>
-                          {reasoningLabelForModel(
-                            mode,
-                            providerId,
-                            selectedModel,
-                          )}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-                <div className="self-center text-[11px] text-muted-foreground">
-                  {routeProviderInvalid || routeModelInvalid
-                    ? "当前路由不可用，请重新选择"
-                    : reasoningCapability.tagOnly
-                      ? "无强度控制"
-                      : reasoningCapability.source === "unknown" &&
-                          selectedReasoning !== "off"
-                        ? "推理未知，不发送推理参数"
-                        : ""}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <p className="text-[11px] text-muted-foreground">
+          所有已启用模型构成同一候选池。任务按文本、工具、视觉、推理和上下文预算筛选；默认模型满足条件时优先使用，否则按稳定顺序切换到其他合格模型。
+        </p>
+        {enabledModelReferences.length === 0 ? (
+          <Input
+            className="h-8 text-xs"
+            value=""
+            placeholder="先在供应商配置中添加并启用模型"
+            disabled
+          />
+        ) : (
+          <Select
+            value={selectedDefaultModel}
+            onValueChange={(value) => {
+              const parsed: unknown = JSON.parse(value);
+              if (
+                !Array.isArray(parsed) ||
+                typeof parsed[0] !== "string" ||
+                typeof parsed[1] !== "string"
+              ) {
+                return;
+              }
+              applyRouting({
+                ...routing,
+                defaultModel: { providerId: parsed[0], modelId: parsed[1] },
+              });
+            }}
+          >
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder="选择默认模型" />
+            </SelectTrigger>
+            <SelectContent>
+              {enabledModelReferences.map((model) => (
+                <SelectItem
+                  key={modelReferenceValue(model.providerId, model.modelId)}
+                  value={modelReferenceValue(model.providerId, model.modelId)}
+                >
+                  {model.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </section>
 
       <div className="flex items-center gap-2">
@@ -2105,7 +1653,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
           disabled={saving || Boolean(loadError)}
           onClick={() => void saveRouting()}
         >
-          {saving ? "保存中…" : "保存路由"}
+          {saving ? "保存中…" : "保存模型池"}
         </Button>
         {message ? (
           <span className="text-xs text-muted-foreground">{message}</span>
@@ -2307,54 +1855,25 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     };
   }
 
-  const slots: LlmRoutingConfig["slots"] = {};
-  const legacyScenes = isRecord(rawRecord.scenes) ? rawRecord.scenes : {};
-  const legacySceneToSlot: Partial<Record<CapabilitySlot, string>> = {
-    fast: "knowledge_lookup",
-    writer: "drafting_assist",
-    reasoner: "research_synthesis",
-    long_context: "exemplar_learning",
-    agent_tools: "knowledge_lookup",
-  };
-  for (const [slot, scene] of Object.entries(legacySceneToSlot)) {
-    const route = legacyScenes[scene];
-    if (!isRecord(route)) continue;
-    const row = route as unknown as SlotRoute & { provider_id?: string };
-    const providerId = row.providerId ?? row.provider_id;
-    if (!providerId || !row.model) continue;
-    slots[slot as CapabilitySlot] = {
-      providerId,
-      model: normalizePersistedModelId(row.model),
-      thinking: row.thinking ?? false,
-      reasoning: normalizeReasoningSlot(row),
-    };
-  }
-  const rawSlots = isRecord(rawRecord.slots) ? rawRecord.slots : {};
-  for (const slot of CAPABILITY_SLOTS) {
-    const route = rawSlots[slot];
-    if (!isRecord(route)) continue;
-    const row = route as unknown as SlotRoute & { provider_id?: string };
-    const providerId = row.providerId ?? row.provider_id;
-    if (!providerId || !row.model) continue;
-    slots[slot] = {
-      providerId,
-      model: normalizePersistedModelId(row.model),
-      thinking: row.thinking ?? false,
-      reasoning: normalizeReasoningSlot(row),
-    };
-  }
-
-  const contextStrategy = isRecord(rawRecord.contextStrategy)
-    ? (rawRecord.contextStrategy as LlmRoutingConfig["contextStrategy"])
-    : DEFAULT_LLM_ROUTING.contextStrategy;
+  const defaultModelRow = isRecord(rawRecord.defaultModel)
+    ? rawRecord.defaultModel
+    : isRecord(rawRecord.default_model)
+      ? rawRecord.default_model
+      : null;
+  const providerId =
+    defaultModelRow?.providerId ?? defaultModelRow?.provider_id;
+  const modelId = defaultModelRow?.modelId ?? defaultModelRow?.model_id;
+  const defaultModel =
+    typeof providerId === "string" && typeof modelId === "string"
+      ? { providerId, modelId: normalizePersistedModelId(modelId) }
+      : null;
 
   return {
     version: typeof rawRecord.version === "number" ? rawRecord.version : 1,
     schemaVersion:
-      typeof rawRecord.schemaVersion === "number" ? rawRecord.schemaVersion : 4,
+      typeof rawRecord.schemaVersion === "number" ? rawRecord.schemaVersion : 5,
     providers,
-    slots,
-    contextStrategy,
+    defaultModel,
   };
 }
 

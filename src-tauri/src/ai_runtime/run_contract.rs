@@ -261,9 +261,6 @@ pub struct AssistantRunStartRequest {
     pub(crate) explicit_action: Option<ExplicitAction>,
     /// User's Web toggle for this Run.
     pub(crate) web_enabled: bool,
-    /// Per-Run ordering preference for already-capable model candidates.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) routing_policy: Option<crate::ai_types::RoutingPolicy>,
     /// Optional provider/model override, revalidated against the Run route.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) model_override: Option<ModelOverride>,
@@ -753,6 +750,12 @@ pub(crate) enum SafeRunErrorCode {
     /// The Provider did not establish or maintain a response within the Run deadline.
     #[serde(rename = "agent_run_provider_timeout")]
     ProviderTimeout,
+    /// No enabled model satisfies the Run's hard requirements.
+    #[serde(rename = "agent_run_no_capable_model")]
+    NoCapableModel,
+    /// No selected Web evidence provider can perform the requested search.
+    #[serde(rename = "agent_run_mcp_unavailable")]
+    WebProviderUnavailable,
     /// A required persistence operation failed safely.
     #[serde(rename = "agent_run_persistence_failed")]
     PersistenceFailed,
@@ -774,6 +777,8 @@ impl SafeRunErrorCode {
             Self::ConfirmationExpired => "agent_run_confirmation_expired",
             Self::ProviderUnavailable => "agent_run_provider_unavailable",
             Self::ProviderTimeout => "agent_run_provider_timeout",
+            Self::NoCapableModel => "agent_run_no_capable_model",
+            Self::WebProviderUnavailable => "agent_run_mcp_unavailable",
             Self::PersistenceFailed => "agent_run_persistence_failed",
             Self::Cancelled => "agent_run_cancelled",
         }

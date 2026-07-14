@@ -132,6 +132,10 @@ const MIGRATION_052_UP: &str =
     include_str!("../../migrations/052_web_evidence_provider_runtime.sql");
 const MIGRATION_052_DOWN: &str =
     include_str!("../../migrations/052_web_evidence_provider_runtime.down.sql");
+const MIGRATION_053_UP: &str =
+    include_str!("../../migrations/053_remove_model_slot_capabilities.sql");
+const MIGRATION_053_DOWN: &str =
+    include_str!("../../migrations/053_remove_model_slot_capabilities.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -580,6 +584,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_052_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "053_remove_model_slot_capabilities",
+        MIGRATION_053_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -591,6 +601,11 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(
+        conn,
+        "053_remove_model_slot_capabilities",
+        MIGRATION_053_DOWN,
+    );
     rollback_migration(
         conn,
         "052_web_evidence_provider_runtime",
@@ -1128,9 +1143,9 @@ mod tests {
         conn.execute(
             "INSERT INTO llm_model_registry
              (provider_id, model_id, display_name, source, stale, first_seen_at, last_seen_at,
-              last_refreshed_at, user_confirmed_capabilities)
+              last_refreshed_at)
              VALUES ('custom', 'model-a', 'Model A', 'provider_discovered', 0,
-                     datetime('now'), datetime('now'), datetime('now'), '[]')",
+                     datetime('now'), datetime('now'), datetime('now'))",
             [],
         )
         .unwrap();

@@ -76,8 +76,6 @@ import type {
   LlmConfigTestResult,
   LlmModelRegistryRefreshResult,
   LlmRoutingConfig,
-  ModelCapabilityConfirmRequest,
-  ModelRegistryEntry,
   ModelValidationKind,
 } from "@/types/llm";
 
@@ -542,14 +540,6 @@ export async function llmModelValidate(
     modelId,
     kind,
     apiKeyOverride,
-  });
-}
-
-export async function llmModelConfirmCapability(
-  request: ModelCapabilityConfirmRequest,
-): Promise<ModelRegistryEntry> {
-  return invoke<ModelRegistryEntry>("llm_model_confirm_capability", {
-    request,
   });
 }
 

@@ -349,19 +349,6 @@ mod reasoning_request_tests {
     }
 }
 
-/// Safe, explainable model routing metadata for the Run Plan UI.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CapabilityRouteSummary {
-    pub slot: CapabilitySlot,
-    pub provider_id: String,
-    pub model: String,
-    pub fallback_chain: Vec<CapabilitySlot>,
-    pub reason: String,
-    pub probe_status: String,
-    pub degraded: bool,
-}
-
 /// Safe prompt-persona layer metadata for the Run Plan UI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1074,39 +1061,6 @@ pub struct TokenUsage {
     pub prompt_cache_miss_tokens: u32,
 }
 
-/// 能力槽位，用于 provider/model 选择。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilitySlot {
-    Fast,
-    Writer,
-    Reasoner,
-    LongContext,
-    Vision,
-    AgentTools,
-    Embedding,
-    Reranker,
-    LocalPrivate,
-}
-
-/// User-selected preference for ordering candidates that already meet hard requirements.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum RoutingPolicy {
-    /// Balance answer quality, latency, cost, and recent reliability.
-    #[default]
-    Balanced,
-    /// Prefer answer quality while retaining a reliability floor.
-    #[serde(rename = "quality", alias = "high_quality")]
-    HighQuality,
-    /// Prefer low latency while retaining a reliability floor.
-    #[serde(rename = "latency", alias = "low_latency")]
-    LowLatency,
-    /// Prefer lower cost while retaining a reliability floor.
-    #[serde(rename = "cost", alias = "low_cost")]
-    LowCost,
-}
-
 /// LLM provider configuration prepared for one immediate dispatch.
 ///
 /// Configuration stored in settings and model registries is deliberately
@@ -1118,7 +1072,6 @@ pub struct ProviderConfig {
     pub base_url: String,
     pub api_key: Option<zeroize::Zeroizing<String>>,
     pub model: String,
-    pub slot: CapabilitySlot,
     pub endpoint_family: EndpointFamily,
 }
 

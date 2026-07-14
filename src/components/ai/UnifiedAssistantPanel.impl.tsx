@@ -26,7 +26,6 @@ export function UnifiedAssistantPanel({
   runtimeDocumentCandidates = [],
   webSearch = false,
   webSearchProviderName = null,
-  routingPolicy,
   modelOverride = null,
   onInsertToEditor,
 }: UnifiedAssistantPanelProps) {
@@ -116,7 +115,6 @@ export function UnifiedAssistantPanel({
     session: runSession,
     contextReferences: bubbleSelection.contextReferences,
     webSearch,
-    routingPolicy,
     modelOverride,
     start: assistantRun.start,
     appendUserMessage,

@@ -13,7 +13,7 @@ use iris_lib::ai_runtime::retrieval_broker::{
 use iris_lib::ai_runtime::skills::{
     inject_into_prompt, SkillConfirmationStatus, SkillEntry, SkillScope,
 };
-use iris_lib::ai_runtime::{CapabilitySlot, EndpointFamily};
+use iris_lib::ai_runtime::EndpointFamily;
 use iris_lib::ai_types::AgentIntent;
 use iris_lib::indexer::chunker::chunk_markdown;
 use zeroize::Zeroizing;
@@ -54,7 +54,6 @@ fn sample_provider() -> ProviderConfig {
         base_url: "https://api.deepseek.com".to_string(),
         api_key: Some(Zeroizing::new("bench-key".to_string())),
         model: "deepseek-chat".to_string(),
-        slot: CapabilitySlot::Reasoner,
         endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
     }
 }

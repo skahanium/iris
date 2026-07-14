@@ -51,10 +51,17 @@ pub(crate) async fn execute_classified_direct_streaming_with_sink(
     let running = classified_run_mark_running(vault, session, run_id, 1)?;
     sink.emit(&running)?;
     let message = classified_run_user_message(vault, session, run_id)?;
+    let messages = [crate::ai_runtime::LlmMessage {
+        role: crate::ai_runtime::MessageRole::User,
+        content: crate::ai_types::MessageContent::Text(message),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }];
     let response = {
         let mut observer = ClassifiedStreamObserver;
         provider
-            .answer_streaming(run_id, &message, &mut observer)
+            .answer_streaming(run_id, &messages, &mut observer)
             .await
     };
     let response = match response {
@@ -164,7 +171,7 @@ mod tests {
         fn answer_streaming<'a>(
             &'a self,
             _run_id: &'a str,
-            _message: &'a str,
+            _messages: &'a [crate::ai_runtime::LlmMessage],
             _observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
         ) -> Pin<
             Box<
@@ -192,7 +199,7 @@ mod tests {
         fn answer_streaming<'a>(
             &'a self,
             _run_id: &'a str,
-            _message: &'a str,
+            _messages: &'a [crate::ai_runtime::LlmMessage],
             _observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
         ) -> Pin<
             Box<
@@ -209,7 +216,7 @@ mod tests {
         fn answer_streaming<'a>(
             &'a self,
             _run_id: &'a str,
-            _message: &'a str,
+            _messages: &'a [crate::ai_runtime::LlmMessage],
             _observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
         ) -> Pin<
             Box<

@@ -120,7 +120,7 @@ const AI_DETAIL_META: Record<
 > = {
   models: {
     label: "模型与供应商",
-    detail: "供应商凭据、诊断与能力槽模型路由。",
+    detail: "供应商凭据、模型验证与默认模型池。",
     icon: SlidersHorizontal,
   },
   "web-search": {

@@ -144,12 +144,6 @@ impl RunIntake {
                 value: None,
             });
         }
-        if let Some(policy) = request.routing_policy {
-            explicit_constraints.push(ExplicitConstraint {
-                kind: "routing_policy".into(),
-                value: Some(serde_json::to_string(&policy)?),
-            });
-        }
         if let Some(model_override) = request.model_override.as_ref() {
             explicit_constraints.push(ExplicitConstraint {
                 kind: "model_override".into(),

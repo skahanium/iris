@@ -1,16 +1,5 @@
 /** Frontend contracts for the unified, scene-free Agent Run control plane. */
 
-export type CapabilitySlot =
-  | "fast"
-  | "writer"
-  | "reasoner"
-  | "long_context"
-  | "vision"
-  | "agent_tools"
-  | "embedding"
-  | "reranker"
-  | "local_private";
-
 export type AgentPermissionAtom =
   | "vault.read"
   | "vault.search"
@@ -118,9 +107,6 @@ export type ContextMode =
   | "explicit_scope";
 export type Freshness = "offline" | "web_preferred" | "web_required";
 export type Effort = "direct" | "tool_loop" | "durable";
-/** User-facing routing preference; capability requirements remain authoritative. */
-export type AgentRoutingPolicy = "balanced" | "quality" | "latency" | "cost";
-
 /** An explicit, one-Run model choice. The backend must reject an incapable override. */
 export interface AgentModelOverride {
   providerId: string;
@@ -239,8 +225,6 @@ export interface AssistantRunStartRequest {
   };
   webEnabled: boolean;
   securityDomain: SecurityDomain;
-  /** Optional until the backend has migrated to the capability-scored router. */
-  routingPolicy?: AgentRoutingPolicy;
   /** Optional until the backend accepts an explicit one-Run model override. */
   modelOverride?: AgentModelOverride;
 }

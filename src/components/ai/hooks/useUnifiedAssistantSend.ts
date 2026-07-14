@@ -4,7 +4,6 @@ import type { ImageAttachment } from "../AiMessageList";
 import type {
   AssistantRunAccepted,
   AgentModelOverride,
-  AgentRoutingPolicy,
   AssistantRunStartRequest,
   AssistantSessionRef,
   ContextReference,
@@ -19,7 +18,6 @@ export interface UnifiedAssistantSendOptions {
   session: AssistantSessionRef | null;
   contextReferences: ContextReference[];
   webSearch: boolean;
-  routingPolicy?: AgentRoutingPolicy;
   modelOverride?: AgentModelOverride | null;
   start: (request: AssistantRunStartRequest) => Promise<AssistantRunAccepted>;
   appendUserMessage: (message: string, images?: ImageAttachment[]) => void;
@@ -59,7 +57,6 @@ export function useUnifiedAssistantSend({
   session,
   contextReferences,
   webSearch,
-  routingPolicy,
   modelOverride,
   start,
   appendUserMessage,
@@ -106,7 +103,6 @@ export function useUnifiedAssistantSend({
         explicitReferences,
         webEnabled: webSearch,
         securityDomain: aiDomain,
-        ...(routingPolicy ? { routingPolicy } : {}),
         ...(modelOverride ? { modelOverride } : {}),
       });
       setSession(accepted.session);
@@ -132,7 +128,6 @@ export function useUnifiedAssistantSend({
     input,
     isStarting,
     session,
-    routingPolicy,
     setActivityHint,
     setError,
     setImages,

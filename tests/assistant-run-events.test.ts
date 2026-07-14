@@ -49,14 +49,13 @@ function reduce(events: readonly AssistantRunEvent[]) {
 }
 
 describe("Assistant Run 前端合同", () => {
-  it("keeps routing preferences and structured run diagnostics forward-compatible", () => {
+  it("keeps model overrides and structured run diagnostics forward-compatible", () => {
     const request = {
       clientRequestId: "client-request-routing-001",
       message: "Find current MCP guidance",
       explicitReferences: [],
       webEnabled: true,
       securityDomain: "normal",
-      routingPolicy: "quality",
       modelOverride: { providerId: "openai", modelId: "gpt-5" },
     } satisfies AssistantRunStartRequest;
 
@@ -85,7 +84,7 @@ describe("Assistant Run 前端合同", () => {
       },
     ] satisfies AssistantRunEvent["payload"][];
 
-    expect(request.routingPolicy).toBe("quality");
+    expect(request.modelOverride?.modelId).toBe("gpt-5");
     expect(diagnostics).toHaveLength(3);
   });
 

@@ -39,7 +39,6 @@ pub mod guardrails;
 pub mod mcp_host_runtime;
 pub mod mcp_runtime_registry;
 pub mod model_gateway;
-pub mod model_registry;
 #[allow(dead_code)]
 pub(crate) mod normal_session_repository;
 #[cfg(test)]

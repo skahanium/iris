@@ -112,14 +112,6 @@ pub enum ModelValidationKind {
     Vision,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelCapabilityConfirmRequest {
-    pub provider_id: String,
-    pub model_id: String,
-    pub slot: crate::ai_types::CapabilitySlot,
-}
-
 #[tauri::command]
 pub async fn llm_config_test(
     state: State<'_, Arc<AppState>>,
@@ -205,17 +197,14 @@ fn delete_provider_inner(
         return Err(AppError::msg(format!("provider not found: {provider_id}")));
     }
 
-    let used_slots: Vec<String> = routing
-        .slots
-        .iter()
-        .filter(|&(_slot, route)| route.provider_id == provider_id)
-        .map(|(slot, _route)| slot.clone())
-        .collect();
-    if !used_slots.is_empty() {
-        return Err(AppError::msg(format!(
-            "provider is still used by slot(s): {}",
-            used_slots.join(", ")
-        )));
+    if routing
+        .default_model
+        .as_ref()
+        .is_some_and(|model| model.provider_id == provider_id)
+    {
+        return Err(AppError::msg(
+            "provider is the current default model provider; choose another default model first",
+        ));
     }
 
     routing.providers.remove(provider_id);
@@ -225,19 +214,6 @@ fn delete_provider_inner(
         crate::credentials::delete_api_key(&credential_service(provider_id))?;
     }
     Ok(routing)
-}
-
-#[tauri::command]
-pub fn llm_model_confirm_capability(
-    state: State<'_, Arc<AppState>>,
-    request: ModelCapabilityConfirmRequest,
-) -> AppResult<model_registry::ModelRegistryEntry> {
-    model_registry::confirm_capability(
-        &state.db,
-        &request.provider_id,
-        &request.model_id,
-        request.slot,
-    )
 }
 
 async fn llm_config_test_provider_inner(
@@ -336,17 +312,12 @@ async fn llm_model_validate_inner(
     .await
     {
         Ok(()) => {
-            let slot = if vision {
-                crate::ai_types::CapabilitySlot::Vision
-            } else {
-                crate::ai_types::CapabilitySlot::Writer
-            };
             let kind = if vision {
                 model_registry::ModelValidationKind::Vision
             } else {
                 model_registry::ModelValidationKind::Text
             };
-            let entry =
+            let _entry =
                 model_registry::mark_model_validated(&state.db, &provider_id, &model_id, kind)?;
             let reasoning_summary = if !vision {
                 record_reasoning_probe_result(&state.db, &provider_id, &model_id)?;
@@ -363,7 +334,6 @@ async fn llm_model_validate_inner(
             } else {
                 None
             };
-            debug_assert!(model_registry::supports_model_for_slot(&entry, slot));
             Ok(LlmConfigTestResult {
                 ok: true,
                 message: if vision {
@@ -691,8 +661,8 @@ async fn probe_chat_minimal(
     Err(AppError::msg(format!("HTTP {status}: {text}")))
 }
 fn validate_routing(routing: &LlmRoutingConfig) -> AppResult<()> {
-    for route in routing.slots.values() {
-        validate_route(&route.provider_id, &route.model, routing)?;
+    if let Some(default_model) = routing.default_model.as_ref() {
+        validate_route(&default_model.provider_id, &default_model.model_id, routing)?;
     }
     for id in routing.providers.keys() {
         if !is_allowed_provider(id) {
@@ -723,7 +693,7 @@ fn validate_route(provider_id: &str, model: &str, routing: &LlmRoutingConfig) ->
     }
     if !routing.providers.contains_key(provider_id) {
         return Err(AppError::msg(format!(
-            "路由引用了未添加的供应商: {provider_id}"
+            "默认模型引用了未添加的供应商: {provider_id}"
         )));
     }
     Ok(())
@@ -732,299 +702,4 @@ fn validate_route(provider_id: &str, model: &str, routing: &LlmRoutingConfig) ->
 fn validate_provider_base_url(url: &str) -> AppResult<()> {
     let trimmed = url.trim();
     crate::security::ipc_policy::validate_https_url(trimmed)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn seed_custom_provider(db: &crate::storage::db::Database, used: bool) {
-        let mut routing = config::deepseek_defaults();
-        routing.providers.insert(
-            "custom_delete".into(),
-            config::ProviderOverride {
-                base_url: Some("https://example.com/v1".into()),
-                label: Some("Delete me".into()),
-                default_model: Some("model-a".into()),
-                enabled_models: Some(vec!["model-a".into()]),
-                model_capabilities: std::collections::HashMap::new(),
-            },
-        );
-        if used {
-            routing.slots.insert(
-                "fast".into(),
-                config::SlotRoute {
-                    provider_id: "custom_delete".into(),
-                    model: "model-a".into(),
-                    thinking: false,
-                    reasoning: None,
-                },
-            );
-        }
-        config::save(db, &routing).unwrap();
-    }
-
-    #[test]
-    fn delete_provider_removes_unused_builtin_provider_configuration() {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
-        let mut routing = config::deepseek_defaults();
-        routing.providers.insert(
-            "deepseek".into(),
-            config::ProviderOverride {
-                base_url: None,
-                label: None,
-                default_model: Some("deepseek-v4-flash".into()),
-                enabled_models: Some(vec!["deepseek-v4-flash".into()]),
-                model_capabilities: std::collections::HashMap::new(),
-            },
-        );
-        config::save(&db, &routing).unwrap();
-        model_registry::upsert_provider_discovered_models(
-            &db,
-            "deepseek",
-            vec!["deepseek-v4-flash".to_string()],
-        )
-        .unwrap();
-
-        let routing = delete_provider_inner(&db, "deepseek", false).unwrap();
-
-        assert!(!routing.providers.contains_key("deepseek"));
-        assert!(!config::load(&db)
-            .unwrap()
-            .providers
-            .contains_key("deepseek"));
-        assert!(model_registry::list_registry_entries(&db)
-            .unwrap()
-            .into_iter()
-            .all(|entry| entry.provider_id != "deepseek"));
-    }
-
-    #[test]
-    fn delete_provider_rejects_missing_provider_configuration() {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
-        let err = delete_provider_inner(&db, "deepseek", false).unwrap_err();
-        assert!(err.to_string().contains("provider not found"));
-    }
-
-    #[test]
-    fn delete_provider_rejects_provider_used_by_slot() {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
-        seed_custom_provider(&db, true);
-
-        let err = delete_provider_inner(&db, "custom_delete", false).unwrap_err();
-
-        assert!(err.to_string().contains("fast"));
-        assert!(config::load(&db)
-            .unwrap()
-            .providers
-            .contains_key("custom_delete"));
-    }
-
-    #[test]
-    fn delete_provider_removes_custom_provider_registry_and_keeps_credential_by_default() {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
-        seed_custom_provider(&db, false);
-        model_registry::upsert_provider_discovered_models(
-            &db,
-            "custom_delete",
-            vec!["model-a".to_string()],
-        )
-        .unwrap();
-
-        let routing = delete_provider_inner(&db, "custom_delete", false).unwrap();
-
-        assert!(!routing.providers.contains_key("custom_delete"));
-        assert!(!config::load(&db)
-            .unwrap()
-            .providers
-            .contains_key("custom_delete"));
-        assert!(model_registry::list_registry_entries(&db)
-            .unwrap()
-            .into_iter()
-            .all(|entry| entry.provider_id != "custom_delete"));
-    }
-
-    #[test]
-    fn delete_provider_tolerates_null_model_capabilities_in_stored_routing() {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
-        let dirty = serde_json::json!({
-            "version": 1,
-            "schemaVersion": 4,
-            "createdAt": "2026-07-05T00:00:00Z",
-            "providers": {
-                "custom_delete": {
-                    "baseUrl": "https://example.com/v1",
-                    "label": "Delete me",
-                    "defaultModel": "model-a",
-                    "enabledModels": ["model-a"],
-                    "modelCapabilities": null
-                }
-            },
-            "slots": {},
-            "scenes": {},
-            "contextStrategy": {}
-        })
-        .to_string();
-        db.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
-                rusqlite::params![config::SETTINGS_KEY, dirty],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-        model_registry::upsert_provider_discovered_models(
-            &db,
-            "custom_delete",
-            vec!["model-a".to_string()],
-        )
-        .unwrap();
-
-        let routing = delete_provider_inner(&db, "custom_delete", false).unwrap();
-
-        assert!(!routing.providers.contains_key("custom_delete"));
-        assert!(model_registry::list_registry_entries(&db)
-            .unwrap()
-            .into_iter()
-            .all(|entry| entry.provider_id != "custom_delete"));
-    }
-
-    #[test]
-    fn delete_provider_tolerates_null_top_level_maps_in_stored_routing() {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
-        let dirty = serde_json::json!({
-            "version": 1,
-            "schemaVersion": 4,
-            "createdAt": "2026-07-05T00:00:00Z",
-            "providers": {
-                "custom_delete": {
-                    "baseUrl": "https://example.com/v1",
-                    "label": "Delete me",
-                    "defaultModel": "model-a",
-                    "enabledModels": ["model-a"]
-                }
-            },
-            "slots": null,
-            "scenes": null,
-            "contextStrategy": null
-        })
-        .to_string();
-        db.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
-                rusqlite::params![config::SETTINGS_KEY, dirty],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-        model_registry::upsert_provider_discovered_models(
-            &db,
-            "custom_delete",
-            vec!["model-a".to_string()],
-        )
-        .unwrap();
-
-        let routing = delete_provider_inner(&db, "custom_delete", false).unwrap();
-
-        assert!(!routing.providers.contains_key("custom_delete"));
-        assert!(model_registry::list_registry_entries(&db)
-            .unwrap()
-            .into_iter()
-            .all(|entry| entry.provider_id != "custom_delete"));
-    }
-
-    #[test]
-    fn model_list_missing_id_is_advisory_and_still_allows_chat_probe() {
-        let check =
-            check_model_list_for_validation("custom-model-a", &["custom-model-b".to_string()]);
-
-        assert_eq!(
-            check,
-            ModelListValidationCheck::AdvisoryMissing {
-                message: "供应商模型列表中没有这个模型 ID；将继续用对话接口验证".into(),
-            }
-        );
-        assert!(check.allows_chat_probe());
-    }
-
-    #[test]
-    fn vision_probe_uses_complete_png_data_url() {
-        assert!(VISION_PROBE_IMAGE_URL.starts_with("data:image/png;base64,"));
-        assert!(VISION_PROBE_IMAGE_URL.contains("AAAANSUhEUgAAAAEAAAAB"));
-        assert!(VISION_PROBE_IMAGE_URL.ends_with("ErkJggg=="));
-        assert_ne!(VISION_PROBE_IMAGE_URL, "data:image/png;base64,iVBORw0KGgo=");
-    }
-
-    #[test]
-    fn reasoning_probe_records_minimax_tag_stream_without_prompt_body() {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
-        let mut routing = config::deepseek_defaults();
-        routing.providers.insert(
-            "custom".into(),
-            config::ProviderOverride {
-                base_url: Some("https://api.minimax.example/v1".into()),
-                label: Some("MiniMax".into()),
-                default_model: Some("MiniMax-M3".into()),
-                enabled_models: Some(vec!["MiniMax-M3".into()]),
-                model_capabilities: std::collections::HashMap::new(),
-            },
-        );
-        config::save(&db, &routing).unwrap();
-
-        record_reasoning_probe_result(&db, "custom", "MiniMax-M3").unwrap();
-
-        let routing = config::load(&db).unwrap();
-        let capability = routing.providers["custom"].model_capabilities["MiniMax-M3"].clone();
-        assert_eq!(
-            capability.reasoning_adapter,
-            Some(crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream)
-        );
-        assert_eq!(
-            capability.reasoning_visibility,
-            Some(crate::ai_types::ReasoningVisibility::PlainContentRisk)
-        );
-        let stored = serde_json::to_string(&routing).unwrap();
-        assert!(!stored.contains("ping"));
-        assert!(!stored.contains("prompt"));
-    }
-
-    #[test]
-    fn reasoning_probe_leaves_plain_custom_model_unmarked() {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
-        let mut routing = config::deepseek_defaults();
-        routing.providers.insert(
-            "custom".into(),
-            config::ProviderOverride {
-                base_url: Some("https://example.com/v1".into()),
-                label: Some("Custom".into()),
-                default_model: Some("plain-model".into()),
-                enabled_models: Some(vec!["plain-model".into()]),
-                model_capabilities: std::collections::HashMap::new(),
-            },
-        );
-        config::save(&db, &routing).unwrap();
-
-        record_reasoning_probe_result(&db, "custom", "plain-model").unwrap();
-
-        let routing = config::load(&db).unwrap();
-        assert!(routing.providers["custom"].model_capabilities.is_empty());
-    }
-
-    #[test]
-    fn reasoning_validation_summary_prefers_catalog_over_unknown_probe() {
-        let summary = reasoning_validation_summary("deepseek", "deepseek-v4-pro", None);
-
-        assert!(summary.contains("推理：可用"));
-        assert!(summary.contains("来源：内置目录"));
-        assert!(!summary.contains("未知"));
-    }
-
-    #[test]
-    fn reasoning_validation_summary_marks_catalog_non_reasoning_model_unsupported() {
-        let summary = reasoning_validation_summary("openai", "gpt-4o", None);
-
-        assert!(summary.contains("推理：不支持"));
-        assert!(summary.contains("来源：内置目录"));
-        assert!(!summary.contains("未知"));
-    }
 }

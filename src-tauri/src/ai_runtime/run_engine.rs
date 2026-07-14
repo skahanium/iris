@@ -10,12 +10,12 @@ use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunEventInput, FinalizeRunInput,
 };
 use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
+use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
-use crate::{ai_runtime::direct_provider_route::DirectProviderRoute, ai_types::EndpointFamily};
 
 /// Provider adapter contract for one direct, normal-domain answer.
 pub(crate) trait DirectAnswerProvider {
@@ -29,7 +29,7 @@ pub(crate) trait StreamingDirectAnswerProvider: Send + Sync {
     fn answer_streaming<'a>(
         &'a self,
         run_id: &'a str,
-        message: &'a str,
+        messages: &'a [crate::ai_runtime::LlmMessage],
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
         Box<
@@ -90,7 +90,7 @@ impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider
     fn answer_streaming<'a>(
         &'a self,
         run_id: &'a str,
-        message: &'a str,
+        messages: &'a [crate::ai_runtime::LlmMessage],
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
         Box<
@@ -99,7 +99,14 @@ impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider
                 + 'a,
         >,
     > {
-        let request = direct_gateway_request(self.provider.clone(), message, self.max_tokens);
+        let request = gateway_request_for_messages(
+            self.provider.clone(),
+            messages.to_vec(),
+            &[],
+            self.max_tokens,
+            self.thinking,
+            self.reasoning,
+        );
         Box::pin(async move {
             self.gateway
                 .send_streaming_request_to_observer(run_id, request, observer)
@@ -142,7 +149,7 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
 /// It owns no credential beyond the one candidate currently being dispatched.
 pub(crate) struct FailoverStreamingDirectAnswerProvider<'a> {
     route: DirectProviderRoute,
-    endpoint_family: EndpointFamily,
+    requirements: crate::ai_runtime::provider_router::ProviderRequirements,
     app_handle: AppHandle,
     db: &'a Database,
     session: &'a AssistantSessionRef,
@@ -152,7 +159,7 @@ pub(crate) struct FailoverStreamingDirectAnswerProvider<'a> {
 impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
     pub(crate) fn new(
         route: DirectProviderRoute,
-        endpoint_family: EndpointFamily,
+        requirements: crate::ai_runtime::provider_router::ProviderRequirements,
         app_handle: AppHandle,
         db: &'a Database,
         session: &'a AssistantSessionRef,
@@ -160,7 +167,7 @@ impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
     ) -> Self {
         Self {
             route,
-            endpoint_family,
+            requirements,
             app_handle,
             db,
             session,
@@ -173,7 +180,7 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
     fn answer_streaming<'a>(
         &'a self,
         run_id: &'a str,
-        message: &'a str,
+        messages: &'a [crate::ai_runtime::LlmMessage],
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
         Box<
@@ -187,34 +194,30 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
             loop {
                 let dispatch = self
                     .route
-                    .hydrate_selected_text_streaming_no_tools_as_fast_dispatch(
-                        self.endpoint_family,
-                        selected_index,
-                    )?;
+                    .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
                 let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
                     self.app_handle.clone(),
                     vec![dispatch.provider.clone()],
                 )?;
-                let provider = ModelGatewayStreamingDirectAnswerProvider::new(
-                    &gateway,
-                    dispatch.provider,
-                    dispatch.max_output_tokens,
-                )?;
-                match provider.answer_streaming(run_id, message, observer).await {
+                let provider =
+                    ModelGatewayStreamingDirectAnswerProvider::from_dispatch(&gateway, dispatch)?;
+                match provider.answer_streaming(run_id, messages, observer).await {
                     Ok(response) => return Ok(response),
                     Err(error) => {
                         let failure = classify_failover_failure(&error);
-                        let Some(next_index) = self.route.next_selected_index_after(
-                            self.endpoint_family,
-                            selected_index,
-                            failure,
-                        ) else {
+                        let Some(next_index) =
+                            self.route.next_selected_index_after_for_requirements(
+                                self.requirements,
+                                selected_index,
+                                failure,
+                            )
+                        else {
                             return Err(error);
                         };
                         let provider_id = self
                             .route
-                            .selected_provider_id(self.endpoint_family, next_index)
-                            .ok_or_else(|| AppError::msg("agent_run_provider_unavailable"))?;
+                            .selected_provider_id_for_requirements(self.requirements, next_index)
+                            .ok_or_else(|| AppError::msg("agent_run_no_capable_model"))?;
                         let snapshot = AgentRunRepository::get_for_session(
                             self.db,
                             &self.session.session_key,
@@ -293,10 +296,7 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
             loop {
                 let dispatch = self
                     .route
-                    .hydrate_selected_streaming_dispatch_for_configured_policy(
-                        self.requirements,
-                        selected_index,
-                    )?;
+                    .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
                 let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
                     self.app_handle.clone(),
                     vec![dispatch.provider.clone()],
@@ -313,7 +313,6 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                         let Some(next_index) =
                             self.route.next_selected_index_after_for_requirements(
                                 self.requirements,
-                                self.route.routing_policy(),
                                 selected_index,
                                 failure,
                             )
@@ -322,11 +321,7 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                         };
                         let provider_id = self
                             .route
-                            .selected_provider_id_for_requirements(
-                                self.requirements,
-                                self.route.routing_policy(),
-                                next_index,
-                            )
+                            .selected_provider_id_for_requirements(self.requirements, next_index)
                             .ok_or_else(|| AppError::msg("agent_run_no_capable_model"))?;
                         let snapshot = AgentRunRepository::get_for_session(
                             self.db,
@@ -828,11 +823,12 @@ impl RunEngine {
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         let message = user_message_for_run(db, &session.session_key, run_id)?;
-        Self::execute_direct_streaming_with_message_and_sink(
+        let messages = [direct_user_message(&message)];
+        Self::execute_direct_streaming_with_messages_and_sink(
             db,
             session,
             run_id,
-            &message,
+            &messages,
             &[],
             None,
             provider,
@@ -872,11 +868,12 @@ impl RunEngine {
         provider: &impl StreamingDirectAnswerProvider,
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
-        Self::execute_direct_streaming_with_message_and_sink(
+        let messages = [direct_user_message(prompt)];
+        Self::execute_direct_streaming_with_messages_and_sink(
             db,
             session,
             run_id,
-            prompt,
+            &messages,
             evidence_ids,
             None,
             provider,
@@ -897,11 +894,37 @@ impl RunEngine {
         provider: &impl StreamingDirectAnswerProvider,
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
-        Self::execute_direct_streaming_with_message_and_sink(
+        let messages = [direct_user_message(prompt)];
+        Self::execute_direct_streaming_with_messages_and_sink(
             db,
             session,
             run_id,
-            prompt,
+            &messages,
+            evidence_ids,
+            Some(domain_plan),
+            provider,
+            sink,
+        )
+        .await
+    }
+
+    /// Drive a streaming Run with multimodal messages and a stateless domain verification gate.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        messages: &[crate::ai_runtime::LlmMessage],
+        evidence_ids: &[i64],
+        domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
+        provider: &impl StreamingDirectAnswerProvider,
+        sink: &impl RunEventSink,
+    ) -> AppResult<()> {
+        Self::execute_direct_streaming_with_messages_and_sink(
+            db,
+            session,
+            run_id,
+            messages,
             evidence_ids,
             Some(domain_plan),
             provider,
@@ -1060,11 +1083,11 @@ impl RunEngine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn execute_direct_streaming_with_message_and_sink(
+    async fn execute_direct_streaming_with_messages_and_sink(
         db: &Database,
         session: &AssistantSessionRef,
         run_id: &str,
-        message: &str,
+        messages: &[crate::ai_runtime::LlmMessage],
         evidence_ids: &[i64],
         domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
         provider: &impl StreamingDirectAnswerProvider,
@@ -1119,7 +1142,7 @@ impl RunEngine {
             defer_visible_deltas,
         );
         let response = provider
-            .answer_streaming(run_id, message, &mut observer)
+            .answer_streaming(run_id, messages, &mut observer)
             .await;
         let response = match response {
             Ok(response) => response,
@@ -1200,10 +1223,26 @@ impl RunEngine {
     }
 }
 
+fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessage {
+    crate::ai_runtime::LlmMessage {
+        role: crate::ai_runtime::MessageRole::User,
+        content: crate::ai_types::MessageContent::Text(content.to_string()),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }
+}
+
 fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
     match code {
         SafeRunErrorCode::ProviderUnavailable => "模型服务暂时不可用，请稍后重试",
         SafeRunErrorCode::ProviderTimeout => "模型服务响应超时，请稍后重试",
+        SafeRunErrorCode::NoCapableModel => {
+            "没有已启用模型满足当前任务所需能力，请在模型设置中启用兼容模型"
+        }
+        SafeRunErrorCode::WebProviderUnavailable => {
+            "未配置可用的联网证据提供方，请在联网与证据中完成配置"
+        }
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
         SafeRunErrorCode::PermissionDenied => "当前请求不具备执行权限",
         SafeRunErrorCode::Cancelled => "运行已取消",

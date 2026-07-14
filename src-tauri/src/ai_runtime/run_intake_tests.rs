@@ -21,7 +21,6 @@ fn request() -> AssistantRunStartRequest {
         explicit_references: vec![],
         explicit_action: None,
         web_enabled: false,
-        routing_policy: None,
         model_override: None,
         security_domain: SecurityDomain::Normal,
     }

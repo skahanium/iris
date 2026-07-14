@@ -189,7 +189,6 @@ pub fn run() {
             commands::llm_config_commands::llm_config_test_provider,
             commands::llm_config_commands::llm_model_registry_refresh,
             commands::llm_config_commands::llm_model_validate,
-            commands::llm_config_commands::llm_model_confirm_capability,
             commands::graph::graph_data,
             commands::version::version_list_cmd,
             commands::version::version_preview_cmd,
