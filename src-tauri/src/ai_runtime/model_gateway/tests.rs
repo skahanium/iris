@@ -21,6 +21,14 @@ fn invalid_provider_json_uses_safe_error_code_without_response_preview() {
 }
 
 #[test]
+fn run_owned_observer_streams_are_always_sanitized_before_becoming_visible() {
+    assert_eq!(
+        super::run_observer_stream_surface(),
+        StreamSurface::VisibleAnswerSanitized
+    );
+}
+
+#[test]
 fn failover_selects_next_model_pool_candidate_for_provider_level_failure() {
     let primary = test_provider("primary");
     let backup = test_provider("backup");

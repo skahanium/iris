@@ -3,6 +3,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use super::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
 use super::domain_executor::{AuthorizedDomainMaterial, DomainExecutor, DomainMaterialRole};
 use super::policy_decision_engine::RunPolicyDecision;
 use super::run_contract::CapabilityId;
@@ -22,7 +23,9 @@ use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEvent
 use crate::ai_runtime::model_gateway::{
     StreamEvent, StreamEventData, StreamEventObserver, StreamEventType, StreamSurface,
 };
-use crate::ai_types::{EndpointFamily, MessageRole, ProviderConfig};
+use crate::ai_types::{
+    EndpointFamily, MessageRole, ProviderConfig, ToolCall, ToolCallResult, ToolSpec,
+};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -34,6 +37,11 @@ struct MockProvider {
 struct MockStreamingProvider {
     calls: AtomicU32,
     failure: Option<&'static str>,
+}
+
+struct CapturingStreamingProvider {
+    calls: AtomicU32,
+    messages: std::sync::Mutex<Vec<crate::ai_runtime::LlmMessage>>,
 }
 
 #[derive(Default)]
@@ -98,6 +106,152 @@ impl StreamingDirectAnswerProvider for MockStreamingProvider {
                 reasoning_content: None,
             })
         })
+    }
+}
+
+impl StreamingDirectAnswerProvider for CapturingStreamingProvider {
+    fn answer_streaming<'a>(
+        &'a self,
+        _run_id: &'a str,
+        messages: &'a [crate::ai_runtime::LlmMessage],
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.messages
+            .lock()
+            .expect("captured messages lock")
+            .extend_from_slice(messages);
+        Box::pin(async {
+            Ok(crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("证据后的最终答复".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+            })
+        })
+    }
+}
+
+struct MetaAnalysisStreamingProvider;
+
+struct NormalAnswerStreamingProvider;
+
+struct MetaAnalysisToolLoopProvider;
+
+struct UnusedToolLoopExecutor;
+
+impl StreamingDirectAnswerProvider for MetaAnalysisStreamingProvider {
+    fn answer_streaming<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _messages: &'a [crate::ai_runtime::LlmMessage],
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            let meta = format!(
+                "The user is asking for current sports information. {}",
+                "I should inspect the system instructions before answering. ".repeat(12)
+            );
+            Ok(crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some(format!(
+                    "{meta}\n\nThe system prompt requires verified evidence before a final response.\n\n这是基于联网证据的最终答复。"
+                )),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+            })
+        })
+    }
+}
+
+impl StreamingDirectAnswerProvider for NormalAnswerStreamingProvider {
+    fn answer_streaming<'a>(
+        &'a self,
+        run_id: &'a str,
+        _messages: &'a [crate::ai_runtime::LlmMessage],
+        observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            let answer = "用户可以在设置中启用兼容模型。".to_string();
+            observer.observe(
+                &StreamEvent {
+                    request_id: run_id.to_string(),
+                    event_type: StreamEventType::Token,
+                    data: StreamEventData::Token {
+                        token: answer.clone(),
+                    },
+                    surface: StreamSurface::VisibleAnswerSanitized,
+                    classified: false,
+                },
+                0,
+            )?;
+            Ok(crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some(answer),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopProvider for MetaAnalysisToolLoopProvider {
+    fn answer_turn<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _messages: &'a [crate::ai_runtime::LlmMessage],
+        _tools: &'a [ToolSpec],
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Ok(crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some(
+                    "The user asks for a current update.\n\nLooking at the system prompt, I should only use evidence.\n\n最终的工具循环答复。".to_string(),
+                ),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopExecutor for UnusedToolLoopExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { Err(AppError::msg("unused_tool_loop_executor")) })
     }
 }
 
@@ -459,6 +613,155 @@ async fn streaming_direct_engine_persists_deltas_and_one_terminal_message() {
             .expect("serialize completed")["type"],
         "completed"
     );
+}
+
+#[tokio::test]
+async fn streaming_direct_engine_persists_only_the_answer_after_meta_analysis() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_direct_streaming_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &MetaAnalysisStreamingProvider,
+        &sink,
+    )
+    .await
+    .expect("streaming direct run");
+
+    let persisted: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT m.content
+                 FROM agent_runs r
+                 JOIN session_messages m ON m.session_id = r.session_id
+                 WHERE r.run_id = ?1 AND m.role = 'assistant'",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted assistant message");
+    assert_eq!(persisted, "这是基于联网证据的最终答复。");
+}
+
+#[tokio::test]
+async fn streaming_direct_engine_persists_a_normal_answer_with_a_common_chinese_opener() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_direct_streaming_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &NormalAnswerStreamingProvider,
+        &sink,
+    )
+    .await
+    .expect("streaming direct run");
+
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run exists");
+    assert_eq!(replay.run.state, RunState::Completed);
+    assert!(replay.run.final_message_id.is_some());
+    assert!(replay.events.iter().any(|event| {
+        serde_json::to_value(event).expect("serialize event")["payload"]["delta"]
+            == "用户可以在设置中启用兼容模型。"
+    }));
+
+    let persisted: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT m.content
+                 FROM agent_runs r
+                 JOIN session_messages m ON m.session_id = r.session_id
+                 WHERE r.run_id = ?1 AND m.role = 'assistant'",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted assistant message");
+    assert_eq!(persisted, "用户可以在设置中启用兼容模型。");
+}
+
+#[test]
+fn direct_engine_never_persists_a_meta_analysis_prefix() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some(
+            "The user is greeting me.\n\nI should reply politely in Chinese.\n\n你好！有什么我可以帮你的吗？"
+                .to_string(),
+        ),
+    };
+
+    RunEngine::execute_direct(&db, &accepted.session, &accepted.run_id, &provider)
+        .expect("direct run");
+
+    let persisted: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT m.content
+                 FROM agent_runs r
+                 JOIN session_messages m ON m.session_id = r.session_id
+                 WHERE r.run_id = ?1 AND m.role = 'assistant'",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted assistant message");
+    assert_eq!(persisted, "你好！有什么我可以帮你的吗？");
+}
+
+#[tokio::test]
+async fn tool_loop_engine_never_persists_a_meta_analysis_prefix() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "请回答".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![],
+        &[],
+        false,
+        None,
+        &MetaAnalysisToolLoopProvider,
+        &UnusedToolLoopExecutor,
+        &sink,
+    )
+    .await
+    .expect("tool loop run");
+
+    let persisted: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT m.content
+                 FROM agent_runs r
+                 JOIN session_messages m ON m.session_id = r.session_id
+                 WHERE r.run_id = ?1 AND m.role = 'assistant'",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted assistant message");
+    assert_eq!(persisted, "最终的工具循环答复。");
 }
 
 #[tokio::test]
@@ -851,49 +1154,12 @@ async fn run_tool_loop_web_required_fails_without_evidence() {
     .await
     .expect_err("web_required must not continue without evidence");
 
-    assert_eq!(error.to_string(), "agent_run_web_evidence_required");
+    assert_eq!(error.to_string(), "agent_run_web_evidence_invalid");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         crate::ai_runtime::tool_audit::count_by_run(&db, &accepted.run_id).expect("audit count"),
         1
     );
-}
-
-#[tokio::test]
-async fn run_tool_loop_web_preferred_degrades_without_evidence() {
-    let db = Database::open_in_memory().expect("database");
-    let mut request = request();
-    request.web_enabled = true;
-    request.message = "explain the public history of this institution".to_string();
-    let accepted = RunIntake::start(&db, request).expect("accepted");
-    let context = super::run_context::RunContextAssembler::assemble(
-        &db,
-        None,
-        &accepted.session.session_key,
-        &accepted.run_id,
-    )
-    .expect("context");
-    let calls = AtomicU32::new(0);
-    let sink = RecordingSink::default();
-
-    let result =
-        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
-            calls.fetch_add(1, Ordering::SeqCst);
-            async {
-                Ok(
-                    crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
-                        items: Vec::new(),
-                        usage: Default::default(),
-                    },
-                )
-            }
-        })
-        .await
-        .expect("web_preferred may degrade");
-
-    assert!(result.evidence_ids.is_empty());
-    assert!(result.prompt_addendum.contains("No verified web evidence"));
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -1040,4 +1306,257 @@ async fn run_tool_loop_registers_bounded_web_evidence_before_provider_dispatch()
         .events
         .iter()
         .any(|event| { serde_json::to_value(event).expect("event")["type"] == "tool_completed" }));
+}
+
+#[tokio::test]
+async fn web_required_pre_answer_stage_uses_search_snippets_without_page_fetches() {
+    let db = Database::open_in_memory().expect("database");
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "search current public facts".to_string();
+    let accepted = RunIntake::start(&db, request).expect("accepted");
+    let context = super::run_context::RunContextAssembler::assemble(
+        &db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("context");
+    let sink = RecordingSink::default();
+    let provider = CapturingStreamingProvider {
+        calls: AtomicU32::new(0),
+        messages: std::sync::Mutex::new(Vec::new()),
+    };
+    let output = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
+        items: vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: "https://example.com/current".to_string(),
+            canonical_url: "https://example.com/current".to_string(),
+            title: "Current public source".to_string(),
+            domain: "example.com".to_string(),
+            snippet: "safe search snippet evidence".to_string(),
+            fetched_excerpt: None,
+            provider_id: "test.web".to_string(),
+            provider_kind: "mcp".to_string(),
+            cost_class: "free".to_string(),
+            raw_result_hash: "test-result-hash".to_string(),
+            extraction_method: "search_snippet".to_string(),
+            trust_level: "external_untrusted".to_string(),
+            retrieval_reason: "search".to_string(),
+            search_backend: crate::ai_runtime::WebSearchBackend::Provider,
+            source_rank: crate::ai_runtime::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
+        }],
+        usage: Default::default(),
+    };
+
+    let evidence = RunEngine::execute_web_required_evidence_then_dispatch_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &sink,
+        || {
+            super::run_tool_loop::collect_web_evidence_for_run(
+                &db,
+                &accepted,
+                &context,
+                &sink,
+                |input| async move {
+                    assert_eq!(input.query, "search current public facts");
+                    assert_eq!(input.max_fetches, 0);
+                    assert!(input.max_search_results <= 5);
+                    Ok(output)
+                },
+            )
+        },
+        |evidence| async {
+            let plan = context.domain_plan();
+            let mut messages = context.messages_with_domain_plan(&plan);
+            super::run_tool_loop::append_web_evidence_to_messages(
+                &mut messages,
+                &evidence.prompt_addendum,
+            )
+            .expect("append safe Web evidence");
+            let evidence_ids = evidence.evidence_ids.clone();
+            RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                &messages,
+                &evidence_ids,
+                &plan,
+                &provider,
+                &sink,
+            )
+            .await?;
+            Ok(evidence)
+        },
+    )
+    .await
+    .expect("a safe MCP search snippet is enough evidence for the first answer");
+
+    assert_eq!(evidence.evidence_ids.len(), 1);
+    assert!(evidence
+        .prompt_addendum
+        .contains("safe search snippet evidence"));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert!(provider
+        .messages
+        .lock()
+        .expect("captured messages lock")
+        .iter()
+        .any(|message| {
+            serde_json::to_string(&message.content)
+                .expect("serialize captured content")
+                .contains("safe search snippet evidence")
+        }));
+    db.with_read_conn(|conn| {
+        let excerpt: String = conn.query_row(
+            "SELECT bounded_excerpt FROM session_evidence WHERE id = ?1",
+            [evidence.evidence_ids[0]],
+            |row| row.get(0),
+        )?;
+        assert_eq!(excerpt, "safe search snippet evidence");
+        Ok(())
+    })
+    .expect("snippet evidence is persisted safely");
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("completed run");
+    let event_types = replay
+        .events
+        .iter()
+        .map(|event| serde_json::to_value(event).expect("serialize event")["type"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        event_types,
+        vec![
+            serde_json::json!("accepted"),
+            serde_json::json!("tool_started"),
+            serde_json::json!("evidence_registered"),
+            serde_json::json!("tool_completed"),
+            serde_json::json!("stage_changed"),
+            serde_json::json!("stage_changed"),
+            serde_json::json!("completed"),
+        ]
+    );
+}
+
+#[test]
+fn web_evidence_failure_classification_never_uses_model_provider_codes() {
+    assert_eq!(
+        super::run_tool_loop::classify_web_evidence_failure(&AppError::msg("deadline exceeded")),
+        SafeRunErrorCode::WebProviderTimeout,
+    );
+    assert_eq!(
+        super::run_tool_loop::classify_web_evidence_failure(&AppError::msg(
+            "mcp_search_parse_empty:unrecognized_schema",
+        )),
+        SafeRunErrorCode::WebEvidenceInvalid,
+    );
+    assert_eq!(
+        super::run_tool_loop::classify_web_evidence_failure(&AppError::msg(
+            "web_search_failed: connection reset",
+        )),
+        SafeRunErrorCode::WebProviderFailed,
+    );
+}
+
+#[test]
+fn tool_loop_web_failures_keep_their_web_safe_codes() {
+    assert_eq!(
+        super::run_engine::classify_tool_loop_failure(&AppError::msg(
+            "agent_run_web_provider_timeout",
+        )),
+        SafeRunErrorCode::WebProviderTimeout,
+    );
+    assert_eq!(
+        super::run_engine::classify_tool_loop_failure(&AppError::msg(
+            "agent_run_web_provider_failed",
+        )),
+        SafeRunErrorCode::WebProviderFailed,
+    );
+    assert_eq!(
+        super::run_engine::classify_tool_loop_failure(&AppError::msg(
+            "agent_run_web_evidence_invalid",
+        )),
+        SafeRunErrorCode::WebEvidenceInvalid,
+    );
+}
+
+#[tokio::test]
+async fn web_required_evidence_failure_returns_before_any_model_dispatch() {
+    let db = Database::open_in_memory().expect("database");
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "search current public facts".to_string();
+    let accepted = RunIntake::start(&db, request).expect("accepted");
+    let context = super::run_context::RunContextAssembler::assemble(
+        &db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("context");
+    let sink = RecordingSink::default();
+    let provider = MockStreamingProvider {
+        calls: AtomicU32::new(0),
+        failure: None,
+    };
+
+    let error = RunEngine::execute_web_required_evidence_then_dispatch_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &sink,
+        || {
+            super::run_tool_loop::collect_web_evidence_for_run(
+                &db,
+                &accepted,
+                &context,
+                &sink,
+                |_| async { Err(AppError::msg("deadline exceeded")) },
+            )
+        },
+        |_| {
+            RunEngine::execute_direct_streaming_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                &provider,
+                &sink,
+            )
+        },
+    )
+    .await
+    .expect_err("required web evidence must stop before model dispatch");
+
+    assert_eq!(error.to_string(), "agent_run_web_provider_timeout");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("failed run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    let event_types = replay
+        .events
+        .iter()
+        .map(|event| serde_json::to_value(event).expect("serialize event")["type"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        event_types,
+        vec![
+            serde_json::json!("accepted"),
+            serde_json::json!("tool_started"),
+            serde_json::json!("tool_completed"),
+            serde_json::json!("stage_changed"),
+            serde_json::json!("failed"),
+        ]
+    );
+    assert_eq!(
+        serde_json::to_value(replay.events.last().expect("failed event"))
+            .expect("serialize failed event")["payload"]["code"],
+        serde_json::json!("agent_run_web_provider_timeout")
+    );
 }

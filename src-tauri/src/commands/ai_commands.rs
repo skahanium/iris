@@ -220,69 +220,26 @@ pub async fn web_evidence_provider_delete(
 #[tauri::command]
 pub async fn web_evidence_provider_diagnostics(
     state: State<'_, Arc<AppState>>,
-    provider_id: Option<String>,
-    live_check: Option<bool>,
+    provider_id: String,
 ) -> AppResult<WebEvidenceProviderDiagnostics> {
-    let live_check = live_check.unwrap_or(false);
     let providers =
         crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db)?;
 
-    if let Some(provider_id) = provider_id.as_deref() {
-        if let Some(provider) = providers.iter().find(|item| item.id == provider_id) {
-            return provider_diagnostics_for_summary(&state.db, provider, live_check).await;
-        }
-        return Ok(WebEvidenceProviderDiagnostics {
-            provider_id: Some(provider_id.to_string()),
-            status: "missing".into(),
-            failures: vec!["未找到提供方记录".into()],
-            checks: vec![provider_diagnostic_check(
-                "configured",
-                false,
-                "提供方记录缺失",
-            )],
-            can_use_for_search: false,
-            can_use_for_fetch: false,
-        });
+    if let Some(provider) = providers.iter().find(|item| item.id == provider_id) {
+        return provider_diagnostics_for_summary(&state.db, provider).await;
     }
 
-    let can_use_for_search = providers
-        .iter()
-        .any(|item| item.enabled && item.has_search_mapping);
-    let can_use_for_fetch = providers
-        .iter()
-        .any(|item| item.enabled && item.has_fetch_mapping);
-    let status = if providers.is_empty() {
-        "not_configured"
-    } else if can_use_for_search || can_use_for_fetch {
-        "configured"
-    } else {
-        "needs_mapping"
-    };
-    let checks = if providers.is_empty() {
-        vec![provider_diagnostic_check(
-            "registry",
-            false,
-            "尚未配置 MCP 联网证据提供方",
-        )]
-    } else {
-        vec![provider_diagnostic_check(
-            "registry",
-            true,
-            "MCP 联网证据提供方注册表可用",
-        )]
-    };
-    let failures = checks
-        .iter()
-        .filter(|check| check.status != "pass")
-        .map(|check| check.message.clone())
-        .collect();
     Ok(WebEvidenceProviderDiagnostics {
-        provider_id: None,
-        status: status.into(),
-        failures,
-        checks,
-        can_use_for_search,
-        can_use_for_fetch,
+        provider_id: Some(provider_id),
+        status: "missing".into(),
+        failures: vec!["未找到提供方记录".into()],
+        checks: vec![provider_diagnostic_check(
+            "configured",
+            false,
+            "提供方记录缺失",
+        )],
+        can_use_for_search: false,
+        can_use_for_fetch: false,
     })
 }
 
@@ -477,21 +434,21 @@ async fn run_mcp_search_smoke_test(
     db: &crate::storage::db::Database,
     provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
 ) -> AppResult<(usize, String)> {
-    let probe = crate::ai_runtime::web_evidence_broker::probe_mcp_search_provider(
-        db,
-        &provider.id,
-        "Iris note app",
-        1,
-        Duration::from_secs(20),
-    )
-    .await?;
+    let probe =
+        crate::ai_runtime::web_evidence_broker::probe_mcp_search_provider_without_recording(
+            db,
+            &provider.id,
+            "Iris note app",
+            1,
+            Duration::from_secs(20),
+        )
+        .await?;
     Ok((probe.diagnostic.parsed_row_count, probe.summary()))
 }
 
 async fn provider_diagnostics_for_summary(
     db: &crate::storage::db::Database,
     provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
-    live_check: bool,
 ) -> AppResult<WebEvidenceProviderDiagnostics> {
     let transport_ok = provider.transport_kind == "https" || provider.transport_kind == "stdio";
     let mut checks = vec![
@@ -547,7 +504,7 @@ async fn provider_diagnostics_for_summary(
     let mut can_use_for_search = provider.enabled && provider.has_search_mapping && credentials_ok;
     let mut can_use_for_fetch = provider.enabled && provider.has_fetch_mapping && credentials_ok;
 
-    if live_check && provider.kind == "mcp" && provider.enabled {
+    if provider.kind == "mcp" && provider.enabled {
         let options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
             request_timeout: Duration::from_secs(20),
             max_stdout_line_bytes: 64 * 1024,
@@ -557,7 +514,7 @@ async fn provider_diagnostics_for_summary(
             stdio_session_idle_timeout:
                 crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         };
-        match crate::ai_runtime::mcp_host_runtime::discover_provider_tools(
+        match crate::ai_runtime::mcp_host_runtime::discover_provider_tools_without_recording(
             db,
             &provider.id,
             options,

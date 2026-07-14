@@ -52,8 +52,6 @@ pub(crate) enum ContextMode {
 pub(crate) enum Freshness {
     /// Web access is forbidden.
     Offline,
-    /// Web evidence is preferred for externally verifiable facts.
-    WebPreferred,
     /// Web evidence is required to substantiate the result.
     WebRequired,
 }
@@ -756,6 +754,15 @@ pub(crate) enum SafeRunErrorCode {
     /// No selected Web evidence provider can perform the requested search.
     #[serde(rename = "agent_run_mcp_unavailable")]
     WebProviderUnavailable,
+    /// The selected Web evidence provider exceeded the bounded evidence-stage deadline.
+    #[serde(rename = "agent_run_web_provider_timeout")]
+    WebProviderTimeout,
+    /// The selected Web evidence provider failed while executing a search request.
+    #[serde(rename = "agent_run_web_provider_failed")]
+    WebProviderFailed,
+    /// The Web evidence provider returned no safely parseable evidence.
+    #[serde(rename = "agent_run_web_evidence_invalid")]
+    WebEvidenceInvalid,
     /// A required persistence operation failed safely.
     #[serde(rename = "agent_run_persistence_failed")]
     PersistenceFailed,
@@ -779,6 +786,9 @@ impl SafeRunErrorCode {
             Self::ProviderTimeout => "agent_run_provider_timeout",
             Self::NoCapableModel => "agent_run_no_capable_model",
             Self::WebProviderUnavailable => "agent_run_mcp_unavailable",
+            Self::WebProviderTimeout => "agent_run_web_provider_timeout",
+            Self::WebProviderFailed => "agent_run_web_provider_failed",
+            Self::WebEvidenceInvalid => "agent_run_web_evidence_invalid",
             Self::PersistenceFailed => "agent_run_persistence_failed",
             Self::Cancelled => "agent_run_cancelled",
         }

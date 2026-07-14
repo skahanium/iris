@@ -82,17 +82,32 @@ describe("Assistant Run 前端合同", () => {
         code: "agent_run_no_capable_model",
         message: "No model satisfies the requested capabilities.",
       },
+      {
+        kind: "failed",
+        code: "agent_run_web_provider_timeout",
+        message: "联网证据服务响应超时。",
+      },
+      {
+        kind: "failed",
+        code: "agent_run_web_provider_failed",
+        message: "联网证据服务暂时不可用。",
+      },
+      {
+        kind: "failed",
+        code: "agent_run_web_evidence_invalid",
+        message: "联网证据服务未返回可用结果。",
+      },
     ] satisfies AssistantRunEvent["payload"][];
 
     expect(request.modelOverride?.modelId).toBe("gpt-5");
-    expect(diagnostics).toHaveLength(3);
+    expect(diagnostics).toHaveLength(6);
   });
 
   it("以正交 ExecutionEnvelope 保留 Run 的安全执行边界", () => {
     const envelope = {
       effect: "draft",
       context: "explicit_references",
-      freshness: "web_preferred",
+      freshness: "web_required",
       effort: "tool_loop",
       securityDomain: "normal",
       risk: "read_only",

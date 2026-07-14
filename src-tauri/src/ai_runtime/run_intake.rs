@@ -56,6 +56,7 @@ impl RunIntake {
                 "\u{4e0d}\u{4fee}\u{6539}",
             ],
         );
+        let explicit_web_instruction = has_explicit_web_instruction(&message);
         let effect = if do_not_modify {
             Effect::Answer
         } else {
@@ -73,17 +74,15 @@ impl RunIntake {
         } else {
             ContextMode::None
         };
-        let freshness = if !request.web_enabled || local_only || is_novel_writing_request(&message)
+        let freshness = if !request.web_enabled
+            || local_only
+            || is_novel_writing_request(&message)
+            || (is_local_transformation_request(&message) && !explicit_web_instruction)
+            || is_short_greeting(&message)
         {
             Freshness::Offline
-        } else if request.security_domain == SecurityDomain::Classified
-            || requires_web_verification(&message)
-        {
-            Freshness::WebRequired
-        } else if concerns_external_verifiable_fact(&message) {
-            Freshness::WebPreferred
         } else {
-            Freshness::Offline
+            Freshness::WebRequired
         };
         let has_images = request.content_parts.as_ref().is_some_and(|parts| {
             parts
@@ -469,51 +468,58 @@ fn resolve_normal_session(
 fn contains_any(message: &str, markers: &[&str]) -> bool {
     markers.iter().any(|marker| message.contains(marker))
 }
-fn requires_web_verification(message: &str) -> bool {
+fn is_local_transformation_request(message: &str) -> bool {
     contains_any(
         message,
         &[
-            "latest",
-            "current",
-            "price",
-            "verify",
-            "search",
-            "http://",
-            "https://",
-            "url",
-            "\u{6700}\u{65b0}",
-            "\u{8054}\u{7f51}",
-            "\u{6838}\u{5b9e}",
-            "\u{641c}\u{7d22}",
+            "rewrite",
+            "rephrase",
+            "polish",
+            "translate",
+            "proofread",
+            "改写",
+            "润色",
+            "翻译",
+            "校对",
+            "续写",
         ],
     )
 }
-fn concerns_external_verifiable_fact(message: &str) -> bool {
+
+fn has_explicit_web_instruction(message: &str) -> bool {
     contains_any(
         message,
         &[
-            "what is",
-            "who is",
-            "when did",
-            "where is",
-            "how many",
-            "facts",
-            "statistics",
-            "history",
-            "definition",
-            "public record",
-            "\u{4ec0}\u{4e48}\u{662f}",
-            "\u{8c01}\u{662f}",
-            "\u{4f55}\u{65f6}",
-            "\u{54ea}\u{91cc}",
-            "\u{591a}\u{5c11}",
-            "\u{5386}\u{53f2}",
-            "\u{6570}\u{636e}",
-            "\u{7edf}\u{8ba1}",
-            "\u{5b9a}\u{4e49}",
-            "\u{4ecb}\u{7ecd}",
-            "\u{80cc}\u{666f}",
+            "search",
+            "browse",
+            "web",
+            "联网",
+            "搜索",
+            "检索",
+            "查一下",
+            "查找",
         ],
+    )
+}
+
+fn is_short_greeting(message: &str) -> bool {
+    let normalized = message.trim_matches(|ch: char| {
+        ch.is_whitespace() || ch.is_ascii_punctuation() || "，。！？；：、（）“”‘’".contains(ch)
+    });
+    matches!(
+        normalized,
+        "hi" | "hello"
+            | "hey"
+            | "thanks"
+            | "thank you"
+            | "你好"
+            | "您好"
+            | "嗨"
+            | "哈喽"
+            | "在吗"
+            | "早上好"
+            | "晚上好"
+            | "谢谢"
     )
 }
 fn is_novel_writing_request(message: &str) -> bool {

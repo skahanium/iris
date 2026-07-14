@@ -105,7 +105,7 @@ export type ContextMode =
   | "conversation"
   | "explicit_references"
   | "explicit_scope";
-export type Freshness = "offline" | "web_preferred" | "web_required";
+export type Freshness = "offline" | "web_required";
 export type Effort = "direct" | "tool_loop" | "durable";
 /** An explicit, one-Run model choice. The backend must reject an incapable override. */
 export interface AgentModelOverride {
@@ -280,6 +280,9 @@ export type AssistantRunErrorCode =
   | "agent_run_tool_invalid_arguments"
   | "agent_run_mcp_unavailable"
   | "agent_run_web_evidence_required"
+  | "agent_run_web_provider_timeout"
+  | "agent_run_web_provider_failed"
+  | "agent_run_web_evidence_invalid"
   | "agent_run_cancelled";
 
 export type ProviderSwitchReasonCode =

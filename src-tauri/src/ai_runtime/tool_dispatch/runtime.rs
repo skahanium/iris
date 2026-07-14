@@ -52,6 +52,15 @@ mod tests {
     #[tokio::test]
     async fn runtime_context_tools_return_structured_readonly_state() {
         let (state, _dir) = test_state();
+        let mut routing = crate::llm::config::deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".to_string(),
+            crate::llm::config::ProviderOverride {
+                enabled_models: Some(vec!["deepseek-v4-flash".to_string()]),
+                ..Default::default()
+            },
+        );
+        crate::llm::config::save(&state.db, &routing).expect("save enabled model pool");
         let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
         let ctx = ToolDispatchContext {
             note_path: Some("notes/test.md"),
@@ -92,7 +101,16 @@ mod tests {
             dispatch_tool(&state, &ctx, "capabilities_read", &serde_json::json!({})).await;
         assert!(capabilities.success, "{:?}", capabilities.error);
         assert_eq!(capabilities.output["web_search_enabled"], true);
-        assert_eq!(capabilities.output["vision"]["configured"], false);
+        assert!(capabilities.output.get("vision").is_none());
+        assert!(capabilities.output["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| {
+                model["provider_id"] == "deepseek"
+                    && model["model"] == "deepseek-v4-flash"
+                    && model["configured"].is_boolean()
+            }));
         assert!(capabilities.output["tools"]
             .as_array()
             .unwrap()

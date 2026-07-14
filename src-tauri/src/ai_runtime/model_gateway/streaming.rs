@@ -412,16 +412,6 @@ impl StreamReadFailureDiagnostic {
     }
 }
 
-/// Maximum number of raw characters the sanitizer will suppress before
-/// allowing content through regardless of meta-analysis detection.
-/// Prevents the "no visible text for several seconds" symptom when a
-/// reasoning model opens with an extended meta-analysis preamble.
-/// Maximum characters the sanitizer will suppress before relaxing
-/// meta-analysis blocking.  Raised from 300 to 500 to accommodate
-/// Chinese-language models that tend to produce longer self-talk
-/// preambles in multi-paragraph form.
-const MAX_SUPPRESSION_BUDGET: usize = 500;
-
 #[derive(Default)]
 struct VisibleStreamSanitizer {
     raw: String,
@@ -464,27 +454,11 @@ impl VisibleStreamSanitizer {
         delta
     }
 
-    /// Strip reasoning tags and meta-analysis from the visible stream,
-    /// with a suppression budget to prevent long stalls.
-    ///
-    /// When the raw input has grown more than [`MAX_SUPPRESSION_BUDGET`]
-    /// characters beyond what has been emitted, meta-analysis suppression
-    /// is relaxed — content is allowed through even if it starts with
-    /// meta-analysis patterns.
+    /// Normalize the visible stream with the same answer sanitizer used by terminal persistence.
+    /// A leading planning prefix stays private until a non-planning paragraph appears; it is never
+    /// released merely because it is long.
     fn sanitize_visible_stream_prefix(&self, raw: &str, done: bool) -> String {
-        let without_reasoning = strip_reasoning_tags_for_stream(raw);
-
-        let suppressed_chars = self.raw.len().saturating_sub(self.emitted.len());
-        let budget_exceeded = suppressed_chars >= MAX_SUPPRESSION_BUDGET;
-
-        let without_meta = if done || budget_exceeded {
-            // Done or budget exhausted: use the full sanitize (which strips
-            // leading meta paragraphs but won't suppress everything since
-            // by this point the model has likely moved past meta content).
-            crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(&without_reasoning)
-        } else {
-            sanitize_meta_analysis_prefix_for_stream(&without_reasoning, done)
-        };
+        let without_meta = sanitize_meta_analysis_prefix_for_stream(raw, done);
 
         if done {
             without_meta
@@ -495,125 +469,14 @@ impl VisibleStreamSanitizer {
 }
 
 fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool) -> String {
-    let trimmed = text.trim_start();
-    if !done && looks_like_partial_meta_analysis_start(trimmed) {
+    let normalized = crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(text);
+    if !done
+        && crate::ai_runtime::text_support::starts_with_meta_analysis_or_partial_prefix(text)
+        && (normalized.is_empty() || normalized == text.trim())
+    {
         return String::new();
     }
-    crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(text)
-}
-
-fn looks_like_partial_meta_analysis_start(text: &str) -> bool {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return false;
-    }
-
-    // English prefixes (case-insensitive via ASCII lowering).
-    let lower = trimmed.to_ascii_lowercase();
-    const EN_PREFIXES: [&str; 7] = [
-        "the user ",
-        "the user is ",
-        "the current task ",
-        "this is a ",
-        "i should ",
-        "i'll ",
-        "the persona ",
-    ];
-    if EN_PREFIXES.iter().any(|prefix| lower.starts_with(prefix)) {
-        return true;
-    }
-
-    // Chinese prefixes (case folding is a no-op for CJK, match original).
-    if trimmed.starts_with("用户的问题是")
-        || trimmed.starts_with("用户想要")
-        || trimmed.starts_with("用户询问")
-        || trimmed.starts_with("用户希望")
-        || trimmed.starts_with("用户的需求")
-        || trimmed.starts_with("用户要求")
-        || trimmed.starts_with("我需要")
-        || trimmed.starts_with("我应该")
-        || trimmed.starts_with("我将")
-        || trimmed.starts_with("让我")
-        || trimmed.starts_with("我来")
-        || trimmed.starts_with("首先我")
-        || trimmed.starts_with("接下来我")
-        || trimmed.starts_with("然后我")
-        || trimmed.starts_with("当前任务")
-        || trimmed.starts_with("任务重点")
-        || trimmed.starts_with("根据系统提示")
-        || trimmed.starts_with("好的，")
-        || trimmed.starts_with("明白了")
-        || trimmed.starts_with("收到，")
-        || trimmed.starts_with("了解，")
-    {
-        return true;
-    }
-
-    false
-}
-
-fn strip_reasoning_tags_for_stream(content: &str) -> String {
-    let mut visible = String::new();
-    let mut cursor = 0usize;
-    while let Some(open) = find_next_reasoning_open_for_stream(content, cursor) {
-        visible.push_str(&content[cursor..open.start]);
-        let body_start = open.start + open.open_len;
-        if let Some(close_start) =
-            find_ascii_case_insensitive_for_stream(content, open.close_tag, body_start)
-        {
-            cursor = close_start + open.close_tag.len();
-        } else {
-            cursor = content.len();
-            break;
-        }
-    }
-    visible.push_str(&content[cursor..]);
-    visible
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ReasoningOpenForStream {
-    start: usize,
-    open_len: usize,
-    close_tag: &'static str,
-}
-
-fn find_next_reasoning_open_for_stream(
-    content: &str,
-    from: usize,
-) -> Option<ReasoningOpenForStream> {
-    const TAGS: [(&str, &str); 3] = [
-        ("<thinking>", "</thinking>"),
-        ("<think>", "</think>"),
-        ("<reasoning>", "</reasoning>"),
-    ];
-    let mut best: Option<ReasoningOpenForStream> = None;
-    for (open, close) in TAGS {
-        if let Some(start) = find_ascii_case_insensitive_for_stream(content, open, from) {
-            if best.is_none_or(|candidate| start < candidate.start) {
-                best = Some(ReasoningOpenForStream {
-                    start,
-                    open_len: open.len(),
-                    close_tag: close,
-                });
-            }
-        }
-    }
-    best
-}
-
-fn find_ascii_case_insensitive_for_stream(
-    haystack: &str,
-    needle: &str,
-    from: usize,
-) -> Option<usize> {
-    let bytes = haystack.as_bytes();
-    let needle = needle.as_bytes();
-    if needle.is_empty() || bytes.len() < needle.len() || from > bytes.len() - needle.len() {
-        return None;
-    }
-    (from..=bytes.len() - needle.len())
-        .find(|&idx| bytes[idx..idx + needle.len()].eq_ignore_ascii_case(needle))
+    normalized
 }
 
 fn withhold_partial_reasoning_open_suffix(visible: &str) -> String {
@@ -1859,6 +1722,44 @@ mod tests {
             "可以先看结论。"
         );
         assert_eq!(sanitizer.sanitize_delta("<reasoning>internal", false), "");
+        assert_eq!(sanitizer.finish(), "");
+    }
+
+    #[test]
+    fn visible_stream_sanitizer_never_releases_a_long_meta_analysis_prefix() {
+        let mut sanitizer = VisibleStreamSanitizer::new();
+        let first_meta_paragraph = format!(
+            "The user is asking for current sports information. {}",
+            "I should inspect the system instructions before answering. ".repeat(12)
+        );
+        assert!(first_meta_paragraph.chars().count() > 500);
+
+        assert_eq!(sanitizer.sanitize_delta(&first_meta_paragraph, false), "");
+        assert_eq!(
+            sanitizer.sanitize_delta(
+                "\n\nThe system prompt requires verified evidence before a final response.",
+                false,
+            ),
+            ""
+        );
+        assert_eq!(
+            sanitizer.sanitize_delta("\n\n这是基于联网证据的最终答复。", false),
+            "这是基于联网证据的最终答复。"
+        );
+        assert_eq!(sanitizer.finish(), "");
+    }
+
+    #[test]
+    fn visible_stream_sanitizer_preserves_normal_answers_with_common_openers() {
+        let mut sanitizer = VisibleStreamSanitizer::new();
+
+        assert_eq!(
+            sanitizer.sanitize_delta(
+                "Given sufficient context, the answer can be concise.",
+                false
+            ),
+            "Given sufficient context, the answer can be concise."
+        );
         assert_eq!(sanitizer.finish(), "");
     }
 

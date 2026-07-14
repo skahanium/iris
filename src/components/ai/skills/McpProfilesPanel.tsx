@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 
 import { Button } from "@/components/ui/button";
@@ -133,37 +133,32 @@ export function McpProfilesPanel({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const diagnosticsEpochRef = useRef(0);
+
+  const invalidateDiagnostics = useCallback(() => {
+    diagnosticsEpochRef.current += 1;
+    setDiagnostics({});
+  }, []);
 
   const load = useCallback(async () => {
     if (!isTauri()) return;
     setLoading(true);
     setMessage(null);
+    invalidateDiagnostics();
     try {
       const nextProviders = await webEvidenceProvidersList();
-      const mcpProviders = nextProviders.filter(
-        (provider) => provider.providerKind === "mcp",
-      );
-      const diagnosticPairs = await Promise.all(
-        mcpProviders.map(async (provider) => {
-          const result = await webEvidenceProviderDiagnostics(
-            provider.id,
-            false,
-          );
-          return [provider.id, result] as const;
-        }),
-      );
       setProviders(nextProviders);
-      setDiagnostics(Object.fromEntries(diagnosticPairs));
     } catch (error) {
       setMessage(invokeErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [invalidateDiagnostics]);
 
   useEffect(() => {
+    invalidateDiagnostics();
     if (open) void load();
-  }, [load, open]);
+  }, [invalidateDiagnostics, load, open]);
 
   const mcpProviders = useMemo(
     () => providers.filter((provider) => provider.providerKind === "mcp"),
@@ -176,6 +171,7 @@ export function McpProfilesPanel({
   ) => {
     setSaving(true);
     setMessage(null);
+    invalidateDiagnostics();
     try {
       for (const credential of credentialSaves) {
         await credentialSet(credential.service, credential.value);
@@ -199,6 +195,7 @@ export function McpProfilesPanel({
   const toggleProvider = async (providerId: string, enabled: boolean) => {
     setSaving(true);
     setMessage(null);
+    invalidateDiagnostics();
     try {
       await webEvidenceProviderToggle(providerId, enabled);
       await load();
@@ -213,6 +210,7 @@ export function McpProfilesPanel({
   const deleteProvider = async (providerId: string) => {
     setSaving(true);
     setMessage(null);
+    invalidateDiagnostics();
     try {
       await webEvidenceProviderDelete(providerId);
       await load();
@@ -224,16 +222,19 @@ export function McpProfilesPanel({
     }
   };
 
-  const runDiagnostics = async (providerId: string, liveCheck = false) => {
+  const runDiagnostics = async (providerId: string) => {
     setMessage(null);
+    invalidateDiagnostics();
+    const epoch = diagnosticsEpochRef.current;
     try {
-      const result = await webEvidenceProviderDiagnostics(
-        providerId,
-        liveCheck,
-      );
-      setDiagnostics((current) => ({ ...current, [providerId]: result }));
+      const result = await webEvidenceProviderDiagnostics(providerId);
+      if (open && diagnosticsEpochRef.current === epoch) {
+        setDiagnostics({ [providerId]: result });
+      }
     } catch (error) {
-      setMessage(invokeErrorMessage(error));
+      if (open && diagnosticsEpochRef.current === epoch) {
+        setMessage(invokeErrorMessage(error));
+      }
     }
   };
 
@@ -260,7 +261,10 @@ export function McpProfilesPanel({
             size="sm"
             variant="outline"
             disabled={loading || saving}
-            onClick={() => setDraft(createDraftSummary())}
+            onClick={() => {
+              invalidateDiagnostics();
+              setDraft(createDraftSummary());
+            }}
           >
             添加 MCP 提供方
           </Button>
@@ -274,13 +278,20 @@ export function McpProfilesPanel({
           saving={saving}
           persisted={false}
           onSave={saveProvider}
-          onToggle={(enabled) =>
-            setDraft((current) => (current ? { ...current, enabled } : current))
-          }
-          onDelete={() => setDraft(null)}
-          onDiagnostics={() => {
-            setMessage("请先保存 MCP 提供方，再测试连接或查看诊断。");
+          onToggle={(enabled) => {
+            invalidateDiagnostics();
+            setDraft((current) =>
+              current ? { ...current, enabled } : current,
+            );
           }}
+          onDelete={() => {
+            invalidateDiagnostics();
+            setDraft(null);
+          }}
+          onDiagnostics={() => {
+            setMessage("请先保存 MCP 提供方，再执行实时诊断。");
+          }}
+          onConfigurationChanged={invalidateDiagnostics}
         />
       ) : null}
 
@@ -295,9 +306,8 @@ export function McpProfilesPanel({
               onSave={saveProvider}
               onToggle={(enabled) => toggleProvider(provider.id, enabled)}
               onDelete={() => deleteProvider(provider.id)}
-              onDiagnostics={(liveCheck) =>
-                void runDiagnostics(provider.id, liveCheck)
-              }
+              onDiagnostics={() => void runDiagnostics(provider.id)}
+              onConfigurationChanged={invalidateDiagnostics}
             />
           ))}
         </div>

@@ -49,6 +49,35 @@ struct RecordingExecutor {
     web_evidence: bool,
 }
 
+struct FailingWebExecutor;
+
+impl ToolLoopExecutor for FailingWebExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: false,
+                output: serde_json::json!({ "error": "agent_run_web_provider_timeout" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: Some("agent_run_web_provider_timeout".to_string()),
+            })
+        })
+    }
+
+    fn web_evidence_failure_code(
+        &self,
+    ) -> Option<crate::ai_runtime::run_contract::SafeRunErrorCode> {
+        Some(crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderTimeout)
+    }
+}
+
 impl ToolLoopExecutor for RecordingExecutor {
     fn execute<'a>(
         &'a self,
@@ -94,6 +123,17 @@ fn tool_call() -> ToolCall {
         function: FunctionCall {
             name: "system_time_now".into(),
             arguments: "{}".into(),
+        },
+    }
+}
+
+fn web_tool_call() -> ToolCall {
+    ToolCall {
+        id: "call-web-search".into(),
+        call_type: "function".into(),
+        function: FunctionCall {
+            name: "web_search".into(),
+            arguments: r#"{"query":"latest status"}"#.into(),
         },
     }
 }
@@ -242,4 +282,51 @@ async fn required_web_evidence_sends_one_correction_before_final_answer() {
 
     assert_eq!(outcome.content, "evidence-backed answer");
     assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn failed_follow_up_web_tool_returns_its_web_safe_code_without_another_model_turn() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: None,
+            tool_calls: vec![web_tool_call()],
+            usage: Default::default(),
+            finish_reason: "tool_calls".into(),
+            reasoning_content: None,
+        }])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    let tools = vec![ToolSpec {
+        name: "web_search".into(),
+        description: "Search Web".into(),
+        input_schema: serde_json::json!({ "type": "object" }),
+        access_level: crate::ai_runtime::ToolAccessLevel::Network,
+        requires_confirmation: false,
+        max_results: None,
+        capability_affinity: Vec::new(),
+    }];
+
+    let error = AgentToolLoop::default()
+        .execute(
+            &provider,
+            &FailingWebExecutor,
+            "run-1",
+            vec![LlmMessage {
+                role: MessageRole::User,
+                content: "latest status".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            }],
+            tools,
+            true,
+            &mut observer,
+        )
+        .await
+        .expect_err("a failed Web tool cannot fall through to model-provider failure");
+
+    assert_eq!(error.to_string(), "agent_run_web_provider_timeout");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
 }

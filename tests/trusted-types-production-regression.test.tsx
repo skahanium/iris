@@ -33,10 +33,9 @@ vi.mock("@/lib/ipc", () => ipcMocks);
 
 const routing = {
   version: 1,
-  schemaVersion: 1,
+  schemaVersion: 5,
   providers: {},
-  slots: {},
-  contextStrategy: {},
+  defaultModel: null,
 };
 
 const providers = [

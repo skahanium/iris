@@ -59,6 +59,14 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     fn has_web_evidence(&self) -> bool {
         false
     }
+
+    /// Return a typed Web failure produced by the most recent follow-up `web_search` call.
+    /// This keeps Broker/MCP failures out of the model-provider error namespace.
+    fn web_evidence_failure_code(
+        &self,
+    ) -> Option<crate::ai_runtime::run_contract::SafeRunErrorCode> {
+        None
+    }
 }
 
 /// Executes the only permitted shape of an Agent tool loop.
@@ -152,6 +160,11 @@ impl AgentToolLoop {
                         executor.execute(run_id, call, tool_calls).await?
                     }
                 };
+                if call.function.name == "web_search" && !result.success {
+                    if let Some(code) = executor.web_evidence_failure_code() {
+                        return Err(AppError::msg(code.as_str()));
+                    }
+                }
                 messages.push(tool_result_message(call, &result));
             }
         }

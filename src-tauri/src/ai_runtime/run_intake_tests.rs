@@ -767,18 +767,77 @@ fn web_enabled_pure_rewrite_remains_direct_without_tool_loop() {
 }
 
 #[test]
-fn web_enabled_external_question_enters_tool_loop_without_fixed_prefetch() {
+fn web_enabled_external_question_requires_engine_owned_web_evidence() {
     let mut request = request();
     request.web_enabled = true;
-    request.message =
-        "\u{4ecb}\u{7ecd}\u{4e00}\u{4e0b}\u{8fd9}\u{5bb6}\u{673a}\u{6784}\u{7684}\u{80cc}\u{666f}"
-            .to_string();
+    request.message = "最近世界杯战况如何？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebPreferred);
-    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
     assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn web_enabled_general_question_requires_engine_owned_web_evidence_without_keywords() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "量子力学的核心概念是什么？".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "你好！".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.effort, Effort::Direct);
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn explicit_web_instruction_overrides_the_local_transformation_shortcut() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "请联网搜索最新报道后翻译成中文。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
+}
+
+#[test]
+fn web_enabled_local_only_transformation_never_enters_the_web_tool_chain() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "只用本地资料，把“最近世界杯战况如何？”改写得更礼貌。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.effect, Effect::Answer);
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.effort, Effort::Direct);
+    assert!(!envelope
+        .material_needs
+        .contains(&super::run_contract::MaterialNeed::Web));
+    assert!(!envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));

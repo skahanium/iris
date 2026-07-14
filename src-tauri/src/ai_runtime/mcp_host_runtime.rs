@@ -2024,6 +2024,24 @@ pub async fn discover_provider_tools(
     provider_id: &str,
     options: McpHostRuntimeOptions,
 ) -> AppResult<McpStdioDiscovery> {
+    discover_provider_tools_with_observation(db, provider_id, options, true).await
+}
+
+/// Discover MCP tools for a user-requested diagnostic without affecting Run health data.
+pub async fn discover_provider_tools_without_recording(
+    db: &Database,
+    provider_id: &str,
+    options: McpHostRuntimeOptions,
+) -> AppResult<McpStdioDiscovery> {
+    discover_provider_tools_with_observation(db, provider_id, options, false).await
+}
+
+async fn discover_provider_tools_with_observation(
+    db: &Database,
+    provider_id: &str,
+    options: McpHostRuntimeOptions,
+    record_observation: bool,
+) -> AppResult<McpStdioDiscovery> {
     let started = Instant::now();
     let result = match load_provider_transport(db, provider_id)?.as_str() {
         "stdio" => discover_provider_stdio_tools(db, provider_id, options).await,
@@ -2043,7 +2061,27 @@ pub async fn discover_provider_tools(
             format!("unsupported_transport: {other}"),
         )),
     };
-    match &result {
+    observe_provider_discovery_result(
+        db,
+        provider_id,
+        started.elapsed(),
+        &result,
+        record_observation,
+    )?;
+    result
+}
+
+fn observe_provider_discovery_result(
+    db: &Database,
+    provider_id: &str,
+    elapsed: Duration,
+    result: &AppResult<McpStdioDiscovery>,
+    record_observation: bool,
+) -> AppResult<()> {
+    if !record_observation {
+        return Ok(());
+    }
+    match result {
         Ok(discovery) => {
             let tool_schema_hash = {
                 let tools = discovery
@@ -2072,7 +2110,7 @@ pub async fn discover_provider_tools(
                 db,
                 provider_id,
                 true,
-                started.elapsed().as_millis() as u64,
+                elapsed.as_millis() as u64,
                 None,
             );
         }
@@ -2087,12 +2125,12 @@ pub async fn discover_provider_tools(
                 db,
                 provider_id,
                 false,
-                started.elapsed().as_millis() as u64,
+                elapsed.as_millis() as u64,
                 Some(&code),
             );
         }
     }
-    result
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2406,5 +2444,64 @@ data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}
         .unwrap();
 
         assert_eq!(parsed["result"]["ok"], true);
+    }
+
+    #[test]
+    fn diagnostic_discovery_observation_does_not_persist_runtime_or_health() {
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "diagnostic-provider".into(),
+                name: "Diagnostic provider".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: r#"{"command":"mcp-server"}"#.into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+        )
+        .unwrap();
+        let discovery = McpStdioDiscovery {
+            protocol_version: "2025-06-18".into(),
+            server_name: "Diagnostic MCP".into(),
+            server_version: None,
+            tools: vec![McpToolDefinition {
+                name: "search".into(),
+                title: None,
+                description: None,
+                input_schema: serde_json::json!({"type":"object"}),
+                output_schema: None,
+            }],
+            stderr_summary: None,
+        };
+
+        super::observe_provider_discovery_result(
+            &db,
+            "diagnostic-provider",
+            Duration::from_millis(12),
+            &Ok(discovery),
+            false,
+        )
+        .unwrap();
+
+        assert!(
+            crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_runtime(
+                &db,
+                "diagnostic-provider"
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
+                &db,
+                "diagnostic-provider"
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 }

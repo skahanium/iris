@@ -252,6 +252,9 @@ impl ModelGateway {
     }
 
     /// Send a streaming request to a caller-owned observer without Tauri event emission.
+    ///
+    /// This is the Run-owned path: its observer persists user-visible answer deltas, so the
+    /// gateway must normalize provider content before forwarding any token.
     pub async fn send_streaming_request_to_observer(
         &self,
         request_id: &str,
@@ -264,7 +267,7 @@ impl ModelGateway {
             request,
             observer,
             false,
-            StreamSurface::VisibleAnswer,
+            run_observer_stream_surface(),
             true,
         )
         .await
@@ -303,6 +306,10 @@ impl ModelGateway {
         )
         .await
     }
+}
+
+fn run_observer_stream_surface() -> StreamSurface {
+    StreamSurface::VisibleAnswerSanitized
 }
 
 fn parse_gateway_json(response_text: &str) -> AppResult<serde_json::Value> {

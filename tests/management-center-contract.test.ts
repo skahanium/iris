@@ -152,14 +152,13 @@ describe("management center contract", () => {
       "凭据引用",
       "搜索工具映射",
       "网页读取工具映射",
-      "测试连接",
       "实时诊断",
       "保存 MCP 提供方",
       "HTTPS 服务",
       "本地命令 (stdio)",
       "请求头",
       "环境变量",
-      "先保存提供方，再测试连接或查看诊断。",
+      "先保存提供方，再执行实时诊断。",
     ]) {
       expect(mcpCard).toContain(label);
     }
@@ -170,6 +169,8 @@ describe("management center contract", () => {
     expect(mcpCard).toContain("自定义 MCP 服务");
 
     expect(mcpPanel).toContain("persisted={false}");
+    expect(mcpCard).not.toContain("测试连接");
+    expect(mcpCard).not.toContain("测试后");
 
     for (const leakedLabel of [
       "MCP web evidence providers",
@@ -326,13 +327,14 @@ describe("management center contract", () => {
     expect(card).toContain(
       "{checkLabelText(check.label)}：{checkStatusText(check.status)} ·",
     );
-    expect(card).toContain("配置可调度性");
     expect(card).toContain("实时可用性");
+    expect(card).not.toContain("配置可调度性");
     expect(card).toContain('case "credential"');
     expect(card).toContain('case "searchSmokeLive"');
     expect(card).toContain('case "searchResultParseLive"');
-    expect(card).toContain("onClick={() => void onDiagnostics(true)}");
-    expect(card).not.toContain("onClick={() => void onDiagnostics(false)}");
+    expect(card).toContain("onClick={() => void onDiagnostics()}");
+    expect(card).not.toContain("onDiagnostics(true)");
+    expect(card).not.toContain("onDiagnostics(false)");
   });
 
   it("waits for restored notes to open before closing recycle views", () => {

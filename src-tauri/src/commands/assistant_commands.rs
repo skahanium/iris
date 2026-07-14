@@ -611,7 +611,6 @@ fn spawn_normal_direct_run(
             }
         };
         let domain_plan = context.domain_plan();
-        let prompt = context.prompt_with_domain_plan(&domain_plan);
         let evidence_ids =
             match crate::ai_runtime::run_context::RunContextAssembler::register_evidence(
                 &db,
@@ -630,185 +629,55 @@ fn spawn_normal_direct_run(
                     return;
                 }
             };
-        if matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable) {
-            let tool_policy = ToolPolicyContext {
-                autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
-                web_search_enabled: context.envelope.freshness != Freshness::Offline,
-                allow_writes: context.envelope.effort == Effort::Durable,
-                allow_research: context.envelope.freshness != Freshness::Offline,
-                allow_skill_management: false,
-            };
-            let tools = ToolRegistry::new()
-                .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable);
-            let route_result = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
-                &db,
-                crate::llm::config::ModelPoolRequirements {
-                    context_tokens: crate::ai_runtime::text_support::estimate_tokens(&prompt),
-                    has_images: context.envelope.modalities.contains(&Modality::Image),
-                    needs_tools: true,
-                    needs_reasoning: false,
-                },
-            )
-            .and_then(crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route)
-            .map(|route| {
-                context.model_override().map_or(route.clone(), |override_| {
-                    route.with_model_override(override_.provider_id, override_.model_id)
-                })
-            });
-            let route = match route_result {
-                Ok(route) => route,
-                Err(error) => {
-                    let _ = RunEngine::fail_before_dispatch_with_sink(
-                        &db,
-                        &accepted.session,
-                        &accepted.run_id,
-                        dispatch_failure_code(&error),
-                        &sink,
-                    );
-                    return;
-                }
-            };
-            if context.envelope.freshness != Freshness::Offline
-                && crate::ai_runtime::capability_resolver::resolve_required_capability_app(
-                    &db,
-                    "web.search",
-                )
-                .is_err()
-            {
-                let _ = RunEngine::fail_before_dispatch_with_sink(
-                    &db,
-                    &accepted.session,
-                    &accepted.run_id,
-                    crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderUnavailable,
-                    &sink,
-                );
-                return;
-            }
-            let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
-                endpoint_family: None,
-                streaming: true,
-                tools: true,
-                vision: context.envelope.modalities.contains(&Modality::Image),
-                reasoning: false,
-                min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(&prompt),
-                min_output_budget_tokens: 1,
-                security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
-            };
-            let provider = FailoverStreamingToolLoopProvider::new(
-                route,
-                requirements,
-                app_handle.clone(),
-                &db,
-                &accepted.session,
-                &sink,
-            );
-            let executor = NormalRunToolExecutor::new(
-                &state,
-                app_handle.clone(),
-                &accepted,
-                &context,
-                tool_policy,
-                &sink,
-            );
-            let messages = context.messages_with_domain_plan(&domain_plan);
-            if RunEngine::execute_tool_loop_with_sink(
+        let execution = if context.envelope.freshness == Freshness::WebRequired {
+            RunEngine::execute_web_required_evidence_then_dispatch_with_sink(
                 &db,
                 &accepted.session,
                 &accepted.run_id,
-                messages,
-                tools,
+                &sink,
+                || {
+                    crate::ai_runtime::run_tool_loop::collect_web_evidence_for_run(
+                        &db,
+                        &accepted,
+                        &context,
+                        &sink,
+                        |input| {
+                            crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
+                                &db, input,
+                            )
+                        },
+                    )
+                },
+                |web_evidence| {
+                    dispatch_normal_run_after_context(
+                        &state,
+                        &app_handle,
+                        &db,
+                        &accepted,
+                        &context,
+                        &domain_plan,
+                        &evidence_ids,
+                        Some(web_evidence),
+                        &sink,
+                    )
+                },
+            )
+            .await
+        } else {
+            dispatch_normal_run_after_context(
+                &state,
+                &app_handle,
+                &db,
+                &accepted,
+                &context,
+                &domain_plan,
                 &evidence_ids,
-                context.envelope.freshness
-                    == crate::ai_runtime::run_contract::Freshness::WebRequired,
-                Some(&domain_plan),
-                &provider,
-                &executor,
+                None,
                 &sink,
             )
             .await
-            .is_err()
-            {
-                tracing::warn!(
-                    run_id = %accepted.run_id,
-                    "normal Agent tool loop exited without a successful result"
-                );
-                let _ = RunEngine::fail_active_with_sink(
-                    &db,
-                    &accepted.session,
-                    &accepted.run_id,
-                    &sink,
-                );
-            }
-            if crate::ai_runtime::model_gateway::is_abort_requested(&accepted.run_id) {
-                crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
-            }
-            return;
-        }
-        let direct_requirements = crate::ai_runtime::provider_router::ProviderRequirements {
-            endpoint_family: None,
-            streaming: true,
-            tools: false,
-            vision: context.envelope.modalities.contains(&Modality::Image),
-            reasoning: false,
-            min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(&prompt),
-            min_output_budget_tokens: 1,
-            security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
         };
-        let route_result = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
-            &db,
-            crate::llm::config::ModelPoolRequirements {
-                context_tokens: direct_requirements.min_input_budget_tokens,
-                has_images: direct_requirements.vision,
-                needs_tools: false,
-                needs_reasoning: false,
-            },
-        )
-        .and_then(|route| {
-            crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route(
-                route,
-            )
-            .map(|route| {
-                context.model_override().map_or(route.clone(), |override_| {
-                    route.with_model_override(override_.provider_id, override_.model_id)
-                })
-            })
-        });
-
-        let route = match route_result {
-            Ok(route) => route,
-            Err(error) => {
-                let _ = RunEngine::fail_before_dispatch_with_sink(
-                    &db,
-                    &accepted.session,
-                    &accepted.run_id,
-                    dispatch_failure_code(&error),
-                    &sink,
-                );
-                return;
-            }
-        };
-        let provider = FailoverStreamingDirectAnswerProvider::new(
-            route,
-            direct_requirements,
-            app_handle.clone(),
-            &db,
-            &accepted.session,
-            &sink,
-        );
-        let messages = context.messages_with_domain_plan(&domain_plan);
-        if RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
-            &db,
-            &accepted.session,
-            &accepted.run_id,
-            &messages,
-            &evidence_ids,
-            &domain_plan,
-            &provider,
-            &sink,
-        )
-        .await
-        .is_err()
-        {
+        if execution.is_err() {
             tracing::warn!(
                 run_id = %accepted.run_id,
                 "normal Agent Run exited without a successful result"
@@ -823,6 +692,197 @@ fn spawn_normal_direct_run(
             crate::ai_runtime::model_gateway::clear_abort(&accepted.run_id);
         }
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_normal_run_after_context(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    db: &crate::storage::db::Database,
+    accepted: &AssistantRunAccepted,
+    context: &crate::ai_runtime::run_context::RunContext,
+    domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
+    registered_evidence_ids: &[i64],
+    web_evidence: Option<crate::ai_runtime::run_tool_loop::RunWebEvidence>,
+    sink: &TauriRunEventSink<'_>,
+) -> AppResult<()> {
+    let mut messages = context.messages_with_domain_plan(domain_plan);
+    let mut routing_prompt = context.prompt_with_domain_plan(domain_plan);
+    let mut evidence_ids = registered_evidence_ids.to_vec();
+    let has_initial_web_evidence = web_evidence.is_some();
+    if let Some(web_evidence) = web_evidence {
+        crate::ai_runtime::run_tool_loop::append_web_evidence_to_messages(
+            &mut messages,
+            &web_evidence.prompt_addendum,
+        )?;
+        routing_prompt.push_str(&web_evidence.prompt_addendum);
+        evidence_ids.extend(web_evidence.evidence_ids);
+    }
+    evidence_ids.sort_unstable();
+    evidence_ids.dedup();
+
+    let needs_follow_up_tools =
+        matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable)
+            && !(context.envelope.freshness == Freshness::WebRequired
+                && context.envelope.effect == Effect::Answer);
+    if needs_follow_up_tools {
+        let tool_policy = ToolPolicyContext {
+            autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
+            web_search_enabled: context.envelope.freshness != Freshness::Offline,
+            allow_writes: context.envelope.effort == Effort::Durable,
+            allow_research: context.envelope.freshness != Freshness::Offline,
+            allow_skill_management: false,
+        };
+        let tools = ToolRegistry::new()
+            .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable);
+        if context.envelope.freshness != Freshness::Offline
+            && !has_initial_web_evidence
+            && crate::ai_runtime::capability_resolver::resolve_required_capability_app(
+                db,
+                "web.search",
+            )
+            .is_err()
+        {
+            RunEngine::fail_before_dispatch_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderUnavailable,
+                sink,
+            )?;
+            return Err(AppError::msg("agent_run_mcp_unavailable"));
+        }
+        let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+            endpoint_family: None,
+            streaming: true,
+            tools: true,
+            vision: context.envelope.modalities.contains(&Modality::Image),
+            reasoning: false,
+            min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(
+                &routing_prompt,
+            ),
+            min_output_budget_tokens: 1,
+            security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
+        };
+        let route = resolve_normal_route(
+            db,
+            accepted,
+            context,
+            requirements.min_input_budget_tokens,
+            requirements.vision,
+            true,
+            sink,
+        )?;
+        let provider = FailoverStreamingToolLoopProvider::new(
+            route,
+            requirements,
+            app_handle.clone(),
+            db,
+            &accepted.session,
+            sink,
+        );
+        let executor = NormalRunToolExecutor::new(
+            state,
+            app_handle.clone(),
+            accepted,
+            context,
+            tool_policy,
+            sink,
+        );
+        return RunEngine::execute_tool_loop_with_sink(
+            db,
+            &accepted.session,
+            &accepted.run_id,
+            messages,
+            tools,
+            &evidence_ids,
+            context.envelope.freshness == Freshness::WebRequired && !has_initial_web_evidence,
+            Some(domain_plan),
+            &provider,
+            &executor,
+            sink,
+        )
+        .await;
+    }
+
+    let direct_requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+        endpoint_family: None,
+        streaming: true,
+        tools: false,
+        vision: context.envelope.modalities.contains(&Modality::Image),
+        reasoning: false,
+        min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(&routing_prompt),
+        min_output_budget_tokens: 1,
+        security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
+    };
+    let route = resolve_normal_route(
+        db,
+        accepted,
+        context,
+        direct_requirements.min_input_budget_tokens,
+        direct_requirements.vision,
+        false,
+        sink,
+    )?;
+    let provider = FailoverStreamingDirectAnswerProvider::new(
+        route,
+        direct_requirements,
+        app_handle.clone(),
+        db,
+        &accepted.session,
+        sink,
+    );
+    RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+        db,
+        &accepted.session,
+        &accepted.run_id,
+        &messages,
+        &evidence_ids,
+        domain_plan,
+        &provider,
+        sink,
+    )
+    .await
+}
+
+fn resolve_normal_route(
+    db: &crate::storage::db::Database,
+    accepted: &AssistantRunAccepted,
+    context: &crate::ai_runtime::run_context::RunContext,
+    context_tokens: usize,
+    has_images: bool,
+    needs_tools: bool,
+    sink: &TauriRunEventSink<'_>,
+) -> AppResult<crate::ai_runtime::direct_provider_route::DirectProviderRoute> {
+    let route = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
+        db,
+        crate::llm::config::ModelPoolRequirements {
+            context_tokens,
+            has_images,
+            needs_tools,
+            needs_reasoning: false,
+        },
+    )
+    .and_then(crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route)
+    .map(|route| {
+        context.model_override().map_or(route.clone(), |override_| {
+            route.with_model_override(override_.provider_id, override_.model_id)
+        })
+    });
+    match route {
+        Ok(route) => Ok(route),
+        Err(error) => {
+            let code = dispatch_failure_code(&error);
+            RunEngine::fail_before_dispatch_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                code,
+                sink,
+            )?;
+            Err(AppError::msg(code.as_str()))
+        }
+    }
 }
 
 fn dispatch_failure_code(error: &AppError) -> crate::ai_runtime::run_contract::SafeRunErrorCode {

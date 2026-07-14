@@ -29,7 +29,7 @@ fn setup_run() -> (Database, i64, String) {
             envelope: ExecutionEnvelope {
                 effect: Effect::Answer,
                 context: ContextMode::ExplicitReferences,
-                freshness: Freshness::WebPreferred,
+                freshness: Freshness::WebRequired,
                 effort: Effort::ToolLoop,
                 security_domain: SecurityDomain::Normal,
                 risk: RiskClass::ReadOnly,

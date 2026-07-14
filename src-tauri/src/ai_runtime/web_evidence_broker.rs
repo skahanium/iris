@@ -98,6 +98,26 @@ pub async fn collect_web_evidence_with_usage(
     db: &Database,
     input: WebEvidenceBrokerInput,
 ) -> AppResult<WebEvidenceBrokerOutput> {
+    let planned_queries = plan_search_queries(&input.query);
+    collect_web_evidence_with_queries(db, input, planned_queries).await
+}
+
+/// Collect the first required Run evidence from exactly one original user query.
+/// The normal Broker path may broaden an interactive tool call into bounded query variants;
+/// the pre-answer stage must remain deterministic and low-latency instead.
+pub async fn collect_initial_run_web_evidence_with_usage(
+    db: &Database,
+    input: WebEvidenceBrokerInput,
+) -> AppResult<WebEvidenceBrokerOutput> {
+    let planned_queries = initial_run_search_queries(&input.query);
+    collect_web_evidence_with_queries(db, input, planned_queries).await
+}
+
+async fn collect_web_evidence_with_queries(
+    db: &Database,
+    input: WebEvidenceBrokerInput,
+    planned_queries: Vec<String>,
+) -> AppResult<WebEvidenceBrokerOutput> {
     if !input.enabled {
         return Ok(WebEvidenceBrokerOutput {
             items: Vec::new(),
@@ -107,8 +127,10 @@ pub async fn collect_web_evidence_with_usage(
 
     let mut collected = Vec::new();
     let mut usage = WebEvidenceUsage::default();
-    if !input.query.trim().is_empty() {
-        for fetch in collect_planned_query_fetches(db, plan_search_queries(&input.query)).await {
+    if !planned_queries.is_empty() {
+        for fetch in
+            collect_planned_query_fetches(db, planned_queries, input.max_search_results).await
+        {
             match fetch {
                 Ok(fetch) => {
                     let items = web_evidence_items_from_search_fetch(&fetch);
@@ -133,6 +155,14 @@ pub async fn collect_web_evidence_with_usage(
     items.truncate(input.max_search_results);
     let items = enrich_with_page_fetches(db, items, input.max_fetches).await?;
     Ok(WebEvidenceBrokerOutput { items, usage })
+}
+
+fn initial_run_search_queries(query: &str) -> Vec<String> {
+    if !query.trim().is_empty() {
+        vec![query.to_string()]
+    } else {
+        Vec::new()
+    }
 }
 
 pub fn web_evidence_items_to_packets(query: &str, items: &[WebEvidenceItem]) -> Vec<ContextPacket> {
@@ -375,10 +405,11 @@ fn search_provider_candidates(db: &Database) -> AppResult<Vec<SearchProviderCand
 async fn collect_planned_query_fetches(
     db: &Database,
     planned_queries: Vec<String>,
+    max_search_results: usize,
 ) -> Vec<Result<SearchProviderFetch, String>> {
     let futures = planned_queries
         .iter()
-        .map(|query| collect_search_provider_fetches(db, query));
+        .map(|query| collect_search_provider_fetches(db, query, max_search_results));
     flatten_planned_query_fetch_results(join_all(futures).await)
 }
 
@@ -391,6 +422,7 @@ fn flatten_planned_query_fetch_results(
 async fn collect_search_provider_fetches(
     db: &Database,
     query: &str,
+    max_search_results: usize,
 ) -> Vec<Result<SearchProviderFetch, String>> {
     let candidates = match search_provider_candidates(db) {
         Ok(candidates) => candidates,
@@ -399,7 +431,7 @@ async fn collect_search_provider_fetches(
     let futures = candidates.into_iter().map(|candidate| async move {
         match candidate {
             SearchProviderCandidate::Mcp(provider_id) => {
-                collect_mcp_search_provider_fetch(db, query, &provider_id).await
+                collect_mcp_search_provider_fetch(db, query, &provider_id, max_search_results).await
             }
         }
         .map_err(|err| err.to_string())
@@ -410,6 +442,7 @@ async fn collect_mcp_search_provider_fetch(
     db: &Database,
     query: &str,
     provider_id: &str,
+    max_search_results: usize,
 ) -> AppResult<SearchProviderFetch> {
     ensure_provider_circuit_allows(provider_id)?;
     let (provider, mapping_json) = resolve_mcp_provider_mapping(db, provider_id, "web.search")?;
@@ -418,8 +451,9 @@ async fn collect_mcp_search_provider_fetch(
         &provider,
         &mapping_json,
         query,
-        10,
+        max_search_results,
         Duration::from_secs(20),
+        true,
     )
     .await;
     let probe = match probe_result {
@@ -435,7 +469,9 @@ async fn collect_mcp_search_provider_fetch(
     Ok(SearchProviderFetch::from_mcp_probe(probe))
 }
 
-pub(crate) async fn probe_mcp_search_provider(
+/// Execute the MCP search smoke request used by settings diagnostics without
+/// altering the provider health record used by Run routing.
+pub(crate) async fn probe_mcp_search_provider_without_recording(
     db: &Database,
     provider_id: &str,
     query: &str,
@@ -450,6 +486,7 @@ pub(crate) async fn probe_mcp_search_provider(
         query,
         max_results,
         request_timeout,
+        false,
     )
     .await
 }
@@ -461,6 +498,7 @@ async fn call_mcp_search_provider(
     query: &str,
     max_results: usize,
     request_timeout: Duration,
+    record_health: bool,
 ) -> AppResult<McpSearchProviderProbe> {
     let arguments = build_mcp_search_arguments(mapping_json, query, max_results);
     let argument_keys = arguments
@@ -498,12 +536,13 @@ async fn call_mcp_search_provider(
     .await;
     let call = match call_result {
         Ok(call) => {
-            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+            observe_mcp_search_provider_call(
                 db,
                 &provider.profile_id,
                 true,
-                started.elapsed().as_millis() as u64,
+                started.elapsed(),
                 None,
+                record_health,
             );
             call
         }
@@ -514,12 +553,13 @@ async fn call_mcp_search_provider(
                 .next()
                 .unwrap_or("unavailable")
                 .to_string();
-            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+            observe_mcp_search_provider_call(
                 db,
                 &provider.profile_id,
                 false,
-                started.elapsed().as_millis() as u64,
+                started.elapsed(),
                 Some(&code),
+                record_health,
             );
             return Err(error);
         }
@@ -531,6 +571,26 @@ async fn call_mcp_search_provider(
         auth_header_present,
         diagnostic: diagnose_mcp_search_result(&call.provider_id, &call.result),
     })
+}
+
+fn observe_mcp_search_provider_call(
+    db: &Database,
+    provider_id: &str,
+    success: bool,
+    elapsed: Duration,
+    failure_code: Option<&str>,
+    record_health: bool,
+) {
+    if !record_health {
+        return;
+    }
+    let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+        db,
+        provider_id,
+        success,
+        elapsed.as_millis() as u64,
+        failure_code,
+    );
 }
 
 fn mcp_provider_transport_kind(db: &Database, provider_id: &str) -> AppResult<String> {
@@ -1554,6 +1614,14 @@ fn result_hash(parts: &[&str]) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn initial_run_search_uses_the_single_original_query_without_replanning() {
+        assert_eq!(
+            initial_run_search_queries("最近世界杯战况如何？"),
+            vec!["最近世界杯战况如何？".to_string()]
+        );
+    }
+
     fn item(url: &str) -> WebEvidenceItem {
         WebEvidenceItem {
             url: url.into(),
@@ -1795,6 +1863,52 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_search_smoke_observation_does_not_persist_provider_health() {
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "diagnostic-provider".into(),
+                name: "Diagnostic provider".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: r#"{"command":"mcp-server"}"#.into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+        )
+        .unwrap();
+
+        super::observe_mcp_search_provider_call(
+            &db,
+            "diagnostic-provider",
+            true,
+            Duration::from_millis(8),
+            None,
+            false,
+        );
+
+        assert!(
+            crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_runtime(
+                &db,
+                "diagnostic-provider"
+            )
+            .unwrap()
+            .is_none()
+        );
+        assert!(
+            crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_health(
+                &db,
+                "diagnostic-provider"
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
     fn search_provider_candidates_use_selected_mcp_only() {
         let db = Database::open_in_memory().unwrap();
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
@@ -1878,6 +1992,18 @@ mod tests {
         assert_eq!(
             search,
             serde_json::json!({"query": "rust mcp", "max_results": 7, "topic": "general"})
+        );
+
+        let initial_search = build_mcp_search_arguments(
+            r#"{"tool":"tavily-search","queryArg":"query","maxResultsArg":"max_results"}"#,
+            "current news",
+            5,
+        );
+        assert!(
+            initial_search["max_results"]
+                .as_u64()
+                .is_some_and(|limit| limit <= 5),
+            "the initial evidence request must preserve its bounded result limit"
         );
 
         let fetch = build_mcp_fetch_arguments(

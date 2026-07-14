@@ -639,6 +639,41 @@ impl RunEngine {
         sink.emit(&failed)
     }
 
+    /// Execute the bounded Web evidence stage before any model route, credential hydration, or
+    /// provider dispatch. A failed required-evidence stage terminalizes the accepted Run with a
+    /// Web-specific safe code and never invokes `dispatch`.
+    pub(crate) async fn execute_web_required_evidence_then_dispatch_with_sink<
+        Evidence,
+        Output,
+        Collector,
+        CollectorFuture,
+        Dispatch,
+        DispatchFuture,
+    >(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        sink: &impl RunEventSink,
+        collector: Collector,
+        dispatch: Dispatch,
+    ) -> AppResult<Output>
+    where
+        Collector: FnOnce() -> CollectorFuture,
+        CollectorFuture: Future<Output = AppResult<Evidence>>,
+        Dispatch: FnOnce(Evidence) -> DispatchFuture,
+        DispatchFuture: Future<Output = AppResult<Output>>,
+    {
+        let evidence = match collector().await {
+            Ok(evidence) => evidence,
+            Err(error) => {
+                let code = classify_web_evidence_stage_failure(&error);
+                Self::fail_before_dispatch_with_sink(db, session, run_id, code, sink)?;
+                return Err(AppError::msg(code.as_str()));
+            }
+        };
+        dispatch(evidence).await
+    }
+
     /// Ensure a background execution error cannot leave a non-terminal Run behind.
     ///
     /// Provider and policy errors normally terminalize themselves. This guard is
@@ -795,6 +830,17 @@ impl RunEngine {
                 )?;
                 sink.emit(&failed)?;
                 return Err(AppError::msg("agent_run_provider_unavailable"));
+            }
+        };
+        let answer = match normalized_final_model_answer(&answer) {
+            Some(answer) => answer,
+            None => {
+                return fail_empty_visible_answer_with_sink(
+                    db,
+                    run_id,
+                    running.state_version(),
+                    sink,
+                );
             }
         };
         AgentRunRepository::finalize(
@@ -1041,8 +1087,19 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
+        let content = match normalized_final_model_answer(&outcome.content) {
+            Some(content) => content,
+            None => {
+                return fail_empty_visible_answer_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                );
+            }
+        };
         if let Some(plan) = domain_plan {
-            if plan.verify_output(&outcome.content).is_err() {
+            if plan.verify_output(&content).is_err() {
                 let failed = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {
@@ -1070,7 +1127,7 @@ impl RunEngine {
             FinalizeRunInput {
                 run_id: run_id.to_string(),
                 state_version: running_state_version,
-                content: outcome.content,
+                content,
                 evidence_ids: final_evidence_ids,
                 citation_map: serde_json::json!({}),
             },
@@ -1181,12 +1238,15 @@ impl RunEngine {
             sink.emit(&failed)?;
             return Err(AppError::msg("agent_run_direct_response_invalid"));
         }
+        let content = response
+            .content
+            .as_deref()
+            .and_then(normalized_final_model_answer);
+        let Some(content) = content else {
+            return fail_empty_visible_answer_with_sink(db, run_id, running_state_version, sink);
+        };
         if let Some(plan) = domain_plan {
-            let content = response
-                .content
-                .as_deref()
-                .expect("validated non-empty content");
-            if plan.verify_output(content).is_err() {
+            if plan.verify_output(&content).is_err() {
                 let failed = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {
@@ -1210,7 +1270,7 @@ impl RunEngine {
             FinalizeRunInput {
                 run_id: run_id.to_string(),
                 state_version: running_state_version,
-                content: response.content.expect("validated non-empty content"),
+                content,
                 evidence_ids: evidence_ids.to_vec(),
                 citation_map: serde_json::json!({}),
             },
@@ -1233,6 +1293,34 @@ fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessage {
     }
 }
 
+fn normalized_final_model_answer(content: &str) -> Option<String> {
+    let normalized = crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(content);
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn fail_empty_visible_answer_with_sink(
+    db: &Database,
+    run_id: &str,
+    running_state_version: u64,
+    sink: &impl RunEventSink,
+) -> AppResult<()> {
+    let code = SafeRunErrorCode::InvalidRequest;
+    let failed = AgentRunRepository::append_event(
+        db,
+        AppendRunEventInput {
+            run_id: run_id.to_string(),
+            state_version: running_state_version,
+            event_type: RunEventType::Failed,
+            payload: RunEventPayload::Failed {
+                code,
+                message: safe_failure_message(code).to_string(),
+            },
+        },
+    )?;
+    sink.emit(&failed)?;
+    Err(AppError::msg("agent_run_empty_visible_answer"))
+}
+
 fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
     match code {
         SafeRunErrorCode::ProviderUnavailable => "模型服务暂时不可用，请稍后重试",
@@ -1243,6 +1331,9 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::WebProviderUnavailable => {
             "未配置可用的联网证据提供方，请在联网与证据中完成配置"
         }
+        SafeRunErrorCode::WebProviderTimeout => "联网证据服务响应超时，请稍后重试",
+        SafeRunErrorCode::WebProviderFailed => "联网证据服务暂时不可用，请稍后重试",
+        SafeRunErrorCode::WebEvidenceInvalid => "联网证据服务未返回可用结果，请稍后重试",
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
         SafeRunErrorCode::PermissionDenied => "当前请求不具备执行权限",
         SafeRunErrorCode::Cancelled => "运行已取消",
@@ -1252,6 +1343,16 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::StateVersionConflict
         | SafeRunErrorCode::ConfirmationExpired
         | SafeRunErrorCode::PersistenceFailed => "运行暂时无法完成，请稍后重试",
+    }
+}
+
+fn classify_web_evidence_stage_failure(error: &AppError) -> SafeRunErrorCode {
+    match error.to_string().as_str() {
+        "agent_run_mcp_unavailable" => SafeRunErrorCode::WebProviderUnavailable,
+        "agent_run_web_provider_timeout" => SafeRunErrorCode::WebProviderTimeout,
+        "agent_run_web_provider_failed" => SafeRunErrorCode::WebProviderFailed,
+        "agent_run_web_evidence_invalid" => SafeRunErrorCode::WebEvidenceInvalid,
+        _ => SafeRunErrorCode::WebProviderFailed,
     }
 }
 
@@ -1271,8 +1372,14 @@ fn classify_provider_failure(error: &AppError) -> SafeRunErrorCode {
     }
 }
 
-fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
+pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
     match error.to_string().as_str() {
+        "agent_run_mcp_unavailable" => SafeRunErrorCode::WebProviderUnavailable,
+        "agent_run_web_provider_timeout" => SafeRunErrorCode::WebProviderTimeout,
+        "agent_run_web_provider_failed" => SafeRunErrorCode::WebProviderFailed,
+        "agent_run_web_evidence_invalid" | "agent_run_web_evidence_required" => {
+            SafeRunErrorCode::WebEvidenceInvalid
+        }
         "agent_run_tool_loop_limit" | "agent_run_invalid_model_response" => {
             SafeRunErrorCode::InvalidRequest
         }

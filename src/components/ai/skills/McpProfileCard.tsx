@@ -40,7 +40,8 @@ interface McpProfileCardProps {
   ) => void | Promise<void>;
   onToggle: (enabled: boolean) => void | Promise<void>;
   onDelete: () => void | Promise<void>;
-  onDiagnostics: (liveCheck?: boolean) => void | Promise<void>;
+  onDiagnostics: () => void | Promise<void>;
+  onConfigurationChanged: () => void;
 }
 
 interface HttpsConfigState {
@@ -337,19 +338,6 @@ function mappingStatusText(status: string): string {
   }
 }
 
-function diagnosticStatusText(status: string): string {
-  switch (status) {
-    case "ready":
-      return "可参与调度";
-    case "needs_mapping":
-      return "需要补全映射";
-    case "disabled":
-      return "已停用";
-    default:
-      return status;
-  }
-}
-
 function checkStatusText(status: string): string {
   switch (status) {
     case "pass":
@@ -426,6 +414,7 @@ export function McpProfileCard({
   onToggle,
   onDelete,
   onDiagnostics,
+  onConfigurationChanged,
 }: McpProfileCardProps) {
   const [name, setName] = useState(provider.name || "MCP 联网证据提供方");
   const [enabled, setEnabled] = useState(provider.enabled);
@@ -474,18 +463,10 @@ export function McpProfileCard({
     [presetId],
   );
   const diagnosticLines = diagnostics?.checks ?? [];
-  const hasLiveDiagnostics = diagnosticLines.some((check) =>
-    [
-      "liveConnection",
-      "searchToolLive",
-      "searchSmokeLive",
-      "searchResultParseLive",
-      "fetchToolLive",
-    ].includes(check.label),
-  );
   const credentialState = credentialStateText(credentialRows);
 
   const applyPreset = (preset: McpProviderPreset) => {
+    onConfigurationChanged();
     setPresetId(preset.id);
     setName(preset.providerName);
     setTransportKind(preset.transportKind);
@@ -506,6 +487,7 @@ export function McpProfileCard({
   };
 
   const addCredentialRow = () => {
+    onConfigurationChanged();
     setCredentialRows((rows) => [
       ...rows,
       {
@@ -520,6 +502,7 @@ export function McpProfileCard({
   };
 
   const addPlainEnvRow = () => {
+    onConfigurationChanged();
     setStdioConfig((current) => ({
       ...current,
       envRows: [
@@ -533,12 +516,14 @@ export function McpProfileCard({
     rowId: string,
     patch: Partial<CredentialRefRow>,
   ) => {
+    onConfigurationChanged();
     setCredentialRows((rows) =>
       rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)),
     );
   };
 
   const updatePlainEnvRow = (rowId: string, patch: Partial<PlainEnvRow>) => {
+    onConfigurationChanged();
     setStdioConfig((current) => ({
       ...current,
       envRows: current.envRows.map((row) =>
@@ -548,10 +533,12 @@ export function McpProfileCard({
   };
 
   const removeCredentialRow = (rowId: string) => {
+    onConfigurationChanged();
     setCredentialRows((rows) => rows.filter((row) => row.id !== rowId));
   };
 
   const removePlainEnvRow = (rowId: string) => {
+    onConfigurationChanged();
     setStdioConfig((current) => ({
       ...current,
       envRows: current.envRows.filter((row) => row.id !== rowId),
@@ -628,9 +615,8 @@ export function McpProfileCard({
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            连接：{transportLabel(transportKind)} ·{" "}
-            {mappingStatusText(provider.mappingStatus)} ·{" "}
-            {diagnosticStatusText(provider.diagnosticStatus)}
+            连接方式：{transportLabel(transportKind)} · 映射：
+            {mappingStatusText(provider.mappingStatus)}
           </p>
           {selectedPreset ? (
             <p className="max-w-3xl text-xs text-muted-foreground">
@@ -652,16 +638,6 @@ export function McpProfileCard({
           >
             {enabled ? "停用" : "启用"}
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={saving || !persisted}
-            title={!persisted ? "请先保存提供方，再测试连接" : undefined}
-            onClick={() => void onDiagnostics(true)}
-          >
-            测试连接
-          </Button>
         </div>
       </header>
 
@@ -674,7 +650,10 @@ export function McpProfileCard({
             onValueChange={(value) => {
               const preset = findMcpProviderPreset(value);
               if (preset) applyPreset(preset);
-              else setPresetId("custom");
+              else {
+                onConfigurationChanged();
+                setPresetId("custom");
+              }
             }}
           >
             <SelectTrigger className="h-9 text-xs">
@@ -699,7 +678,10 @@ export function McpProfileCard({
             value={name}
             disabled={saving}
             placeholder="MCP 联网证据提供方"
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              onConfigurationChanged();
+              setName(event.target.value);
+            }}
           />
         </label>
         <label className="space-y-1 text-xs font-medium text-foreground">
@@ -707,9 +689,10 @@ export function McpProfileCard({
           <Select
             value={transportKind}
             disabled={saving}
-            onValueChange={(value) =>
-              setTransportKind(editableTransportKind(value))
-            }
+            onValueChange={(value) => {
+              onConfigurationChanged();
+              setTransportKind(editableTransportKind(value));
+            }}
           >
             <SelectTrigger className="h-9 text-xs">
               <SelectValue />
@@ -732,12 +715,13 @@ export function McpProfileCard({
                 disabled={saving}
                 spellCheck={false}
                 placeholder="例如：npx"
-                onChange={(event) =>
+                onChange={(event) => {
+                  onConfigurationChanged();
                   setStdioConfig((current) => ({
                     ...current,
                     command: event.target.value,
-                  }))
-                }
+                  }));
+                }}
               />
             </label>
             <label className="space-y-1 text-xs font-medium text-foreground">
@@ -748,12 +732,13 @@ export function McpProfileCard({
                 rows={3}
                 spellCheck={false}
                 placeholder={"每行一个参数，例如：\n-y\nmcp-searxng"}
-                onChange={(event) =>
+                onChange={(event) => {
+                  onConfigurationChanged();
                   setStdioConfig((current) => ({
                     ...current,
                     argsText: event.target.value,
-                  }))
-                }
+                  }));
+                }}
               />
             </label>
           </div>
@@ -821,12 +806,13 @@ export function McpProfileCard({
               disabled={saving}
               spellCheck={false}
               placeholder="https://api.anysearch.com/mcp"
-              onChange={(event) =>
+              onChange={(event) => {
+                onConfigurationChanged();
                 setHttpsConfig((current) => ({
                   ...current,
                   url: event.target.value,
-                }))
-              }
+                }));
+              }}
             />
           </label>
           <label className="flex items-center gap-2 self-end rounded-md border border-border/65 bg-card px-3 py-2 text-xs font-medium text-foreground">
@@ -835,12 +821,13 @@ export function McpProfileCard({
               className="h-4 w-4 rounded border-border accent-primary"
               checked={httpsConfig.allowLocalhostDev}
               disabled={saving}
-              onChange={(event) =>
+              onChange={(event) => {
+                onConfigurationChanged();
                 setHttpsConfig((current) => ({
                   ...current,
                   allowLocalhostDev: event.target.checked,
-                }))
-              }
+                }));
+              }}
             />
             允许连接本机开发服务
           </label>
@@ -855,7 +842,10 @@ export function McpProfileCard({
             disabled={saving}
             spellCheck={false}
             placeholder="例如：search"
-            onChange={(event) => setSearchTool(event.target.value)}
+            onChange={(event) => {
+              onConfigurationChanged();
+              setSearchTool(event.target.value);
+            }}
           />
         </label>
         <label className="space-y-1 text-xs font-medium text-foreground">
@@ -865,7 +855,10 @@ export function McpProfileCard({
             disabled={saving}
             spellCheck={false}
             placeholder="例如：extract"
-            onChange={(event) => setFetchTool(event.target.value)}
+            onChange={(event) => {
+              onConfigurationChanged();
+              setFetchTool(event.target.value);
+            }}
           />
         </label>
       </div>
@@ -972,7 +965,7 @@ export function McpProfileCard({
 
       {!persisted ? (
         <p className="text-xs text-muted-foreground">
-          先保存提供方，再测试连接或查看诊断。
+          先保存提供方，再执行实时诊断。
         </p>
       ) : null}
 
@@ -985,7 +978,7 @@ export function McpProfileCard({
             </p>
           ))}
           <p>
-            {hasLiveDiagnostics ? "实时可用性" : "配置可调度性"}：搜索
+            实时可用性：搜索
             {diagnostics?.canUseForSearch ? "可用" : "不可用"}
             ，网页读取{diagnostics?.canUseForFetch ? "可用" : "不可用"}
           </p>
@@ -999,7 +992,7 @@ export function McpProfileCard({
           variant="outline"
           disabled={saving || !persisted}
           title={!persisted ? "请先保存提供方，再执行实时诊断" : undefined}
-          onClick={() => void onDiagnostics(true)}
+          onClick={() => void onDiagnostics()}
         >
           实时诊断
         </Button>

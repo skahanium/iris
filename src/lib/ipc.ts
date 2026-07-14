@@ -792,12 +792,11 @@ export async function webEvidenceProviderDelete(
 }
 
 export async function webEvidenceProviderDiagnostics(
-  providerId?: string,
-  liveCheck?: boolean,
+  providerId: string,
 ): Promise<WebEvidenceProviderDiagnostics> {
   return invoke<WebEvidenceProviderDiagnostics>(
     "web_evidence_provider_diagnostics",
-    { providerId: providerId ?? null, liveCheck: liveCheck ?? false },
+    { providerId },
   );
 }
 

@@ -228,6 +228,11 @@ fn safe_run_errors_serialize_as_stable_agent_run_codes() {
         SafeRunErrorCode::ConfirmationExpired,
         SafeRunErrorCode::ProviderUnavailable,
         SafeRunErrorCode::ProviderTimeout,
+        SafeRunErrorCode::NoCapableModel,
+        SafeRunErrorCode::WebProviderUnavailable,
+        SafeRunErrorCode::WebProviderTimeout,
+        SafeRunErrorCode::WebProviderFailed,
+        SafeRunErrorCode::WebEvidenceInvalid,
         SafeRunErrorCode::PersistenceFailed,
         SafeRunErrorCode::Cancelled,
     ] {
