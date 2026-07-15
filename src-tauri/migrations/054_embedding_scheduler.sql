@@ -26,7 +26,9 @@ SELECT singleton, active_model_id, target_model_id, target_dimension,
        CASE
            WHEN phase = 'rebuilding' AND NOT (indexed_items = 0 AND total_items = 0)
                THEN 'Embedding rebuild interrupted'
-           ELSE last_error
+           WHEN phase = 'failed' THEN 'Embedding rebuild failed'
+           WHEN phase = 'rebuilding' THEN NULL
+           ELSE NULL
        END,
        CASE
            WHEN phase = 'rebuilding' AND NOT (indexed_items = 0 AND total_items = 0)

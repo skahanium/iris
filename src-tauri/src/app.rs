@@ -270,8 +270,11 @@ impl AppState {
             watcher: Mutex::new(None),
             brute_force: BruteForceProtection::new(),
         });
-        if let Err(error) = state.db.with_conn(recover_interrupted_generation) {
-            tracing::warn!(result_code = "embedding_recovery_failed", "embedding recovery was unavailable: {error}");
+        if state.db.with_conn(recover_interrupted_generation).is_err() {
+            tracing::warn!(
+                result_code = "embedding_recovery_failed",
+                "embedding recovery was unavailable"
+            );
         }
 
         if let Err(e) = crate::llm::search_web::cleanup_expired_search_cache(&state.db) {

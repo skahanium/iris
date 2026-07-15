@@ -251,7 +251,10 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
                     IndexEmbeddingMode::Queue(&state),
                 )
             }) {
-            tracing::warn!(result_code = "vault_background_index_skipped", "vault background index skipped");
+                tracing::warn!(
+                    result_code = "vault_background_index_skipped",
+                    "vault background index skipped"
+                );
             }
             processed += 1;
             let _ = app.emit(
@@ -266,11 +269,15 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
             );
         }
 
-        if let Err(e) = state
+        if state
             .db
             .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
+            .is_err()
         {
-            tracing::warn!("vault_set: background prune skipped: {e}");
+            tracing::warn!(
+                result_code = "vault_background_prune_skipped",
+                "vault background prune skipped"
+            );
             let _ = app.emit(
                 "vault:index_progress",
                 &VaultIndexProgress {
@@ -278,7 +285,7 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
                     processed,
                     total,
                     path: None,
-                    error: Some(e.to_string()),
+                    error: Some("Index cleanup failed".into()),
                 },
             );
             return;
@@ -1099,8 +1106,11 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
     state.clear_ai_state();
     crate::commands::media::clear_media_leases();
 
-    if let Err(e) = state.restart_file_watcher(app.clone()) {
-        tracing::warn!("vault_set: file watcher did not start: {e}");
+    if state.restart_file_watcher(app.clone()).is_err() {
+        tracing::warn!(
+            result_code = "vault_watcher_start_failed",
+            "vault file watcher did not start"
+        );
     }
 
     if let Ok(vault) = state.vault_path() {

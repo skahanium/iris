@@ -294,7 +294,10 @@ pub fn index_file_with_embed(
 
     if let Some((id, stored_hash, title, stored_wc)) = &existing_row {
         if stored_hash == &hash {
-            tracing::debug!(result_code = "index_content_unchanged", "index content unchanged");
+            tracing::debug!(
+                result_code = "index_content_unchanged",
+                "index content unchanged"
+            );
             return Ok(FileEntry {
                 id: *id,
                 path: rel,
@@ -403,7 +406,10 @@ pub fn index_file_from_content(
 
     if let Some((id, stored_hash, title, stored_wc)) = &existing_row {
         if stored_hash == hash {
-            tracing::debug!(result_code = "index_content_unchanged", "index content unchanged");
+            tracing::debug!(
+                result_code = "index_content_unchanged",
+                "index content unchanged"
+            );
             return Ok(FileEntry {
                 id: *id,
                 path: rel,
@@ -586,8 +592,11 @@ pub fn index_vault_incremental(
         }
         let disk_hash = match file_hash(&abs) {
             Ok(h) => h,
-            Err(e) => {
-                tracing::warn!("index skip {}: {e}", abs.display());
+            Err(_) => {
+                tracing::warn!(
+                    result_code = "index_file_hash_unavailable",
+                    "index file hash unavailable"
+                );
                 continue;
             }
         };
@@ -619,7 +628,7 @@ pub fn index_vault_incremental(
         }
         match index_file_with_embed(conn, vault, &abs, embedding_mode) {
             Ok(entry) => entries.push(entry),
-            Err(e) => tracing::warn!("index failed for {}: {e}", abs.display()),
+            Err(_) => tracing::warn!(result_code = "index_file_failed", "index file failed"),
         }
     }
     let _ = prune_stale_file_indexes(conn, vault)?;
@@ -684,8 +693,11 @@ pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<us
         } else {
             match resolve_vault_path(vault, &path) {
                 Ok(abs) => !abs.is_file(),
-                Err(e) => {
-                    tracing::warn!(path = %path, error = %e, "prune: path outside vault or invalid");
+                Err(_) => {
+                    tracing::warn!(
+                        result_code = "index_prune_invalid_path",
+                        "index prune invalid path"
+                    );
                     true
                 }
             }

@@ -92,7 +92,9 @@ pub fn run() {
             // `AppState::new` returns `Arc<AppState>`; Tauri can inject it directly.
             let state = AppState::new(data_dir)?;
             crate::crypto::vault_key::init_vault_key();
-            state.embedding_scheduler().attach_app_handle(app.handle().clone());
+            state
+                .embedding_scheduler()
+                .attach_app_handle(app.handle().clone());
             app.manage(state.clone());
             app.manage(commands::app_update::PendingAppUpdate::default());
 

@@ -137,8 +137,7 @@ const MIGRATION_053_UP: &str =
 const MIGRATION_053_DOWN: &str =
     include_str!("../../migrations/053_remove_model_slot_capabilities.down.sql");
 const MIGRATION_054_UP: &str = include_str!("../../migrations/054_embedding_scheduler.sql");
-const MIGRATION_054_DOWN: &str =
-    include_str!("../../migrations/054_embedding_scheduler.down.sql");
+const MIGRATION_054_DOWN: &str = include_str!("../../migrations/054_embedding_scheduler.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
