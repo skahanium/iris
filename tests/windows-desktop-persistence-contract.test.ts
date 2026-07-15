@@ -34,7 +34,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain('aria-label="关闭"');
     expect(runner).toContain("restartApplication");
     expect(runner).toMatch(
-      /executeSync\([\s\S]*__TAURI_INTERNALS__[\s\S]*tauri_runtime_not_ready/,
+      /invokeTauri[\s\S]*executeAsync[\s\S]*const done = arguments[\s\S]*__TAURI_INTERNALS__/,
     );
     expect(runner).not.toContain("vitest");
     expect(runner).not.toContain("vitest run");
