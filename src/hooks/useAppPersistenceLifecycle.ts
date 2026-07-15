@@ -432,6 +432,26 @@ export function useAppPersistenceLifecycle({
     [coordinator],
   );
 
+  const beginPathMigration = useCallback(
+    async (oldPath: string, newPath: string): Promise<void> => {
+      await coordinator.beginPathMigration(oldPath, newPath);
+    },
+    [coordinator],
+  );
+
+  const completePathMigration = useCallback(
+    (oldPath: string, newPath: string): string =>
+      coordinator.completePathMigration(oldPath, newPath).markdown,
+    [coordinator],
+  );
+
+  const abortPathMigration = useCallback(
+    (oldPath: string): void => {
+      coordinator.abortPathMigration(oldPath);
+    },
+    [coordinator],
+  );
+
   return {
     notifyDirty,
     flushSave,
@@ -445,6 +465,9 @@ export function useAppPersistenceLifecycle({
     versionSnapshotScheduler,
     flushSaveForPath,
     renamePath,
+    beginPathMigration,
+    completePathMigration,
+    abortPathMigration,
     flushAllOpenTabs,
     saveStatus,
     saveError,

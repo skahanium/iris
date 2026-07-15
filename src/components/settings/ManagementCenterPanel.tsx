@@ -68,12 +68,13 @@ interface ManagementCenterPanelProps {
   onOpenVersion: () => void;
   onRescanVault: () => void;
   onRecycleIndexChange: () => void;
-  onBeforeFilePathChange?: (path: string) => Promise<void>;
+  onBeforeFilePathChange?: (oldPath: string, newPath: string) => Promise<void>;
   onFilePathChanged?: (
     oldPath: string,
     newPath: string,
     title?: string,
   ) => void;
+  onFilePathChangeFailed?: (oldPath: string) => void;
   onBeforeFileDelete?: (path: string) => Promise<void>;
   onFileDeleted?: (path: string) => void;
   onIndexChange?: () => void;
@@ -363,6 +364,7 @@ export function ManagementCenterPanel({
   onRecycleIndexChange,
   onBeforeFilePathChange,
   onFilePathChanged,
+  onFilePathChangeFailed,
   onBeforeFileDelete,
   onFileDeleted,
   onIndexChange,
@@ -738,6 +740,7 @@ export function ManagementCenterPanel({
               onPrepare={onPrepareNote}
               onBeforeFilePathChange={onBeforeFilePathChange}
               onFilePathChanged={onFilePathChanged}
+              onFilePathChangeFailed={onFilePathChangeFailed}
               onBeforeFileDelete={onBeforeFileDelete}
               onFileDeleted={onFileDeleted}
               onIndexChange={onIndexChange}

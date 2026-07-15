@@ -140,6 +140,45 @@ describe("DocumentPersistenceCoordinator", () => {
     expect(coordinator.get("suggested.md")).toBeNull();
   });
 
+  it("queues timer-triggered edits on the new path while a move is still pending", async () => {
+    vi.useFakeTimers();
+    try {
+      const move = deferred<string>();
+      const moveStarted = deferred<void>();
+      const write = vi.fn(async () => written);
+      const coordinator = new DocumentPersistenceCoordinator({
+        delayMs: 50,
+        write,
+      });
+
+      coordinator.load("old.md", "opened");
+      coordinator.capture("old.md", "before move");
+      const rename = coordinator.rename("old.md", "new.md", () => {
+        moveStarted.resolve();
+        return move.promise;
+      });
+
+      await moveStarted.promise;
+
+      coordinator.capture("old.md", "edited while moving");
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(write.mock.calls).toEqual([["old.md", "before move"]]);
+
+      move.resolve("allocated.md");
+      await rename;
+      await coordinator.barrier("allocated.md");
+
+      expect(write.mock.calls).toEqual([
+        ["old.md", "before move"],
+        ["allocated.md", "edited while moving"],
+      ]);
+      expect(coordinator.get("old.md")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("moves a captured snapshot to a rebound path before its next write", async () => {
     const write = vi.fn(async () => written);
     const coordinator = new DocumentPersistenceCoordinator({ write });

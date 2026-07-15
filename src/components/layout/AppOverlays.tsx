@@ -122,8 +122,9 @@ interface AppOverlaysProps {
   handleConflictManualEdit: () => void;
   markdown: string;
   onClassifiedUnlocked: () => void;
-  onBeforeFilePathChange: (path: string) => Promise<void>;
+  onBeforeFilePathChange: (oldPath: string, newPath: string) => Promise<void>;
   onFilePathChanged: (oldPath: string, newPath: string, title?: string) => void;
+  onFilePathChangeFailed: (oldPath: string) => void;
   onBeforeFileDelete: (path: string) => Promise<void>;
   onFileDeleted: (path: string) => void;
   openClassifiedPaths: string[];
@@ -192,6 +193,7 @@ export function AppOverlays({
   onClassifiedUnlocked,
   onBeforeFilePathChange,
   onFilePathChanged,
+  onFilePathChangeFailed,
   onBeforeFileDelete,
   onFileDeleted,
   openClassifiedPaths,
@@ -264,6 +266,7 @@ export function AppOverlays({
         onPrepare={(file, source) => onPrepareNote?.(file, source)}
         onBeforeFilePathChange={onBeforeFilePathChange}
         onFilePathChanged={onFilePathChanged}
+        onFilePathChangeFailed={onFilePathChangeFailed}
         onBeforeFileDelete={onBeforeFileDelete}
         onFileDeleted={onFileDeleted}
       />
@@ -328,6 +331,7 @@ export function AppOverlays({
             onRecycleIndexChange={bumpVaultIndex}
             onBeforeFilePathChange={onBeforeFilePathChange}
             onFilePathChanged={onFilePathChanged}
+            onFilePathChangeFailed={onFilePathChangeFailed}
             onBeforeFileDelete={onBeforeFileDelete}
             onFileDeleted={onFileDeleted}
             onIndexChange={bumpVaultIndex}

@@ -166,12 +166,13 @@ interface VaultNavigatorProps {
     options?: VaultNavigatorOpenOptions,
   ) => void | Promise<void>;
   onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
-  onBeforeFilePathChange?: (path: string) => Promise<void>;
+  onBeforeFilePathChange?: (oldPath: string, newPath: string) => Promise<void>;
   onFilePathChanged?: (
     oldPath: string,
     newPath: string,
     title?: string,
   ) => void;
+  onFilePathChangeFailed?: (oldPath: string) => void;
   onBeforeFileDelete?: (path: string) => Promise<void>;
   onFileDeleted?: (path: string) => void;
   onIndexChange?: () => void;
@@ -354,6 +355,7 @@ export function VaultNavigatorBody({
   onPrepare,
   onBeforeFilePathChange,
   onFilePathChanged,
+  onFilePathChangeFailed,
   onBeforeFileDelete,
   onFileDeleted,
   onIndexChange,
@@ -588,6 +590,7 @@ export function VaultNavigatorBody({
   const handleRename = useCallback(
     async (name: string) => {
       if (!renameTarget) return;
+      const startedMigrations: string[] = [];
       try {
         if (renameTarget.kind === "file") {
           const parent = fileParentPath(renameTarget.file.path);
@@ -596,7 +599,8 @@ export function VaultNavigatorBody({
             normalizeDocumentName(name),
           );
           if (nextPath !== renameTarget.file.path) {
-            await onBeforeFilePathChange?.(renameTarget.file.path);
+            await onBeforeFilePathChange?.(renameTarget.file.path, nextPath);
+            startedMigrations.push(renameTarget.file.path);
             await fileRename(renameTarget.file.path, nextPath);
             onFilePathChanged?.(renameTarget.file.path, nextPath, name);
           }
@@ -610,7 +614,12 @@ export function VaultNavigatorBody({
               file.path.startsWith(oldPrefix),
             );
             for (const file of renamedFiles) {
-              await onBeforeFilePathChange?.(file.path);
+              const remappedPath = joinVaultChildPath(
+                newPrefix,
+                file.path.slice(oldPrefix.length),
+              );
+              await onBeforeFilePathChange?.(file.path, remappedPath);
+              startedMigrations.push(file.path);
             }
             await folderRename(renameTarget.path, nextPath);
             for (const file of renamedFiles) {
@@ -631,11 +640,15 @@ export function VaultNavigatorBody({
         onIndexChange?.();
         refresh();
       } catch (e) {
+        startedMigrations.forEach((oldPath) =>
+          onFilePathChangeFailed?.(oldPath),
+        );
         setError(e instanceof Error ? e.message : "重命名失败");
       }
     },
     [
       onBeforeFilePathChange,
+      onFilePathChangeFailed,
       onFilePathChanged,
       onIndexChange,
       files,
@@ -647,11 +660,13 @@ export function VaultNavigatorBody({
   const handleMove = useCallback(
     async (targetFolder: string) => {
       if (!moveTarget) return;
+      const startedMigrations: string[] = [];
       try {
         if (moveTarget.kind === "file") {
           const nextPath = resolveMoveFilePath(moveTarget.file, targetFolder);
           if (nextPath !== moveTarget.file.path) {
-            await onBeforeFilePathChange?.(moveTarget.file.path);
+            await onBeforeFilePathChange?.(moveTarget.file.path, nextPath);
+            startedMigrations.push(moveTarget.file.path);
             await fileRename(moveTarget.file.path, nextPath);
             onFilePathChanged?.(
               moveTarget.file.path,
@@ -668,7 +683,8 @@ export function VaultNavigatorBody({
               reservedPaths,
             );
             if (nextPath === file.path) continue;
-            await onBeforeFilePathChange?.(file.path);
+            await onBeforeFilePathChange?.(file.path, nextPath);
+            startedMigrations.push(file.path);
             await fileRename(file.path, nextPath);
             onFilePathChanged?.(file.path, nextPath, vaultFileTitle(file));
             reservedPaths.add(nextPath);
@@ -685,7 +701,12 @@ export function VaultNavigatorBody({
               file.path.startsWith(oldPrefix),
             );
             for (const file of movedFiles) {
-              await onBeforeFilePathChange?.(file.path);
+              const remappedPath = joinVaultChildPath(
+                newPrefix,
+                file.path.slice(oldPrefix.length),
+              );
+              await onBeforeFilePathChange?.(file.path, remappedPath);
+              startedMigrations.push(file.path);
             }
             await folderRename(moveTarget.path, nextPath);
             for (const file of movedFiles) {
@@ -706,6 +727,9 @@ export function VaultNavigatorBody({
         onIndexChange?.();
         refresh();
       } catch (e) {
+        startedMigrations.forEach((oldPath) =>
+          onFilePathChangeFailed?.(oldPath),
+        );
         setError(errorMessage(e, "移动失败"));
       }
     },
@@ -713,6 +737,7 @@ export function VaultNavigatorBody({
       files,
       moveTarget,
       onBeforeFilePathChange,
+      onFilePathChangeFailed,
       onFilePathChanged,
       onIndexChange,
       refresh,

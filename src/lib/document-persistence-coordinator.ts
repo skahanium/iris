@@ -24,8 +24,20 @@ export interface DocumentPersistenceSnapshot {
 
 interface DocumentRecord extends DocumentPersistenceSnapshot {
   discarded: boolean;
+  migration: PathMigration | null;
   timer: ReturnType<typeof setTimeout> | null;
   writeTask: Promise<void> | null;
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+}
+
+interface PathMigration {
+  oldPath: string;
+  record: DocumentRecord;
+  ready: Deferred<void>;
 }
 
 interface DocumentPersistenceCoordinatorOptions {
@@ -44,6 +56,14 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 /**
  * Serializes Markdown persistence per document path and prevents stale write
  * receipts from acknowledging a newer captured revision.
@@ -51,6 +71,8 @@ function errorMessage(error: unknown): string {
 export class DocumentPersistenceCoordinator {
   private readonly delayMs: number;
   private readonly records = new Map<string, DocumentRecord>();
+  private readonly pathRedirects = new Map<string, string>();
+  private readonly migrations = new Map<string, PathMigration>();
   private readonly listeners = new Set<DocumentPersistenceListener>();
   private readonly write: DocumentPersistenceCoordinatorOptions["write"];
   private revision = 0;
@@ -78,6 +100,7 @@ export class DocumentPersistenceCoordinator {
       status: "clean",
       error: null,
       discarded: false,
+      migration: null,
       timer: null,
       writeTask: null,
     };
@@ -88,10 +111,11 @@ export class DocumentPersistenceCoordinator {
 
   /** Captures a complete Markdown snapshot and schedules its delayed commit. */
   capture(path: string, markdown: string): DocumentPersistenceSnapshot {
-    if (!this.records.has(path)) {
+    const resolvedPath = this.resolvePath(path);
+    if (!this.records.has(resolvedPath)) {
       const revision = this.nextRevision();
       const record: DocumentRecord = {
-        path,
+        path: resolvedPath,
         markdown,
         revision,
         baselineMarkdown: "",
@@ -101,15 +125,16 @@ export class DocumentPersistenceCoordinator {
         status: "dirty",
         error: null,
         discarded: false,
+        migration: null,
         timer: null,
         writeTask: null,
       };
-      this.records.set(path, record);
+      this.records.set(resolvedPath, record);
       this.schedule(record);
       this.emit(record);
       return this.snapshot(record);
     }
-    const record = this.requireRecord(path);
+    const record = this.requireRecord(resolvedPath);
     record.markdown = markdown;
     record.revision = this.nextRevision();
     record.error = null;
@@ -126,8 +151,12 @@ export class DocumentPersistenceCoordinator {
 
   /** Commits the currently captured revision once, without waiting for later edits. */
   async commit(path: string): Promise<DocumentPersistenceSnapshot> {
-    const record = this.requireRecord(path);
+    const record = this.requireRecord(this.resolvePath(path));
     this.cancelTimer(record);
+    if (record.migration) {
+      await record.migration.ready.promise;
+      return this.commit(record.path);
+    }
     if (record.baselineRevision === record.revision) {
       return this.snapshot(record);
     }
@@ -147,11 +176,11 @@ export class DocumentPersistenceCoordinator {
 
   /** Waits until every captured revision for this path is durably acknowledged. */
   async barrier(path: string): Promise<DocumentPersistenceSnapshot> {
-    let record = this.requireRecord(path);
+    let record = this.requireRecord(this.resolvePath(path));
     this.cancelTimer(record);
     while (record.baselineRevision !== record.revision) {
       await this.commit(record.path);
-      record = this.requireRecord(path);
+      record = this.requireRecord(this.resolvePath(record.path));
     }
     return this.snapshot(record);
   }
@@ -162,25 +191,62 @@ export class DocumentPersistenceCoordinator {
     newPath: string,
     move: () => Promise<string>,
   ): Promise<DocumentPersistenceSnapshot> {
-    await this.barrier(oldPath);
-    const reboundPath = await move();
-    return this.rebind(oldPath, reboundPath || newPath);
+    await this.beginPathMigration(oldPath, newPath);
+    try {
+      const reboundPath = await move();
+      return this.completePathMigration(oldPath, reboundPath || newPath);
+    } catch (error) {
+      this.abortPathMigration(oldPath);
+      throw error;
+    }
   }
 
-  /** Rebinds a known document snapshot after an external path move. */
-  rebind(oldPath: string, newPath: string): DocumentPersistenceSnapshot {
+  /** Begins a path migration and prevents later captures from writing the old path. */
+  async beginPathMigration(
+    oldPath: string,
+    newPath: string,
+  ): Promise<DocumentPersistenceSnapshot> {
+    const existing = this.migrations.get(oldPath);
+    if (existing) return this.snapshot(existing.record);
+
+    await this.barrier(oldPath);
     const source = this.requireRecord(oldPath);
     const destination = this.records.get(newPath);
     if (destination && destination !== source) {
-      if (destination.revision > source.revision) {
-        this.discard(oldPath);
-        return this.snapshot(destination);
-      }
-      this.discard(newPath);
+      throw new Error(
+        `path migration destination is already tracked: ${newPath}`,
+      );
     }
+
+    const migration: PathMigration = {
+      oldPath,
+      record: source,
+      ready: deferred<void>(),
+    };
     this.records.delete(oldPath);
     source.path = newPath;
+    source.migration = migration;
     this.records.set(newPath, source);
+    this.pathRedirects.set(oldPath, newPath);
+    this.migrations.set(oldPath, migration);
+    this.emit(source);
+    return this.snapshot(source);
+  }
+
+  /** Completes a prepared migration after the external move has succeeded. */
+  completePathMigration(
+    oldPath: string,
+    newPath: string,
+  ): DocumentPersistenceSnapshot {
+    const migration = this.migrations.get(oldPath);
+    if (!migration) return this.rebind(oldPath, newPath);
+
+    const source = migration.record;
+    this.migrations.delete(oldPath);
+    this.pathRedirects.delete(oldPath);
+    this.rebindRecord(source, newPath);
+    source.migration = null;
+    migration.ready.resolve();
     if (source.baselineRevision !== source.revision) {
       source.status = "dirty";
       this.schedule(source);
@@ -189,19 +255,69 @@ export class DocumentPersistenceCoordinator {
     return this.snapshot(source);
   }
 
+  /** Restores the old path when an external move fails. */
+  abortPathMigration(oldPath: string): DocumentPersistenceSnapshot | null {
+    const migration = this.migrations.get(oldPath);
+    if (!migration) return null;
+
+    const source = migration.record;
+    this.migrations.delete(oldPath);
+    this.pathRedirects.delete(oldPath);
+    this.rebindRecord(source, oldPath);
+    source.migration = null;
+    migration.ready.resolve();
+    if (source.baselineRevision !== source.revision) {
+      source.status = "dirty";
+      this.schedule(source);
+    }
+    this.emit(source);
+    return this.snapshot(source);
+  }
+
+  /** Rebinds a known document snapshot after an external path move. */
+  rebind(oldPath: string, newPath: string): DocumentPersistenceSnapshot {
+    const migration = this.migrations.get(oldPath);
+    if (migration) return this.completePathMigration(oldPath, newPath);
+    const source = this.requireRecord(this.resolvePath(oldPath));
+    this.rebindRecord(source, newPath);
+    this.emit(source);
+    return this.snapshot(source);
+  }
+
+  private rebindRecord(source: DocumentRecord, newPath: string): void {
+    const oldPath = source.path;
+    const destination = this.records.get(newPath);
+    if (destination && destination !== source) {
+      if (destination.revision > source.revision) {
+        throw new Error(`path rebind destination is newer: ${newPath}`);
+      }
+      this.discard(newPath);
+    }
+    this.records.delete(oldPath);
+    source.path = newPath;
+    this.records.set(newPath, source);
+  }
+
   /** Stops pending work and forgets a document that was deleted or discarded. */
   discard(path: string): Promise<void> {
-    const record = this.records.get(path);
+    const resolvedPath = this.resolvePath(path);
+    const record = this.records.get(resolvedPath);
     if (!record) return Promise.resolve();
+    for (const [oldPath, migration] of this.migrations) {
+      if (migration.record !== record) continue;
+      this.migrations.delete(oldPath);
+      this.pathRedirects.delete(oldPath);
+      migration.ready.resolve();
+    }
     record.discarded = true;
     this.cancelTimer(record);
-    this.records.delete(path);
+    this.records.delete(resolvedPath);
     return record.writeTask ?? Promise.resolve();
   }
 
   /** Returns the visible persistence state for a path. */
   get(path: string): DocumentPersistenceSnapshot | null {
-    const record = this.records.get(path);
+    const record = this.records.get(this.resolvePath(path));
     return record ? this.snapshot(record) : null;
   }
 
@@ -221,6 +337,16 @@ export class DocumentPersistenceCoordinator {
       throw new Error(`no recoverable snapshot for ${path}`);
     }
     return record;
+  }
+
+  private resolvePath(path: string): string {
+    let resolvedPath = path;
+    const visited = new Set<string>();
+    while (this.pathRedirects.has(resolvedPath) && !visited.has(resolvedPath)) {
+      visited.add(resolvedPath);
+      resolvedPath = this.pathRedirects.get(resolvedPath)!;
+    }
+    return resolvedPath;
   }
 
   private schedule(record: DocumentRecord): void {

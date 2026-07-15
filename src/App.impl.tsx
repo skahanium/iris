@@ -367,6 +367,9 @@ function App() {
     versionSnapshotScheduler,
     flushAllOpenTabs,
     renamePath,
+    beginPathMigration,
+    completePathMigration,
+    abortPathMigration,
     saveStatus,
     saveError,
   } = useAppPersistenceLifecycle({
@@ -404,17 +407,18 @@ function App() {
   const {
     handleBeforeFilePathChange,
     handleFilePathChanged,
+    handleFilePathChangeFailed,
     handleBeforeFileDelete,
     handleFileDeleted,
   } = useNavigatorFileLifecycle({
     activePathRef,
     awaitSaveInFlight,
+    abortPathMigration,
+    beginPathMigration,
     bumpVaultIndex,
     cancelPendingSave,
+    completePathMigration,
     discardOpenTab,
-    getTabMarkdownCached,
-    markClean,
-    markdownRef,
     persistBeforeLeaveRef,
     replaceOpenTabPath,
     tabsRef,
@@ -850,6 +854,7 @@ function App() {
             markdown={markdown}
             onBeforeFilePathChange={handleBeforeFilePathChange}
             onFilePathChanged={handlePreparedFilePathChanged}
+            onFilePathChangeFailed={handleFilePathChangeFailed}
             onBeforeFileDelete={handleBeforeFileDelete}
             onFileDeleted={handlePreparedFileDeleted}
             onClassifiedUnlocked={onClassifiedUnlocked}
