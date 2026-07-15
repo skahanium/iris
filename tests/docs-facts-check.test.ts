@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -34,5 +35,12 @@ describe("docs:check — document facts verification", () => {
     const result = runDocsCheck(["--forbidden-phrase", "OS 凭据管理器"]);
     // The codebase should be clean now — verify script reports no such phrase.
     expect(result.exitCode).toBe(0);
+  });
+
+  it("verifies the scheduler IPC contract rather than retired reindex commands", () => {
+    const source = readFileSync(scriptPath, "utf8");
+
+    expect(source).toContain("embedding_scheduler_status");
+    expect(source).not.toContain("missing search_embedding_status entry");
   });
 });

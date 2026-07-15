@@ -67,7 +67,7 @@ pub fn log_vector_index_consistency(conn: &Connection) {
                 chunk_embeddings = consistency.chunk_embeddings,
                 vec_chunks = consistency.vec_chunks,
                 missing_vec_chunks = consistency.missing_vec_chunks,
-                "sqlite-vec chunk index is behind chunk_embeddings; run search_reindex to refresh"
+                "sqlite-vec legacy index is stale; it is not used by the v2 embedding scheduler"
             );
         }
         Ok(Some(consistency)) => {

@@ -243,10 +243,16 @@ function checkIpcIndex() {
   const ipcRefPath = path.join(root, "docs", "ipc-api-reference.md");
   if (!existsSync(ipcRefPath)) return;
 
-  // Verify search_embedding_status is documented
   const ipcContent = readFileSync(ipcRefPath, "utf8");
-  if (!ipcContent.includes("search_embedding_status")) {
-    fail("docs/ipc-api-reference.md missing search_embedding_status entry");
+  for (const command of [
+    "embedding_scheduler_status",
+    "embedding_scheduler_start",
+    "embedding_scheduler_set_paused",
+    "embedding_scheduler_set_foreground_busy",
+  ]) {
+    if (!ipcContent.includes(command)) {
+      fail(`docs/ipc-api-reference.md missing ${command} entry`);
+    }
   }
   if (!ipcContent.includes("EmbeddingIndexStatus")) {
     fail("docs/ipc-api-reference.md missing EmbeddingIndexStatus reference");
