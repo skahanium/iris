@@ -42,8 +42,11 @@ import {
   type WebSearchAvailability,
   type WebSearchProviderOption,
 } from "@/lib/web-search-provider-state";
-import type { FileListItem } from "@/types/ipc";
-import type { EmbeddingIndexStatus } from "@/types/ipc";
+import type {
+  EmbeddingIndexStatus,
+  EmbeddingSchedulerStartResult,
+  FileListItem,
+} from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
@@ -83,9 +86,11 @@ interface ManagementCenterPanelProps {
   onAutoVersionEnabledChange: (enabled: boolean) => void;
   onAutoVersionIdleMinutesChange: (minutes: number) => void;
   embeddingStatus: EmbeddingIndexStatus | null;
-  onReindexEmbeddings: () => void;
+  embeddingStatusLoading: boolean;
+  onSetEmbeddingPaused: (paused: boolean) => Promise<void>;
+  onStartEmbeddingRebuild: () => Promise<EmbeddingSchedulerStartResult | null>;
   appUpdate: AppUpdateSnapshot;
-  hasUnsaved: boolean;
+  hasDirtyDocuments: boolean;
   onCheckUpdate: () => Promise<void>;
   onDownloadUpdate: () => Promise<void>;
   onInstallUpdate: () => Promise<void>;
@@ -343,6 +348,24 @@ function isNotesManagementDetail(
   return detail === "file-sheet" || detail === "recycle-bin";
 }
 
+function embeddingFailureDetail(
+  failureCode: EmbeddingIndexStatus["failureCode"],
+): string {
+  switch (failureCode) {
+    case "model_unavailable":
+      return "模型不可用，可稍后手动重试。";
+    case "interrupted_migration":
+    case "interrupted_restart":
+      return "上一次后台重建已中断，可手动重试。";
+    case "database_error":
+      return "索引数据库暂不可用，可稍后手动重试。";
+    case "embedding_failed":
+      return "嵌入生成未完成，可手动重试。";
+    default:
+      return "后台重建未完成，可手动重试。";
+  }
+}
+
 export function ManagementCenterPanel({
   open,
   onClose,
@@ -373,9 +396,11 @@ export function ManagementCenterPanel({
   onAutoVersionEnabledChange,
   onAutoVersionIdleMinutesChange,
   embeddingStatus,
-  onReindexEmbeddings,
+  embeddingStatusLoading,
+  onSetEmbeddingPaused,
+  onStartEmbeddingRebuild,
   appUpdate,
-  hasUnsaved,
+  hasDirtyDocuments,
   onCheckUpdate,
   onDownloadUpdate,
   onInstallUpdate,
@@ -387,6 +412,29 @@ export function ManagementCenterPanel({
   const [activeNotesDetail, setActiveNotesDetail] =
     useState<NotesManagementDetail | null>(null);
   const status = connectivityStatus;
+  const [embeddingActionMessage, setEmbeddingActionMessage] = useState<
+    string | null
+  >(null);
+
+  const handleEmbeddingStart = () => {
+    setEmbeddingActionMessage(null);
+    void onStartEmbeddingRebuild()
+      .then((result) => {
+        if (result === null) {
+          setEmbeddingActionMessage("无法启动后台重建，请稍后手动重试");
+        }
+      })
+      .catch(() => {
+        setEmbeddingActionMessage("无法启动后台重建，请稍后手动重试");
+      });
+  };
+
+  const handleEmbeddingPaused = (paused: boolean) => {
+    setEmbeddingActionMessage(null);
+    void onSetEmbeddingPaused(paused).catch(() => {
+      setEmbeddingActionMessage("无法更新后台重建状态，请稍后手动重试");
+    });
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -566,9 +614,9 @@ export function ManagementCenterPanel({
               {appUpdate.preflight?.ok ? (
                 <p className="text-foreground">兼容性预检已通过。</p>
               ) : null}
-              {hasUnsaved && appUpdate.status === "ready_to_install" ? (
+              {hasDirtyDocuments && appUpdate.status === "ready_to_install" ? (
                 <p className="text-destructive">
-                  安装前若有未保存内容，必须先保存或取消。
+                  安装时将先保存所有未确认落盘的 Markdown。
                 </p>
               ) : null}
               {appUpdate.installBlockedMessage ? (
@@ -605,7 +653,7 @@ export function ManagementCenterPanel({
             <Button
               size="sm"
               variant="outline"
-              disabled={appUpdate.busy || hasUnsaved}
+              disabled={appUpdate.busy}
               onClick={() => void onInstallUpdate()}
             >
               安装并重启
@@ -797,52 +845,83 @@ export function ManagementCenterPanel({
           detail={
             embeddingStatus
               ? `${embeddingStatus.targetModelId} · ${embeddingStatus.dimension} 维 · ${embeddingStatus.indexedItems}/${embeddingStatus.totalItems} 项`
-              : "正在读取嵌入索引状态…"
+              : embeddingStatusLoading
+                ? "正在读取嵌入索引状态…"
+                : "暂时无法读取嵌入索引状态。"
           }
         >
-          <StatusValue
-            ready={
-              embeddingStatus?.phase === "ready" ||
-              embeddingStatus?.phase === "legacy_ready"
-            }
-          >
+          <StatusValue ready={embeddingStatus?.phase === "ready"}>
             {embeddingStatus?.phase === "ready"
               ? "就绪"
-              : embeddingStatus?.phase === "rebuilding"
-                ? "重建中"
-                : embeddingStatus?.phase === "failed"
-                  ? "失败"
-                  : embeddingStatus?.phase === "legacy_ready"
-                    ? "旧版可用"
-                    : "未知"}
+              : embeddingStatus?.phase === "running"
+                ? "后台重建"
+                : embeddingStatus?.phase === "paused"
+                  ? "已暂停"
+                  : embeddingStatus?.phase === "failed"
+                    ? "失败但不影响编辑"
+                    : embeddingStatus?.phase === "legacy_ready"
+                      ? "旧版检索可用，等待空闲升级"
+                      : "未知"}
           </StatusValue>
         </SettingRow>
-        {embeddingStatus?.phase === "failed" ||
-        embeddingStatus?.phase === "rebuilding" ? (
+        {embeddingStatus?.phase === "running" ? (
           <SettingRow
             icon={RefreshCw}
             title="嵌入重建"
-            detail={
-              embeddingStatus.lastError
-                ? `错误：${embeddingStatus.lastError}`
-                : "重建嵌入向量以提高搜索质量。"
-            }
+            detail="后台正在低优先级重建；继续编辑会在批次边界暂停。"
           >
-            <Button size="sm" variant="outline" onClick={onReindexEmbeddings}>
-              重试重建
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleEmbeddingPaused(true)}
+            >
+              暂停
+            </Button>
+          </SettingRow>
+        ) : embeddingStatus?.phase === "paused" ? (
+          <SettingRow
+            icon={RefreshCw}
+            title="嵌入重建"
+            detail="后台重建已暂停，保留当前进度。"
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleEmbeddingPaused(false)}
+            >
+              继续
+            </Button>
+          </SettingRow>
+        ) : embeddingStatus?.phase === "failed" ? (
+          <SettingRow
+            icon={AlertCircle}
+            title="嵌入重建"
+            detail={embeddingFailureDetail(embeddingStatus.failureCode)}
+          >
+            <Button size="sm" variant="outline" onClick={handleEmbeddingStart}>
+              手动重试
             </Button>
           </SettingRow>
         ) : (
           <SettingRow
             icon={RefreshCw}
             title="嵌入重建"
-            detail="重新生成全部 BGE v2 嵌入向量。"
+            detail="后台重建不影响 Markdown 编辑或保存。"
           >
-            <Button size="sm" variant="outline" onClick={onReindexEmbeddings}>
-              重建嵌入
+            <Button size="sm" variant="outline" onClick={handleEmbeddingStart}>
+              后台重建
             </Button>
           </SettingRow>
         )}
+        {embeddingActionMessage ? (
+          <p
+            className="px-3 text-xs text-destructive"
+            role="status"
+            aria-live="polite"
+          >
+            {embeddingActionMessage}
+          </p>
+        ) : null}
       </PanelSection>
 
       <PanelSection title="边界">

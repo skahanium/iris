@@ -4,7 +4,6 @@ import {
   useMemo,
   useState,
   type Dispatch,
-  type MutableRefObject,
   type SetStateAction,
 } from "react";
 
@@ -41,17 +40,15 @@ export interface AppUpdateController {
     status: AppUpdateStatus;
     info: AppUpdateInfo | null;
   };
-  hasUnsaved: boolean;
+  hasDirtyDocuments: boolean;
   check: () => Promise<void>;
   download: () => Promise<void>;
   install: () => Promise<void>;
 }
 
 interface UseAppUpdateOptions {
-  beforeInstall?: () => Promise<void>;
+  beforeInstall: () => Promise<void>;
   enabled: boolean;
-  hasUnsaved: () => boolean;
-  onBlockedInstall?: (message: string) => void;
 }
 
 const INITIAL_UPDATE: AppUpdateSnapshot = {
@@ -111,12 +108,7 @@ function failedPreflightResult(message: string): AppUpdatePreflightResult {
   };
 }
 
-export function useAppUpdate({
-  beforeInstall,
-  enabled,
-  hasUnsaved,
-  onBlockedInstall,
-}: UseAppUpdateOptions) {
+export function useAppUpdate({ beforeInstall, enabled }: UseAppUpdateOptions) {
   const [snapshot, setSnapshot] = useState<AppUpdateSnapshot>(INITIAL_UPDATE);
 
   useEffect(() => {
@@ -227,23 +219,13 @@ export function useAppUpdate({
   }, []);
 
   const install = useCallback(async () => {
-    if (!beforeInstall && hasUnsaved()) {
-      const message = "安装更新前请先保存所有未保存内容，或取消安装。";
-      setSnapshot((current) => ({
-        ...current,
-        installBlockedMessage: message,
-      }));
-      onBlockedInstall?.(message);
-      return;
-    }
-
     try {
-      await beforeInstall?.();
+      await beforeInstall();
       await appUpdateInstall();
     } catch {
       handleActionError(setSnapshot, APP_UPDATE_INSTALL_ERROR_MESSAGE);
     }
-  }, [beforeInstall, hasUnsaved, onBlockedInstall]);
+  }, [beforeInstall]);
 
   return {
     snapshot,
@@ -257,27 +239,18 @@ export function useAppUpdate({
 export function useAppUpdateController({
   beforeInstall,
   enabled,
-  tabs,
-  tabsRef,
+  hasDirtyDocuments,
   onStatus,
 }: {
-  beforeInstall?: () => Promise<void>;
+  beforeInstall: () => Promise<void>;
   enabled: boolean;
-  tabs: Array<{ dirty?: boolean }>;
-  tabsRef: MutableRefObject<Array<{ dirty?: boolean }>>;
+  hasDirtyDocuments: boolean;
   onStatus: (status: string) => void;
 }): AppUpdateController {
-  const hasUnsaved = useCallback(
-    () => tabsRef.current.some((tab) => tab.dirty),
-    [tabsRef],
-  );
   const update = useAppUpdate({
     beforeInstall,
     enabled,
-    hasUnsaved,
-    onBlockedInstall: onStatus,
   });
-  const hasUnsavedTabs = tabs.some((tab) => tab.dirty);
   const download = useCallback(async () => {
     const downloaded = await update.download();
     if (!downloaded) return;
@@ -292,11 +265,17 @@ export function useAppUpdateController({
         status: update.snapshot.status,
         info: update.snapshot.info,
       },
-      hasUnsaved: hasUnsavedTabs,
+      hasDirtyDocuments,
       check: update.check,
       download,
       install: update.install,
     }),
-    [download, hasUnsavedTabs, update.check, update.install, update.snapshot],
+    [
+      download,
+      hasDirtyDocuments,
+      update.check,
+      update.install,
+      update.snapshot,
+    ],
   );
 }

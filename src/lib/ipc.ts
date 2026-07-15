@@ -49,6 +49,7 @@ import type {
   DocumentOpenResult,
   DocumentOpenScopeResult,
   EmbeddingIndexStatus,
+  EmbeddingSchedulerStartResult,
   FileChangedEvent,
   FileEntry,
   FileWriteResult,
@@ -460,12 +461,38 @@ export async function searchSemantic(
   return invoke<SemanticHit[]>("search_semantic", { query, limit });
 }
 
-export async function searchReindex(): Promise<number> {
-  return invoke<number>("search_reindex");
+/** Reads the single scheduler-owned embedding generation state. */
+export async function embeddingSchedulerStatus(): Promise<EmbeddingIndexStatus> {
+  return invoke<EmbeddingIndexStatus>("embedding_scheduler_status");
 }
 
-export async function searchEmbeddingStatus(): Promise<EmbeddingIndexStatus> {
-  return invoke<EmbeddingIndexStatus>("search_embedding_status");
+/** Starts background embedding work, or reports that its single worker already runs. */
+export async function embeddingSchedulerStart(): Promise<EmbeddingSchedulerStartResult> {
+  return invoke<EmbeddingSchedulerStartResult>("embedding_scheduler_start");
+}
+
+/** Requests a pause or resume at the scheduler's next batch boundary. */
+export async function embeddingSchedulerSetPaused(
+  paused: boolean,
+): Promise<void> {
+  return invoke("embedding_scheduler_set_paused", { paused });
+}
+
+/** Reports foreground editing activity to the scheduler's idle policy. */
+export async function embeddingSchedulerSetForegroundBusy(
+  busy: boolean,
+): Promise<void> {
+  return invoke("embedding_scheduler_set_foreground_busy", { busy });
+}
+
+/** Subscribes the central scheduler hook to complete status snapshots. */
+export async function listenEmbeddingSchedulerStatus(
+  handler: (payload: EmbeddingIndexStatus) => void,
+): Promise<() => void> {
+  return listen<EmbeddingIndexStatus>(
+    IPC_EVENTS.EMBEDDING_INDEX_PROGRESS,
+    (e) => handler(e.payload),
+  );
 }
 
 export async function llmProviders(): Promise<LlmProviderInfo[]> {

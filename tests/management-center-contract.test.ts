@@ -69,6 +69,41 @@ describe("management center contract", () => {
     expect(center).not.toContain("onOpenClassifiedPanel");
   });
 
+  it("only consumes scheduler-owned embedding state across all five phases", () => {
+    const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const overlays = read("src/components/layout/AppOverlays.tsx");
+    const ipc = read("src/lib/ipc.ts");
+
+    for (const label of [
+      "旧版检索可用，等待空闲升级",
+      "后台重建",
+      "已暂停",
+      "失败但不影响编辑",
+      "模型不可用，可稍后手动重试。",
+      "暂停",
+      "继续",
+      "手动重试",
+    ]) {
+      expect(center).toContain(label);
+    }
+    for (const phase of [
+      '"legacy_ready"',
+      '"running"',
+      '"paused"',
+      '"ready"',
+      '"failed"',
+    ]) {
+      expect(center).toContain(phase);
+    }
+    expect(center).not.toContain("lastError");
+    expect(overlays).not.toContain("searchReindex");
+    expect(overlays).not.toContain("searchEmbeddingStatus");
+    expect(ipc).not.toContain("search_reindex");
+    expect(ipc).not.toContain("search_embedding_status");
+    expect(ipc).toContain("embeddingSchedulerStart");
+    expect(ipc).toContain("embeddingSchedulerSetPaused");
+  });
+
   it("exposes automatic version tracking as real settings in the notes area", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
     const app = read("src/App.impl.tsx");

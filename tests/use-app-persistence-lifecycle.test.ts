@@ -36,6 +36,7 @@ function Harness({
   editorReady,
   markdown = '---\ntitle: "Note"\n---\n\nOriginal body that must remain authoritative.',
   getTabMarkdownCached = () => undefined,
+  tabDirty = true,
   onReady,
   persistBeforeLeaveRef,
   setFileLocked,
@@ -44,6 +45,7 @@ function Harness({
   editorReady: boolean;
   markdown?: string;
   getTabMarkdownCached?: (path: string) => string | undefined;
+  tabDirty?: boolean;
   onReady?: (api: ReturnType<typeof useAppPersistenceLifecycle>) => void;
   persistBeforeLeaveRef: React.MutableRefObject<PersistBeforeLeave>;
   setFileLocked?: (path: string, locked: boolean) => void;
@@ -62,7 +64,7 @@ function Harness({
   getLiveMarkdownRef.current = () => markdown;
   const tabsRef = useRef<TabItem[]>([
     {
-      dirty: true,
+      dirty: tabDirty,
       locked: false,
       path,
       title: "Note",
@@ -151,6 +153,99 @@ describe("useAppPersistenceLifecycle", () => {
       '---\ntitle: "Renamed"\n---\n\nBody captured before remount.',
     );
     expect(setCachedEditorHtml).not.toHaveBeenCalled();
+  });
+
+  it("projects whether any coordinator-owned document still needs persistence", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    expect(api.hasDirtyDocuments).toBe(false);
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: '---\ntitle: "Note"\n---\n\nUnsaved coordinator snapshot.',
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      api.notifyDirty();
+    });
+
+    expect(api.hasDirtyDocuments).toBe(true);
+  });
+
+  it("uses the coordinator revision rather than a stale tab dirty flag before leaving", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+    const markdown = '---\ntitle: "Note"\n---\n\nCoordinator is authoritative.';
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          tabDirty: false,
+        }),
+      );
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown:
+            '---\ntitle: "Note"\n---\n\nMust write despite stale tab state.',
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          tabDirty: false,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      api.notifyDirty();
+      await persistBeforeLeaveRef.current("note.md");
+    });
+
+    expect(fileWrite).toHaveBeenCalledWith(
+      "note.md",
+      '---\ntitle: "Note"\n---\n\nMust write despite stale tab state.',
+    );
   });
 
   it("rejects close persistence when a dirty remount has no recoverable snapshot", async () => {

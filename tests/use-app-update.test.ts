@@ -30,7 +30,6 @@ function Harness({
     useAppUpdate({
       beforeInstall,
       enabled: false,
-      hasUnsaved: () => true,
     }),
   );
   return null;

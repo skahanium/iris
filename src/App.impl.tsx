@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { AppAiPanelSlot } from "@/components/layout/AppAiPanelSlot";
 import { AppEditorWorkspace } from "@/components/layout/AppEditorWorkspace";
 import { AppOverlays } from "@/components/layout/AppOverlays";
@@ -27,6 +28,7 @@ import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
 import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
 import { useAppUpdateController } from "@/hooks/useAppUpdate";
+import { useEmbeddingScheduler } from "@/hooks/useEmbeddingScheduler";
 import {
   useCurrentFileChangeListener,
   type ConflictState,
@@ -36,6 +38,7 @@ import { useAppEditorActions } from "@/hooks/useAppEditorActions";
 import {
   useAppPersistenceLifecycle,
   type PersistBeforeLeave,
+  type PersistenceBlocker,
 } from "@/hooks/useAppPersistenceLifecycle";
 import { useClassifiedVaultSession } from "@/hooks/useClassifiedVaultSession";
 import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
@@ -124,6 +127,8 @@ function App() {
     "find",
   );
   const [classifiedOpen, setClassifiedOpen] = useState(false);
+  const [persistenceBlocker, setPersistenceBlocker] =
+    useState<PersistenceBlocker | null>(null);
   const [vaultIndexEpoch, setVaultIndexEpoch] = useState(0);
   const {
     zoom: editorZoom,
@@ -189,13 +194,6 @@ function App() {
   const updateInstallBarrierRef = useRef<() => Promise<void>>(
     async () => undefined,
   );
-  const appUpdateController = useAppUpdateController({
-    beforeInstall: () => updateInstallBarrierRef.current(),
-    enabled: Boolean(vaultPath),
-    tabs,
-    tabsRef,
-    onStatus: setAiStatus,
-  });
 
   useWorkspaceSessionSnapshot({ activePath, tabs, vaultPath });
   const {
@@ -371,7 +369,7 @@ function App() {
     completePathMigration,
     abortPathMigration,
     saveStatus,
-    saveError,
+    hasDirtyDocuments,
   } = useAppPersistenceLifecycle({
     activeFileLocked,
     activePath,
@@ -389,6 +387,7 @@ function App() {
     markClean,
     markdown,
     noteTitle,
+    onPersistenceBlocked: setPersistenceBlocker,
     persistBeforeLeaveRef,
     schedulePathSync,
     setAiStatus,
@@ -399,6 +398,21 @@ function App() {
   });
 
   updateInstallBarrierRef.current = flushAllOpenTabs;
+
+  const {
+    loading: embeddingStatusLoading,
+    reportForegroundActivity,
+    setPaused: setEmbeddingPaused,
+    start: startEmbeddingRebuild,
+    status: embeddingStatus,
+  } = useEmbeddingScheduler({ hasDirtyDocuments });
+
+  const appUpdateController = useAppUpdateController({
+    beforeInstall: () => updateInstallBarrierRef.current(),
+    enabled: Boolean(vaultPath),
+    hasDirtyDocuments,
+    onStatus: setAiStatus,
+  });
 
   pathRenamePersistenceRef.current = {
     rename: renamePath,
@@ -535,12 +549,14 @@ function App() {
       invalidateActivePreparedNote();
     }
     notifyDirty();
+    void reportForegroundActivity();
     resetVersionIdle();
   }, [
     activeFileLocked,
     invalidateActivePreparedNote,
     markDirty,
     notifyDirty,
+    reportForegroundActivity,
     resetVersionIdle,
   ]);
 
@@ -554,6 +570,7 @@ function App() {
         invalidateActivePreparedNote();
       }
       notifyDirty();
+      void reportForegroundActivity();
       resetVersionIdle();
     },
     [
@@ -561,6 +578,7 @@ function App() {
       invalidateActivePreparedNote,
       markDirty,
       notifyDirty,
+      reportForegroundActivity,
       onTitleChange,
       resetVersionIdle,
     ],
@@ -570,6 +588,11 @@ function App() {
     onStatus: setAiStatus,
     onIndexed: bumpVaultIndex,
   });
+
+  useEffect(() => {
+    if (!activePath) return;
+    void reportForegroundActivity();
+  }, [activePath, reportForegroundActivity]);
 
   const handleVaultRescan = useCallback(() => {
     void rescanVault("manual");
@@ -797,13 +820,7 @@ function App() {
             activeDocumentTitle={
               activeMediaTab ? activeMediaTab.title : activeDocumentTitle
             }
-            unsaved={
-              activeMediaTab
-                ? false
-                : (tabs.find((t) => t.path === activePath)?.dirty ?? false)
-            }
             persistenceStatus={saveStatus}
-            persistenceError={saveError}
             characterCount={editorStats.characterCount}
             readingMinutes={editorStats.readingMinutes}
             aiStatus={aiStatus}
@@ -846,6 +863,8 @@ function App() {
             classifiedWaiting={classifiedWaiting}
             connectivityStatus={connectivityStatus}
             conflictState={conflictState}
+            embeddingStatus={embeddingStatus}
+            embeddingStatusLoading={embeddingStatusLoading}
             getCurrentContent={() => getLiveMarkdownRef.current()}
             onBeforeFinalizeCurrent={handleBeforeFinalizeCurrent}
             handleConflictAcceptExternal={handleConflictAcceptExternal}
@@ -877,6 +896,8 @@ function App() {
             openKnowledgeRelations={() =>
               overlays.openOverlay("knowledgeRelations")
             }
+            onSetEmbeddingPaused={setEmbeddingPaused}
+            onStartEmbeddingRebuild={startEmbeddingRebuild}
             openVersion={() => overlays.openOverlay("version")}
             rescanVault={handleVaultRescan}
             autoVersionSettings={autoVersionSettings}
@@ -887,6 +908,21 @@ function App() {
             appUpdateController={appUpdateController}
           />
         }
+      />
+      <ConfirmDialog
+        open={persistenceBlocker !== null}
+        title="保存失败"
+        message="存在尚未确认落盘的 Markdown，不能关闭应用。"
+        description="请重试保存，或返回编辑后检查内容。"
+        confirmLabel="重试"
+        cancelLabel="返回编辑"
+        variant="destructive"
+        onConfirm={() => {
+          const blocker = persistenceBlocker;
+          if (!blocker) return;
+          void blocker.retry();
+        }}
+        onCancel={() => setPersistenceBlocker(null)}
       />
     </DesktopFrame>
   );

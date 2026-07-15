@@ -99,11 +99,12 @@ describe("app update contract", () => {
     expect(statusBar).toContain('data-testid="status-bar-update-available"');
     expect(slot).toContain("appUpdate");
     expect(app).toContain("useAppUpdateController");
-    expect(hook).toContain("hasUnsaved");
-    expect(hook).toContain("安装更新前请先保存所有未保存内容");
+    expect(hook).toContain("beforeInstall");
+    expect(hook).toContain("await beforeInstall()");
+    expect(hook).not.toContain("hasUnsaved");
     expect(hook).toContain("handleActionError");
     expect(hook).toContain("busy: false");
-    expect(overlays).toContain("hasUnsaved");
+    expect(overlays).toContain("hasDirtyDocuments");
     expect(about).toContain("下载更新");
     expect(about).toContain("安装并重启");
     expect(about).toContain("无法检查更新");

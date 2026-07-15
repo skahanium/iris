@@ -49,7 +49,7 @@ interface DocumentPersistenceCoordinatorOptions {
 }
 
 type DocumentPersistenceListener = (
-  snapshot: DocumentPersistenceSnapshot,
+  snapshot: DocumentPersistenceSnapshot | null,
 ) => void;
 
 function errorMessage(error: unknown): string {
@@ -312,6 +312,7 @@ export class DocumentPersistenceCoordinator {
     record.discarded = true;
     this.cancelTimer(record);
     this.records.delete(resolvedPath);
+    this.emit(null);
     return record.writeTask ?? Promise.resolve();
   }
 
@@ -319,6 +320,14 @@ export class DocumentPersistenceCoordinator {
   get(path: string): DocumentPersistenceSnapshot | null {
     const record = this.records.get(this.resolvePath(path));
     return record ? this.snapshot(record) : null;
+  }
+
+  /** Reports whether a captured revision still lacks a disk acknowledgement. */
+  hasDirtyDocuments(): boolean {
+    return [...this.records.values()].some(
+      (record) =>
+        !record.discarded && record.baselineRevision !== record.revision,
+    );
   }
 
   subscribe(listener: DocumentPersistenceListener): () => void {
@@ -406,8 +415,8 @@ export class DocumentPersistenceCoordinator {
     await task;
   }
 
-  private emit(record: DocumentRecord): void {
-    const snapshot = this.snapshot(record);
+  private emit(record: DocumentRecord | null): void {
+    const snapshot = record ? this.snapshot(record) : null;
     for (const listener of this.listeners) {
       listener(snapshot);
     }

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense } from "react";
 
 import { ClassifiedPanel } from "@/components/classified/ClassifiedPanel";
 import { ConflictDialog } from "@/components/file/ConflictDialog";
@@ -28,6 +28,7 @@ import type { AppUpdateController } from "@/hooks/useAppUpdate";
 import type {
   ClassifiedStatus,
   EmbeddingIndexStatus,
+  EmbeddingSchedulerStartResult,
   FileListItem,
 } from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
@@ -35,7 +36,6 @@ import type {
   WebSearchAvailability,
   WebSearchProviderOption,
 } from "@/lib/web-search-provider-state";
-import { searchEmbeddingStatus, searchReindex } from "@/lib/ipc";
 
 const GraphView = lazy(() =>
   import("@/components/graph/GraphView").then((m) => ({
@@ -115,6 +115,8 @@ interface AppOverlaysProps {
   classifiedWaiting: boolean;
   connectivityStatus: ConnectivityStatus | null;
   conflictState: ConflictState | null;
+  embeddingStatus: EmbeddingIndexStatus | null;
+  embeddingStatusLoading: boolean;
   getCurrentContent: () => string;
   onBeforeFinalizeCurrent: () => Promise<string | null>;
   handleConflictAcceptExternal: () => void;
@@ -164,6 +166,8 @@ interface AppOverlaysProps {
   setWebSearchProviderId: (providerId: string | null) => void;
   refreshWebSearchProviders: () => Promise<void>;
   openKnowledgeRelations: () => void;
+  onSetEmbeddingPaused: (paused: boolean) => Promise<void>;
+  onStartEmbeddingRebuild: () => Promise<EmbeddingSchedulerStartResult | null>;
   openVersion: () => void;
   rescanVault: () => void;
   tabs: TabItem[];
@@ -184,6 +188,8 @@ export function AppOverlays({
   classifiedWaiting,
   connectivityStatus,
   conflictState,
+  embeddingStatus,
+  embeddingStatusLoading,
   getCurrentContent,
   onBeforeFinalizeCurrent,
   handleConflictAcceptExternal,
@@ -213,6 +219,8 @@ export function AppOverlays({
   setWebSearchProviderId,
   refreshWebSearchProviders,
   openKnowledgeRelations,
+  onSetEmbeddingPaused,
+  onStartEmbeddingRebuild,
   openVersion,
   rescanVault,
   tabs,
@@ -221,25 +229,6 @@ export function AppOverlays({
   webSearch,
   appUpdateController,
 }: AppOverlaysProps) {
-  const [embeddingStatus, setEmbeddingStatus] =
-    useState<EmbeddingIndexStatus | null>(null);
-
-  const refreshEmbeddingStatus = useCallback(() => {
-    searchEmbeddingStatus()
-      .then(setEmbeddingStatus)
-      .catch(() => setEmbeddingStatus(null));
-  }, []);
-
-  const handleReindexEmbeddings = useCallback(() => {
-    searchReindex()
-      .then(() => refreshEmbeddingStatus())
-      .catch(() => {});
-  }, [refreshEmbeddingStatus]);
-
-  useEffect(() => {
-    refreshEmbeddingStatus();
-  }, [refreshEmbeddingStatus]);
-
   return (
     <>
       <QuickOpen
@@ -344,9 +333,11 @@ export function AppOverlays({
               autoVersionSettings.setAutoVersionIdleMinutes
             }
             embeddingStatus={embeddingStatus}
-            onReindexEmbeddings={handleReindexEmbeddings}
+            embeddingStatusLoading={embeddingStatusLoading}
+            onSetEmbeddingPaused={onSetEmbeddingPaused}
+            onStartEmbeddingRebuild={onStartEmbeddingRebuild}
             appUpdate={appUpdateController.snapshot}
-            hasUnsaved={appUpdateController.hasUnsaved}
+            hasDirtyDocuments={appUpdateController.hasDirtyDocuments}
             onCheckUpdate={appUpdateController.check}
             onDownloadUpdate={appUpdateController.download}
             onInstallUpdate={appUpdateController.install}

@@ -39,7 +39,6 @@ function renderStatusBarSlot(
       createElement(AppStatusBarSlot, {
         activePath: "target.md",
         activeDocumentTitle: "Target",
-        unsaved: false,
         characterCount: 1200,
         readingMinutes: 6,
         aiStatus: "AI 空闲",
@@ -212,5 +211,27 @@ describe("status bar assistant chrome", () => {
       '[data-testid="status-bar-link-summary"]',
     );
     expect(linkButton?.textContent).toContain("双链暂不可用");
+  });
+
+  it("renders coordinator persistence projections without exposing a raw write error", () => {
+    mockFileLinkSummary.mockResolvedValue({
+      inboundCount: 0,
+      outboundCount: 0,
+      inbound: [],
+      outbound: [],
+    });
+    renderStatusBarSlot({
+      persistenceStatus: "failed",
+    });
+
+    const persistence = document.querySelector(
+      '[data-testid="status-bar-persistence"]',
+    );
+    expect(persistence?.textContent).toBe("保存失败");
+    expect(persistence?.getAttribute("role")).toBe("status");
+    expect(persistence?.getAttribute("aria-live")).toBe("polite");
+    expect(read("src/components/layout/StatusBar.tsx")).not.toContain(
+      "persistenceError",
+    );
   });
 });

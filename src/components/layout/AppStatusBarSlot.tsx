@@ -14,9 +14,7 @@ import type { ConnectivityStatus } from "@/types/llm";
 interface AppStatusBarSlotProps {
   activePath: string | null;
   activeDocumentTitle: string | null;
-  unsaved: boolean;
   persistenceStatus?: DocumentPersistenceStatus;
-  persistenceError?: string | null;
   characterCount: number;
   readingMinutes: number;
   aiStatus: string;
@@ -50,9 +48,7 @@ interface AppStatusBarSlotProps {
 export function AppStatusBarSlot({
   activePath,
   activeDocumentTitle,
-  unsaved,
   persistenceStatus,
-  persistenceError,
   characterCount,
   readingMinutes,
   aiStatus,
@@ -112,9 +108,7 @@ export function AppStatusBarSlot({
     <StatusBar
       path={activePath}
       documentTitle={activeDocumentTitle}
-      unsaved={unsaved}
       persistenceStatus={persistenceStatus}
-      persistenceError={persistenceError}
       characterCount={characterCount}
       readingMinutes={readingMinutes}
       aiStatus={aiStatus}

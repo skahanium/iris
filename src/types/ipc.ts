@@ -186,9 +186,17 @@ export interface SemanticHit {
 
 export type EmbeddingIndexPhase =
   | "legacy_ready"
-  | "rebuilding"
+  | "running"
+  | "paused"
   | "ready"
   | "failed";
+
+export type EmbeddingFailureCode =
+  | "interrupted_migration"
+  | "interrupted_restart"
+  | "model_unavailable"
+  | "embedding_failed"
+  | "database_error";
 
 export interface EmbeddingIndexStatus {
   activeModelId: string;
@@ -198,12 +206,11 @@ export interface EmbeddingIndexStatus {
   indexedItems: number;
   totalItems: number;
   lastError: string | null;
+  failureCode: EmbeddingFailureCode | null;
+  automaticAttempted: boolean;
 }
 
-export interface EmbeddingIndexProgress {
-  indexedItems: number;
-  totalItems: number;
-}
+export type EmbeddingSchedulerStartResult = "started" | "already_running";
 
 export interface FileChangedEvent {
   path: string;

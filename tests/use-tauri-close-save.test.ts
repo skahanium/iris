@@ -34,12 +34,14 @@ vi.mock("@/lib/tauri-runtime", () => ({
 
 function Harness({
   flushBeforeClose,
+  onBlocked,
   onError,
 }: {
   flushBeforeClose: () => Promise<void>;
+  onBlocked?: (retry: () => Promise<void>) => void;
   onError?: (message: string) => void;
 }) {
-  useTauriCloseSave({ flushBeforeClose, onError });
+  useTauriCloseSave({ flushBeforeClose, onBlocked, onError });
   return null;
 }
 
@@ -128,6 +130,38 @@ describe("useTauriCloseSave", () => {
     expect(tauriWindow.close).not.toHaveBeenCalled();
     expect(tauriWindow.destroy).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith("disk write failed");
+  });
+
+  it("supplies a retry action after a blocked close and exits only after that retry saves", async () => {
+    vi.useFakeTimers();
+    const flushBeforeClose = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error("disk write failed"))
+      .mockResolvedValueOnce(undefined);
+    const onBlocked = vi.fn();
+
+    await act(async () => {
+      root.render(createElement(Harness, { flushBeforeClose, onBlocked }));
+    });
+
+    await act(async () => {
+      await tauriWindow.handler?.({ preventDefault: vi.fn() });
+    });
+
+    const retry = onBlocked.mock.calls[0]?.[0] as
+      | (() => Promise<void>)
+      | undefined;
+    expect(retry).toBeTypeOf("function");
+    expect(appExit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await retry?.();
+      vi.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+
+    expect(flushBeforeClose).toHaveBeenCalledTimes(2);
+    expect(appExit).toHaveBeenCalledTimes(1);
   });
 
   it("unlistens on unmount", async () => {

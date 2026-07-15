@@ -43,6 +43,11 @@ export type PersistBeforeLeave = (
   options?: PersistBeforeLeaveOptions,
 ) => Promise<string | null>;
 
+export interface PersistenceBlocker {
+  action: "close";
+  retry: () => Promise<void>;
+}
+
 interface UseAppPersistenceLifecycleParams {
   activeFileLocked: boolean;
   activePath: string | null;
@@ -60,6 +65,7 @@ interface UseAppPersistenceLifecycleParams {
   markClean: (path: string, title: string) => void;
   markdown: string;
   noteTitle: string;
+  onPersistenceBlocked?: (blocker: PersistenceBlocker) => void;
   persistBeforeLeaveRef: MutableRefObject<PersistBeforeLeave>;
   schedulePathSync: (path: string, title: string) => void;
   setAiStatus: (status: string) => void;
@@ -90,6 +96,7 @@ export function useAppPersistenceLifecycle({
   markClean,
   markdown,
   noteTitle,
+  onPersistenceBlocked,
   persistBeforeLeaveRef,
   schedulePathSync,
   setAiStatus,
@@ -111,6 +118,7 @@ export function useAppPersistenceLifecycle({
   const [saveStatus, setSaveStatus] =
     useState<DocumentPersistenceStatus>("clean");
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [hasDirtyDocuments, setHasDirtyDocuments] = useState(false);
   const cancelledWriteRef = useRef<Promise<void>>(Promise.resolve());
   const noteTitleRef = useRef(noteTitle);
   noteTitleRef.current = noteTitle;
@@ -167,6 +175,8 @@ export function useAppPersistenceLifecycle({
 
   useEffect(() => {
     return coordinator.subscribe((snapshot) => {
+      setHasDirtyDocuments(coordinator.hasDirtyDocuments());
+      if (!snapshot) return;
       if (snapshot.path === activePathRef.current) {
         setSaveStatus(snapshot.status);
         setSaveError(snapshot.error);
@@ -270,8 +280,16 @@ export function useAppPersistenceLifecycle({
     options: PersistBeforeLeaveOptions = {},
   ) => {
     const reason = options.reason ?? "tab_leave";
-    const tab = tabsRef.current.find((item) => item.path === path);
-    if (!tab?.dirty) {
+    const persisted = coordinator.get(path);
+    if (persisted && persisted.baselineRevision === persisted.revision) {
+      const tab = tabsRef.current.find((item) => item.path === path);
+      if (!tab?.dirty) {
+        return (
+          getTabMarkdownCached(path) ?? coordinator.get(path)?.markdown ?? null
+        );
+      }
+    }
+    if (!persisted) {
       return (
         getTabMarkdownCached(path) ?? coordinator.get(path)?.markdown ?? null
       );
@@ -334,7 +352,8 @@ export function useAppPersistenceLifecycle({
 
   useTauriCloseSave({
     flushBeforeClose: flushAllOpenTabs,
-    onError: (message) => setAiStatus(`关闭前保存失败：${message}`),
+    onError: () => setAiStatus("关闭前保存失败，请重试或返回编辑"),
+    onBlocked: (retry) => onPersistenceBlocked?.({ action: "close", retry }),
   });
 
   const flushWhenEditorReady = useCallback(
@@ -471,5 +490,6 @@ export function useAppPersistenceLifecycle({
     flushAllOpenTabs,
     saveStatus,
     saveError,
+    hasDirtyDocuments,
   };
 }

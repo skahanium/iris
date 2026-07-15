@@ -26,10 +26,7 @@ interface StatusBarProps {
   path: string | null;
   /** User-facing document name (`files.title`). */
   documentTitle?: string | null;
-  /** Current note has unsaved edits (shown as text, not on tabs). */
-  unsaved?: boolean;
   persistenceStatus?: DocumentPersistenceStatus;
-  persistenceError?: string | null;
   characterCount: number;
   readingMinutes: number;
   aiStatus: string;
@@ -69,9 +66,7 @@ function isClassifiedStatusLine(value: string | null | undefined) {
 export const StatusBar = memo(function StatusBar({
   path,
   documentTitle,
-  unsaved = false,
   persistenceStatus = "clean",
-  persistenceError = null,
   characterCount,
   readingMinutes,
   aiStatus: _aiStatus,
@@ -121,13 +116,13 @@ export const StatusBar = memo(function StatusBar({
         ? "更新已下载"
         : `发现 ${appUpdateInfo?.version}`;
   const persistenceLabel =
-    persistenceStatus === "saving"
+    persistenceStatus === "dirty" || persistenceStatus === "saving"
       ? "正在保存"
       : persistenceStatus === "saved_index_degraded"
-        ? "已保存（索引延后）"
+        ? "已保存但索引待修复"
         : persistenceStatus === "failed"
           ? "保存失败"
-          : null;
+          : "已保存";
 
   return (
     <footer
@@ -195,15 +190,7 @@ export const StatusBar = memo(function StatusBar({
           </div>
         </>
       ) : null}
-      {path && unsaved ? (
-        <>
-          <span className="shrink-0 text-muted-foreground/60" aria-hidden>
-            ·
-          </span>
-          <span className="shrink-0 text-muted-foreground">未保存</span>
-        </>
-      ) : null}
-      {path && persistenceLabel ? (
+      {path ? (
         <>
           <span className="shrink-0 text-muted-foreground/60" aria-hidden>
             ·
@@ -214,7 +201,9 @@ export const StatusBar = memo(function StatusBar({
                 ? "shrink-0 text-destructive"
                 : "shrink-0 text-muted-foreground"
             }
-            title={persistenceError ?? undefined}
+            data-testid="status-bar-persistence"
+            role="status"
+            aria-live="polite"
           >
             {persistenceLabel}
           </span>
