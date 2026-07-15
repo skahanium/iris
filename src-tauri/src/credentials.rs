@@ -62,6 +62,10 @@ struct LocalCredentialRecord {
 /// who gains access to the credential ciphertext directory still needs the
 /// master key from a different location.
 fn iris_config_dir() -> AppResult<PathBuf> {
+    if let Some(config_dir) = std::env::var_os("IRIS_CONFIG_DIR").filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(config_dir));
+    }
+
     #[cfg(windows)]
     {
         let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
@@ -546,9 +550,41 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::collections::BTreeMap;
+    use std::ffi::OsString;
     use std::sync::{LazyLock, Mutex};
 
     static TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    struct ScopedIrisEnvironment {
+        data_dir: Option<OsString>,
+        config_dir: Option<OsString>,
+    }
+
+    impl ScopedIrisEnvironment {
+        fn new(data_dir: &Path, config_dir: &Path) -> Self {
+            let environment = Self {
+                data_dir: std::env::var_os("IRIS_DATA_DIR"),
+                config_dir: std::env::var_os("IRIS_CONFIG_DIR"),
+            };
+            std::env::set_var("IRIS_DATA_DIR", data_dir);
+            std::env::set_var("IRIS_CONFIG_DIR", config_dir);
+            environment
+        }
+    }
+
+    impl Drop for ScopedIrisEnvironment {
+        fn drop(&mut self) {
+            restore_environment_variable("IRIS_DATA_DIR", self.data_dir.take());
+            restore_environment_variable("IRIS_CONFIG_DIR", self.config_dir.take());
+        }
+    }
+
+    fn restore_environment_variable(key: &str, value: Option<OsString>) {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
 
     #[derive(Default)]
     struct MemoryCredentialBackend {
@@ -819,21 +855,46 @@ mod tests {
     fn credential_roundtrip() {
         let _guard = TEST_ENV_LOCK.lock().expect("env lock");
         let dir = tempfile::tempdir().expect("temp dir");
-        std::env::set_var("IRIS_DATA_DIR", dir.path());
-        let id = format!("iris.llm.test_{}", uuid::Uuid::new_v4());
-        set_api_key(&id, "test-secret-value").expect("set");
-        assert_eq!(
-            get_runtime_secret(&id).expect("get").as_str(),
-            "test-secret-value"
-        );
-        delete_api_key(&id).expect("delete");
+        let data_dir = dir.path().join("data");
+        let config_dir = dir.path().join("config");
+        let original_data_dir = std::env::var_os("IRIS_DATA_DIR");
+        let original_config_dir = std::env::var_os("IRIS_CONFIG_DIR");
+
+        {
+            let _environment = ScopedIrisEnvironment::new(&data_dir, &config_dir);
+
+            assert_eq!(iris_config_dir().expect("config directory"), config_dir);
+
+            let id = format!("iris.llm.test_{}", uuid::Uuid::new_v4());
+            set_api_key(&id, "test-secret-value").expect("set");
+            assert_eq!(
+                get_runtime_secret(&id).expect("get").as_str(),
+                "test-secret-value"
+            );
+            assert!(
+                config_dir.join(LOCAL_MASTER_KEY_FILE).is_file(),
+                "public API must keep the master key inside IRIS_CONFIG_DIR"
+            );
+            assert!(
+                !data_dir
+                    .join(LOCAL_CREDENTIAL_DIR)
+                    .join(LOCAL_MASTER_KEY_FILE)
+                    .is_file(),
+                "public API must not put the master key beside credential ciphertext"
+            );
+            delete_api_key(&id).expect("delete");
+        }
+
+        assert_eq!(std::env::var_os("IRIS_DATA_DIR"), original_data_dir);
+        assert_eq!(std::env::var_os("IRIS_CONFIG_DIR"), original_config_dir);
     }
 
     #[test]
     fn generic_secret_roundtrip() {
         let _guard = TEST_ENV_LOCK.lock().expect("env lock");
         let dir = tempfile::tempdir().expect("temp dir");
-        std::env::set_var("IRIS_DATA_DIR", dir.path());
+        let _environment =
+            ScopedIrisEnvironment::new(&dir.path().join("data"), &dir.path().join("config"));
         let id = format!("iris.test.{}", uuid::Uuid::new_v4());
         set_secret(&id, "test-secret-value").expect("set");
         assert!(has_secret(&id));

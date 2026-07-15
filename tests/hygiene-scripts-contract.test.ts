@@ -21,9 +21,11 @@ describe("Iris hygiene scripts", () => {
     expect(result.status, result.stderr).toBe(0);
     const env = JSON.parse(result.stdout) as Record<string, string>;
     const devRoot = path.join(root, ".iris-dev");
+    const configDir = env.IRIS_CONFIG_DIR;
 
     expect(env.IRIS_HOME).toBe(devRoot);
     expect(env.IRIS_DATA_DIR).toBe(path.join(devRoot, "app-data"));
+    expect(configDir).toBe(path.join(devRoot, "config"));
     expect(env.IRIS_CACHE_DIR).toBe(path.join(devRoot, "cache"));
     expect(env.IRIS_TEMP_DIR).toBe(path.join(devRoot, "tmp"));
     expect(env.IRIS_GLOBAL_SKILLS_DIR).toBe(path.join(devRoot, "skills"));
@@ -38,6 +40,7 @@ describe("Iris hygiene scripts", () => {
     expect(env.TEMP).toBe(path.join(devRoot, "tmp"));
     expect(env.TMP).toBe(path.join(devRoot, "tmp"));
     expect(env.TMPDIR).toBe(path.join(devRoot, "tmp"));
+    expect(existsSync(configDir ?? "")).toBe(true);
   });
 
   it("exposes hygiene npm scripts and keeps generated artifacts ignored", () => {

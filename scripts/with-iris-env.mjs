@@ -10,10 +10,12 @@ function buildIrisEnv(baseEnv = process.env) {
   const irisHome = baseEnv.IRIS_HOME || devHome;
   const irisCache = baseEnv.IRIS_CACHE_DIR || path.join(irisHome, "cache");
   const irisTemp = baseEnv.IRIS_TEMP_DIR || path.join(irisHome, "tmp");
+  const irisConfig = baseEnv.IRIS_CONFIG_DIR || path.join(irisHome, "config");
   const env = {
     ...baseEnv,
     IRIS_HOME: irisHome,
     IRIS_DATA_DIR: baseEnv.IRIS_DATA_DIR || path.join(irisHome, "app-data"),
+    IRIS_CONFIG_DIR: irisConfig,
     IRIS_CACHE_DIR: irisCache,
     IRIS_TEMP_DIR: irisTemp,
     IRIS_GLOBAL_SKILLS_DIR:
@@ -36,6 +38,7 @@ function ensureIrisDirs(env) {
   for (const key of [
     "IRIS_HOME",
     "IRIS_DATA_DIR",
+    "IRIS_CONFIG_DIR",
     "IRIS_CACHE_DIR",
     "IRIS_TEMP_DIR",
     "IRIS_GLOBAL_SKILLS_DIR",
@@ -58,6 +61,7 @@ if (args[0] === "--print-env") {
   const keys = [
     "IRIS_HOME",
     "IRIS_DATA_DIR",
+    "IRIS_CONFIG_DIR",
     "IRIS_CACHE_DIR",
     "IRIS_TEMP_DIR",
     "IRIS_GLOBAL_SKILLS_DIR",
