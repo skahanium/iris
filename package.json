@@ -27,6 +27,7 @@
     "test:coverage": "node scripts/with-iris-env.mjs -- vitest run --coverage",
     "test:watch": "node scripts/with-iris-env.mjs -- vitest",
     "test:e2e": "node scripts/with-iris-env.mjs -- vitest run --config vitest.e2e.config.ts",
+    "test:desktop:windows": "node scripts/run-windows-persistence-e2e.mjs",
     "audit:rust": "node scripts/with-iris-env.mjs -- node scripts/cargo-audit.mjs",
     "model:prepare": "node scripts/prepare-embedding-model.mjs",
     "rag:eval": "node scripts/with-iris-env.mjs -- cargo test --manifest-path src-tauri/Cargo.toml --test rag_broker_eval -- --nocapture",

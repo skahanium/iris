@@ -130,6 +130,19 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: node scripts/verify-desktop-package.mjs win
 
+      - name: Install Tauri WebDriver tools
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --locked
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          & "$HOME/.cargo/bin/msedgedriver-tool.exe"
+          "$HOME/.cargo/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $PWD.Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run Windows Markdown persistence desktop E2E
+        shell: pwsh
+        run: npm run test:desktop:windows
+
       - name: Upload Windows installer and updater signature
         uses: actions/upload-artifact@v6
         with:
