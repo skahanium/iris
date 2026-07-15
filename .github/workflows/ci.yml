@@ -100,3 +100,46 @@ jobs:
       - name: Run RAG broker eval (FTS-only)
         working-directory: src-tauri
         run: cargo test --test rag_broker_eval -- --nocapture
+
+  windows-desktop-persistence-e2e:
+    name: Windows Markdown persistence desktop E2E
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows desktop executable
+        run: npm run tauri -- build --no-bundle
+
+      - name: Install pinned Tauri WebDriver tools
+        shell: pwsh
+        env:
+          IRIS_WEBDRIVER_TOOLS: ${{ runner.temp }}\iris-webdriver-tools
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo install tauri-driver --version 2.0.6 --locked --root "$env:IRIS_WEBDRIVER_TOOLS"
+          cargo install --git https://github.com/chippers/msedgedriver-tool --rev 8c4b34f51b45f5cf08013366d703de464ab871d1 --root "$env:IRIS_WEBDRIVER_TOOLS"
+          & "$env:IRIS_WEBDRIVER_TOOLS/bin/msedgedriver-tool.exe"
+          if (-not (Test-Path "$PWD/msedgedriver.exe")) {
+            throw "msedgedriver-tool did not produce msedgedriver.exe"
+          }
+          "$env:IRIS_WEBDRIVER_TOOLS/bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $PWD.Path | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run Windows Markdown persistence desktop E2E
+        shell: pwsh
+        run: npm run test:desktop:windows

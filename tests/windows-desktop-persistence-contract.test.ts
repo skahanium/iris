@@ -52,15 +52,53 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("rmSync");
   });
 
+  it("观察重命名 remount 的 staging 保存，并在新 editor 可交互后输入唯一正文立即保存关闭", () => {
+    const runner = read(runnerPath);
+
+    expect(runner).toContain("REMOUNT_BODY_LINE");
+    expect(runner).toContain("waitForRemountStaging");
+    expect(runner).toContain("waitForRemountVisible");
+    expect(runner).toContain('data-editor-visibility="staging"');
+    expect(runner).toContain('END: "\\uE010"');
+    expect(runner).toMatch(
+      /waitForRemountStaging[\s\S]*pressSave\(sessionId\)[\s\S]*waitForRemountVisible[\s\S]*sendKeys\(sessionId, remountEditor, REMOUNT_BODY_LINE\)[\s\S]*pressSave\(sessionId\)[\s\S]*aria-label="关闭"/,
+    );
+  });
+
+  it("第二次真实启动后经应用 UI 打开重命名笔记并断言标题和全文", () => {
+    const runner = read(runnerPath);
+    const welcome = read("src/components/layout/WelcomeEmpty.tsx");
+
+    expect(welcome).toContain('data-testid="home-recent-note"');
+    expect(runner).toContain("openPersistedNoteInApplication");
+    expect(runner).toContain('data-testid="home-recent-note"');
+    expect(runner).toContain("assertOpenedNote");
+  });
+
   it("将真实 Windows E2E 设为发布包构建后的硬门禁", () => {
     const workflow = read(".github/workflows/package-desktop.yml");
 
     expect(workflow).toContain("Install Tauri WebDriver tools");
-    expect(workflow).toContain("cargo install tauri-driver --locked");
+    expect(workflow).toContain(
+      "cargo install tauri-driver --version 2.0.6 --locked",
+    );
+    expect(workflow).toContain('Test-Path "$PWD/msedgedriver.exe"');
     expect(workflow).toContain("Run Windows Markdown persistence desktop E2E");
     expect(workflow).toContain("npm run test:desktop:windows");
     expect(workflow).toMatch(
       /Package Windows NSIS installer[\s\S]*Run Windows Markdown persistence desktop E2E/,
     );
+  });
+
+  it("将 Windows E2E 设为当前提交的 PR/push CI 硬门禁，并固定测试工具版本", () => {
+    const ci = read(".github/workflows/ci.yml");
+    const release = read(".github/workflows/package-desktop.yml");
+
+    expect(ci).toContain("Windows Markdown persistence desktop E2E");
+    expect(ci).toContain("runs-on: windows-2022");
+    expect(ci).toContain("npm run tauri -- build --no-bundle");
+    expect(ci).toContain("npm run test:desktop:windows");
+    expect(release).toContain("tauri-driver --version 2.0.6 --locked");
+    expect(release).toContain("--rev 8c4b34f51b45f5cf08013366d703de464ab871d1");
   });
 });

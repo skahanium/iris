@@ -121,6 +121,7 @@ export const WelcomeEmpty = memo(function WelcomeEmpty({
                   >
                     <button
                       type="button"
+                      data-testid="home-recent-note"
                       className="min-w-0 flex-1 px-2 py-3 text-left"
                       onFocus={() => onPrepare?.(f, "welcome")}
                       onClick={() => onOpen(f.path, title, "welcome")}

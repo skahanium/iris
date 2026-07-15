@@ -33,20 +33,23 @@ const SESSION_TIMEOUT_MS = 45_000;
 const POLL_INTERVAL_MS = 125;
 const KEY = {
   CONTROL: "\uE009",
+  END: "\uE010",
   ENTER: "\uE007",
 };
 
 const EXPECTED_TITLE = "Iris E2E Persistence";
 const EXPECTED_FILE_NAME = `${EXPECTED_TITLE}.md`;
-const EXPECTED_BODY = "IRIS_E2E_FIRST_LINE\n\nIRIS_E2E_SECOND_LINE";
+const FIRST_BODY_LINE = "IRIS_E2E_FIRST_LINE";
+const REMOUNT_BODY_LINE = "IRIS_E2E_REMOUNT_LINE";
+const EXPECTED_BODY = `${FIRST_BODY_LINE}\n\n${REMOUNT_BODY_LINE}`;
 const EXPECTED_MARKDOWN = [
   "---",
   `title: \"${EXPECTED_TITLE}\"`,
   "---",
   "",
-  "IRIS_E2E_FIRST_LINE",
+  FIRST_BODY_LINE,
   "",
-  "IRIS_E2E_SECOND_LINE",
+  REMOUNT_BODY_LINE,
   "",
 ].join("\n");
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
@@ -225,6 +228,13 @@ async function elementValue(sessionId, element) {
   );
 }
 
+async function elementText(sessionId, element) {
+  return webdriverRequest(
+    "GET",
+    `/session/${sessionId}/element/${element}/text`,
+  );
+}
+
 async function executeAsync(sessionId, script, args = []) {
   return webdriverRequest("POST", `/session/${sessionId}/execute/async`, {
     script,
@@ -308,6 +318,20 @@ async function restartApplication(sessionId, appPath) {
   return createSession(appPath);
 }
 
+async function waitForRemountStaging(sessionId) {
+  return waitForElement(
+    sessionId,
+    '[data-editor-visibility="staging"] [data-testid="editor"] [contenteditable="true"]',
+  );
+}
+
+async function waitForRemountVisible(sessionId) {
+  return waitForElement(
+    sessionId,
+    '[data-editor-visibility="visible"] [data-testid="editor"] [contenteditable="true"]',
+  );
+}
+
 function markdownFile(vaultPath) {
   const notes = readdirSync(vaultPath, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
@@ -326,6 +350,38 @@ function assertPersistedMarkdown(vaultPath) {
   if (!markdown.includes(EXPECTED_BODY)) fail("markdown_body_mismatch");
 }
 
+function normalizedEditorText(value) {
+  return String(value).replaceAll("\r\n", "\n").trim();
+}
+
+async function openPersistedNoteInApplication(sessionId) {
+  await waitForElement(sessionId, '[data-testid="home-workbench"]');
+  const recentNote = await waitForElement(
+    sessionId,
+    '[data-testid="home-recent-note"]',
+  );
+  await click(sessionId, recentNote);
+}
+
+async function assertOpenedNote(sessionId) {
+  const title = await waitForElement(
+    sessionId,
+    '[data-testid="document-title"]',
+  );
+  if ((await elementValue(sessionId, title)) !== EXPECTED_TITLE) {
+    fail("reopened_editor_title_mismatch");
+  }
+  const editor = await waitForElement(
+    sessionId,
+    '[data-editor-visibility="visible"] [data-testid="editor"] [contenteditable="true"]',
+  );
+  if (
+    normalizedEditorText(await elementText(sessionId, editor)) !== EXPECTED_BODY
+  ) {
+    fail("reopened_editor_body_mismatch");
+  }
+}
+
 async function runScenario(sessionId) {
   await waitForElement(sessionId, '[data-testid="home-workbench"]');
 
@@ -340,9 +396,8 @@ async function runScenario(sessionId) {
     '[data-testid="editor"] [contenteditable="true"]',
   );
   await click(sessionId, editor);
-  await sendKeys(sessionId, editor, "IRIS_E2E_FIRST_LINE");
+  await sendKeys(sessionId, editor, FIRST_BODY_LINE);
   await sendKeys(sessionId, editor, KEY.ENTER);
-  await sendKeys(sessionId, editor, "IRIS_E2E_SECOND_LINE");
 
   const title = await waitForElement(
     sessionId,
@@ -352,15 +407,16 @@ async function runScenario(sessionId) {
   await sendKeys(sessionId, title, EXPECTED_TITLE);
   await click(sessionId, editor);
   await acceptRenameConfirmation(sessionId);
-
-  await waitUntil(async () => {
-    const remountedTitle = await findElement(
-      sessionId,
-      '[data-testid="document-title"]',
-    );
-    return (await elementValue(sessionId, remountedTitle)) === EXPECTED_TITLE;
-  }, "editor_remount_after_rename_missing");
-
+  // The staging surface is intentionally non-interactive for real users, so
+  // first exercise the coordinator's snapshot through a save while remounting.
+  // Then type through the newly visible editor and close without a debounce.
+  await waitForRemountStaging(sessionId);
+  await pressSave(sessionId);
+  const remountEditor = await waitForRemountVisible(sessionId);
+  await click(sessionId, remountEditor);
+  await sendKeys(sessionId, remountEditor, KEY.END);
+  await sendKeys(sessionId, remountEditor, KEY.ENTER);
+  await sendKeys(sessionId, remountEditor, REMOUNT_BODY_LINE);
   await pressSave(sessionId);
   const close = await waitForElement(sessionId, '[aria-label="关闭"]');
   await click(sessionId, close);
@@ -402,6 +458,8 @@ async function main() {
     sessionId = await restartApplication(sessionId, appPath);
     await waitForElement(sessionId, '[data-testid="desktop-title-bar"]');
     assertPersistedMarkdown(vaultPath);
+    await openPersistedNoteInApplication(sessionId);
+    await assertOpenedNote(sessionId);
     passed = true;
     process.stdout.write("[desktop-e2e] Windows Markdown persistence passed\n");
   } finally {
