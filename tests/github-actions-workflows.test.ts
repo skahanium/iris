@@ -88,6 +88,10 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).toContain("gh release upload");
     expect(workflow).toContain("--clobber");
     expect(workflow).toContain("scripts/verify-updater-release.mjs");
+    expect(workflow).toContain("shopt -s globstar nullglob");
+    expect(workflow).toContain("release-assets/windows/**/*setup.exe");
+    expect(workflow).toContain("release-assets/macos/**/*.dmg");
+    expect(workflow).toContain("release-assets/macos/**/*.app.tar.gz");
     expect(workflow).not.toContain("softprops/action-gh-release");
   });
 

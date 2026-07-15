@@ -261,12 +261,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          shopt -s globstar nullglob
           assets=(
-            release-assets/windows/*setup.exe
-            release-assets/windows/*setup.exe.sig
-            release-assets/macos/*.dmg
-            release-assets/macos/*.app.tar.gz
-            release-assets/macos/*.app.tar.gz.sig
+            release-assets/windows/**/*setup.exe
+            release-assets/windows/**/*setup.exe.sig
+            release-assets/macos/**/*.dmg
+            release-assets/macos/**/*.app.tar.gz
+            release-assets/macos/**/*.app.tar.gz.sig
             release-assets/latest.json
           )
 
