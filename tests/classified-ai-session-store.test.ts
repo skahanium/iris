@@ -7,15 +7,17 @@ function read(path: string): string {
 }
 
 describe("classified Agent Run storage contract", () => {
-  it("keeps classified note commands outside the normal SessionManager", () => {
+  it("keeps classified note commands outside SessionManager and delegates Markdown persistence", () => {
     const source = read("src-tauri/src/commands/classified.rs");
 
     expect(source).not.toContain("SessionManager");
     expect(source).toContain("classified_io");
-    expect(source).toContain("encrypt_cef");
     expect(source).toContain("decrypt_cef");
     expect(source).toContain("VaultKey");
     expect(source).toContain("require_unlocked");
+    expect(source).toContain("NoteWriteService::create");
+    expect(source).toContain("NoteWriteService::write");
+    expect(source).not.toContain("classified_io::encrypt_cef");
   });
 
   it("stores normal conversations behind opaque scene-free session keys", () => {
