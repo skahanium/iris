@@ -51,6 +51,7 @@ import type {
   EmbeddingIndexStatus,
   FileChangedEvent,
   FileEntry,
+  FileWriteResult,
   FileLinkSummary,
   FileListItem,
   FileReadResult,
@@ -261,8 +262,8 @@ export async function classifiedRename(
 export async function fileWrite(
   path: string,
   content: string,
-): Promise<FileEntry> {
-  return invoke<FileEntry>("file_write", { path, content });
+): Promise<FileWriteResult> {
+  return invoke<FileWriteResult>("file_write", { path, content });
 }
 
 /** Save a vault image under `assets/` (base64 body). Returns vault-relative path. */

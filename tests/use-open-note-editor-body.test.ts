@@ -46,6 +46,7 @@ function Harness({
   editor,
   editorReady,
   dirty,
+  persistBeforePathRename,
   replaceOpenTabPath,
 }: {
   activePath: string | null;
@@ -54,6 +55,10 @@ function Harness({
   editor?: Editor | null;
   editorReady?: boolean;
   dirty?: boolean;
+  persistBeforePathRename?: (
+    path: string,
+    markdown: string,
+  ) => Promise<boolean>;
   replaceOpenTabPath?: ReplaceOpenTabPath;
   outRef: {
     current: {
@@ -74,6 +79,7 @@ function Harness({
     editorRef: { current: editor ?? null },
     editorReadyRef,
     dirtyRef: { current: dirty ?? false },
+    persistBeforePathRename,
     updateTabTitle: vi.fn(),
     replaceOpenTabPath: replaceOpenTabPath ?? vi.fn<ReplaceOpenTabPath>(),
   });
@@ -253,5 +259,63 @@ describe("useOpenNote editorBodyMarkdown", () => {
     const markdownOverride = replaceOpenTabPath.mock.calls[0]?.[3] as string;
     expect(markdownOverride).toContain('title: "Doc A"');
     expect(markdownOverride).toContain("Rename must not drop this body.");
+  });
+
+  it("persists the complete live markdown before title sync renames the file", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    pathSyncSuggest.mockResolvedValue({
+      needs_sync: true,
+      suggested_path: "renamed.md",
+      conflict_resolved: false,
+    });
+    fileRename.mockResolvedValue({
+      id: 1,
+      path: "renamed.md",
+      title: "Renamed",
+      updated_at: "",
+      word_count: 3,
+    });
+    const persistBeforePathRename = vi.fn(async () => true);
+    editor = bodyEditor("Body must reach disk before rename.");
+    const outRef = { current: null } as {
+      current: {
+        schedulePathSync: (path: string, title: string) => void;
+      } | null;
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          activePath: "untitled.md",
+          markdown: '---\ntitle: "Untitled"\n---\n\n',
+          editor,
+          editorReady: true,
+          dirty: true,
+          editorContentTick: 1,
+          persistBeforePathRename,
+          outRef,
+        }),
+      );
+    });
+
+    act(() => {
+      outRef.current?.schedulePathSync("untitled.md", "Renamed");
+      vi.advanceTimersByTime(800);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persistBeforePathRename).toHaveBeenCalledTimes(1);
+    expect(persistBeforePathRename.mock.calls[0]?.[0]).toBe("untitled.md");
+    expect(persistBeforePathRename.mock.calls[0]?.[1]).toContain(
+      "Body must reach disk before rename.",
+    );
+    expect(persistBeforePathRename.mock.invocationCallOrder[0]).toBeLessThan(
+      fileRename.mock.invocationCallOrder[0]!,
+    );
   });
 });

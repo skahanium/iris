@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { fileWrite } from "@/lib/ipc";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
@@ -9,10 +9,18 @@ import { debounce } from "@/lib/utils";
 export const EDITOR_SAVE_DEBOUNCE_MS = 1200;
 export type { LastSavedSnapshot } from "@/lib/version-snapshot-scheduler";
 
+export type DocumentSaveStatus =
+  | "clean"
+  | "dirty"
+  | "saving"
+  | "saved"
+  | "saved_index_degraded"
+  | "failed";
+
 async function writeNoteAtPath(
   targetPath: string,
   md: string,
-): Promise<string | null> {
+): Promise<{ markdown: string; indexDegraded: boolean } | null> {
   const substantivelyEmpty = isNoteSubstantivelyEmpty(md);
   if (substantivelyEmpty) {
     console.debug(
@@ -21,8 +29,11 @@ async function writeNoteAtPath(
     );
     return null;
   }
-  await fileWrite(targetPath, md);
-  return md;
+  const result = await fileWrite(targetPath, md);
+  return {
+    markdown: md,
+    indexDegraded: result.indexStatus === "degraded",
+  };
 }
 
 /**
@@ -32,7 +43,7 @@ async function writeNoteAtPath(
 export function useEditorSave(
   path: string | null,
   getMarkdown: () => string,
-  onSaved?: (md: string) => void,
+  onSaved?: (md: string, currentRevision: boolean) => void,
 ) {
   const pathRef = useRef(path);
   pathRef.current = path;
@@ -47,14 +58,20 @@ export function useEditorSave(
   const saveAgainRef = useRef(false);
   const dirtyGenerationRef = useRef(0);
   const lastSavedSnapshotRef = useRef<LastSavedSnapshot | null>(null);
+  const [saveStatus, setSaveStatus] = useState<DocumentSaveStatus>("clean");
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const recordSavedSnapshot = useCallback(
-    (targetPath: string, markdown: string) => {
+    (
+      targetPath: string,
+      markdown: string,
+      dirtyGeneration = dirtyGenerationRef.current,
+    ) => {
       lastSavedSnapshotRef.current = {
         path: targetPath,
         markdown,
         savedAt: Date.now(),
-        dirtyGeneration: dirtyGenerationRef.current,
+        dirtyGeneration,
       };
     },
     [],
@@ -66,20 +83,38 @@ export function useEditorSave(
     // Skip save if content unchanged from last persisted snapshot.
     // This avoids sending full content over IPC for no-op auto-saves.
     const md = getMarkdownRef.current();
+    const savingGeneration = dirtyGenerationRef.current;
     const last = lastSavedSnapshotRef.current;
     if (last && last.path === target && last.markdown === md) {
       if (last.dirtyGeneration !== dirtyGenerationRef.current) {
         recordSavedSnapshot(target, md);
-        onSavedRef.current?.(md);
+        onSavedRef.current?.(md, true);
       }
       return last.markdown;
     }
-    const saved = await writeNoteAtPath(target, md);
-    if (saved) {
-      recordSavedSnapshot(target, saved);
-      onSavedRef.current?.(saved);
+    setSaveStatus("saving");
+    setSaveError(null);
+    try {
+      const saved = await writeNoteAtPath(target, md);
+      if (saved) {
+        recordSavedSnapshot(target, saved.markdown, savingGeneration);
+        const currentRevision =
+          savingGeneration === dirtyGenerationRef.current;
+        onSavedRef.current?.(saved.markdown, currentRevision);
+        setSaveStatus(
+          currentRevision
+            ? saved.indexDegraded
+              ? "saved_index_degraded"
+              : "saved"
+            : "dirty",
+        );
+      }
+      return saved?.markdown ?? null;
+    } catch (error) {
+      setSaveStatus("failed");
+      setSaveError(error instanceof Error ? error.message : String(error));
+      throw error;
     }
-    return saved;
   }, [recordSavedSnapshot]);
 
   const saveNote = useCallback(async (): Promise<string | null> => {
@@ -123,6 +158,11 @@ export function useEditorSave(
 
   const notifyDirty = useCallback(() => {
     dirtyGenerationRef.current += 1;
+    setSaveStatus("dirty");
+    setSaveError(null);
+    if (saveInFlightRef.current) {
+      saveAgainRef.current = true;
+    }
     debouncedSave();
   }, [debouncedSave]);
 
@@ -142,12 +182,33 @@ export function useEditorSave(
         await saveInFlightRef.current;
       }
       const getMd = getMarkdownOverride ?? (() => getMarkdownRef.current());
-      const md = await writeNoteAtPath(targetPath, getMd());
-      if (md) {
-        recordSavedSnapshot(targetPath, md);
+      setSaveStatus("saving");
+      setSaveError(null);
+      const savingGeneration = dirtyGenerationRef.current;
+      let saved: Awaited<ReturnType<typeof writeNoteAtPath>>;
+      try {
+        saved = await writeNoteAtPath(targetPath, getMd());
+      } catch (error) {
+        setSaveStatus("failed");
+        setSaveError(error instanceof Error ? error.message : String(error));
+        throw error;
       }
+      const md = saved?.markdown ?? null;
+      if (md) {
+        recordSavedSnapshot(targetPath, md, savingGeneration);
+      }
+      const currentRevision = savingGeneration === dirtyGenerationRef.current;
       if (md && targetPath === pathRef.current) {
-        onSavedRef.current?.(md);
+        onSavedRef.current?.(md, currentRevision);
+      }
+      if (md) {
+        setSaveStatus(
+          currentRevision
+            ? saved?.indexDegraded
+              ? "saved_index_degraded"
+              : "saved"
+            : "dirty",
+        );
       }
       return md;
     },
@@ -167,6 +228,19 @@ export function useEditorSave(
     [],
   );
 
+  const rebindSavedSnapshot = useCallback(
+    (oldPath: string, newPath: string, markdown: string) => {
+      const last = lastSavedSnapshotRef.current;
+      if (
+        last?.path === oldPath &&
+        last.markdown === markdown
+      ) {
+        lastSavedSnapshotRef.current = { ...last, path: newPath };
+      }
+    },
+    [],
+  );
+
   return {
     notifyDirty,
     flushSave,
@@ -175,5 +249,8 @@ export function useEditorSave(
     awaitSaveInFlight,
     getLastSavedSnapshot,
     recordSavedSnapshot,
+    rebindSavedSnapshot,
+    saveStatus,
+    saveError,
   };
 }

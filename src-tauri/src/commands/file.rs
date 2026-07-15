@@ -24,8 +24,26 @@ use crate::storage::paths::{
     has_reserved_path_root, is_accessible_note_path, is_classified_note_path, is_user_note_path,
     read_file_lossy, resolve_vault_path,
 };
+use crate::storage::atomic_write::atomic_write;
 
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
+
+/// Whether the derived SQLite indexes were refreshed with the authoritative write.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileWriteIndexStatus {
+    Synced,
+    Degraded,
+}
+
+/// Receipt separating authoritative Markdown persistence from derived indexing.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileWriteResult {
+    pub entry: FileEntry,
+    pub content_hash: String,
+    pub index_status: FileWriteIndexStatus,
+}
 
 #[cfg(test)]
 fn vault_runtime_cleanup_sql() -> &'static str {
@@ -502,7 +520,7 @@ pub async fn file_write(
     state: State<'_, Arc<AppState>>,
     path: String,
     content: String,
-) -> AppResult<FileEntry> {
+) -> AppResult<FileWriteResult> {
     if !is_accessible_note_path(&path) {
         return Err(AppError::msg("只能写入用户笔记，不允许修改内部元数据路径"));
     }
@@ -513,45 +531,65 @@ pub async fn file_write(
         )));
     }
     let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let vault = state.vault_path()?;
-        let abs = resolve_vault_path(&vault, &path)?;
+    tokio::task::spawn_blocking(move || file_write_inner(state, path, content))
+        .await
+        .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
 
-        let tmp = abs.with_extension("md.tmp");
-        let data = encode_file_payload(&path, &content)?;
-        fs::write(&tmp, &data)?;
-        if let Err(e) = fs::rename(&tmp, &abs) {
-            let _ = crate::security::secure_delete::secure_delete(&tmp);
-            return Err(e.into());
-        }
+fn file_write_inner(
+    state: Arc<AppState>,
+    path: String,
+    content: String,
+) -> AppResult<FileWriteResult> {
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &path)?;
 
-        let hash = content_hash(&content);
-        state.storage.write_guard.mark(&path, &hash);
+    let data = encode_file_payload(&path, &content)?;
+    atomic_write(&abs, &data)?;
 
-        if is_classified_note_path(&path) {
-            Ok(FileEntry {
+    let hash = content_hash(&content);
+    state.storage.write_guard.mark(&path, &hash);
+
+    let (entry, index_status) = if is_classified_note_path(&path) {
+        (
+            FileEntry {
                 id: 0,
                 path: path.clone(),
                 title: title_from_path(&path),
                 updated_at: chrono::Utc::now().to_rfc3339(),
                 word_count: 0,
-            })
-        } else {
-            let entry = state.db.with_conn(|conn| {
-                index_file_from_content(
-                    conn,
-                    &vault,
-                    &abs,
-                    &content,
-                    &hash,
-                    IndexEmbeddingMode::Queue(&state),
+            },
+            FileWriteIndexStatus::Synced,
+        )
+    } else {
+        match state.db.with_conn(|conn| {
+            index_file_from_content(
+                conn,
+                &vault,
+                &abs,
+                &content,
+                &hash,
+                IndexEmbeddingMode::Queue(&state),
+            )
+        }) {
+            Ok(entry) => (entry, FileWriteIndexStatus::Synced),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "file_write: markdown persisted but derived index refresh failed"
+                );
+                (
+                    fallback_file_entry(&path, &abs)?,
+                    FileWriteIndexStatus::Degraded,
                 )
-            })?;
-            Ok(entry)
+            }
         }
+    };
+    Ok(FileWriteResult {
+        entry,
+        content_hash: hash,
+        index_status,
     })
-    .await
-    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 /// Write a binary asset under `assets/` (editor image drop / paste).
@@ -580,12 +618,7 @@ pub async fn vault_asset_write(
         if bytes.len() > MAX_BYTES {
             return Err(AppError::msg("图片超过 20MB 限制"));
         }
-        let tmp = abs.with_extension("tmp");
-        fs::write(&tmp, &bytes)?;
-        if let Err(e) = fs::rename(&tmp, &abs) {
-            let _ = fs::remove_file(&tmp);
-            return Err(e.into());
-        }
+        atomic_write(&abs, &bytes)?;
         Ok(path)
     })
     .await
@@ -1091,12 +1124,7 @@ fn cascade_rewrite_wikilinks_on_disk(
 
         if changed {
             let updated = lines.join("\n");
-            let tmp = abs.with_extension("md.tmp");
-            fs::write(&tmp, &updated)?;
-            if let Err(e) = fs::rename(&tmp, &abs) {
-                let _ = crate::security::secure_delete::secure_delete(&tmp);
-                return Err(e.into());
-            }
+            atomic_write(&abs, updated.as_bytes())?;
             modified.push(src_path.clone());
         }
     }
@@ -1137,13 +1165,8 @@ pub async fn file_create(
             .map(str::to_string)
             .unwrap_or_else(|| title_from_path(&path));
         let body = content.unwrap_or_else(|| default_create_content(&document_title));
-        let tmp = abs.with_extension("md.tmp");
         let data = encode_file_payload(&path, &body)?;
-        fs::write(&tmp, &data)?;
-        if let Err(e) = fs::rename(&tmp, &abs) {
-            let _ = fs::remove_file(&tmp);
-            return Err(e.into());
-        }
+        atomic_write(&abs, &data)?;
         let hash = content_hash(&body);
         state.storage.write_guard.mark(&path, &hash);
         if is_classified_note_path(&path) {
@@ -1634,6 +1657,48 @@ Body",
             fs::read_to_string(vault.join("new.md")).unwrap(),
             "# Changed\n\nBody"
         );
+    }
+
+    #[test]
+    fn file_write_reports_degraded_index_without_losing_persisted_markdown() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("note.md"), "---\ntitle: Old\n---\n\nOld").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("note.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_note_refresh
+                     BEFORE UPDATE OF title ON files
+                     WHEN NEW.path = 'note.md'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated index failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let updated = "---\ntitle: New\n---\n\nBody survives index failure";
+
+        let result = file_write_inner(
+            state,
+            "note.md".to_string(),
+            updated.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.index_status, FileWriteIndexStatus::Degraded);
+        assert_eq!(fs::read_to_string(vault.join("note.md")).unwrap(), updated);
+        assert_eq!(result.content_hash, content_hash(updated));
     }
     #[test]
     fn wikilink_rewrite_skips_stale_inbound_sources() {

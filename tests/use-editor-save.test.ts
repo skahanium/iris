@@ -311,7 +311,7 @@ describe("useEditorSave", () => {
     expect(saved).toBe(edited);
     expect(fileWrite).toHaveBeenCalledTimes(1);
     expect(fileWrite).toHaveBeenCalledWith("note.md", edited);
-    expect(onSaved).toHaveBeenCalledWith(edited);
+    expect(onSaved).toHaveBeenCalledWith(edited, true);
   });
 
   it("flushSaveForPath writes the leaving path while active path is already B", async () => {

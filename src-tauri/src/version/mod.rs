@@ -551,10 +551,8 @@ pub fn version_restore(
     let content = read_version_content(state, &vault, &storage_path)?;
     let abs_note = crate::storage::paths::resolve_vault_path(&vault, &path)?;
 
-    let tmp = abs_note.with_extension("md.tmp");
     let payload = encode_restore_payload(&path, &content)?;
-    fs::write(&tmp, payload)?;
-    fs::rename(&tmp, &abs_note)?;
+    crate::storage::atomic_write::atomic_write(&abs_note, &payload)?;
 
     if is_classified_note_path(&path) {
         let hash = crate::cas::hash::content_hash_str(&content);

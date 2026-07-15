@@ -35,6 +35,7 @@ function Harness({
   editorContentTick = 0,
   editorReady,
   markdown = '---\ntitle: "Note"\n---\n\nOriginal body that must remain authoritative.',
+  getTabMarkdownCached = () => undefined,
   onReady,
   persistBeforeLeaveRef,
   setFileLocked,
@@ -42,6 +43,7 @@ function Harness({
   editorContentTick?: number;
   editorReady: boolean;
   markdown?: string;
+  getTabMarkdownCached?: (path: string) => string | undefined;
   onReady?: (api: ReturnType<typeof useAppPersistenceLifecycle>) => void;
   persistBeforeLeaveRef: React.MutableRefObject<PersistBeforeLeave>;
   setFileLocked?: (path: string, locked: boolean) => void;
@@ -80,7 +82,7 @@ function Harness({
     editorReadyRef,
     editorRef,
     getLiveMarkdownRef,
-    getTabMarkdownCached: vi.fn(),
+    getTabMarkdownCached,
     markClean: vi.fn(),
     markdown,
     noteTitle: "Note",
@@ -124,7 +126,7 @@ describe("useAppPersistenceLifecycle", () => {
     host.remove();
   });
 
-  it("does not write or cache the active note while the editor is not ready for persistence", async () => {
+  it("persists a dirty cached snapshot while the editor is remounting", async () => {
     const persistBeforeLeaveRef = {
       current: async () => null,
     } as React.MutableRefObject<PersistBeforeLeave>;
@@ -133,6 +135,8 @@ describe("useAppPersistenceLifecycle", () => {
       root.render(
         createElement(Harness, {
           editorReady: false,
+          getTabMarkdownCached: () =>
+            '---\ntitle: "Renamed"\n---\n\nBody captured before remount.',
           persistBeforeLeaveRef,
         }),
       );
@@ -142,8 +146,32 @@ describe("useAppPersistenceLifecycle", () => {
       await persistBeforeLeaveRef.current("note.md");
     });
 
-    expect(fileWrite).not.toHaveBeenCalled();
+    expect(fileWrite).toHaveBeenCalledWith(
+      "note.md",
+      '---\ntitle: "Renamed"\n---\n\nBody captured before remount.',
+    );
     expect(setCachedEditorHtml).not.toHaveBeenCalled();
+  });
+
+  it("rejects close persistence when a dirty remount has no recoverable snapshot", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorReady: false,
+          getTabMarkdownCached: () => undefined,
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await expect(
+      persistBeforeLeaveRef.current("note.md", { reason: "app_close" }),
+    ).rejects.toThrow("no recoverable snapshot");
+    expect(fileWrite).not.toHaveBeenCalled();
   });
 
   it("does not create a manual version snapshot while the editor is not ready", async () => {

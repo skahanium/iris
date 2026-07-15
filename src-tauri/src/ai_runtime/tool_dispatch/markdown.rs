@@ -151,12 +151,7 @@ pub(super) fn markdown_write_patch_apply(
         &current,
         crate::version::SnapshotParams::manual(),
     )?;
-    let tmp = abs.with_extension("md.tmp");
-    std::fs::write(&tmp, &applied)?;
-    if let Err(e) = std::fs::rename(&tmp, &abs) {
-        let _ = crate::security::secure_delete::secure_delete(&tmp);
-        return Err(e.into());
-    }
+    crate::storage::atomic_write::atomic_write(&abs, applied.as_bytes())?;
     let hash = crate::cas::hash::content_hash_str(&applied);
     state.storage.write_guard.mark(&target_path, &hash);
     let mut warnings = Vec::new();

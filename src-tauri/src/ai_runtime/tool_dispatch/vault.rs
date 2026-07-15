@@ -50,12 +50,7 @@ pub(super) fn vault_create_note_tool(
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = abs.with_extension("md.tmp");
-    std::fs::write(&tmp, content)?;
-    if let Err(e) = std::fs::rename(&tmp, &abs) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
+    crate::storage::atomic_write::atomic_write(&abs, content.as_bytes())?;
 
     let hash = content_hash(content);
     state.storage.write_guard.mark(target_path, &hash);
@@ -221,12 +216,7 @@ pub(super) fn vault_asset_write_tool(
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let tmp = abs.with_extension("tmp");
-    std::fs::write(&tmp, &bytes)?;
-    if let Err(e) = std::fs::rename(&tmp, &abs) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
+    crate::storage::atomic_write::atomic_write(&abs, &bytes)?;
 
     Ok(serde_json::json!({
         "type": "vault_asset_write",
@@ -311,12 +301,7 @@ fn rewrite_source_wikilinks(
         &content,
         crate::version::SnapshotParams::manual(),
     )?;
-    let tmp = abs.with_extension("md.tmp");
-    std::fs::write(&tmp, &updated)?;
-    if let Err(e) = std::fs::rename(&tmp, &abs) {
-        let _ = crate::security::secure_delete::secure_delete(&tmp);
-        return Err(e.into());
-    }
+    crate::storage::atomic_write::atomic_write(&abs, updated.as_bytes())?;
     Ok(true)
 }
 

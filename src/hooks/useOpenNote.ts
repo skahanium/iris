@@ -46,6 +46,17 @@ interface UseOpenNoteOptions {
   editorRef: RefObject<Editor | null>;
   editorReadyRef?: RefObject<boolean>;
   dirtyRef?: RefObject<boolean>;
+  /** Persist the exact live markdown before a title-driven path rename. */
+  persistBeforePathRename?: (
+    path: string,
+    markdown: string,
+  ) => Promise<boolean>;
+  /** Rebind an acknowledged save snapshot after the file move succeeds. */
+  onPersistedPathRenamed?: (
+    oldPath: string,
+    newPath: string,
+    markdown: string,
+  ) => void;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
     oldPath: string,
@@ -64,6 +75,8 @@ export function useOpenNote({
   editorRef,
   editorReadyRef,
   dirtyRef,
+  persistBeforePathRename,
+  onPersistedPathRenamed,
   updateTabTitle,
   replaceOpenTabPath,
 }: UseOpenNoteOptions) {
@@ -172,7 +185,7 @@ export function useOpenNote({
       pathSyncTimerRef.current = setTimeout(() => {
         pathSyncTimerRef.current = null;
         void pathSyncSuggest(path, title)
-          .then((suggest) => {
+          .then(async (suggest) => {
             if (generation !== pathSyncGenRef.current) return;
             if (activePathRef.current !== path) return;
             if (!suggest.needs_sync || suggest.suggested_path === path) {
@@ -182,14 +195,11 @@ export function useOpenNote({
               ? `路径「${suggest.suggested_path}」已避开同名冲突。是否同步？`
               : `是否将文件路径同步为「${suggest.suggested_path}」？`;
             if (!window.confirm(msg)) return;
-            return fileRename(path, suggest.suggested_path).then((entry) => {
-              const allocatedTitle = pathStem(entry.path);
-              const nextTitle =
-                title.trim() === "" ? allocatedTitle : title.trim();
+            const serializeLatest = () => {
               const editor = editorRef.current;
-              const liveMarkdown = serializeOpenNote({
+              return serializeOpenNote({
                 yaml: frontmatterYamlRef.current,
-                title: nextTitle,
+                title: title.trim(),
                 editor,
                 editorReady: shouldSerializeEditorBody(
                   editor,
@@ -198,7 +208,42 @@ export function useOpenNote({
                 ),
                 bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
               });
-              replaceOpenTabPath(path, entry.path, nextTitle, liveMarkdown);
+            };
+            let persistedMarkdown = serializeLatest();
+            if (persistBeforePathRename) {
+              let stable = false;
+              for (let attempt = 0; attempt < 3; attempt += 1) {
+                if (
+                  !(await persistBeforePathRename(path, persistedMarkdown))
+                ) {
+                  throw new Error("path rename pre-save failed");
+                }
+                const latest = serializeLatest();
+                if (latest === persistedMarkdown) {
+                  stable = true;
+                  break;
+                }
+                persistedMarkdown = latest;
+              }
+              if (!stable) {
+                throw new Error("path rename deferred while document changes");
+              }
+            }
+            return fileRename(path, suggest.suggested_path).then((entry) => {
+              const allocatedTitle = pathStem(entry.path);
+              const nextTitle =
+                title.trim() === "" ? allocatedTitle : title.trim();
+              replaceOpenTabPath(
+                path,
+                entry.path,
+                nextTitle,
+                persistedMarkdown,
+              );
+              onPersistedPathRenamed?.(
+                path,
+                entry.path,
+                persistedMarkdown,
+              );
               if (title.trim() === "") {
                 setNoteTitle(allocatedTitle);
               }
@@ -216,6 +261,8 @@ export function useOpenNote({
       editorReadyRef,
       frontmatterYamlRef,
       markdownRef,
+      onPersistedPathRenamed,
+      persistBeforePathRename,
       replaceOpenTabPath,
     ],
   );

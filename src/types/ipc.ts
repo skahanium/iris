@@ -82,6 +82,15 @@ export interface FileEntry {
   word_count: number;
 }
 
+export type FileWriteIndexStatus = "synced" | "degraded";
+
+/** Receipt for the authoritative Markdown write and its derived-index refresh. */
+export interface FileWriteResult {
+  entry: FileEntry;
+  contentHash: string;
+  indexStatus: FileWriteIndexStatus;
+}
+
 export interface ChatMessage {
   role: string;
   content: string;

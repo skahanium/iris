@@ -102,10 +102,14 @@ export function useAppPersistenceLifecycle({
     awaitSaveInFlight,
     getLastSavedSnapshot,
     recordSavedSnapshot,
+    rebindSavedSnapshot,
+    saveStatus,
+    saveError,
   } = useEditorSave(
     activePath,
     () => getLiveMarkdownRef.current(),
-    (md) => {
+    (md, currentRevision) => {
+      if (!currentRevision) return;
       applySavedMarkdown(md);
       dirtyRef.current = false;
       const path = activePathRef.current;
@@ -126,7 +130,10 @@ export function useAppPersistenceLifecycle({
   useEffect(() => {
     if (!activePath) return;
     recordSavedSnapshot(activePath, markdownBaselineRef.current);
-  }, [activePath, editorContentTick, recordSavedSnapshot]);
+    // `editorContentTick` is the authoritative-load revision. Path-only
+    // changes (notably title-driven renames) must never create a saved baseline.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorContentTick, recordSavedSnapshot]);
 
   const versionSnapshotScheduler = useMemo(
     () =>
@@ -179,8 +186,20 @@ export function useAppPersistenceLifecycle({
     const tab = tabsRef.current.find((t) => t.path === path);
     if (path === activePathRef.current) {
       if (!editorReadyRef.current) {
-        setAiStatus("文档仍在加载，已跳过自动保存以保护磁盘内容");
-        return null;
+        if (!tab?.dirty) {
+          return getTabMarkdownCached(path) ?? null;
+        }
+        const cached = getTabMarkdownCached(path);
+        if (!cached || isNoteSubstantivelyEmpty(cached)) {
+          throw new Error(
+            "dirty document is remounting with no recoverable snapshot",
+          );
+        }
+        await fileWrite(path, cached);
+        recordSavedSnapshot(path, cached);
+        markClean(path, tab.title);
+        dirtyRef.current = false;
+        return cached;
       }
       const markdownSnapshot = getLiveMarkdownRef.current();
       const titleSnapshot = noteTitle;
@@ -284,13 +303,36 @@ export function useAppPersistenceLifecycle({
         return { ok: false, markdown: null };
       }
       if (activePathRef.current && !editorReadyRef.current) {
-        setAiStatus(`文档仍在加载，无法${actionLabel}；未修改磁盘内容`);
+        const path = activePathRef.current;
+        const tab = tabsRef.current.find((item) => item.path === path);
+        const cached = getTabMarkdownCached(path);
+        if (tab?.dirty && cached && !isNoteSubstantivelyEmpty(cached)) {
+          await fileWrite(path, cached);
+          recordSavedSnapshot(path, cached);
+          markClean(path, tab.title);
+          dirtyRef.current = false;
+          return { ok: true, markdown: cached };
+        }
+        setAiStatus(
+          `文档仍在加载，无法${actionLabel}；未找到可安全写入的快照`,
+        );
         return { ok: false, markdown: null };
       }
       const markdown = await flushSave();
       return { ok: true, markdown };
     },
-    [activeFileLocked, activePathRef, editorReadyRef, flushSave, setAiStatus],
+    [
+      activeFileLocked,
+      activePathRef,
+      dirtyRef,
+      editorReadyRef,
+      flushSave,
+      getTabMarkdownCached,
+      markClean,
+      recordSavedSnapshot,
+      setAiStatus,
+      tabsRef,
+    ],
   );
 
   const handleSaveNote = useCallback(async () => {
@@ -352,5 +394,10 @@ export function useAppPersistenceLifecycle({
     handleLockToggle,
     handleSaveVersion,
     versionSnapshotScheduler,
+    flushSaveForPath,
+    recordSavedSnapshot,
+    rebindSavedSnapshot,
+    saveStatus,
+    saveError,
   };
 }

@@ -100,6 +100,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const [markdown, setMarkdownState] = useState("");
   /** Incremented when disk content is loaded into tab state (not on editor save). */
   const [editorContentTick, setEditorContentTick] = useState(0);
+  /** Incremented only when authoritative disk/prepared content is committed. */
+  const [persistenceContentTick, setPersistenceContentTick] = useState(0);
   const [pendingNoteOpen, setPendingNoteOpen] =
     useState<PendingNoteOpen | null>(null);
   const activePathRef = useRef<string | null>(null);
@@ -309,6 +311,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       if (!skipTickBump) {
         setEditorContentTick((tick) => tick + 1);
       }
+      setPersistenceContentTick((tick) => tick + 1);
       setTabs((prev) => {
         const withoutDiscarded = discardedPreviousPath
           ? prev.filter((tab) => tab.path !== discardedPreviousPath)
@@ -846,6 +849,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     activeFileLocked,
     markdown,
     editorContentTick,
+    persistenceContentTick,
     pendingNoteOpen,
     cancelPendingNoteOpen,
     hasUncommittedOpen,

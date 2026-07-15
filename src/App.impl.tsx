@@ -157,6 +157,7 @@ function App() {
     activePath,
     markdown,
     editorContentTick,
+    persistenceContentTick,
     activePathRef,
     markdownRef,
     frontmatterYamlRef,
@@ -298,6 +299,10 @@ function App() {
   }, [activePath]);
 
   const getLiveMarkdownRef = useRef(() => markdownRef.current);
+  const pathRenamePersistenceRef = useRef({
+    persist: async (_path: string, _markdown: string) => false,
+    rebind: (_oldPath: string, _newPath: string, _markdown: string) => {},
+  });
   const inlineAiDomain =
     activeNoteIsClassified &&
     classifiedUnlocked &&
@@ -328,6 +333,14 @@ function App() {
     editorRef,
     editorReadyRef: editorReadyForPersistenceRef,
     dirtyRef,
+    persistBeforePathRename: (path, markdownSnapshot) =>
+      pathRenamePersistenceRef.current.persist(path, markdownSnapshot),
+    onPersistedPathRenamed: (oldPath, newPath, markdownSnapshot) =>
+      pathRenamePersistenceRef.current.rebind(
+        oldPath,
+        newPath,
+        markdownSnapshot,
+      ),
     updateTabTitle,
     replaceOpenTabPath,
   });
@@ -345,6 +358,10 @@ function App() {
     handleLockToggle,
     handleSaveNote,
     versionSnapshotScheduler,
+    flushSaveForPath,
+    rebindSavedSnapshot,
+    saveStatus,
+    saveError,
   } = useAppPersistenceLifecycle({
     activeFileLocked,
     activePath,
@@ -354,7 +371,7 @@ function App() {
     autoVersionEnabled: autoVersionSettings.autoVersionEnabled,
     autoVersionIdleMinutes: autoVersionSettings.autoVersionIdleMinutes,
     dirtyRef,
-    editorContentTick,
+    editorContentTick: persistenceContentTick,
     editorRef,
     editorReadyRef: editorReadyForPersistenceRef,
     getLiveMarkdownRef,
@@ -370,6 +387,16 @@ function App() {
     syncTabMarkdownCache,
     tabsRef,
   });
+
+  pathRenamePersistenceRef.current = {
+    persist: async (path, markdownSnapshot) =>
+      (await flushSaveForPath(path, () => markdownSnapshot)) ===
+      markdownSnapshot,
+    rebind: (oldPath, newPath, markdownSnapshot) => {
+      rebindSavedSnapshot(oldPath, newPath, markdownSnapshot);
+      syncTabMarkdownCache(newPath, markdownSnapshot);
+    },
+  };
 
   const {
     handleBeforeFilePathChange,
