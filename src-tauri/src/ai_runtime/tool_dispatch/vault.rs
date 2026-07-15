@@ -7,6 +7,7 @@ use crate::app::AppState;
 use crate::commands::file::is_vault_asset_path;
 use crate::error::{AppError, AppResult};
 use crate::indexer::scan::index_file_with_embed;
+use crate::storage::atomic_write::{move_file_no_replace_locked, with_vault_move_lock};
 use crate::storage::note_write::NoteWriteService;
 use crate::storage::paths::{
     is_user_note_path, read_file_lossy, resolve_vault_path, validate_user_note_relative_path,
@@ -61,6 +62,14 @@ pub(super) fn vault_rename_move_tool(
     ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
+    with_vault_move_lock(|| vault_rename_move_tool_locked(state, ctx, args))
+}
+
+fn vault_rename_move_tool_locked(
+    state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
@@ -80,9 +89,6 @@ pub(super) fn vault_rename_move_tool(
     if !abs.is_file() {
         return Err(AppError::msg("Source note does not exist"));
     }
-    if new_abs.exists() {
-        return Err(AppError::msg("Target path already exists"));
-    }
 
     let impacted_sources = backlink_source_paths(state, path)?;
     let impact = LinkImpact {
@@ -91,18 +97,32 @@ pub(super) fn vault_rename_move_tool(
     };
 
     let current = read_file_lossy(&abs)?;
-    crate::version::create_snapshot(
+    // First establish the Markdown fact. A competing destination creator is
+    // rejected atomically, before snapshots, backlink writes, or index work.
+    move_file_no_replace_locked(&abs, &new_abs)?;
+    let hash = crate::indexer::scan::content_hash(&current);
+    state.storage.write_guard.mark(new_path, &hash);
+    let mut index_degraded = false;
+    if crate::version::create_snapshot(
         state,
         path,
         &current,
         crate::version::SnapshotParams::manual(),
-    )?;
+    )
+    .is_err()
+    {
+        index_degraded = true;
+        tracing::warn!(
+            result_code = "ai_vault_rename_snapshot_degraded",
+            "AI vault rename completed while its version snapshot could not be recorded"
+        );
+    }
 
     let old_stem = title_from_path(path);
     let new_stem = title_from_path(new_path);
     let mut modified_sources = Vec::new();
     for source_path in impacted_sources {
-        if rewrite_source_wikilinks(
+        match rewrite_source_wikilinks(
             state,
             &vault,
             &source_path,
@@ -110,18 +130,19 @@ pub(super) fn vault_rename_move_tool(
             new_path,
             &old_stem,
             &new_stem,
-        )? {
-            modified_sources.push(source_path);
+        ) {
+            Ok(true) => modified_sources.push(source_path),
+            Ok(false) => {}
+            Err(_) => {
+                index_degraded = true;
+                tracing::warn!(
+                    result_code = "ai_vault_rename_cascade_degraded",
+                    "AI vault rename completed while a backlink cascade could not be applied"
+                );
+            }
         }
     }
 
-    if let Some(parent) = new_abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::rename(&abs, &new_abs)?;
-    let hash = crate::indexer::scan::content_hash(&current);
-    state.storage.write_guard.mark(new_path, &hash);
-    let mut index_degraded = false;
     if state
         .db
         .with_conn(|conn| {

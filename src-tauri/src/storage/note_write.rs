@@ -8,7 +8,9 @@ use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
 use crate::error::{AppError, AppResult};
 use crate::indexer::scan::{content_hash, index_file_from_content, FileEntry, IndexEmbeddingMode};
-use crate::storage::atomic_write::{atomic_create, atomic_write};
+use crate::storage::atomic_write::{
+    atomic_create, atomic_write, move_file_no_replace_locked, with_vault_move_lock,
+};
 use crate::storage::paths::{
     has_reserved_path_root, is_classified_note_path, read_file_lossy, resolve_vault_path,
 };
@@ -72,14 +74,13 @@ impl NoteWriteService {
         }
 
         let vault = state.vault_path()?;
-        ensure_note_parent(&vault, path)?;
-        let absolute = resolve_vault_path(&vault, path)?;
-        if absolute.exists() {
-            return Err(AppError::msg("File already exists"));
-        }
-        let content = read_file_lossy(source)?;
-
-        std::fs::rename(source, &absolute)?;
+        let (absolute, content) = with_vault_move_lock(|| {
+            ensure_note_parent(&vault, path)?;
+            let absolute = resolve_vault_path(&vault, path)?;
+            let content = read_file_lossy(source)?;
+            move_file_no_replace_locked(source, &absolute)?;
+            Ok((absolute, content))
+        })?;
         let hash = content_hash(&content);
         state.storage.write_guard.mark(path, &hash);
 

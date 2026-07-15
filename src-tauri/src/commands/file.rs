@@ -20,7 +20,10 @@ use base64::Engine;
 
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
-use crate::storage::atomic_write::atomic_write;
+use crate::storage::atomic_write::{
+    atomic_write, move_directory_no_replace_locked, move_file_no_replace_locked,
+    with_vault_move_lock,
+};
 use crate::storage::note_write::{FileWriteIndexStatus, FileWriteResult, NoteWriteService};
 use crate::storage::paths::{
     is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
@@ -608,6 +611,14 @@ fn folder_rename_inner(
     old_path: String,
     new_path: String,
 ) -> AppResult<FileWriteIndexStatus> {
+    with_vault_move_lock(|| folder_rename_inner_locked(state, old_path, new_path))
+}
+
+fn folder_rename_inner_locked(
+    state: &Arc<AppState>,
+    old_path: String,
+    new_path: String,
+) -> AppResult<FileWriteIndexStatus> {
     validate_folder_path(&old_path)?;
     validate_folder_path(&new_path)?;
     let vault = state.vault_path()?;
@@ -616,10 +627,6 @@ fn folder_rename_inner(
     if !abs.is_dir() {
         return Err(AppError::msg("Source path is not a folder"));
     }
-    if new_abs.exists() {
-        return Err(AppError::msg("Target path already exists"));
-    }
-
     let affected_files: Vec<String> = state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ?1")?;
         let prefix = if old_path.ends_with('/') || old_path.is_empty() {
@@ -632,6 +639,10 @@ fn folder_rename_inner(
     })?;
 
     let mut index_degraded = false;
+    // The physical move is the authoritative step. A competing creator owns
+    // the destination atomically, before any backlink or index mutation runs.
+    move_directory_no_replace_locked(&abs, &new_abs)?;
+
     let mut all_modified_sources: Vec<String> = Vec::new();
     for file_path in &affected_files {
         let rel_old = file_path.as_str();
@@ -645,7 +656,13 @@ fn folder_rename_inner(
         let old_stem = title_from_path(rel_old);
         let new_stem = title_from_path(&rel_new);
         match cascade_rewrite_wikilinks_on_disk(
-            state, &vault, rel_old, &rel_new, &old_stem, &new_stem,
+            state,
+            &vault,
+            rel_old,
+            &rel_new,
+            &old_stem,
+            &new_stem,
+            Some((&old_path, &new_path)),
         ) {
             Ok(mut mods) => all_modified_sources.append(&mut mods),
             Err(_) => {
@@ -657,11 +674,6 @@ fn folder_rename_inner(
             }
         }
     }
-
-    if let Some(parent) = new_abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::rename(&abs, &new_abs)?;
 
     let reindex_paths =
         folder_rename_reindex_paths(&old_path, &new_path, &affected_files, &all_modified_sources);
@@ -896,6 +908,14 @@ fn file_rename_inner(
     path: String,
     new_path: String,
 ) -> AppResult<FileWriteResult> {
+    with_vault_move_lock(|| file_rename_inner_locked(&state, path, new_path))
+}
+
+fn file_rename_inner_locked(
+    state: &Arc<AppState>,
+    path: String,
+    new_path: String,
+) -> AppResult<FileWriteResult> {
     if !is_user_note_path(&path) || !is_user_note_path(&new_path) {
         return Err(AppError::msg("Only user note paths can be renamed"));
     }
@@ -903,12 +923,6 @@ fn file_rename_inner(
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
     let new_abs = resolve_vault_path(&vault, &new_path)?;
-    if new_abs.exists() {
-        return Err(AppError::msg("Target path already exists"));
-    }
-    if let Some(parent) = new_abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
 
     let old_stem = title_from_path(&path);
     let new_stem = title_from_path(&new_path);
@@ -916,20 +930,14 @@ fn file_rename_inner(
     let hash = content_hash(&source_content);
     let mut index_degraded = false;
 
-    if state
-        .db
-        .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
-        .is_err()
-    {
-        index_degraded = true;
-        tracing::warn!(
-            result_code = "file_rename_pre_move_index_degraded",
-            "file rename continued after derived index degradation before move"
-        );
-    }
+    // This is the only state-changing operation before backlink and index
+    // work. `move_file_no_replace_locked` makes a competing destination
+    // creator win without replacing it or touching source documents.
+    move_file_no_replace_locked(&abs, &new_abs)?;
+    state.storage.write_guard.mark(&new_path, &hash);
 
     let modified_sources = match cascade_rewrite_wikilinks_on_disk(
-        &state, &vault, &path, &new_path, &old_stem, &new_stem,
+        state, &vault, &path, &new_path, &old_stem, &new_stem, None,
     ) {
         Ok(paths) => paths,
         Err(_) => {
@@ -942,10 +950,11 @@ fn file_rename_inner(
         }
     };
 
-    fs::rename(&abs, &new_abs)?;
-    state.storage.write_guard.mark(&new_path, &hash);
-
     let entry = match state.db.with_conn(|conn| {
+        // A path absent on disk can still have an obsolete derived row. The
+        // destination now contains the moved Markdown, so discard only that
+        // stale collision after the authoritative move has succeeded.
+        conn.execute("DELETE FROM files WHERE path = ?1", [&new_path])?;
         if rename_file_index(conn, &path, &new_path).is_err() {
             index_degraded = true;
             tracing::warn!(
@@ -954,7 +963,7 @@ fn file_rename_inner(
             );
         }
         let entry =
-            index_file_with_embed(conn, &vault, &new_abs, IndexEmbeddingMode::Queue(&state))?;
+            index_file_with_embed(conn, &vault, &new_abs, IndexEmbeddingMode::Queue(state))?;
         if crate::indexer::scan::prune_stale_file_indexes(conn, &vault).is_err() {
             index_degraded = true;
             tracing::warn!(
@@ -983,26 +992,22 @@ fn file_rename_inner(
             if state
                 .db
                 .with_conn(|conn| {
-                    index_file_with_embed(conn, &vault, &abs_src, IndexEmbeddingMode::Queue(&state))
+                    index_file_with_embed(conn, &vault, &abs_src, IndexEmbeddingMode::Queue(state))
                 })
                 .is_err()
             {
                 index_degraded = true;
                 NoteWriteService::schedule_index_repair(
-                    &state,
+                    state,
                     src_path,
-                    IndexEmbeddingMode::Queue(&state),
+                    IndexEmbeddingMode::Queue(state),
                 );
             }
         }
     }
 
     if index_degraded {
-        NoteWriteService::schedule_index_repair(
-            &state,
-            &new_path,
-            IndexEmbeddingMode::Queue(&state),
-        );
+        NoteWriteService::schedule_index_repair(state, &new_path, IndexEmbeddingMode::Queue(state));
     }
 
     Ok(FileWriteResult {
@@ -1018,7 +1023,8 @@ fn file_rename_inner(
 
 /// Rewrite wikilink text in all files referencing `old_path` on disk.
 /// Returns the list of modified source file paths.
-/// Does NOT reindex — caller must reindex after the target has been reindexed.
+/// `moved_source_root` remaps source paths that moved with a folder before the
+/// database paths have been refreshed. Callers reindex after this completes.
 fn cascade_rewrite_wikilinks_on_disk(
     state: &Arc<AppState>,
     vault: &std::path::Path,
@@ -1026,6 +1032,7 @@ fn cascade_rewrite_wikilinks_on_disk(
     new_path: &str,
     old_stem: &str,
     new_stem: &str,
+    moved_source_root: Option<(&str, &str)>,
 ) -> AppResult<Vec<String>> {
     let source_paths: Vec<String> = state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
@@ -1041,8 +1048,9 @@ fn cascade_rewrite_wikilinks_on_disk(
 
     let mut modified = Vec::new();
 
-    for src_path in &source_paths {
-        let abs = resolve_vault_path(vault, src_path)?;
+    for source_path in &source_paths {
+        let src_path = remap_moved_source_path(source_path, moved_source_root);
+        let abs = resolve_vault_path(vault, &src_path)?;
         if !abs.exists() {
             tracing::warn!(
                 result_code = "file_rename_cascade_source_missing",
@@ -1094,12 +1102,25 @@ fn cascade_rewrite_wikilinks_on_disk(
 
         if changed {
             let updated = lines.join("\n");
-            NoteWriteService::write(state, src_path, &updated, IndexEmbeddingMode::Queue(state))?;
-            modified.push(src_path.clone());
+            NoteWriteService::write(state, &src_path, &updated, IndexEmbeddingMode::Queue(state))?;
+            modified.push(src_path);
         }
     }
 
     Ok(modified)
+}
+
+fn remap_moved_source_path(source_path: &str, moved_source_root: Option<(&str, &str)>) -> String {
+    let Some((old_root, new_root)) = moved_source_root else {
+        return source_path.to_string();
+    };
+    let Some(suffix) = source_path.strip_prefix(old_root) else {
+        return source_path.to_string();
+    };
+    let Some(relative) = suffix.strip_prefix('/') else {
+        return source_path.to_string();
+    };
+    format!("{}/{}", new_root.trim_end_matches('/'), relative)
 }
 
 #[tauri::command]
@@ -1488,7 +1509,7 @@ Body",
     }
 
     #[test]
-    fn file_rename_inner_prunes_stale_target_index_before_move() {
+    fn file_rename_inner_replaces_stale_target_index_after_move() {
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
         fs::create_dir_all(&vault).unwrap();
@@ -1634,6 +1655,49 @@ Body",
     }
 
     #[test]
+    fn file_rename_does_not_rewrite_backlinks_when_destination_cannot_be_created() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("old.md"), "# Old\n").unwrap();
+        fs::write(vault.join("source.md"), "See [[old]].\n").unwrap();
+        // A regular file in the destination-parent position makes the physical
+        // move impossible; source Markdown must remain untouched.
+        fs::write(vault.join("blocked"), "not a directory").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("old.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("source.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(
+            file_rename_inner(state, "old.md".to_string(), "blocked/new.md".to_string()).is_err()
+        );
+
+        assert!(vault.join("old.md").is_file());
+        assert!(!vault.join("blocked/new.md").exists());
+        assert_eq!(
+            fs::read_to_string(vault.join("source.md")).unwrap(),
+            "See [[old]].\n"
+        );
+    }
+
+    #[test]
     fn file_create_inner_does_not_replace_a_note_created_by_another_writer() {
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
@@ -1690,6 +1754,96 @@ Body",
         assert_eq!(
             fs::read_to_string(vault.join("new/note.md")).unwrap(),
             "# Old\n\nOriginal"
+        );
+    }
+
+    #[test]
+    fn folder_rename_rewrites_backlinks_from_sources_moved_with_the_folder() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("old")).unwrap();
+        fs::write(vault.join("old/target.md"), "# Target\n").unwrap();
+        fs::write(vault.join("old/source.md"), "Inside [[old/target.md]].\n").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("old/target.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("old/source.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                let target_id: i64 = conn.query_row(
+                    "SELECT id FROM files WHERE path = 'old/target.md'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                let source_id: i64 = conn.query_row(
+                    "SELECT id FROM files WHERE path = 'old/source.md'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                conn.execute(
+                    "INSERT INTO links (source_id, target_id, context) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![source_id, target_id, "Inside [[old/target.md]]."],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let status = folder_rename_inner(&state, "old".to_string(), "new".to_string()).unwrap();
+
+        assert_eq!(status, FileWriteIndexStatus::Synced);
+        assert_eq!(
+            fs::read_to_string(vault.join("new/source.md")).unwrap(),
+            "Inside [[new/target.md]]."
+        );
+    }
+
+    #[test]
+    fn folder_rename_does_not_rewrite_backlinks_when_destination_cannot_be_created() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("old")).unwrap();
+        fs::write(vault.join("old/note.md"), "# Note\n").unwrap();
+        fs::write(vault.join("source.md"), "See [[old/note.md]].\n").unwrap();
+        fs::write(vault.join("blocked"), "not a directory").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("old/note.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("source.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(folder_rename_inner(&state, "old".to_string(), "blocked/new".to_string()).is_err());
+
+        assert!(vault.join("old/note.md").is_file());
+        assert!(!vault.join("blocked/new").exists());
+        assert_eq!(
+            fs::read_to_string(vault.join("source.md")).unwrap(),
+            "See [[old/note.md]].\n"
         );
     }
 
@@ -1764,6 +1918,7 @@ Body",
             "folder/target.md",
             "target",
             "target",
+            None,
         )
         .unwrap();
 

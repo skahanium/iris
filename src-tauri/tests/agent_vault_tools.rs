@@ -244,6 +244,38 @@ async fn vault_rename_move_reports_link_impact_and_moves_note() {
 }
 
 #[tokio::test]
+async fn vault_rename_move_does_not_rewrite_backlinks_when_destination_cannot_be_created() {
+    let (state, _dir) = test_state();
+    index_note(&state, "notes/old.md", "# Old\n");
+    index_note(&state, "notes/source.md", "See [[old]].\n");
+    std::fs::write(
+        state.vault_path().unwrap().join("blocked"),
+        "not a directory",
+    )
+    .unwrap();
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(None),
+        "vault_rename_move",
+        &serde_json::json!({
+            "path": "notes/old.md",
+            "new_path": "blocked/new.md"
+        }),
+    )
+    .await;
+
+    assert!(!result.success);
+    let vault = state.vault_path().unwrap();
+    assert!(vault.join("notes/old.md").is_file());
+    assert!(!vault.join("blocked/new.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(vault.join("notes/source.md")).unwrap(),
+        "See [[old]].\n"
+    );
+}
+
+#[tokio::test]
 async fn vault_rename_move_reports_degraded_after_physical_move_when_indexing_fails() {
     let (state, _dir) = test_state();
     index_note(&state, "notes/old.md", "# Old\n\nOriginal");
