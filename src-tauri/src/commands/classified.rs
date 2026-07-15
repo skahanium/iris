@@ -10,8 +10,8 @@ use crate::crypto::classified_io;
 use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
 use crate::error::{AppError, AppResult};
 use crate::indexer::fts::delete_fts;
-use crate::indexer::scan::remove_file_index;
-use crate::storage::note_write::NoteWriteService;
+use crate::indexer::scan::{prune_stale_file_indexes, remove_file_index};
+use crate::storage::note_write::{FileWriteIndexStatus, NoteWriteService};
 use crate::storage::paths::{
     is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
 };
@@ -225,13 +225,38 @@ fn classified_files_inner(
     Ok(entries)
 }
 
+const CLASSIFIED_INDEX_REPAIR_ATTEMPTS: usize = 3;
+const CLASSIFIED_INDEX_REPAIR_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
+
+fn repair_classified_index_once(state: &AppState, vault: &Path) -> AppResult<()> {
+    state
+        .db
+        .with_conn(|conn| prune_stale_file_indexes(conn, vault).map(|_| ()))
+}
+
+fn schedule_classified_index_repair(state: Arc<AppState>, vault: PathBuf) {
+    tauri::async_runtime::spawn_blocking(move || {
+        for _ in 0..CLASSIFIED_INDEX_REPAIR_ATTEMPTS {
+            std::thread::sleep(CLASSIFIED_INDEX_REPAIR_DELAY);
+            if repair_classified_index_once(&state, &vault).is_ok() {
+                return;
+            }
+        }
+        tracing::warn!(
+            result_code = "classified_index_repair_failed",
+            "classified index repair exhausted its bounded retry budget"
+        );
+    });
+}
+
 fn classified_import_inner(
     state: &Arc<AppState>,
     app: Option<&AppHandle>,
     path: &str,
     target_folder: &str,
 ) -> AppResult<()> {
-    let _vk = require_unlocked()?;
+    let vault_key = require_unlocked()?;
+    drop(vault_key);
     if !is_user_note_path(path) || is_classified_path(path) {
         return Err(AppError::msg("只能导入用户笔记"));
     }
@@ -272,6 +297,7 @@ fn classified_import_inner(
         .with_conn(|conn| remove_file_index(conn, path))
         .is_err()
     {
+        schedule_classified_index_repair(Arc::clone(state), vault.clone());
         tracing::warn!(
             result_code = "classified_import_index_degraded",
             "classified import completed with derived index degradation"
@@ -290,7 +316,7 @@ fn classified_export_inner(
     path: &str,
     target_folder: &str,
     overwrite: bool,
-) -> AppResult<()> {
+) -> AppResult<FileWriteIndexStatus> {
     let vk = require_unlocked()?;
     if !is_classified_path(path) {
         return Err(AppError::msg("只能导出涉密文件"));
@@ -346,7 +372,8 @@ fn classified_export_inner(
             .map_err(|_| AppError::msg("File is not valid UTF-8"))?
     };
 
-    NoteWriteService::write(
+    drop(vk);
+    let receipt = NoteWriteService::write(
         state,
         &dest_rel,
         &content,
@@ -354,18 +381,21 @@ fn classified_export_inner(
     )?;
     fs::remove_file(&src)?;
 
+    let mut index_status = receipt.index_status;
     if state
         .db
         .with_conn(|conn| remove_file_index(conn, path))
         .is_err()
     {
+        schedule_classified_index_repair(Arc::clone(state), vault.clone());
+        index_status = FileWriteIndexStatus::Degraded;
         tracing::warn!(
             result_code = "classified_export_index_degraded",
             "classified export completed with derived index degradation"
         );
     }
 
-    Ok(())
+    Ok(index_status)
 }
 
 fn remove_classified_metadata(state: &AppState, path: &str) -> AppResult<()> {
@@ -529,12 +559,13 @@ pub fn classified_export(
     target_folder: String,
     overwrite: Option<bool>,
 ) -> AppResult<()> {
-    classified_export_inner(
+    let _ = classified_export_inner(
         state.inner(),
         &path,
         &target_folder,
         overwrite.unwrap_or(false),
-    )
+    )?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -792,6 +823,54 @@ mod tests {
         assert!(classified_io::has_csef_magic(
             &fs::read(vault.join(".classified/source.md")).unwrap()
         ));
+
+        let stale_count: i64 = state
+            .db
+            .with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM files WHERE path = 'notes/source.md'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(stale_count, 1, "the first index cleanup must fail");
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch("DROP TRIGGER fail_source_index_cleanup")?;
+                Ok(())
+            })
+            .unwrap();
+
+        for _ in 0..20 {
+            let remaining: i64 = state
+                .db
+                .with_read_conn(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT COUNT(*) FROM files WHERE path = 'notes/source.md'",
+                        [],
+                        |row| row.get(0),
+                    )?)
+                })
+                .unwrap();
+            if remaining == 0 {
+                let fts_count: i64 = state
+                    .db
+                    .with_read_conn(|conn| {
+                        Ok(conn.query_row(
+                            "SELECT COUNT(*) FROM files_fts WHERE path = 'notes/source.md'",
+                            [],
+                            |row| row.get(0),
+                        )?)
+                    })
+                    .unwrap();
+                assert_eq!(fts_count, 0);
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("stale source path remained searchable after bounded index repair");
     }
 
     #[test]
@@ -809,7 +888,7 @@ mod tests {
                 index_file(conn, &vault, &vault.join("exported/source.md"))?;
                 conn.execute_batch(
                     "CREATE TRIGGER fail_export_index_refresh
-                     BEFORE INSERT ON files
+                     BEFORE UPDATE OF title ON files
                      WHEN NEW.path = 'exported/source.md'
                      BEGIN
                        SELECT RAISE(ABORT, 'simulated index refresh failure');
@@ -819,13 +898,50 @@ mod tests {
             })
             .unwrap();
 
-        classified_export_inner(&state, ".classified/source.md", "exported", true).unwrap();
+        let status =
+            classified_export_inner(&state, ".classified/source.md", "exported", true).unwrap();
 
+        assert_eq!(status, FileWriteIndexStatus::Degraded);
         assert_eq!(
             fs::read_to_string(vault.join("exported/source.md")).unwrap(),
             "# Source\n\nContent."
         );
         assert!(!vault.join(".classified/source.md").exists());
+        let stale_content: String = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT content FROM files_fts WHERE path = 'exported/source.md'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert!(stale_content.contains("Old"));
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch("DROP TRIGGER fail_export_index_refresh")?;
+                crate::indexer::scan::index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("exported/source.md"),
+                    crate::indexer::scan::IndexEmbeddingMode::Queue(&state),
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let repaired_content: String = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT content FROM files_fts WHERE path = 'exported/source.md'",
+                    [],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert!(repaired_content.contains("Content."));
     }
 
     #[test]
