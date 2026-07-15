@@ -265,7 +265,7 @@ pub fn embedding_generation_ready(conn: &Connection) -> AppResult<bool> {
 
     match super::scheduler::generation_coverage_complete(conn) {
         Ok(complete) => Ok(complete),
-        Err(error) if matches!(error, AppError::Db(_)) => Ok(false),
+        Err(AppError::Db(_)) => Ok(false),
         Err(error) => Err(error),
     }
 }

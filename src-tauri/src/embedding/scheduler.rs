@@ -165,7 +165,7 @@ impl EmbeddingScheduler {
             }
             return Err(error);
         }
-        if matches!(transition?, false) {
+        if !transition? {
             if let Ok(mut runtime) = self.runtime.lock() {
                 runtime.running = false;
             }
@@ -219,7 +219,7 @@ impl EmbeddingScheduler {
                 && !runtime.running
         };
         if paused {
-            self.db.with_conn(|conn| set_phase_paused(conn))?;
+            self.db.with_conn(set_phase_paused)?;
         } else if should_resume {
             let _ = self.start_generation(EmbeddingStartSource::Manual)?;
         }
@@ -247,7 +247,7 @@ impl EmbeddingScheduler {
 
     fn run_generation(self: Arc<Self>, vault_epoch: u64) {
         let result = self.batcher.ensure_available();
-        if let Err(_) = result {
+        if result.is_err() {
             let _ = self.write_if_current(vault_epoch, |conn| {
                 mark_failed(conn, "model_unavailable", "Embedding model unavailable")
             });
