@@ -14,10 +14,72 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release-quality:
+    name: Release quality gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential curl file libayatana-appindicator3-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev patchelf wget
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check release version facts
+        run: npm run version:check
+
+      - name: Check document facts
+        run: npm run docs:check
+
+      - name: Check frontend formatting
+        run: npm run format:check
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Typecheck frontend
+        run: npm run typecheck
+
+      - name: Run frontend tests
+        run: npm run test
+
+      - name: Check Rust formatting
+        working-directory: src-tauri
+        run: cargo fmt --all -- --check
+
+      - name: Lint Rust
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
   package-windows:
     name: Windows x64 NSIS
     runs-on: windows-2022
     timeout-minutes: 60
+    needs: release-quality
 
     steps:
       - name: Checkout
@@ -63,6 +125,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run package:local:win
 
+      - name: Verify Windows desktop package
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/verify-desktop-package.mjs win
+
       - name: Upload Windows installer and updater signature
         uses: actions/upload-artifact@v6
         with:
@@ -77,6 +144,7 @@ jobs:
     name: macOS arm64 DMG
     runs-on: macos-latest
     timeout-minutes: 60
+    needs: release-quality
 
     steps:
       - name: Checkout
@@ -123,6 +191,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/package-local.mjs --no-sqlite-vec mac
+
+      - name: Verify macOS desktop package
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/verify-desktop-package.mjs mac
 
       - name: Upload macOS DMG and updater bundle
         uses: actions/upload-artifact@v6
@@ -174,6 +247,15 @@ jobs:
             --assets-dir release-assets \
             --out release-assets/latest.json
 
+      - name: Verify updater release assets
+        shell: bash
+        run: |
+          node scripts/verify-updater-release.mjs \
+            --version "$GITHUB_REF_NAME" \
+            --asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" \
+            --assets-dir release-assets \
+            --manifest release-assets/latest.json
+
       - name: Create or update draft release
         shell: bash
         env:
@@ -195,7 +277,7 @@ jobs:
               exit 1
             fi
 
-            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY"
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
           fi

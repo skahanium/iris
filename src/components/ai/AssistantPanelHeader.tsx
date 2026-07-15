@@ -75,12 +75,12 @@ export function AssistantPanelHeader({
             variant="outline"
             size="sm"
             className="h-8 gap-1 px-2 text-xs"
-            title="New conversation"
+            title="新建对话"
             onClick={onNewChat}
             disabled={chromeActionsDisabled}
           >
             <MessageSquarePlus className="h-3.5 w-3.5" />
-            New chat
+            新对话
           </Button>
         </div>
       </div>

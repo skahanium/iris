@@ -43,6 +43,28 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).toContain("actions/cache@v5");
     expect(workflow).toContain(".iris-dev/models/bge-small-zh-v1.5");
     expect(workflow).toContain("npm run model:prepare");
+    expect(workflow).toContain("Verify Windows desktop package");
+    expect(workflow).toContain("Verify macOS desktop package");
+    expect(workflow).toContain("scripts/verify-desktop-package.mjs");
+  });
+
+  it("gates tag packaging on complete frontend and Rust checks", () => {
+    const workflow = readWorkflow(".github/workflows/package-desktop.yml");
+
+    expect(workflow).toContain("release-quality:");
+    expect(workflow).toContain("npm run version:check");
+    expect(workflow).toContain("npm run docs:check");
+    expect(workflow).toContain("npm run format:check");
+    expect(workflow).toContain("npm run lint");
+    expect(workflow).toContain("npm run typecheck");
+    expect(workflow).toContain("npm run test");
+    expect(workflow).toContain("cargo fmt --all -- --check");
+    expect(workflow).toContain("cargo clippy --all-targets -- -D warnings");
+    expect(workflow).toContain("cargo test");
+    expect(workflow).toMatch(/package-windows:[\s\S]*needs: release-quality/);
+    expect(workflow).toMatch(
+      /package-macos-arm64:[\s\S]*needs: release-quality/,
+    );
   });
   it("creates a draft GitHub Release with packaged assets for v tags", () => {
     const workflow = readWorkflow(".github/workflows/package-desktop.yml");
@@ -64,7 +86,8 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).toContain("--generate-notes");
     expect(workflow).toContain("--verify-tag");
     expect(workflow).toContain("gh release upload");
-    expect(workflow).not.toContain("--clobber");
+    expect(workflow).toContain("--clobber");
+    expect(workflow).toContain("scripts/verify-updater-release.mjs");
     expect(workflow).not.toContain("softprops/action-gh-release");
   });
 
@@ -105,10 +128,22 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).toContain("npm run format:check");
     expect(workflow).toContain("npm run lint");
     expect(workflow).toContain("npm run typecheck");
-    expect(workflow).toContain(
-      "npm run test -- tests/package-local-script-contract.test.ts tests/github-actions-workflows.test.ts",
-    );
+    expect(workflow).toContain("npm run test");
+    expect(workflow).toContain("cargo fmt --all -- --check");
+    expect(workflow).toContain("cargo clippy --all-targets -- -D warnings");
+    expect(workflow).toContain("cargo test");
     expect(workflow).not.toContain("package:local:win");
     expect(workflow).not.toContain("package:local:mac");
+  });
+
+  it("verifies updater assets again after a GitHub Release is published", () => {
+    const workflow = readWorkflow(".github/workflows/verify-release.yml");
+
+    expect(workflow).toContain("types: [published]");
+    expect(workflow).toContain('gh release download "$TAG_NAME"');
+    expect(workflow).toContain("scripts/verify-updater-release.mjs");
+    expect(workflow).toContain("releases/latest/download/latest.json");
+    expect(workflow).toContain("--retry-all-errors");
+    expect(workflow).toContain("Compare-Object");
   });
 });

@@ -66,6 +66,8 @@ const INITIAL_UPDATE: AppUpdateSnapshot = {
 const APP_UPDATE_NETWORK_ERROR_MESSAGE = "无法连接更新服务器，请检查网络后重试";
 const APP_UPDATE_DOWNLOAD_ERROR_MESSAGE = "更新下载失败，请稍后重试";
 const APP_UPDATE_PREFLIGHT_ERROR_MESSAGE = "兼容性预检失败，请重试";
+const APP_UPDATE_INSTALL_ERROR_MESSAGE =
+  "更新安装失败，请重试或前往 GitHub Release 手动安装";
 
 function mergeStateEvent(
   current: AppUpdateSnapshot,
@@ -233,7 +235,11 @@ export function useAppUpdate({
       return;
     }
 
-    await appUpdateInstall();
+    try {
+      await appUpdateInstall();
+    } catch {
+      handleActionError(setSnapshot, APP_UPDATE_INSTALL_ERROR_MESSAGE);
+    }
   }, [hasUnsaved, onBlockedInstall]);
 
   return {

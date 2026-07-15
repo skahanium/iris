@@ -160,8 +160,13 @@ describe("embedded BGE model preparation", () => {
     expect(packageLocal).toContain('"model:prepare"');
     expect(tauriConfig.bundle.resources).toBeUndefined();
     expect(windowsConfig.bundle.resources).toBeUndefined();
-    expect(packageLocal).toContain("TAURI_CONFIG");
-    expect(packageLocal).toContain('"../.iris-dev/models/bge-small-zh-v1.5"');
+    expect(packageLocal).toContain("writePackageTauriConfig");
+    expect(packageLocal).toContain('"--config"');
+    expect(packageLocal).not.toContain("TAURI_CONFIG");
+    expect(packageLocal).toContain("embeddedModelSource");
+    expect(packageLocal).toContain('".iris-dev"');
+    expect(packageLocal).toContain('"bge-small-zh-v1.5"');
+    expect(packageLocal).toContain("verify-desktop-package.mjs");
   });
   it("accepts a complete offline staging directory only when every pinned artifact matches", () => {
     const fixture = createFixture();

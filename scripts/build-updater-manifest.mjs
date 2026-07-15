@@ -1,6 +1,15 @@
 #!/usr/bin/env node
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
+
+const SEMVER_PATTERN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 
 function usage() {
   return [
@@ -48,6 +57,13 @@ function parseArgs(argv) {
   for (const [key, value] of Object.entries(options)) {
     if (!value) throw new Error(`Missing required option: ${key}`);
   }
+  if (!SEMVER_PATTERN.test(options.version)) {
+    throw new Error(`Updater version must be valid SemVer: ${options.version}`);
+  }
+  const assetBaseUrl = new URL(options.assetBaseUrl);
+  if (assetBaseUrl.protocol !== "https:") {
+    throw new Error("Updater asset base URL must use HTTPS");
+  }
   return options;
 }
 
@@ -75,7 +91,11 @@ function signatureFor(asset) {
   if (!existsSync(sig)) {
     throw new Error(`Missing updater signature: ${sig}`);
   }
-  return readFileSync(sig, "utf8").trim();
+  const signature = readFileSync(sig, "utf8").trim();
+  if (!signature) {
+    throw new Error(`Updater signature is empty: ${sig}`);
+  }
+  return signature;
 }
 
 const options = parseArgs(process.argv.slice(2));
@@ -106,11 +126,10 @@ const manifest = {
   pub_date: new Date().toISOString(),
   platforms: {
     "darwin-aarch64": macPlatform,
-    "darwin-aarch64/app": macPlatform,
     "windows-x86_64": winPlatform,
-    "windows-x86_64/nsis": winPlatform,
   },
 };
 
+mkdirSync(path.dirname(options.out), { recursive: true });
 writeFileSync(options.out, `${JSON.stringify(manifest, null, 2)}\n`);
 process.stdout.write(`[updater-manifest] wrote ${options.out}\n`);

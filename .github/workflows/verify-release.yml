@@ -1,0 +1,76 @@
+name: Verify Published Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name }}
+  cancel-in-progress: true
+
+jobs:
+  verify-release:
+    name: Verify updater release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG_NAME: ${{ github.event.release.tag_name }}
+
+    steps:
+      - name: Checkout published tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Download published release assets
+        shell: bash
+        run: gh release download "$TAG_NAME" --repo "$GITHUB_REPOSITORY" --dir release-assets
+
+      - name: Verify published updater assets
+        shell: bash
+        run: |
+          node scripts/verify-updater-release.mjs \
+            --version "$TAG_NAME" \
+            --asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}" \
+            --assets-dir release-assets \
+            --manifest release-assets/latest.json
+
+      - name: Wait for latest updater pointer
+        if: ${{ !github.event.release.prerelease }}
+        shell: pwsh
+        run: |
+          $latestUrl = "https://github.com/$env:GITHUB_REPOSITORY/releases/latest/download/latest.json"
+          for ($attempt = 1; $attempt -le 12; $attempt++) {
+            curl --fail --location --retry 3 --retry-delay 3 --retry-all-errors $latestUrl --output remote-latest.json
+            if ($LASTEXITCODE -eq 0) {
+              $difference = Compare-Object (Get-Content release-assets/latest.json) (Get-Content remote-latest.json)
+              if (-not $difference) {
+                Write-Output "The latest updater pointer matches $env:TAG_NAME."
+                exit 0
+              }
+            }
+            if ($attempt -lt 12) {
+              Write-Output "Latest pointer has not propagated yet (attempt $attempt/12)."
+              Start-Sleep -Seconds 10
+            }
+          }
+          throw "The GitHub latest release pointer does not match the published latest.json asset."
+
+      - name: Verify latest updater pointer contents
+        if: ${{ !github.event.release.prerelease }}
+        shell: bash
+        run: |
+          node scripts/verify-updater-release.mjs \
+            --version "$TAG_NAME" \
+            --asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG_NAME}" \
+            --assets-dir release-assets \
+            --manifest remote-latest.json

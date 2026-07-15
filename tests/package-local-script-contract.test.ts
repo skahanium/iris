@@ -29,6 +29,15 @@ describe("local packaging script contract", () => {
     expect(source).not.toContain("bundle_dmg.sh");
   });
 
+  it("lets Tauri ad-hoc sign the macOS app before updater artifacts are created", () => {
+    const source = script();
+
+    expect(source).toContain('signingIdentity: "-"');
+    expect(source).not.toContain("function signMacApp");
+    expect(source).not.toContain('run("ad-hoc sign Iris.app"');
+    expect(source).toContain("verify desktop package");
+  });
+
   it("defaults Windows packaging away from sqlite-vec and keeps explicit vec opt-in", () => {
     const source = script();
 
@@ -52,9 +61,13 @@ describe("local packaging script contract", () => {
   it("prepares a Windows NSIS command but only runs it on Windows", () => {
     const source = script();
 
-    expect(source).toContain("tauri.windows.conf.json");
+    expect(source).toContain('"--config"');
     expect(source).toContain("nsis");
     expect(source).toContain("process.platform");
     expect(source).toContain("win32");
+    expect(source).toContain("verify-desktop-package.mjs");
+    expect(source).toContain("resetTargetBundle");
+    expect(source).toContain('path.join(bundleRoot, "nsis")');
+    expect(source).toContain('path.join(releaseRoot, "nsis")');
   });
 });

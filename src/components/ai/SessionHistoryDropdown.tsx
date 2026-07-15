@@ -167,13 +167,13 @@ export function SessionHistoryDropdown({
         variant="outline"
         size="sm"
         className="h-8 shrink-0 gap-1 px-2 text-xs"
-        title="Conversation history"
+        title="对话历史"
         disabled={disabled}
         data-testid="session-history-trigger"
         onClick={() => setOpen((value) => !value)}
       >
         <History className="h-3.5 w-3.5" />
-        History
+        历史记录
       </Button>
       {open ? (
         <div
@@ -181,7 +181,7 @@ export function SessionHistoryDropdown({
           data-testid="session-history-popover"
         >
           <div className="border-b border-border/60 px-3 py-2">
-            <p className="text-xs font-medium text-foreground">History</p>
+            <p className="text-xs font-medium text-foreground">对话历史</p>
             <p className="text-[10px] text-muted-foreground">
               Conversations in this security domain
             </p>

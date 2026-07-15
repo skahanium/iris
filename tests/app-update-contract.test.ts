@@ -120,6 +120,9 @@ describe("app update contract", () => {
 
     expect(hook).toContain("catch");
     expect(hook).toContain("无法连接更新服务器，请检查网络后重试");
+    expect(hook).toContain(
+      "更新安装失败，请重试或前往 GitHub Release 手动安装",
+    );
     expect(hook).not.toContain("error sending request");
     expect(updater).toContain("APP_UPDATE_CHECK_TIMEOUT");
     expect(updater).toContain(".timeout(APP_UPDATE_CHECK_TIMEOUT)");
@@ -155,7 +158,9 @@ describe("app update contract", () => {
     expect(workflow).toContain("latest.json");
     expect(workflow).toContain("scripts/build-updater-manifest.mjs");
     expect(workflow).toContain("--draft");
-    expect(workflow).not.toContain("--clobber");
+    expect(workflow).toContain("--clobber");
     expect(existsSync("scripts/build-updater-manifest.mjs")).toBe(true);
+    expect(existsSync("scripts/verify-updater-release.mjs")).toBe(true);
+    expect(existsSync("scripts/verify-desktop-package.mjs")).toBe(true);
   });
 });

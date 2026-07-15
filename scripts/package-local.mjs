@@ -1,28 +1,27 @@
 #!/usr/bin/env node
 import {
-  existsSync,
-  rmSync,
-  mkdirSync,
-  symlinkSync,
-  readFileSync,
   cpSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const bundleRoot = path.join(root, ".iris-dev", "target", "release", "bundle");
+const releaseRoot = path.join(root, ".iris-dev", "target", "release");
+const bundleRoot = path.join(releaseRoot, "bundle");
 const appPath = path.join(bundleRoot, "macos", "Iris.app");
 const updaterSigningEnabled = Boolean(process.env.TAURI_SIGNING_PRIVATE_KEY);
-const embeddedModelTauriConfig = JSON.stringify({
-  bundle: {
-    createUpdaterArtifacts: updaterSigningEnabled,
-    resources: {
-      "../.iris-dev/models/bge-small-zh-v1.5": "models/bge-small-zh-v1.5",
-    },
-  },
-});
+const embeddedModelSource = path.join(
+  root,
+  ".iris-dev",
+  "models",
+  "bge-small-zh-v1.5",
+);
 
 function usage() {
   return [
@@ -77,13 +76,13 @@ function parseArgs(argv) {
   return options;
 }
 
-function run(label, command, args, extraEnv = {}) {
+function run(label, command, args) {
   process.stdout.write(`\n[package-local] ${label}\n`);
   const result = spawnSync(command, args, {
     cwd: root,
     shell: process.platform === "win32",
     stdio: "inherit",
-    env: { ...process.env, ...extraEnv },
+    env: process.env,
   });
   if (result.status !== 0) {
     const code = result.status ?? 1;
@@ -112,8 +111,8 @@ function archLabel() {
   return process.arch;
 }
 
-function tauriBuildArgs(target, sqliteVec) {
-  const args = ["run", "tauri", "--", "build"];
+function tauriBuildArgs(target, sqliteVec, configPath) {
+  const args = ["run", "tauri", "--", "build", "--config", configPath];
   if (sqliteVec) {
     args.push("--features", "sqlite-vec");
   }
@@ -121,13 +120,37 @@ function tauriBuildArgs(target, sqliteVec) {
     args.push("--bundles", "app");
     return args;
   }
-  args.push(
-    "--config",
-    "src-tauri/tauri.windows.conf.json",
-    "--bundles",
-    "nsis",
-  );
+  args.push("--bundles", "nsis");
   return args;
+}
+
+function writePackageTauriConfig() {
+  const configDir = path.join(root, ".iris-dev", "tmp");
+  const configPath = path.join(configDir, "package-local-tauri.conf.json");
+  const config = {
+    bundle: {
+      createUpdaterArtifacts: updaterSigningEnabled,
+      macOS: {
+        signingIdentity: "-",
+      },
+      resources: {
+        [embeddedModelSource]: "models/bge-small-zh-v1.5",
+      },
+    },
+  };
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  return configPath;
+}
+
+function resetTargetBundle(target) {
+  if (target === "mac") {
+    rmSync(path.join(bundleRoot, "macos"), { force: true, recursive: true });
+    rmSync(path.join(bundleRoot, "dmg"), { force: true, recursive: true });
+    return;
+  }
+  rmSync(path.join(bundleRoot, "nsis"), { force: true, recursive: true });
+  rmSync(path.join(releaseRoot, "nsis"), { force: true, recursive: true });
 }
 
 function prepareEmbeddedModel() {
@@ -145,19 +168,6 @@ function runChecks() {
     "tests/ai-code-copy.test.tsx",
     "tests/runtime-contracts.test.ts",
     "tests/trusted-types-production-regression.test.tsx",
-  ]);
-}
-
-function signMacApp() {
-  if (!existsSync(appPath)) {
-    throw new Error(`macOS app bundle was not created: ${appPath}`);
-  }
-  run("ad-hoc sign Iris.app", "codesign", [
-    "--force",
-    "--deep",
-    "--sign",
-    "-",
-    appPath,
   ]);
 }
 
@@ -193,14 +203,22 @@ function packageMac(options) {
     throw new Error("mac packaging must run on macOS.");
   }
   prepareEmbeddedModel();
-  run(
-    "build macOS app intermediate",
-    "npm",
-    tauriBuildArgs("mac", options.sqliteVec),
-    { TAURI_CONFIG: embeddedModelTauriConfig },
-  );
-  signMacApp();
+  resetTargetBundle("mac");
+  const configPath = writePackageTauriConfig();
+  try {
+    run(
+      "build macOS app intermediate",
+      "npm",
+      tauriBuildArgs("mac", options.sqliteVec, configPath),
+    );
+  } finally {
+    rmSync(configPath, { force: true });
+  }
   const dmgPath = createLocalDmg();
+  run("verify desktop package", "node", [
+    "scripts/verify-desktop-package.mjs",
+    "mac",
+  ]);
   process.stdout.write(
     [
       "",
@@ -221,12 +239,21 @@ function packageWin(options) {
     throw new Error("Windows NSIS packaging must run on Windows.");
   }
   prepareEmbeddedModel();
-  run(
-    "build Windows NSIS installer",
-    "npm",
-    tauriBuildArgs("win", options.sqliteVec),
-    { TAURI_CONFIG: embeddedModelTauriConfig },
-  );
+  resetTargetBundle("win");
+  const configPath = writePackageTauriConfig();
+  try {
+    run(
+      "build Windows NSIS installer",
+      "npm",
+      tauriBuildArgs("win", options.sqliteVec, configPath),
+    );
+  } finally {
+    rmSync(configPath, { force: true });
+  }
+  run("verify desktop package", "node", [
+    "scripts/verify-desktop-package.mjs",
+    "win",
+  ]);
   process.stdout.write(
     [
       "",

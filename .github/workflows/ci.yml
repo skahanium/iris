@@ -45,13 +45,13 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Run stable contract tests
-        run: npm run test -- tests/package-local-script-contract.test.ts tests/github-actions-workflows.test.ts tests/docs-facts-check.test.ts
+      - name: Run frontend tests
+        run: npm run test
 
   rust-tests:
     name: Rust tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -62,10 +62,25 @@ jobs:
 
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
 
-      - name: Run Rust unit tests
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential curl file libayatana-appindicator3-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev patchelf wget
+
+      - name: Check Rust formatting
         working-directory: src-tauri
-        run: cargo test --lib -- --skip indexer
+        run: cargo fmt --all -- --check
+
+      - name: Lint Rust
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run Rust tests
+        working-directory: src-tauri
+        run: cargo test
 
   rag-eval:
     name: RAG evaluation gates
