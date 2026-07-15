@@ -121,6 +121,17 @@ pub(crate) fn move_file_no_replace_locked(source: &Path, target: &Path) -> AppRe
 /// child move if any later step fails. Callers hold [`with_vault_move_lock`]
 /// for the complete higher-level operation.
 pub(crate) fn move_directory_no_replace_locked(source: &Path, target: &Path) -> AppResult<()> {
+    move_directory_no_replace_with_sync(source, target, sync_parent_directory)
+}
+
+fn move_directory_no_replace_with_sync<F>(
+    source: &Path,
+    target: &Path,
+    sync_parent: F,
+) -> AppResult<()>
+where
+    F: Fn(&Path) -> AppResult<()>,
+{
     if !fs::symlink_metadata(source)?.file_type().is_dir() {
         return Err(AppError::msg("no-replace move source is not a directory"));
     }
@@ -137,21 +148,53 @@ pub(crate) fn move_directory_no_replace_locked(source: &Path, target: &Path) -> 
     let mut created_directories = Vec::new();
     let result =
         move_directory_contents(source, target, &mut moved_files, &mut created_directories);
-    if let Err(error) = result {
-        rollback_directory_move(&moved_files, &created_directories, target);
-        return Err(error);
+    if result.is_err() {
+        return rollback_directory_move_or_report(
+            &moved_files,
+            &created_directories,
+            source,
+            target,
+            &sync_parent,
+            "directory move failed; source restored",
+            "directory_move_rollback_completed",
+        );
     }
 
-    if let Err(error) = fs::remove_dir(source) {
-        rollback_directory_move(&moved_files, &created_directories, target);
-        return Err(error.into());
+    if fs::remove_dir(source).is_err() {
+        return rollback_directory_move_or_report(
+            &moved_files,
+            &created_directories,
+            source,
+            target,
+            &sync_parent,
+            "directory move failed; source restored",
+            "directory_move_rollback_completed",
+        );
     }
     let source_parent = source
         .parent()
         .ok_or_else(|| AppError::msg("no-replace move source has no parent"))?;
-    sync_parent_directory(source_parent)?;
-    if source_parent != target_parent {
-        sync_parent_directory(target_parent)?;
+    if sync_parent(source_parent).is_err() {
+        return rollback_directory_move_or_report(
+            &moved_files,
+            &created_directories,
+            source,
+            target,
+            &sync_parent,
+            "directory move durability check failed; source restored",
+            "directory_move_durability_rollback_completed",
+        );
+    }
+    if source_parent != target_parent && sync_parent(target_parent).is_err() {
+        return rollback_directory_move_or_report(
+            &moved_files,
+            &created_directories,
+            source,
+            target,
+            &sync_parent,
+            "directory move durability check failed; source restored",
+            "directory_move_durability_rollback_completed",
+        );
     }
     Ok(())
 }
@@ -189,18 +232,91 @@ fn move_directory_contents(
     Ok(())
 }
 
-fn rollback_directory_move(
+fn rollback_directory_move_or_report<F>(
     moved_files: &[(PathBuf, PathBuf)],
     created_directories: &[PathBuf],
+    source: &Path,
     target: &Path,
-) {
+    sync_parent: &F,
+    restored_message: &'static str,
+    restored_result_code: &'static str,
+) -> AppResult<()>
+where
+    F: Fn(&Path) -> AppResult<()>,
+{
+    if rollback_directory_move(
+        moved_files,
+        created_directories,
+        source,
+        target,
+        sync_parent,
+    )
+    .is_ok()
+    {
+        tracing::warn!(
+            result_code = restored_result_code,
+            "directory move failed and its source tree was restored"
+        );
+        return Err(AppError::msg(restored_message));
+    }
+    tracing::error!(
+        result_code = "directory_move_rollback_incomplete",
+        "directory move failed and its source tree could not be fully restored"
+    );
+    Err(AppError::msg(
+        "directory move failed; rollback could not be completed",
+    ))
+}
+
+fn rollback_directory_move<F>(
+    moved_files: &[(PathBuf, PathBuf)],
+    created_directories: &[PathBuf],
+    source: &Path,
+    target: &Path,
+    sync_parent: &F,
+) -> AppResult<()>
+where
+    F: Fn(&Path) -> AppResult<()>,
+{
+    let mut rollback_error = None;
+    if !source.exists() {
+        if let Err(error) = fs::create_dir(source) {
+            rollback_error = Some(error.into());
+        }
+    }
     for (source, target) in moved_files.iter().rev() {
-        let _ = move_file_no_replace_locked(target, source);
+        if let Err(error) = move_file_no_replace_locked(target, source) {
+            rollback_error.get_or_insert(error);
+        }
     }
     for directory in created_directories.iter().rev() {
-        let _ = fs::remove_dir(directory);
+        if let Err(error) = fs::remove_dir(directory) {
+            rollback_error.get_or_insert(error.into());
+        }
     }
-    let _ = fs::remove_dir(target);
+    if let Err(error) = fs::remove_dir(target) {
+        rollback_error.get_or_insert(error.into());
+    }
+
+    let source_parent = source
+        .parent()
+        .ok_or_else(|| AppError::msg("no-replace move source has no parent"))?;
+    if let Err(error) = sync_parent(source_parent) {
+        rollback_error.get_or_insert(error);
+    }
+    let target_parent = target
+        .parent()
+        .ok_or_else(|| AppError::msg("no-replace move target has no parent"))?;
+    if source_parent != target_parent {
+        match sync_parent(target_parent) {
+            Ok(()) => {}
+            Err(error) => {
+                rollback_error.get_or_insert(error);
+            }
+        }
+    }
+
+    rollback_error.map_or(Ok(()), Err)
 }
 
 fn write_synced_temporary(
@@ -242,9 +358,10 @@ fn sync_parent_directory(parent: &Path) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        atomic_create, atomic_write, move_directory_no_replace_locked, move_file_no_replace_locked,
-        sync_parent_directory,
+        atomic_create, atomic_write, move_directory_no_replace_locked,
+        move_directory_no_replace_with_sync, move_file_no_replace_locked, sync_parent_directory,
     };
+    use std::cell::Cell;
     use std::fs;
     use tempfile::tempdir;
 
@@ -404,5 +521,60 @@ mod tests {
             fs::read_to_string(target.join("note.md")).unwrap(),
             "target body"
         );
+    }
+
+    #[test]
+    fn directory_move_restores_source_when_final_parent_sync_fails() {
+        let directory = tempdir().expect("temporary directory");
+        let source = directory.path().join("source");
+        let target = directory.path().join("target");
+        fs::create_dir_all(source.join("nested")).unwrap();
+        fs::write(source.join("nested/note.md"), "source body").unwrap();
+        let source_parent = source.parent().unwrap().to_path_buf();
+        let failed_once = Cell::new(false);
+
+        let error = move_directory_no_replace_with_sync(&source, &target, |parent| {
+            if parent == source_parent && !failed_once.replace(true) {
+                return Err(crate::error::AppError::Io(std::io::Error::other(
+                    "injected final directory sync failure",
+                )));
+            }
+            sync_parent_directory(parent)
+        })
+        .expect_err("a failed final sync must not acknowledge the move");
+
+        assert!(error.to_string().contains("source restored"));
+        assert_eq!(
+            fs::read_to_string(source.join("nested/note.md")).unwrap(),
+            "source body"
+        );
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn directory_move_reports_when_rollback_durability_cannot_be_confirmed() {
+        let directory = tempdir().expect("temporary directory");
+        let source = directory.path().join("source");
+        let target = directory.path().join("target");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("note.md"), "source body").unwrap();
+
+        let error = move_directory_no_replace_with_sync(&source, &target, |_| {
+            Err(crate::error::AppError::Io(std::io::Error::other(
+                "injected persistent directory sync failure",
+            )))
+        })
+        .expect_err("an unconfirmed rollback must not be reported as restored");
+
+        assert!(error
+            .to_string()
+            .contains("rollback could not be completed"));
+        // The best-effort compensation still restores the visible namespace,
+        // but the returned error preserves that its durability was not proven.
+        assert_eq!(
+            fs::read_to_string(source.join("note.md")).unwrap(),
+            "source body"
+        );
+        assert!(!target.exists());
     }
 }
