@@ -10,6 +10,12 @@ export interface DocumentPersistenceWriteResult {
   indexDegraded: boolean;
 }
 
+/** Result of the filesystem move that completes a coordinated path migration. */
+export interface DocumentPersistenceMoveResult {
+  path: string;
+  indexDegraded: boolean;
+}
+
 export interface DocumentPersistenceSnapshot {
   path: string;
   markdown: string;
@@ -206,12 +212,16 @@ export class DocumentPersistenceCoordinator {
   async rename(
     oldPath: string,
     newPath: string,
-    move: () => Promise<string>,
+    move: () => Promise<DocumentPersistenceMoveResult>,
   ): Promise<DocumentPersistenceSnapshot> {
     await this.beginPathMigration(oldPath, newPath);
     try {
-      const reboundPath = await move();
-      return this.completePathMigration(oldPath, reboundPath || newPath);
+      const result = await move();
+      return this.completePathMigration(
+        oldPath,
+        result.path || newPath,
+        result.indexDegraded,
+      );
     } catch (error) {
       this.abortPathMigration(oldPath);
       throw error;
@@ -254,6 +264,7 @@ export class DocumentPersistenceCoordinator {
   completePathMigration(
     oldPath: string,
     newPath: string,
+    indexDegraded = false,
   ): DocumentPersistenceSnapshot {
     const migration = this.migrations.get(oldPath);
     if (!migration) return this.rebind(oldPath, newPath);
@@ -267,6 +278,9 @@ export class DocumentPersistenceCoordinator {
     if (source.baselineRevision !== source.revision) {
       source.status = "dirty";
       this.schedule(source);
+    } else if (indexDegraded) {
+      source.indexDegraded = true;
+      source.status = "saved_index_degraded";
     }
     this.emit(source);
     return this.snapshot(source);

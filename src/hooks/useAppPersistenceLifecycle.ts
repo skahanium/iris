@@ -15,6 +15,7 @@ import { useVersionIdle } from "@/hooks/useVersionIdle";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import {
   DocumentPersistenceCoordinator,
+  type DocumentPersistenceMoveResult,
   type DocumentPersistenceSnapshot,
   type DocumentPersistenceStatus,
 } from "@/lib/document-persistence-coordinator";
@@ -271,6 +272,23 @@ export function useAppPersistenceLifecycle({
     return flushSaveForPath(path);
   }, [activePathRef, flushSaveForPath]);
 
+  const restoreVersion = useCallback(
+    async (path: string, markdown: string): Promise<string> => {
+      coordinator.capture(path, markdown);
+      return (await coordinator.barrier(path)).markdown;
+    },
+    [coordinator],
+  );
+
+  const restoreCurrentVersion = useCallback(
+    async (markdown: string): Promise<void> => {
+      const path = activePathRef.current;
+      if (!path) throw new Error("没有可恢复版本的当前文档");
+      await restoreVersion(path, markdown);
+    },
+    [activePathRef, restoreVersion],
+  );
+
   const notifyDirty = useCallback(() => {
     if (persistenceBarrierActiveRef.current) return;
     const path = activePathRef.current;
@@ -497,12 +515,15 @@ export function useAppPersistenceLifecycle({
       oldPath: string,
       newPath: string,
       markdownSnapshot: string,
-      move: () => Promise<string>,
+      move: () => Promise<DocumentPersistenceMoveResult>,
     ): Promise<string> => {
       coordinator.capture(oldPath, markdownSnapshot);
-      return (await coordinator.rename(oldPath, newPath, move)).markdown;
+      const snapshot = await coordinator.rename(oldPath, newPath, move);
+      setSaveStatus(snapshot.status);
+      setSaveError(snapshot.error);
+      return snapshot.markdown;
     },
-    [coordinator],
+    [coordinator, setSaveError, setSaveStatus],
   );
 
   const beginPathMigration = useCallback(
@@ -528,6 +549,8 @@ export function useAppPersistenceLifecycle({
   return {
     notifyDirty,
     flushSave,
+    restoreVersion,
+    restoreCurrentVersion,
     flushWhenEditorReady,
     cancelPendingSave,
     awaitSaveInFlight,

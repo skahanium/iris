@@ -13,6 +13,7 @@ use crate::app::AppState;
 use crate::error::AppError;
 use crate::error::AppResult;
 use crate::indexer::scan::{index_file_with_embed, remove_file_index, IndexEmbeddingMode};
+use crate::storage::note_write::{FileWriteIndexStatus, FileWriteResult, NoteWriteService};
 use crate::storage::paths::resolve_vault_path;
 use crate::version::VersionEntry;
 
@@ -306,6 +307,7 @@ pub fn purge_expired(state: &AppState) -> AppResult<usize> {
 
 pub fn list_recycle(state: &AppState) -> AppResult<Vec<RecycleBinItem>> {
     let vault = state.vault_path()?;
+    resume_deferred_restores(state, &vault);
     let rows: Vec<(String, String, String, String, String, String)> =
         state.db.with_conn(|conn| {
             let mut stmt = conn.prepare(
@@ -345,8 +347,136 @@ pub fn list_recycle(state: &AppState) -> AppResult<Vec<RecycleBinItem>> {
         .collect())
 }
 
+fn resume_deferred_restores(state: &AppState, vault: &Path) {
+    let pending: Vec<(String, String, String)> = match state.db.with_read_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, trash_rel_dir, original_path
+             FROM recycle_bin ORDER BY deleted_at ASC",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        Ok(rows.flatten().collect())
+    }) {
+        Ok(pending) => pending,
+        Err(_) => {
+            tracing::warn!(
+                result_code = "recycle_restore_resume_lookup_degraded",
+                "deferred recycle restore lookup failed"
+            );
+            return;
+        }
+    };
+
+    for (id, trash_rel, original_path) in pending {
+        let bundle_dir = vault.join(&trash_rel);
+        let document = bundle_dir.join("document.md");
+        let Ok(destination) = resolve_vault_path(vault, &original_path) else {
+            continue;
+        };
+        if document.is_file() || !destination.is_file() {
+            continue;
+        }
+
+        let Ok(manifest) = load_manifest(vault, &trash_rel) else {
+            tracing::warn!(
+                result_code = "recycle_restore_resume_manifest_degraded",
+                "deferred recycle restore manifest could not be loaded"
+            );
+            continue;
+        };
+        if manifest.original_path != original_path {
+            tracing::warn!(
+                result_code = "recycle_restore_resume_manifest_mismatch",
+                "deferred recycle restore manifest did not match metadata"
+            );
+            continue;
+        }
+
+        let entry = match state.db.with_conn(|conn| {
+            index_file_with_embed(conn, vault, &destination, IndexEmbeddingMode::Skip)
+        }) {
+            Ok(entry) => entry,
+            Err(_) => {
+                tracing::warn!(
+                    result_code = "recycle_restore_resume_index_degraded",
+                    "deferred recycle restore index repair is still pending"
+                );
+                continue;
+            }
+        };
+
+        if finalize_restore(state, vault, &id, &trash_rel, &manifest, entry.id).is_err() {
+            tracing::warn!(
+                result_code = "recycle_restore_resume_versions_degraded",
+                "deferred recycle restore version recovery is still pending"
+            );
+        }
+    }
+}
+
+fn finalize_restore(
+    state: &AppState,
+    vault: &Path,
+    id: &str,
+    trash_rel: &str,
+    manifest: &TrashManifest,
+    file_id: i64,
+) -> AppResult<()> {
+    let bundle_dir = vault.join(trash_rel);
+    for v in &manifest.versions {
+        let src = bundle_dir.join("versions").join(&v.trash_file);
+        let new_storage = storage_path_for(file_id, &v.version_no);
+        let dest_version = versions_root(vault).join(&new_storage);
+        if let Some(parent) = dest_version.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if src.is_file() {
+            fs::rename(&src, &dest_version)?;
+        } else if !dest_version.is_file() {
+            return Err(AppError::msg("recycled version snapshot is missing"));
+        }
+        state.db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO versions (file_id, version_no, label, content_hash, storage_path, word_count, is_finalized, kind, created_at)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+                 WHERE NOT EXISTS (
+                    SELECT 1 FROM versions WHERE file_id = ?1 AND version_no = ?2
+                 )",
+                rusqlite::params![
+                    file_id,
+                    v.version_no,
+                    v.label,
+                    v.content_hash,
+                    new_storage,
+                    v.word_count,
+                    if v.is_finalized { 1 } else { 0 },
+                    v.kind,
+                    v.created_at,
+                ],
+            )?;
+            Ok(())
+        })?;
+    }
+
+    purge_bundle(vault, trash_rel)?;
+    state.db.with_conn(|conn| {
+        conn.execute("DELETE FROM recycle_bin WHERE id = ?1", [id])?;
+        Ok(())
+    })
+}
+
 /// Restore a trashed note (body + all version snapshots) to its original path.
-pub fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<String> {
+///
+/// The Markdown move is authoritative. If its derived index cannot be
+/// refreshed, the receipt remains successful with a degraded index status;
+/// version snapshots stay in the recycle bundle until a later repair can bind
+/// them to the regenerated file row.
+pub(crate) fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<FileWriteResult> {
     let vault = state.vault_path()?;
     let (trash_rel, original_path): (String, String) = state.db.with_conn(|conn| {
         conn.query_row(
@@ -371,60 +501,38 @@ pub fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<String> {
             manifest.original_path
         )));
     }
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
     let doc = bundle_dir.join("document.md");
     if !doc.is_file() {
         return Err(AppError::msg(
             "回收站中的文档文件已损坏（document.md 缺失），无法恢复",
         ));
     }
-    fs::rename(&doc, &dest)?;
+    let receipt = NoteWriteService::adopt(
+        state,
+        &doc,
+        &manifest.original_path,
+        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
+    )?;
 
-    let file_entry = state.db.with_conn(|conn| {
-        index_file_with_embed(conn, &vault, &dest, IndexEmbeddingMode::Queue(state))
-    })?;
-    let file_id = file_entry.id;
-
-    for v in &manifest.versions {
-        let src = bundle_dir.join("versions").join(&v.trash_file);
-        let new_storage = storage_path_for(file_id, &v.version_no);
-        let dest_version = versions_root(&vault).join(&new_storage);
-        if let Some(parent) = dest_version.parent() {
-            fs::create_dir_all(parent)?;
+    if receipt.index_status == FileWriteIndexStatus::Degraded {
+        if manifest.versions.is_empty() {
+            purge_bundle(&vault, &trash_rel)?;
+            state.db.with_conn(|conn| {
+                conn.execute("DELETE FROM recycle_bin WHERE id = ?1", [id])?;
+                Ok(())
+            })?;
+        } else {
+            tracing::warn!(
+                result_code = "recycle_restore_versions_pending_index_repair",
+                "recycle restore persisted Markdown while version metadata awaits index repair"
+            );
         }
-        if src.is_file() {
-            fs::rename(&src, &dest_version)?;
-        }
-        state.db.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO versions (file_id, version_no, label, content_hash, storage_path, word_count, is_finalized, kind, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                rusqlite::params![
-                    file_id,
-                    v.version_no,
-                    v.label,
-                    v.content_hash,
-                    new_storage,
-                    v.word_count,
-                    if v.is_finalized { 1 } else { 0 },
-                    v.kind,
-                    v.created_at,
-                ],
-            )?;
-            Ok(())
-        })?;
+        return Ok(receipt);
     }
 
-    purge_bundle(&vault, &trash_rel)?;
-    state.db.with_conn(|conn| {
-        conn.execute("DELETE FROM recycle_bin WHERE id = ?1", [id])?;
-        Ok(())
-    })?;
+    finalize_restore(state, &vault, id, &trash_rel, &manifest, receipt.entry.id)?;
 
-    Ok(manifest.original_path)
+    Ok(receipt)
 }
 
 /// Permanently delete a recycle entry before its expiry.
@@ -516,12 +624,96 @@ mod tests {
         version_save_manual(&state, "restore-me.md", "# Restore\n\nBody v2.").unwrap();
         trash_document(&state, "restore-me.md").unwrap();
         let id = list_recycle(&state).unwrap()[0].id.clone();
-        let path = restore_document(&state, &id).unwrap();
-        assert_eq!(path, "restore-me.md");
+        let receipt = restore_document(&state, &id).unwrap();
+        assert_eq!(receipt.entry.path, "restore-me.md");
+        assert_eq!(receipt.index_status, FileWriteIndexStatus::Synced);
         assert!(note.is_file());
         assert!(list_recycle(&state).unwrap().is_empty());
         let versions = crate::version::version_list(&state, "restore-me.md").unwrap();
         assert!(!versions.is_empty());
+    }
+
+    #[test]
+    fn restore_reports_degraded_after_markdown_is_recovered_when_indexing_fails() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("restore-degraded.md");
+        fs::write(&note, "# Restore\n\nBody.").unwrap();
+        state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
+        trash_document(&state, "restore-degraded.md").unwrap();
+        let id = list_recycle(&state).unwrap()[0].id.clone();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_restore_index
+                     BEFORE INSERT ON files
+                     WHEN NEW.path = 'restore-degraded.md'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated index failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let receipt = restore_document(&state, &id).unwrap();
+
+        assert_eq!(
+            receipt.index_status,
+            crate::storage::note_write::FileWriteIndexStatus::Degraded
+        );
+        assert_eq!(receipt.entry.path, "restore-degraded.md");
+        assert_eq!(fs::read_to_string(note).unwrap(), "# Restore\n\nBody.");
+        assert!(list_recycle(&state).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deferred_restore_keeps_versions_until_index_repair_can_bind_them() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("restore-versions.md");
+        fs::write(&note, "# Restore\n\nBody.").unwrap();
+        state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
+        version_save_manual(&state, "restore-versions.md", "# Restore\n\nSnapshot").unwrap();
+        trash_document(&state, "restore-versions.md").unwrap();
+        let id = list_recycle(&state).unwrap()[0].id.clone();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_restore_versions_index
+                     BEFORE INSERT ON files
+                     WHEN NEW.path = 'restore-versions.md'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated index failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let receipt = restore_document(&state, &id).unwrap();
+
+        assert_eq!(receipt.index_status, FileWriteIndexStatus::Degraded);
+        assert_eq!(fs::read_to_string(&note).unwrap(), "# Restore\n\nBody.");
+        assert_eq!(list_recycle(&state).unwrap().len(), 1);
+
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch("DROP TRIGGER fail_restore_versions_index;")?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(list_recycle(&state).unwrap().is_empty());
+        let versions = crate::version::version_list(&state, "restore-versions.md").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(
+            crate::version::version_preview(&state, versions[0].id).unwrap(),
+            "# Restore\n\nSnapshot"
+        );
     }
 
     #[test]

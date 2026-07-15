@@ -71,7 +71,12 @@ import {
 } from "@/lib/vault-tree";
 import { cn } from "@/lib/utils";
 import type { NoteOpenSource } from "@/lib/document-open-runtime";
-import type { CorpusListItem, FileListItem, WorkspaceItem } from "@/types/ipc";
+import type {
+  CorpusListItem,
+  FileListItem,
+  FileWriteIndexStatus,
+  WorkspaceItem,
+} from "@/types/ipc";
 
 import {
   FolderCreateDialog,
@@ -175,6 +180,7 @@ interface VaultNavigatorProps {
   onFilePathChangeFailed?: (oldPath: string) => void;
   onBeforeFileDelete?: (path: string) => Promise<void>;
   onFileDeleted?: (path: string) => void;
+  onIndexDegraded?: () => void;
   onIndexChange?: () => void;
 }
 
@@ -358,6 +364,7 @@ export function VaultNavigatorBody({
   onFilePathChangeFailed,
   onBeforeFileDelete,
   onFileDeleted,
+  onIndexDegraded,
   onIndexChange,
 }: VaultNavigatorProps) {
   const [files, setFiles] = useState<VaultFileItem[]>([]);
@@ -388,6 +395,13 @@ export function VaultNavigatorBody({
     path: string;
     name: string;
   } | null>(null);
+
+  const reportIndexStatus = useCallback(
+    (status: FileWriteIndexStatus) => {
+      if (status === "degraded") onIndexDegraded?.();
+    },
+    [onIndexDegraded],
+  );
   const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const preparedKeysRef = useRef(new Set<string>());
@@ -601,7 +615,8 @@ export function VaultNavigatorBody({
           if (nextPath !== renameTarget.file.path) {
             await onBeforeFilePathChange?.(renameTarget.file.path, nextPath);
             startedMigrations.push(renameTarget.file.path);
-            await fileRename(renameTarget.file.path, nextPath);
+            const receipt = await fileRename(renameTarget.file.path, nextPath);
+            reportIndexStatus(receipt.indexStatus);
             onFilePathChanged?.(renameTarget.file.path, nextPath, name);
           }
         } else {
@@ -621,7 +636,7 @@ export function VaultNavigatorBody({
               await onBeforeFilePathChange?.(file.path, remappedPath);
               startedMigrations.push(file.path);
             }
-            await folderRename(renameTarget.path, nextPath);
+            reportIndexStatus(await folderRename(renameTarget.path, nextPath));
             for (const file of renamedFiles) {
               const remappedPath = joinVaultChildPath(
                 newPrefix,
@@ -650,6 +665,7 @@ export function VaultNavigatorBody({
       onBeforeFilePathChange,
       onFilePathChangeFailed,
       onFilePathChanged,
+      reportIndexStatus,
       onIndexChange,
       files,
       refresh,
@@ -667,7 +683,8 @@ export function VaultNavigatorBody({
           if (nextPath !== moveTarget.file.path) {
             await onBeforeFilePathChange?.(moveTarget.file.path, nextPath);
             startedMigrations.push(moveTarget.file.path);
-            await fileRename(moveTarget.file.path, nextPath);
+            const receipt = await fileRename(moveTarget.file.path, nextPath);
+            reportIndexStatus(receipt.indexStatus);
             onFilePathChanged?.(
               moveTarget.file.path,
               nextPath,
@@ -685,7 +702,8 @@ export function VaultNavigatorBody({
             if (nextPath === file.path) continue;
             await onBeforeFilePathChange?.(file.path, nextPath);
             startedMigrations.push(file.path);
-            await fileRename(file.path, nextPath);
+            const receipt = await fileRename(file.path, nextPath);
+            reportIndexStatus(receipt.indexStatus);
             onFilePathChanged?.(file.path, nextPath, vaultFileTitle(file));
             reservedPaths.add(nextPath);
           }
@@ -708,7 +726,7 @@ export function VaultNavigatorBody({
               await onBeforeFilePathChange?.(file.path, remappedPath);
               startedMigrations.push(file.path);
             }
-            await folderRename(moveTarget.path, nextPath);
+            reportIndexStatus(await folderRename(moveTarget.path, nextPath));
             for (const file of movedFiles) {
               const remappedPath = joinVaultChildPath(
                 newPrefix,
@@ -739,6 +757,7 @@ export function VaultNavigatorBody({
       onBeforeFilePathChange,
       onFilePathChangeFailed,
       onFilePathChanged,
+      reportIndexStatus,
       onIndexChange,
       refresh,
       resolveMoveFilePath,

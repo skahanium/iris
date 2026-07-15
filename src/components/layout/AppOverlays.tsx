@@ -101,7 +101,7 @@ interface VersionSchedulerPort {
 
 interface AppOverlaysProps {
   activePath: string | null;
-  applyMarkdownToEditor: (content: string) => void;
+  restoreVersion: (content: string) => Promise<void>;
   autoVersionSettings: {
     autoVersionEnabled: boolean;
     autoVersionIdleMinutes: number;
@@ -124,6 +124,7 @@ interface AppOverlaysProps {
   handleConflictManualEdit: () => void;
   markdown: string;
   onClassifiedUnlocked: () => void;
+  onIndexDegraded: () => void;
   onBeforeFilePathChange: (oldPath: string, newPath: string) => Promise<void>;
   onFilePathChanged: (oldPath: string, newPath: string, title?: string) => void;
   onFilePathChangeFailed: (oldPath: string) => void;
@@ -179,7 +180,7 @@ interface AppOverlaysProps {
 
 export function AppOverlays({
   activePath,
-  applyMarkdownToEditor,
+  restoreVersion,
   autoVersionSettings,
   bumpVaultIndex,
   classifiedIdleDeadline,
@@ -197,6 +198,7 @@ export function AppOverlays({
   handleConflictManualEdit,
   markdown,
   onClassifiedUnlocked,
+  onIndexDegraded,
   onBeforeFilePathChange,
   onFilePathChanged,
   onFilePathChangeFailed,
@@ -258,6 +260,7 @@ export function AppOverlays({
         onFilePathChangeFailed={onFilePathChangeFailed}
         onBeforeFileDelete={onBeforeFileDelete}
         onFileDeleted={onFileDeleted}
+        onIndexDegraded={onIndexDegraded}
       />
       <RecycleBinSheet
         open={overlays.recycleBinOpen}
@@ -268,6 +271,7 @@ export function AppOverlays({
             source: "recycle",
           })
         }
+        onIndexDegraded={onIndexDegraded}
         onIndexChange={bumpVaultIndex}
       />
       <SearchPanel
@@ -318,6 +322,7 @@ export function AppOverlays({
             onOpenVersion={openVersion}
             onRescanVault={rescanVault}
             onRecycleIndexChange={bumpVaultIndex}
+            onIndexDegraded={onIndexDegraded}
             onBeforeFilePathChange={onBeforeFilePathChange}
             onFilePathChanged={onFilePathChanged}
             onFilePathChangeFailed={onFilePathChangeFailed}
@@ -379,7 +384,7 @@ export function AppOverlays({
             hasUnsavedEdits={
               tabs.find((tab) => tab.path === activePath)?.dirty ?? false
             }
-            onRestore={applyMarkdownToEditor}
+            onRestore={restoreVersion}
             onHighPriorityStart={(path) =>
               versionSnapshotScheduler.markHighPriorityStart(path)
             }

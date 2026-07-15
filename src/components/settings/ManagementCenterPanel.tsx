@@ -71,6 +71,7 @@ interface ManagementCenterPanelProps {
   onOpenVersion: () => void;
   onRescanVault: () => void;
   onRecycleIndexChange: () => void;
+  onIndexDegraded: () => void;
   onBeforeFilePathChange?: (oldPath: string, newPath: string) => Promise<void>;
   onFilePathChanged?: (
     oldPath: string,
@@ -385,6 +386,7 @@ export function ManagementCenterPanel({
   onOpenVersion,
   onRescanVault,
   onRecycleIndexChange,
+  onIndexDegraded,
   onBeforeFilePathChange,
   onFilePathChanged,
   onFilePathChangeFailed,
@@ -791,6 +793,7 @@ export function ManagementCenterPanel({
               onFilePathChangeFailed={onFilePathChangeFailed}
               onBeforeFileDelete={onBeforeFileDelete}
               onFileDeleted={onFileDeleted}
+              onIndexDegraded={onIndexDegraded}
               onIndexChange={onIndexChange}
             />
           ) : (
@@ -798,6 +801,7 @@ export function ManagementCenterPanel({
               open={open && activeSection === "notes" && !isFileTree}
               onClose={onClose}
               onRestored={onOpenNote}
+              onIndexDegraded={onIndexDegraded}
               onIndexChange={onRecycleIndexChange}
             />
           )}

@@ -13,7 +13,6 @@ use tracing::info;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::storage::note_write::NoteWriteService;
 use crate::storage::paths::is_classified_note_path;
 
 pub use kind::VersionKind;
@@ -510,6 +509,11 @@ pub fn version_preview(state: &AppState, version_id: i64) -> AppResult<String> {
     read_version_content(state, &vault, &storage_path)
 }
 
+/// Creates a pre-restore snapshot and returns the selected Markdown.
+///
+/// This deliberately does not write the note. The frontend document
+/// persistence coordinator owns the resulting revision and awaits its durable
+/// Markdown write receipt before it projects the restored content into the UI.
 pub fn version_restore(
     state: &Arc<AppState>,
     version_id: i64,
@@ -534,20 +538,7 @@ pub fn version_restore(
     }
 
     let vault = state.vault_path()?;
-    let content = read_version_content(state, &vault, &storage_path)?;
-    let _receipt = NoteWriteService::write(
-        state,
-        &path,
-        &content,
-        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
-    )?;
-
-    if is_classified_note_path(&path) {
-        let hash = crate::cas::hash::content_hash_str(&content);
-        let _ = ensure_snapshot_file_id(state, &path, &hash, &content)?;
-    }
-
-    Ok(content)
+    read_version_content(state, &vault, &storage_path)
 }
 
 pub fn version_delete(state: &AppState, version_id: i64) -> AppResult<()> {
@@ -702,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn classified_version_restore_keeps_disk_encrypted_and_unindexed() {
+    fn classified_version_restore_prepares_content_without_writing_markdown() {
         let _guard = VAULT_KEY_TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -737,7 +728,7 @@ mod tests {
         let raw = fs::read(vault.join(".classified/secret.md")).unwrap();
         assert!(classified_io::has_csef_magic(&raw));
         let decrypted = classified_io::decrypt_cef(&raw, &key).unwrap();
-        assert_eq!(String::from_utf8(decrypted).unwrap(), "# Historical");
+        assert_eq!(String::from_utf8(decrypted).unwrap(), "# Current");
 
         let (chunks, fts, metadata_fts): (i64, i64, i64) = state
             .db
@@ -856,6 +847,8 @@ mod tests {
     #[test]
     fn version_restore_creates_pre_restore_snapshot() {
         let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        fs::write(vault.join("note.md"), "disk body before restore").unwrap();
         seed_file_in_db(&state, "note.md", "Note");
 
         let target = version_save_manual(&state, "note.md", "historical body")
@@ -872,6 +865,10 @@ mod tests {
 
         let restored = version_restore(&state, target.id, "current editor body").unwrap();
         assert_eq!(restored, "historical body");
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "disk body before restore"
+        );
 
         let pre_restore_count: i64 = state
             .db

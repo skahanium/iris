@@ -52,6 +52,7 @@ import type {
   EmbeddingSchedulerStartResult,
   FileChangedEvent,
   FileEntry,
+  FileWriteIndexStatus,
   FileWriteResult,
   FileLinkSummary,
   FileListItem,
@@ -294,8 +295,8 @@ export async function fileDiscard(path: string): Promise<void> {
 export async function fileRename(
   path: string,
   newPath: string,
-): Promise<FileEntry> {
-  return invoke<FileEntry>("file_rename", { path, newPath });
+): Promise<FileWriteResult> {
+  return invoke<FileWriteResult>("file_rename", { path, newPath });
 }
 
 export async function pathSyncSuggest(
@@ -325,8 +326,8 @@ export async function folderCreate(path: string): Promise<void> {
 export async function folderRename(
   oldPath: string,
   newPath: string,
-): Promise<void> {
-  return invoke("folder_rename", { oldPath, newPath });
+): Promise<FileWriteIndexStatus> {
+  return invoke<FileWriteIndexStatus>("folder_rename", { oldPath, newPath });
 }
 
 export async function folderDelete(path: string): Promise<void> {
@@ -337,8 +338,8 @@ export async function recycleList(): Promise<RecycleBinItem[]> {
   return invoke<RecycleBinItem[]>("recycle_list_cmd");
 }
 
-export async function recycleRestore(id: string): Promise<string> {
-  return invoke<string>("recycle_restore_cmd", { id });
+export async function recycleRestore(id: string): Promise<FileWriteResult> {
+  return invoke<FileWriteResult>("recycle_restore_cmd", { id });
 }
 
 export async function recyclePurge(id: string): Promise<void> {

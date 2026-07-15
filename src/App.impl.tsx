@@ -70,6 +70,7 @@ import {
 } from "@/lib/ipc";
 import { formatVersionSaveStatus } from "@/lib/version-save-status";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
+import type { DocumentPersistenceMoveResult } from "@/lib/document-persistence-coordinator";
 
 function loadOutlineOpen(): boolean {
   try {
@@ -325,7 +326,7 @@ function App() {
       _oldPath: string,
       _newPath: string,
       _markdown: string,
-      _move: () => Promise<string>,
+      _move: () => Promise<DocumentPersistenceMoveResult>,
     ) => "",
   });
   const inlineAiDomain =
@@ -363,14 +364,13 @@ function App() {
     updateTabTitle,
     replaceOpenTabPath,
   });
-
   getLiveMarkdownRef.current = getLiveMarkdown;
-
   const autoVersionSettings = useAutoVersionSettings();
 
   const {
     notifyDirty,
     flushSave,
+    restoreCurrentVersion,
     cancelPendingSave,
     awaitSaveInFlight,
     resetVersionIdle,
@@ -529,7 +529,6 @@ function App() {
     }
     return null;
   }, [bumpVaultIndex, flushSave]);
-
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let disposed = false;
@@ -911,7 +910,7 @@ function App() {
         overlays={
           <AppOverlays
             activePath={activePath}
-            applyMarkdownToEditor={applyMarkdownToEditor}
+            restoreVersion={restoreCurrentVersion}
             bumpVaultIndex={bumpVaultIndex}
             classifiedIdleDeadline={classifiedIdleDeadline}
             classifiedOpen={classifiedOpen}
@@ -933,6 +932,7 @@ function App() {
             onBeforeFileDelete={handleBeforeFileDelete}
             onFileDeleted={handlePreparedFileDeleted}
             onClassifiedUnlocked={onClassifiedUnlocked}
+            onIndexDegraded={() => setAiStatus("已保存但索引待修复")}
             openClassifiedPaths={openClassifiedPaths}
             openNoteLeavingHome={openWorkspacePathLeavingHome}
             onPrepareNote={prepareVisibleNote}

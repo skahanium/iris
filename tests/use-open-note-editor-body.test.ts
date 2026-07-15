@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
 import { useOpenNote } from "@/hooks/useOpenNote";
+import type { DocumentPersistenceMoveResult } from "@/lib/document-persistence-coordinator";
 import { markdownBodyToEditorHtml } from "@/lib/markdown";
 
 const pathSyncSuggest = vi.fn();
@@ -59,7 +60,7 @@ function Harness({
     path: string,
     newPath: string,
     markdown: string,
-    move: () => Promise<string>,
+    move: () => Promise<DocumentPersistenceMoveResult>,
   ) => Promise<string>;
   replaceOpenTabPath?: ReplaceOpenTabPath;
   outRef: {
@@ -213,11 +214,15 @@ describe("useOpenNote editorBodyMarkdown", () => {
       conflict_resolved: false,
     });
     fileRename.mockResolvedValue({
-      id: 1,
-      path: "doc-a.md",
-      title: "Doc A",
-      updated_at: "",
-      word_count: 7,
+      entry: {
+        id: 1,
+        path: "doc-a.md",
+        title: "Doc A",
+        updated_at: "",
+        word_count: 7,
+      },
+      contentHash: "doc-a",
+      indexStatus: "synced",
     });
 
     const replaceOpenTabPath = vi.fn<ReplaceOpenTabPath>();
@@ -272,18 +277,22 @@ describe("useOpenNote editorBodyMarkdown", () => {
       conflict_resolved: false,
     });
     fileRename.mockResolvedValue({
-      id: 1,
-      path: "renamed.md",
-      title: "Renamed",
-      updated_at: "",
-      word_count: 3,
+      entry: {
+        id: 1,
+        path: "renamed.md",
+        title: "Renamed",
+        updated_at: "",
+        word_count: 3,
+      },
+      contentHash: "renamed",
+      indexStatus: "synced",
     });
     const renamePersistedPath = vi.fn<
       (
         path: string,
         newPath: string,
         markdown: string,
-        move: () => Promise<string>,
+        move: () => Promise<DocumentPersistenceMoveResult>,
       ) => Promise<string>
     >(async (_path, _newPath, markdown, move) => {
       await move();

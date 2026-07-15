@@ -10,6 +10,7 @@ import {
 } from "react";
 
 import { pathStem } from "@/lib/note-display";
+import type { DocumentPersistenceMoveResult } from "@/lib/document-persistence-coordinator";
 import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
 import { resetEditorContentBaseline } from "@/lib/editor-baseline";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
@@ -51,7 +52,7 @@ interface UseOpenNoteOptions {
     path: string,
     newPath: string,
     markdown: string,
-    move: () => Promise<string>,
+    move: () => Promise<DocumentPersistenceMoveResult>,
   ) => Promise<string>;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
@@ -207,9 +208,12 @@ export function useOpenNote({
             const markdownSnapshot = serializeLatest();
             let renamedPath: string | null = null;
             const move = async () => {
-              const entry = await fileRename(path, suggest.suggested_path);
-              renamedPath = entry.path;
-              return entry.path;
+              const receipt = await fileRename(path, suggest.suggested_path);
+              renamedPath = receipt.entry.path;
+              return {
+                path: receipt.entry.path,
+                indexDegraded: receipt.indexStatus === "degraded",
+              };
             };
             const persistedMarkdown = renamePersistedPath
               ? await renamePersistedPath(

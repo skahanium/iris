@@ -50,7 +50,7 @@ const VersionTimelineHarness = VersionTimeline as unknown as (props: {
   currentContent?: string;
   getCurrentContent?: () => string;
   hasUnsavedEdits?: boolean;
-  onRestore: (content: string) => void;
+  onRestore: (content: string) => Promise<void>;
 }) => ReturnType<typeof VersionTimeline>;
 
 describe("VersionTimeline collapsed auto backups", () => {
@@ -90,7 +90,7 @@ describe("VersionTimeline collapsed auto backups", () => {
           onClose: () => {},
           notePath: "note.md",
           currentContent: "# current",
-          onRestore: () => {},
+          onRestore: async () => {},
         }),
       );
       await Promise.resolve();
@@ -112,7 +112,7 @@ describe("VersionTimeline collapsed auto backups", () => {
           onClose: () => {},
           notePath: "note.md",
           currentContent: "# current",
-          onRestore: () => {},
+          onRestore: async () => {},
         }),
       );
       await Promise.resolve();
@@ -136,7 +136,7 @@ describe("VersionTimeline collapsed auto backups", () => {
     versionList.mockResolvedValueOnce([manualEntry()]);
     const getCurrentContent = vi.fn(() => "# fresh current");
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const onRestore = vi.fn();
+    const onRestore = vi.fn(async () => {});
 
     await act(async () => {
       root.render(
@@ -187,7 +187,7 @@ describe("VersionTimeline collapsed auto backups", () => {
           notePath: "note.md",
           currentContent: "# stale current",
           getCurrentContent,
-          onRestore: () => {},
+          onRestore: async () => {},
         }),
       );
       await Promise.resolve();

@@ -49,6 +49,7 @@ function Harness({
   onReady,
   onPersistenceBarrierStart,
   persistBeforeLeaveRef,
+  applySavedMarkdown = vi.fn(),
   setFileLocked,
 }: {
   editorContentTick?: number;
@@ -60,6 +61,7 @@ function Harness({
   onReady?: (api: ReturnType<typeof useAppPersistenceLifecycle>) => void;
   onPersistenceBarrierStart?: () => void;
   persistBeforeLeaveRef: React.MutableRefObject<PersistBeforeLeave>;
+  applySavedMarkdown?: (markdown: string) => void;
   setFileLocked?: (path: string, locked: boolean) => void;
 }) {
   const path = "note.md";
@@ -89,7 +91,7 @@ function Harness({
     activeFileLocked: false,
     activePath: path,
     activePathRef,
-    applySavedMarkdown: vi.fn(),
+    applySavedMarkdown,
     autoSnapshotGenerationRef,
     autoVersionEnabled: false,
     autoVersionIdleMinutes: 5,
@@ -660,5 +662,142 @@ describe("useAppPersistenceLifecycle", () => {
     });
 
     expect(fileWrite).toHaveBeenCalledWith("note.md", localPatchMarkdown);
+  });
+
+  it("projects degraded index status after a title-driven path rename", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: "# loaded",
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await act(async () => {
+      await expect(
+        api.renamePath("note.md", "renamed.md", "# loaded", async () => ({
+          path: "renamed.md",
+          indexDegraded: true,
+        })),
+      ).resolves.toBe("# loaded");
+    });
+
+    expect(api.saveStatus).toBe("saved_index_degraded");
+  });
+
+  it("waits for an in-flight save before durably acknowledging a restored version", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const applySavedMarkdown = vi.fn();
+    const firstWrite = deferred<{
+      id: number;
+      path: string;
+      title: string;
+      updated_at: string;
+      word_count: number;
+    }>();
+    const restoredWrite = deferred<{
+      id: number;
+      path: string;
+      title: string;
+      updated_at: string;
+      word_count: number;
+    }>();
+    fileWrite.mockReturnValueOnce(firstWrite.promise);
+    fileWrite.mockReturnValueOnce(restoredWrite.promise);
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          applySavedMarkdown,
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: "# loaded",
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+    applySavedMarkdown.mockClear();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          applySavedMarkdown,
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: "# unsaved before restore",
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+      api.notifyDirty();
+      await Promise.resolve();
+    });
+    applySavedMarkdown.mockClear();
+
+    let initialSave!: Promise<string | null>;
+    await act(async () => {
+      initialSave = api.flushSave();
+      await Promise.resolve();
+    });
+    expect(fileWrite).toHaveBeenCalledWith(
+      "note.md",
+      "# unsaved before restore",
+    );
+
+    let restored!: Promise<string>;
+    await act(async () => {
+      restored = api.restoreVersion("note.md", "# historical version");
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      firstWrite.resolve({
+        id: 1,
+        path: "note.md",
+        title: "Note",
+        updated_at: "",
+        word_count: 3,
+      });
+      await Promise.resolve();
+    });
+    expect(applySavedMarkdown).not.toHaveBeenCalled();
+    await vi.waitFor(() => {
+      expect(fileWrite).toHaveBeenLastCalledWith(
+        "note.md",
+        "# historical version",
+      );
+    });
+
+    await act(async () => {
+      restoredWrite.resolve({
+        id: 1,
+        path: "note.md",
+        title: "Note",
+        updated_at: "",
+        word_count: 3,
+      });
+      await expect(restored).resolves.toBe("# historical version");
+    });
+    await expect(initialSave).resolves.toBe("# historical version");
+    expect(applySavedMarkdown).toHaveBeenCalledWith("# historical version");
   });
 });

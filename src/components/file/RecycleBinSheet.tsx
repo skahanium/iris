@@ -12,12 +12,13 @@ import {
   recycleRetentionLabel,
 } from "@/lib/recycle-dates";
 import { cn } from "@/lib/utils";
-import type { RecycleBinItem } from "@/types/ipc";
+import type { FileWriteResult, RecycleBinItem } from "@/types/ipc";
 
 interface RecycleBinSheetProps {
   open: boolean;
   onClose: () => void;
   onRestored: (path: string) => void | Promise<void>;
+  onIndexDegraded?: () => void;
   onIndexChange?: () => void;
 }
 
@@ -25,6 +26,7 @@ export function RecycleBinBody({
   open,
   onClose,
   onRestored,
+  onIndexDegraded,
   onIndexChange,
 }: RecycleBinSheetProps) {
   const [items, setItems] = useState<RecycleBinItem[]>([]);
@@ -197,8 +199,10 @@ export function RecycleBinBody({
           setBusyId(target.id);
           void (async () => {
             try {
-              const path = await recycleRestore(target.id);
+              const receipt: FileWriteResult = await recycleRestore(target.id);
+              const path = receipt.entry.path;
               onIndexChange?.();
+              if (receipt.indexStatus === "degraded") onIndexDegraded?.();
               refresh();
               await onRestored(path);
               onClose();

@@ -54,7 +54,7 @@ describe("VersionTimeline finalize", () => {
           onClose={() => {}}
           notePath="notes/a.md"
           currentContent="body"
-          onRestore={() => {}}
+          onRestore={async () => {}}
           onHighPriorityStart={onHighPriorityStart}
           onHighPriorityEnd={onHighPriorityEnd}
         />,
@@ -98,7 +98,7 @@ describe("VersionTimeline finalize", () => {
           currentContent="# stale state"
           getCurrentContent={getCurrentContent}
           onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
-          onRestore={() => {}}
+          onRestore={async () => {}}
         />,
       );
     });
@@ -136,7 +136,7 @@ describe("VersionTimeline finalize", () => {
           notePath="notes/a.md"
           currentContent="# stale state"
           onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
-          onRestore={() => {}}
+          onRestore={async () => {}}
         />,
       );
     });

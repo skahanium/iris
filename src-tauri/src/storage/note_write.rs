@@ -8,8 +8,10 @@ use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
 use crate::error::{AppError, AppResult};
 use crate::indexer::scan::{content_hash, index_file_from_content, FileEntry, IndexEmbeddingMode};
-use crate::storage::atomic_write::atomic_write;
-use crate::storage::paths::{has_reserved_path_root, is_classified_note_path, resolve_vault_path};
+use crate::storage::atomic_write::{atomic_create, atomic_write};
+use crate::storage::paths::{
+    has_reserved_path_root, is_classified_note_path, read_file_lossy, resolve_vault_path,
+};
 
 /// Whether derived SQLite indexes match the persisted Markdown body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -52,6 +54,70 @@ impl NoteWriteService {
         Self::write_inner(state, path, content, embedding_mode, true)
     }
 
+    /// Move an existing plain Markdown file into the vault, then refresh its derived index.
+    ///
+    /// This is the persistence boundary for workflows such as recycle-bin
+    /// restore: once the filesystem move succeeds, index failures are reported
+    /// as degraded and queued for repair rather than negating the Markdown fact.
+    pub(crate) fn adopt(
+        state: &AppState,
+        source: &Path,
+        path: &str,
+        embedding_mode: IndexEmbeddingMode<'_>,
+    ) -> AppResult<FileWriteResult> {
+        if is_classified_note_path(path) {
+            return Err(AppError::msg(
+                "classified notes cannot be adopted through the plain Markdown service",
+            ));
+        }
+
+        let vault = state.vault_path()?;
+        ensure_note_parent(&vault, path)?;
+        let absolute = resolve_vault_path(&vault, path)?;
+        if absolute.exists() {
+            return Err(AppError::msg("File already exists"));
+        }
+        let content = read_file_lossy(source)?;
+
+        std::fs::rename(source, &absolute)?;
+        let hash = content_hash(&content);
+        state.storage.write_guard.mark(path, &hash);
+
+        Self::refresh_index_after_persist(
+            state,
+            vault,
+            path,
+            &absolute,
+            &content,
+            hash,
+            embedding_mode,
+        )
+    }
+
+    /// Queue a best-effort repair for derived state after an already-persisted move.
+    pub(crate) fn schedule_index_repair(
+        state: &AppState,
+        path: &str,
+        embedding_mode: IndexEmbeddingMode<'_>,
+    ) {
+        let Ok(vault) = state.vault_path() else {
+            tracing::warn!(
+                result_code = "note_index_repair_vault_unavailable",
+                "derived index repair could not resolve the active vault"
+            );
+            return;
+        };
+        schedule_index_repair_task(
+            Arc::clone(&state.db),
+            vault,
+            path.to_string(),
+            match embedding_mode {
+                IndexEmbeddingMode::Queue(state) => Some(Arc::clone(state)),
+                IndexEmbeddingMode::Skip => None,
+            },
+        );
+    }
+
     fn write_inner(
         state: &AppState,
         path: &str,
@@ -62,15 +128,36 @@ impl NoteWriteService {
         let vault = state.vault_path()?;
         ensure_note_parent(&vault, path)?;
         let absolute = resolve_vault_path(&vault, path)?;
-        if reject_existing && absolute.exists() {
-            return Err(AppError::msg("File already exists"));
-        }
         let payload = encode_payload(path, content)?;
-        atomic_write(&absolute, &payload)?;
+        if reject_existing {
+            atomic_create(&absolute, &payload)?;
+        } else {
+            atomic_write(&absolute, &payload)?;
+        }
 
         let hash = content_hash(content);
         state.storage.write_guard.mark(path, &hash);
 
+        Self::refresh_index_after_persist(
+            state,
+            vault,
+            path,
+            &absolute,
+            content,
+            hash,
+            embedding_mode,
+        )
+    }
+
+    fn refresh_index_after_persist(
+        state: &AppState,
+        vault: PathBuf,
+        path: &str,
+        absolute: &Path,
+        content: &str,
+        hash: String,
+        embedding_mode: IndexEmbeddingMode<'_>,
+    ) -> AppResult<FileWriteResult> {
         if is_classified_note_path(path) {
             return Ok(FileWriteResult {
                 entry: fallback_entry(path, content),
@@ -80,7 +167,7 @@ impl NoteWriteService {
         }
 
         match state.db.with_conn(|conn| {
-            index_file_from_content(conn, &vault, &absolute, content, &hash, embedding_mode)
+            index_file_from_content(conn, &vault, absolute, content, &hash, embedding_mode)
         }) {
             Ok(entry) => Ok(FileWriteResult {
                 entry,
@@ -88,15 +175,7 @@ impl NoteWriteService {
                 index_status: FileWriteIndexStatus::Synced,
             }),
             Err(_) => {
-                schedule_index_repair(
-                    Arc::clone(&state.db),
-                    vault,
-                    path.to_string(),
-                    match embedding_mode {
-                        IndexEmbeddingMode::Queue(state) => Some(Arc::clone(state)),
-                        IndexEmbeddingMode::Skip => None,
-                    },
-                );
+                Self::schedule_index_repair(state, path, embedding_mode);
                 tracing::warn!(
                     result_code = "note_index_degraded",
                     "note markdown persisted while derived index refresh failed"
@@ -161,7 +240,7 @@ fn title_from_path(path: &str) -> String {
         .to_string()
 }
 
-fn schedule_index_repair(
+fn schedule_index_repair_task(
     db: Arc<crate::storage::db::Database>,
     vault: std::path::PathBuf,
     path: String,
@@ -181,7 +260,9 @@ fn schedule_index_repair(
                         .as_ref()
                         .map(IndexEmbeddingMode::Queue)
                         .unwrap_or(IndexEmbeddingMode::Skip),
-                )
+                )?;
+                crate::indexer::scan::prune_stale_file_indexes(conn, &vault)?;
+                Ok(())
             })?;
             Ok(())
         })();

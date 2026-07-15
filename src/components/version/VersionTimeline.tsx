@@ -38,7 +38,8 @@ interface VersionTimelineProps {
   getCurrentContent?: () => string;
   onBeforeFinalizeCurrent?: () => Promise<string | null>;
   hasUnsavedEdits?: boolean;
-  onRestore: (content: string) => void;
+  /** Persists the restored Markdown through the document coordinator. */
+  onRestore: (content: string) => Promise<void>;
   /** Blocks low-priority `auto_idle` while finalize IPC is in flight. */
   onHighPriorityStart?: (path: string) => void;
   onHighPriorityEnd?: (path: string) => void;
@@ -63,6 +64,7 @@ export function VersionTimeline({
   const [previewId, setPreviewId] = useState<number | null>(null);
   const [finalizeLabel, setFinalizeLabel] = useState("");
   const [finalizing, setFinalizing] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(),
   );
@@ -103,12 +105,17 @@ export function VersionTimeline({
     const message = buildRestoreConfirmMessage(target, hasUnsavedEdits);
     if (!window.confirm(message)) return;
 
-    const liveContent = getCurrentContent?.() ?? currentContent ?? "";
-    const result = await versionRestore(id, liveContent);
-    onRestore(result.content);
-    refresh();
-    setPreview(null);
-    setPreviewId(null);
+    setRestoring(true);
+    try {
+      const liveContent = getCurrentContent?.() ?? currentContent ?? "";
+      const result = await versionRestore(id, liveContent);
+      await onRestore(result.content);
+      refresh();
+      setPreview(null);
+      setPreviewId(null);
+    } finally {
+      setRestoring(false);
+    }
   };
 
   const handleDelete = async (id: number) => {
@@ -160,6 +167,7 @@ export function VersionTimeline({
           size="sm"
           variant="outline"
           title="将当前正文替换为此版本（恢复前会自动备份）"
+          disabled={restoring}
           onClick={() => void handleRestore(v.id)}
         >
           <RotateCw className="mr-1 h-3 w-3" />

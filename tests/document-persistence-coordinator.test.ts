@@ -153,7 +153,7 @@ describe("DocumentPersistenceCoordinator", () => {
     coordinator.capture("old.md", "before rename");
     await coordinator.rename("old.md", "suggested.md", async () => {
       coordinator.capture("old.md", "edited during rename");
-      return "allocated.md";
+      return { path: "allocated.md", indexDegraded: false };
     });
     await coordinator.barrier("allocated.md");
 
@@ -173,7 +173,7 @@ describe("DocumentPersistenceCoordinator", () => {
   it("queues timer-triggered edits on the new path while a move is still pending", async () => {
     vi.useFakeTimers();
     try {
-      const move = deferred<string>();
+      const move = deferred<{ path: string; indexDegraded: boolean }>();
       const moveStarted = deferred<void>();
       const write = vi.fn(async () => written);
       const coordinator = new DocumentPersistenceCoordinator({
@@ -195,7 +195,7 @@ describe("DocumentPersistenceCoordinator", () => {
 
       expect(write.mock.calls).toEqual([["old.md", "before move"]]);
 
-      move.resolve("allocated.md");
+      move.resolve({ path: "allocated.md", indexDegraded: false });
       await rename;
       await coordinator.barrier("allocated.md");
 
@@ -219,6 +219,24 @@ describe("DocumentPersistenceCoordinator", () => {
     await coordinator.barrier("new.md");
 
     expect(write).toHaveBeenCalledWith("new.md", "unsaved");
+  });
+
+  it("projects a successful rename with a degraded derived index", async () => {
+    const coordinator = new DocumentPersistenceCoordinator({
+      write: async () => written,
+    });
+
+    coordinator.load("old.md", "opened");
+    await coordinator.rename("old.md", "new.md", async () => ({
+      path: "new.md",
+      indexDegraded: true,
+    }));
+
+    expect(coordinator.get("new.md")).toMatchObject({
+      baselineMarkdown: "opened",
+      indexDegraded: true,
+      status: "saved_index_degraded",
+    });
   });
 
   it("rejects a barrier when a dirty remount has no captured snapshot", async () => {

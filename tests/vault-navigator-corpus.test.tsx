@@ -109,10 +109,20 @@ describe("VaultNavigator corpus assignment", () => {
     templateList.mockResolvedValue([]);
     corpusUpsert.mockResolvedValue(undefined);
     fileDelete.mockResolvedValue(undefined);
-    fileRename.mockResolvedValue(undefined);
+    fileRename.mockResolvedValue({
+      entry: {
+        id: 1,
+        path: "policy/a.md",
+        title: "A",
+        updated_at: "",
+        word_count: 1,
+      },
+      contentHash: "hash",
+      indexStatus: "synced",
+    });
     fileSetLock.mockResolvedValue(undefined);
     folderCreate.mockResolvedValue(undefined);
-    folderRename.mockResolvedValue(undefined);
+    folderRename.mockResolvedValue("synced");
     knowledgeReindex.mockResolvedValue({ anchors: 0, regulations: 1 });
     vi.mocked(createDefaultNote).mockResolvedValue({
       content: '---\ntitle: "未命名文档"\n---\n\n',
