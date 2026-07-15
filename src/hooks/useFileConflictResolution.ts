@@ -10,6 +10,7 @@ interface UseFileConflictResolutionOptions {
   dirtyRef: MutableRefObject<boolean>;
   flushSave: () => void | Promise<unknown>;
   invalidatePreparedNote: (path: string) => void;
+  isMutationBlocked: () => boolean;
   markClean: (path: string, title: string) => void;
   openNoteLeavingHome: (path: string) => void | Promise<void>;
   setConflictState: (state: ConflictState | null) => void;
@@ -23,17 +24,20 @@ export function useFileConflictResolution({
   dirtyRef,
   flushSave,
   invalidatePreparedNote,
+  isMutationBlocked,
   markClean,
   openNoteLeavingHome,
   setConflictState,
   syncTabMarkdownCache,
 }: UseFileConflictResolutionOptions) {
   const handleConflictKeepLocal = useCallback(() => {
+    if (isMutationBlocked()) return;
     setConflictState(null);
     void flushSave();
-  }, [flushSave, setConflictState]);
+  }, [flushSave, isMutationBlocked, setConflictState]);
 
   const handleConflictAcceptExternal = useCallback(() => {
+    if (isMutationBlocked()) return;
     if (!conflictState) return;
     const { externalContent, filePath } = conflictState;
     setConflictState(null);
@@ -55,6 +59,7 @@ export function useFileConflictResolution({
     conflictState,
     dirtyRef,
     invalidatePreparedNote,
+    isMutationBlocked,
     markClean,
     openNoteLeavingHome,
     setConflictState,

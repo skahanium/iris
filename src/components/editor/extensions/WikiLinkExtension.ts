@@ -34,6 +34,7 @@ async function loadTippy() {
 
 export interface WikiLinkOptions {
   HTMLAttributes: Record<string, unknown>;
+  canMutate?: () => boolean;
   onOpenNote?: (title: string) => void;
   onPrepareNote?: (title: string) => void;
   getSuggestions?: () => Promise<WikiLinkSuggestionItem[]>;
@@ -59,6 +60,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
   addOptions() {
     return {
       HTMLAttributes: {},
+      canMutate: () => true,
       onOpenNote: undefined,
       onPrepareNote: undefined,
       getSuggestions: async () =>
@@ -101,6 +103,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
       insertWikiLink:
         (title: string) =>
         ({ chain, state }) => {
+          if (!this.options.canMutate?.()) return false;
           const { from, to } = state.selection;
           return chain()
             .deleteRange({ from, to })
@@ -116,6 +119,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
 
   addProseMirrorPlugins() {
     const onOpenNote = this.options.onOpenNote;
+    const canMutate = this.options.canMutate ?? (() => true);
     const onPrepareNote = this.options.onPrepareNote;
     const getSuggestions =
       this.options.getSuggestions ??
@@ -172,6 +176,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
       new Plugin({
         key: new PluginKey("wikiLinkFullWidthTrigger"),
         appendTransaction: (transactions, _oldState, newState) => {
+          if (!canMutate()) return null;
           if (!transactions.some((transaction) => transaction.docChanged)) {
             return null;
           }
@@ -203,7 +208,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
         char: "[[",
         allowSpaces: true,
         allow: ({ editor, state, range }) => {
-          if (!editor.isEditable) return false;
+          if (!editor.isEditable || !canMutate()) return false;
           const $from = state.doc.resolve(range.from);
           return $from.parent.type.name !== "codeBlock";
         },
@@ -229,6 +234,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
         items: async ({ query }) =>
           filterWikiLinkSuggestionItems(await loadSuggestions(), query),
         command: ({ editor, range, props }) => {
+          if (!canMutate()) return;
           editor
             .chain()
             .focus()

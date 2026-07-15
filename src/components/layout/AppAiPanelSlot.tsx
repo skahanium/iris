@@ -25,6 +25,7 @@ function AssistantPanelLoading() {
 interface AppAiPanelSlotProps {
   aiDomain: AiDomain;
   classifiedPath: string | null;
+  editorInteractionLocked?: boolean;
   runtimeDocumentCandidates?: FileListItem[];
   handleInsertToEditor: (content: string) => void;
   webSearch: boolean;
@@ -35,6 +36,7 @@ interface AppAiPanelSlotProps {
 export function AppAiPanelSlot({
   aiDomain,
   classifiedPath,
+  editorInteractionLocked = false,
   runtimeDocumentCandidates = [],
   handleInsertToEditor,
   webSearch,
@@ -57,7 +59,9 @@ export function AppAiPanelSlot({
           runtimeDocumentCandidates={mentionRuntimeCandidates}
           webSearch={webSearch}
           webSearchProviderName={webSearchProviderName}
-          onInsertToEditor={handleInsertToEditor}
+          onInsertToEditor={
+            editorInteractionLocked ? undefined : handleInsertToEditor
+          }
         />
       </Suspense>
     </ErrorBoundary>

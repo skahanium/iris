@@ -13,6 +13,7 @@ interface DocumentTitleContextMenuProps {
   inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   value: string;
   onValueChange: (value: string) => void;
+  readOnly?: boolean;
   children: React.ReactNode;
 }
 
@@ -21,6 +22,7 @@ export function DocumentTitleContextMenu({
   inputRef,
   value,
   onValueChange,
+  readOnly = false,
   children,
 }: DocumentTitleContextMenuProps) {
   const [menu, setMenu] = useState({ open: false, x: 0, y: 0 });
@@ -48,6 +50,7 @@ export function DocumentTitleContextMenu({
 
   const runAction = useCallback(
     async (id: string) => {
+      if (readOnly && (id === "cut" || id === "paste")) return;
       const el = inputRef.current;
       if (!el) return;
       el.focus();
@@ -86,11 +89,11 @@ export function DocumentTitleContextMenu({
         }
       }
     },
-    [inputRef, onValueChange, value],
+    [inputRef, onValueChange, readOnly, value],
   );
 
   return (
-    <div onContextMenu={handleContextMenu}>
+    <div onContextMenu={readOnly ? undefined : handleContextMenu}>
       {children}
       <IrisContextMenu
         open={menu.open}
@@ -100,10 +103,11 @@ export function DocumentTitleContextMenu({
           ...g,
           items: g.items.map((item) => ({
             ...item,
-            disabled:
-              item.id === "cut" &&
-              (inputRef.current?.selectionStart ?? 0) ===
-                (inputRef.current?.selectionEnd ?? 0),
+            disabled: readOnly
+              ? item.id === "cut" || item.id === "paste"
+              : item.id === "cut" &&
+                (inputRef.current?.selectionStart ?? 0) ===
+                  (inputRef.current?.selectionEnd ?? 0),
           })),
         }))}
         onSelect={(id) => void runAction(id)}

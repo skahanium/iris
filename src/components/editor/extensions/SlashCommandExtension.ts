@@ -24,6 +24,7 @@ async function loadTippy() {
 }
 
 export interface SlashCommandOptions {
+  canMutate?: () => boolean;
   onCommand?: (command: string) => void;
   hasNote?: () => boolean;
 }
@@ -44,11 +45,12 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
   name: "slashCommand",
 
   addOptions() {
-    return { onCommand: undefined };
+    return { canMutate: () => true, onCommand: undefined };
   },
 
   addProseMirrorPlugins() {
     const onCommand = this.options.onCommand;
+    const canMutate = this.options.canMutate ?? (() => true);
 
     return [
       Suggestion({
@@ -56,6 +58,7 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
         char: "/",
         allow: () => true,
         command: ({ editor, range, props }) => {
+          if (!canMutate()) return;
           const item = props as SlashItem;
           const pos = range.from;
           editor.chain().focus().deleteRange(range).setTextSelection(pos).run();

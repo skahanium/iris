@@ -94,6 +94,8 @@ interface AppEditorWorkspaceProps {
     dismiss: (editor: Editor) => void;
     finish: () => void;
   };
+  isMutationBlocked?: () => boolean;
+  persistenceBarrierActive?: boolean;
   onOutlineOpenChange: (open: boolean) => void;
   onOpenAiManagement: () => void;
   onOpenQuickOpen: () => void;
@@ -212,6 +214,8 @@ export function AppEditorWorkspace({
   handleNewNoteLeavingHome,
   homeActive,
   inlineAi,
+  isMutationBlocked = () => false,
+  persistenceBarrierActive = false,
   onOutlineOpenChange,
   onOpenAiManagement,
   onOpenQuickOpen,
@@ -245,7 +249,10 @@ export function AppEditorWorkspace({
     pendingNoteOpen?.bodyMarkdown ?? editorBodyMarkdown;
   const effectivePreparedHtml =
     pendingNoteOpen?.preparedEditorHtml ?? editorPreparedHtml;
-  const effectiveLocked = pendingNoteOpen?.isLocked ?? activeFileLocked;
+  const workspaceInteractionLocked =
+    activeFileLocked || persistenceBarrierActive;
+  const effectiveLocked =
+    Boolean(pendingNoteOpen?.isLocked) || workspaceInteractionLocked;
   const effectiveNamespace =
     pendingNoteOpen?.namespace ??
     (activeNoteIsClassified ? "classified" : "normal");
@@ -748,6 +755,8 @@ export function AppEditorWorkspace({
               mediaLoading="visible"
               titleSlot={snapshot.editorTitleSlot}
               locked={snapshot.activeFileLocked}
+              mutationBlocked={isMutationBlocked}
+              lockToggleDisabled={persistenceBarrierActive}
               setLocked={
                 !snapshot.activeNoteIsClassified
                   ? (locked) => void handleLockToggle(locked)
@@ -797,8 +806,10 @@ export function AppEditorWorkspace({
       handleSurfaceEditorReady,
       handleSurfaceFirstFrameReady,
       inlineAi,
+      isMutationBlocked,
       onPrepareNotePath,
       openNoteLeavingHome,
+      persistenceBarrierActive,
       runEditorActionById,
       updateEditorStats,
       vaultPath,
@@ -872,6 +883,7 @@ export function AppEditorWorkspace({
         editor={editorInstance}
         mode={findReplaceMode}
         open={findReplaceOpen && Boolean(activePath) && !activeMediaTab}
+        readOnly={workspaceInteractionLocked}
         onClose={() => setFindReplaceOpen(false)}
         onModeChange={setFindReplaceMode}
       />

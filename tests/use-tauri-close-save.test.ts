@@ -6,6 +6,14 @@ import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 
 const appExit = vi.hoisted(() => vi.fn());
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 const tauriWindow = vi.hoisted(() => ({
   close: vi.fn(),
   destroy: vi.fn(),
@@ -102,11 +110,41 @@ describe("useTauriCloseSave", () => {
     });
 
     expect(firstPreventDefault).toHaveBeenCalledTimes(1);
-    expect(secondPreventDefault).not.toHaveBeenCalled();
+    expect(secondPreventDefault).toHaveBeenCalledTimes(1);
     expect(flushBeforeClose).toHaveBeenCalledTimes(1);
     expect(appExit).toHaveBeenCalledTimes(1);
     expect(tauriWindow.close).not.toHaveBeenCalled();
     expect(tauriWindow.destroy).not.toHaveBeenCalled();
+  });
+
+  it("coalesces repeated close requests behind the first in-flight persistence barrier", async () => {
+    vi.useFakeTimers();
+    const firstFlush = deferred<void>();
+    const flushBeforeClose = vi.fn(() => firstFlush.promise);
+    const firstPreventDefault = vi.fn();
+    const secondPreventDefault = vi.fn();
+
+    await act(async () => {
+      root.render(createElement(Harness, { flushBeforeClose }));
+    });
+
+    await act(async () => {
+      void tauriWindow.handler?.({ preventDefault: firstPreventDefault });
+      await Promise.resolve();
+      void tauriWindow.handler?.({ preventDefault: secondPreventDefault });
+      await Promise.resolve();
+    });
+
+    expect(firstPreventDefault).toHaveBeenCalledTimes(1);
+    expect(secondPreventDefault).toHaveBeenCalledTimes(1);
+    expect(flushBeforeClose).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      firstFlush.resolve(undefined);
+      await Promise.resolve();
+      vi.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
   });
 
   it("keeps the window open and reports an error when flushing fails", async () => {

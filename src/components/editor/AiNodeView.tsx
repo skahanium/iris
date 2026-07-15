@@ -26,6 +26,7 @@ export function AiNodeView({ editor, node }: NodeViewProps) {
   );
   const options = extension?.options as AiStreamOptions | undefined;
   const onRetry = options?.onRetry;
+  const mutationBlocked = options?.canMutate ? !options.canMutate() : false;
 
   const actionLabel = action ? inlineAiActionLabel(action) : "AI 建议";
   const statusLabel = isStreaming
@@ -67,8 +68,11 @@ export function AiNodeView({ editor, node }: NodeViewProps) {
               className="h-8 gap-1 px-2 text-xs"
               title="放弃：移除候选并保留原文"
               data-testid="ai-stream-dismiss"
+              disabled={mutationBlocked}
               onMouseDown={stopEditorCapture}
-              onClick={() => editor.commands.dismissAiStream()}
+              onClick={() => {
+                if (!mutationBlocked) editor.commands.dismissAiStream();
+              }}
             >
               <X className="h-3.5 w-3.5" />
               放弃
@@ -79,10 +83,12 @@ export function AiNodeView({ editor, node }: NodeViewProps) {
               variant="ghost"
               className="h-8 gap-1 px-2 text-xs"
               title="重试：重新生成"
-              disabled={isStreaming}
+              disabled={isStreaming || mutationBlocked}
               data-testid="ai-stream-retry"
               onMouseDown={stopEditorCapture}
-              onClick={() => onRetry?.(editor)}
+              onClick={() => {
+                if (!mutationBlocked) onRetry?.(editor);
+              }}
             >
               <RotateCw className="h-3.5 w-3.5" />
               重试
@@ -93,10 +99,12 @@ export function AiNodeView({ editor, node }: NodeViewProps) {
               variant="default"
               className="h-8 gap-1 px-2 text-xs"
               title="接受：用候选替换原文"
-              disabled={!isReady || !hasContent}
+              disabled={!isReady || !hasContent || mutationBlocked}
               data-testid="ai-stream-accept"
               onMouseDown={stopEditorCapture}
-              onClick={() => editor.commands.acceptAiStream()}
+              onClick={() => {
+                if (!mutationBlocked) editor.commands.acceptAiStream();
+              }}
             >
               <Check className="h-3.5 w-3.5" />
               接受

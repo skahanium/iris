@@ -8,6 +8,7 @@ export type AiStreamStatus = "streaming" | "ready" | "error";
 
 export interface AiStreamOptions {
   HTMLAttributes: Record<string, unknown>;
+  canMutate?: () => boolean;
   onRetry?: (editor: Editor) => void;
   onDismiss?: (editor: Editor) => void;
   onAccept?: (editor: Editor) => void;
@@ -116,6 +117,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
   addOptions() {
     return {
       HTMLAttributes: {},
+      canMutate: () => true,
       onRetry: undefined,
       onDismiss: undefined,
       onAccept: undefined,
@@ -151,10 +153,12 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
   addKeyboardShortcuts() {
     return {
       Escape: () => {
+        if (!this.options.canMutate?.()) return false;
         if (!findAiStreamNode(this.editor.state)) return false;
         return this.editor.commands.dismissAiStream();
       },
       "Mod-Enter": () => {
+        if (!this.options.canMutate?.()) return false;
         const found = findAiStreamNode(this.editor.state);
         if (!found) return false;
         if (found.attrs.status !== "ready") return false;
@@ -168,6 +172,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
       insertAiStreamBelowSelection:
         ({ originalText, action, sourceFrom, sourceTo }) =>
         ({ tr, state, dispatch }) => {
+          if (!this.options.canMutate?.()) return false;
           if (!dispatch) return false;
           const $from = state.doc.resolve(sourceFrom);
           const $to = state.doc.resolve(sourceTo);
@@ -211,6 +216,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
       insertAiStreamAtCursor:
         ({ originalText, action }) =>
         ({ chain, state }) => {
+          if (!this.options.canMutate?.()) return false;
           const { from } = state.selection;
           return chain()
             .insertContentAt(from, {
@@ -234,6 +240,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
       updateAiStream:
         (content) =>
         ({ tr, state, dispatch }) => {
+          if (!this.options.canMutate?.()) return false;
           const found = findAiStreamNode(state);
           if (!found || !dispatch) return false;
           const node = state.doc.nodeAt(found.pos);
@@ -259,6 +266,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
       setAiStreamStatus:
         (status) =>
         ({ tr, state, dispatch }) => {
+          if (!this.options.canMutate?.()) return false;
           const found = findAiStreamNode(state);
           if (!found || !dispatch) return false;
           tr.setNodeMarkup(found.pos, undefined, {
@@ -272,6 +280,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
       acceptAiStream:
         () =>
         ({ state, dispatch, editor }) => {
+          if (!this.options.canMutate?.()) return false;
           const found = findAiStreamNode(state);
           if (!found || !dispatch) return false;
 
@@ -288,6 +297,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
 
           // 2) 下一帧应用可撤销的文本替换，避免在 command 内重入 dispatch
           queueMicrotask(() => {
+            if (!this.options.canMutate?.()) return;
             if (sourceFrom > 0 && sourceTo > sourceFrom) {
               if (text) {
                 editor.commands.insertContentAt(
@@ -315,6 +325,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
       rollbackAiStream:
         () =>
         ({ tr, state, dispatch }) => {
+          if (!this.options.canMutate?.()) return false;
           const found = findAiStreamNode(state);
           if (!found || !dispatch) return false;
           const { sourceFrom, sourceTo } = readSourceRange(found.attrs);
@@ -329,6 +340,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
       dismissAiStream:
         () =>
         ({ editor, commands }) => {
+          if (!this.options.canMutate?.()) return false;
           this.options.onDismiss?.(editor);
           return commands.rollbackAiStream();
         },

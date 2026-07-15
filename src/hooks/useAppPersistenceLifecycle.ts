@@ -65,6 +65,8 @@ interface UseAppPersistenceLifecycleParams {
   markClean: (path: string, title: string) => void;
   markdown: string;
   noteTitle: string;
+  onPersistenceBarrierRelease?: () => void;
+  onPersistenceBarrierStart?: () => void;
   onPersistenceBlocked?: (blocker: PersistenceBlocker) => void;
   persistBeforeLeaveRef: MutableRefObject<PersistBeforeLeave>;
   schedulePathSync: (path: string, title: string) => void;
@@ -96,6 +98,8 @@ export function useAppPersistenceLifecycle({
   markClean,
   markdown,
   noteTitle,
+  onPersistenceBarrierRelease,
+  onPersistenceBarrierStart,
   onPersistenceBlocked,
   persistBeforeLeaveRef,
   schedulePathSync,
@@ -123,6 +127,11 @@ export function useAppPersistenceLifecycle({
     useState(false);
   const cancelledWriteRef = useRef<Promise<void>>(Promise.resolve());
   const persistenceBarrierActiveRef = useRef(false);
+  const persistenceBarrierTaskRef = useRef<Promise<void> | null>(null);
+  const isPersistenceBarrierActiveNow = useCallback(
+    () => persistenceBarrierActiveRef.current,
+    [],
+  );
   const noteTitleRef = useRef(noteTitle);
   noteTitleRef.current = noteTitle;
 
@@ -347,37 +356,56 @@ export function useAppPersistenceLifecycle({
       idleMs: autoVersionIdleMinutes * 60 * 1000,
     });
 
-  const flushAllOpenTabs = useCallback(async (): Promise<void> => {
+  const releasePersistenceBarrier = useCallback(() => {
+    if (!persistenceBarrierActiveRef.current) return;
+    persistenceBarrierActiveRef.current = false;
+    persistenceBarrierTaskRef.current = null;
+    versionSnapshotScheduler.setAppClosing(false);
+    onPersistenceBarrierRelease?.();
+    setIsPersistenceBarrierActive(false);
+  }, [onPersistenceBarrierRelease, versionSnapshotScheduler]);
+
+  const flushAllOpenTabs = useCallback((): Promise<void> => {
+    if (persistenceBarrierTaskRef.current) {
+      return persistenceBarrierTaskRef.current;
+    }
     persistenceBarrierActiveRef.current = true;
+    onPersistenceBarrierStart?.();
     setIsPersistenceBarrierActive(true);
     versionSnapshotScheduler.setAppClosing(true);
     clearVersionIdleTimer();
-    try {
-      // Tabs can still contain a prepared/remounting snapshot that has not yet
-      // been captured by the coordinator. Stage those snapshots first, then
-      // make the coordinator own the completion condition. `barrierAll` keeps
-      // scanning until no new revision was observed during a write pass.
-      await Promise.all(
-        tabsRef.current.map((tab) =>
-          persistBeforeLeaveRef.current(tab.path, { reason: "app_close" }),
-        ),
-      );
-      await coordinator.barrierAll();
-    } finally {
-      versionSnapshotScheduler.setAppClosing(false);
-      persistenceBarrierActiveRef.current = false;
-      setIsPersistenceBarrierActive(false);
-    }
+    const task = (async () => {
+      try {
+        // Tabs can still contain a prepared/remounting snapshot that has not yet
+        // been captured by the coordinator. Stage those snapshots first, then
+        // make the coordinator own the completion condition. `barrierAll` keeps
+        // scanning until no new revision was observed during a write pass.
+        await Promise.all(
+          tabsRef.current.map((tab) =>
+            persistBeforeLeaveRef.current(tab.path, { reason: "app_close" }),
+          ),
+        );
+        await coordinator.barrierAll();
+      } catch (error) {
+        releasePersistenceBarrier();
+        throw error;
+      }
+    })();
+    persistenceBarrierTaskRef.current = task;
+    return task;
   }, [
     clearVersionIdleTimer,
     coordinator,
+    onPersistenceBarrierStart,
     persistBeforeLeaveRef,
+    releasePersistenceBarrier,
     tabsRef,
     versionSnapshotScheduler,
   ]);
 
   useTauriCloseSave({
     flushBeforeClose: flushAllOpenTabs,
+    releaseAfterCloseFailure: releasePersistenceBarrier,
     onError: () => setAiStatus("关闭前保存失败，请重试或返回编辑"),
     onBlocked: (retry) => onPersistenceBlocked?.({ action: "close", retry }),
   });
@@ -518,5 +546,7 @@ export function useAppPersistenceLifecycle({
     saveError,
     hasDirtyDocuments,
     isPersistenceBarrierActive,
+    isPersistenceBarrierActiveNow,
+    releasePersistenceBarrier,
   };
 }

@@ -95,6 +95,7 @@ describe("useInlineAi", () => {
   let root: Root;
   let container: HTMLDivElement;
   let api: ReturnType<typeof useInlineAi>;
+  let mutationBlocked = false;
   let emit:
     | ((
         event: Parameters<Parameters<typeof listenAssistantRunEvent>[0]>[0],
@@ -102,7 +103,10 @@ describe("useInlineAi", () => {
     | null;
 
   function Host() {
-    api = useInlineAi({ domain: "classified" });
+    api = useInlineAi({
+      domain: "classified",
+      isMutationBlocked: () => mutationBlocked,
+    });
     return null;
   }
 
@@ -111,6 +115,7 @@ describe("useInlineAi", () => {
     mockAssistantRunStart.mockReset();
     mockListenAssistantRunEvent.mockReset();
     emit = null;
+    mutationBlocked = false;
     mockAssistantRunStart.mockResolvedValue(acceptedRun());
     mockListenAssistantRunEvent.mockImplementation(async (handler) => {
       emit = handler;
@@ -231,6 +236,41 @@ describe("useInlineAi", () => {
       await api.abort();
     });
 
+    expect(mockAssistantRunControl).toHaveBeenCalledWith({
+      session: { domain: "classified", sessionKey: "session-inline-1" },
+      runId: "run-inline-1",
+      expectedStateVersion: 1,
+      action: { type: "cancel" },
+    });
+    editor.destroy();
+  });
+
+  it("aborts and detaches an active stream when the persistence barrier starts", async () => {
+    const editor = createEditor();
+    editor.commands.setTextSelection({ from: 1, to: 9 });
+
+    await act(async () => {
+      await api.run(editor, "rewrite");
+    });
+    const beforeBarrier = editor.getText();
+
+    mutationBlocked = true;
+    act(() => {
+      api.abortAndDetach();
+      emit?.({
+        runId: "run-inline-1",
+        seq: 2,
+        stateVersion: 2,
+        timestamp: "2026-07-13T12:00:00.000Z",
+        type: "content_delta",
+        payload: { kind: "content_delta", delta: "must not enter editor" },
+      });
+    });
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    expect(editor.getText()).toBe(beforeBarrier);
     expect(mockAssistantRunControl).toHaveBeenCalledWith({
       session: { domain: "classified", sessionKey: "session-inline-1" },
       runId: "run-inline-1",

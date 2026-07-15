@@ -7,6 +7,7 @@ import { isTauriRuntime } from "@/lib/tauri-runtime";
 interface UseTauriCloseSaveOptions {
   enabled?: boolean;
   flushBeforeClose: () => Promise<void>;
+  releaseAfterCloseFailure?: () => void;
   onBlocked?: (retry: () => Promise<void>) => void;
   onError?: (message: string) => void;
 }
@@ -18,6 +19,7 @@ function errorMessage(err: unknown): string {
 export function useTauriCloseSave({
   enabled = true,
   flushBeforeClose,
+  releaseAfterCloseFailure,
   onBlocked,
   onError,
 }: UseTauriCloseSaveOptions): void {
@@ -25,9 +27,11 @@ export function useTauriCloseSave({
   const flushBeforeCloseRef = useRef(flushBeforeClose);
   const onBlockedRef = useRef(onBlocked);
   const onErrorRef = useRef(onError);
+  const releaseAfterCloseFailureRef = useRef(releaseAfterCloseFailure);
   flushBeforeCloseRef.current = flushBeforeClose;
   onBlockedRef.current = onBlocked;
   onErrorRef.current = onError;
+  releaseAfterCloseFailureRef.current = releaseAfterCloseFailure;
 
   useEffect(() => {
     if (!enabled || !isTauriRuntime()) return;
@@ -36,26 +40,34 @@ export function useTauriCloseSave({
     let unlisten: (() => void) | null = null;
     const win = getCurrentWindow();
 
-    const completeClose = async (): Promise<void> => {
-      try {
-        await flushBeforeCloseRef.current();
-        closingRef.current = true;
-        window.setTimeout(() => {
-          void appExit().catch((err: unknown) => {
-            closingRef.current = false;
-            onErrorRef.current?.(errorMessage(err));
-          });
-        }, 0);
-      } catch (err) {
-        closingRef.current = false;
-        onErrorRef.current?.(errorMessage(err));
-        onBlockedRef.current?.(completeClose);
-      }
+    let closeTask: Promise<void> | null = null;
+    const completeClose = (): Promise<void> => {
+      if (closeTask) return closeTask;
+      closingRef.current = true;
+      closeTask = (async () => {
+        try {
+          await flushBeforeCloseRef.current();
+          window.setTimeout(() => {
+            void appExit().catch((err: unknown) => {
+              closingRef.current = false;
+              closeTask = null;
+              releaseAfterCloseFailureRef.current?.();
+              onErrorRef.current?.(errorMessage(err));
+            });
+          }, 0);
+        } catch (err) {
+          closingRef.current = false;
+          closeTask = null;
+          releaseAfterCloseFailureRef.current?.();
+          onErrorRef.current?.(errorMessage(err));
+          onBlockedRef.current?.(completeClose);
+        }
+      })();
+      return closeTask;
     };
 
     void win
       .onCloseRequested(async (event) => {
-        if (closingRef.current) return;
         event.preventDefault();
         await completeClose();
       })

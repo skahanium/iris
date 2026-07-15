@@ -106,7 +106,6 @@ function scheduleManagementCenterPreload(): () => void {
   const handle = scheduler.setTimeout(() => preloadManagementCenter(), 0);
   return () => scheduler.clearTimeout(handle);
 }
-
 function App() {
   useMacOSWindowChromeSync();
   const { vaultPath, loading, pickVault, error: vaultError } = useVault();
@@ -141,22 +140,18 @@ function App() {
   const editorReadyForPersistenceRef = useRef(false);
   const overlays = useOverlayManager();
   const { status: connectivityStatus } = useConnectivityStatus();
-
   useEffect(() => {
     if (!vaultPath) return undefined;
     return scheduleManagementCenterPreload();
   }, [vaultPath]);
-
   const bumpVaultIndex = useCallback(
     () => setVaultIndexEpoch((n) => n + 1),
     [],
   );
-
   const dirtyRef = useRef(false);
   const autoSnapshotGenerationRef = useRef(0);
-
+  const departureInteractionLockedRef = useRef(false);
   const persistBeforeLeaveRef = useRef<PersistBeforeLeave>(async () => null);
-
   const {
     tabs,
     activePath,
@@ -188,13 +183,45 @@ function App() {
     onVaultIndexBump: bumpVaultIndex,
     persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
   });
+  const rejectDepartureInteraction = useCallback(() => {
+    if (!departureInteractionLockedRef.current) return false;
+    setAiStatus("文档正在保存，暂不能切换或新建笔记");
+    return true;
+  }, []);
+  const guardedHandleNewNote = useCallback(
+    async (...args: Parameters<typeof handleNewNote>): Promise<void> => {
+      if (rejectDepartureInteraction()) return;
+      await handleNewNote(...args);
+    },
+    [handleNewNote, rejectDepartureInteraction],
+  );
+  const guardedActivateTab = useCallback(
+    async (...args: Parameters<typeof activateTab>): Promise<void> => {
+      if (rejectDepartureInteraction()) return;
+      await activateTab(...args);
+    },
+    [activateTab, rejectDepartureInteraction],
+  );
+  const guardedCloseTab = useCallback(
+    (path: string): Promise<void> => {
+      if (rejectDepartureInteraction()) return Promise.resolve();
+      return closeTab(path);
+    },
+    [closeTab, rejectDepartureInteraction],
+  );
+  const guardedOpenNote = useCallback(
+    async (...args: Parameters<typeof openNote>): Promise<void> => {
+      if (rejectDepartureInteraction()) return;
+      await openNote(...args);
+    },
+    [openNote, rejectDepartureInteraction],
+  );
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
   const updateInstallBarrierRef = useRef<() => Promise<void>>(
     async () => undefined,
   );
-
   useWorkspaceSessionSnapshot({ activePath, tabs, vaultPath });
   const {
     aiPanelOpen,
@@ -213,13 +240,11 @@ function App() {
     editorRef,
     setAiStatus,
   });
-
   const openClassifiedPaths = useMemo(
     () =>
       tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
     [tabs],
   );
-
   const {
     status: classifiedVaultStatus,
     waiting: classifiedWaiting,
@@ -233,15 +258,12 @@ function App() {
     enabled: Boolean(vaultPath) && isTauriRuntime(),
     openClassifiedPaths,
   });
-
   const classifiedUnlocked = classifiedVaultStatus === "unlocked";
-
   useEffect(() => {
     if (classifiedOpen) {
       void refreshClassifiedStatus();
     }
   }, [classifiedOpen, refreshClassifiedStatus]);
-
   const {
     clearPendingOpenFromWorkspace,
     handleActivateWorkspaceTab: handleActivateNoteTab,
@@ -258,15 +280,14 @@ function App() {
     NonNullable<Parameters<typeof openNote>[2]>
   >({
     activePathRef,
-    activateTab,
+    activateTab: guardedActivateTab,
     classifiedVaultStatus,
-    handleNewNote,
-    openNote,
+    handleNewNote: guardedHandleNewNote,
+    openNote: guardedOpenNote,
     setHomeActive,
     tabs,
     vaultPath,
   });
-
   const currentNoteIsClassified = Boolean(
     activePath && isClassifiedVaultPath(activePath),
   );
@@ -281,7 +302,7 @@ function App() {
     workspaceTabs,
   } = useWorkspaceTabRouting<NonNullable<Parameters<typeof openNote>[2]>>({
     activePath,
-    closeTab,
+    closeTab: guardedCloseTab,
     currentNoteIsClassified,
     handleActivateNoteTab,
     handleNewNoteLeavingHome,
@@ -290,7 +311,6 @@ function App() {
     showHome,
     tabs,
   });
-
   useEffect(() => {
     if (!activePath) {
       dirtyRef.current = false;
@@ -299,8 +319,8 @@ function App() {
     const tab = tabsRef.current.find((t) => t.path === activePath);
     dirtyRef.current = tab?.dirty ?? false;
   }, [activePath]);
-
   const getLiveMarkdownRef = useRef(() => markdownRef.current);
+  const abortInlineAiForPersistenceRef = useRef<() => void>(() => undefined);
   const pathRenamePersistenceRef = useRef({
     rename: async (
       _oldPath: string,
@@ -316,11 +336,6 @@ function App() {
     activePath
       ? "classified"
       : "normal";
-  const inlineAi = useInlineAi({
-    domain: inlineAiDomain,
-    onStatus: setAiStatus,
-  });
-
   const {
     noteTitle,
     editorBodyMarkdown,
@@ -371,6 +386,8 @@ function App() {
     saveStatus,
     hasDirtyDocuments,
     isPersistenceBarrierActive,
+    isPersistenceBarrierActiveNow,
+    releasePersistenceBarrier,
   } = useAppPersistenceLifecycle({
     activeFileLocked,
     activePath,
@@ -388,6 +405,13 @@ function App() {
     markClean,
     markdown,
     noteTitle,
+    onPersistenceBarrierRelease: () => {
+      departureInteractionLockedRef.current = false;
+    },
+    onPersistenceBarrierStart: () => {
+      departureInteractionLockedRef.current = true;
+      abortInlineAiForPersistenceRef.current();
+    },
     onPersistenceBlocked: setPersistenceBlocker,
     persistBeforeLeaveRef,
     schedulePathSync,
@@ -402,6 +426,19 @@ function App() {
 
   const isEditorPersistenceBlocked =
     activeFileLocked || isPersistenceBarrierActive;
+  const isEditorMutationBlocked = useCallback(
+    () => activeFileLocked || departureInteractionLockedRef.current,
+    [activeFileLocked],
+  );
+  departureInteractionLockedRef.current =
+    activeFileLocked || isPersistenceBarrierActiveNow();
+
+  const inlineAi = useInlineAi({
+    domain: inlineAiDomain,
+    isMutationBlocked: isEditorMutationBlocked,
+    onStatus: setAiStatus,
+  });
+  abortInlineAiForPersistenceRef.current = inlineAi.abortAndDetach;
 
   const {
     loading: embeddingStatusLoading,
@@ -415,6 +452,7 @@ function App() {
     beforeInstall: () => updateInstallBarrierRef.current(),
     enabled: Boolean(vaultPath),
     hasDirtyDocuments,
+    releaseAfterInstallFailure: releasePersistenceBarrier,
     onStatus: setAiStatus,
   });
 
@@ -534,6 +572,7 @@ function App() {
     dirtyRef,
     flushSave,
     invalidatePreparedNote,
+    isMutationBlocked: isEditorMutationBlocked,
     markClean,
     openNoteLeavingHome,
     setConflictState,
@@ -659,6 +698,7 @@ function App() {
       editorRef,
       getLiveMarkdown,
       inlineAi,
+      isMutationBlocked: isEditorMutationBlocked,
       scheduleUndoRedoStateRefresh,
       sendSelectionToAi,
       setAiStatus,
@@ -678,8 +718,8 @@ function App() {
   const { appShortcutItems, handleAppShortcut } = useAppShortcuts({
     activePath,
     activePathRef,
-    closeTab,
-    handleNewNote,
+    closeTab: guardedCloseTab,
+    handleNewNote: guardedHandleNewNote,
     handleSaveNote,
     handleVaultRescan,
     openFindReplace,
@@ -782,10 +822,15 @@ function App() {
             findReplaceOpen={findReplaceOpen}
             handleDirty={handleDirty}
             handleEditorReady={handleEditorReady}
-            handleLockToggle={handleLockToggle}
+            handleLockToggle={async (locked) => {
+              if (isEditorMutationBlocked()) return;
+              await handleLockToggle(locked);
+            }}
             handleNewNoteLeavingHome={handleNewWorkspaceNote}
             homeActive={homeActive}
             inlineAi={inlineAi}
+            isMutationBlocked={isEditorMutationBlocked}
+            persistenceBarrierActive={isPersistenceBarrierActive}
             onOutlineOpenChange={(open) => {
               setOutlineOpen(open);
               saveOutlineOpen(open);
@@ -816,6 +861,7 @@ function App() {
           <AppAiPanelSlot
             aiDomain={aiDomain}
             classifiedPath={classifiedPath}
+            editorInteractionLocked={isEditorPersistenceBlocked}
             runtimeDocumentCandidates={assistantRuntimeDocumentCandidates}
             handleInsertToEditor={handleAssistantInsertToEditor}
             webSearch={webSearch}
@@ -842,8 +888,8 @@ function App() {
             onEditorZoomChange={setZoom}
             onUndo={handleUndo}
             onRedo={handleRedo}
-            canUndo={canUndo}
-            canRedo={canRedo}
+            canUndo={canUndo && !isEditorPersistenceBlocked}
+            canRedo={canRedo && !isEditorPersistenceBlocked}
             webSearch={webSearch}
             webSearchAvailability={webSearchAvailability}
             onWebSearchChange={setWebSearch}

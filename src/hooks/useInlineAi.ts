@@ -25,6 +25,7 @@ export const INLINE_AI_REPLACE_SELECTION = "replace_selection";
 
 export interface UseInlineAiOptions {
   domain?: AiDomain;
+  isMutationBlocked?: () => boolean;
   onStatus?: (status: string) => void;
 }
 
@@ -91,12 +92,17 @@ interface ActiveInlineRun {
 /** Inline AI presents the same persistent Run lifecycle as the assistant panel. */
 export function useInlineAi({
   domain = "normal",
+  isMutationBlocked = () => false,
   onStatus,
 }: UseInlineAiOptions = {}) {
   const activeRef = useRef<ActiveInlineRun | null>(null);
   const bufferRef = useRef("");
   const rafRef = useRef<number | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
+  const isMutationBlockedRef = useRef(isMutationBlocked);
+  isMutationBlockedRef.current = isMutationBlocked;
+
+  const mutationBlocked = useCallback(() => isMutationBlockedRef.current(), []);
 
   const detach = useCallback(() => {
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
@@ -105,11 +111,15 @@ export function useInlineAi({
     unlistenRef.current = null;
   }, []);
 
-  const flush = useCallback((editor: Editor) => {
-    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    rafRef.current = null;
-    editor.commands.updateAiStream(bufferRef.current);
-  }, []);
+  const flush = useCallback(
+    (editor: Editor) => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      if (mutationBlocked()) return;
+      editor.commands.updateAiStream(bufferRef.current);
+    },
+    [mutationBlocked],
+  );
 
   const start = useCallback(
     async (
@@ -117,6 +127,7 @@ export function useInlineAi({
       request: AiStreamRequest,
       reference?: ContextReference | null,
     ) => {
+      if (mutationBlocked()) return;
       detach();
       bufferRef.current = "";
       editor.commands.clearAiStreamContent();
@@ -156,6 +167,7 @@ export function useInlineAi({
             if (rafRef.current === null) {
               rafRef.current = requestAnimationFrame(() => {
                 rafRef.current = null;
+                if (mutationBlocked()) return;
                 editor.commands.updateAiStream(bufferRef.current);
               });
             }
@@ -163,12 +175,14 @@ export function useInlineAi({
           }
           if (event.type === "completed") {
             flush(editor);
+            if (mutationBlocked()) return;
             editor.commands.setAiStreamStatus("ready");
             onStatus?.("AI 空闲");
             return;
           }
           if (event.type === "failed" || event.type === "cancelled") {
             flush(editor);
+            if (mutationBlocked()) return;
             editor.commands.setAiStreamStatus("error");
             onStatus?.(
               event.type === "failed"
@@ -178,17 +192,19 @@ export function useInlineAi({
           }
         });
       } catch (error) {
+        if (mutationBlocked()) return;
         editor.commands.setAiStreamStatus("error");
         onStatus?.(
           `AI 错误: ${error instanceof Error ? error.message : "无法启动 Run"}`,
         );
       }
     },
-    [detach, domain, flush, onStatus],
+    [detach, domain, flush, mutationBlocked, onStatus],
   );
 
   const run = useCallback(
     async (editor: Editor, action: string) => {
+      if (mutationBlocked()) return;
       const { from, to } = editor.state.selection;
       const originalText = editor.state.doc.textBetween(from, to, "\n").trim();
       if (!originalText) return;
@@ -203,11 +219,12 @@ export function useInlineAi({
         buildInlineSelectionReference(editor),
       );
     },
-    [start],
+    [mutationBlocked, start],
   );
 
   const runSlash = useCallback(
     async (editor: Editor, command: string) => {
+      if (mutationBlocked()) return;
       const action = slashActionId(command);
       editor.commands.insertAiStreamAtCursor({ originalText: "", action });
       await start(editor, {
@@ -216,11 +233,12 @@ export function useInlineAi({
         message: buildSlashCommandMessage(command),
       });
     },
-    [start],
+    [mutationBlocked, start],
   );
 
   const retry = useCallback(
     async (editor: Editor) => {
+      if (mutationBlocked()) return;
       const context = getActiveAiStreamAttrs(editor);
       if (!context) return;
       await start(
@@ -229,7 +247,7 @@ export function useInlineAi({
         context.originalText ? buildInlineSelectionReference(editor) : null,
       );
     },
-    [start],
+    [mutationBlocked, start],
   );
 
   const abort = useCallback(async () => {
@@ -243,6 +261,22 @@ export function useInlineAi({
     });
   }, []);
 
+  const abortAndDetach = useCallback(() => {
+    const active = activeRef.current;
+    activeRef.current = null;
+    bufferRef.current = "";
+    detach();
+    if (!active) return;
+    void Promise.resolve(
+      assistantRunControl({
+        session: active.session,
+        runId: active.runId,
+        expectedStateVersion: active.stateVersion,
+        action: { type: "cancel" },
+      }),
+    ).catch(() => undefined);
+  }, [detach]);
+
   const dismiss = useCallback((_editor?: Editor) => void abort(), [abort]);
 
   const finish = useCallback(() => {
@@ -254,5 +288,5 @@ export function useInlineAi({
 
   useEffect(() => () => detach(), [detach]);
 
-  return { run, runSlash, retry, abort, dismiss, finish };
+  return { run, runSlash, retry, abort, abortAndDetach, dismiss, finish };
 }

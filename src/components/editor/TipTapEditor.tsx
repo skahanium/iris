@@ -166,6 +166,11 @@ interface TipTapEditorProps {
 
   locked?: boolean;
 
+  /** Synchronously guards imperative mutations while departure persistence holds a lease. */
+  mutationBlocked?: () => boolean;
+
+  lockToggleDisabled?: boolean;
+
   mediaLoading?: "deferred" | "visible";
 
   setLocked?: (locked: boolean) => void;
@@ -219,11 +224,22 @@ function TipTapEditorInner({
   onBodyContextMenu,
 
   locked = false,
+  mutationBlocked = () => false,
+  lockToggleDisabled = false,
 
   mediaLoading = "visible",
 
   setLocked,
 }: TipTapEditorProps) {
+  const lockedRef = useRef(locked);
+  lockedRef.current = locked;
+  const mutationBlockedRef = useRef(mutationBlocked);
+  mutationBlockedRef.current = mutationBlocked;
+
+  const mutationAllowed = useCallback(
+    () => !lockedRef.current && !mutationBlockedRef.current(),
+    [],
+  );
   const inlineAiRetryRef = useRef(onInlineAiRetry);
   inlineAiRetryRef.current = onInlineAiRetry;
   const inlineAiDismissRef = useRef(onInlineAiDismiss);
@@ -359,6 +375,7 @@ function TipTapEditorInner({
       }),
 
       EditorImageDropExtension.configure({
+        canMutate: () => mutationAllowed(),
         enabled: isTauriRuntime(),
       }),
 
@@ -395,22 +412,25 @@ function TipTapEditorInner({
       AiSourceHighlightExtension,
 
       AiStreamExtension.configure({
+        canMutate: () => mutationAllowed(),
         onRetry: (ed) => inlineAiRetryRef.current?.(ed),
         onDismiss: (ed) => inlineAiDismissRef.current?.(ed),
         onAccept: (ed) => inlineAiAcceptRef.current?.(ed),
       }),
 
       SlashCommandExtension.configure({
+        canMutate: () => mutationAllowed(),
         onCommand: (command) => onSlashCommandRef.current?.(command),
       }),
 
       WikiLinkExtension.configure({
+        canMutate: mutationAllowed,
         onOpenNote: (title) => onOpenWikiLinkRef.current?.(title),
         onPrepareNote: (title) => onPrepareWikiLinkRef.current?.(title),
       }),
     ],
 
-    [mediaLoading, vaultPath],
+    [mediaLoading, mutationAllowed, vaultPath],
   );
 
   const ingestResultRef = useRef<{
@@ -635,7 +655,7 @@ function TipTapEditorInner({
 
   const openLinkEditor = useCallback(
     (targetEditor: Editor) => {
-      if (locked || !targetEditor.isEditable) return;
+      if (!mutationAllowed() || !targetEditor.isEditable) return;
       const href = targetEditor.getAttributes("link").href;
       const { from, to } = targetEditor.state.selection;
       setLinkEditor({
@@ -645,7 +665,7 @@ function TipTapEditorInner({
         to,
       });
     },
-    [locked],
+    [mutationAllowed],
   );
 
   useEffect(() => {
@@ -666,7 +686,7 @@ function TipTapEditorInner({
   }, []);
 
   const applyLinkEditor = useCallback(() => {
-    if (!editor || !linkEditor) return;
+    if (!editor || !linkEditor || !mutationAllowed()) return;
     const href = linkEditor.href.trim();
     if (!href) {
       editor
@@ -693,10 +713,10 @@ function TipTapEditorInner({
       .setLink({ href })
       .run();
     setLinkEditor(null);
-  }, [editor, linkEditor]);
+  }, [editor, linkEditor, mutationAllowed]);
 
   const removeLinkEditor = useCallback(() => {
-    if (!editor || !linkEditor) return;
+    if (!editor || !linkEditor || !mutationAllowed()) return;
     editor
       .chain()
       .focus()
@@ -705,7 +725,7 @@ function TipTapEditorInner({
       .unsetLink()
       .run();
     setLinkEditor(null);
-  }, [editor, linkEditor]);
+  }, [editor, linkEditor, mutationAllowed]);
 
   useEffect(() => {
     if (!editor) return;
@@ -757,6 +777,7 @@ function TipTapEditorInner({
           data-testid="editor-lock-toggle"
           className="iris-focus-soft editor-edge-control editor-lock-btn absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-surface-elevated/90 text-muted-foreground shadow-sm backdrop-blur-sm duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none"
           onClick={() => setLocked(!locked)}
+          disabled={lockToggleDisabled}
           title={locked ? "解锁编辑" : "锁定编辑"}
           aria-label={locked ? "解锁编辑" : "锁定编辑"}
           aria-pressed={locked}

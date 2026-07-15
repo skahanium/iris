@@ -44,6 +44,7 @@ async function saveImageFile(file: File): Promise<string | null> {
 }
 
 export interface EditorImageDropOptions {
+  canMutate: () => boolean;
   enabled: boolean;
 }
 
@@ -55,18 +56,25 @@ export const EditorImageDropExtension =
     name: "editorImageDrop",
 
     addOptions() {
-      return { enabled: true };
+      return { canMutate: () => true, enabled: true };
     },
 
     addProseMirrorPlugins() {
       const enabled = this.options.enabled;
+      const canMutate = this.options.canMutate;
 
       return [
         new Plugin({
           key: pluginKey,
           props: {
             handleDrop: (view, event, _slice, moved) => {
-              if (!enabled || moved || !event.dataTransfer?.files?.length) {
+              if (
+                !enabled ||
+                !view.editable ||
+                !canMutate() ||
+                moved ||
+                !event.dataTransfer?.files?.length
+              ) {
                 return false;
               }
               const file = Array.from(event.dataTransfer.files).find((f) =>
@@ -79,7 +87,7 @@ export const EditorImageDropExtension =
                 top: event.clientY,
               });
               void saveImageFile(file).then((src) => {
-                if (!src) return;
+                if (!src || !view.editable || !canMutate()) return;
                 const pos = coords?.pos ?? view.state.selection.from;
                 view.dispatch(
                   view.state.tr.insert(
@@ -94,7 +102,7 @@ export const EditorImageDropExtension =
               return true;
             },
             handlePaste: (view, event) => {
-              if (!enabled) return false;
+              if (!enabled || !view.editable || !canMutate()) return false;
               const items = event.clipboardData?.items;
               if (!items) return false;
               const fileItem = Array.from(items).find(
@@ -107,7 +115,7 @@ export const EditorImageDropExtension =
               event.preventDefault();
               const pos = view.state.selection.from;
               void saveImageFile(file).then((src) => {
-                if (!src) return;
+                if (!src || !view.editable || !canMutate()) return;
                 view.dispatch(
                   view.state.tr.insert(
                     pos,

@@ -12,6 +12,7 @@ export interface EditorFindReplaceBarProps {
   editor: Editor | null;
   mode: "find" | "replace";
   open: boolean;
+  readOnly?: boolean;
   onClose: () => void;
   onModeChange?: (mode: "find" | "replace") => void;
 }
@@ -28,6 +29,7 @@ export function EditorFindReplaceBar({
   editor,
   mode,
   open,
+  readOnly = false,
   onClose,
   onModeChange,
 }: EditorFindReplaceBarProps) {
@@ -86,17 +88,17 @@ export function EditorFindReplaceBar({
   );
 
   const replaceCurrent = useCallback(() => {
-    if (!editor) return;
+    if (!editor || readOnly) return;
     const range = currentRange(ranges, boundedIndex);
     if (!range) return;
     editor.view.dispatch(
       editor.state.tr.insertText(replacement, range.from, range.to),
     );
     editor.commands.focus();
-  }, [boundedIndex, editor, ranges, replacement]);
+  }, [boundedIndex, editor, ranges, readOnly, replacement]);
 
   const replaceAll = useCallback(() => {
-    if (!editor || ranges.length === 0) return;
+    if (!editor || readOnly || ranges.length === 0) return;
     const tr = editor.state.tr;
     for (const range of [...ranges].sort((a, b) => b.from - a.from)) {
       tr.insertText(replacement, range.from, range.to);
@@ -104,7 +106,7 @@ export function EditorFindReplaceBar({
     editor.view.dispatch(tr);
     editor.commands.focus();
     setCurrentIndex(0);
-  }, [editor, ranges, replacement]);
+  }, [editor, ranges, readOnly, replacement]);
 
   if (!open || !editor) return null;
 
@@ -168,6 +170,7 @@ export function EditorFindReplaceBar({
             type="button"
             size="sm"
             variant="outline"
+            disabled={readOnly}
             onClick={replaceCurrent}
           >
             替换
@@ -177,6 +180,7 @@ export function EditorFindReplaceBar({
             size="sm"
             variant="outline"
             data-testid="replace-all"
+            disabled={readOnly}
             onClick={replaceAll}
           >
             全部

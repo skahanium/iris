@@ -68,6 +68,7 @@ export function DocumentTitleField({
       inputRef={inputRef}
       value={value}
       onValueChange={commit}
+      readOnly={readOnly || disabled}
     >
       <div
         className={cn(

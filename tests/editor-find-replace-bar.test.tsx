@@ -80,6 +80,41 @@ describe("EditorFindReplaceBar", () => {
     expect(editor?.getText()).toBe("gamma beta gamma");
   });
 
+  it("disables replacement dispatch while the persistence interaction lock is active", () => {
+    host = document.createElement("div");
+    document.body.append(host);
+    editor = new Editor({
+      extensions: [StarterKit, FindHighlightExtension],
+      content: "<p>Alpha beta alpha</p>",
+    });
+    root = createRoot(host);
+    act(() => {
+      root?.render(
+        <EditorFindReplaceBar
+          editor={editor}
+          mode="replace"
+          open
+          readOnly
+          onClose={() => {}}
+        />,
+      );
+    });
+
+    changeInput("查找", "alpha");
+    changeInput("替换为", "gamma");
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>('[data-testid="replace-all"]')
+        ?.click();
+    });
+
+    expect(editor.getText()).toBe("Alpha beta alpha");
+    expect(
+      document.querySelector<HTMLButtonElement>('[data-testid="replace-all"]')
+        ?.disabled,
+    ).toBe(true);
+  });
+
   it("closes when Escape is pressed inside the bar", () => {
     const onClose = vi.fn();
     host = document.createElement("div");

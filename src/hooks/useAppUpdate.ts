@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type SetStateAction,
@@ -49,6 +50,7 @@ export interface AppUpdateController {
 interface UseAppUpdateOptions {
   beforeInstall: () => Promise<void>;
   enabled: boolean;
+  releaseAfterInstallFailure?: () => void;
 }
 
 const INITIAL_UPDATE: AppUpdateSnapshot = {
@@ -108,8 +110,13 @@ function failedPreflightResult(message: string): AppUpdatePreflightResult {
   };
 }
 
-export function useAppUpdate({ beforeInstall, enabled }: UseAppUpdateOptions) {
+export function useAppUpdate({
+  beforeInstall,
+  enabled,
+  releaseAfterInstallFailure,
+}: UseAppUpdateOptions) {
   const [snapshot, setSnapshot] = useState<AppUpdateSnapshot>(INITIAL_UPDATE);
+  const installTaskRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     if (!enabled || !isTauriRuntime()) return undefined;
@@ -218,14 +225,40 @@ export function useAppUpdate({ beforeInstall, enabled }: UseAppUpdateOptions) {
     }
   }, []);
 
-  const install = useCallback(async () => {
-    try {
-      await beforeInstall();
-      await appUpdateInstall();
-    } catch {
-      handleActionError(setSnapshot, APP_UPDATE_INSTALL_ERROR_MESSAGE);
-    }
-  }, [beforeInstall]);
+  const install = useCallback((): Promise<void> => {
+    if (installTaskRef.current) return installTaskRef.current;
+    setSnapshot((current) => ({
+      ...current,
+      busy: true,
+      installBlockedMessage: null,
+      message: null,
+    }));
+    const task = (async () => {
+      try {
+        await beforeInstall();
+      } catch {
+        setSnapshot((current) => ({
+          ...current,
+          busy: false,
+          status: "ready_to_install",
+          installBlockedMessage: "保存失败，未安装更新；请重试或返回编辑",
+          message: null,
+        }));
+        return;
+      }
+
+      try {
+        await appUpdateInstall();
+      } catch {
+        releaseAfterInstallFailure?.();
+        handleActionError(setSnapshot, APP_UPDATE_INSTALL_ERROR_MESSAGE);
+      }
+    })().finally(() => {
+      installTaskRef.current = null;
+    });
+    installTaskRef.current = task;
+    return task;
+  }, [beforeInstall, releaseAfterInstallFailure]);
 
   return {
     snapshot,
@@ -240,16 +273,19 @@ export function useAppUpdateController({
   beforeInstall,
   enabled,
   hasDirtyDocuments,
+  releaseAfterInstallFailure,
   onStatus,
 }: {
   beforeInstall: () => Promise<void>;
   enabled: boolean;
   hasDirtyDocuments: boolean;
+  releaseAfterInstallFailure?: () => void;
   onStatus: (status: string) => void;
 }): AppUpdateController {
   const update = useAppUpdate({
     beforeInstall,
     enabled,
+    releaseAfterInstallFailure,
   });
   const download = useCallback(async () => {
     const downloaded = await update.download();

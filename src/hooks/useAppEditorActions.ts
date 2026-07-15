@@ -15,6 +15,7 @@ interface UseAppEditorActionsParams {
   editorRef: RefObject<Editor | null>;
   getLiveMarkdown: () => string;
   inlineAi: InlineAiPort;
+  isMutationBlocked: () => boolean;
   scheduleUndoRedoStateRefresh: (editor?: Editor | null) => void;
   sendSelectionToAi: (options?: { prefill?: string }) => void;
   setAiStatus: (message: string) => void;
@@ -26,25 +27,34 @@ export function useAppEditorActions({
   editorRef,
   getLiveMarkdown: _getLiveMarkdown,
   inlineAi,
+  isMutationBlocked,
   scheduleUndoRedoStateRefresh,
   sendSelectionToAi,
   setAiStatus,
 }: UseAppEditorActionsParams) {
+  const rejectWhenMutationBlocked = useCallback(() => {
+    if (!isMutationBlocked()) return false;
+    setAiStatus("文档正在保存，编辑操作已暂停");
+    return true;
+  }, [isMutationBlocked, setAiStatus]);
+
   const runInlineAi = useCallback(
     (action: string) => {
+      if (rejectWhenMutationBlocked()) return;
       const ed = editorRef.current;
       if (!ed) return;
       void inlineAi.run(ed, action);
     },
-    [editorRef, inlineAi],
+    [editorRef, inlineAi, rejectWhenMutationBlocked],
   );
 
   const handleSlashCommand = useCallback(
     (command: string) => {
+      if (rejectWhenMutationBlocked()) return;
       if (!editorRef.current) return;
       void inlineAi.runSlash(editorRef.current, command);
     },
-    [editorRef, inlineAi],
+    [editorRef, inlineAi, rejectWhenMutationBlocked],
   );
 
   const editorActionHandlers = useMemo(
@@ -60,34 +70,38 @@ export function useAppEditorActions({
 
   const runEditorActionById = useCallback(
     (actionId: string) => {
+      if (rejectWhenMutationBlocked()) return;
       void runEditorAction(actionId, editorRef.current, editorActionHandlers);
     },
-    [editorActionHandlers, editorRef],
+    [editorActionHandlers, editorRef, rejectWhenMutationBlocked],
   );
 
   const handleInsertToEditor = useCallback(
     (content: string) => {
+      if (rejectWhenMutationBlocked()) return;
       const ed = editorRef.current;
       const path = activePathRef.current;
       if (!ed || !path) return;
       insertAssistantMarkdownAtCursor(ed, content);
     },
-    [activePathRef, editorRef],
+    [activePathRef, editorRef, rejectWhenMutationBlocked],
   );
 
   const handleUndo = useCallback(() => {
+    if (rejectWhenMutationBlocked()) return;
     const ed = editorRef.current;
     if (!ed || !ed.can().undo()) return;
     ed.commands.undo();
     scheduleUndoRedoStateRefresh(ed);
-  }, [editorRef, scheduleUndoRedoStateRefresh]);
+  }, [editorRef, rejectWhenMutationBlocked, scheduleUndoRedoStateRefresh]);
 
   const handleRedo = useCallback(() => {
+    if (rejectWhenMutationBlocked()) return;
     const ed = editorRef.current;
     if (!ed || !ed.can().redo()) return;
     ed.commands.redo();
     scheduleUndoRedoStateRefresh(ed);
-  }, [editorRef, scheduleUndoRedoStateRefresh]);
+  }, [editorRef, rejectWhenMutationBlocked, scheduleUndoRedoStateRefresh]);
 
   return {
     handleInsertToEditor,

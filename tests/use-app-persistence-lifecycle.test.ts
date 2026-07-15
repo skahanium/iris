@@ -341,6 +341,11 @@ describe("useAppPersistenceLifecycle", () => {
     expect(fileWrite.mock.calls).toEqual([
       ["note.md", '---\ntitle: "Note"\n---\n\nFirst captured revision.'],
     ]);
+    expect(api.isPersistenceBarrierActive).toBe(true);
+
+    await act(async () => {
+      api.releasePersistenceBarrier();
+    });
     expect(api.isPersistenceBarrierActive).toBe(false);
   });
 
