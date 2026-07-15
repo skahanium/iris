@@ -78,7 +78,6 @@ function loadOutlineOpen(): boolean {
     return true;
   }
 }
-
 function saveOutlineOpen(open: boolean): void {
   try {
     localStorage.setItem("iris-outline-open", open ? "true" : "false");
@@ -410,6 +409,7 @@ function App() {
     },
     onPersistenceBarrierStart: () => {
       departureInteractionLockedRef.current = true;
+      editorRef.current?.setEditable(false);
       abortInlineAiForPersistenceRef.current();
     },
     onPersistenceBlocked: setPersistenceBlocker,

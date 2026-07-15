@@ -47,6 +47,7 @@ function Harness({
   tabDirty = true,
   tabs,
   onReady,
+  onPersistenceBarrierStart,
   persistBeforeLeaveRef,
   setFileLocked,
 }: {
@@ -57,6 +58,7 @@ function Harness({
   tabDirty?: boolean;
   tabs?: TabItem[];
   onReady?: (api: ReturnType<typeof useAppPersistenceLifecycle>) => void;
+  onPersistenceBarrierStart?: () => void;
   persistBeforeLeaveRef: React.MutableRefObject<PersistBeforeLeave>;
   setFileLocked?: (path: string, locked: boolean) => void;
 }) {
@@ -100,6 +102,7 @@ function Harness({
     markClean: vi.fn(),
     markdown,
     noteTitle: "Note",
+    onPersistenceBarrierStart,
     persistBeforeLeaveRef,
     schedulePathSync: vi.fn(),
     setAiStatus: vi.fn(),
@@ -347,6 +350,32 @@ describe("useAppPersistenceLifecycle", () => {
       api.releasePersistenceBarrier();
     });
     expect(api.isPersistenceBarrierActive).toBe(false);
+  });
+
+  it("invokes the departure interaction lock synchronously before the close barrier yields", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const setEditable = vi.fn();
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          onPersistenceBarrierStart: () => setEditable(false),
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    void api.flushAllOpenTabs();
+
+    expect(setEditable).toHaveBeenCalledWith(false);
   });
 
   it("stages an uncaptured dirty background tab before the global close barrier", async () => {
