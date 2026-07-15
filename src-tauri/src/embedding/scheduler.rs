@@ -255,10 +255,7 @@ impl EmbeddingScheduler {
                 runtime.restart_after_pause = false;
                 return Ok(());
             }
-            !paused
-                && !runtime.foreground_busy
-                && runtime.initial_index_complete
-                && !runtime.running
+            !runtime.foreground_busy && runtime.initial_index_complete && !runtime.running
         };
         if should_start_now {
             let _ = self.start_generation(EmbeddingStartSource::Manual)?;
