@@ -635,11 +635,9 @@ pub async fn folder_rename(
                 &state, &vault, rel_old, &rel_new, &old_stem, &new_stem,
             ) {
                 Ok(mut mods) => all_modified_sources.append(&mut mods),
-                Err(err) => tracing::warn!(
-                    old = %rel_old,
-                    new = %rel_new,
-                    error = %err,
-                    "folder_rename: skipped wikilink cascade for child"
+                Err(_) => tracing::warn!(
+                    result_code = "folder_rename_cascade_degraded",
+                    "folder rename continued after wikilink cascade degradation"
                 ),
             }
         }
@@ -886,15 +884,14 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
     let old_stem = title_from_path(&path);
     let new_stem = title_from_path(&new_path);
 
-    if let Err(err) = state
+    if state
         .db
         .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
+        .is_err()
     {
         tracing::warn!(
-            old = %path,
-            new = %new_path,
-            error = %err,
-            "file_rename: skipped stale index prune before move"
+            result_code = "file_rename_pre_move_index_degraded",
+            "file rename continued after derived index degradation before move"
         );
     }
 
@@ -902,12 +899,10 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
         &state, &vault, &path, &new_path, &old_stem, &new_stem,
     ) {
         Ok(paths) => paths,
-        Err(err) => {
+        Err(_) => {
             tracing::warn!(
-                old = %path,
-                new = %new_path,
-                error = %err,
-                "file_rename: skipped wikilink cascade before move"
+                result_code = "file_rename_cascade_degraded",
+                "file rename continued after wikilink cascade degradation"
             );
             Vec::new()
         }
@@ -918,33 +913,27 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
     state.storage.write_guard.mark(&new_path, &hash);
 
     let entry = match state.db.with_conn(|conn| {
-        if let Err(err) = rename_file_index(conn, &path, &new_path) {
+        if rename_file_index(conn, &path, &new_path).is_err() {
             tracing::warn!(
-                old = %path,
-                new = %new_path,
-                error = %err,
-                "file_rename: skipped stale or missing file index rename"
+                result_code = "file_rename_index_rename_degraded",
+                "file rename continued after derived index rename degradation"
             );
         }
         let entry =
             index_file_with_embed(conn, &vault, &new_abs, IndexEmbeddingMode::Queue(&state))?;
-        if let Err(err) = crate::indexer::scan::prune_stale_file_indexes(conn, &vault) {
+        if crate::indexer::scan::prune_stale_file_indexes(conn, &vault).is_err() {
             tracing::warn!(
-                old = %path,
-                new = %new_path,
-                error = %err,
-                "file_rename: skipped stale index prune after move"
+                result_code = "file_rename_post_move_index_degraded",
+                "file rename continued after derived index degradation after move"
             );
         }
         Ok(entry)
     }) {
         Ok(entry) => entry,
-        Err(err) => {
+        Err(_) => {
             tracing::warn!(
-                old = %path,
-                new = %new_path,
-                error = %err,
-                "file_rename: moved file but index refresh failed"
+                result_code = "file_rename_index_refresh_degraded",
+                "file rename completed with derived index degradation"
             );
             fallback_file_entry(&new_path, &new_abs)?
         }
@@ -993,9 +982,8 @@ fn cascade_rewrite_wikilinks_on_disk(
         let abs = resolve_vault_path(vault, src_path)?;
         if !abs.exists() {
             tracing::warn!(
-                source = %src_path,
-                target = %old_path,
-                "skipping stale wikilink source during file rename"
+                result_code = "file_rename_cascade_source_missing",
+                "file rename skipped a missing wikilink cascade source"
             );
             continue;
         }

@@ -10,7 +10,8 @@ use crate::crypto::classified_io;
 use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
 use crate::error::{AppError, AppResult};
 use crate::indexer::fts::delete_fts;
-use crate::indexer::scan::{index_file_with_embed, remove_file_index, IndexEmbeddingMode};
+use crate::indexer::scan::remove_file_index;
+use crate::storage::note_write::NoteWriteService;
 use crate::storage::paths::{
     is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
 };
@@ -70,6 +71,16 @@ fn normalize_classified_target(target_folder: &str) -> AppResult<String> {
     };
     if !is_classified_path(&rel) {
         return Err(AppError::msg("导入目标必须在 .classified/ 目录内"));
+    }
+    if Path::new(&rel).components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(AppError::msg("导入目标路径无效"));
     }
     Ok(rel)
 }
@@ -215,12 +226,12 @@ fn classified_files_inner(
 }
 
 fn classified_import_inner(
-    state: &AppState,
+    state: &Arc<AppState>,
     app: Option<&AppHandle>,
     path: &str,
     target_folder: &str,
 ) -> AppResult<()> {
-    let vk = require_unlocked()?;
+    let _vk = require_unlocked()?;
     if !is_user_note_path(path) || is_classified_path(path) {
         return Err(AppError::msg("只能导入用户笔记"));
     }
@@ -237,6 +248,7 @@ fn classified_import_inner(
     } else {
         format!("{}/{}", target_rel, file_name.to_string_lossy())
     };
+    fs::create_dir_all(vault.join(&target_rel))?;
     let dest = resolve_vault_path(&vault, &dest_rel)?;
 
     if dest.exists() {
@@ -246,17 +258,25 @@ fn classified_import_inner(
         )));
     }
 
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
     let content = read_file_lossy(&src)?;
-    let key = vk.key()?;
-    let encrypted = classified_io::encrypt_cef(content.as_bytes(), key)?;
-    fs::write(&dest, &encrypted)?;
+    NoteWriteService::create(
+        state,
+        &dest_rel,
+        &content,
+        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
+    )?;
     fs::remove_file(&src)?;
 
-    state.db.with_conn(|conn| remove_file_index(conn, path))?;
+    if state
+        .db
+        .with_conn(|conn| remove_file_index(conn, path))
+        .is_err()
+    {
+        tracing::warn!(
+            result_code = "classified_import_index_degraded",
+            "classified import completed with derived index degradation"
+        );
+    }
 
     if let Some(app) = app {
         let _ = app.emit("classified:file_taken", serde_json::json!({ "path": path }));
@@ -326,14 +346,24 @@ fn classified_export_inner(
             .map_err(|_| AppError::msg("File is not valid UTF-8"))?
     };
 
-    fs::write(&dest, &content)?;
+    NoteWriteService::write(
+        state,
+        &dest_rel,
+        &content,
+        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
+    )?;
     fs::remove_file(&src)?;
 
-    state.db.with_conn(|conn| {
-        remove_file_index(conn, path)?;
-        remove_file_index(conn, &dest_rel)?;
-        index_file_with_embed(conn, &vault, &dest, IndexEmbeddingMode::Queue(state))
-    })?;
+    if state
+        .db
+        .with_conn(|conn| remove_file_index(conn, path))
+        .is_err()
+    {
+        tracing::warn!(
+            result_code = "classified_export_index_degraded",
+            "classified export completed with derived index degradation"
+        );
+    }
 
     Ok(())
 }
@@ -731,6 +761,71 @@ mod tests {
             })
             .unwrap();
         assert_eq!(indexed, 1);
+    }
+
+    #[test]
+    fn classified_import_keeps_markdown_move_successful_when_index_cleanup_fails() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        classified_setup_inner(&state, "test-pass").unwrap();
+        write_note(&vault, "notes/source.md", "# Source\n\nContent.");
+        state
+            .db
+            .with_conn(|conn| {
+                index_file(conn, &vault, &vault.join("notes/source.md"))?;
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_source_index_cleanup
+                     BEFORE DELETE ON files
+                     WHEN OLD.path = 'notes/source.md'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated index cleanup failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        classified_import_inner(&state, None, "notes/source.md", ".classified").unwrap();
+
+        assert!(!vault.join("notes/source.md").exists());
+        assert!(classified_io::has_csef_magic(
+            &fs::read(vault.join(".classified/source.md")).unwrap()
+        ));
+    }
+
+    #[test]
+    fn classified_export_keeps_markdown_move_successful_when_index_refresh_fails() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        classified_setup_inner(&state, "test-pass").unwrap();
+        write_note(&vault, "notes/source.md", "# Source\n\nContent.");
+        classified_import_inner(&state, None, "notes/source.md", ".classified").unwrap();
+        write_note(&vault, "exported/source.md", "# Old");
+        state
+            .db
+            .with_conn(|conn| {
+                index_file(conn, &vault, &vault.join("exported/source.md"))?;
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_export_index_refresh
+                     BEFORE INSERT ON files
+                     WHEN NEW.path = 'exported/source.md'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated index refresh failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        classified_export_inner(&state, ".classified/source.md", "exported", true).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(vault.join("exported/source.md")).unwrap(),
+            "# Source\n\nContent."
+        );
+        assert!(!vault.join(".classified/source.md").exists());
     }
 
     #[test]

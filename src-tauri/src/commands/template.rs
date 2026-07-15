@@ -6,7 +6,9 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::indexer::scan::{index_file_with_embed, IndexEmbeddingMode};
+use crate::indexer::scan::FileEntry;
+use crate::storage::note_write::NoteWriteService;
+use crate::storage::paths::is_user_note_path;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TemplateInfo {
@@ -88,10 +90,21 @@ pub fn template_create(
     state: State<'_, Arc<AppState>>,
     path: String,
     template_name: String,
-) -> AppResult<crate::indexer::scan::FileEntry> {
+) -> AppResult<FileEntry> {
+    template_create_inner(state.inner(), &path, &template_name)
+}
+
+fn template_create_inner(
+    state: &Arc<AppState>,
+    path: &str,
+    template_name: &str,
+) -> AppResult<FileEntry> {
     let vault = state.vault_path()?;
+    if !is_user_note_path(path) {
+        return Err(AppError::msg("只能从模板创建用户笔记"));
+    }
     ensure_templates(&vault)?;
-    let safe_name = validate_template_name(&template_name)?;
+    let safe_name = validate_template_name(template_name)?;
     let tmpl_path = templates_dir(&vault).join(&safe_name);
     let content = if tmpl_path.exists() {
         fs::read_to_string(&tmpl_path)?
@@ -99,17 +112,13 @@ pub fn template_create(
         format!("# {}\n\n", path.trim_end_matches(".md"))
     };
 
-    let abs = crate::storage::paths::resolve_vault_path(&vault, &path)?;
-    if abs.exists() {
-        return Err(crate::error::AppError::msg("File already exists"));
-    }
-    if let Some(parent) = abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&abs, &content)?;
-    state.db.with_conn(|conn| {
-        index_file_with_embed(conn, &vault, &abs, IndexEmbeddingMode::Queue(&state))
-    })
+    Ok(NoteWriteService::create(
+        state,
+        path,
+        &content,
+        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
+    )?
+    .entry)
 }
 
 /// Read template content by name.
@@ -152,4 +161,56 @@ pub fn template_delete(state: State<'_, Arc<AppState>>, name: String) -> AppResu
     }
     fs::remove_file(&tmpl_path)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::indexer::scan::{index_file_with_embed, IndexEmbeddingMode};
+    use tempfile::tempdir;
+
+    #[test]
+    fn template_create_preserves_markdown_when_derived_index_fails() {
+        let directory = tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let state = AppState::new(directory.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        fs::create_dir_all(templates_dir(&vault)).unwrap();
+        fs::write(
+            templates_dir(&vault).join("failure.md"),
+            "---\ntitle: New\n---\n\nBody",
+        )
+        .unwrap();
+        fs::write(vault.join("note.md"), "---\ntitle: Old\n---\n\nOld").unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("note.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_template_index_refresh
+                     BEFORE UPDATE OF title ON files
+                     WHEN NEW.path = 'note.md'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated index failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        fs::remove_file(vault.join("note.md")).unwrap();
+
+        let result = template_create_inner(&state, "note.md", "failure").unwrap();
+
+        assert_eq!(result.path, "note.md");
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "---\ntitle: New\n---\n\nBody"
+        );
+    }
 }

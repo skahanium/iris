@@ -39,9 +39,32 @@ impl NoteWriteService {
         content: &str,
         embedding_mode: IndexEmbeddingMode<'_>,
     ) -> AppResult<FileWriteResult> {
+        Self::write_inner(state, path, content, embedding_mode, false)
+    }
+
+    /// Atomically create a note body without replacing an existing Markdown file.
+    pub(crate) fn create(
+        state: &AppState,
+        path: &str,
+        content: &str,
+        embedding_mode: IndexEmbeddingMode<'_>,
+    ) -> AppResult<FileWriteResult> {
+        Self::write_inner(state, path, content, embedding_mode, true)
+    }
+
+    fn write_inner(
+        state: &AppState,
+        path: &str,
+        content: &str,
+        embedding_mode: IndexEmbeddingMode<'_>,
+        reject_existing: bool,
+    ) -> AppResult<FileWriteResult> {
         let vault = state.vault_path()?;
         ensure_note_parent(&vault, path)?;
         let absolute = resolve_vault_path(&vault, path)?;
+        if reject_existing && absolute.exists() {
+            return Err(AppError::msg("File already exists"));
+        }
         let payload = encode_payload(path, content)?;
         atomic_write(&absolute, &payload)?;
 
@@ -65,7 +88,15 @@ impl NoteWriteService {
                 index_status: FileWriteIndexStatus::Synced,
             }),
             Err(_) => {
-                schedule_index_repair(Arc::clone(&state.db), vault, path.to_string());
+                schedule_index_repair(
+                    Arc::clone(&state.db),
+                    vault,
+                    path.to_string(),
+                    match embedding_mode {
+                        IndexEmbeddingMode::Queue(state) => Some(Arc::clone(state)),
+                        IndexEmbeddingMode::Skip | IndexEmbeddingMode::Sync => None,
+                    },
+                );
                 tracing::warn!(
                     result_code = "note_index_degraded",
                     "note markdown persisted while derived index refresh failed"
@@ -134,6 +165,7 @@ fn schedule_index_repair(
     db: Arc<crate::storage::db::Database>,
     vault: std::path::PathBuf,
     path: String,
+    queue_state: Option<Arc<AppState>>,
 ) {
     #[cfg(not(test))]
     tauri::async_runtime::spawn_blocking(move || {
@@ -145,7 +177,10 @@ fn schedule_index_repair(
                     conn,
                     &vault,
                     &absolute,
-                    IndexEmbeddingMode::Skip,
+                    queue_state
+                        .as_ref()
+                        .map(IndexEmbeddingMode::Queue)
+                        .unwrap_or(IndexEmbeddingMode::Skip),
                 )
             })?;
             Ok(())
@@ -160,6 +195,6 @@ fn schedule_index_repair(
 
     #[cfg(test)]
     {
-        let _ = (db, vault, path);
+        let _ = (db, vault, path, queue_state);
     }
 }
