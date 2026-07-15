@@ -14,10 +14,10 @@ Use this checklist after automated tests pass.
 - Quick Open: open Quick Open, type a query, wait for visible results, open the first result, and confirm no blank workspace frame appears.
 - File tree: expand a folder, hover a note, click it, and confirm the same loading surface behavior as Quick Open.
 - Hot tab: open two notes, switch between their tabs ten times, and confirm there is no visible loading surface and no repeated `fileRead` trace for the ready tab.
-- Dirty tab: edit note A, switch to note B, switch back to note A, and confirm unsaved text remains present without a visual stall.
+- Dirty tab: edit note A, switch to note B, switch back to note A, and confirm the latest complete Markdown snapshot remains present without a visual stall; returning to A must not silently mark it saved before a disk receipt.
 - Reopen existing document: open a note that already has a tab from Quick Open and confirm focus moves to the existing tab instead of cold-loading a duplicate.
 - Startup warmup: restart Iris, open a recently used note from Quick Open, and confirm the runtime trace reports a warm or cache-hit path when possible.
-- Background index contention: trigger vault indexing or reindexing, immediately open a note, and confirm visible open feedback appears quickly while index progress may temporarily slow.
+- Background index contention: trigger the background embedding rebuild, immediately open and edit a note, and confirm visible open feedback and ordinary Markdown saves complete quickly. The rebuild must pause at a batch boundary for foreground activity rather than holding a long-lived database connection or blocking the editor.
 
 ## Pass Criteria
 

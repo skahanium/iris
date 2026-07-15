@@ -13,9 +13,9 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 | 分组              | 主要命令前缀/示例                                                                                                                       | 责任                                                                 |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | 设置与凭据        | `settings_*`、`credential_*`                                                                                                            | 非敏感设置与本地加密凭据状态                                         |
-| Vault 与文件      | `vault_*`、`file_*`、`folder_*`、`media_*`                                                                                              | Markdown、资源、目录、锁与索引扫描                                   |
+| Vault 与文件      | `vault_*`、`file_*`、`folder_*`、`media_*`                                                                                              | Markdown、资源、目录、锁与索引扫描；`file_write` 返回落盘回执        |
 | 版本与回收站      | `version_*`、`recycle_*`                                                                                                                | 快照、恢复、清理与回收站                                             |
-| 搜索与知识        | `search_*`（含 `search_embedding_status`）、`knowledge_reindex`、`tag_list`、`graph_data`、`corpus_*`                                   | FTS、语义搜索、知识结构；`EmbeddingIndexStatus` 描述嵌入索引状态     |
+| 搜索与知识        | `search_*`、`embedding_scheduler_*`、`knowledge_reindex`、`tag_list`、`graph_data`、`corpus_*`                                          | FTS、语义搜索、知识结构；后台嵌入调度器状态、启动与暂停控制          |
 | LLM 配置          | `llm_*`、`connectivity_status`                                                                                                          | provider、模型、路由与连通性；不执行助手请求                         |
 | Agent Run         | `assistant_run_start`、`assistant_run_control`、`assistant_run_get`                                                                     | 唯一的执行、取消、确认、恢复与断流回放入口                           |
 | Agent 会话        | `assistant_session_list`、`assistant_session_load`、`assistant_session_rename`、`assistant_session_delete`、`assistant_session_retract` | 仅通过 `AssistantSessionRef` 访问、与当前文档解绑的域隔离历史        |
@@ -34,6 +34,10 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 ## 写入与安全
 
 涉及笔记正文的变更必须先生成可审计的变更计划与预览，并在应用前校验目标、计划 hash 与最新内容 hash。未经用户确认，Iris 不得修改用户 `.md` 文件。
+
+`file_write` 的成功语义仅是“指定 Markdown 已耐久原子落盘”。其 `FileWriteResult` 包含 `entry`、`contentHash` 与 `indexStatus`：`synced` 表示派生索引同步完成，`degraded` 表示 Markdown 已保存、索引修复已排队。调用方不得因 `degraded` 回滚、删除或拒绝该 Markdown，也不得把它显示为保存失败。所有正文写入入口（普通保存、创建、AI 应用、版本恢复、模板和链接级联）必须复用同一后端写入服务。
+
+嵌入重建没有同步阻塞接口。`embedding_scheduler_status` 返回 `EmbeddingIndexStatus`，`embedding_scheduler_start` 立即返回 `started` 或 `already_running`，`embedding_scheduler_set_paused` 在批次边界暂停/恢复，`embedding_scheduler_set_foreground_busy` 只报告前台活动。前端持续消费完整状态事件；运行、暂停、失败、进度和自动尝试标记均以服务端状态为准，不能由组件自行推断。旧 `search_embedding_status` 与同步 `search_reindex` 已移除，不得恢复兼容入口。
 
 `credential_set`、`credential_has`、`credential_status`、`credential_delete` 只处理服务名和状态；任何返回值、日志、诊断或错误均不得含有秘密值。
 
