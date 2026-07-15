@@ -376,11 +376,10 @@ impl AppState {
         if !path.is_dir() {
             return Err(AppError::msg("Vault must be a directory"));
         }
-        let canonical = path.canonicalize().unwrap_or_else(|e| {
+        let canonical = path.canonicalize().unwrap_or_else(|_| {
             tracing::warn!(
-                path = %path.display(),
-                error = %e,
-                "vault canonicalize failed; using path as selected"
+                result_code = "vault_canonicalize_failed",
+                "vault canonicalize failed"
             );
             path
         });
@@ -396,7 +395,9 @@ impl AppState {
                 [json],
             )?;
             Ok(())
-        })
+        })?;
+        self.embedding_scheduler().reset_for_vault();
+        Ok(())
     }
 
     pub fn vault_path(&self) -> AppResult<PathBuf> {

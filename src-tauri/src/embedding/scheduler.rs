@@ -66,6 +66,7 @@ struct RuntimeState {
     foreground_busy: bool,
     initial_index_complete: bool,
     activity_epoch: u64,
+    vault_epoch: u64,
 }
 
 /// The single owner for generation work and incremental vector repairs.
@@ -97,6 +98,16 @@ impl EmbeddingScheduler {
     pub fn attach_app_handle(&self, app_handle: AppHandle) {
         if let Ok(mut handle) = self.app_handle.lock() {
             *handle = Some(app_handle);
+        }
+    }
+
+    /// Invalidate a worker snapshot when the active vault changes.
+    pub fn reset_for_vault(&self) {
+        if let Ok(mut runtime) = self.runtime.lock() {
+            runtime.vault_epoch = runtime.vault_epoch.wrapping_add(1);
+            runtime.initial_index_complete = false;
+            runtime.foreground_busy = true;
+            runtime.activity_epoch = runtime.activity_epoch.wrapping_add(1);
         }
     }
 
@@ -138,7 +149,16 @@ impl EmbeddingScheduler {
             }
             runtime.running = true;
         }
-        let transition = self.db.with_conn(|conn| transition_running(conn, source));
+        let (transition, vault_epoch) = {
+            let runtime = self
+                .runtime
+                .lock()
+                .map_err(|_| AppError::msg("Embedding scheduler lock poisoned"))?;
+            (
+                self.db.with_conn(|conn| transition_running(conn, source)),
+                runtime.vault_epoch,
+            )
+        };
         if let Err(error) = transition {
             if let Ok(mut runtime) = self.runtime.lock() {
                 runtime.running = false;
@@ -154,7 +174,7 @@ impl EmbeddingScheduler {
         let scheduler = Arc::clone(self);
         thread::Builder::new()
             .name("iris-embedding-scheduler".into())
-            .spawn(move || scheduler.run_generation())
+            .spawn(move || scheduler.run_generation(vault_epoch))
             .map_err(|error| {
                 AppError::msg(format!("Failed to start embedding scheduler: {error}"))
             })?;
@@ -225,7 +245,7 @@ impl EmbeddingScheduler {
             });
     }
 
-    fn run_generation(self: Arc<Self>) {
+    fn run_generation(self: Arc<Self>, vault_epoch: u64) {
         let result = self.batcher.ensure_available();
         if let Err(_) = result {
             let _ = self.db.with_conn(|conn| {
@@ -235,6 +255,10 @@ impl EmbeddingScheduler {
             return;
         }
         loop {
+            if !self.is_current_vault(vault_epoch) {
+                self.finish_worker();
+                return;
+            }
             if self.should_pause() {
                 let _ = self.db.with_conn(set_phase_paused);
                 self.finish_worker();
@@ -305,6 +329,12 @@ impl EmbeddingScheduler {
             .lock()
             .map(|runtime| runtime.manual_paused || runtime.foreground_busy)
             .unwrap_or(true)
+    }
+    fn is_current_vault(&self, vault_epoch: u64) -> bool {
+        self.runtime
+            .lock()
+            .map(|runtime| runtime.vault_epoch == vault_epoch)
+            .unwrap_or(false)
     }
     fn finish_worker(&self) {
         if let Ok(mut runtime) = self.runtime.lock() {
