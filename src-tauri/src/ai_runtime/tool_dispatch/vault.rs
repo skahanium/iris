@@ -6,7 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use crate::app::AppState;
 use crate::commands::file::is_vault_asset_path;
 use crate::error::{AppError, AppResult};
-use crate::indexer::scan::{content_hash, index_file_from_content, index_file_with_embed};
+use crate::indexer::scan::index_file_with_embed;
+use crate::storage::note_write::NoteWriteService;
 use crate::storage::paths::{
     is_user_note_path, read_file_lossy, resolve_vault_path, validate_user_note_relative_path,
 };
@@ -50,20 +51,8 @@ pub(super) fn vault_create_note_tool(
     if let Some(parent) = abs.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    crate::storage::atomic_write::atomic_write(&abs, content.as_bytes())?;
-
-    let hash = content_hash(content);
-    state.storage.write_guard.mark(target_path, &hash);
-    let entry = state.db.with_conn(|conn| {
-        index_file_from_content(
-            conn,
-            &vault,
-            &abs,
-            content,
-            &hash,
-            ctx.index_embedding_mode(),
-        )
-    })?;
+    let entry =
+        NoteWriteService::write(state, target_path, content, ctx.index_embedding_mode())?.entry;
     Ok(serde_json::json!({
         "type": "vault_create_note",
         "path": entry.path,
@@ -301,7 +290,12 @@ fn rewrite_source_wikilinks(
         &content,
         crate::version::SnapshotParams::manual(),
     )?;
-    crate::storage::atomic_write::atomic_write(&abs, updated.as_bytes())?;
+    NoteWriteService::write(
+        state,
+        source_path,
+        &updated,
+        crate::indexer::scan::IndexEmbeddingMode::Skip,
+    )?;
     Ok(true)
 }
 

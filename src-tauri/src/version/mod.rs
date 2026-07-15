@@ -12,8 +12,8 @@ use serde::Serialize;
 use tracing::info;
 
 use crate::app::AppState;
-use crate::crypto::{classified_io, vault_key::VAULT_KEY};
 use crate::error::{AppError, AppResult};
+use crate::storage::note_write::NoteWriteService;
 use crate::storage::paths::is_classified_note_path;
 
 pub use kind::VersionKind;
@@ -194,20 +194,6 @@ fn ensure_snapshot_file_id(
         purge_classified_derived_rows(conn, file_id, path)?;
         Ok(file_id)
     })
-}
-
-fn encode_restore_payload(path: &str, content: &str) -> AppResult<Vec<u8>> {
-    if !is_classified_note_path(path) {
-        return Ok(content.as_bytes().to_vec());
-    }
-    let key = VAULT_KEY
-        .get()
-        .ok_or_else(|| AppError::msg("保险库未初始化"))?
-        .read()
-        .map_err(|e| AppError::msg(format!("VAULT_KEY lock error: {e}")))?
-        .key()
-        .copied()?;
-    classified_io::encrypt_cef(content.as_bytes(), &key)
 }
 
 fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {
@@ -549,23 +535,16 @@ pub fn version_restore(
 
     let vault = state.vault_path()?;
     let content = read_version_content(state, &vault, &storage_path)?;
-    let abs_note = crate::storage::paths::resolve_vault_path(&vault, &path)?;
-
-    let payload = encode_restore_payload(&path, &content)?;
-    crate::storage::atomic_write::atomic_write(&abs_note, &payload)?;
+    let _receipt = NoteWriteService::write(
+        state,
+        &path,
+        &content,
+        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
+    )?;
 
     if is_classified_note_path(&path) {
         let hash = crate::cas::hash::content_hash_str(&content);
         let _ = ensure_snapshot_file_id(state, &path, &hash, &content)?;
-    } else {
-        state.db.with_conn(|conn| {
-            crate::indexer::scan::index_file_with_embed(
-                conn,
-                &vault,
-                &abs_note,
-                crate::indexer::scan::IndexEmbeddingMode::Queue(state),
-            )
-        })?;
     }
 
     Ok(content)

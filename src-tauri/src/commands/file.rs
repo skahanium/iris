@@ -11,8 +11,8 @@ use crate::cas::hash::content_hash as content_hash_bytes;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    collect_vault_folders, content_hash, index_file_from_content, index_file_with_embed,
-    index_vault_incremental, rename_file_index, FileEntry, IndexEmbeddingMode,
+    collect_vault_folders, index_file_with_embed, index_vault_incremental, rename_file_index,
+    FileEntry, IndexEmbeddingMode,
 };
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
@@ -20,30 +20,14 @@ use base64::Engine;
 
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
-use crate::storage::paths::{
-    has_reserved_path_root, is_accessible_note_path, is_classified_note_path, is_user_note_path,
-    read_file_lossy, resolve_vault_path,
-};
 use crate::storage::atomic_write::atomic_write;
+use crate::storage::note_write::{FileWriteResult, NoteWriteService};
+use crate::storage::paths::{
+    is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
+    resolve_vault_path,
+};
 
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
-
-/// Whether the derived SQLite indexes were refreshed with the authoritative write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileWriteIndexStatus {
-    Synced,
-    Degraded,
-}
-
-/// Receipt separating authoritative Markdown persistence from derived indexing.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileWriteResult {
-    pub entry: FileEntry,
-    pub content_hash: String,
-    pub index_status: FileWriteIndexStatus,
-}
 
 #[cfg(test)]
 fn vault_runtime_cleanup_sql() -> &'static str {
@@ -116,23 +100,6 @@ fn decode_file_content(raw_bytes: &[u8]) -> AppResult<String> {
         std::str::from_utf8(raw_bytes)
             .map(str::to_owned)
             .map_err(|_| AppError::msg("File is not valid UTF-8"))
-    }
-}
-
-fn encode_file_payload(path: &str, content: &str) -> AppResult<Vec<u8>> {
-    if is_classified_note_path(path) {
-        let vk_guard = VAULT_KEY
-            .get()
-            .ok_or_else(|| AppError::msg("保险库未初始化"))?;
-        let vk = vk_guard
-            .read()
-            .map_err(|e| AppError::msg(format!("lock error: {e}")))?;
-        let key = vk.key()?;
-        classified_io::encrypt_cef(content.as_bytes(), key)
-    } else if has_reserved_path_root(path) {
-        Err(AppError::msg("Invalid classified path casing"))
-    } else {
-        Ok(content.as_bytes().to_vec())
     }
 }
 
@@ -541,55 +508,7 @@ fn file_write_inner(
     path: String,
     content: String,
 ) -> AppResult<FileWriteResult> {
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
-
-    let data = encode_file_payload(&path, &content)?;
-    atomic_write(&abs, &data)?;
-
-    let hash = content_hash(&content);
-    state.storage.write_guard.mark(&path, &hash);
-
-    let (entry, index_status) = if is_classified_note_path(&path) {
-        (
-            FileEntry {
-                id: 0,
-                path: path.clone(),
-                title: title_from_path(&path),
-                updated_at: chrono::Utc::now().to_rfc3339(),
-                word_count: 0,
-            },
-            FileWriteIndexStatus::Synced,
-        )
-    } else {
-        match state.db.with_conn(|conn| {
-            index_file_from_content(
-                conn,
-                &vault,
-                &abs,
-                &content,
-                &hash,
-                IndexEmbeddingMode::Queue(&state),
-            )
-        }) {
-            Ok(entry) => (entry, FileWriteIndexStatus::Synced),
-            Err(error) => {
-                tracing::warn!(
-                    error = %error,
-                    "file_write: markdown persisted but derived index refresh failed"
-                );
-                (
-                    fallback_file_entry(&path, &abs)?,
-                    FileWriteIndexStatus::Degraded,
-                )
-            }
-        }
-    };
-    Ok(FileWriteResult {
-        entry,
-        content_hash: hash,
-        index_status,
-    })
+    NoteWriteService::write(&state, &path, &content, IndexEmbeddingMode::Queue(&state))
 }
 
 /// Write a binary asset under `assets/` (editor image drop / paste).
@@ -1124,7 +1043,7 @@ fn cascade_rewrite_wikilinks_on_disk(
 
         if changed {
             let updated = lines.join("\n");
-            atomic_write(&abs, updated.as_bytes())?;
+            NoteWriteService::write(state, src_path, &updated, IndexEmbeddingMode::Queue(state))?;
             modified.push(src_path.clone());
         }
     }
@@ -1165,23 +1084,9 @@ pub async fn file_create(
             .map(str::to_string)
             .unwrap_or_else(|| title_from_path(&path));
         let body = content.unwrap_or_else(|| default_create_content(&document_title));
-        let data = encode_file_payload(&path, &body)?;
-        atomic_write(&abs, &data)?;
-        let hash = content_hash(&body);
-        state.storage.write_guard.mark(&path, &hash);
-        if is_classified_note_path(&path) {
-            Ok(FileEntry {
-                id: 0,
-                path: path.clone(),
-                title: document_title,
-                updated_at: chrono::Utc::now().to_rfc3339(),
-                word_count: 0,
-            })
-        } else {
-            state.db.with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &abs, IndexEmbeddingMode::Queue(&state))
-            })
-        }
+        let receipt =
+            NoteWriteService::write(&state, &path, &body, IndexEmbeddingMode::Queue(&state))?;
+        Ok(receipt.entry)
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
@@ -1375,10 +1280,12 @@ mod file_io_pipeline_tests {
     use super::*;
     use crate::crypto::classified_io;
     use crate::crypto::vault_key::{VaultKey, VAULT_KEY, VAULT_KEY_TEST_LOCK};
+    use crate::indexer::scan::content_hash;
     use crate::storage::db::Database;
     use crate::storage::migrate::migrate_up;
+    use crate::storage::note_write::FileWriteIndexStatus;
     use std::fs;
-    use std::sync::OnceLock;
+    use std::sync::{Arc, OnceLock};
     use tempfile::tempdir;
 
     static INIT_KEY: OnceLock<()> = OnceLock::new();
@@ -1600,21 +1507,37 @@ Body",
     }
 
     #[test]
-    fn encode_file_payload_encrypts_classified_path() {
+    fn note_write_service_encrypts_classified_path() {
         let _guard = VAULT_KEY_TEST_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
         fs::create_dir_all(&vault).unwrap();
         unlock_test_vault(&vault);
 
-        let data = encode_file_payload(".classified/secret.md", "# Hi").unwrap();
+        let state = Arc::new(AppState::new(dir.path().join("data")).unwrap());
+        state.set_vault(vault.clone()).unwrap();
+        NoteWriteService::write(
+            &state,
+            ".classified/secret.md",
+            "# Hi",
+            IndexEmbeddingMode::Skip,
+        )
+        .unwrap();
+        let data = fs::read(vault.join(".classified/secret.md")).unwrap();
         assert!(classified_io::has_csef_magic(&data));
 
-        let plain = encode_file_payload("notes/open.md", "# Hi").unwrap();
+        NoteWriteService::write(&state, "notes/open.md", "# Hi", IndexEmbeddingMode::Skip).unwrap();
+        let plain = fs::read(vault.join("notes/open.md")).unwrap();
         assert!(!classified_io::has_csef_magic(&plain));
         assert_eq!(plain, b"# Hi");
 
-        let err = encode_file_payload(".CLASSIFIED/secret.md", "# Hi").unwrap_err();
+        let err = NoteWriteService::write(
+            &state,
+            ".CLASSIFIED/secret.md",
+            "# Hi",
+            IndexEmbeddingMode::Skip,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("classified"));
     }
 
@@ -1689,12 +1612,7 @@ Body",
             .unwrap();
         let updated = "---\ntitle: New\n---\n\nBody survives index failure";
 
-        let result = file_write_inner(
-            state,
-            "note.md".to_string(),
-            updated.to_string(),
-        )
-        .unwrap();
+        let result = file_write_inner(state, "note.md".to_string(), updated.to_string()).unwrap();
 
         assert_eq!(result.index_status, FileWriteIndexStatus::Degraded);
         assert_eq!(fs::read_to_string(vault.join("note.md")).unwrap(), updated);

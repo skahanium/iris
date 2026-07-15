@@ -105,4 +105,20 @@ mod tests {
         assert!(body == "first" || body == "second");
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
+
+    #[test]
+    fn failed_replacement_preserves_existing_directory_contents_and_cleans_temporary_file() {
+        let directory = tempdir().expect("temporary directory");
+        let target = directory.path().join("note.md");
+        fs::create_dir(&target).expect("seed target directory");
+        fs::write(target.join("old.md"), "old body").expect("seed old content");
+
+        assert!(atomic_write(&target, b"new body").is_err());
+
+        assert_eq!(
+            fs::read_to_string(target.join("old.md")).expect("preserved old content"),
+            "old body"
+        );
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 }

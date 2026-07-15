@@ -1,24 +1,13 @@
 use crate::ai_runtime::{PatchApplyResult, PatchProposal, RiskLevel, SourceSpan};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::indexer::scan::FileEntry;
+use crate::storage::note_write::{FileWriteIndexStatus, NoteWriteService};
 use crate::storage::paths::{is_user_note_path, resolve_vault_path};
 
 use super::ToolDispatchContext;
 
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
 const INDEX_REFRESH_WARNING: &str = "文档已写入，但索引刷新失败。可继续编辑，稍后可重新索引。";
-
-fn fallback_entry_after_write(
-    state: &AppState,
-    vault: &std::path::Path,
-    abs: &std::path::Path,
-    content: &str,
-) -> AppResult<FileEntry> {
-    state.db.with_conn(|conn| {
-        crate::indexer::scan::peek_file_entry_after_write(conn, vault, abs, content)
-    })
-}
 
 pub(super) fn markdown_write_patch_apply(
     state: &AppState,
@@ -134,48 +123,41 @@ pub(super) fn markdown_write_patch_apply(
             applied.len()
         )));
     }
-    let current_hash = crate::indexer::scan::content_hash(&current);
-    state.db.with_conn(|conn| {
-        crate::indexer::scan::index_file_from_content(
-            conn,
-            &vault,
-            &abs,
-            &current,
-            &current_hash,
-            ctx.index_embedding_mode(),
-        )
+    let is_indexed = state.db.with_read_conn(|conn| {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM files WHERE path = ?1",
+            [&target_path],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     })?;
+    if !is_indexed {
+        let current_hash = crate::indexer::scan::content_hash(&current);
+        state.db.with_conn(|conn| {
+            crate::indexer::scan::index_file_from_content(
+                conn,
+                &vault,
+                &abs,
+                &current,
+                &current_hash,
+                ctx.index_embedding_mode(),
+            )
+        })?;
+    }
     crate::version::create_snapshot(
         state,
         &target_path,
         &current,
         crate::version::SnapshotParams::manual(),
     )?;
-    crate::storage::atomic_write::atomic_write(&abs, applied.as_bytes())?;
-    let hash = crate::cas::hash::content_hash_str(&applied);
-    state.storage.write_guard.mark(&target_path, &hash);
+    let receipt =
+        NoteWriteService::write(state, &target_path, &applied, ctx.index_embedding_mode())?;
+    let hash = receipt.content_hash;
     let mut warnings = Vec::new();
-    let entry = match state.db.with_conn(|conn| {
-        crate::indexer::scan::index_file_from_content(
-            conn,
-            &vault,
-            &abs,
-            &applied,
-            &hash,
-            ctx.index_embedding_mode(),
-        )
-    }) {
-        Ok(entry) => entry,
-        Err(error) => {
-            tracing::warn!(
-                target_path = %target_path,
-                error = %error,
-                "markdown write succeeded but index refresh failed"
-            );
-            warnings.push(INDEX_REFRESH_WARNING.into());
-            fallback_entry_after_write(state, &vault, &abs, &applied)?
-        }
-    };
+    if receipt.index_status == FileWriteIndexStatus::Degraded {
+        warnings.push(INDEX_REFRESH_WARNING.into());
+    }
+    let entry = receipt.entry;
     warnings.insert(
         0,
         format!("已写入《{}》，共 {} 字", entry.title, entry.word_count),
