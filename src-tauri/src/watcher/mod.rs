@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use notify::{EventKind, RecursiveMode};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
+use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
 use tauri::{AppHandle, Emitter};
 use tracing::info;
 
@@ -31,7 +31,7 @@ fn event_relative_path(vault: &std::path::Path, path: &std::path::Path) -> AppRe
 
 /// 持有 debouncer；Drop 时自动取消目录监听。切换 vault 时需 drop 后重建。
 pub struct FileWatcher {
-    _debouncer: Debouncer<notify::RecommendedWatcher, FileIdMap>,
+    _debouncer: Debouncer<notify::RecommendedWatcher, RecommendedCache>,
 }
 
 fn event_kind_label(kind: &EventKind) -> &'static str {
