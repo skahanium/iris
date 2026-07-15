@@ -11,8 +11,8 @@ use crate::cas::hash::content_hash as content_hash_bytes;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    collect_vault_folders, index_file_with_embed, index_vault_incremental, rename_file_index,
-    FileEntry, IndexEmbeddingMode,
+    collect_vault_folders, content_hash, index_file_with_embed, index_vault_incremental,
+    rename_file_index, FileEntry, IndexEmbeddingMode,
 };
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
@@ -21,7 +21,7 @@ use base64::Engine;
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
 use crate::storage::atomic_write::atomic_write;
-use crate::storage::note_write::{FileWriteResult, NoteWriteService};
+use crate::storage::note_write::{FileWriteIndexStatus, FileWriteResult, NoteWriteService};
 use crate::storage::paths::{
     is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
     resolve_vault_path,
@@ -596,93 +596,111 @@ pub async fn folder_rename(
     state: State<'_, Arc<AppState>>,
     old_path: String,
     new_path: String,
-) -> AppResult<()> {
+) -> AppResult<FileWriteIndexStatus> {
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || folder_rename_inner(&state, old_path, new_path))
+        .await
+        .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+fn folder_rename_inner(
+    state: &Arc<AppState>,
+    old_path: String,
+    new_path: String,
+) -> AppResult<FileWriteIndexStatus> {
     validate_folder_path(&old_path)?;
     validate_folder_path(&new_path)?;
-    let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let vault = state.vault_path()?;
-        let abs = resolve_vault_path(&vault, &old_path)?;
-        let new_abs = resolve_vault_path(&vault, &new_path)?;
-        if !abs.is_dir() {
-            return Err(AppError::msg("Source path is not a folder"));
-        }
-        if new_abs.exists() {
-            return Err(AppError::msg("Target path already exists"));
-        }
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &old_path)?;
+    let new_abs = resolve_vault_path(&vault, &new_path)?;
+    if !abs.is_dir() {
+        return Err(AppError::msg("Source path is not a folder"));
+    }
+    if new_abs.exists() {
+        return Err(AppError::msg("Target path already exists"));
+    }
 
-        let affected_files: Vec<String> = state.db.with_read_conn(|conn| {
-            let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ?1")?;
-            let prefix = if old_path.ends_with('/') || old_path.is_empty() {
-                old_path.to_string()
-            } else {
-                format!("{}/", old_path)
-            };
-            let rows = stmt.query_map([format!("{}%", prefix)], |row| row.get::<_, String>(0))?;
-            Ok(rows.flatten().collect())
-        })?;
+    let affected_files: Vec<String> = state.db.with_read_conn(|conn| {
+        let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ?1")?;
+        let prefix = if old_path.ends_with('/') || old_path.is_empty() {
+            old_path.to_string()
+        } else {
+            format!("{old_path}/")
+        };
+        let rows = stmt.query_map([format!("{prefix}%")], |row| row.get::<_, String>(0))?;
+        Ok(rows.flatten().collect())
+    })?;
 
-        // Step 1: rewrite wikilinks while old paths still exist on disk.
-        let mut all_modified_sources: Vec<String> = Vec::new();
-        for file_path in &affected_files {
-            let rel_old = file_path.as_str();
-            let rel_new = if let Some(suffix) = rel_old.strip_prefix(&old_path) {
-                let trimmed = suffix.trim_start_matches('/');
-                if new_path.is_empty() || new_path == "/" {
-                    trimmed.to_string()
-                } else {
-                    format!("{}/{}", new_path.trim_end_matches('/'), trimmed)
-                }
-            } else {
-                continue;
-            };
+    let mut index_degraded = false;
+    let mut all_modified_sources: Vec<String> = Vec::new();
+    for file_path in &affected_files {
+        let rel_old = file_path.as_str();
+        let rel_new = if let Some(suffix) = rel_old.strip_prefix(&old_path) {
+            let trimmed = suffix.trim_start_matches('/');
+            format!("{}/{}", new_path.trim_end_matches('/'), trimmed)
+        } else {
+            continue;
+        };
 
-            let old_stem = title_from_path(rel_old);
-            let new_stem = title_from_path(&rel_new);
-            match cascade_rewrite_wikilinks_on_disk(
-                &state, &vault, rel_old, &rel_new, &old_stem, &new_stem,
-            ) {
-                Ok(mut mods) => all_modified_sources.append(&mut mods),
-                Err(_) => tracing::warn!(
+        let old_stem = title_from_path(rel_old);
+        let new_stem = title_from_path(&rel_new);
+        match cascade_rewrite_wikilinks_on_disk(
+            state, &vault, rel_old, &rel_new, &old_stem, &new_stem,
+        ) {
+            Ok(mut mods) => all_modified_sources.append(&mut mods),
+            Err(_) => {
+                index_degraded = true;
+                tracing::warn!(
                     result_code = "folder_rename_cascade_degraded",
                     "folder rename continued after wikilink cascade degradation"
-                ),
+                );
             }
         }
+    }
 
-        // Step 2: rename the folder on disk.
-        if let Some(parent) = new_abs.parent() {
-            fs::create_dir_all(parent)?;
+    if let Some(parent) = new_abs.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(&abs, &new_abs)?;
+
+    let reindex_paths =
+        folder_rename_reindex_paths(&old_path, &new_path, &affected_files, &all_modified_sources);
+    for rel in &reindex_paths {
+        let Ok(abs_path) = resolve_vault_path(&vault, rel) else {
+            index_degraded = true;
+            continue;
+        };
+        if let Ok(hash) = crate::indexer::scan::file_hash(&abs_path) {
+            state.storage.write_guard.mark(rel, &hash);
         }
-        fs::rename(&abs, &new_abs)?;
-
-        // Step 3: reindex only moved files and sources whose wikilinks changed.
-        let reindex_paths = folder_rename_reindex_paths(
-            &old_path,
-            &new_path,
-            &affected_files,
-            &all_modified_sources,
-        );
-        for rel in &reindex_paths {
-            let Ok(abs_path) = resolve_vault_path(&vault, rel) else {
-                continue;
-            };
-            if let Ok(h) = crate::indexer::scan::file_hash(&abs_path) {
-                state.storage.write_guard.mark(rel, &h);
-            }
-            let _ = state.db.with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &abs_path, IndexEmbeddingMode::Queue(&state))
-            });
-        }
-
-        let _ = state
+        if state
             .db
-            .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault));
+            .with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &abs_path, IndexEmbeddingMode::Queue(state))
+            })
+            .is_err()
+        {
+            index_degraded = true;
+            NoteWriteService::schedule_index_repair(state, rel, IndexEmbeddingMode::Queue(state));
+        }
+    }
 
-        Ok(())
+    if state
+        .db
+        .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
+        .is_err()
+    {
+        index_degraded = true;
+        for rel in &reindex_paths {
+            NoteWriteService::schedule_index_repair(state, rel, IndexEmbeddingMode::Queue(state));
+        }
+    }
+
+    Ok(if index_degraded {
+        FileWriteIndexStatus::Degraded
+    } else {
+        FileWriteIndexStatus::Synced
     })
-    .await
-    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 /// Delete an empty folder. Fails if the folder is not empty.
@@ -856,25 +874,28 @@ pub async fn file_rename(
     state: State<'_, Arc<AppState>>,
     path: String,
     new_path: String,
-) -> AppResult<FileEntry> {
+) -> AppResult<FileWriteResult> {
     let state = state.inner().clone();
     tokio::task::spawn_blocking(move || file_rename_inner(state, path, new_path))
         .await
         .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
-fn fallback_file_entry(path: &str, absolute: &std::path::Path) -> AppResult<FileEntry> {
-    let content = read_file_lossy(absolute)?;
-    Ok(FileEntry {
+fn fallback_file_entry(path: &str, content: &str) -> FileEntry {
+    FileEntry {
         id: 0,
         path: path.to_string(),
         title: title_from_path(path),
         updated_at: chrono::Utc::now().to_rfc3339(),
         word_count: content.split_whitespace().count() as i64,
-    })
+    }
 }
 
-fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> AppResult<FileEntry> {
+fn file_rename_inner(
+    state: Arc<AppState>,
+    path: String,
+    new_path: String,
+) -> AppResult<FileWriteResult> {
     if !is_user_note_path(&path) || !is_user_note_path(&new_path) {
         return Err(AppError::msg("Only user note paths can be renamed"));
     }
@@ -891,12 +912,16 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
 
     let old_stem = title_from_path(&path);
     let new_stem = title_from_path(&new_path);
+    let source_content = read_file_lossy(&abs)?;
+    let hash = content_hash(&source_content);
+    let mut index_degraded = false;
 
     if state
         .db
         .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
         .is_err()
     {
+        index_degraded = true;
         tracing::warn!(
             result_code = "file_rename_pre_move_index_degraded",
             "file rename continued after derived index degradation before move"
@@ -908,6 +933,7 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
     ) {
         Ok(paths) => paths,
         Err(_) => {
+            index_degraded = true;
             tracing::warn!(
                 result_code = "file_rename_cascade_degraded",
                 "file rename continued after wikilink cascade degradation"
@@ -917,11 +943,11 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
     };
 
     fs::rename(&abs, &new_abs)?;
-    let hash = crate::indexer::scan::file_hash(&new_abs)?;
     state.storage.write_guard.mark(&new_path, &hash);
 
     let entry = match state.db.with_conn(|conn| {
         if rename_file_index(conn, &path, &new_path).is_err() {
+            index_degraded = true;
             tracing::warn!(
                 result_code = "file_rename_index_rename_degraded",
                 "file rename continued after derived index rename degradation"
@@ -930,6 +956,7 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
         let entry =
             index_file_with_embed(conn, &vault, &new_abs, IndexEmbeddingMode::Queue(&state))?;
         if crate::indexer::scan::prune_stale_file_indexes(conn, &vault).is_err() {
+            index_degraded = true;
             tracing::warn!(
                 result_code = "file_rename_post_move_index_degraded",
                 "file rename continued after derived index degradation after move"
@@ -939,11 +966,12 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
     }) {
         Ok(entry) => entry,
         Err(_) => {
+            index_degraded = true;
             tracing::warn!(
                 result_code = "file_rename_index_refresh_degraded",
                 "file rename completed with derived index degradation"
             );
-            fallback_file_entry(&new_path, &new_abs)?
+            fallback_file_entry(&new_path, &source_content)
         }
     };
 
@@ -952,13 +980,40 @@ fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> Ap
             if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
                 state.storage.write_guard.mark(src_path, &h);
             }
-            let _ = state.db.with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &abs_src, IndexEmbeddingMode::Queue(&state))
-            });
+            if state
+                .db
+                .with_conn(|conn| {
+                    index_file_with_embed(conn, &vault, &abs_src, IndexEmbeddingMode::Queue(&state))
+                })
+                .is_err()
+            {
+                index_degraded = true;
+                NoteWriteService::schedule_index_repair(
+                    &state,
+                    src_path,
+                    IndexEmbeddingMode::Queue(&state),
+                );
+            }
         }
     }
 
-    Ok(entry)
+    if index_degraded {
+        NoteWriteService::schedule_index_repair(
+            &state,
+            &new_path,
+            IndexEmbeddingMode::Queue(&state),
+        );
+    }
+
+    Ok(FileWriteResult {
+        entry,
+        content_hash: hash,
+        index_status: if index_degraded {
+            FileWriteIndexStatus::Degraded
+        } else {
+            FileWriteIndexStatus::Synced
+        },
+    })
 }
 
 /// Rewrite wikilink text in all files referencing `old_path` on disk.
@@ -1066,26 +1121,16 @@ pub async fn file_create(
     }
     let state = state.inner().clone();
     tokio::task::spawn_blocking(move || {
-        let vault = state.vault_path()?;
-        let abs = resolve_vault_path(&vault, &path)?;
-        if abs.exists() {
-            return Err(AppError::msg("File already exists"));
-        }
-        if let Some(parent) = abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let document_title = abs
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(str::to_string)
-            .unwrap_or_else(|| title_from_path(&path));
+        let document_title = title_from_path(&path);
         let body = content.unwrap_or_else(|| default_create_content(&document_title));
-        let receipt =
-            NoteWriteService::write(&state, &path, &body, IndexEmbeddingMode::Queue(&state))?;
-        Ok(receipt.entry)
+        create_file_inner(&state, &path, &body)
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+fn create_file_inner(state: &Arc<AppState>, path: &str, body: &str) -> AppResult<FileEntry> {
+    Ok(NoteWriteService::create(state, path, body, IndexEmbeddingMode::Queue(state))?.entry)
 }
 
 #[tauri::command]
@@ -1479,11 +1524,12 @@ Body",
             })
             .unwrap();
 
-        let entry =
+        let receipt =
             file_rename_inner(state.clone(), "old.md".to_string(), "new.md".to_string()).unwrap();
 
-        assert_eq!(entry.id, old_id);
-        assert_eq!(entry.path, "new.md");
+        assert_eq!(receipt.index_status, FileWriteIndexStatus::Synced);
+        assert_eq!(receipt.entry.id, old_id);
+        assert_eq!(receipt.entry.path, "new.md");
         assert!(vault.join("new.md").is_file());
     }
 
@@ -1572,14 +1618,78 @@ Body",
             .unwrap();
         fs::write(vault.join("old.md"), "# Changed\n\nBody").unwrap();
 
-        let entry = file_rename_inner(state, "old.md".to_string(), "new.md".to_string()).unwrap();
+        let receipt = file_rename_inner(state, "old.md".to_string(), "new.md".to_string()).unwrap();
 
-        assert_eq!(entry.id, 0);
-        assert_eq!(entry.path, "new.md");
+        assert_eq!(
+            receipt.index_status,
+            crate::storage::note_write::FileWriteIndexStatus::Degraded
+        );
+        assert_eq!(receipt.entry.id, 0);
+        assert_eq!(receipt.entry.path, "new.md");
         assert!(!vault.join("old.md").exists());
         assert_eq!(
             fs::read_to_string(vault.join("new.md")).unwrap(),
             "# Changed\n\nBody"
+        );
+    }
+
+    #[test]
+    fn file_create_inner_does_not_replace_a_note_created_by_another_writer() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        fs::write(vault.join("note.md"), "existing body").unwrap();
+
+        let error = create_file_inner(&state, "note.md", "new body").unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Io(ref io_error) if io_error.kind() == std::io::ErrorKind::AlreadyExists
+        ));
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "existing body"
+        );
+    }
+
+    #[test]
+    fn folder_rename_inner_reports_degraded_after_physical_move_when_indexing_fails() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("old")).unwrap();
+        fs::write(vault.join("old/note.md"), "# Old\n\nOriginal").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("old/note.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_folder_rename_index
+                     BEFORE INSERT ON files
+                     WHEN NEW.path = 'new/note.md'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated index failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let status = folder_rename_inner(&state, "old".to_string(), "new".to_string()).unwrap();
+
+        assert_eq!(status, FileWriteIndexStatus::Degraded);
+        assert!(!vault.join("old/note.md").exists());
+        assert_eq!(
+            fs::read_to_string(vault.join("new/note.md")).unwrap(),
+            "# Old\n\nOriginal"
         );
     }
 

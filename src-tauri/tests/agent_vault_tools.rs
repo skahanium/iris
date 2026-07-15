@@ -151,6 +151,29 @@ async fn vault_create_note_writes_markdown_and_indexes_it() {
 }
 
 #[tokio::test]
+async fn vault_create_note_never_overwrites_an_existing_note() {
+    let (state, _dir) = test_state();
+    index_note(&state, "notes/existing.md", "# Existing\n\nOriginal");
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(None),
+        "vault_create_note",
+        &serde_json::json!({
+            "target_path": "notes/existing.md",
+            "content": "# Replacement"
+        }),
+    )
+    .await;
+
+    assert!(!result.success);
+    assert_eq!(
+        std::fs::read_to_string(state.vault_path().unwrap().join("notes/existing.md")).unwrap(),
+        "# Existing\n\nOriginal"
+    );
+}
+
+#[tokio::test]
 async fn search_tool_respects_hard_retrieval_scope_and_clamps_limit() {
     let (state, _dir) = test_state();
     index_note(
@@ -218,6 +241,50 @@ async fn vault_rename_move_reports_link_impact_and_moves_note() {
     let source =
         std::fs::read_to_string(state.vault_path().unwrap().join("notes/source.md")).unwrap();
     assert!(source.contains("[[new]]") || source.contains("[[archive/new.md]]"));
+}
+
+#[tokio::test]
+async fn vault_rename_move_reports_degraded_after_physical_move_when_indexing_fails() {
+    let (state, _dir) = test_state();
+    index_note(&state, "notes/old.md", "# Old\n\nOriginal");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_ai_rename_index
+                 BEFORE UPDATE OF title ON files
+                 WHEN NEW.path = 'archive/new.md'
+                 BEGIN
+                   SELECT RAISE(ABORT, 'simulated index failure');
+                 END;",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    std::fs::write(
+        state.vault_path().unwrap().join("notes/old.md"),
+        "# Changed\n\nCurrent body",
+    )
+    .unwrap();
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(None),
+        "vault_rename_move",
+        &serde_json::json!({
+            "path": "notes/old.md",
+            "new_path": "archive/new.md"
+        }),
+    )
+    .await;
+
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.output["indexStatus"], "degraded");
+    assert!(!state.vault_path().unwrap().join("notes/old.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(state.vault_path().unwrap().join("archive/new.md")).unwrap(),
+        "# Changed\n\nCurrent body"
+    );
 }
 
 #[tokio::test]

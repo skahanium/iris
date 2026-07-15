@@ -44,20 +44,15 @@ pub(super) fn vault_create_note_tool(
     }
 
     let vault = state.vault_path()?;
-    let abs = resolve_new_vault_path(&vault, target_path)?;
-    if abs.exists() {
-        return Err(AppError::msg("File already exists"));
-    }
-    if let Some(parent) = abs.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let entry =
-        NoteWriteService::write(state, target_path, content, ctx.index_embedding_mode())?.entry;
+    let _ = resolve_new_vault_path(&vault, target_path)?;
+    let receipt =
+        NoteWriteService::create(state, target_path, content, ctx.index_embedding_mode())?;
     Ok(serde_json::json!({
         "type": "vault_create_note",
-        "path": entry.path,
-        "title": entry.title,
-        "wordCount": entry.word_count,
+        "path": receipt.entry.path,
+        "title": receipt.entry.title,
+        "wordCount": receipt.entry.word_count,
+        "indexStatus": receipt.index_status,
     }))
 }
 
@@ -124,20 +119,52 @@ pub(super) fn vault_rename_move_tool(
         std::fs::create_dir_all(parent)?;
     }
     std::fs::rename(&abs, &new_abs)?;
-    let hash = crate::indexer::scan::file_hash(&new_abs)?;
+    let hash = crate::indexer::scan::content_hash(&current);
     state.storage.write_guard.mark(new_path, &hash);
-    state.db.with_conn(|conn| {
-        crate::indexer::scan::rename_file_index(conn, path, new_path)?;
-        index_file_with_embed(conn, &vault, &new_abs, ctx.index_embedding_mode())
-    })?;
+    let mut index_degraded = false;
+    if state
+        .db
+        .with_conn(|conn| {
+            if crate::indexer::scan::rename_file_index(conn, path, new_path).is_err() {
+                index_degraded = true;
+                tracing::warn!(
+                    result_code = "ai_vault_rename_index_rename_degraded",
+                    "AI vault rename continued after derived index path rename degradation"
+                );
+            }
+            index_file_with_embed(conn, &vault, &new_abs, ctx.index_embedding_mode())
+        })
+        .is_err()
+    {
+        index_degraded = true;
+        tracing::warn!(
+            result_code = "ai_vault_rename_index_refresh_degraded",
+            "AI vault rename completed with derived index refresh degradation"
+        );
+    }
 
     for source_path in &modified_sources {
-        let abs_source = resolve_vault_path(&vault, source_path)?;
-        let hash = crate::indexer::scan::file_hash(&abs_source)?;
-        state.storage.write_guard.mark(source_path, &hash);
-        state.db.with_conn(|conn| {
-            index_file_with_embed(conn, &vault, &abs_source, ctx.index_embedding_mode())
-        })?;
+        let Ok(abs_source) = resolve_vault_path(&vault, source_path) else {
+            index_degraded = true;
+            continue;
+        };
+        if let Ok(hash) = crate::indexer::scan::file_hash(&abs_source) {
+            state.storage.write_guard.mark(source_path, &hash);
+        }
+        if state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &abs_source, ctx.index_embedding_mode())
+            })
+            .is_err()
+        {
+            index_degraded = true;
+            NoteWriteService::schedule_index_repair(state, source_path, ctx.index_embedding_mode());
+        }
+    }
+
+    if index_degraded {
+        NoteWriteService::schedule_index_repair(state, new_path, ctx.index_embedding_mode());
     }
 
     Ok(serde_json::json!({
@@ -145,6 +172,7 @@ pub(super) fn vault_rename_move_tool(
         "path": new_path,
         "previousPath": path,
         "linkImpact": impact,
+        "indexStatus": if index_degraded { "degraded" } else { "synced" },
         "reversibleBy": "version history and rename/move back",
     }))
 }
