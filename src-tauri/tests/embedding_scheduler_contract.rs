@@ -284,6 +284,42 @@ fn unavailable_model_marks_safe_failure_without_touching_document_index() {
 }
 
 #[test]
+fn automatic_start_waits_for_the_single_backend_owned_idle_delay() {
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    db.with_conn(|conn| {
+        seed_chunk(conn, "chunk-hash");
+        Ok(())
+    })
+    .unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let scheduler = EmbeddingScheduler::with_batcher_and_idle_delay(
+        Arc::clone(&db),
+        Arc::new(BlockingBatcher {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        }),
+        Duration::from_millis(40),
+    );
+
+    let started = Instant::now();
+    scheduler.set_foreground_busy(false);
+    scheduler.mark_initial_index_complete();
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(scheduler.status().unwrap().phase, "legacy_ready");
+    entered_rx
+        .recv_timeout(Duration::from_millis(150))
+        .expect("backend starts after its idle delay");
+    assert!(
+        started.elapsed() >= Duration::from_millis(40),
+        "automatic job started before the backend idle delay elapsed"
+    );
+
+    release_tx.send(()).unwrap();
+    wait_for_phase(&scheduler, "ready");
+}
+
+#[test]
 fn blocked_model_batch_does_not_hold_database_connection() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
@@ -327,7 +363,7 @@ fn blocked_model_batch_does_not_hold_database_connection() {
 }
 
 #[test]
-fn idle_resumes_ready_repair_after_enqueue_without_manual_pause() {
+fn unchanged_repair_enqueue_resumes_while_already_idle_without_foreground_round_trip() {
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunk(conn, "chunk-hash");
@@ -341,24 +377,19 @@ fn idle_resumes_ready_repair_after_enqueue_without_manual_pause() {
         Ok(())
     })
     .unwrap();
-    let scheduler = EmbeddingScheduler::with_batcher(
+    let scheduler = EmbeddingScheduler::with_batcher_and_idle_delay(
         Arc::clone(&db),
         Arc::new(ScriptedBatcher::new(vec![Ok(vec![
             vec![0.4; EMBEDDING_DIMENSION],
         ])])),
+        Duration::from_millis(20),
     );
     scheduler.set_foreground_busy(false);
     scheduler.mark_initial_index_complete();
     scheduler.enqueue_file(1);
     assert_eq!(scheduler.status().unwrap().phase, "paused");
-
-    assert_eq!(
-        scheduler
-            .start_generation(EmbeddingStartSource::Automatic)
-            .unwrap(),
-        EmbeddingStartResult::Started
-    );
-    wait_for_phase(&scheduler, "ready");
+    thread::sleep(Duration::from_millis(100));
+    assert_eq!(scheduler.status().unwrap().phase, "ready");
 }
 
 #[test]

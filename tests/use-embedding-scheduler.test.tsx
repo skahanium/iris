@@ -146,7 +146,7 @@ describe("useEmbeddingScheduler", () => {
     expect(api.status?.phase).toBe("legacy_ready");
   });
 
-  it("holds the scheduler busy while documents are dirty, then releases it after 30 seconds clean idle", async () => {
+  it("reports clean immediately so the backend owns the single 30 second idle clock", async () => {
     await act(async () => {
       root.render(
         createElement(Harness, {
@@ -159,9 +159,6 @@ describe("useEmbeddingScheduler", () => {
 
     expect(schedulerSetForegroundBusy).toHaveBeenCalledWith(true);
 
-    await act(async () => {
-      vi.advanceTimersByTime(30_000);
-    });
     expect(schedulerSetForegroundBusy).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -174,12 +171,6 @@ describe("useEmbeddingScheduler", () => {
     });
 
     await act(async () => {
-      vi.advanceTimersByTime(29_999);
-    });
-    expect(schedulerSetForegroundBusy).toHaveBeenCalledTimes(1);
-
-    await act(async () => {
-      vi.advanceTimersByTime(1);
       await Promise.resolve();
     });
     expect(schedulerSetForegroundBusy).toHaveBeenLastCalledWith(false);
@@ -202,15 +193,49 @@ describe("useEmbeddingScheduler", () => {
 
     await act(async () => {
       await api.reportForegroundActivity();
-      vi.advanceTimersByTime(29_999);
-    });
-    expect(schedulerSetForegroundBusy).toHaveBeenCalledWith(true);
-    expect(schedulerSetForegroundBusy).not.toHaveBeenCalledWith(false);
-
-    await act(async () => {
-      vi.advanceTimersByTime(1);
       await Promise.resolve();
     });
+    expect(schedulerSetForegroundBusy).toHaveBeenCalledWith(true);
     expect(schedulerSetForegroundBusy).toHaveBeenLastCalledWith(false);
+  });
+
+  it("serializes rapid dirty-to-clean foreground facts so stale busy cannot arrive after idle", async () => {
+    let releaseBusy!: () => void;
+    schedulerSetForegroundBusy.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseBusy = resolve;
+        }),
+    );
+    schedulerSetForegroundBusy.mockResolvedValue(undefined);
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          hasDirtyDocuments: true,
+          onReady: () => {},
+        }),
+      );
+      await Promise.resolve();
+    });
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          hasDirtyDocuments: false,
+          onReady: () => {},
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(schedulerSetForegroundBusy.mock.calls).toEqual([[true]]);
+
+    await act(async () => {
+      releaseBusy();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(schedulerSetForegroundBusy.mock.calls).toEqual([[true], [false]]);
   });
 });

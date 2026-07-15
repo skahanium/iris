@@ -150,7 +150,7 @@ fn scope_is_applied_before_top_k_selection() {
 }
 
 #[test]
-fn v2_embedding_generation_starts_rebuilding_without_overwriting_legacy_embeddings() {
+fn v2_embedding_generation_starts_legacy_ready_without_overwriting_legacy_embeddings() {
     let conn = migrated_memory_connection();
 
     let state: (String, String, i64, String) = conn
@@ -172,7 +172,7 @@ fn v2_embedding_generation_starts_rebuilding_without_overwriting_legacy_embeddin
     assert_eq!(state.0, "fastembed/AllMiniLML6V2");
     assert_eq!(state.1, "Xenova/bge-small-zh-v1.5");
     assert_eq!(state.2, 512);
-    assert_eq!(state.3, "rebuilding");
+    assert_eq!(state.3, "legacy_ready");
     assert_eq!(v2_table_exists, 1);
 }
 
@@ -224,13 +224,27 @@ fn metadata_alias_retrieval_returns_note_without_polluting_body_fts() {
 }
 
 #[test]
-fn rebuilding_v2_generation_reports_vector_layer_as_not_ready() {
+fn legacy_ready_generation_reports_vector_layer_as_not_ready_while_keyword_search_remains_available(
+) {
     let conn = migrated_memory_connection();
+    conn.execute(
+        "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
+         VALUES ('notes/legacy.md', 'Legacy', 'legacy-hash', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        [],
+    )
+    .expect("insert keyword-searchable note");
+    conn.execute(
+        "INSERT INTO files_fts (path, title, content)
+         VALUES ('notes/legacy.md', 'Legacy', 'legacy alpha evidence')",
+        [],
+    )
+    .expect("insert keyword index");
+    insert_chunk_for_path(&conn, "notes/legacy.md", "legacy alpha evidence");
     let request = RetrievalRequest {
-        query: "query".into(),
+        query: "alpha".into(),
         max_results: 5,
         layers: RetrievalLayers {
-            fts: false,
+            fts: true,
             vector: true,
             graph: false,
             exact: false,
@@ -253,6 +267,10 @@ fn rebuilding_v2_generation_reports_vector_layer_as_not_ready() {
     assert_eq!(vector.status, RetrievalLayerStatus::IndexNotReady);
     assert_eq!(
         vector.message.as_deref(),
-        Some("BGE v2 embedding generation is rebuilding")
+        Some("BGE v2 embedding generation awaits idle upgrade")
     );
+    assert!(outcome
+        .packets
+        .iter()
+        .any(|packet| packet.retrieval_reason == "fts_keyword_match"));
 }

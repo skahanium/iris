@@ -111,7 +111,7 @@ pub fn hybrid_retrieve_with_diagnostics(
             diagnostics.push(RetrievalLayerDiagnostic {
                 layer: "vector".to_string(),
                 status: RetrievalLayerStatus::IndexNotReady,
-                message: Some("BGE v2 embedding generation is rebuilding".to_string()),
+                message: Some(embedding_not_ready_message(conn)?),
                 backend: Some("cosine-rust".into()),
                 model_id: Some(crate::embedding::engine::EMBEDDING_MODEL_ID.into()),
                 generation_id: None,
@@ -170,6 +170,18 @@ pub fn hybrid_retrieve_with_diagnostics(
         packets,
         diagnostics,
     })
+}
+
+fn embedding_not_ready_message(conn: &Connection) -> AppResult<String> {
+    let phase = crate::embedding::scheduler::embedding_index_status(conn)?.phase;
+    let message = match phase.as_str() {
+        "legacy_ready" => "BGE v2 embedding generation awaits idle upgrade",
+        "running" => "BGE v2 embedding generation is rebuilding",
+        "paused" => "BGE v2 embedding generation is paused",
+        "failed" => "BGE v2 embedding generation failed; keyword search remains available",
+        _ => "BGE v2 embedding generation is not ready",
+    };
+    Ok(message.to_string())
 }
 
 fn annotate_packets_with_corpus(

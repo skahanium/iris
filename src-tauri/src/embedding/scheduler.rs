@@ -63,6 +63,7 @@ impl EmbeddingBatcher for BgeEmbeddingBatcher {
 struct RuntimeState {
     running: bool,
     manual_paused: bool,
+    restart_after_pause: bool,
     foreground_busy: bool,
     initial_index_complete: bool,
     activity_epoch: u64,
@@ -73,8 +74,11 @@ struct RuntimeState {
 pub struct EmbeddingScheduler {
     db: Arc<Database>,
     batcher: Arc<dyn EmbeddingBatcher>,
+    idle_delay: Duration,
     runtime: Mutex<RuntimeState>,
     app_handle: Mutex<Option<AppHandle>>,
+    #[cfg(test)]
+    emitted_statuses: Mutex<Vec<EmbeddingIndexStatus>>,
 }
 
 impl EmbeddingScheduler {
@@ -84,14 +88,27 @@ impl EmbeddingScheduler {
 
     #[doc(hidden)]
     pub fn with_batcher(db: Arc<Database>, batcher: Arc<dyn EmbeddingBatcher>) -> Arc<Self> {
+        Self::with_batcher_and_idle_delay(db, batcher, IDLE_DELAY)
+    }
+
+    /// Construct a scheduler with a deterministic idle delay for contract tests.
+    #[doc(hidden)]
+    pub fn with_batcher_and_idle_delay(
+        db: Arc<Database>,
+        batcher: Arc<dyn EmbeddingBatcher>,
+        idle_delay: Duration,
+    ) -> Arc<Self> {
         Arc::new(Self {
             db,
             batcher,
+            idle_delay,
             runtime: Mutex::new(RuntimeState {
                 foreground_busy: true,
                 ..RuntimeState::default()
             }),
             app_handle: Mutex::new(None),
+            #[cfg(test)]
+            emitted_statuses: Mutex::new(Vec::new()),
         })
     }
 
@@ -107,6 +124,7 @@ impl EmbeddingScheduler {
             runtime.vault_epoch = runtime.vault_epoch.wrapping_add(1);
             runtime.initial_index_complete = false;
             runtime.foreground_busy = true;
+            runtime.restart_after_pause = false;
             runtime.activity_epoch = runtime.activity_epoch.wrapping_add(1);
         }
     }
@@ -119,13 +137,26 @@ impl EmbeddingScheduler {
         // A reindex invalidates vectors through FK cascade. Keep one owner for
         // the repair by transitioning a previously-ready generation to paused;
         // the normal idle policy resumes it without a second queue/worker.
-        let _ = self.db.with_conn(|conn| {
-            conn.execute(
+        let transitioned = self.db.with_conn(|conn| {
+            Ok(conn.execute(
                 "UPDATE embedding_generation_state SET phase = 'paused', updated_at = datetime('now') WHERE singleton = 1 AND phase = 'ready'",
                 [],
-            )?;
-            Ok(())
+            )? > 0)
         });
+        let Ok(true) = transitioned else {
+            return;
+        };
+        self.emit_status();
+        let epoch = self.runtime.lock().ok().and_then(|runtime| {
+            (!runtime.foreground_busy
+                && runtime.initial_index_complete
+                && !runtime.manual_paused
+                && !runtime.running)
+                .then_some(runtime.activity_epoch)
+        });
+        if let Some(epoch) = epoch {
+            self.schedule_auto_start(epoch);
+        }
     }
 
     pub fn start_generation(
@@ -171,13 +202,17 @@ impl EmbeddingScheduler {
             }
             return Ok(EmbeddingStartResult::AlreadyRunning);
         }
+        self.emit_status();
         let scheduler = Arc::clone(self);
-        thread::Builder::new()
+        if let Err(error) = thread::Builder::new()
             .name("iris-embedding-scheduler".into())
             .spawn(move || scheduler.run_generation(vault_epoch))
-            .map_err(|error| {
-                AppError::msg(format!("Failed to start embedding scheduler: {error}"))
-            })?;
+        {
+            self.handle_worker_spawn_failure(vault_epoch);
+            return Err(AppError::msg(format!(
+                "Failed to start embedding scheduler: {error}"
+            )));
+        }
         Ok(EmbeddingStartResult::Started)
     }
 
@@ -185,11 +220,14 @@ impl EmbeddingScheduler {
         let epoch = match self.runtime.lock() {
             Ok(mut runtime) => {
                 runtime.initial_index_complete = true;
-                runtime.activity_epoch
+                (!runtime.foreground_busy && !runtime.manual_paused && !runtime.running)
+                    .then_some(runtime.activity_epoch)
             }
             Err(_) => return,
         };
-        self.schedule_auto_start(epoch);
+        if let Some(epoch) = epoch {
+            self.schedule_auto_start(epoch);
+        }
     }
 
     pub fn set_foreground_busy(self: &Arc<Self>, busy: bool) {
@@ -207,21 +245,29 @@ impl EmbeddingScheduler {
     }
 
     pub fn set_manual_paused(self: &Arc<Self>, paused: bool) -> AppResult<()> {
-        let should_resume = {
+        let should_start_now = {
             let mut runtime = self
                 .runtime
                 .lock()
                 .map_err(|_| AppError::msg("Embedding scheduler lock poisoned"))?;
             runtime.manual_paused = paused;
+            if paused {
+                runtime.restart_after_pause = false;
+                return Ok(());
+            }
             !paused
                 && !runtime.foreground_busy
                 && runtime.initial_index_complete
                 && !runtime.running
         };
-        if paused {
-            self.db.with_conn(set_phase_paused)?;
-        } else if should_resume {
+        if should_start_now {
             let _ = self.start_generation(EmbeddingStartSource::Manual)?;
+        } else if self.status()?.phase == "paused" {
+            if let Ok(mut runtime) = self.runtime.lock() {
+                if runtime.running && !runtime.manual_paused && !runtime.foreground_busy {
+                    runtime.restart_after_pause = true;
+                }
+            }
         }
         Ok(())
     }
@@ -231,7 +277,7 @@ impl EmbeddingScheduler {
         let _ = thread::Builder::new()
             .name("iris-embedding-idle".into())
             .spawn(move || {
-                thread::sleep(IDLE_DELAY);
+                thread::sleep(scheduler.idle_delay);
                 let allowed = scheduler.runtime.lock().is_ok_and(|runtime| {
                     runtime.activity_epoch == epoch
                         && runtime.initial_index_complete
@@ -252,6 +298,7 @@ impl EmbeddingScheduler {
                 mark_failed(conn, "model_unavailable", "Embedding model unavailable")
             });
             self.finish_worker();
+            self.emit_status();
             return;
         }
         loop {
@@ -259,8 +306,8 @@ impl EmbeddingScheduler {
                 self.finish_worker();
                 return;
             }
-            if self.should_pause() {
-                let _ = self.db.with_conn(set_phase_paused);
+            if self.should_pause() && self.pause_if_current(vault_epoch).unwrap_or(false) {
+                self.emit_status();
                 self.finish_worker();
                 return;
             }
@@ -271,6 +318,7 @@ impl EmbeddingScheduler {
                         mark_failed(conn, "database_error", "Embedding database unavailable")
                     });
                     self.finish_worker();
+                    self.emit_status();
                     return;
                 }
             };
@@ -285,8 +333,8 @@ impl EmbeddingScheduler {
                         mark_failed(conn, "database_error", "Embedding database unavailable")
                     });
                 }
-                self.emit_status();
                 self.finish_worker();
+                self.emit_status();
                 return;
             }
             let texts = batch
@@ -306,8 +354,8 @@ impl EmbeddingScheduler {
                     let _ = self.write_if_current(vault_epoch, |conn| {
                         mark_failed(conn, "embedding_failed", FAILED_SUMMARY)
                     });
-                    self.emit_status();
                     self.finish_worker();
+                    self.emit_status();
                     return;
                 }
             };
@@ -321,8 +369,8 @@ impl EmbeddingScheduler {
                 let _ = self.write_if_current(vault_epoch, |conn| {
                     mark_failed(conn, "database_error", "Embedding database unavailable")
                 });
-                self.emit_status();
                 self.finish_worker();
+                self.emit_status();
                 return;
             }
             self.emit_status();
@@ -360,20 +408,73 @@ impl EmbeddingScheduler {
         self.db.with_conn(write)?;
         Ok(true)
     }
-    fn finish_worker(&self) {
-        if let Ok(mut runtime) = self.runtime.lock() {
+    fn pause_if_current(&self, vault_epoch: u64) -> AppResult<bool> {
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| AppError::msg("Embedding scheduler lock poisoned"))?;
+        if runtime.vault_epoch != vault_epoch
+            || (!runtime.manual_paused && !runtime.foreground_busy)
+        {
+            return Ok(false);
+        }
+        self.db.with_conn(set_phase_paused)?;
+        Ok(true)
+    }
+    fn finish_worker(self: &Arc<Self>) {
+        let restart = if let Ok(mut runtime) = self.runtime.lock() {
             runtime.running = false;
+            if runtime.restart_after_pause
+                && !runtime.manual_paused
+                && !runtime.foreground_busy
+                && runtime.initial_index_complete
+            {
+                runtime.restart_after_pause = false;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        if restart {
+            let _ = self.start_generation(EmbeddingStartSource::Manual);
         }
     }
+
+    fn handle_worker_spawn_failure(self: &Arc<Self>, vault_epoch: u64) {
+        let _ = self.write_if_current(vault_epoch, |conn| {
+            mark_failed(
+                conn,
+                "scheduler_start_failed",
+                "Embedding scheduler unavailable",
+            )
+        });
+        self.finish_worker();
+        self.emit_status();
+    }
+
     fn emit_status(&self) {
         let Ok(status) = self.status() else {
             return;
         };
+        #[cfg(test)]
+        if let Ok(mut emitted) = self.emitted_statuses.lock() {
+            emitted.push(status.clone());
+        }
         if let Ok(handle) = self.app_handle.lock() {
             if let Some(handle) = handle.as_ref() {
                 let _ = handle.emit("embedding-index-progress", status);
             }
         }
+    }
+
+    #[cfg(test)]
+    fn emitted_statuses(&self) -> Vec<EmbeddingIndexStatus> {
+        self.emitted_statuses
+            .lock()
+            .map(|statuses| statuses.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -588,7 +689,74 @@ fn unavailable_schema(error: &rusqlite::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::db::Database;
     use crate::storage::migrate::migrate_up;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+
+    struct BlockingThenReadyBatcher {
+        entered: mpsc::Sender<()>,
+        release: Mutex<mpsc::Receiver<()>>,
+        calls: AtomicUsize,
+    }
+
+    impl EmbeddingBatcher for BlockingThenReadyBatcher {
+        fn ensure_available(&self) -> AppResult<()> {
+            Ok(())
+        }
+
+        fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                self.entered
+                    .send(())
+                    .expect("report first model batch entry");
+                self.release
+                    .lock()
+                    .expect("lock model release receiver")
+                    .recv()
+                    .expect("release first model batch");
+            }
+            Ok(vec![vec![0.5; EMBEDDING_DIMENSION]; texts.len()])
+        }
+    }
+
+    struct UnavailableBatcher;
+
+    impl EmbeddingBatcher for UnavailableBatcher {
+        fn ensure_available(&self) -> AppResult<()> {
+            Err(AppError::Embed("unavailable model".into()))
+        }
+
+        fn embed_batch(&self, _texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+            unreachable!("model preflight prevents batches")
+        }
+    }
+
+    fn seed_chunk(conn: &Connection) {
+        conn.execute(
+            "INSERT INTO files(path,title,content_hash,word_count,created_at,updated_at)
+             VALUES ('note.md','Note','file',1,'now','now')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO chunks(file_id,chunk_index,content,content_hash)
+             VALUES (1,0,'body','chunk')",
+            [],
+        )
+        .unwrap();
+    }
+
+    fn wait_for_phase(scheduler: &EmbeddingScheduler, expected: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while scheduler.status().unwrap().phase != expected {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "scheduler did not reach {expected}"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
 
     #[test]
     fn unknown_vector_metadata_does_not_count_as_coverage() {
@@ -602,5 +770,133 @@ mod tests {
         )
         .unwrap();
         assert!(!generation_coverage_complete(&conn).unwrap());
+    }
+
+    #[test]
+    fn emits_complete_snapshots_for_running_paused_and_ready_transitions() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            seed_chunk(conn);
+            Ok(())
+        })
+        .unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let scheduler = EmbeddingScheduler::with_batcher(
+            Arc::clone(&db),
+            Arc::new(BlockingThenReadyBatcher {
+                entered: entered_tx,
+                release: Mutex::new(release_rx),
+                calls: AtomicUsize::new(0),
+            }),
+        );
+        scheduler.set_foreground_busy(false);
+        scheduler.mark_initial_index_complete();
+        scheduler
+            .start_generation(EmbeddingStartSource::Manual)
+            .unwrap();
+        entered_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker entered model batch");
+        scheduler.set_manual_paused(true).unwrap();
+        release_tx.send(()).unwrap();
+        wait_for_phase(&scheduler, "paused");
+        scheduler.set_manual_paused(false).unwrap();
+        wait_for_phase(&scheduler, "ready");
+
+        let phases = scheduler
+            .emitted_statuses()
+            .into_iter()
+            .map(|status| status.phase)
+            .collect::<Vec<_>>();
+        assert!(phases.contains(&"running".to_string()));
+        assert!(phases.contains(&"paused".to_string()));
+        assert!(phases.contains(&"ready".to_string()));
+    }
+
+    #[test]
+    fn emits_safe_failed_snapshot_when_model_preflight_is_unavailable() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            seed_chunk(conn);
+            Ok(())
+        })
+        .unwrap();
+        let scheduler =
+            EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(UnavailableBatcher));
+        scheduler.set_foreground_busy(false);
+        scheduler
+            .start_generation(EmbeddingStartSource::Manual)
+            .unwrap();
+        wait_for_phase(&scheduler, "failed");
+
+        let failed = scheduler
+            .emitted_statuses()
+            .into_iter()
+            .find(|status| status.phase == "failed")
+            .expect("failed state is emitted");
+        assert_eq!(failed.failure_code.as_deref(), Some("model_unavailable"));
+        assert_eq!(
+            failed.last_error.as_deref(),
+            Some("Embedding model unavailable")
+        );
+    }
+
+    #[test]
+    fn enqueue_repair_emits_paused_snapshot_before_idle_restart() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            seed_chunk(conn);
+            conn.execute(
+                "UPDATE embedding_generation_state SET phase = 'ready' WHERE singleton = 1",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let scheduler =
+            EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(UnavailableBatcher));
+
+        scheduler.enqueue_file(1);
+
+        assert_eq!(scheduler.status().unwrap().phase, "paused");
+        assert_eq!(
+            scheduler
+                .emitted_statuses()
+                .last()
+                .map(|status| status.phase.as_str()),
+            Some("paused")
+        );
+    }
+
+    #[test]
+    fn worker_spawn_failure_releases_running_flag_and_emits_safe_failure() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            seed_chunk(conn);
+            transition_running(conn, EmbeddingStartSource::Manual)?;
+            Ok(())
+        })
+        .unwrap();
+        let scheduler =
+            EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(UnavailableBatcher));
+        scheduler.runtime.lock().unwrap().running = true;
+
+        scheduler.handle_worker_spawn_failure(0);
+
+        assert!(!scheduler.runtime.lock().unwrap().running);
+        let failed = scheduler
+            .emitted_statuses()
+            .into_iter()
+            .find(|status| status.phase == "failed")
+            .expect("spawn failure emits a failed snapshot");
+        assert_eq!(
+            failed.failure_code.as_deref(),
+            Some("scheduler_start_failed")
+        );
+        assert_eq!(
+            failed.last_error.as_deref(),
+            Some("Embedding scheduler unavailable")
+        );
     }
 }

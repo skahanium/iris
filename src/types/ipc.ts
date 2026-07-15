@@ -195,6 +195,7 @@ export type EmbeddingFailureCode =
   | "interrupted_migration"
   | "interrupted_restart"
   | "model_unavailable"
+  | "scheduler_start_failed"
   | "embedding_failed"
   | "database_error";
 

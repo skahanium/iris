@@ -13,8 +13,6 @@ import type {
   EmbeddingSchedulerStartResult,
 } from "@/types/ipc";
 
-const IDLE_DELAY_MS = 30_000;
-
 export interface UseEmbeddingSchedulerOptions {
   hasDirtyDocuments: boolean;
 }
@@ -40,44 +38,39 @@ export function useEmbeddingScheduler({
   const [loading, setLoading] = useState(isTauriRuntime);
   const [error, setError] = useState<"status_unavailable" | null>(null);
   const hasDirtyDocumentsRef = useRef(hasDirtyDocuments);
-  const idleTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(
-    null,
-  );
   const foregroundBusyRef = useRef(false);
+  const foregroundTargetRef = useRef(false);
+  const foregroundUpdateRef = useRef<Promise<void>>(Promise.resolve());
 
   hasDirtyDocumentsRef.current = hasDirtyDocuments;
 
-  const clearIdleTimer = useCallback(() => {
-    if (idleTimerRef.current === null) return;
-    window.clearTimeout(idleTimerRef.current);
-    idleTimerRef.current = null;
-  }, []);
-
   const sendForegroundBusy = useCallback(async (busy: boolean) => {
-    if (foregroundBusyRef.current === busy) return;
-    foregroundBusyRef.current = busy;
-    try {
-      await embeddingSchedulerSetForegroundBusy(busy);
-    } catch {
-      setError("status_unavailable");
+    if (foregroundTargetRef.current === busy) {
+      return foregroundUpdateRef.current;
     }
+    foregroundTargetRef.current = busy;
+    const update = foregroundUpdateRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (foregroundBusyRef.current === busy) return;
+        try {
+          await embeddingSchedulerSetForegroundBusy(busy);
+          foregroundBusyRef.current = busy;
+        } catch {
+          if (foregroundTargetRef.current === busy) {
+            foregroundTargetRef.current = foregroundBusyRef.current;
+          }
+          setError("status_unavailable");
+        }
+      });
+    foregroundUpdateRef.current = update;
+    return update;
   }, []);
-
-  const scheduleIdleRelease = useCallback(() => {
-    clearIdleTimer();
-    if (hasDirtyDocumentsRef.current) return;
-    idleTimerRef.current = window.setTimeout(() => {
-      idleTimerRef.current = null;
-      if (hasDirtyDocumentsRef.current) return;
-      void sendForegroundBusy(false);
-    }, IDLE_DELAY_MS);
-  }, [clearIdleTimer, sendForegroundBusy]);
 
   const reportForegroundActivity = useCallback(async () => {
-    clearIdleTimer();
     await sendForegroundBusy(true);
-    if (!hasDirtyDocumentsRef.current) scheduleIdleRelease();
-  }, [clearIdleTimer, scheduleIdleRelease, sendForegroundBusy]);
+    if (!hasDirtyDocumentsRef.current) await sendForegroundBusy(false);
+  }, [sendForegroundBusy]);
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -120,26 +113,11 @@ export function useEmbeddingScheduler({
   }, []);
 
   useEffect(() => {
-    void sendForegroundBusy(true);
-    if (hasDirtyDocuments) {
-      clearIdleTimer();
-      return undefined;
-    }
-    scheduleIdleRelease();
-    return clearIdleTimer;
-  }, [
-    clearIdleTimer,
-    hasDirtyDocuments,
-    scheduleIdleRelease,
-    sendForegroundBusy,
-  ]);
-
-  useEffect(
-    () => () => {
-      clearIdleTimer();
-    },
-    [clearIdleTimer],
-  );
+    void (async () => {
+      await sendForegroundBusy(true);
+      if (!hasDirtyDocumentsRef.current) await sendForegroundBusy(false);
+    })();
+  }, [hasDirtyDocuments, sendForegroundBusy]);
 
   const start = useCallback(async () => {
     try {
