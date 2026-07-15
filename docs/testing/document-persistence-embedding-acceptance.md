@@ -32,7 +32,7 @@
 
 在此闭环真实执行并留存证据前，状态只能写作“待验收”，不能声称 Windows E2E 已通过。
 
-自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中观察标题重命名后的 editor staging，并在 staging 期触发保存屏障；新 editor 变为可交互的第一刻输入唯一正文后立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。该入口同时是 PR CI 与发布打包 CI 的 Windows 硬门禁；静态 Vitest 契约不能替代其 Windows 运行日志。
+自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中观察标题重命名后 editor surface identity 从旧路径稳定切换到新路径，并在该重挂载边界触发保存；新 editor 可交互后明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。该入口会在 PR CI 与发布打包 workflow 中运行；PR 是否因该检查而禁止合并，取决于仓库外 GitHub 分支保护规则是否将该状态设为 required。发布 workflow 内的 Windows 打包步骤则在该 E2E 成功前不会上传工件。静态 Vitest 契约不能替代其 Windows 运行日志。
 
 ## 隐私与可观测性
 

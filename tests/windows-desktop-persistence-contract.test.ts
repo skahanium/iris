@@ -52,16 +52,23 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("rmSync");
   });
 
-  it("观察重命名 remount 的 staging 保存，并在新 editor 可交互后输入唯一正文立即保存关闭", () => {
+  it("以持久 surface identity 观察重命名 remount，并明确定位文末后输入唯一正文立即保存关闭", () => {
     const runner = read(runnerPath);
+    const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
 
     expect(runner).toContain("REMOUNT_BODY_LINE");
-    expect(runner).toContain("waitForRemountStaging");
+    expect(runner).toContain("waitForRemountIdentity");
     expect(runner).toContain("waitForRemountVisible");
-    expect(runner).toContain('data-editor-visibility="staging"');
-    expect(runner).toContain('END: "\\uE010"');
+    expect(runner).toContain("data-editor-active-identity");
+    expect(runner).toContain("KEY.CONTROL}${KEY.END}");
+    expect(runner).not.toContain("waitForRemountStaging");
+    expect(runner).not.toContain("click(sessionId, remountEditor)");
+    expect(workspace).toContain('data-testid="editor-surface-stack"');
+    expect(workspace).toContain(
+      'data-editor-active-identity={currentSurfaceIdentity ?? ""}',
+    );
     expect(runner).toMatch(
-      /waitForRemountStaging[\s\S]*pressSave\(sessionId\)[\s\S]*waitForRemountVisible[\s\S]*sendKeys\(sessionId, remountEditor, REMOUNT_BODY_LINE\)[\s\S]*pressSave\(sessionId\)[\s\S]*aria-label="关闭"/,
+      /waitForRemountIdentity[\s\S]*pressSave\(sessionId\)[\s\S]*waitForRemountVisible[\s\S]*sendKeys\(sessionId, remountEditor, `\$\{KEY\.CONTROL\}\$\{KEY\.END\}`\)[\s\S]*sendKeys\(sessionId, remountEditor, REMOUNT_BODY_LINE\)[\s\S]*pressSave\(sessionId\)[\s\S]*aria-label="关闭"/,
     );
   });
 
@@ -90,15 +97,26 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     );
   });
 
-  it("将 Windows E2E 设为当前提交的 PR/push CI 硬门禁，并固定测试工具版本", () => {
+  it("将 Windows E2E 接入 PR CI，并固定测试工具版本", () => {
     const ci = read(".github/workflows/ci.yml");
     const release = read(".github/workflows/package-desktop.yml");
 
     expect(ci).toContain("Windows Markdown persistence desktop E2E");
+    expect(ci).toMatch(/on:\n\s+pull_request:/);
     expect(ci).toContain("runs-on: windows-2022");
     expect(ci).toContain("npm run tauri -- build --no-bundle");
     expect(ci).toContain("npm run test:desktop:windows");
     expect(release).toContain("tauri-driver --version 2.0.6 --locked");
     expect(release).toContain("--rev 8c4b34f51b45f5cf08013366d703de464ab871d1");
+  });
+
+  it("准确说明 PR 合并门禁由仓库外的分支保护规则配置", () => {
+    const acceptance = read(
+      "docs/testing/document-persistence-embedding-acceptance.md",
+    );
+
+    expect(acceptance).toContain("分支保护");
+    expect(acceptance).toContain("仓库外");
+    expect(acceptance).not.toContain("PR CI 与发布打包 CI 的 Windows 硬门禁");
   });
 });

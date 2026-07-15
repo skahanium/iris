@@ -235,6 +235,13 @@ async function elementText(sessionId, element) {
   );
 }
 
+async function elementAttribute(sessionId, element, name) {
+  return webdriverRequest(
+    "GET",
+    `/session/${sessionId}/element/${element}/attribute/${name}`,
+  );
+}
+
 async function executeAsync(sessionId, script, args = []) {
   return webdriverRequest("POST", `/session/${sessionId}/execute/async`, {
     script,
@@ -318,17 +325,25 @@ async function restartApplication(sessionId, appPath) {
   return createSession(appPath);
 }
 
-async function waitForRemountStaging(sessionId) {
-  return waitForElement(
+async function waitForRemountIdentity(sessionId, previousIdentity) {
+  const stack = await waitForElement(
     sessionId,
-    '[data-editor-visibility="staging"] [data-testid="editor"] [contenteditable="true"]',
+    '[data-testid="editor-surface-stack"]',
   );
+  return waitUntil(async () => {
+    const identity = await elementAttribute(
+      sessionId,
+      stack,
+      "data-editor-active-identity",
+    );
+    return identity === EXPECTED_FILE_NAME && identity !== previousIdentity;
+  }, "editor_remount_identity_missing");
 }
 
 async function waitForRemountVisible(sessionId) {
   return waitForElement(
     sessionId,
-    '[data-editor-visibility="visible"] [data-testid="editor"] [contenteditable="true"]',
+    `[data-editor-visibility="visible"][data-path="${EXPECTED_FILE_NAME}"] [data-testid="editor"] [contenteditable="true"]`,
   );
 }
 
@@ -403,18 +418,31 @@ async function runScenario(sessionId) {
     sessionId,
     '[data-testid="document-title"]',
   );
+  const editorStack = await waitForElement(
+    sessionId,
+    '[data-testid="editor-surface-stack"]',
+  );
+  const originalSurfaceIdentity = await elementAttribute(
+    sessionId,
+    editorStack,
+    "data-editor-active-identity",
+  );
+  if (typeof originalSurfaceIdentity !== "string" || !originalSurfaceIdentity) {
+    fail("editor_surface_identity_missing");
+  }
   await clear(sessionId, title);
   await sendKeys(sessionId, title, EXPECTED_TITLE);
   await click(sessionId, editor);
   await acceptRenameConfirmation(sessionId);
-  // The staging surface is intentionally non-interactive for real users, so
-  // first exercise the coordinator's snapshot through a save while remounting.
-  // Then type through the newly visible editor and close without a debounce.
-  await waitForRemountStaging(sessionId);
+  // The remount's staging phase can be shorter than a WebDriver request. The
+  // surface identity changes from the old path to the renamed path and stays
+  // observable through readiness, so it is the stable remount boundary.
+  await waitForRemountIdentity(sessionId, originalSurfaceIdentity);
   await pressSave(sessionId);
   const remountEditor = await waitForRemountVisible(sessionId);
-  await click(sessionId, remountEditor);
-  await sendKeys(sessionId, remountEditor, KEY.END);
+  // Element Send Keys targets and focuses this editor, then explicitly moves
+  // its selection to the document end. Do not use pointer position + End.
+  await sendKeys(sessionId, remountEditor, `${KEY.CONTROL}${KEY.END}`);
   await sendKeys(sessionId, remountEditor, KEY.ENTER);
   await sendKeys(sessionId, remountEditor, REMOUNT_BODY_LINE);
   await pressSave(sessionId);
