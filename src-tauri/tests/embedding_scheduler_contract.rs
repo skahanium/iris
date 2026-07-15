@@ -325,3 +325,103 @@ fn blocked_model_batch_does_not_hold_database_connection() {
     release_tx.send(()).unwrap();
     wait_for_phase(&scheduler, "ready");
 }
+
+#[test]
+fn idle_resumes_ready_repair_after_enqueue_without_manual_pause() {
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    db.with_conn(|conn| {
+        seed_chunk(conn, "chunk-hash");
+        conn.execute(
+            "UPDATE embedding_generation_state
+             SET active_model_id = 'Xenova/bge-small-zh-v1.5',
+                 target_model_id = 'Xenova/bge-small-zh-v1.5',
+                 target_dimension = 512, phase = 'ready'",
+            [],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let scheduler = EmbeddingScheduler::with_batcher(
+        Arc::clone(&db),
+        Arc::new(ScriptedBatcher::new(vec![Ok(vec![
+            vec![0.4; EMBEDDING_DIMENSION],
+        ])])),
+    );
+    scheduler.set_foreground_busy(false);
+    scheduler.mark_initial_index_complete();
+    scheduler.enqueue_file(1);
+    assert_eq!(scheduler.status().unwrap().phase, "paused");
+
+    assert_eq!(
+        scheduler
+            .start_generation(EmbeddingStartSource::Automatic)
+            .unwrap(),
+        EmbeddingStartResult::Started
+    );
+    wait_for_phase(&scheduler, "ready");
+}
+
+#[test]
+fn manual_pause_resume_restarts_paused_job_when_idle() {
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    db.with_conn(|conn| {
+        seed_chunk(conn, "chunk-hash");
+        conn.execute(
+            "UPDATE embedding_generation_state SET phase = 'paused' WHERE singleton = 1",
+            [],
+        )?;
+        Ok(())
+    })
+    .unwrap();
+    let scheduler = EmbeddingScheduler::with_batcher(
+        Arc::clone(&db),
+        Arc::new(ScriptedBatcher::new(vec![Ok(vec![
+            vec![0.5; EMBEDDING_DIMENSION],
+        ])])),
+    );
+    scheduler.set_foreground_busy(false);
+    scheduler.mark_initial_index_complete();
+    scheduler.set_manual_paused(true).unwrap();
+    scheduler.set_manual_paused(false).unwrap();
+
+    wait_for_phase(&scheduler, "ready");
+}
+
+#[test]
+fn vault_reset_during_model_inference_prevents_old_batch_commit() {
+    let db = Arc::new(Database::open_in_memory().unwrap());
+    db.with_conn(|conn| {
+        seed_chunk(conn, "chunk-hash");
+        Ok(())
+    })
+    .unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let scheduler = EmbeddingScheduler::with_batcher(
+        Arc::clone(&db),
+        Arc::new(BlockingBatcher {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        }),
+    );
+    scheduler.set_foreground_busy(false);
+    scheduler
+        .start_generation(EmbeddingStartSource::Manual)
+        .unwrap();
+    entered_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("model batch entered");
+
+    scheduler.reset_for_vault();
+    release_tx.send(()).unwrap();
+    thread::sleep(Duration::from_millis(100));
+
+    db.with_read_conn(|conn| {
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM chunk_embeddings_v2", [], |row| {
+            row.get(0)
+        })?;
+        assert_eq!(count, 0, "old-vault model output must never be committed");
+        Ok(())
+    })
+    .unwrap();
+}

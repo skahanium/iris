@@ -248,7 +248,7 @@ impl EmbeddingScheduler {
     fn run_generation(self: Arc<Self>, vault_epoch: u64) {
         let result = self.batcher.ensure_available();
         if let Err(_) = result {
-            let _ = self.db.with_conn(|conn| {
+            let _ = self.write_if_current(vault_epoch, |conn| {
                 mark_failed(conn, "model_unavailable", "Embedding model unavailable")
             });
             self.finish_worker();
@@ -267,7 +267,7 @@ impl EmbeddingScheduler {
             let batch = match self.db.with_read_conn(load_pending_batch) {
                 Ok(batch) => batch,
                 Err(_) => {
-                    let _ = self.db.with_conn(|conn| {
+                    let _ = self.write_if_current(vault_epoch, |conn| {
                         mark_failed(conn, "database_error", "Embedding database unavailable")
                     });
                     self.finish_worker();
@@ -275,9 +275,13 @@ impl EmbeddingScheduler {
                 }
             };
             if batch.is_empty() {
-                let completion = self.db.with_conn(finalize_if_covered);
+                let completion = self.write_if_current(vault_epoch, finalize_if_covered);
+                if matches!(completion, Ok(false)) {
+                    self.finish_worker();
+                    return;
+                }
                 if completion.is_err() {
-                    let _ = self.db.with_conn(|conn| {
+                    let _ = self.write_if_current(vault_epoch, |conn| {
                         mark_failed(conn, "database_error", "Embedding database unavailable")
                     });
                 }
@@ -299,20 +303,22 @@ impl EmbeddingScheduler {
                     vectors
                 }
                 _ => {
-                    let _ = self
-                        .db
-                        .with_conn(|conn| mark_failed(conn, "embedding_failed", FAILED_SUMMARY));
+                    let _ = self.write_if_current(vault_epoch, |conn| {
+                        mark_failed(conn, "embedding_failed", FAILED_SUMMARY)
+                    });
                     self.emit_status();
                     self.finish_worker();
                     return;
                 }
             };
-            if self
-                .db
-                .with_conn(|conn| commit_batch(conn, &batch, &vectors))
-                .is_err()
-            {
-                let _ = self.db.with_conn(|conn| {
+            let committed =
+                self.write_if_current(vault_epoch, |conn| commit_batch(conn, &batch, &vectors));
+            if matches!(committed, Ok(false)) {
+                self.finish_worker();
+                return;
+            }
+            if committed.is_err() {
+                let _ = self.write_if_current(vault_epoch, |conn| {
                     mark_failed(conn, "database_error", "Embedding database unavailable")
                 });
                 self.emit_status();
@@ -335,6 +341,24 @@ impl EmbeddingScheduler {
             .lock()
             .map(|runtime| runtime.vault_epoch == vault_epoch)
             .unwrap_or(false)
+    }
+    /// Hold the epoch gate across a short write transaction. A vault reset
+    /// either happens before this gate (the write is skipped) or after the
+    /// transaction commits; an old inference result can never cross the reset.
+    fn write_if_current<T>(
+        &self,
+        vault_epoch: u64,
+        write: impl FnOnce(&Connection) -> AppResult<T>,
+    ) -> AppResult<bool> {
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| AppError::msg("Embedding scheduler lock poisoned"))?;
+        if runtime.vault_epoch != vault_epoch {
+            return Ok(false);
+        }
+        self.db.with_conn(write)?;
+        Ok(true)
     }
     fn finish_worker(&self) {
         if let Ok(mut runtime) = self.runtime.lock() {
@@ -395,7 +419,7 @@ pub fn generation_coverage_complete(conn: &Connection) -> AppResult<bool> {
 
 fn transition_running(conn: &Connection, source: EmbeddingStartSource) -> AppResult<bool> {
     let status = embedding_index_status(conn)?;
-    if matches!(status.phase.as_str(), "running" | "paused") {
+    if status.phase == "running" {
         return Ok(false);
     }
     if source == EmbeddingStartSource::Automatic
