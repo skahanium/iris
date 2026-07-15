@@ -185,6 +185,23 @@ export class DocumentPersistenceCoordinator {
     return this.snapshot(record);
   }
 
+  /**
+   * Waits for a stable point where every tracked document revision has a
+   * durable acknowledgement. Captures observed while an earlier pass writes
+   * are included by the following pass rather than being missed by a caller's
+   * one-time tab enumeration.
+   */
+  async barrierAll(): Promise<void> {
+    while (true) {
+      const observedRevision = this.revision;
+      const paths = [...this.records.keys()];
+      await Promise.all(paths.map((path) => this.barrier(path)));
+      if (observedRevision === this.revision && !this.hasDirtyDocuments()) {
+        return;
+      }
+    }
+  }
+
   /** Flushes the old path before moving it, then moves later captures to the new path. */
   async rename(
     oldPath: string,

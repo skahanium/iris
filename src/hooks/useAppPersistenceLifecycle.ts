@@ -119,7 +119,10 @@ export function useAppPersistenceLifecycle({
     useState<DocumentPersistenceStatus>("clean");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [hasDirtyDocuments, setHasDirtyDocuments] = useState(false);
+  const [isPersistenceBarrierActive, setIsPersistenceBarrierActive] =
+    useState(false);
   const cancelledWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const persistenceBarrierActiveRef = useRef(false);
   const noteTitleRef = useRef(noteTitle);
   noteTitleRef.current = noteTitle;
 
@@ -260,6 +263,7 @@ export function useAppPersistenceLifecycle({
   }, [activePathRef, flushSaveForPath]);
 
   const notifyDirty = useCallback(() => {
+    if (persistenceBarrierActiveRef.current) return;
     const path = activePathRef.current;
     if (!path || !editorReadyRef.current) return;
     coordinator.capture(path, getLiveMarkdownRef.current());
@@ -281,8 +285,8 @@ export function useAppPersistenceLifecycle({
   ) => {
     const reason = options.reason ?? "tab_leave";
     const persisted = coordinator.get(path);
+    const tab = tabsRef.current.find((item) => item.path === path);
     if (persisted && persisted.baselineRevision === persisted.revision) {
-      const tab = tabsRef.current.find((item) => item.path === path);
       if (!tab?.dirty) {
         return (
           getTabMarkdownCached(path) ?? coordinator.get(path)?.markdown ?? null
@@ -290,9 +294,19 @@ export function useAppPersistenceLifecycle({
       }
     }
     if (!persisted) {
-      return (
-        getTabMarkdownCached(path) ?? coordinator.get(path)?.markdown ?? null
-      );
+      const cached = getTabMarkdownCached(path);
+      if (!tab?.dirty) return cached ?? null;
+      if (cached === undefined) {
+        throw new Error(
+          "dirty document is remounting with no recoverable snapshot",
+        );
+      }
+      const saved = await flushSaveForPath(path, () => cached);
+      if (!saved) return null;
+      if (reason !== "app_close") {
+        enqueueLeaveSnapshot(path, saved, reason);
+      }
+      return saved;
     }
     const cached =
       path === activePathRef.current && editorReadyRef.current
@@ -334,17 +348,29 @@ export function useAppPersistenceLifecycle({
     });
 
   const flushAllOpenTabs = useCallback(async (): Promise<void> => {
+    persistenceBarrierActiveRef.current = true;
+    setIsPersistenceBarrierActive(true);
     versionSnapshotScheduler.setAppClosing(true);
     clearVersionIdleTimer();
     try {
-      for (const tab of tabsRef.current) {
-        await persistBeforeLeaveRef.current(tab.path, { reason: "app_close" });
-      }
+      // Tabs can still contain a prepared/remounting snapshot that has not yet
+      // been captured by the coordinator. Stage those snapshots first, then
+      // make the coordinator own the completion condition. `barrierAll` keeps
+      // scanning until no new revision was observed during a write pass.
+      await Promise.all(
+        tabsRef.current.map((tab) =>
+          persistBeforeLeaveRef.current(tab.path, { reason: "app_close" }),
+        ),
+      );
+      await coordinator.barrierAll();
     } finally {
       versionSnapshotScheduler.setAppClosing(false);
+      persistenceBarrierActiveRef.current = false;
+      setIsPersistenceBarrierActive(false);
     }
   }, [
     clearVersionIdleTimer,
+    coordinator,
     persistBeforeLeaveRef,
     tabsRef,
     versionSnapshotScheduler,
@@ -491,5 +517,6 @@ export function useAppPersistenceLifecycle({
     saveStatus,
     saveError,
     hasDirtyDocuments,
+    isPersistenceBarrierActive,
   };
 }

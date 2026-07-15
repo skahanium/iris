@@ -370,6 +370,7 @@ function App() {
     abortPathMigration,
     saveStatus,
     hasDirtyDocuments,
+    isPersistenceBarrierActive,
   } = useAppPersistenceLifecycle({
     activeFileLocked,
     activePath,
@@ -398,6 +399,9 @@ function App() {
   });
 
   updateInstallBarrierRef.current = flushAllOpenTabs;
+
+  const isEditorPersistenceBlocked =
+    activeFileLocked || isPersistenceBarrierActive;
 
   const {
     loading: embeddingStatusLoading,
@@ -542,7 +546,7 @@ function App() {
   }, []);
 
   const handleDirty = useCallback(() => {
-    if (activeFileLocked) return;
+    if (isEditorPersistenceBlocked) return;
     if (!dirtyRef.current) {
       dirtyRef.current = true;
       markDirty();
@@ -552,7 +556,7 @@ function App() {
     void reportForegroundActivity();
     resetVersionIdle();
   }, [
-    activeFileLocked,
+    isEditorPersistenceBlocked,
     invalidateActivePreparedNote,
     markDirty,
     notifyDirty,
@@ -562,7 +566,7 @@ function App() {
 
   const handleTitleChange = useCallback(
     (raw: string) => {
-      if (activeFileLocked) return;
+      if (isEditorPersistenceBlocked) return;
       onTitleChange(raw);
       if (!dirtyRef.current) {
         dirtyRef.current = true;
@@ -574,7 +578,7 @@ function App() {
       resetVersionIdle();
     },
     [
-      activeFileLocked,
+      isEditorPersistenceBlocked,
       invalidateActivePreparedNote,
       markDirty,
       notifyDirty,
@@ -636,10 +640,16 @@ function App() {
         onChange={handleTitleChange}
         onBlur={onTitleBlur}
         editorRef={editorRef}
-        readOnly={activeFileLocked}
+        readOnly={isEditorPersistenceBlocked}
       />
     ),
-    [noteTitle, handleTitleChange, onTitleBlur, editorRef, activeFileLocked],
+    [
+      noteTitle,
+      handleTitleChange,
+      onTitleBlur,
+      editorRef,
+      isEditorPersistenceBlocked,
+    ],
   );
 
   const { handleInsertToEditor, handleRedo, handleUndo, runEditorActionById } =
@@ -658,7 +668,7 @@ function App() {
     editorInstance,
     Boolean(activePath),
     () => setAiStatus("选区 AI：请使用右键菜单"),
-    activeFileLocked,
+    isEditorPersistenceBlocked,
     {
       aiDomain: activeNoteIsClassified ? "classified" : "normal",
       classifiedUnlocked,
@@ -758,7 +768,7 @@ function App() {
         }
         editor={
           <AppEditorWorkspace
-            activeFileLocked={activeFileLocked}
+            activeFileLocked={isEditorPersistenceBlocked}
             activeMediaTab={activeMediaTab}
             activeNoteIsClassified={activeNoteIsClassified}
             activePath={activePath}

@@ -14,6 +14,14 @@ const setCachedEditorHtml = vi.fn();
 const fileSetLock = vi.fn();
 const versionSaveManual = vi.fn();
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
+
 vi.mock("@/lib/ipc", () => ({
   appExit: vi.fn(),
   fileSetLock: (...args: unknown[]) => fileSetLock(...args),
@@ -37,6 +45,7 @@ function Harness({
   markdown = '---\ntitle: "Note"\n---\n\nOriginal body that must remain authoritative.',
   getTabMarkdownCached = () => undefined,
   tabDirty = true,
+  tabs,
   onReady,
   persistBeforeLeaveRef,
   setFileLocked,
@@ -46,6 +55,7 @@ function Harness({
   markdown?: string;
   getTabMarkdownCached?: (path: string) => string | undefined;
   tabDirty?: boolean;
+  tabs?: TabItem[];
   onReady?: (api: ReturnType<typeof useAppPersistenceLifecycle>) => void;
   persistBeforeLeaveRef: React.MutableRefObject<PersistBeforeLeave>;
   setFileLocked?: (path: string, locked: boolean) => void;
@@ -62,14 +72,16 @@ function Harness({
   } as Editor);
   const getLiveMarkdownRef = useRef(() => markdown);
   getLiveMarkdownRef.current = () => markdown;
-  const tabsRef = useRef<TabItem[]>([
+  const tabItems = tabs ?? [
     {
       dirty: tabDirty,
       locked: false,
       path,
       title: "Note",
     },
-  ]);
+  ];
+  const tabsRef = useRef<TabItem[]>(tabItems);
+  tabsRef.current = tabItems;
 
   const api = useAppPersistenceLifecycle({
     activeFileLocked: false,
@@ -246,6 +258,200 @@ describe("useAppPersistenceLifecycle", () => {
       "note.md",
       '---\ntitle: "Note"\n---\n\nMust write despite stale tab state.',
     );
+  });
+
+  it("freezes new captures until the close barrier reaches a durable fixed point", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const firstWrite = deferred<{
+      id: number;
+      path: string;
+      title: string;
+      updated_at: string;
+      word_count: number;
+    }>();
+    fileWrite.mockReturnValueOnce(firstWrite.promise);
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: '---\ntitle: "Note"\n---\n\nOpened revision.',
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: '---\ntitle: "Note"\n---\n\nFirst captured revision.',
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+      await Promise.resolve();
+      api.notifyDirty();
+    });
+    let closing!: Promise<void>;
+    await act(async () => {
+      closing = api.flushAllOpenTabs();
+      await Promise.resolve();
+    });
+    expect(api.isPersistenceBarrierActive).toBe(true);
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown:
+            '---\ntitle: "Note"\n---\n\nMust not capture after close starts.',
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+      await Promise.resolve();
+      api.notifyDirty();
+    });
+
+    await act(async () => {
+      firstWrite.resolve({
+        id: 1,
+        path: "note.md",
+        title: "Note",
+        updated_at: "",
+        word_count: 3,
+      });
+      await closing;
+    });
+
+    expect(fileWrite.mock.calls).toEqual([
+      ["note.md", '---\ntitle: "Note"\n---\n\nFirst captured revision.'],
+    ]);
+    expect(api.isPersistenceBarrierActive).toBe(false);
+  });
+
+  it("stages an uncaptured dirty background tab before the global close barrier", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const backgroundMarkdown =
+      '---\ntitle: "Background"\n---\n\nCached before close.';
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          getTabMarkdownCached: (path) =>
+            path === "background.md" ? backgroundMarkdown : undefined,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          tabs: [
+            {
+              dirty: false,
+              locked: false,
+              path: "note.md",
+              title: "Note",
+            },
+            {
+              dirty: true,
+              locked: false,
+              path: "background.md",
+              title: "Background",
+            },
+          ],
+        }),
+      );
+    });
+
+    await act(async () => {
+      await api.flushAllOpenTabs();
+    });
+
+    expect(fileWrite).toHaveBeenCalledWith("background.md", backgroundMarkdown);
+  });
+
+  it("releases the capture freeze after a close barrier write failure", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+    const retryMarkdown =
+      '---\ntitle: "Note"\n---\n\nRetry after the failed close barrier.';
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: '---\ntitle: "Note"\n---\n\nFirst close attempt.',
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown:
+            '---\ntitle: "Note"\n---\n\nFirst close attempt that needs saving.',
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+      api.notifyDirty();
+    });
+    fileWrite.mockRejectedValueOnce(new Error("disk unavailable"));
+
+    await act(async () => {
+      await expect(api.flushAllOpenTabs()).rejects.toThrow("disk unavailable");
+    });
+
+    expect(api.isPersistenceBarrierActive).toBe(false);
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: retryMarkdown,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+    await act(async () => {
+      api.notifyDirty();
+      await api.flushAllOpenTabs();
+    });
+
+    expect(fileWrite).toHaveBeenLastCalledWith("note.md", retryMarkdown);
   });
 
   it("rejects close persistence when a dirty remount has no recoverable snapshot", async () => {

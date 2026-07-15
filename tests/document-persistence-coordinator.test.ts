@@ -115,6 +115,36 @@ describe("DocumentPersistenceCoordinator", () => {
     ]);
   });
 
+  it("holds a global barrier until a document captured during an earlier write is acknowledged", async () => {
+    const firstWrite = deferred<DocumentPersistenceWriteResult>();
+    const write = vi
+      .fn<
+        (
+          path: string,
+          markdown: string,
+        ) => Promise<DocumentPersistenceWriteResult>
+      >()
+      .mockReturnValueOnce(firstWrite.promise)
+      .mockResolvedValue(written);
+    const coordinator = new DocumentPersistenceCoordinator({ write });
+
+    coordinator.load("first.md", "opened");
+    coordinator.capture("first.md", "first edit");
+    const barrier = coordinator.barrierAll();
+
+    expect(write).toHaveBeenCalledWith("first.md", "first edit");
+    coordinator.capture("second.md", "edit captured while closing");
+    firstWrite.resolve(written);
+
+    await barrier;
+
+    expect(write.mock.calls).toEqual([
+      ["first.md", "first edit"],
+      ["second.md", "edit captured while closing"],
+    ]);
+    expect(coordinator.hasDirtyDocuments()).toBe(false);
+  });
+
   it("reschedules rename-time edits onto the backend-allocated path", async () => {
     const write = vi.fn(async () => written);
     const coordinator = new DocumentPersistenceCoordinator({ write });
