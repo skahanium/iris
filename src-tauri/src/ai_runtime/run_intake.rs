@@ -8,7 +8,7 @@ use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetResponse,
     AssistantRunStartRequest, AssistantSessionRef, CapabilityId, ContextMode, Effect, Effort,
     ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed, Modality, RiskClass,
-    RunControlAction, RunEventPayload, RunEventType, SecurityDomain,
+    RunControlAction, RunEventPayload, RunEventType, SecurityDomain, WebDecisionReason,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -36,12 +36,23 @@ impl RunIntake {
     ) -> AppResult<ExecutionEnvelope> {
         validate_start_request(request)?;
         let message = request.message.to_ascii_lowercase();
+        let directive_text = strip_quoted_segments(&message);
         let local_only = contains_any(
-            &message,
+            &directive_text,
             &[
                 "local only",
                 "offline only",
                 "do not use web",
+                "without web",
+                "stay offline",
+                "use local material only",
+                "do not browse",
+                "only use the attachment",
+                "conversation only",
+                "不要联网",
+                "不联网",
+                "离线完成",
+                "只看当前对话",
                 "\u{53ea}\u{7528}\u{672c}\u{5730}",
                 "\u{4ec5}\u{7528}\u{672c}\u{5730}",
             ],
@@ -56,7 +67,8 @@ impl RunIntake {
                 "\u{4e0d}\u{4fee}\u{6539}",
             ],
         );
-        let explicit_web_instruction = has_explicit_web_instruction(&message);
+        let web_decision =
+            WebIntentResolver::resolve(request, &message, &directive_text, local_only);
         let effect = if do_not_modify {
             Effect::Answer
         } else {
@@ -69,21 +81,12 @@ impl RunIntake {
             ContextMode::ExplicitScope
         } else if !request.explicit_references.is_empty() {
             ContextMode::ExplicitReferences
-        } else if is_novel_writing_request(&message) {
+        } else if is_novel_writing_request(&message) || request.session.is_some() {
             ContextMode::Conversation
         } else {
             ContextMode::None
         };
-        let freshness = if !request.web_enabled
-            || local_only
-            || is_novel_writing_request(&message)
-            || (is_local_transformation_request(&message) && !explicit_web_instruction)
-            || is_short_greeting(&message)
-        {
-            Freshness::Offline
-        } else {
-            Freshness::WebRequired
-        };
+        let freshness = web_decision.freshness;
         let has_images = request.content_parts.as_ref().is_some_and(|parts| {
             parts
                 .iter()
@@ -122,7 +125,7 @@ impl RunIntake {
         if has_images {
             required_capabilities.push(CapabilityId::new("model.vision"));
         }
-        if freshness != Freshness::Offline {
+        if freshness == Freshness::WebRequired {
             required_capabilities.push(CapabilityId::new("web.search"));
         }
         match effect {
@@ -153,6 +156,7 @@ impl RunIntake {
             effect,
             context,
             freshness,
+            web_reason: web_decision.reason,
             effort,
             security_domain: request.security_domain,
             risk,
@@ -468,6 +472,150 @@ fn resolve_normal_session(
 fn contains_any(message: &str, markers: &[&str]) -> bool {
     markers.iter().any(|marker| message.contains(marker))
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WebIntentDecision {
+    freshness: Freshness,
+    reason: WebDecisionReason,
+}
+
+struct WebIntentResolver;
+
+impl WebIntentResolver {
+    fn resolve(
+        request: &AssistantRunStartRequest,
+        message: &str,
+        directive_text: &str,
+        local_only: bool,
+    ) -> WebIntentDecision {
+        if request.security_domain == SecurityDomain::Classified {
+            return offline(WebDecisionReason::SecurityDomainOffline);
+        }
+        if !request.web_enabled {
+            return offline(WebDecisionReason::UserDisabled);
+        }
+        if local_only {
+            return offline(WebDecisionReason::ExplicitLocalOnly);
+        }
+
+        let explicit_web = has_explicit_web_instruction(directive_text);
+        if is_trusted_runtime_request(directive_text) {
+            return offline(WebDecisionReason::TrustedRuntimeFact);
+        }
+        if is_conversation_meta_request(directive_text) {
+            return offline(WebDecisionReason::ConversationMeta);
+        }
+        if contains_any(directive_text, &["http://", "https://"]) {
+            return required(WebDecisionReason::ExplicitUrl);
+        }
+        let local_transformation = is_local_transformation_request(message);
+        if local_transformation
+            && is_material_bound_transformation(request, directive_text)
+            && !explicit_web
+        {
+            return offline(WebDecisionReason::LocalTransformation);
+        }
+        if (is_novel_writing_request(message) || is_creative_request(message)) && !explicit_web {
+            return offline(WebDecisionReason::CreativeGeneration);
+        }
+        if explicit_web {
+            return required(WebDecisionReason::ExplicitWebRequest);
+        }
+        if is_high_stakes_current_request(directive_text) {
+            return required(WebDecisionReason::HighStakesCurrentFact);
+        }
+        if is_volatile_external_request(directive_text) {
+            return required(WebDecisionReason::VolatileExternalFact);
+        }
+        if local_transformation {
+            return offline(WebDecisionReason::LocalTransformation);
+        }
+        if is_short_greeting(directive_text) {
+            return offline(WebDecisionReason::ConversationMeta);
+        }
+        WebIntentDecision {
+            freshness: Freshness::WebPreferred,
+            reason: WebDecisionReason::GeneralQuestion,
+        }
+    }
+}
+
+fn is_material_bound_transformation(
+    request: &AssistantRunStartRequest,
+    directive_text: &str,
+) -> bool {
+    request.explicit_action.is_some()
+        || !request.explicit_references.is_empty()
+        || contains_any(
+            directive_text,
+            &[
+                "provided material",
+                "provided text",
+                "attached material",
+                "attachment",
+                "the text above",
+                "this text",
+                "this sentence",
+                "this paragraph",
+                "我提供的材料",
+                "上面的材料",
+                "附件",
+                "这段",
+                "这句话",
+            ],
+        )
+}
+
+fn offline(reason: WebDecisionReason) -> WebIntentDecision {
+    WebIntentDecision {
+        freshness: Freshness::Offline,
+        reason,
+    }
+}
+
+fn required(reason: WebDecisionReason) -> WebIntentDecision {
+    WebIntentDecision {
+        freshness: Freshness::WebRequired,
+        reason,
+    }
+}
+
+fn strip_quoted_segments(message: &str) -> String {
+    let mut output = String::with_capacity(message.len());
+    let mut closing_quote = None;
+    let characters = message.chars().collect::<Vec<_>>();
+    for (index, character) in characters.iter().copied().enumerate() {
+        if let Some(expected) = closing_quote {
+            if character == expected {
+                closing_quote = None;
+            }
+            output.push(' ');
+            continue;
+        }
+        closing_quote = match character {
+            '“' => Some('”'),
+            '‘' => Some('’'),
+            '「' => Some('」'),
+            '『' => Some('』'),
+            '"' => Some('"'),
+            '\'' if index == 0
+                || !characters[index - 1].is_alphanumeric()
+                    && characters[index + 1..].contains(&'\'') =>
+            {
+                Some('\'')
+            }
+            '`' => Some('`'),
+            _ => None,
+        };
+        if closing_quote.is_some() {
+            output.push(' ');
+        } else {
+            output.push(character);
+        }
+    }
+    output
+}
+
 fn is_local_transformation_request(message: &str) -> bool {
     contains_any(
         message,
@@ -477,11 +625,16 @@ fn is_local_transformation_request(message: &str) -> bool {
             "polish",
             "translate",
             "proofread",
+            "summarize",
+            "写得更",
+            "礼貌",
+            "校对",
             "改写",
             "润色",
             "翻译",
             "校对",
-            "续写",
+            "总结",
+            "摘要",
         ],
     )
 }
@@ -490,16 +643,179 @@ fn has_explicit_web_instruction(message: &str) -> bool {
     contains_any(
         message,
         &[
-            "search",
-            "browse",
-            "web",
-            "联网",
-            "搜索",
-            "检索",
+            "please search",
+            "please browse",
+            "search for",
+            "browse for",
+            "look up",
+            "verify online",
+            "browse the web",
+            "search online",
+            "use web search",
+            "on the internet",
+            "请联网",
+            "帮我联网",
+            "请搜索",
+            "帮我搜索",
+            "联网查",
+            "联网核实",
+            "上网查证",
+            "检索公开来源",
+            "搜索一下",
+            "检索一下",
             "查一下",
             "查找",
         ],
     )
+}
+
+fn is_trusted_runtime_request(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "今天星期几",
+            "今天几号",
+            "当前日期",
+            "本机日期",
+            "现在几点",
+            "当前时间",
+            "本机时间",
+            "应用版本",
+            "iris 版本",
+            "联网是否开启",
+            "what day of the week is it today",
+            "which day of the week is it today",
+            "what is today's date",
+            "current local time",
+            "app version",
+            "iris version",
+        ],
+    )
+}
+
+fn is_conversation_meta_request(message: &str) -> bool {
+    let has_prior_reference = contains_any(
+        message,
+        &[
+            "刚才",
+            "刚刚",
+            "上一条",
+            "上一个",
+            "之前",
+            "previous",
+            "earlier",
+        ],
+    );
+    let has_assistant_reference = contains_any(message, &["你", "助手", "模型", "harness", "you"]);
+    let has_behavior_reference = contains_any(
+        message,
+        &[
+            "联网", "搜索", "工具", "调用", "报错", "出错", "错误", "失败", "坏掉", "罢工",
+            "browse", "search", "tool", "error", "failed",
+        ],
+    );
+    (has_prior_reference && (has_assistant_reference || has_behavior_reference))
+        || (has_assistant_reference
+            && has_behavior_reference
+            && contains_any(
+                message,
+                &["为什么", "为何", "怎么", "还联网", "why", "how come"],
+            ))
+}
+
+fn is_creative_request(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "创作",
+            "写故事",
+            "写诗",
+            "写一",
+            "虚构",
+            "brainstorm",
+            "write a story",
+            "poem",
+            "draft a fantasy",
+            "invent",
+            "fictional",
+        ],
+    )
+}
+
+fn is_volatile_external_request(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "最新",
+            "实时",
+            "现任",
+            "截至",
+            "当前赛",
+            "今天的比赛",
+            "今天比赛",
+            "赛况",
+            "战况",
+            "比分",
+            "股价",
+            "价格",
+            "天气",
+            "新闻",
+            "latest",
+            "real-time",
+            "realtime",
+            "current score",
+            "today's game",
+            "stock price",
+            "weather",
+            "breaking news",
+        ],
+    )
+}
+
+fn is_high_stakes_current_request(message: &str) -> bool {
+    let high_stakes = contains_any(
+        message,
+        &[
+            "用药",
+            "剂量",
+            "诊断",
+            "法律",
+            "法规",
+            "合规",
+            "税务",
+            "投资",
+            "税",
+            "签证",
+            "监管",
+            "medical",
+            "dosage",
+            "dose",
+            "visa",
+            "regulatory",
+            "legal",
+            "regulation",
+            "compliance",
+            "tax",
+            "investment",
+        ],
+    );
+    high_stakes
+        && contains_any(
+            message,
+            &[
+                "最新",
+                "当前",
+                "现行",
+                "现在",
+                "今天",
+                "怎么做",
+                "建议",
+                "latest",
+                "current",
+                "today",
+                "advice",
+            ],
+        )
 }
 
 fn is_short_greeting(message: &str) -> bool {
@@ -517,6 +833,7 @@ fn is_short_greeting(message: &str) -> bool {
             | "嗨"
             | "哈喽"
             | "在吗"
+            | "你还在吗"
             | "早上好"
             | "晚上好"
             | "谢谢"

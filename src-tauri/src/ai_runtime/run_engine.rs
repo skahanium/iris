@@ -640,8 +640,9 @@ impl RunEngine {
     }
 
     /// Execute the bounded Web evidence stage before any model route, credential hydration, or
-    /// provider dispatch. A failed required-evidence stage terminalizes the accepted Run with a
-    /// Web-specific safe code and never invokes `dispatch`.
+    /// provider dispatch. Expected provider failures are represented by a degraded evidence
+    /// outcome and still reach `dispatch`; only an unexpected orchestration error terminalizes
+    /// the accepted Run with a Web-specific safe code.
     pub(crate) async fn execute_web_required_evidence_then_dispatch_with_sink<
         Evidence,
         Output,
@@ -1087,7 +1088,7 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
-        let content = match normalized_final_model_answer(&outcome.content) {
+        let mut content = match normalized_final_model_answer(&outcome.content) {
             Some(content) => content,
             None => {
                 return fail_empty_visible_answer_with_sink(
@@ -1118,6 +1119,14 @@ impl RunEngine {
             }
         }
         observer.flush()?;
+        append_required_web_degradation_notice(
+            db,
+            session,
+            run_id,
+            running_state_version,
+            sink,
+            &mut content,
+        )?;
         let mut final_evidence_ids = evidence_ids.to_vec();
         final_evidence_ids.extend(executor.evidence_ids());
         final_evidence_ids.sort_unstable();
@@ -1242,7 +1251,7 @@ impl RunEngine {
             .content
             .as_deref()
             .and_then(normalized_final_model_answer);
-        let Some(content) = content else {
+        let Some(mut content) = content else {
             return fail_empty_visible_answer_with_sink(db, run_id, running_state_version, sink);
         };
         if let Some(plan) = domain_plan {
@@ -1265,6 +1274,14 @@ impl RunEngine {
             }
         }
         observer.flush()?;
+        append_required_web_degradation_notice(
+            db,
+            session,
+            run_id,
+            running_state_version,
+            sink,
+            &mut content,
+        )?;
         AgentRunRepository::finalize(
             db,
             FinalizeRunInput {
@@ -1281,6 +1298,46 @@ impl RunEngine {
         sink.emit(&completed)?;
         Ok(())
     }
+}
+
+fn append_required_web_degradation_notice(
+    db: &Database,
+    session: &AssistantSessionRef,
+    run_id: &str,
+    state_version: u64,
+    sink: &impl RunEventSink,
+    content: &mut String,
+) -> AppResult<()> {
+    const NOTICE: &str =
+        "\n\n> 联网核实暂不可用；本答复仅保留不依赖最新事实的内容，请稍后重试或提供可信来源。";
+    let policy = AgentRunRepository::policy_request_for_session(db, &session.session_key, run_id)?
+        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+    if policy.envelope.freshness != crate::ai_runtime::run_contract::Freshness::WebRequired {
+        return Ok(());
+    }
+    let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
+        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+    let degraded = snapshot.events.iter().any(|event| {
+        serde_json::to_value(event)
+            .ok()
+            .is_some_and(|value| value["type"] == "capability_degraded")
+    });
+    if !degraded || content.contains(NOTICE.trim()) {
+        return Ok(());
+    }
+    content.push_str(NOTICE);
+    let event = AgentRunRepository::append_event(
+        db,
+        AppendRunEventInput {
+            run_id: run_id.to_string(),
+            state_version,
+            event_type: RunEventType::ContentDelta,
+            payload: RunEventPayload::ContentDelta {
+                delta: NOTICE.to_string(),
+            },
+        },
+    )?;
+    sink.emit(&event)
 }
 
 fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessage {

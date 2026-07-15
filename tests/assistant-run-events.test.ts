@@ -67,6 +67,14 @@ describe("Assistant Run 前端合同", () => {
         reasonCode: "transient_failure",
       },
       {
+        kind: "capability_degraded",
+        capability: "web.search",
+        code: "agent_run_web_provider_timeout",
+        retryable: true,
+        attemptCount: 2,
+        message: "联网核实暂不可用，已继续生成受约束答复。",
+      },
+      {
         kind: "confirmation_required",
         confirmationId: "confirmation-routing-001",
         planHash: "sha256:plan",
@@ -100,7 +108,7 @@ describe("Assistant Run 前端合同", () => {
     ] satisfies AssistantRunEvent["payload"][];
 
     expect(request.modelOverride?.modelId).toBe("gpt-5");
-    expect(diagnostics).toHaveLength(6);
+    expect(diagnostics).toHaveLength(7);
   });
 
   it("以正交 ExecutionEnvelope 保留 Run 的安全执行边界", () => {
@@ -108,6 +116,7 @@ describe("Assistant Run 前端合同", () => {
       effect: "draft",
       context: "explicit_references",
       freshness: "web_required",
+      webReason: "explicit_web_request",
       effort: "tool_loop",
       securityDomain: "normal",
       risk: "read_only",
@@ -162,6 +171,14 @@ describe("Assistant Run 前端合同", () => {
         summary: "已找到 2 条资料",
       },
       {
+        kind: "capability_degraded",
+        capability: "web.search",
+        code: "agent_run_web_provider_timeout",
+        retryable: true,
+        attemptCount: 2,
+        message: "联网核实暂不可用，已继续生成受约束答复。",
+      },
+      {
         kind: "confirmation_required",
         confirmationId: "confirmation-001",
         planHash: "sha256:plan",
@@ -189,7 +206,7 @@ describe("Assistant Run 前端合同", () => {
       { kind: "cancelled", reason: "用户取消" },
     ] satisfies AssistantRunEvent["payload"][];
 
-    expect(payloads).toHaveLength(14);
+    expect(payloads).toHaveLength(15);
   });
 
   it("不允许 event type 与判别载荷 kind 脱节", () => {
@@ -281,6 +298,50 @@ describe("Assistant Run 前端合同", () => {
 });
 
 describe("Assistant Run 事件归约", () => {
+  it("将能力降级保留为运行中的轻量状态而不是终态错误", () => {
+    const state = reduce([
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(2, "stage_changed", {
+        kind: "stage_changed",
+        state: "preparing",
+        stage: "正在准备",
+      }),
+      event(3, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "正在生成",
+      }),
+      event(
+        4,
+        "capability_degraded",
+        {
+          kind: "capability_degraded",
+          capability: "web.search",
+          code: "agent_run_web_provider_timeout",
+          retryable: true,
+          attemptCount: 2,
+          message: "联网核实暂不可用，已继续生成受约束答复。",
+        },
+        3,
+      ),
+    ]);
+
+    expect(state.state).toBe("running");
+    expect(state.summary).toBe("联网核实暂不可用，已继续生成受约束答复。");
+    expect(state.capabilityDegradation).toMatchObject({
+      kind: "capability_degraded",
+      capability: "web.search",
+      code: "agent_run_web_provider_timeout",
+      retryable: true,
+      attemptCount: 2,
+    });
+    expect(state.events.at(-1)?.type).toBe("capability_degraded");
+  });
+
   it("preserves structured confirmation and provider diagnostics while accepting legacy events", () => {
     const state = reduce([
       event(1, "accepted", {

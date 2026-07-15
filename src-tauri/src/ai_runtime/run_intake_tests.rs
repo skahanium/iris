@@ -1,7 +1,7 @@
 use super::run_contract::{
     AssistantRunControlRequest, AssistantRunStartRequest, ContextMode, Effect, Effort,
     ExplicitAction, ExplicitTarget, Freshness, RiskClass, RunControlAction, RunEventPayload,
-    RunEventType, RunState, SecurityDomain, SelectionSnapshot,
+    RunEventType, RunState, SecurityDomain, SelectionSnapshot, WebDecisionReason,
 };
 use super::run_engine::RunEventSink;
 use super::run_intake::RunIntake;
@@ -359,7 +359,11 @@ fn envelope_resolver_applies_security_action_and_web_rules_without_scene_inferen
     assert_eq!(resolved.security_domain, SecurityDomain::Classified);
     assert_eq!(resolved.effect, Effect::Apply);
     assert_eq!(resolved.context, ContextMode::ExplicitScope);
-    assert_eq!(resolved.freshness, Freshness::WebRequired);
+    assert_eq!(resolved.freshness, Freshness::Offline);
+    assert_eq!(
+        resolved.web_reason,
+        WebDecisionReason::SecurityDomainOffline
+    );
     assert_eq!(resolved.effort, Effort::Durable);
     assert_eq!(resolved.risk, RiskClass::BoundedWrite);
     let wire = serde_json::to_value(&resolved).expect("serialize envelope");
@@ -404,8 +408,7 @@ fn envelope_resolver_keeps_novel_writing_in_conversation_without_implicit_retrie
     assert!(resolved.material_needs.is_empty());
 }
 #[test]
-fn intake_declares_model_text_for_direct_answers_and_rejects_classified_web_before_cef_acceptance()
-{
+fn intake_declares_model_text_and_forces_classified_requests_offline_before_cef_acceptance() {
     let resolved = RunIntake::resolve_envelope(&request()).expect("resolved envelope");
     assert!(resolved.required_capabilities.contains(
         &crate::ai_runtime::run_contract::CapabilityId::new("model.text")
@@ -432,14 +435,9 @@ fn intake_declares_model_text_for_direct_answers_and_rejects_classified_web_befo
     classified.security_domain = SecurityDomain::Classified;
     classified.web_enabled = true;
 
-    let error = RunIntake::start_classified(&vault, classified)
-        .expect_err("classified Web must be denied before CEF acceptance");
-    assert_eq!(error.to_string(), "agent_run_permission_denied");
-    assert!(
-        crate::ai_runtime::classified_session::classified_ai_thread_list(&vault)
-            .unwrap()
-            .is_empty()
-    );
+    let accepted = RunIntake::start_classified(&vault, classified)
+        .expect("classified Run must remain offline instead of requesting Web");
+    assert_eq!(accepted.session.domain, SecurityDomain::Classified);
     std::fs::remove_dir_all(vault).unwrap();
 }
 #[test]
@@ -789,11 +787,151 @@ fn web_enabled_general_question_requires_engine_owned_web_evidence_without_keywo
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
-    assert!(envelope
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
+    assert_eq!(envelope.web_reason, WebDecisionReason::GeneralQuestion);
+    assert!(!envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn web_enabled_trusted_runtime_questions_remain_offline() {
+    for message in [
+        "今天星期几？",
+        "现在几点？",
+        "当前应用版本是什么？",
+        "Which day of the week is it today?",
+    ] {
+        let mut request = request();
+        request.web_enabled = true;
+        request.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
+        assert_eq!(
+            envelope.web_reason,
+            WebDecisionReason::TrustedRuntimeFact,
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn web_enabled_conversation_meta_questions_never_trigger_search() {
+    for message in [
+        "这么简单的问题你还联网搜索？",
+        "刚刚问你为什么简单问题也联网搜索，你就坏掉了？",
+        "为什么你刚才调用了 web search？",
+        "Why did you browse the web for my previous question?",
+    ] {
+        let mut request = request();
+        request.web_enabled = true;
+        request.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_eq!(envelope.freshness, Freshness::Offline, "{message}");
+        assert_eq!(
+            envelope.web_reason,
+            WebDecisionReason::ConversationMeta,
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn bilingual_web_intent_fixture_has_120_deterministic_cases() {
+    #[derive(serde::Deserialize)]
+    struct FixtureGroup {
+        freshness: String,
+        reason: String,
+        cases: Vec<String>,
+    }
+
+    let groups: Vec<FixtureGroup> =
+        serde_json::from_str(include_str!("fixtures/web_intent_v1.json"))
+            .expect("web intent fixture JSON");
+    let mut count = 0;
+    let mut mismatches = Vec::new();
+    for group in groups {
+        for message in group.cases {
+            count += 1;
+            let mut request = request();
+            request.web_enabled = true;
+            request.message = message.clone();
+            let envelope = RunIntake::resolve_envelope(&request).expect("resolve fixture");
+            let freshness = serde_json::to_value(envelope.freshness)
+                .expect("freshness")
+                .as_str()
+                .expect("freshness string")
+                .to_string();
+            let reason = serde_json::to_value(envelope.web_reason)
+                .expect("reason")
+                .as_str()
+                .expect("reason string")
+                .to_string();
+            if freshness != group.freshness || reason != group.reason {
+                mismatches.push(format!(
+                    "{message}: got {freshness}/{reason}, expected {}/{}",
+                    group.freshness, group.reason
+                ));
+            }
+        }
+    }
+    assert_eq!(count, 120);
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn quoted_web_instruction_inside_a_transformation_remains_offline() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "把‘请联网搜索最新消息’翻译成英文。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+}
+
+#[test]
+fn quoted_offline_instruction_inside_a_transformation_is_not_a_user_directive() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.message =
+        "Translate the quoted sentence 'Do not browse the web' into Chinese.".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
+}
+
+#[test]
+fn transformation_word_does_not_hide_an_unbound_current_facts_request() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "Summarize the latest breaking news.".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
+}
+
+#[test]
+fn continuing_a_normal_session_authorizes_bounded_conversation_context() {
+    let mut request = request();
+    request.session = Some(super::run_contract::AssistantSessionRef {
+        domain: SecurityDomain::Normal,
+        session_key: "existing-session".into(),
+    });
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.context, ContextMode::Conversation);
 }
 
 #[test]

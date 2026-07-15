@@ -14,6 +14,10 @@ export interface AssistantRunEventState {
   state: RunState | null;
   stage: string | null;
   summary: string | null;
+  capabilityDegradation: Extract<
+    AssistantRunEventPayload,
+    { kind: "capability_degraded" }
+  > | null;
   pendingConfirmation: PendingConfirmation | null;
   provider: {
     providerId: string;
@@ -40,6 +44,7 @@ export function createAssistantRunEventState(
     state: null,
     stage: null,
     summary: null,
+    capabilityDegradation: null,
     pendingConfirmation: null,
     provider: null,
     content: "",
@@ -136,6 +141,10 @@ function applyEvent(
     state: nextState,
     stage: payload.kind === "stage_changed" ? payload.stage : state.stage,
     summary: summaryForPayload(payload) ?? state.summary,
+    capabilityDegradation:
+      payload.kind === "capability_degraded"
+        ? payload
+        : state.capabilityDegradation,
     pendingConfirmation:
       payload.kind === "confirmation_required"
         ? confirmationForPayload(payload)
@@ -216,6 +225,8 @@ function summaryForPayload(payload: AssistantRunEventPayload): string | null {
     case "tool_completed":
     case "confirmation_required":
       return payload.summary;
+    case "capability_degraded":
+      return payload.message;
     case "permission_denied":
     case "failed":
       return payload.message;

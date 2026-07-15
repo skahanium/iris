@@ -230,7 +230,7 @@ mod tests {
     use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
     use crate::ai_runtime::run_contract::{
         ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed, Modality,
-        RiskClass, SecurityDomain,
+        RiskClass, SecurityDomain, WebDecisionReason,
     };
 
     fn audit_db() -> (Database, String) {
@@ -253,6 +253,7 @@ mod tests {
                     effect: Effect::Answer,
                     context: ContextMode::ExplicitReferences,
                     freshness: Freshness::Offline,
+                    web_reason: WebDecisionReason::LegacyUnknown,
                     effort: Effort::Direct,
                     security_domain: SecurityDomain::Normal,
                     risk: RiskClass::ReadOnly,

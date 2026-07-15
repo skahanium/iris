@@ -285,15 +285,27 @@ async fn required_web_evidence_sends_one_correction_before_final_answer() {
 }
 
 #[tokio::test]
-async fn failed_follow_up_web_tool_returns_its_web_safe_code_without_another_model_turn() {
+async fn failed_follow_up_web_tool_returns_a_structured_result_for_a_degraded_final_answer() {
     let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
-            content: None,
-            tool_calls: vec![web_tool_call()],
-            usage: Default::default(),
-            finish_reason: "tool_calls".into(),
-            reasoning_content: None,
-        }])),
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![web_tool_call()],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some(
+                    "I could not verify the current status because Web timed out. Please retry."
+                        .into(),
+                ),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+            },
+        ])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
     };
@@ -308,7 +320,7 @@ async fn failed_follow_up_web_tool_returns_its_web_safe_code_without_another_mod
         capability_affinity: Vec::new(),
     }];
 
-    let error = AgentToolLoop::default()
+    let outcome = AgentToolLoop::default()
         .execute(
             &provider,
             &FailingWebExecutor,
@@ -325,8 +337,19 @@ async fn failed_follow_up_web_tool_returns_its_web_safe_code_without_another_mod
             &mut observer,
         )
         .await
-        .expect_err("a failed Web tool cannot fall through to model-provider failure");
+        .expect("a failed Web tool is recoverable");
 
-    assert_eq!(error.to_string(), "agent_run_web_provider_timeout");
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert!(outcome.content.contains("could not verify"));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    let messages = provider
+        .second_turn_messages
+        .lock()
+        .expect("second turn messages lock");
+    assert!(messages.iter().any(|message| {
+        matches!(message.role, MessageRole::Tool)
+            && message
+                .content
+                .text_content()
+                .contains("agent_run_web_provider_timeout")
+    }));
 }

@@ -52,8 +52,43 @@ pub(crate) enum ContextMode {
 pub(crate) enum Freshness {
     /// Web access is forbidden.
     Offline,
+    /// Web access is permitted, while the answering model decides whether it is useful.
+    WebPreferred,
     /// Web evidence is required to substantiate the result.
     WebRequired,
+}
+
+/// Stable explanation for the deterministic Web decision attached to a Run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WebDecisionReason {
+    /// A historical envelope predates explicit Web decision reasons.
+    #[default]
+    LegacyUnknown,
+    /// The user disabled Web access for this Run.
+    UserDisabled,
+    /// The security domain forbids network access.
+    SecurityDomainOffline,
+    /// The user explicitly required local-only execution.
+    ExplicitLocalOnly,
+    /// Trusted local runtime facts can answer the request.
+    TrustedRuntimeFact,
+    /// The request discusses this assistant, its tools, or a previous Run.
+    ConversationMeta,
+    /// The request transforms only supplied or authorized text.
+    LocalTransformation,
+    /// The request is creative and has no explicit external-fact requirement.
+    CreativeGeneration,
+    /// The user explicitly instructed the assistant to search or verify online.
+    ExplicitWebRequest,
+    /// The user supplied a URL that must be fetched through the Web boundary.
+    ExplicitUrl,
+    /// The answer depends on volatile external facts.
+    VolatileExternalFact,
+    /// A current medical, legal, financial, or compliance fact has elevated stakes.
+    HighStakesCurrentFact,
+    /// Web is available for a general or ambiguous question but is not mandatory.
+    GeneralQuestion,
 }
 
 /// Amount of coordinated work the Run may perform.
@@ -135,6 +170,9 @@ pub(crate) struct ExecutionEnvelope {
     pub(crate) context: ContextMode,
     /// Web freshness requirement.
     pub(crate) freshness: Freshness,
+    /// Deterministic, content-safe explanation for the Web freshness decision.
+    #[serde(default)]
+    pub(crate) web_reason: WebDecisionReason,
     /// Allowed execution depth.
     pub(crate) effort: Effort,
     /// Physical security domain.
@@ -452,6 +490,8 @@ pub(crate) enum RunEventType {
     ToolStarted,
     /// A capability call completed.
     ToolCompleted,
+    /// A recoverable capability failure occurred without terminating the Run.
+    CapabilityDegraded,
     /// A frozen change plan needs user confirmation.
     ConfirmationRequired,
     /// Policy denied an action.
@@ -514,6 +554,19 @@ pub(crate) enum RunEventPayload {
         tool_call_id: String,
         /// User-safe completion summary.
         summary: String,
+    },
+    /// A recoverable capability failure that allows the Run to continue.
+    CapabilityDegraded {
+        /// Stable capability name.
+        capability: String,
+        /// Stable sanitized failure code.
+        code: SafeRunErrorCode,
+        /// Whether a later user retry may succeed.
+        retryable: bool,
+        /// Number of attempts already consumed during this Run.
+        attempt_count: u32,
+        /// User-safe explanation without raw provider output.
+        message: String,
     },
     /// A frozen confirmation summary.
     ConfirmationRequired {
@@ -803,6 +856,7 @@ impl RunEventPayload {
             Self::ContentDelta { .. } => RunEventType::ContentDelta,
             Self::ToolStarted { .. } => RunEventType::ToolStarted,
             Self::ToolCompleted { .. } => RunEventType::ToolCompleted,
+            Self::CapabilityDegraded { .. } => RunEventType::CapabilityDegraded,
             Self::ConfirmationRequired { .. } => RunEventType::ConfirmationRequired,
             Self::PermissionDenied { .. } => RunEventType::PermissionDenied,
             Self::ProviderSwitched { .. } => RunEventType::ProviderSwitched,

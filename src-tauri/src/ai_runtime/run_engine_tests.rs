@@ -59,6 +59,35 @@ impl RunEventSink for RecordingSink {
     }
 }
 
+fn failed_web_output(
+    reason: &str,
+) -> crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
+    crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
+        items: vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: String::new(),
+            canonical_url: String::new(),
+            title: String::new(),
+            domain: String::new(),
+            snippet: String::new(),
+            fetched_excerpt: None,
+            provider_id: "test.web".to_string(),
+            provider_kind: "mcp".to_string(),
+            cost_class: "free".to_string(),
+            raw_result_hash: String::new(),
+            extraction_method: "search_failed".to_string(),
+            trust_level: "external_untrusted".to_string(),
+            retrieval_reason: "search".to_string(),
+            search_backend: crate::ai_runtime::WebSearchBackend::Provider,
+            source_rank: crate::ai_runtime::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: Some(reason.to_string()),
+            conflict_group: None,
+            conflict_note: None,
+        }],
+        usage: Default::default(),
+    }
+}
+
 impl DirectAnswerProvider for MockProvider {
     fn answer(&self, _run_id: &str, _message: &str) -> AppResult<String> {
         self.calls.set(self.calls.get() + 1);
@@ -964,6 +993,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
             effect: super::run_contract::Effect::Answer,
             context: super::run_contract::ContextMode::None,
             freshness: super::run_contract::Freshness::Offline,
+            web_reason: super::run_contract::WebDecisionReason::LegacyUnknown,
             effort: super::run_contract::Effort::Direct,
             security_domain: SecurityDomain::Normal,
             risk: super::run_contract::RiskClass::ReadOnly,
@@ -1074,6 +1104,7 @@ async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final
             effect: super::run_contract::Effect::Draft,
             context: super::run_contract::ContextMode::ExplicitReferences,
             freshness: super::run_contract::Freshness::Offline,
+            web_reason: super::run_contract::WebDecisionReason::LegacyUnknown,
             effort: super::run_contract::Effort::Direct,
             security_domain: SecurityDomain::Normal,
             risk: super::run_contract::RiskClass::ReadOnly,
@@ -1117,7 +1148,7 @@ async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final
 }
 
 #[tokio::test]
-async fn run_tool_loop_web_required_fails_without_evidence() {
+async fn run_tool_loop_web_required_degrades_without_evidence() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
@@ -1133,7 +1164,7 @@ async fn run_tool_loop_web_required_fails_without_evidence() {
     let calls = AtomicU32::new(0);
     let sink = RecordingSink::default();
 
-    let error = super::run_tool_loop::collect_web_evidence_for_run(
+    let outcome = super::run_tool_loop::collect_web_evidence_for_run(
         &db,
         &accepted,
         &context,
@@ -1152,14 +1183,138 @@ async fn run_tool_loop_web_required_fails_without_evidence() {
         },
     )
     .await
-    .expect_err("web_required must not continue without evidence");
+    .expect("web_required continues with a constrained degradation");
 
-    assert_eq!(error.to_string(), "agent_run_web_evidence_invalid");
+    assert_eq!(outcome.status, super::run_tool_loop::RunWebStatus::Degraded);
+    assert_eq!(
+        outcome.failure_code,
+        Some(SafeRunErrorCode::WebEvidenceInvalid)
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         crate::ai_runtime::tool_audit::count_by_run(&db, &accepted.run_id).expect("audit count"),
         1
     );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert!(replay.events.iter().any(|event| {
+        serde_json::to_value(event).expect("event")["type"] == "capability_degraded"
+    }));
+}
+
+#[tokio::test]
+async fn transient_failure_output_is_retried_once_then_succeeds() {
+    let db = Database::open_in_memory().expect("database");
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "Please search the web for current public facts".to_string();
+    let accepted = RunIntake::start(&db, request).expect("accepted");
+    let context = super::run_context::RunContextAssembler::assemble(
+        &db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("context");
+    let calls = AtomicU32::new(0);
+    let sink = RecordingSink::default();
+
+    let outcome =
+        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
+            let call = calls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if call == 0 {
+                    return Ok(failed_web_output(
+                        "web_search_failed: connection reset by peer",
+                    ));
+                }
+                Ok(
+                    crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput {
+                        items: vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+                            url: "https://example.com/current".to_string(),
+                            canonical_url: "https://example.com/current".to_string(),
+                            title: "Current public source".to_string(),
+                            domain: "example.com".to_string(),
+                            snippet: "verified current fact".to_string(),
+                            fetched_excerpt: None,
+                            provider_id: "test.web".to_string(),
+                            provider_kind: "mcp".to_string(),
+                            cost_class: "free".to_string(),
+                            raw_result_hash: "test-result-hash".to_string(),
+                            extraction_method: "search_snippet".to_string(),
+                            trust_level: "external_untrusted".to_string(),
+                            retrieval_reason: "search".to_string(),
+                            search_backend: crate::ai_runtime::WebSearchBackend::Provider,
+                            source_rank: crate::ai_runtime::WebSourceRank::Unknown,
+                            freshness_label: None,
+                            failure_reason: None,
+                            conflict_group: None,
+                            conflict_note: None,
+                        }],
+                        usage: Default::default(),
+                    },
+                )
+            }
+        })
+        .await
+        .expect("transient provider output should recover");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        outcome.status,
+        super::run_tool_loop::RunWebStatus::Succeeded
+    );
+    assert_eq!(outcome.attempt_count, 2);
+    assert_eq!(outcome.evidence_ids.len(), 1);
+}
+
+#[tokio::test]
+async fn deterministic_failure_output_is_not_retried_and_is_not_retryable() {
+    let db = Database::open_in_memory().expect("database");
+    let mut request = request();
+    request.web_enabled = true;
+    request.message = "Please search the web for current public facts".to_string();
+    let accepted = RunIntake::start(&db, request).expect("accepted");
+    let context = super::run_context::RunContextAssembler::assemble(
+        &db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("context");
+    let calls = AtomicU32::new(0);
+    let sink = RecordingSink::default();
+
+    let outcome =
+        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            async {
+                Ok(failed_web_output(
+                    "mcp_search_parse_empty:unrecognized_schema",
+                ))
+            }
+        })
+        .await
+        .expect("schema failure should degrade");
+
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(outcome.status, super::run_tool_loop::RunWebStatus::Degraded);
+    assert_eq!(
+        outcome.failure_code,
+        Some(SafeRunErrorCode::WebEvidenceInvalid)
+    );
+    assert!(!outcome.retryable);
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    let degraded = replay
+        .events
+        .iter()
+        .map(|event| serde_json::to_value(event).expect("event"))
+        .find(|event| event["type"] == "capability_degraded")
+        .expect("degradation event");
+    assert_eq!(degraded["payload"]["retryable"], false);
 }
 
 #[tokio::test]
@@ -1231,7 +1386,7 @@ async fn run_tool_loop_registers_bounded_web_evidence_before_provider_dispatch()
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "search current public facts".to_string();
+    request.message = "Please search the web for current public facts".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,
@@ -1266,15 +1421,13 @@ async fn run_tool_loop_registers_bounded_web_evidence_before_provider_dispatch()
         usage: Default::default(),
     };
 
-    let result = super::run_tool_loop::collect_web_evidence_for_run(
-        &db,
-        &accepted,
-        &context,
-        &sink,
-        |_| async { Ok(output) },
-    )
-    .await
-    .expect("web evidence is registered");
+    let result =
+        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
+            let output = output.clone();
+            async move { Ok(output) }
+        })
+        .await
+        .expect("web evidence is registered");
 
     assert_eq!(result.evidence_ids.len(), 1);
     assert!(result.prompt_addendum.contains("bounded page evidence"));
@@ -1313,7 +1466,7 @@ async fn web_required_pre_answer_stage_uses_search_snippets_without_page_fetches
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "search current public facts".to_string();
+    request.message = "Please search the web for current public facts".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,
@@ -1363,11 +1516,17 @@ async fn web_required_pre_answer_stage_uses_search_snippets_without_page_fetches
                 &accepted,
                 &context,
                 &sink,
-                |input| async move {
-                    assert_eq!(input.query, "search current public facts");
-                    assert_eq!(input.max_fetches, 0);
-                    assert!(input.max_search_results <= 5);
-                    Ok(output)
+                |input| {
+                    let output = output.clone();
+                    async move {
+                        assert_eq!(
+                            input.query,
+                            "Please search the web for current public facts"
+                        );
+                        assert_eq!(input.max_fetches, 0);
+                        assert!(input.max_search_results <= 5);
+                        Ok(output)
+                    }
                 },
             )
         },
@@ -1465,6 +1624,31 @@ fn web_evidence_failure_classification_never_uses_model_provider_codes() {
 }
 
 #[test]
+fn web_failure_retryability_is_limited_to_known_transient_conditions() {
+    for deterministic in [
+        "web_search_provider_missing",
+        "provider_disabled: circuit_open",
+        "unauthorized: invalid api key",
+        "policy denied",
+        "mcp_search_parse_empty:unrecognized_schema",
+        "output too large",
+    ] {
+        assert!(
+            !super::run_tool_loop::web_evidence_failure_is_retryable(
+                &AppError::msg(deterministic,)
+            ),
+            "{deterministic}"
+        );
+    }
+    for transient in ["deadline exceeded", "connection reset by peer"] {
+        assert!(
+            super::run_tool_loop::web_evidence_failure_is_retryable(&AppError::msg(transient)),
+            "{transient}"
+        );
+    }
+}
+
+#[test]
 fn tool_loop_web_failures_keep_their_web_safe_codes() {
     assert_eq!(
         super::run_engine::classify_tool_loop_failure(&AppError::msg(
@@ -1487,11 +1671,11 @@ fn tool_loop_web_failures_keep_their_web_safe_codes() {
 }
 
 #[tokio::test]
-async fn web_required_evidence_failure_returns_before_any_model_dispatch() {
+async fn web_required_evidence_failure_degrades_and_still_dispatches_the_model() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "search current public facts".to_string();
+    request.message = "Please search the web for current public facts".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,
@@ -1505,8 +1689,9 @@ async fn web_required_evidence_failure_returns_before_any_model_dispatch() {
         calls: AtomicU32::new(0),
         failure: None,
     };
+    let web_calls = AtomicU32::new(0);
 
-    let error = RunEngine::execute_web_required_evidence_then_dispatch_with_sink(
+    RunEngine::execute_web_required_evidence_then_dispatch_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -1517,7 +1702,10 @@ async fn web_required_evidence_failure_returns_before_any_model_dispatch() {
                 &accepted,
                 &context,
                 &sink,
-                |_| async { Err(AppError::msg("deadline exceeded")) },
+                |_| {
+                    web_calls.fetch_add(1, Ordering::SeqCst);
+                    async { Err(AppError::msg("deadline exceeded")) }
+                },
             )
         },
         |_| {
@@ -1531,14 +1719,14 @@ async fn web_required_evidence_failure_returns_before_any_model_dispatch() {
         },
     )
     .await
-    .expect_err("required web evidence must stop before model dispatch");
+    .expect("required Web failure still permits a constrained model answer");
 
-    assert_eq!(error.to_string(), "agent_run_web_provider_timeout");
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(web_calls.load(Ordering::SeqCst), 2);
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
-        .expect("failed run");
-    assert_eq!(replay.run.state, RunState::Failed);
+        .expect("completed degraded run");
+    assert_eq!(replay.run.state, RunState::Completed);
     let event_types = replay
         .events
         .iter()
@@ -1550,13 +1738,36 @@ async fn web_required_evidence_failure_returns_before_any_model_dispatch() {
             serde_json::json!("accepted"),
             serde_json::json!("tool_started"),
             serde_json::json!("tool_completed"),
+            serde_json::json!("capability_degraded"),
             serde_json::json!("stage_changed"),
-            serde_json::json!("failed"),
+            serde_json::json!("stage_changed"),
+            serde_json::json!("content_delta"),
+            serde_json::json!("content_delta"),
+            serde_json::json!("completed"),
         ]
     );
+    let degraded = replay
+        .events
+        .iter()
+        .map(|event| serde_json::to_value(event).expect("event"))
+        .find(|event| event["type"] == "capability_degraded")
+        .expect("degradation event");
     assert_eq!(
-        serde_json::to_value(replay.events.last().expect("failed event"))
-            .expect("serialize failed event")["payload"]["code"],
-        serde_json::json!("agent_run_web_provider_timeout")
+        degraded["payload"]["code"],
+        "agent_run_web_provider_timeout"
     );
+    assert_eq!(degraded["payload"]["attemptCount"], 2);
+    let persisted: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT m.content FROM agent_runs r JOIN session_messages m
+                 ON m.session_id = r.session_id
+                 WHERE r.run_id = ?1 AND m.role = 'assistant'",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted degraded answer");
+    assert!(persisted.contains("联网核实暂不可用"));
 }

@@ -536,6 +536,7 @@ mod tests {
             effect: crate::ai_runtime::run_contract::Effect::Answer,
             context: crate::ai_runtime::run_contract::ContextMode::None,
             freshness,
+            web_reason: crate::ai_runtime::run_contract::WebDecisionReason::LegacyUnknown,
             effort: crate::ai_runtime::run_contract::Effort::Direct,
             security_domain,
             risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,

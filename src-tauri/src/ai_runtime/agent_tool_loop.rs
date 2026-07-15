@@ -119,6 +119,13 @@ impl AgentToolLoop {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
                 }
                 if require_web_evidence && !executor.has_web_evidence() {
+                    if executor.web_evidence_failure_code().is_some() {
+                        return Ok(AgentToolLoopOutcome {
+                            content,
+                            model_turns,
+                            tool_calls,
+                        });
+                    }
                     if required_evidence_correction_sent {
                         return Err(AppError::msg("agent_run_web_evidence_required"));
                     }
@@ -160,11 +167,6 @@ impl AgentToolLoop {
                         executor.execute(run_id, call, tool_calls).await?
                     }
                 };
-                if call.function.name == "web_search" && !result.success {
-                    if let Some(code) = executor.web_evidence_failure_code() {
-                        return Err(AppError::msg(code.as_str()));
-                    }
-                }
                 messages.push(tool_result_message(call, &result));
             }
         }

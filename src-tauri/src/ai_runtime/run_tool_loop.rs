@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
@@ -38,19 +38,75 @@ const WEB_TOOL_NAME: &str = "web_search";
 const MAX_WEB_EVIDENCE_PER_RUN: usize = 8;
 const MAX_INITIAL_WEB_SEARCH_RESULTS: usize = 5;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
-const INITIAL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(15);
+const INITIAL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(10);
 /// Internal control-flow signal: the Run was durably moved to confirmation,
 /// so the model loop must stop without terminalizing it.
 pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
 const CHANGE_CONFIRMATION_TTL_MS: i64 = 10 * 60 * 1_000;
 
 /// Transient result produced by the bounded Run Web loop.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RunWebStatus {
+    Skipped,
+    Succeeded,
+    Degraded,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WebFailure {
+    code: SafeRunErrorCode,
+    retryable: bool,
+}
+
+impl WebFailure {
+    const fn new(code: SafeRunErrorCode, retryable: bool) -> Self {
+        Self { code, retryable }
+    }
+}
+
+#[derive(Debug, Default)]
+struct RunWebBudget {
+    started: Mutex<Option<Instant>>,
+}
+
+impl RunWebBudget {
+    fn started(&self) -> AppResult<Instant> {
+        let mut started = self
+            .started
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_budget_lock_failed"))?;
+        Ok(*started.get_or_insert_with(Instant::now))
+    }
+}
+
+/// Internal Web capability outcome; a degraded result is still dispatchable.
+#[derive(Debug, Clone)]
 pub(crate) struct RunWebEvidence {
     /// Ledger IDs that must be attached to the final assistant message.
     pub(crate) evidence_ids: Vec<i64>,
     /// Untrusted evidence data bounded for the current provider prompt only.
     pub(crate) prompt_addendum: String,
+    pub(crate) status: RunWebStatus,
+    pub(crate) failure_code: Option<SafeRunErrorCode>,
+    pub(crate) retryable: bool,
+    pub(crate) attempt_count: u32,
+    pub(crate) duration_bucket: &'static str,
+    pub(crate) remaining_budget_ms: u64,
+}
+
+impl Default for RunWebEvidence {
+    fn default() -> Self {
+        Self {
+            evidence_ids: Vec::new(),
+            prompt_addendum: String::new(),
+            status: RunWebStatus::Skipped,
+            failure_code: None,
+            retryable: false,
+            attempt_count: 0,
+            duration_bucket: "not_attempted",
+            remaining_budget_ms: bounded_duration_ms(INITIAL_WEB_EVIDENCE_DEADLINE),
+        }
+    }
 }
 
 /// Concrete normal-domain executor for the model tool loop.
@@ -68,7 +124,10 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     cold_start_packets: Vec<crate::ai_runtime::ContextPacket>,
     runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot>,
     evidence_ids: Mutex<Vec<i64>>,
-    web_failure_code: Mutex<Option<SafeRunErrorCode>>,
+    web_failure: Mutex<Option<WebFailure>>,
+    web_attempt_count: Mutex<u32>,
+    web_budget: RunWebBudget,
+    web_degradation_emitted: Mutex<bool>,
 }
 
 impl<'a> NormalRunToolExecutor<'a> {
@@ -92,7 +151,10 @@ impl<'a> NormalRunToolExecutor<'a> {
             cold_start_packets: Vec::new(),
             runtime_documents: Vec::new(),
             evidence_ids: Mutex::new(Vec::new()),
-            web_failure_code: Mutex::new(None),
+            web_failure: Mutex::new(None),
+            web_attempt_count: Mutex::new(0),
+            web_budget: RunWebBudget::default(),
+            web_degradation_emitted: Mutex::new(false),
         }
     }
 
@@ -118,32 +180,76 @@ impl<'a> NormalRunToolExecutor<'a> {
             .unwrap_or_default();
         let remaining = MAX_WEB_EVIDENCE_PER_RUN.saturating_sub(self.evidence_ids().len());
         if remaining == 0 {
-            self.set_web_failure_code(Some(SafeRunErrorCode::WebEvidenceInvalid))?;
+            self.set_web_failure(Some(WebFailure::new(
+                SafeRunErrorCode::WebEvidenceInvalid,
+                false,
+            )))?;
             return Ok(failed_tool_call(
                 WEB_TOOL_NAME,
                 "web_evidence_budget_exhausted",
             ));
         }
-        let output = match crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(
-            &self.state.db,
-            crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
-                query: query.to_owned(),
-                urls,
-                enabled: self.policy_ctx.web_search_enabled,
-                max_search_results: remaining,
-                max_fetches: remaining,
-            },
-        )
-        .await
-        {
-            Ok(output) => output,
-            Err(error) => {
-                self.set_web_failure_code(Some(classify_web_evidence_failure(&error)))?;
-                return Ok(failed_tool_call(
-                    WEB_TOOL_NAME,
-                    classify_web_evidence_failure(&error).as_str(),
+        let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
+            query: query.to_owned(),
+            urls,
+            enabled: self.policy_ctx.web_search_enabled,
+            max_search_results: remaining,
+            max_fetches: remaining,
+        };
+        let budget_started = self.web_budget.started()?;
+        let call_started = Instant::now();
+        let output = loop {
+            let Some(attempt_count) = self.reserve_web_attempt()? else {
+                let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
+                self.set_web_failure(Some(failure))?;
+                return Ok(failed_web_tool_call(
+                    failure,
+                    self.web_attempt_count(),
+                    call_started.elapsed(),
+                    remaining_web_budget_ms(budget_started.elapsed()),
+                ));
+            };
+            let remaining_time =
+                INITIAL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
+            if remaining_time.is_zero() {
+                let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
+                self.set_web_failure(Some(failure))?;
+                return Ok(failed_web_tool_call(
+                    failure,
+                    attempt_count,
+                    call_started.elapsed(),
+                    remaining_web_budget_ms(budget_started.elapsed()),
                 ));
             }
+            let failure = match tokio::time::timeout(
+                remaining_time,
+                crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
+                    &self.state.db,
+                    broker_input.clone(),
+                ),
+            )
+            .await
+            {
+                Ok(Ok(output)) if web_output_has_usable_evidence(&output) => break output,
+                Ok(Ok(output)) => classify_web_evidence_output_failure(&output),
+                Ok(Err(error)) => classify_web_failure(&error),
+                Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
+            };
+            if attempt_count < 2
+                && failure.retryable
+                && budget_started.elapsed() + Duration::from_millis(250)
+                    < INITIAL_WEB_EVIDENCE_DEADLINE
+            {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            self.set_web_failure(Some(failure))?;
+            return Ok(failed_web_tool_call(
+                failure,
+                attempt_count,
+                call_started.elapsed(),
+                remaining_web_budget_ms(budget_started.elapsed()),
+            ));
         };
         let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets(
             query,
@@ -159,11 +265,16 @@ impl<'a> NormalRunToolExecutor<'a> {
             remaining,
         )?;
         if evidence_ids.is_empty() {
-            let code = classify_web_evidence_output_failure(&output);
-            self.set_web_failure_code(Some(code))?;
-            return Ok(failed_tool_call(WEB_TOOL_NAME, code.as_str()));
+            let failure = classify_web_evidence_output_failure(&output);
+            self.set_web_failure(Some(failure))?;
+            return Ok(failed_web_tool_call(
+                failure,
+                self.web_attempt_count(),
+                call_started.elapsed(),
+                remaining_web_budget_ms(budget_started.elapsed()),
+            ));
         }
-        self.set_web_failure_code(None)?;
+        self.set_web_failure(None)?;
         self.evidence_ids
             .lock()
             .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?
@@ -176,9 +287,10 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "evidenceIds": evidence_ids,
                 "count": evidence_ids.len(),
                 "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
+                "remainingBudgetMs": remaining_web_budget_ms(budget_started.elapsed()),
                 "webUsage": output.usage,
             }),
-            duration_ms: 0,
+            duration_ms: bounded_duration_ms(call_started.elapsed()),
             tokens_used: None,
             error: None,
         })
@@ -415,6 +527,33 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 &call.id,
                 summary,
             )?;
+            if call.function.name == WEB_TOOL_NAME && !result.success {
+                if let Some(failure) = self.web_failure() {
+                    if self.mark_web_degradation_emitted()? {
+                        append_capability_degraded(
+                            &self.state.db,
+                            self.accepted,
+                            self.sink,
+                            failure,
+                            self.web_attempt_count(),
+                        )?;
+                    }
+                }
+            }
+            if call.function.name == WEB_TOOL_NAME {
+                let failure = self.web_failure();
+                tracing::info!(
+                    run_id,
+                    web_mode = ?self.context.envelope.freshness,
+                    web_reason = ?self.context.envelope.web_reason,
+                    web_status = if result.success { "succeeded" } else { "degraded" },
+                    web_failure_code = failure.map(|value| value.code.as_str()),
+                    web_retryable = failure.is_some_and(|value| value.retryable),
+                    web_attempt_count = self.web_attempt_count(),
+                    web_duration_bucket = web_duration_bucket(Duration::from_millis(result.duration_ms)),
+                    "Run model-decided Web capability outcome"
+                );
+            }
             Ok(result)
         })
     }
@@ -431,17 +570,55 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn web_evidence_failure_code(&self) -> Option<SafeRunErrorCode> {
-        self.web_failure_code.lock().ok().and_then(|code| *code)
+        self.web_failure
+            .lock()
+            .ok()
+            .and_then(|failure| failure.map(|value| value.code))
     }
 }
 
 impl NormalRunToolExecutor<'_> {
-    fn set_web_failure_code(&self, code: Option<SafeRunErrorCode>) -> AppResult<()> {
+    fn set_web_failure(&self, failure: Option<WebFailure>) -> AppResult<()> {
         *self
-            .web_failure_code
+            .web_failure
             .lock()
-            .map_err(|_| AppError::msg("agent_run_web_failure_lock_failed"))? = code;
+            .map_err(|_| AppError::msg("agent_run_web_failure_lock_failed"))? = failure;
         Ok(())
+    }
+
+    fn web_failure(&self) -> Option<WebFailure> {
+        self.web_failure.lock().ok().and_then(|failure| *failure)
+    }
+
+    fn reserve_web_attempt(&self) -> AppResult<Option<u32>> {
+        let mut attempts = self
+            .web_attempt_count
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_attempt_lock_failed"))?;
+        if *attempts >= 2 {
+            return Ok(None);
+        }
+        *attempts = attempts.saturating_add(1);
+        Ok(Some(*attempts))
+    }
+
+    fn web_attempt_count(&self) -> u32 {
+        self.web_attempt_count
+            .lock()
+            .map(|attempts| *attempts)
+            .unwrap_or(0)
+    }
+
+    fn mark_web_degradation_emitted(&self) -> AppResult<bool> {
+        let mut emitted = self
+            .web_degradation_emitted
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_degradation_lock_failed"))?;
+        if *emitted {
+            return Ok(false);
+        }
+        *emitted = true;
+        Ok(true)
     }
 }
 
@@ -545,13 +722,44 @@ fn revalidate_frozen_base_hashes(
 }
 
 fn failed_tool_call(tool_name: &str, code: &str) -> ToolCallResult {
+    failed_tool_call_with_duration(tool_name, code, Duration::ZERO)
+}
+
+fn failed_tool_call_with_duration(
+    tool_name: &str,
+    code: &str,
+    duration: Duration,
+) -> ToolCallResult {
     ToolCallResult {
         tool_name: tool_name.to_string(),
         success: false,
         output: serde_json::json!({ "error": code }),
-        duration_ms: 0,
+        duration_ms: bounded_duration_ms(duration),
         tokens_used: None,
         error: Some(code.to_string()),
+    }
+}
+
+fn failed_web_tool_call(
+    failure: WebFailure,
+    attempt_count: u32,
+    duration: Duration,
+    remaining_budget_ms: u64,
+) -> ToolCallResult {
+    ToolCallResult {
+        tool_name: WEB_TOOL_NAME.to_string(),
+        success: false,
+        output: serde_json::json!({
+            "capability": "web.search",
+            "error": failure.code.as_str(),
+            "retryable": failure.retryable,
+            "attemptCount": attempt_count,
+            "budgetExhausted": remaining_budget_ms == 0,
+            "remainingBudgetMs": remaining_budget_ms,
+        }),
+        duration_ms: bounded_duration_ms(duration),
+        tokens_used: None,
+        error: Some(failure.code.as_str().to_string()),
     }
 }
 
@@ -677,10 +885,10 @@ pub(crate) async fn collect_web_evidence_for_run<F, Fut>(
     accepted: &AssistantRunAccepted,
     context: &RunContext,
     sink: &impl RunEventSink,
-    collector: F,
+    mut collector: F,
 ) -> AppResult<RunWebEvidence>
 where
-    F: FnOnce(crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput) -> Fut,
+    F: FnMut(crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput) -> Fut,
     Fut:
         Future<Output = AppResult<crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput>>,
 {
@@ -727,25 +935,42 @@ where
     }
 
     let tool_state_version = append_tool_started(db, accepted, sink)?;
-    let collection = tokio::time::timeout(
-        INITIAL_WEB_EVIDENCE_DEADLINE,
-        collector(
-            crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
-                query: context.user_message.clone(),
-                urls: Vec::new(),
-                enabled: true,
-                max_search_results: MAX_INITIAL_WEB_SEARCH_RESULTS,
-                max_fetches: 0,
-            },
-        ),
-    )
-    .await;
+    let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
+        query: context.user_message.clone(),
+        urls: Vec::new(),
+        enabled: true,
+        max_search_results: MAX_INITIAL_WEB_SEARCH_RESULTS,
+        max_fetches: 0,
+    };
+    let started = Instant::now();
+    let mut attempt_count = 0;
+    let collection = loop {
+        attempt_count += 1;
+        let remaining = INITIAL_WEB_EVIDENCE_DEADLINE.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            break Err(WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true));
+        }
+        let failure = match tokio::time::timeout(remaining, collector(broker_input.clone())).await {
+            Ok(Ok(output)) if web_output_has_usable_evidence(&output) => break Ok(output),
+            Ok(Ok(output)) => classify_web_evidence_output_failure(&output),
+            Ok(Err(error)) => classify_web_failure(&error),
+            Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
+        };
+        if attempt_count < 2
+            && failure.retryable
+            && started.elapsed() + Duration::from_millis(250) < INITIAL_WEB_EVIDENCE_DEADLINE
+        {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            continue;
+        }
+        break Err(failure);
+    };
 
     let output = match collection {
-        Ok(Ok(output)) => output,
-        Ok(Err(error)) => {
-            let code = classify_web_evidence_failure(&error);
-            let result = failed_web_result(code.as_str());
+        Ok(output) => output,
+        Err(failure) => {
+            let mut result = failed_web_result(failure.code.as_str());
+            result.duration_ms = bounded_duration_ms(started.elapsed());
             audit_dispatched_tool(db, &gate, &gate_outcome.decision, &result)?;
             append_tool_completed(
                 db,
@@ -754,20 +979,15 @@ where
                 sink,
                 "Web evidence unavailable",
             )?;
-            return required_web_result(context, code);
-        }
-        Err(_) => {
-            let code = SafeRunErrorCode::WebProviderTimeout;
-            let result = failed_web_result(code.as_str());
-            audit_dispatched_tool(db, &gate, &gate_outcome.decision, &result)?;
-            append_tool_completed(
+            return required_web_result(
                 db,
                 accepted,
-                tool_state_version,
+                context,
                 sink,
-                "Web evidence unavailable",
-            )?;
-            return required_web_result(context, code);
+                failure,
+                attempt_count,
+                started.elapsed(),
+            );
         }
     };
 
@@ -823,14 +1043,17 @@ where
         prompt_items.push((registered.reference.display_label, item.title, item.excerpt));
     }
 
+    let elapsed = started.elapsed();
     let result = if evidence_ids.is_empty() {
-        failed_web_result("web_evidence_unavailable")
+        let mut result = failed_web_result("web_evidence_unavailable");
+        result.duration_ms = bounded_duration_ms(elapsed);
+        result
     } else {
         ToolCallResult {
             tool_name: WEB_TOOL_NAME.to_string(),
             success: true,
             output: serde_json::json!({ "evidence_count": evidence_ids.len() }),
-            duration_ms: 0,
+            duration_ms: bounded_duration_ms(elapsed),
             tokens_used: None,
             error: None,
         }
@@ -848,12 +1071,26 @@ where
         },
     )?;
     if evidence_ids.is_empty() {
-        return required_web_result(context, classify_web_evidence_output_failure(&output));
+        return required_web_result(
+            db,
+            accepted,
+            context,
+            sink,
+            classify_web_evidence_output_failure(&output),
+            attempt_count,
+            elapsed,
+        );
     }
 
     Ok(RunWebEvidence {
         evidence_ids,
         prompt_addendum: render_prompt_addendum(&prompt_items),
+        status: RunWebStatus::Succeeded,
+        failure_code: None,
+        retryable: false,
+        attempt_count,
+        duration_bucket: web_duration_bucket(elapsed),
+        remaining_budget_ms: remaining_web_budget_ms(elapsed),
     })
 }
 
@@ -918,21 +1155,104 @@ fn required_web_failure(
     result: ToolCallResult,
 ) -> AppResult<RunWebEvidence> {
     audit_dispatched_tool(db, gate, decision, &result)?;
-    let _ = (accepted, sink);
     required_web_result(
+        db,
+        accepted,
         context,
-        classify_web_evidence_failure(&AppError::msg(
+        sink,
+        classify_web_failure(&AppError::msg(
             result
                 .error
                 .as_deref()
                 .unwrap_or("agent_run_web_provider_failed"),
         )),
+        1,
+        Duration::ZERO,
     )
 }
 
-fn required_web_result(context: &RunContext, code: SafeRunErrorCode) -> AppResult<RunWebEvidence> {
+fn required_web_result(
+    db: &Database,
+    accepted: &AssistantRunAccepted,
+    context: &RunContext,
+    sink: &impl RunEventSink,
+    failure: WebFailure,
+    attempt_count: u32,
+    elapsed: Duration,
+) -> AppResult<RunWebEvidence> {
     debug_assert_eq!(context.envelope.freshness, Freshness::WebRequired);
-    Err(AppError::msg(code.as_str()))
+    append_capability_degraded(db, accepted, sink, failure, attempt_count)?;
+    Ok(RunWebEvidence {
+        evidence_ids: Vec::new(),
+        prompt_addendum: constrained_web_degradation_prompt(failure.code),
+        status: RunWebStatus::Degraded,
+        failure_code: Some(failure.code),
+        retryable: failure.retryable,
+        attempt_count,
+        duration_bucket: web_duration_bucket(elapsed),
+        remaining_budget_ms: remaining_web_budget_ms(elapsed),
+    })
+}
+
+fn bounded_duration_ms(duration: Duration) -> u64 {
+    if duration.is_zero() {
+        0
+    } else {
+        duration.as_millis().max(1).min(u64::MAX as u128) as u64
+    }
+}
+
+fn remaining_web_budget_ms(elapsed: Duration) -> u64 {
+    bounded_duration_ms(INITIAL_WEB_EVIDENCE_DEADLINE.saturating_sub(elapsed))
+}
+
+fn web_duration_bucket(duration: Duration) -> &'static str {
+    if duration.is_zero() {
+        "not_started"
+    } else if duration < Duration::from_secs(1) {
+        "under_1s"
+    } else if duration < Duration::from_secs(3) {
+        "1s_to_3s"
+    } else if duration < INITIAL_WEB_EVIDENCE_DEADLINE {
+        "3s_to_10s"
+    } else {
+        "budget_exhausted"
+    }
+}
+
+fn append_capability_degraded(
+    db: &Database,
+    accepted: &AssistantRunAccepted,
+    sink: &dyn RunEventSink,
+    failure: WebFailure,
+    attempt_count: u32,
+) -> AppResult<()> {
+    let snapshot =
+        AgentRunRepository::get_for_session(db, &accepted.session.session_key, &accepted.run_id)?
+            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+    let event = AgentRunRepository::append_event(
+        db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: snapshot.run.state_version,
+            event_type: RunEventType::CapabilityDegraded,
+            payload: RunEventPayload::CapabilityDegraded {
+                capability: "web.search".to_string(),
+                code: failure.code,
+                retryable: failure.retryable,
+                attempt_count,
+                message: "联网核实暂不可用，已继续生成受约束答复。".to_string(),
+            },
+        },
+    )?;
+    sink.emit(&event)
+}
+
+fn constrained_web_degradation_prompt(code: SafeRunErrorCode) -> String {
+    format!(
+        "\n\n<web_degradation code=\"{}\">Web verification produced no usable evidence. Explicitly say that current facts could not be verified. Do not invent current claims or citations. Answer only stable, non-current parts and suggest retrying or providing a source.</web_degradation>",
+        code.as_str()
+    )
 }
 
 fn failed_web_result(reason: &str) -> ToolCallResult {
@@ -1004,49 +1324,93 @@ fn render_prompt_addendum(items: &[(String, String, String)]) -> String {
 /// Map the shared Broker/MCP boundary into the small safe vocabulary persisted by a Run.
 /// Raw MCP diagnostics can include transport and provider details, so they never cross this
 /// boundary directly.
+#[cfg(test)]
 pub(crate) fn classify_web_evidence_failure(error: &AppError) -> SafeRunErrorCode {
+    classify_web_failure(error).code
+}
+
+/// Report whether the sanitized Web failure is a known transient condition.
+#[cfg(test)]
+pub(crate) fn web_evidence_failure_is_retryable(error: &AppError) -> bool {
+    classify_web_failure(error).retryable
+}
+
+fn classify_web_failure(error: &AppError) -> WebFailure {
     let message = error.to_string().to_ascii_lowercase();
     match message.as_str() {
-        "agent_run_mcp_unavailable" => SafeRunErrorCode::WebProviderUnavailable,
-        "agent_run_web_provider_timeout" => SafeRunErrorCode::WebProviderTimeout,
-        "agent_run_web_provider_failed" => SafeRunErrorCode::WebProviderFailed,
-        "agent_run_web_evidence_invalid" => SafeRunErrorCode::WebEvidenceInvalid,
+        "agent_run_mcp_unavailable" => {
+            WebFailure::new(SafeRunErrorCode::WebProviderUnavailable, false)
+        }
+        "agent_run_web_provider_timeout" => {
+            WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
+        }
+        "agent_run_web_provider_failed" => {
+            WebFailure::new(SafeRunErrorCode::WebProviderFailed, false)
+        }
+        "agent_run_web_evidence_invalid" => {
+            WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+        }
         _ if message.contains("timeout")
             || message.contains("timed out")
             || message.contains("deadline") =>
         {
-            SafeRunErrorCode::WebProviderTimeout
+            WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
         }
         _ if message.contains("mcp_search_parse_empty")
             || message.contains("unrecognized_schema")
             || message.contains("text_without_url")
-            || message.contains("web_evidence_unavailable") =>
+            || message.contains("web_evidence_unavailable")
+            || message.contains("output_too_large")
+            || message.contains("output too large") =>
         {
-            SafeRunErrorCode::WebEvidenceInvalid
+            WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
         }
         _ if message.contains("web_search_provider_missing")
             || message.contains("web_search_provider_unselected")
             || message.contains("web_search_provider_unavailable")
-            || message.contains("agent_run_web_tool_missing") =>
+            || message.contains("agent_run_web_tool_missing")
+            || message.contains("circuit_open") =>
         {
-            SafeRunErrorCode::WebProviderUnavailable
+            WebFailure::new(SafeRunErrorCode::WebProviderUnavailable, false)
         }
-        _ => SafeRunErrorCode::WebProviderFailed,
+        _ if message.contains("connection reset")
+            || message.contains("connection refused")
+            || message.contains("connection aborted")
+            || message.contains("broken pipe")
+            || message.contains("temporarily unavailable")
+            || message.contains("service unavailable")
+            || message.contains("transport interrupted")
+            || message.contains("network unreachable") =>
+        {
+            WebFailure::new(SafeRunErrorCode::WebProviderFailed, true)
+        }
+        _ => WebFailure::new(SafeRunErrorCode::WebProviderFailed, false),
     }
 }
 
 fn classify_web_evidence_output_failure(
     output: &crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput,
-) -> SafeRunErrorCode {
+) -> WebFailure {
     let reasons = output
         .items
         .iter()
         .filter_map(|item| item.failure_reason.as_deref())
         .collect::<Vec<_>>();
     if reasons.is_empty() {
-        return SafeRunErrorCode::WebEvidenceInvalid;
+        return WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
     }
-    classify_web_evidence_failure(&AppError::msg(reasons.join("; ")))
+    classify_web_failure(&AppError::msg(reasons.join("; ")))
+}
+
+fn web_output_has_usable_evidence(
+    output: &crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerOutput,
+) -> bool {
+    output.items.iter().any(|item| {
+        item.failure_reason.is_none()
+            && item.url.starts_with("https://")
+            && item.canonical_url.starts_with("https://")
+            && bounded_page_evidence(item).is_some()
+    })
 }
 
 /// Append bounded, untrusted Web evidence to the already assembled Run messages.
@@ -1077,4 +1441,19 @@ pub(crate) fn append_web_evidence_to_messages(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RunWebBudget;
+
+    #[test]
+    fn model_web_calls_share_one_run_budget_start() {
+        let budget = RunWebBudget::default();
+        let first = budget.started().expect("first budget start");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let second = budget.started().expect("second budget start");
+
+        assert_eq!(first, second);
+    }
 }

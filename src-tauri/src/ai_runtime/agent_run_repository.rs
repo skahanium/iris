@@ -1313,6 +1313,7 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
         | RunEventPayload::ContentDelta { .. }
         | RunEventPayload::ToolStarted { .. }
         | RunEventPayload::ToolCompleted { .. }
+        | RunEventPayload::CapabilityDegraded { .. }
         | RunEventPayload::PermissionDenied { .. }
         | RunEventPayload::ProviderSwitched { .. }
         | RunEventPayload::EvidenceRegistered { .. } => None,

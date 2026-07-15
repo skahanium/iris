@@ -8,7 +8,7 @@ use super::normal_session_repository::NormalSessionRepository;
 use super::run_contract::{
     AssistantRunEvent, ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint,
     Freshness, MaterialNeed, Modality, RiskClass, RunEventPayload, RunEventType, RunState,
-    SecurityDomain,
+    SecurityDomain, WebDecisionReason,
 };
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan};
 use crate::storage::db::Database;
@@ -24,6 +24,7 @@ fn envelope() -> ExecutionEnvelope {
         effect: Effect::Answer,
         context: ContextMode::ExplicitReferences,
         freshness: Freshness::Offline,
+        web_reason: WebDecisionReason::LegacyUnknown,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,

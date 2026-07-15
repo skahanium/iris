@@ -175,6 +175,40 @@ impl NormalSessionRepository {
             Ok(messages)
         })
     }
+
+    /// Load bounded conversation history strictly before one Run's current message.
+    pub(crate) fn recent_messages_before(
+        db: &Database,
+        session_id: i64,
+        before_seq: i64,
+        limit: u32,
+    ) -> AppResult<Vec<NormalSessionMessage>> {
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT seq, role, content, content_parts, tool_calls, created_at
+                 FROM session_messages
+                 WHERE session_id = ?1 AND seq < ?2 AND role IN ('user', 'assistant')
+                 ORDER BY seq DESC
+                 LIMIT ?3",
+            )?;
+            let rows =
+                statement.query_map(rusqlite::params![session_id, before_seq, limit], |row| {
+                    Ok(NormalSessionMessage {
+                        seq: row.get(0)?,
+                        role: row.get(1)?,
+                        content: row.get(2)?,
+                        content_parts: row.get(3)?,
+                        tool_calls: row
+                            .get::<_, Option<String>>(4)?
+                            .and_then(|value| serde_json::from_str(&value).ok()),
+                        created_at: row.get(5)?,
+                    })
+                })?;
+            let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
+            messages.reverse();
+            Ok(messages)
+        })
+    }
     /// Rename a conversation by opaque key.
     pub(crate) fn rename(db: &Database, session_key: &str, title: &str) -> AppResult<()> {
         let title = title.trim();

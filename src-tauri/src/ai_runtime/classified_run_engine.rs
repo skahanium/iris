@@ -153,6 +153,7 @@ mod tests {
             effect: crate::ai_runtime::run_contract::Effect::Answer,
             context: crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,
             freshness: crate::ai_runtime::run_contract::Freshness::Offline,
+            web_reason: crate::ai_runtime::run_contract::WebDecisionReason::SecurityDomainOffline,
             effort: crate::ai_runtime::run_contract::Effort::Direct,
             security_domain: SecurityDomain::Classified,
             risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,

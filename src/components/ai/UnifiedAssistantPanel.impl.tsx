@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
+import { AssistantRunCapabilityDegraded } from "@/components/ai/AssistantRunCapabilityDegraded";
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
@@ -185,6 +186,11 @@ export function UnifiedAssistantPanel({
         <p className="border-b border-destructive/30 px-3 py-2 text-xs text-destructive">
           {lastError}
         </p>
+      ) : null}
+      {assistantRun.eventState?.capabilityDegradation ? (
+        <AssistantRunCapabilityDegraded
+          degradation={assistantRun.eventState.capabilityDegradation}
+        />
       ) : null}
       {assistantRun.pendingConfirmation ? (
         <AssistantRunConfirmation

@@ -709,7 +709,34 @@ async fn dispatch_normal_run_after_context(
     let mut messages = context.messages_with_domain_plan(domain_plan);
     let mut routing_prompt = context.prompt_with_domain_plan(domain_plan);
     let mut evidence_ids = registered_evidence_ids.to_vec();
-    let has_initial_web_evidence = web_evidence.is_some();
+    let has_initial_web_evidence = web_evidence.as_ref().is_some_and(|outcome| {
+        outcome.status == crate::ai_runtime::run_tool_loop::RunWebStatus::Succeeded
+    });
+    tracing::info!(
+        run_id = %accepted.run_id,
+        web_mode = ?context.envelope.freshness,
+        web_reason = ?context.envelope.web_reason,
+        web_execution = match context.envelope.freshness {
+            Freshness::Offline => "skipped",
+            Freshness::WebPreferred => "model_decides",
+            Freshness::WebRequired => "deterministic_prefetch",
+        },
+        "Run Web decision"
+    );
+    if let Some(outcome) = web_evidence.as_ref() {
+        tracing::info!(
+            run_id = %accepted.run_id,
+            web_status = ?outcome.status,
+            web_failure_code = outcome.failure_code.map(|code| code.as_str()),
+            web_retryable = outcome.retryable,
+            web_attempt_count = outcome.attempt_count,
+            web_duration_bucket = outcome.duration_bucket,
+            web_remaining_budget_ms = outcome.remaining_budget_ms,
+            web_mode = ?context.envelope.freshness,
+            web_reason = ?context.envelope.web_reason,
+            "Run Web capability outcome"
+        );
+    }
     if let Some(web_evidence) = web_evidence {
         crate::ai_runtime::run_tool_loop::append_web_evidence_to_messages(
             &mut messages,
@@ -721,10 +748,29 @@ async fn dispatch_normal_run_after_context(
     evidence_ids.sort_unstable();
     evidence_ids.dedup();
 
-    let needs_follow_up_tools =
+    let base_needs_follow_up_tools =
         matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable)
             && !(context.envelope.freshness == Freshness::WebRequired
                 && context.envelope.effect == Effect::Answer);
+    let preferred_web_tools_available = if context.envelope.freshness == Freshness::WebPreferred {
+        crate::ai_runtime::capability_resolver::resolve_required_capability_app(db, "web.search")
+            .is_ok()
+            && crate::llm::config::resolve_model_pool_for_requirements_without_secret(
+                db,
+                crate::llm::config::ModelPoolRequirements {
+                    context_tokens: crate::ai_runtime::text_support::estimate_tokens(
+                        &routing_prompt,
+                    ),
+                    has_images: context.envelope.modalities.contains(&Modality::Image),
+                    needs_tools: true,
+                    needs_reasoning: false,
+                },
+            )
+            .is_ok()
+    } else {
+        true
+    };
+    let needs_follow_up_tools = base_needs_follow_up_tools && preferred_web_tools_available;
     if needs_follow_up_tools {
         let tool_policy = ToolPolicyContext {
             autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
@@ -735,23 +781,6 @@ async fn dispatch_normal_run_after_context(
         };
         let tools = ToolRegistry::new()
             .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable);
-        if context.envelope.freshness != Freshness::Offline
-            && !has_initial_web_evidence
-            && crate::ai_runtime::capability_resolver::resolve_required_capability_app(
-                db,
-                "web.search",
-            )
-            .is_err()
-        {
-            RunEngine::fail_before_dispatch_with_sink(
-                db,
-                &accepted.session,
-                &accepted.run_id,
-                crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderUnavailable,
-                sink,
-            )?;
-            return Err(AppError::msg("agent_run_mcp_unavailable"));
-        }
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
             streaming: true,

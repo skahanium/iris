@@ -1,10 +1,15 @@
 use super::domain_executor::DomainMaterialRole;
 use super::run_context::{RunContext, RunContextAssembler, RunContextMaterial};
-use crate::ai_runtime::agent_run_repository::{AcceptRunInput, AgentRunRepository};
+use crate::ai_runtime::agent_evidence_repository::{
+    AgentEvidenceRepository, LocalEvidenceInput, MaterialRole,
+};
+use crate::ai_runtime::agent_run_repository::{
+    AcceptRunInput, AgentRunRepository, AppendRunEventInput, FinalizeRunInput,
+};
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed, Modality, RiskClass,
-    SecurityDomain,
+    SecurityDomain, WebDecisionReason,
 };
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
 use crate::storage::db::Database;
@@ -14,6 +19,7 @@ fn envelope() -> ExecutionEnvelope {
         effect: Effect::Answer,
         context: ContextMode::ExplicitReferences,
         freshness: Freshness::Offline,
+        web_reason: WebDecisionReason::LegacyUnknown,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,
@@ -301,6 +307,10 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
             source_span_end: 8,
             content: "用户明确附上的事实".into(),
         }],
+        recent_messages: vec![],
+        conversation_memory: None,
+        prompt_profile: Default::default(),
+        previous_run_summary: None,
     };
 
     let prompt = context.prompt_with_domain_plan(&context.domain_plan());
@@ -309,4 +319,252 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
     assert!(prompt.contains("role=\"reference\""));
     assert!(prompt.contains("用户明确附上的事实"));
     assert!(!prompt.contains("当前活动文档"));
+}
+
+#[test]
+fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_turn() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "history-first".into(),
+            run_id: "history-run-first".into(),
+            turn_id: "history-turn-first".into(),
+            message: "Why did you search the web?".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::Conversation,
+                ..envelope()
+            },
+        },
+    )
+    .expect("first accepted run");
+    for (state_version, state) in [
+        (0, crate::ai_runtime::run_contract::RunState::Preparing),
+        (1, crate::ai_runtime::run_contract::RunState::Running),
+    ] {
+        AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: "history-run-first".into(),
+                state_version,
+                event_type: crate::ai_runtime::run_contract::RunEventType::StageChanged,
+                payload: crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
+                    state,
+                    stage: "history fixture".into(),
+                },
+            },
+        )
+        .expect("advance first run");
+    }
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "history-run-first".into(),
+            state_version: 2,
+            event_type: crate::ai_runtime::run_contract::RunEventType::CapabilityDegraded,
+            payload: crate::ai_runtime::run_contract::RunEventPayload::CapabilityDegraded {
+                capability: "web.search".into(),
+                code: crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderTimeout,
+                retryable: true,
+                attempt_count: 2,
+                message: "联网核实暂不可用，已继续生成受约束答复。".into(),
+            },
+        },
+    )
+    .expect("record safe Web degradation");
+    AgentRunRepository::finalize(
+        &db,
+        FinalizeRunInput {
+            run_id: "history-run-first".into(),
+            state_version: 2,
+            content: "The previous web attempt timed out, so I should explain the degradation."
+                .into(),
+            evidence_ids: vec![],
+            citation_map: serde_json::json!({}),
+        },
+    )
+    .expect("first run finalized");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "history-current".into(),
+            run_id: "history-run-current".into(),
+            turn_id: "history-turn-current".into(),
+            message: "What went wrong just now?".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::Conversation,
+                ..envelope()
+            },
+        },
+    )
+    .expect("current accepted run");
+
+    let context =
+        RunContextAssembler::assemble(&db, None, &session.session_key, "history-run-current")
+            .expect("assembled conversation context");
+    assert_eq!(context.recent_messages.len(), 2);
+    assert!(context
+        .recent_messages
+        .iter()
+        .all(|message| message.seq < context.message_seq_first));
+    let prior_summary = context
+        .previous_run_summary
+        .as_deref()
+        .expect("previous Run safety summary");
+    assert!(prior_summary.contains("status=completed"));
+    assert!(prior_summary.contains("webResult=degraded"));
+    assert!(prior_summary.contains("attemptCount=2"));
+    assert!(prior_summary.contains("safeCode=agent_run_web_provider_timeout"));
+    assert!(!prior_summary.contains("Why did you search the web?"));
+
+    let messages = context.messages_with_domain_plan(&context.domain_plan());
+    let serialized = serde_json::to_string(&messages).expect("messages JSON");
+    assert_eq!(serialized.matches("What went wrong just now?").count(), 1);
+    assert!(serialized.contains("Why did you search the web?"));
+    assert!(serialized.contains("previous web attempt timed out"));
+    assert!(messages[0]
+        .content
+        .text_content()
+        .contains("Web access is permission, not a requirement"));
+    assert!(messages[0].content.text_content().contains("Local date"));
+}
+
+#[test]
+fn previous_run_safety_does_not_treat_local_evidence_as_web_success() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "local-evidence-first".into(),
+            run_id: "local-evidence-run-first".into(),
+            turn_id: "local-evidence-turn-first".into(),
+            message: "Summarize the attached local note.".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            explicit_action: None,
+            envelope: envelope(),
+        },
+    )
+    .expect("first accepted run");
+    let message_seq_first = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT m.seq
+                 FROM agent_runs r
+                 JOIN session_messages m
+                   ON m.session_id = r.session_id AND m.turn_id = r.turn_id AND m.role = 'user'
+                 WHERE r.run_id = ?1",
+                ["local-evidence-run-first"],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("message sequence");
+    let local = AgentEvidenceRepository::register_local(
+        &db,
+        LocalEvidenceInput {
+            session_id: session.session_id,
+            run_id: "local-evidence-run-first".into(),
+            message_seq_first,
+            material_role: MaterialRole::Reference,
+            title: "Local note".into(),
+            source_path: "notes/local.md".into(),
+            source_span_start: 0,
+            source_span_end: 12,
+            heading_path: None,
+            content_hash: "local-note-hash".into(),
+            retrieval_reason: Some("explicit_reference".into()),
+            score: None,
+        },
+    )
+    .expect("local evidence");
+    for (state_version, state) in [
+        (0, crate::ai_runtime::run_contract::RunState::Preparing),
+        (1, crate::ai_runtime::run_contract::RunState::Running),
+    ] {
+        AgentRunRepository::append_event(
+            &db,
+            AppendRunEventInput {
+                run_id: "local-evidence-run-first".into(),
+                state_version,
+                event_type: crate::ai_runtime::run_contract::RunEventType::StageChanged,
+                payload: crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
+                    state,
+                    stage: "local evidence fixture".into(),
+                },
+            },
+        )
+        .expect("advance first run");
+    }
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "local-evidence-run-first".into(),
+            state_version: 2,
+            event_type: crate::ai_runtime::run_contract::RunEventType::EvidenceRegistered,
+            payload: crate::ai_runtime::run_contract::RunEventPayload::EvidenceRegistered {
+                evidence_id: local.evidence_id.to_string(),
+            },
+        },
+    )
+    .expect("local evidence event");
+    AgentRunRepository::finalize(
+        &db,
+        FinalizeRunInput {
+            run_id: "local-evidence-run-first".into(),
+            state_version: 2,
+            content: "Local-only summary.".into(),
+            evidence_ids: vec![local.evidence_id],
+            citation_map: serde_json::json!({}),
+        },
+    )
+    .expect("first run finalized");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "local-evidence-current".into(),
+            run_id: "local-evidence-run-current".into(),
+            turn_id: "local-evidence-turn-current".into(),
+            message: "What happened previously?".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::Conversation,
+                ..envelope()
+            },
+        },
+    )
+    .expect("current accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        None,
+        &session.session_key,
+        "local-evidence-run-current",
+    )
+    .expect("assembled context");
+    let prior_summary = context
+        .previous_run_summary
+        .as_deref()
+        .expect("previous Run summary");
+
+    assert!(prior_summary.contains("webAttempted=false"));
+    assert!(prior_summary.contains("webResult=skipped"));
 }

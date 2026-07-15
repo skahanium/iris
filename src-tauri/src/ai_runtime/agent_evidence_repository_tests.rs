@@ -5,7 +5,7 @@ use super::agent_run_repository::{AcceptRunInput, AgentRunRepository};
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_contract::{
     ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed,
-    Modality, RiskClass, SecurityDomain,
+    Modality, RiskClass, SecurityDomain, WebDecisionReason,
 };
 use crate::storage::db::Database;
 
@@ -30,6 +30,7 @@ fn setup_run() -> (Database, i64, String) {
                 effect: Effect::Answer,
                 context: ContextMode::ExplicitReferences,
                 freshness: Freshness::WebRequired,
+                web_reason: WebDecisionReason::LegacyUnknown,
                 effort: Effort::ToolLoop,
                 security_domain: SecurityDomain::Normal,
                 risk: RiskClass::ReadOnly,

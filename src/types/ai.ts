@@ -105,7 +105,21 @@ export type ContextMode =
   | "conversation"
   | "explicit_references"
   | "explicit_scope";
-export type Freshness = "offline" | "web_required";
+export type Freshness = "offline" | "web_preferred" | "web_required";
+export type WebDecisionReason =
+  | "legacy_unknown"
+  | "user_disabled"
+  | "security_domain_offline"
+  | "explicit_local_only"
+  | "trusted_runtime_fact"
+  | "conversation_meta"
+  | "local_transformation"
+  | "creative_generation"
+  | "explicit_web_request"
+  | "explicit_url"
+  | "volatile_external_fact"
+  | "high_stakes_current_fact"
+  | "general_question";
 export type Effort = "direct" | "tool_loop" | "durable";
 /** An explicit, one-Run model choice. The backend must reject an incapable override. */
 export interface AgentModelOverride {
@@ -131,6 +145,7 @@ export interface ExecutionEnvelope {
   effect: Effect;
   context: ContextMode;
   freshness: Freshness;
+  webReason: WebDecisionReason;
   effort: Effort;
   securityDomain: SecurityDomain;
   risk: RiskClass;
@@ -254,6 +269,7 @@ export type RunEventType =
   | "content_delta"
   | "tool_started"
   | "tool_completed"
+  | "capability_degraded"
   | "confirmation_required"
   | "permission_denied"
   | "provider_switched"
@@ -324,6 +340,14 @@ export type AssistantRunEventPayload =
       capability: string;
       toolCallId: string;
       summary: string;
+    }
+  | {
+      kind: "capability_degraded";
+      capability: string;
+      code: AssistantRunErrorCode;
+      retryable: boolean;
+      attemptCount: number;
+      message: string;
     }
   | {
       kind: "confirmation_required";

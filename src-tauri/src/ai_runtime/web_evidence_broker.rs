@@ -452,7 +452,7 @@ async fn collect_mcp_search_provider_fetch(
         &mapping_json,
         query,
         max_search_results,
-        Duration::from_secs(20),
+        Duration::from_secs(10),
         true,
     )
     .await;
@@ -1273,7 +1273,6 @@ async fn enrich_with_page_fetches(
     for mut item in items {
         if fetched < max_fetches && item.failure_reason.is_none() {
             if Instant::now() >= fetch_deadline {
-                item.failure_reason = Some("web_page_fetch_budget_exhausted".into());
                 enriched.push(item);
                 continue;
             }
@@ -1281,8 +1280,10 @@ async fn enrich_with_page_fetches(
             let remaining = fetch_deadline.saturating_duration_since(Instant::now());
             match tokio::time::timeout(remaining, fetch_url_with_providers(db, &item.url)).await {
                 Ok(Ok(page)) => apply_page_provider_fetch(&mut item, page),
-                Ok(Err(error)) => item.failure_reason = Some(format!("fetch_failed: {error}")),
-                Err(_) => item.failure_reason = Some("web_page_fetch_budget_exhausted".into()),
+                Ok(Err(_)) | Err(_) => {
+                    // The search snippet remains usable low-grade evidence even when
+                    // optional deep reading fails or exhausts the shared fetch budget.
+                }
             }
         }
         enriched.push(item);
@@ -1767,7 +1768,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broker_records_page_fetch_failure_without_dropping_other_evidence() {
+    async fn broker_keeps_search_snippet_usable_when_page_fetch_fails() {
         let db = Database::open_in_memory().unwrap();
         let items = enrich_with_page_fetches(
             &db,
@@ -1778,11 +1779,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(items.len(), 2);
-        assert!(items[0]
-            .failure_reason
-            .as_deref()
-            .unwrap_or_default()
-            .starts_with("fetch_failed:"));
+        assert!(items[0].failure_reason.is_none());
+        assert!(!items[0].snippet.is_empty());
         assert!(items[1].failure_reason.is_none());
     }
 

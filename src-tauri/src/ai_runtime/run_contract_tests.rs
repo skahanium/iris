@@ -3,7 +3,7 @@ use super::run_contract::{
     AssistantRunEvent, AssistantRunGetRequest, AssistantRunStartRequest, AssistantSessionRef,
     CapabilityId, ContextMode, Effect, Effort, EvidenceRef, EvidenceSourceKind, ExecutionEnvelope,
     Freshness, MaterialNeed, RiskClass, RunControlAction, RunEventPayload, RunEventType, RunState,
-    RunStateTransitionError, SafeRunErrorCode, SecurityDomain,
+    RunStateTransitionError, SafeRunErrorCode, SecurityDomain, WebDecisionReason,
 };
 
 fn direct_answer_envelope() -> ExecutionEnvelope {
@@ -11,6 +11,7 @@ fn direct_answer_envelope() -> ExecutionEnvelope {
         effect: Effect::Answer,
         context: ContextMode::Conversation,
         freshness: Freshness::Offline,
+        web_reason: WebDecisionReason::LegacyUnknown,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,
@@ -205,6 +206,7 @@ fn execution_envelope_uses_the_same_camel_case_wire_fields_as_typescript() {
             "effect": "answer",
             "context": "conversation",
             "freshness": "offline",
+            "webReason": "legacy_unknown",
             "effort": "direct",
             "securityDomain": "normal",
             "risk": "read_only",
@@ -214,6 +216,36 @@ fn execution_envelope_uses_the_same_camel_case_wire_fields_as_typescript() {
             "explicitConstraints": [],
         })
     );
+}
+
+#[test]
+fn historical_envelope_without_web_reason_deserializes_safely() {
+    let envelope: ExecutionEnvelope = serde_json::from_value(serde_json::json!({
+        "effect": "answer",
+        "context": "conversation",
+        "freshness": "web_required",
+        "effort": "tool_loop",
+        "securityDomain": "normal",
+        "risk": "read_only",
+        "modalities": [],
+        "materialNeeds": ["web"],
+        "requiredCapabilities": ["web.search"],
+        "explicitConstraints": []
+    }))
+    .expect("legacy envelope remains readable");
+
+    assert_eq!(envelope.web_reason, WebDecisionReason::LegacyUnknown);
+}
+
+#[test]
+fn web_preferred_and_reason_use_stable_wire_values() {
+    let mut envelope = direct_answer_envelope();
+    envelope.freshness = Freshness::WebPreferred;
+    envelope.web_reason = WebDecisionReason::GeneralQuestion;
+
+    let json = serde_json::to_value(envelope).expect("serialize envelope");
+    assert_eq!(json["freshness"], "web_preferred");
+    assert_eq!(json["webReason"], "general_question");
 }
 
 #[test]
@@ -309,6 +341,7 @@ fn run_event_types_match_the_stable_event_contract() {
         RunEventType::ContentDelta,
         RunEventType::ToolStarted,
         RunEventType::ToolCompleted,
+        RunEventType::CapabilityDegraded,
         RunEventType::ConfirmationRequired,
         RunEventType::PermissionDenied,
         RunEventType::ProviderSwitched,
@@ -320,7 +353,34 @@ fn run_event_types_match_the_stable_event_contract() {
         RunEventType::Cancelled,
     ];
 
-    assert_eq!(event_types.len(), 14);
+    assert_eq!(event_types.len(), 15);
+}
+
+#[test]
+fn capability_degraded_is_nonterminal_and_serializes_only_safe_diagnostics() {
+    let event = AssistantRunEvent::new(
+        "run-1",
+        4,
+        2,
+        RunEventType::CapabilityDegraded,
+        "2026-07-15T00:00:00Z",
+        RunEventPayload::CapabilityDegraded {
+            capability: "web.search".into(),
+            code: SafeRunErrorCode::WebProviderTimeout,
+            retryable: true,
+            attempt_count: 2,
+            message: "联网核实暂不可用，已继续生成受约束答复。".into(),
+        },
+    )
+    .expect("valid degradation event");
+
+    let json = serde_json::to_value(event).expect("event JSON");
+    assert_eq!(json["type"], "capability_degraded");
+    assert_eq!(json["stateVersion"], 2);
+    assert_eq!(json["payload"]["code"], "agent_run_web_provider_timeout");
+    assert_eq!(json["payload"]["attemptCount"], 2);
+    assert!(json.to_string().contains("web.search"));
+    assert!(!json.to_string().contains("endpoint"));
 }
 
 #[test]

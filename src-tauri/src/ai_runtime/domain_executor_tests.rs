@@ -4,7 +4,7 @@ use super::domain_executor::{
 };
 use super::run_contract::{
     CapabilityId, ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed,
-    Modality, RiskClass, SecurityDomain,
+    Modality, RiskClass, SecurityDomain, WebDecisionReason,
 };
 
 fn envelope(context: ContextMode, material_needs: Vec<MaterialNeed>) -> ExecutionEnvelope {
@@ -12,6 +12,7 @@ fn envelope(context: ContextMode, material_needs: Vec<MaterialNeed>) -> Executio
         effect: Effect::Draft,
         context,
         freshness: Freshness::Offline,
+        web_reason: WebDecisionReason::LegacyUnknown,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,
