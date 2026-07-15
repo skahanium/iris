@@ -31,6 +31,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEBDRIVER_URL = "http://127.0.0.1:4444";
 const SESSION_TIMEOUT_MS = 45_000;
 const POLL_INTERVAL_MS = 125;
+const REMOUNT_POLL_INTERVAL_MS = 10;
 const KEY = {
   CONTROL: "\uE009",
   END: "\uE010",
@@ -121,7 +122,7 @@ async function webdriverRequest(method, pathname, body) {
   return payload.value;
 }
 
-async function waitUntil(predicate, code) {
+async function waitUntil(predicate, code, pollIntervalMs = POLL_INTERVAL_MS) {
   const deadline = Date.now() + SESSION_TIMEOUT_MS;
   while (Date.now() < deadline) {
     try {
@@ -131,7 +132,7 @@ async function waitUntil(predicate, code) {
       // During first launch/reload/close WebDriver legitimately reports no
       // current window. The timeout produces the stable test result code.
     }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
   fail(code);
 }
@@ -235,13 +236,6 @@ async function elementText(sessionId, element) {
   );
 }
 
-async function elementAttribute(sessionId, element, name) {
-  return webdriverRequest(
-    "GET",
-    `/session/${sessionId}/element/${element}/attribute/${name}`,
-  );
-}
-
 async function executeAsync(sessionId, script, args = []) {
   return webdriverRequest("POST", `/session/${sessionId}/execute/async`, {
     script,
@@ -325,25 +319,56 @@ async function restartApplication(sessionId, appPath) {
   return createSession(appPath);
 }
 
-async function waitForRemountIdentity(sessionId, previousIdentity) {
-  const stack = await waitForElement(
+async function expectedRemountSurfaceState(sessionId) {
+  return executeSync(
     sessionId,
-    '[data-testid="editor-surface-stack"]',
+    `
+      const expectedPath = arguments[0];
+      const stack = document.querySelector('[data-testid="editor-surface-stack"]');
+      const surface = Array.from(document.querySelectorAll('[data-path]')).find(
+        (candidate) => candidate.getAttribute('data-path') === expectedPath,
+      );
+      return {
+        activePath: stack?.getAttribute('data-editor-active-surface-path'),
+        activePhase: stack?.getAttribute('data-editor-active-surface-phase'),
+        surfaceIdentity: surface?.getAttribute('data-editor-surface-identity'),
+        surfacePath: surface?.getAttribute('data-path'),
+        surfaceVisibility: surface?.getAttribute('data-editor-visibility'),
+      };
+    `,
+    [EXPECTED_FILE_NAME],
   );
-  return waitUntil(async () => {
-    const identity = await elementAttribute(
-      sessionId,
-      stack,
-      "data-editor-active-identity",
-    );
-    return identity === EXPECTED_FILE_NAME && identity !== previousIdentity;
-  }, "editor_remount_identity_missing");
+}
+
+function isExpectedRemountSurfaceInPhase(state, phase) {
+  return (
+    state?.activePath === EXPECTED_FILE_NAME &&
+    state.activePhase === phase &&
+    state.surfaceIdentity === EXPECTED_FILE_NAME &&
+    state.surfacePath === EXPECTED_FILE_NAME &&
+    state.surfaceVisibility === phase
+  );
+}
+
+async function waitForMountedRemountStaging(sessionId) {
+  return waitUntil(
+    async () => {
+      const state = await expectedRemountSurfaceState(sessionId);
+      return isExpectedRemountSurfaceInPhase(state, "staging") ? state : false;
+    },
+    "mounted_remount_staging_not_observed",
+    REMOUNT_POLL_INTERVAL_MS,
+  );
 }
 
 async function waitForRemountVisible(sessionId) {
+  await waitUntil(async () => {
+    const state = await expectedRemountSurfaceState(sessionId);
+    return isExpectedRemountSurfaceInPhase(state, "visible");
+  }, "mounted_remount_visible_not_observed");
   return waitForElement(
     sessionId,
-    `[data-editor-visibility="visible"][data-path="${EXPECTED_FILE_NAME}"] [data-testid="editor"] [contenteditable="true"]`,
+    `[data-editor-visibility="visible"][data-editor-surface-identity="${EXPECTED_FILE_NAME}"][data-path="${EXPECTED_FILE_NAME}"] [data-testid="editor"] [contenteditable="true"]`,
   );
 }
 
@@ -418,26 +443,14 @@ async function runScenario(sessionId) {
     sessionId,
     '[data-testid="document-title"]',
   );
-  const editorStack = await waitForElement(
-    sessionId,
-    '[data-testid="editor-surface-stack"]',
-  );
-  const originalSurfaceIdentity = await elementAttribute(
-    sessionId,
-    editorStack,
-    "data-editor-active-identity",
-  );
-  if (typeof originalSurfaceIdentity !== "string" || !originalSurfaceIdentity) {
-    fail("editor_surface_identity_missing");
-  }
   await clear(sessionId, title);
   await sendKeys(sessionId, title, EXPECTED_TITLE);
   await click(sessionId, editor);
   await acceptRenameConfirmation(sessionId);
-  // The remount's staging phase can be shorter than a WebDriver request. The
-  // surface identity changes from the old path to the renamed path and stays
-  // observable through readiness, so it is the stable remount boundary.
-  await waitForRemountIdentity(sessionId, originalSurfaceIdentity);
+  // This checks both the mounted surface DOM and the lifecycle projection.
+  // The dedicated short poll observes the real, non-interactive staging phase
+  // before issuing Ctrl+S; it never injects text into that hidden editor.
+  await waitForMountedRemountStaging(sessionId);
   await pressSave(sessionId);
   const remountEditor = await waitForRemountVisible(sessionId);
   // Element Send Keys targets and focuses this editor, then explicitly moves

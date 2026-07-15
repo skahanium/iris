@@ -52,23 +52,29 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("rmSync");
   });
 
-  it("以持久 surface identity 观察重命名 remount，并明确定位文末后输入唯一正文立即保存关闭", () => {
+  it("在新 surface 实际挂载的 staging 阶段保存，并在同一 surface visible 后追加正文", () => {
     const runner = read(runnerPath);
     const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
 
     expect(runner).toContain("REMOUNT_BODY_LINE");
-    expect(runner).toContain("waitForRemountIdentity");
+    expect(runner).toContain("waitForMountedRemountStaging");
     expect(runner).toContain("waitForRemountVisible");
-    expect(runner).toContain("data-editor-active-identity");
+    expect(runner).toContain("REMOUNT_POLL_INTERVAL_MS");
+    expect(runner).toContain("data-editor-active-surface-path");
+    expect(runner).toContain("data-editor-active-surface-phase");
+    expect(runner).toContain("data-editor-surface-identity");
     expect(runner).toContain("KEY.CONTROL}${KEY.END}");
-    expect(runner).not.toContain("waitForRemountStaging");
+    expect(runner).not.toContain("waitForRemountIdentity");
     expect(runner).not.toContain("click(sessionId, remountEditor)");
     expect(workspace).toContain('data-testid="editor-surface-stack"');
     expect(workspace).toContain(
-      'data-editor-active-identity={currentSurfaceIdentity ?? ""}',
+      'data-editor-active-surface-path={activeSurfaceRecord?.snapshot.path ?? ""}',
+    );
+    expect(workspace).toContain(
+      "data-editor-active-surface-phase={activeSurfacePhase}",
     );
     expect(runner).toMatch(
-      /waitForRemountIdentity[\s\S]*pressSave\(sessionId\)[\s\S]*waitForRemountVisible[\s\S]*sendKeys\(sessionId, remountEditor, `\$\{KEY\.CONTROL\}\$\{KEY\.END\}`\)[\s\S]*sendKeys\(sessionId, remountEditor, REMOUNT_BODY_LINE\)[\s\S]*pressSave\(sessionId\)[\s\S]*aria-label="关闭"/,
+      /waitForMountedRemountStaging[\s\S]*pressSave\(sessionId\)[\s\S]*waitForRemountVisible[\s\S]*sendKeys\(sessionId, remountEditor, `\$\{KEY\.CONTROL\}\$\{KEY\.END\}`\)[\s\S]*sendKeys\(sessionId, remountEditor, REMOUNT_BODY_LINE\)[\s\S]*pressSave\(sessionId\)[\s\S]*aria-label="关闭"/,
     );
   });
 

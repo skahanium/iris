@@ -479,6 +479,11 @@ export function AppEditorWorkspace({
     (record) => record.snapshot.path === effectiveNotePath,
   );
   const activeEditorReady = Boolean(activeSurfaceRecord?.ready);
+  const activeSurfacePhase = !activeSurfaceRecord
+    ? "absent"
+    : activeSurfaceRecord.ready
+      ? "visible"
+      : "staging";
   const currentSurfaceIdentity = currentEditorSurface
     ? surfaceIdentity(currentEditorSurface)
     : null;
@@ -734,6 +739,7 @@ export function AppEditorWorkspace({
       return (
         <div
           key={record.identityKey}
+          data-editor-surface-identity={record.identityKey}
           data-path={snapshot.path}
           data-editor-visibility={visibility}
           aria-hidden={!isVisible}
@@ -820,7 +826,8 @@ export function AppEditorWorkspace({
   const renderEditorStack = () => (
     <div
       data-testid="editor-surface-stack"
-      data-editor-active-identity={currentSurfaceIdentity ?? ""}
+      data-editor-active-surface-path={activeSurfaceRecord?.snapshot.path ?? ""}
+      data-editor-active-surface-phase={activeSurfacePhase}
       className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
     >
       {surfaceRecords.map(renderEditorSurface)}

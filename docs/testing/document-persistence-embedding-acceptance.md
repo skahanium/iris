@@ -32,7 +32,7 @@
 
 在此闭环真实执行并留存证据前，状态只能写作“待验收”，不能声称 Windows E2E 已通过。
 
-自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中观察标题重命名后 editor surface identity 从旧路径稳定切换到新路径，并在该重挂载边界触发保存；新 editor 可交互后明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。该入口会在 PR CI 与发布打包 workflow 中运行；PR 是否因该检查而禁止合并，取决于仓库外 GitHub 分支保护规则是否将该状态设为 required。发布 workflow 内的 Windows 打包步骤则在该 E2E 成功前不会上传工件。静态 Vitest 契约不能替代其 Windows 运行日志。
+自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中确认重命名后的新 `[data-path]` editor surface 已挂载，且其由 `surfaceRecords` 投影的生命周期处于非交互 `staging`；此时触发保存。随后必须确认同一 surface 进入 `visible`，明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。为避免短暂 staging 被普通轮询漏掉，该检查只对 remount 生命周期使用短轮询，并同时验证实际 DOM 和测试专用生命周期属性；它不向隐藏 editor 注入内容。该入口会在 PR CI 与发布打包 workflow 中运行；PR 是否因该检查而禁止合并，取决于仓库外 GitHub 分支保护规则是否将该状态设为 required。发布 workflow 内的 Windows 打包步骤则在该 E2E 成功前不会上传工件。静态 Vitest 契约不能替代其 Windows 运行日志。
 
 ## 隐私与可观测性
 
