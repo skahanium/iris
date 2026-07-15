@@ -1,108 +1,57 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  persistActiveTabBeforeLeave,
-  persistInactiveDirtyTabBeforeLeave,
-} from "@/lib/persist-before-leave";
-import { createLeaveSnapshotEnqueuer } from "@/lib/version-leave-snapshot";
+import { DocumentPersistenceCoordinator } from "@/lib/document-persistence-coordinator";
 import type { LastSavedSnapshot } from "@/lib/version-snapshot-scheduler";
-import {
-  createVersionSnapshotScheduler,
-  type VersionSnapshotEnqueueResult,
-} from "@/lib/version-snapshot-scheduler";
-
-/** Mirrors `App.flushAllOpenTabs` close guard + per-tab persist. */
-async function flushTabsOnAppClose(
-  paths: string[],
-  deps: {
-    persistActive: (path: string) => Promise<string | null>;
-    persistInactive: (path: string, cached: string) => Promise<string>;
-    isActive: (path: string) => boolean;
-    getCached: (path: string) => string | null;
-    setAppClosing: (closing: boolean) => void;
-    clearVersionIdleTimer: () => void;
-  },
-): Promise<void> {
-  deps.setAppClosing(true);
-  deps.clearVersionIdleTimer();
-  try {
-    for (const path of paths) {
-      if (deps.isActive(path)) {
-        await deps.persistActive(path);
-      } else {
-        const cached = deps.getCached(path);
-        if (cached) {
-          await deps.persistInactive(path, cached);
-        }
-      }
-    }
-  } finally {
-    deps.setAppClosing(false);
-  }
-}
+import { createVersionSnapshotScheduler } from "@/lib/version-snapshot-scheduler";
 
 describe("app close version guard", () => {
   it("flushing multiple tabs during app close never calls versionSaveIdle", async () => {
     const versionSaveIdle = vi.fn(async () => undefined);
     const scheduler = createVersionSnapshotScheduler({ versionSaveIdle });
-    let generation = 0;
+    const write = vi.fn(async () => ({ indexDegraded: false }));
+    const coordinator = new DocumentPersistenceCoordinator({ write });
+    coordinator.load("notes/active.md", "active opened");
+    coordinator.load("notes/background.md", "background opened");
+    coordinator.capture("notes/active.md", "active saved");
+    coordinator.capture("notes/background.md", "background cached");
+
+    const clearVersionIdleTimer = vi.fn();
+    const flushAllOpenTabs = async () => {
+      scheduler.setAppClosing(true);
+      clearVersionIdleTimer();
+      try {
+        for (const path of ["notes/active.md", "notes/background.md"]) {
+          await coordinator.barrier(path);
+        }
+      } finally {
+        scheduler.setAppClosing(false);
+      }
+    };
+
+    await flushAllOpenTabs();
+
+    expect(write).toHaveBeenCalledTimes(2);
+    expect(clearVersionIdleTimer).toHaveBeenCalledTimes(1);
+    expect(versionSaveIdle).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue leave snapshots while the app-close barrier is active", async () => {
+    const versionSaveIdle = vi.fn(async () => undefined);
+    const scheduler = createVersionSnapshotScheduler({ versionSaveIdle });
+    scheduler.setAppClosing(true);
     const enqueueIdleSnapshot = (snapshot: LastSavedSnapshot) => {
-      const result: VersionSnapshotEnqueueResult =
-        scheduler.enqueueIdle(snapshot);
+      const result = scheduler.enqueueIdle(snapshot);
       if (result.accepted) {
         void result.done;
       }
     };
-    const enqueueLeaveSnapshot = createLeaveSnapshotEnqueuer({
-      enqueueIdleSnapshot,
-      nextDirtyGeneration: () => {
-        generation += 1;
-        return generation;
-      },
+    enqueueIdleSnapshot({
+      path: "notes/a.md",
+      markdown: "body",
+      savedAt: 1,
+      dirtyGeneration: 1,
     });
-
-    const snapshots = new Map<string, LastSavedSnapshot>([
-      [
-        "notes/active.md",
-        {
-          path: "notes/active.md",
-          markdown: "active saved",
-          savedAt: 1,
-          dirtyGeneration: 1,
-        },
-      ],
-    ]);
-
-    const clearVersionIdleTimer = vi.fn();
-
-    await flushTabsOnAppClose(["notes/active.md", "notes/background.md"], {
-      setAppClosing: (closing) => scheduler.setAppClosing(closing),
-      clearVersionIdleTimer,
-      isActive: (path) => path === "notes/active.md",
-      getCached: (path) =>
-        path === "notes/background.md" ? "background cached" : null,
-      persistActive: (path) =>
-        persistActiveTabBeforeLeave({
-          path,
-          reason: "app_close",
-          getMarkdown: () => "active live",
-          flushSaveForPath: async () => "active saved",
-          getLastSavedSnapshot: () => snapshots.get(path) ?? null,
-          enqueueIdleSnapshot,
-        }),
-      persistInactive: (path, cached) =>
-        persistInactiveDirtyTabBeforeLeave({
-          path,
-          reason: "app_close",
-          cachedMarkdown: cached,
-          writeFile: async () => undefined,
-          enqueueLeaveSnapshot,
-        }),
-    });
-
-    expect(clearVersionIdleTimer).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).not.toHaveBeenCalled();
-    expect(scheduler.getStats().skipped.app_closing).toBe(0);
   });
 
   it("rejects idle enqueue while appClosing even if leave policy were bypassed", () => {

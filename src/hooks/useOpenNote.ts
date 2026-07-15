@@ -46,17 +46,13 @@ interface UseOpenNoteOptions {
   editorRef: RefObject<Editor | null>;
   editorReadyRef?: RefObject<boolean>;
   dirtyRef?: RefObject<boolean>;
-  /** Persist the exact live markdown before a title-driven path rename. */
-  persistBeforePathRename?: (
+  /** Atomically flushes and rebinds a title-driven path rename. */
+  renamePersistedPath?: (
     path: string,
-    markdown: string,
-  ) => Promise<boolean>;
-  /** Rebind an acknowledged save snapshot after the file move succeeds. */
-  onPersistedPathRenamed?: (
-    oldPath: string,
     newPath: string,
     markdown: string,
-  ) => void;
+    move: () => Promise<string>,
+  ) => Promise<string>;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
     oldPath: string,
@@ -75,8 +71,7 @@ export function useOpenNote({
   editorRef,
   editorReadyRef,
   dirtyRef,
-  persistBeforePathRename,
-  onPersistedPathRenamed,
+  renamePersistedPath,
   updateTabTitle,
   replaceOpenTabPath,
 }: UseOpenNoteOptions) {
@@ -209,45 +204,29 @@ export function useOpenNote({
                 bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
               });
             };
-            let persistedMarkdown = serializeLatest();
-            if (persistBeforePathRename) {
-              let stable = false;
-              for (let attempt = 0; attempt < 3; attempt += 1) {
-                if (
-                  !(await persistBeforePathRename(path, persistedMarkdown))
-                ) {
-                  throw new Error("path rename pre-save failed");
-                }
-                const latest = serializeLatest();
-                if (latest === persistedMarkdown) {
-                  stable = true;
-                  break;
-                }
-                persistedMarkdown = latest;
-              }
-              if (!stable) {
-                throw new Error("path rename deferred while document changes");
-              }
+            const markdownSnapshot = serializeLatest();
+            let renamedPath: string | null = null;
+            const move = async () => {
+              const entry = await fileRename(path, suggest.suggested_path);
+              renamedPath = entry.path;
+              return entry.path;
+            };
+            const persistedMarkdown = renamePersistedPath
+              ? await renamePersistedPath(
+                  path,
+                  suggest.suggested_path,
+                  markdownSnapshot,
+                  move,
+                )
+              : (await move(), markdownSnapshot);
+            if (!renamedPath) return;
+            const allocatedTitle = pathStem(renamedPath);
+            const nextTitle =
+              title.trim() === "" ? allocatedTitle : title.trim();
+            replaceOpenTabPath(path, renamedPath, nextTitle, persistedMarkdown);
+            if (title.trim() === "") {
+              setNoteTitle(allocatedTitle);
             }
-            return fileRename(path, suggest.suggested_path).then((entry) => {
-              const allocatedTitle = pathStem(entry.path);
-              const nextTitle =
-                title.trim() === "" ? allocatedTitle : title.trim();
-              replaceOpenTabPath(
-                path,
-                entry.path,
-                nextTitle,
-                persistedMarkdown,
-              );
-              onPersistedPathRenamed?.(
-                path,
-                entry.path,
-                persistedMarkdown,
-              );
-              if (title.trim() === "") {
-                setNoteTitle(allocatedTitle);
-              }
-            });
           })
           .catch(() => {
             /* Path sync is optional so tests can isolate editor content flow. */
@@ -261,8 +240,7 @@ export function useOpenNote({
       editorReadyRef,
       frontmatterYamlRef,
       markdownRef,
-      onPersistedPathRenamed,
-      persistBeforePathRename,
+      renamePersistedPath,
       replaceOpenTabPath,
     ],
   );

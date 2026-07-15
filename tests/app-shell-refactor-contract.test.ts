@@ -34,8 +34,9 @@ describe("App shell refactor contract", () => {
     const hook = read("src/hooks/useAppPersistenceLifecycle.ts");
     const app = read("src/App.impl.tsx");
 
-    expect(hook).toContain("useEditorSave");
-    expect(hook).toContain("persistActiveTabBeforeLeave");
+    expect(hook).toContain("DocumentPersistenceCoordinator");
+    expect(hook).not.toContain("useEditorSave");
+    expect(hook).not.toContain("persistActiveTabBeforeLeave");
     expect(hook).toContain("useTauriCloseSave");
     expect(hook).toContain("handleSaveVersion");
     expect(app).toContain("useAppPersistenceLifecycle");

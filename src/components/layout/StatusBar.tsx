@@ -12,6 +12,7 @@ import {
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
+import type { DocumentPersistenceStatus } from "@/lib/document-persistence-coordinator";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type {
   AppUpdateInfo,
@@ -27,6 +28,8 @@ interface StatusBarProps {
   documentTitle?: string | null;
   /** Current note has unsaved edits (shown as text, not on tabs). */
   unsaved?: boolean;
+  persistenceStatus?: DocumentPersistenceStatus;
+  persistenceError?: string | null;
   characterCount: number;
   readingMinutes: number;
   aiStatus: string;
@@ -67,6 +70,8 @@ export const StatusBar = memo(function StatusBar({
   path,
   documentTitle,
   unsaved = false,
+  persistenceStatus = "clean",
+  persistenceError = null,
   characterCount,
   readingMinutes,
   aiStatus: _aiStatus,
@@ -115,6 +120,14 @@ export const StatusBar = memo(function StatusBar({
       : appUpdateStatus === "downloaded"
         ? "更新已下载"
         : `发现 ${appUpdateInfo?.version}`;
+  const persistenceLabel =
+    persistenceStatus === "saving"
+      ? "正在保存"
+      : persistenceStatus === "saved_index_degraded"
+        ? "已保存（索引延后）"
+        : persistenceStatus === "failed"
+          ? "保存失败"
+          : null;
 
   return (
     <footer
@@ -188,6 +201,23 @@ export const StatusBar = memo(function StatusBar({
             ·
           </span>
           <span className="shrink-0 text-muted-foreground">未保存</span>
+        </>
+      ) : null}
+      {path && persistenceLabel ? (
+        <>
+          <span className="shrink-0 text-muted-foreground/60" aria-hidden>
+            ·
+          </span>
+          <span
+            className={
+              persistenceStatus === "failed"
+                ? "shrink-0 text-destructive"
+                : "shrink-0 text-muted-foreground"
+            }
+            title={persistenceError ?? undefined}
+          >
+            {persistenceLabel}
+          </span>
         </>
       ) : null}
       {path &&

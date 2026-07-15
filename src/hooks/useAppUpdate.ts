@@ -48,6 +48,7 @@ export interface AppUpdateController {
 }
 
 interface UseAppUpdateOptions {
+  beforeInstall?: () => Promise<void>;
   enabled: boolean;
   hasUnsaved: () => boolean;
   onBlockedInstall?: (message: string) => void;
@@ -111,6 +112,7 @@ function failedPreflightResult(message: string): AppUpdatePreflightResult {
 }
 
 export function useAppUpdate({
+  beforeInstall,
   enabled,
   hasUnsaved,
   onBlockedInstall,
@@ -225,7 +227,7 @@ export function useAppUpdate({
   }, []);
 
   const install = useCallback(async () => {
-    if (hasUnsaved()) {
+    if (!beforeInstall && hasUnsaved()) {
       const message = "安装更新前请先保存所有未保存内容，或取消安装。";
       setSnapshot((current) => ({
         ...current,
@@ -236,11 +238,12 @@ export function useAppUpdate({
     }
 
     try {
+      await beforeInstall?.();
       await appUpdateInstall();
     } catch {
       handleActionError(setSnapshot, APP_UPDATE_INSTALL_ERROR_MESSAGE);
     }
-  }, [hasUnsaved, onBlockedInstall]);
+  }, [beforeInstall, hasUnsaved, onBlockedInstall]);
 
   return {
     snapshot,
@@ -252,11 +255,13 @@ export function useAppUpdate({
 }
 
 export function useAppUpdateController({
+  beforeInstall,
   enabled,
   tabs,
   tabsRef,
   onStatus,
 }: {
+  beforeInstall?: () => Promise<void>;
   enabled: boolean;
   tabs: Array<{ dirty?: boolean }>;
   tabsRef: MutableRefObject<Array<{ dirty?: boolean }>>;
@@ -267,6 +272,7 @@ export function useAppUpdateController({
     [tabsRef],
   );
   const update = useAppUpdate({
+    beforeInstall,
     enabled,
     hasUnsaved,
     onBlockedInstall: onStatus,

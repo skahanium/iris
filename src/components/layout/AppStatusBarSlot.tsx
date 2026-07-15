@@ -1,6 +1,7 @@
 import { StatusBar } from "@/components/layout/StatusBar";
 import { useEffect, useState } from "react";
 import { fileLinkSummary } from "@/lib/ipc";
+import type { DocumentPersistenceStatus } from "@/lib/document-persistence-coordinator";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type {
   AppUpdateInfo,
@@ -14,6 +15,8 @@ interface AppStatusBarSlotProps {
   activePath: string | null;
   activeDocumentTitle: string | null;
   unsaved: boolean;
+  persistenceStatus?: DocumentPersistenceStatus;
+  persistenceError?: string | null;
   characterCount: number;
   readingMinutes: number;
   aiStatus: string;
@@ -48,6 +51,8 @@ export function AppStatusBarSlot({
   activePath,
   activeDocumentTitle,
   unsaved,
+  persistenceStatus,
+  persistenceError,
   characterCount,
   readingMinutes,
   aiStatus,
@@ -108,6 +113,8 @@ export function AppStatusBarSlot({
       path={activePath}
       documentTitle={activeDocumentTitle}
       unsaved={unsaved}
+      persistenceStatus={persistenceStatus}
+      persistenceError={persistenceError}
       characterCount={characterCount}
       readingMinutes={readingMinutes}
       aiStatus={aiStatus}

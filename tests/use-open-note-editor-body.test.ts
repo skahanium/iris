@@ -46,7 +46,7 @@ function Harness({
   editor,
   editorReady,
   dirty,
-  persistBeforePathRename,
+  renamePersistedPath,
   replaceOpenTabPath,
 }: {
   activePath: string | null;
@@ -55,10 +55,12 @@ function Harness({
   editor?: Editor | null;
   editorReady?: boolean;
   dirty?: boolean;
-  persistBeforePathRename?: (
+  renamePersistedPath?: (
     path: string,
+    newPath: string,
     markdown: string,
-  ) => Promise<boolean>;
+    move: () => Promise<string>,
+  ) => Promise<string>;
   replaceOpenTabPath?: ReplaceOpenTabPath;
   outRef: {
     current: {
@@ -79,7 +81,7 @@ function Harness({
     editorRef: { current: editor ?? null },
     editorReadyRef,
     dirtyRef: { current: dirty ?? false },
-    persistBeforePathRename,
+    renamePersistedPath,
     updateTabTitle: vi.fn(),
     replaceOpenTabPath: replaceOpenTabPath ?? vi.fn<ReplaceOpenTabPath>(),
   });
@@ -276,12 +278,20 @@ describe("useOpenNote editorBodyMarkdown", () => {
       updated_at: "",
       word_count: 3,
     });
-    const persistBeforePathRename = vi.fn(async () => true);
+    const renamePersistedPath = vi.fn<
+      (
+        path: string,
+        newPath: string,
+        markdown: string,
+        move: () => Promise<string>,
+      ) => Promise<string>
+    >(async (_path, _newPath, markdown, move) => {
+      await move();
+      return markdown;
+    });
     editor = bodyEditor("Body must reach disk before rename.");
     const outRef = { current: null } as {
-      current: {
-        schedulePathSync: (path: string, title: string) => void;
-      } | null;
+      current: ReturnType<typeof useOpenNote> | null;
     };
 
     await act(async () => {
@@ -293,7 +303,7 @@ describe("useOpenNote editorBodyMarkdown", () => {
           editorReady: true,
           dirty: true,
           editorContentTick: 1,
-          persistBeforePathRename,
+          renamePersistedPath,
           outRef,
         }),
       );
@@ -309,12 +319,12 @@ describe("useOpenNote editorBodyMarkdown", () => {
       await Promise.resolve();
     });
 
-    expect(persistBeforePathRename).toHaveBeenCalledTimes(1);
-    expect(persistBeforePathRename.mock.calls[0]?.[0]).toBe("untitled.md");
-    expect(persistBeforePathRename.mock.calls[0]?.[1]).toContain(
+    expect(renamePersistedPath).toHaveBeenCalledTimes(1);
+    expect(renamePersistedPath.mock.calls[0]?.[0]).toBe("untitled.md");
+    expect(renamePersistedPath.mock.calls[0]?.[2]).toContain(
       "Body must reach disk before rename.",
     );
-    expect(persistBeforePathRename.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(renamePersistedPath.mock.invocationCallOrder[0]).toBeLessThan(
       fileRename.mock.invocationCallOrder[0]!,
     );
   });

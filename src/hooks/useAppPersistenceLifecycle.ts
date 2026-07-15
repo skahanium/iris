@@ -4,31 +4,31 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type MutableRefObject,
   type RefObject,
 } from "react";
 
 import type { TabItem } from "@/components/layout/TabBar";
-import { useEditorSave } from "@/hooks/useEditorSave";
 import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 import { useVersionIdle } from "@/hooks/useVersionIdle";
+import { isClassifiedVaultPath } from "@/lib/classified-path";
+import {
+  DocumentPersistenceCoordinator,
+  type DocumentPersistenceSnapshot,
+  type DocumentPersistenceStatus,
+} from "@/lib/document-persistence-coordinator";
+import { editorHtmlDigest, setCachedEditorHtml } from "@/lib/editor-html-cache";
+import { splitFrontmatter } from "@/lib/frontmatter";
 import {
   fileSetLock,
   fileWrite,
   versionSaveIdle,
   versionSaveManual,
 } from "@/lib/ipc";
-import { editorHtmlDigest, setCachedEditorHtml } from "@/lib/editor-html-cache";
-import { isClassifiedVaultPath } from "@/lib/classified-path";
-import { splitFrontmatter } from "@/lib/frontmatter";
-import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import type { AutoSnapshotLeaveReason } from "@/lib/version-auto-snapshot-policy";
 import { createLeaveSnapshotEnqueuer } from "@/lib/version-leave-snapshot";
-import {
-  persistActiveTabBeforeLeave,
-  persistInactiveDirtyTabBeforeLeave,
-} from "@/lib/persist-before-leave";
 import {
   createVersionSnapshotScheduler,
   type LastSavedSnapshot,
@@ -69,6 +69,10 @@ interface UseAppPersistenceLifecycleParams {
   tabsRef: MutableRefObject<TabItem[]>;
 }
 
+function isSavedStatus(status: DocumentPersistenceStatus): boolean {
+  return status === "saved" || status === "saved_index_degraded";
+}
+
 export function useAppPersistenceLifecycle({
   activeFileLocked,
   activePath,
@@ -94,46 +98,90 @@ export function useAppPersistenceLifecycle({
   syncTabMarkdownCache,
   tabsRef,
 }: UseAppPersistenceLifecycleParams) {
-  const {
-    notifyDirty,
-    flushSave,
-    flushSaveForPath,
-    cancelPendingSave,
-    awaitSaveInFlight,
-    getLastSavedSnapshot,
-    recordSavedSnapshot,
-    rebindSavedSnapshot,
-    saveStatus,
-    saveError,
-  } = useEditorSave(
-    activePath,
-    () => getLiveMarkdownRef.current(),
-    (md, currentRevision) => {
-      if (!currentRevision) return;
-      applySavedMarkdown(md);
+  const coordinatorRef = useRef<DocumentPersistenceCoordinator | null>(null);
+  if (!coordinatorRef.current) {
+    coordinatorRef.current = new DocumentPersistenceCoordinator({
+      write: async (path, content) => {
+        const result = await fileWrite(path, content);
+        return { indexDegraded: result.indexStatus === "degraded" };
+      },
+    });
+  }
+  const coordinator = coordinatorRef.current;
+  const [saveStatus, setSaveStatus] =
+    useState<DocumentPersistenceStatus>("clean");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const cancelledWriteRef = useRef<Promise<void>>(Promise.resolve());
+  const noteTitleRef = useRef(noteTitle);
+  noteTitleRef.current = noteTitle;
+
+  const getLastSavedSnapshot = useCallback((): LastSavedSnapshot | null => {
+    const path = activePathRef.current;
+    if (!path) return null;
+    const snapshot = coordinator.get(path);
+    if (!snapshot || snapshot.baselineRevision !== snapshot.revision) {
+      return null;
+    }
+    return {
+      path,
+      markdown: snapshot.baselineMarkdown,
+      savedAt: snapshot.savedAt ?? Date.now(),
+      dirtyGeneration: snapshot.revision,
+    };
+  }, [activePathRef, coordinator]);
+
+  const acknowledgeSnapshot = useCallback(
+    (snapshot: DocumentPersistenceSnapshot) => {
+      if (!isSavedStatus(snapshot.status) && snapshot.status !== "clean") {
+        return;
+      }
+      const tab = tabsRef.current.find((item) => item.path === snapshot.path);
+      const title =
+        snapshot.path === activePathRef.current
+          ? noteTitleRef.current
+          : (tab?.title ?? snapshot.path);
+      syncTabMarkdownCache(snapshot.path, snapshot.markdown);
+      markClean(
+        snapshot.path,
+        resolveNoteDisplayTitle({ path: snapshot.path, title }),
+      );
+      if (snapshot.path !== activePathRef.current) return;
+      applySavedMarkdown(snapshot.markdown);
       dirtyRef.current = false;
-      const path = activePathRef.current;
-      if (path) {
-        setMarkdown(md);
-        syncTabMarkdownCache(path, md);
-        markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
-        if (noteTitle.trim() === "") {
-          schedulePathSync(path, noteTitle);
-        }
+      setMarkdown(snapshot.markdown);
+      if (noteTitleRef.current.trim() === "") {
+        schedulePathSync(snapshot.path, noteTitleRef.current);
       }
     },
+    [
+      activePathRef,
+      applySavedMarkdown,
+      dirtyRef,
+      markClean,
+      schedulePathSync,
+      setMarkdown,
+      syncTabMarkdownCache,
+      tabsRef,
+    ],
   );
 
-  const markdownBaselineRef = useRef(markdown);
-  markdownBaselineRef.current = markdown;
+  useEffect(() => {
+    return coordinator.subscribe((snapshot) => {
+      if (snapshot.path === activePathRef.current) {
+        setSaveStatus(snapshot.status);
+        setSaveError(snapshot.error);
+      }
+      acknowledgeSnapshot(snapshot);
+    });
+  }, [acknowledgeSnapshot, activePathRef, coordinator]);
 
   useEffect(() => {
-    if (!activePath) return;
-    recordSavedSnapshot(activePath, markdownBaselineRef.current);
-    // `editorContentTick` is the authoritative-load revision. Path-only
-    // changes (notably title-driven renames) must never create a saved baseline.
+    const path = activePathRef.current;
+    if (!path) return;
+    coordinator.load(path, markdown);
+    // `editorContentTick` denotes only an authoritative disk/prepared load.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editorContentTick, recordSavedSnapshot]);
+  }, [coordinator, editorContentTick]);
 
   const versionSnapshotScheduler = useMemo(
     () =>
@@ -154,9 +202,7 @@ export function useAppPersistenceLifecycle({
         return;
       }
       const result = versionSnapshotScheduler.enqueueIdle(snapshot);
-      if (result.accepted) {
-        void result.done;
-      }
+      if (result.accepted) void result.done;
     },
     [
       activePathRef,
@@ -178,89 +224,89 @@ export function useAppPersistenceLifecycle({
     [autoSnapshotGenerationRef, enqueueIdleSnapshot],
   );
 
+  const flushSaveForPath = useCallback(
+    async (
+      path: string,
+      getMarkdownOverride?: () => string,
+    ): Promise<string | null> => {
+      const markdownSnapshot =
+        getMarkdownOverride?.() ??
+        (path === activePathRef.current
+          ? getLiveMarkdownRef.current()
+          : getTabMarkdownCached(path));
+      if (markdownSnapshot === undefined) {
+        throw new Error(`no recoverable snapshot for ${path}`);
+      }
+      coordinator.capture(path, markdownSnapshot);
+      return (await coordinator.barrier(path)).markdown;
+    },
+    [activePathRef, coordinator, getLiveMarkdownRef, getTabMarkdownCached],
+  );
+
+  const flushSave = useCallback(async (): Promise<string | null> => {
+    const path = activePathRef.current;
+    if (!path) return null;
+    return flushSaveForPath(path);
+  }, [activePathRef, flushSaveForPath]);
+
+  const notifyDirty = useCallback(() => {
+    const path = activePathRef.current;
+    if (!path || !editorReadyRef.current) return;
+    coordinator.capture(path, getLiveMarkdownRef.current());
+  }, [activePathRef, coordinator, editorReadyRef, getLiveMarkdownRef]);
+
+  const cancelPendingSave = useCallback(() => {
+    const path = activePathRef.current;
+    if (!path) return;
+    cancelledWriteRef.current = coordinator.discard(path);
+  }, [activePathRef, coordinator]);
+
+  const awaitSaveInFlight = useCallback(async (): Promise<void> => {
+    await cancelledWriteRef.current;
+  }, []);
+
   persistBeforeLeaveRef.current = async (
     path: string,
     options: PersistBeforeLeaveOptions = {},
   ) => {
     const reason = options.reason ?? "tab_leave";
-    const tab = tabsRef.current.find((t) => t.path === path);
-    if (path === activePathRef.current) {
-      if (!editorReadyRef.current) {
-        if (!tab?.dirty) {
-          return getTabMarkdownCached(path) ?? null;
-        }
-        const cached = getTabMarkdownCached(path);
-        if (!cached || isNoteSubstantivelyEmpty(cached)) {
-          throw new Error(
-            "dirty document is remounting with no recoverable snapshot",
-          );
-        }
-        await fileWrite(path, cached);
-        recordSavedSnapshot(path, cached);
-        markClean(path, tab.title);
-        dirtyRef.current = false;
-        return cached;
-      }
-      const markdownSnapshot = getLiveMarkdownRef.current();
-      const titleSnapshot = noteTitle;
-      const editor = editorRef.current;
-      const editorHtmlSnapshot =
-        editorReadyRef.current && editor && !editor.isDestroyed
-          ? editor.getHTML()
-          : null;
-      const namespace = isClassifiedVaultPath(path) ? "classified" : "normal";
-      syncTabMarkdownCache(path, markdownSnapshot);
-      const md = await persistActiveTabBeforeLeave({
-        path,
-        reason,
-        getMarkdown: () => markdownSnapshot,
-        flushSaveForPath,
-        getLastSavedSnapshot,
-        enqueueIdleSnapshot,
-      });
-      if (md) {
-        syncTabMarkdownCache(path, md);
-        if (editorHtmlSnapshot) {
-          setCachedEditorHtml(
-            path,
-            editorHtmlSnapshot,
-            editorHtmlDigest(splitFrontmatter(md).body),
-            namespace,
-          );
-        }
-        markClean(
-          path,
-          resolveNoteDisplayTitle({ path, title: titleSnapshot }),
-        );
-        if (activePathRef.current === path) {
-          applySavedMarkdown(md);
-          dirtyRef.current = false;
-          setMarkdown(md);
-          if (titleSnapshot.trim() === "") {
-            schedulePathSync(path, titleSnapshot);
-          }
-        }
-      }
-      return md;
-    }
+    const tab = tabsRef.current.find((item) => item.path === path);
     if (!tab?.dirty) {
-      return getTabMarkdownCached(path) ?? null;
+      return (
+        getTabMarkdownCached(path) ?? coordinator.get(path)?.markdown ?? null
+      );
     }
-    const cached = getTabMarkdownCached(path);
-    if (!cached || isNoteSubstantivelyEmpty(cached)) {
-      return null;
+    const cached =
+      path === activePathRef.current && editorReadyRef.current
+        ? getLiveMarkdownRef.current()
+        : getTabMarkdownCached(path);
+    if (cached === undefined) {
+      throw new Error(
+        "dirty document is remounting with no recoverable snapshot",
+      );
     }
-    await persistInactiveDirtyTabBeforeLeave({
-      path,
-      reason,
-      cachedMarkdown: cached,
-      writeFile: async (targetPath, content) => {
-        await fileWrite(targetPath, content);
-      },
-      enqueueLeaveSnapshot,
-    });
-    markClean(path, tab.title);
-    return cached;
+    const editor = editorRef.current;
+    const editorHtmlSnapshot =
+      path === activePathRef.current &&
+      editorReadyRef.current &&
+      editor &&
+      !editor.isDestroyed
+        ? editor.getHTML()
+        : null;
+    const saved = await flushSaveForPath(path, () => cached);
+    if (!saved) return null;
+    if (editorHtmlSnapshot) {
+      setCachedEditorHtml(
+        path,
+        editorHtmlSnapshot,
+        editorHtmlDigest(splitFrontmatter(saved).body),
+        isClassifiedVaultPath(path) ? "classified" : "normal",
+      );
+    }
+    if (reason !== "app_close") {
+      enqueueLeaveSnapshot(path, saved, reason);
+    }
+    return saved;
   };
 
   const { onActivity: resetVersionIdle, clearTimer: clearVersionIdleTimer } =
@@ -269,13 +315,12 @@ export function useAppPersistenceLifecycle({
       idleMs: autoVersionIdleMinutes * 60 * 1000,
     });
 
-  const flushAllOpenTabs = useCallback(async () => {
-    const paths = tabsRef.current.map((tab) => tab.path);
+  const flushAllOpenTabs = useCallback(async (): Promise<void> => {
     versionSnapshotScheduler.setAppClosing(true);
     clearVersionIdleTimer();
     try {
-      for (const path of paths) {
-        await persistBeforeLeaveRef.current(path, { reason: "app_close" });
+      for (const tab of tabsRef.current) {
+        await persistBeforeLeaveRef.current(tab.path, { reason: "app_close" });
       }
     } finally {
       versionSnapshotScheduler.setAppClosing(false);
@@ -289,9 +334,7 @@ export function useAppPersistenceLifecycle({
 
   useTauriCloseSave({
     flushBeforeClose: flushAllOpenTabs,
-    onError: (message) => {
-      setAiStatus(`关闭前保存失败：${message}`);
-    },
+    onError: (message) => setAiStatus(`关闭前保存失败：${message}`),
   });
 
   const flushWhenEditorReady = useCallback(
@@ -302,36 +345,31 @@ export function useAppPersistenceLifecycle({
         setAiStatus("笔记已锁定，无法保存");
         return { ok: false, markdown: null };
       }
-      if (activePathRef.current && !editorReadyRef.current) {
-        const path = activePathRef.current;
-        const tab = tabsRef.current.find((item) => item.path === path);
+      const path = activePathRef.current;
+      if (!path) return { ok: true, markdown: null };
+      if (!editorReadyRef.current) {
         const cached = getTabMarkdownCached(path);
-        if (tab?.dirty && cached && !isNoteSubstantivelyEmpty(cached)) {
-          await fileWrite(path, cached);
-          recordSavedSnapshot(path, cached);
-          markClean(path, tab.title);
-          dirtyRef.current = false;
-          return { ok: true, markdown: cached };
+        if (cached === undefined) {
+          setAiStatus(
+            `文档仍在加载，无法${actionLabel}；未找到可安全写入的快照`,
+          );
+          return { ok: false, markdown: null };
         }
-        setAiStatus(
-          `文档仍在加载，无法${actionLabel}；未找到可安全写入的快照`,
-        );
-        return { ok: false, markdown: null };
+        return {
+          ok: true,
+          markdown: await flushSaveForPath(path, () => cached),
+        };
       }
-      const markdown = await flushSave();
-      return { ok: true, markdown };
+      return { ok: true, markdown: await flushSave() };
     },
     [
       activeFileLocked,
       activePathRef,
-      dirtyRef,
       editorReadyRef,
       flushSave,
+      flushSaveForPath,
       getTabMarkdownCached,
-      markClean,
-      recordSavedSnapshot,
       setAiStatus,
-      tabsRef,
     ],
   );
 
@@ -363,18 +401,16 @@ export function useAppPersistenceLifecycle({
       setAiStatus("文档仍在加载，无法定稿；未修改磁盘内容");
       return;
     }
-    const md = await flushSave();
-    if (!md) return;
+    const saved = await flushSave();
+    if (!saved) return;
     setAiStatus("正在后台创建版本快照…");
     versionSnapshotScheduler.markHighPriorityStart(path);
-    void versionSaveManual(path, md)
+    void versionSaveManual(path, saved)
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
         setAiStatus(`版本快照提交失败：${msg}`);
       })
-      .finally(() => {
-        versionSnapshotScheduler.markHighPriorityEnd(path);
-      });
+      .finally(() => versionSnapshotScheduler.markHighPriorityEnd(path));
   }, [
     activePathRef,
     editorReadyRef,
@@ -382,6 +418,19 @@ export function useAppPersistenceLifecycle({
     setAiStatus,
     versionSnapshotScheduler,
   ]);
+
+  const renamePath = useCallback(
+    async (
+      oldPath: string,
+      newPath: string,
+      markdownSnapshot: string,
+      move: () => Promise<string>,
+    ): Promise<string> => {
+      coordinator.capture(oldPath, markdownSnapshot);
+      return (await coordinator.rename(oldPath, newPath, move)).markdown;
+    },
+    [coordinator],
+  );
 
   return {
     notifyDirty,
@@ -395,8 +444,8 @@ export function useAppPersistenceLifecycle({
     handleSaveVersion,
     versionSnapshotScheduler,
     flushSaveForPath,
-    recordSavedSnapshot,
-    rebindSavedSnapshot,
+    renamePath,
+    flushAllOpenTabs,
     saveStatus,
     saveError,
   };

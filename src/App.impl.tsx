@@ -186,7 +186,11 @@ function App() {
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
+  const updateInstallBarrierRef = useRef<() => Promise<void>>(
+    async () => undefined,
+  );
   const appUpdateController = useAppUpdateController({
+    beforeInstall: () => updateInstallBarrierRef.current(),
     enabled: Boolean(vaultPath),
     tabs,
     tabsRef,
@@ -300,8 +304,12 @@ function App() {
 
   const getLiveMarkdownRef = useRef(() => markdownRef.current);
   const pathRenamePersistenceRef = useRef({
-    persist: async (_path: string, _markdown: string) => false,
-    rebind: (_oldPath: string, _newPath: string, _markdown: string) => {},
+    rename: async (
+      _oldPath: string,
+      _newPath: string,
+      _markdown: string,
+      _move: () => Promise<string>,
+    ) => "",
   });
   const inlineAiDomain =
     activeNoteIsClassified &&
@@ -333,13 +341,12 @@ function App() {
     editorRef,
     editorReadyRef: editorReadyForPersistenceRef,
     dirtyRef,
-    persistBeforePathRename: (path, markdownSnapshot) =>
-      pathRenamePersistenceRef.current.persist(path, markdownSnapshot),
-    onPersistedPathRenamed: (oldPath, newPath, markdownSnapshot) =>
-      pathRenamePersistenceRef.current.rebind(
-        oldPath,
+    renamePersistedPath: (path, newPath, markdownSnapshot, move) =>
+      pathRenamePersistenceRef.current.rename(
+        path,
         newPath,
         markdownSnapshot,
+        move,
       ),
     updateTabTitle,
     replaceOpenTabPath,
@@ -358,8 +365,8 @@ function App() {
     handleLockToggle,
     handleSaveNote,
     versionSnapshotScheduler,
-    flushSaveForPath,
-    rebindSavedSnapshot,
+    flushAllOpenTabs,
+    renamePath,
     saveStatus,
     saveError,
   } = useAppPersistenceLifecycle({
@@ -388,14 +395,10 @@ function App() {
     tabsRef,
   });
 
+  updateInstallBarrierRef.current = flushAllOpenTabs;
+
   pathRenamePersistenceRef.current = {
-    persist: async (path, markdownSnapshot) =>
-      (await flushSaveForPath(path, () => markdownSnapshot)) ===
-      markdownSnapshot,
-    rebind: (oldPath, newPath, markdownSnapshot) => {
-      rebindSavedSnapshot(oldPath, newPath, markdownSnapshot);
-      syncTabMarkdownCache(newPath, markdownSnapshot);
-    },
+    rename: renamePath,
   };
 
   const {
@@ -795,6 +798,8 @@ function App() {
                 ? false
                 : (tabs.find((t) => t.path === activePath)?.dirty ?? false)
             }
+            persistenceStatus={saveStatus}
+            persistenceError={saveError}
             characterCount={editorStats.characterCount}
             readingMinutes={editorStats.readingMinutes}
             aiStatus={aiStatus}

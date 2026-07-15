@@ -11,8 +11,8 @@ onBodyStatsChange
 const md = await flushSave();
 versionSaveManual(path, md)
 setMarkdown(md)
-persistActiveTabBeforeLeave
-flushSaveForPath
+DocumentPersistenceCoordinator
+flushAllOpenTabs
 reason: "app_close"
 setAppClosing(true)
 clearVersionIdleTimer
