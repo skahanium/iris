@@ -168,17 +168,20 @@ fn classified_run_intake_stays_outside_normal_session_storage() {
     );
 }
 #[test]
-fn classified_io_provides_cef_encryption_for_threads() {
+fn classified_markdown_writes_route_to_cef_write_service() {
     let classified_src = include_str!("../src/commands/classified.rs");
+    let note_write_src = include_str!("../src/storage/note_write.rs");
 
-    // classified.rs must use CEF encryption for all classified content
+    // Commands must go through the sole Markdown write boundary; encryption
+    // belongs there so ordinary, AI, template and classified writes cannot
+    // drift into separate persistence implementations.
     assert!(
-        classified_src.contains("encrypt_cef"),
-        "classified.rs must use encrypt_cef for encrypting classified content"
+        classified_src.contains("NoteWriteService"),
+        "classified commands must use the unified Markdown write service"
     );
     assert!(
-        classified_src.contains("decrypt_cef"),
-        "classified.rs must use decrypt_cef for decrypting classified content"
+        note_write_src.contains("encrypt_cef"),
+        "the unified write service must encrypt classified Markdown with CEF"
     );
     assert!(
         classified_src.contains("has_csef_magic"),
