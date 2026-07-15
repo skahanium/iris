@@ -56,6 +56,7 @@ pub fn cleanup_once(config: CleanupConfig) -> AppResult<CleanupReport> {
             &dir,
             config.now,
             config.temp_max_age,
+            true,
             &config.modified_time,
             &mut report,
         )?;
@@ -66,6 +67,7 @@ pub fn cleanup_once(config: CleanupConfig) -> AppResult<CleanupReport> {
             &dir,
             config.now,
             config.cache_max_age,
+            false,
             &config.modified_time,
             &mut report,
         )?;
@@ -78,6 +80,7 @@ fn clean_root(
     root: &Path,
     now: SystemTime,
     max_age: Duration,
+    secure_expired_files: bool,
     modified_time: &dyn Fn(&Path) -> SystemTime,
     report: &mut CleanupReport,
 ) -> AppResult<()> {
@@ -87,7 +90,15 @@ fn clean_root(
 
     for entry in fs::read_dir(root)? {
         let entry = entry?;
-        clean_entry(&entry.path(), root, now, max_age, modified_time, report)?;
+        clean_entry(
+            &entry.path(),
+            root,
+            now,
+            max_age,
+            secure_expired_files,
+            modified_time,
+            report,
+        )?;
     }
 
     Ok(())
@@ -98,6 +109,7 @@ fn clean_entry(
     root: &Path,
     now: SystemTime,
     max_age: Duration,
+    secure_expired_files: bool,
     modified_time: &dyn Fn(&Path) -> SystemTime,
     report: &mut CleanupReport,
 ) -> AppResult<()> {
@@ -105,7 +117,15 @@ fn clean_entry(
     if metadata.is_dir() {
         for entry in fs::read_dir(path)? {
             let entry = entry?;
-            clean_entry(&entry.path(), root, now, max_age, modified_time, report)?;
+            clean_entry(
+                &entry.path(),
+                root,
+                now,
+                max_age,
+                secure_expired_files,
+                modified_time,
+                report,
+            )?;
         }
         remove_empty_dir(path, root)?;
         return Ok(());
@@ -124,7 +144,11 @@ fn clean_entry(
 
     if expired {
         let bytes = metadata.len();
-        fs::remove_file(path)?;
+        if secure_expired_files {
+            crate::security::secure_delete::secure_delete(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
         report.deleted_files += 1;
         report.deleted_bytes += bytes;
     }

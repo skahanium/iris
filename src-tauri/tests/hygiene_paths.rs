@@ -110,3 +110,35 @@ fn cleanup_once_removes_only_expired_whitelisted_cache_and_temp_files() {
     assert!(database.exists());
     assert!(note.exists());
 }
+
+#[test]
+fn cleanup_once_overwrites_expired_temp_files_before_removing_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let temp_root = dir.path().join("tmp");
+    fs::create_dir_all(&temp_root).unwrap();
+
+    let expired_temp = temp_root.join("expired.tmp");
+    let linked_copy = dir.path().join("linked-copy");
+    let sensitive_content = b"sensitive temporary payload";
+    fs::write(&expired_temp, sensitive_content).unwrap();
+    fs::hard_link(&expired_temp, &linked_copy).unwrap();
+
+    let now = SystemTime::UNIX_EPOCH + Duration::from_secs(100 * 24 * 60 * 60);
+    let old = now - Duration::from_secs(8 * 24 * 60 * 60);
+    let report = cleanup_once(CleanupConfig {
+        temp_dirs: vec![temp_root],
+        cache_dirs: Vec::new(),
+        now,
+        temp_max_age: Duration::from_secs(7 * 24 * 60 * 60),
+        cache_max_age: Duration::from_secs(30 * 24 * 60 * 60),
+        modified_time: Box::new(move |_| old),
+    })
+    .unwrap();
+
+    assert_eq!(report.deleted_files, 1);
+    assert!(!expired_temp.exists());
+    assert_eq!(
+        fs::read(&linked_copy).unwrap(),
+        vec![0; sensitive_content.len()]
+    );
+}
