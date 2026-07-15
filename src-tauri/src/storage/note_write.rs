@@ -94,7 +94,7 @@ impl NoteWriteService {
                     path.to_string(),
                     match embedding_mode {
                         IndexEmbeddingMode::Queue(state) => Some(Arc::clone(state)),
-                        IndexEmbeddingMode::Skip | IndexEmbeddingMode::Sync => None,
+                        IndexEmbeddingMode::Skip => None,
                     },
                 );
                 tracing::warn!(

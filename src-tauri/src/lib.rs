@@ -92,6 +92,7 @@ pub fn run() {
             // `AppState::new` returns `Arc<AppState>`; Tauri can inject it directly.
             let state = AppState::new(data_dir)?;
             crate::crypto::vault_key::init_vault_key();
+            state.embedding_scheduler().attach_app_handle(app.handle().clone());
             app.manage(state.clone());
             app.manage(commands::app_update::PendingAppUpdate::default());
 
@@ -174,8 +175,10 @@ pub fn run() {
             commands::recycle::recycle_purge_cmd,
             commands::search::search_keyword,
             commands::search::search_semantic,
-            commands::search::search_reindex,
-            commands::search::search_embedding_status,
+            commands::search::embedding_scheduler_status,
+            commands::search::embedding_scheduler_start,
+            commands::search::embedding_scheduler_set_paused,
+            commands::search::embedding_scheduler_set_foreground_busy,
             commands::llm::llm_providers,
             commands::llm::llm_generate,
             commands::llm::llm_chat,

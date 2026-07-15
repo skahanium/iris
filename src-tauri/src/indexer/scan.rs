@@ -13,8 +13,6 @@ use super::fts::{delete_fts, rename_fts, upsert_fts, upsert_metadata_fts};
 use super::image_ref::index_image_refs;
 use super::wikilink::index_wiki_links;
 use crate::app::AppState;
-#[cfg(not(test))]
-use crate::embedding::store::store_chunk_embeddings;
 use crate::error::AppResult;
 use crate::storage::paths::{
     has_reserved_path_root, is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
@@ -25,13 +23,12 @@ use std::sync::Arc;
 pub enum IndexEmbeddingMode<'a> {
     Skip,
     Queue(&'a Arc<AppState>),
-    Sync,
 }
 
 fn should_yield_for_foreground_document_open(embedding_mode: IndexEmbeddingMode<'_>) -> bool {
     match embedding_mode {
         IndexEmbeddingMode::Queue(state) => state.has_foreground_document_open(),
-        IndexEmbeddingMode::Skip | IndexEmbeddingMode::Sync => false,
+        IndexEmbeddingMode::Skip => false,
     }
 }
 
@@ -297,7 +294,7 @@ pub fn index_file_with_embed(
 
     if let Some((id, stored_hash, title, stored_wc)) = &existing_row {
         if stored_hash == &hash {
-            tracing::debug!(path = %rel, "index_file skipped: content unchanged");
+            tracing::debug!(result_code = "index_content_unchanged", "index content unchanged");
             return Ok(FileEntry {
                 id: *id,
                 path: rel,
@@ -406,7 +403,7 @@ pub fn index_file_from_content(
 
     if let Some((id, stored_hash, title, stored_wc)) = &existing_row {
         if stored_hash == hash {
-            tracing::debug!(path = %rel, "index_file skipped: content unchanged");
+            tracing::debug!(result_code = "index_content_unchanged", "index content unchanged");
             return Ok(FileEntry {
                 id: *id,
                 path: rel,
@@ -615,6 +612,7 @@ pub fn index_vault_incremental(
                     })
                 },
             ) {
+                handle_index_embedding(conn, entry.id, embedding_mode);
                 entries.push(entry);
             }
             continue;
@@ -742,11 +740,6 @@ fn handle_index_embedding(
     match embedding_mode {
         IndexEmbeddingMode::Skip => {}
         IndexEmbeddingMode::Queue(state) => state.enqueue_embedding(file_id),
-        IndexEmbeddingMode::Sync => {
-            if let Err(e) = store_chunk_embeddings(conn, file_id) {
-                tracing::warn!("embedding skipped for file {file_id}: {e}");
-            }
-        }
     }
 }
 
@@ -802,9 +795,6 @@ mod tests {
         ));
         assert!(!should_yield_for_foreground_document_open(
             IndexEmbeddingMode::Skip
-        ));
-        assert!(!should_yield_for_foreground_document_open(
-            IndexEmbeddingMode::Sync
         ));
         assert!(state.end_document_open(&token));
         assert!(!should_yield_for_foreground_document_open(

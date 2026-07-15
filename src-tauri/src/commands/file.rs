@@ -243,7 +243,7 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
                 Ok(rel) if crate::storage::paths::is_user_note_path(&rel) => rel,
                 _ => continue,
             };
-            if let Err(e) = state.db.with_conn(|conn| {
+            if let Err(_error) = state.db.with_conn(|conn| {
                 crate::indexer::scan::index_file_with_embed(
                     conn,
                     &vault,
@@ -251,7 +251,7 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
                     IndexEmbeddingMode::Queue(&state),
                 )
             }) {
-                tracing::warn!(path = %rel, "vault_set background index skipped: {e}");
+            tracing::warn!(result_code = "vault_background_index_skipped", "vault background index skipped");
             }
             processed += 1;
             let _ = app.emit(
@@ -294,6 +294,7 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
                 error: None,
             },
         );
+        state.embedding_scheduler().mark_initial_index_complete();
     });
 }
 
@@ -1123,9 +1124,11 @@ pub async fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<File
     let state = state.inner().clone();
     tokio::task::spawn_blocking(move || {
         let vault = state.vault_path()?;
-        state.db.with_conn(|conn| {
+        let entries = state.db.with_conn(|conn| {
             index_vault_incremental(conn, &vault, IndexEmbeddingMode::Queue(&state))
-        })
+        })?;
+        state.embedding_scheduler().mark_initial_index_complete();
+        Ok(entries)
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?

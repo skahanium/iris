@@ -10,7 +10,7 @@ use tauri::AppHandle;
 use crate::cas::ref_counter::RefCounter;
 use crate::cas::store::CasObjectStore;
 use crate::cas::write_guard::WriteGuard;
-use crate::embedding::queue::EmbedQueue;
+use crate::embedding::scheduler::{recover_interrupted_generation, EmbeddingScheduler};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
@@ -106,7 +106,7 @@ pub struct AiRuntimeState {
     pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
     pub context_cache: Mutex<ContextAssemblyCache>,
     pub vector_index_ready: AtomicBool,
-    embed_queue: OnceLock<EmbedQueue>,
+    embedding_scheduler: OnceLock<Arc<EmbeddingScheduler>>,
 }
 
 pub struct DocumentOpenState {
@@ -155,7 +155,7 @@ impl AiRuntimeState {
             pending_tool_calls: Mutex::new(HashMap::new()),
             context_cache: Mutex::new(ContextAssemblyCache::new(64, 30)),
             vector_index_ready: AtomicBool::new(vector_ready),
-            embed_queue: OnceLock::new(),
+            embedding_scheduler: OnceLock::new(),
         }
     }
 
@@ -270,6 +270,9 @@ impl AppState {
             watcher: Mutex::new(None),
             brute_force: BruteForceProtection::new(),
         });
+        if let Err(error) = state.db.with_conn(recover_interrupted_generation) {
+            tracing::warn!(result_code = "embedding_recovery_failed", "embedding recovery was unavailable: {error}");
+        }
 
         if let Err(e) = crate::llm::search_web::cleanup_expired_search_cache(&state.db) {
             tracing::warn!("failed to cleanup expired search cache: {e}");
@@ -294,22 +297,29 @@ impl AppState {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn ensure_embed_queue(self: &Arc<Self>) -> &EmbedQueue {
-        self.ai
-            .embed_queue
-            .get_or_init(|| EmbedQueue::spawn(Arc::clone(self)))
+    pub fn embedding_scheduler(&self) -> Arc<EmbeddingScheduler> {
+        Arc::clone(
+            self.ai
+                .embedding_scheduler
+                .get_or_init(|| EmbeddingScheduler::new(Arc::clone(&self.db))),
+        )
     }
 
     pub fn enqueue_embedding(self: &Arc<Self>, file_id: i64) {
-        self.ensure_embed_queue().enqueue(file_id);
+        self.embedding_scheduler().enqueue_file(file_id);
     }
 
     pub fn begin_document_open(&self) -> String {
+        self.embedding_scheduler().set_foreground_busy(true);
         self.document_open.begin()
     }
 
     pub fn end_document_open(&self, token: &str) -> bool {
-        self.document_open.end(token)
+        let ended = self.document_open.end(token);
+        if self.document_open.count() == 0 {
+            self.embedding_scheduler().set_foreground_busy(false);
+        }
+        ended
     }
 
     pub fn foreground_document_open_count(&self) -> usize {
@@ -447,7 +457,7 @@ mod document_open_state_tests {
     }
 
     #[test]
-    fn embedding_queue_does_not_keep_app_state_alive() {
+    fn embedding_scheduler_does_not_keep_app_state_alive() {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::new_with_test_cas_key(dir.path().join("data"), [0xA7; 32]).unwrap();
         let weak = Arc::downgrade(&state);

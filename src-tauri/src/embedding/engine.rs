@@ -52,6 +52,12 @@ fn get_embedder() -> AppResult<MutexGuard<'static, TextEmbedding>> {
         .map_err(|_| AppError::Embed("Embedding model lock poisoned".into()))
 }
 
+/// Verify that the bundled embedding model can be loaded without embedding text.
+pub fn ensure_embedding_model_available() -> AppResult<()> {
+    drop(get_embedder()?);
+    Ok(())
+}
+
 fn create_bundled_embedder() -> AppResult<TextEmbedding> {
     let directory = bundled_model_directory()?;
     let tokenizer_files = TokenizerFiles {
@@ -257,85 +263,11 @@ pub fn embedding_generation_ready(conn: &Connection) -> AppResult<bool> {
         return Ok(false);
     }
 
-    let chunk_count = match conn.query_row("SELECT COUNT(*) FROM chunks", [], |row| {
-        row.get::<_, i64>(0)
-    }) {
-        Ok(count) => count,
-        Err(error) if is_unavailable_embedding_schema(&error) => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-    let embedded_count =
-        match conn.query_row("SELECT COUNT(*) FROM chunk_embeddings_v2", [], |row| {
-            row.get::<_, i64>(0)
-        }) {
-            Ok(count) => count,
-            Err(error) if is_unavailable_embedding_schema(&error) => return Ok(false),
-            Err(error) => return Err(error.into()),
-        };
-    let invalid_dimension_count = match conn.query_row(
-        "SELECT COUNT(*) FROM chunk_embeddings_v2 WHERE length(embedding) <> ?1",
-        [((EMBEDDING_DIMENSION * std::mem::size_of::<f32>()) as i64)],
-        |row| row.get::<_, i64>(0),
-    ) {
-        Ok(count) => count,
-        Err(error) if is_unavailable_embedding_schema(&error) => return Ok(false),
-        Err(error) => return Err(error.into()),
-    };
-
-    let (anchor_count, anchor_embedded_count, invalid_anchor_dimensions) =
-        auxiliary_embedding_counts(
-            conn,
-            "semantic_anchors",
-            "semantic_anchor_embeddings_v2",
-            "anchor_id",
-        )?;
-    let (regulation_count, regulation_embedded_count, invalid_regulation_dimensions) =
-        auxiliary_embedding_counts(
-            conn,
-            "regulation_index",
-            "regulation_embeddings_v2",
-            "regulation_id",
-        )?;
-    let generation_count = chunk_count + anchor_count + regulation_count;
-    Ok(total == generation_count
-        && embedded_count == chunk_count
-        && anchor_embedded_count == anchor_count
-        && regulation_embedded_count == regulation_count
-        && invalid_dimension_count == 0
-        && invalid_anchor_dimensions == 0
-        && invalid_regulation_dimensions == 0)
-}
-
-fn auxiliary_embedding_counts(
-    conn: &Connection,
-    source_table: &str,
-    embedding_table: &str,
-    id_column: &str,
-) -> AppResult<(i64, i64, i64)> {
-    let source_count: i64 =
-        conn.query_row(&format!("SELECT COUNT(*) FROM {source_table}"), [], |row| {
-            row.get(0)
-        })?;
-    let embedding_count: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM {embedding_table}"),
-        [],
-        |row| row.get(0),
-    )?;
-    let invalid_dimensions: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM {embedding_table} WHERE length(embedding) <> ?1"),
-        [((EMBEDDING_DIMENSION * std::mem::size_of::<f32>()) as i64)],
-        |row| row.get(0),
-    )?;
-    let orphan_count: i64 = conn.query_row(
-        &format!("SELECT COUNT(*) FROM {embedding_table} AS e LEFT JOIN {source_table} AS s ON s.id = e.{id_column} WHERE s.id IS NULL"),
-        [],
-        |row| row.get(0),
-    )?;
-    Ok((
-        source_count,
-        embedding_count + orphan_count,
-        invalid_dimensions,
-    ))
+    match super::scheduler::generation_coverage_complete(conn) {
+        Ok(complete) => Ok(total > 0 || complete),
+        Err(error) if matches!(error, AppError::Db(_)) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn is_unavailable_embedding_schema(error: &rusqlite::Error) -> bool {

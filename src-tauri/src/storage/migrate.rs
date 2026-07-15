@@ -136,6 +136,9 @@ const MIGRATION_053_UP: &str =
     include_str!("../../migrations/053_remove_model_slot_capabilities.sql");
 const MIGRATION_053_DOWN: &str =
     include_str!("../../migrations/053_remove_model_slot_capabilities.down.sql");
+const MIGRATION_054_UP: &str = include_str!("../../migrations/054_embedding_scheduler.sql");
+const MIGRATION_054_DOWN: &str =
+    include_str!("../../migrations/054_embedding_scheduler.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -590,6 +593,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_053_UP,
         false,
     )?;
+    apply_migration(conn, "054_embedding_scheduler", MIGRATION_054_UP, false)?;
 
     Ok(())
 }
@@ -601,6 +605,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "054_embedding_scheduler", MIGRATION_054_DOWN);
     rollback_migration(
         conn,
         "053_remove_model_slot_capabilities",
@@ -701,6 +706,30 @@ mod tests {
             r.get::<_, i64>(0)
         });
         assert!(err.is_err());
+    }
+
+    #[test]
+    fn migration_054_marks_abandoned_zero_progress_generation_legacy_ready() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let phase: String = conn
+            .query_row(
+                "SELECT phase FROM embedding_generation_state WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let automatic_attempted: i64 = conn
+            .query_row(
+                "SELECT automatic_attempted FROM embedding_generation_state WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(phase, "legacy_ready");
+        assert_eq!(automatic_attempted, 0);
     }
 
     #[test]

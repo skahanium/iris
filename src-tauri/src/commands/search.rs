@@ -1,15 +1,12 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{Emitter, State};
+use tauri::State;
 
 use crate::app::AppState;
 use crate::embedding::engine::{semantic_search, SemanticHit};
-use crate::embedding::rebuild::{
-    embedding_index_status, rebuild_v2_embeddings_with, BgeEmbeddingBatcher, EmbeddingIndexStatus,
-};
+use crate::embedding::scheduler::{EmbeddingIndexStatus, EmbeddingStartResult};
 use crate::error::AppResult;
-use crate::indexer::scan::{index_vault_incremental, IndexEmbeddingMode};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct KeywordHit {
@@ -58,39 +55,34 @@ pub fn search_semantic(
 }
 
 #[tauri::command]
-pub fn search_reindex(
+pub fn embedding_scheduler_status(
     state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
-) -> AppResult<usize> {
-    let vault = state.vault_path()?;
-    let entries = state.db.with_conn(|conn| {
-        let entries =
-            index_vault_incremental(conn, &vault, IndexEmbeddingMode::Queue(state.inner()))?;
-        crate::storage::db::log_vector_index_consistency(conn);
-        Ok(entries)
-    })?;
-    state.db.with_conn(|conn| {
-        rebuild_v2_embeddings_with(conn, &BgeEmbeddingBatcher, &|indexed, total| {
-            let _ = app_handle.emit(
-                "embedding-index-progress",
-                EmbeddingProgressPayload {
-                    indexed_items: indexed as i64,
-                    total_items: total as i64,
-                },
-            );
-        })
-    })?;
-    Ok(entries.len())
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct EmbeddingProgressPayload {
-    indexed_items: i64,
-    total_items: i64,
+) -> AppResult<EmbeddingIndexStatus> {
+    state.embedding_scheduler().status()
 }
 
 #[tauri::command]
-pub fn search_embedding_status(state: State<'_, Arc<AppState>>) -> AppResult<EmbeddingIndexStatus> {
-    state.db.with_read_conn(embedding_index_status)
+pub fn embedding_scheduler_start(
+    state: State<'_, Arc<AppState>>,
+) -> AppResult<EmbeddingStartResult> {
+    state
+        .embedding_scheduler()
+        .start_generation(crate::embedding::scheduler::EmbeddingStartSource::Manual)
+}
+
+#[tauri::command]
+pub fn embedding_scheduler_set_paused(
+    state: State<'_, Arc<AppState>>,
+    paused: bool,
+) -> AppResult<()> {
+    state.embedding_scheduler().set_manual_paused(paused)
+}
+
+#[tauri::command]
+pub fn embedding_scheduler_set_foreground_busy(
+    state: State<'_, Arc<AppState>>,
+    busy: bool,
+) -> AppResult<()> {
+    state.embedding_scheduler().set_foreground_busy(busy);
+    Ok(())
 }
