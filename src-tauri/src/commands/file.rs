@@ -11,8 +11,8 @@ use crate::cas::hash::content_hash as content_hash_bytes;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    collect_vault_folders, content_hash, index_file_with_embed, index_vault_incremental,
-    rename_file_index, FileEntry, IndexEmbeddingMode,
+    collect_vault_folders, content_hash, index_file, index_vault_incremental, rename_file_index,
+    FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
@@ -246,14 +246,12 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
                 Ok(rel) if crate::storage::paths::is_user_note_path(&rel) => rel,
                 _ => continue,
             };
-            if let Err(_error) = state.db.with_conn(|conn| {
-                crate::indexer::scan::index_file_with_embed(
-                    conn,
-                    &vault,
-                    abs,
-                    IndexEmbeddingMode::Queue(&state),
-                )
-            }) {
+            let indexed = state
+                .db
+                .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, abs));
+            if indexed.is_ok() {
+                state.embedding_scheduler().notify_index_committed();
+            } else {
                 tracing::warn!(
                     result_code = "vault_background_index_skipped",
                     "vault background index skipped"
@@ -519,7 +517,7 @@ fn file_write_inner(
     path: String,
     content: String,
 ) -> AppResult<FileWriteResult> {
-    NoteWriteService::write(&state, &path, &content, IndexEmbeddingMode::Queue(&state))
+    NoteWriteService::write(&state, &path, &content)
 }
 
 /// Write a binary asset under `assets/` (editor image drop / paste).
@@ -685,15 +683,15 @@ fn folder_rename_inner_locked(
         if let Ok(hash) = crate::indexer::scan::file_hash(&abs_path) {
             state.storage.write_guard.mark(rel, &hash);
         }
-        if state
+        let indexed = state
             .db
-            .with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &abs_path, IndexEmbeddingMode::Queue(state))
-            })
-            .is_err()
-        {
+            .with_conn(|conn| index_file(conn, &vault, &abs_path))
+            .is_ok();
+        if indexed {
+            state.embedding_scheduler().notify_index_committed();
+        } else {
             index_degraded = true;
-            NoteWriteService::schedule_index_repair(state, rel, IndexEmbeddingMode::Queue(state));
+            NoteWriteService::schedule_index_repair(state, rel);
         }
     }
 
@@ -704,7 +702,7 @@ fn folder_rename_inner_locked(
     {
         index_degraded = true;
         for rel in &reindex_paths {
-            NoteWriteService::schedule_index_repair(state, rel, IndexEmbeddingMode::Queue(state));
+            NoteWriteService::schedule_index_repair(state, rel);
         }
     }
 
@@ -962,8 +960,7 @@ fn file_rename_inner_locked(
                 "file rename continued after derived index rename degradation"
             );
         }
-        let entry =
-            index_file_with_embed(conn, &vault, &new_abs, IndexEmbeddingMode::Queue(state))?;
+        let entry = index_file(conn, &vault, &new_abs)?;
         if crate::indexer::scan::prune_stale_file_indexes(conn, &vault).is_err() {
             index_degraded = true;
             tracing::warn!(
@@ -973,7 +970,10 @@ fn file_rename_inner_locked(
         }
         Ok(entry)
     }) {
-        Ok(entry) => entry,
+        Ok(entry) => {
+            state.embedding_scheduler().notify_index_committed();
+            entry
+        }
         Err(_) => {
             index_degraded = true;
             tracing::warn!(
@@ -989,25 +989,21 @@ fn file_rename_inner_locked(
             if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
                 state.storage.write_guard.mark(src_path, &h);
             }
-            if state
+            let indexed = state
                 .db
-                .with_conn(|conn| {
-                    index_file_with_embed(conn, &vault, &abs_src, IndexEmbeddingMode::Queue(state))
-                })
-                .is_err()
-            {
+                .with_conn(|conn| index_file(conn, &vault, &abs_src))
+                .is_ok();
+            if indexed {
+                state.embedding_scheduler().notify_index_committed();
+            } else {
                 index_degraded = true;
-                NoteWriteService::schedule_index_repair(
-                    state,
-                    src_path,
-                    IndexEmbeddingMode::Queue(state),
-                );
+                NoteWriteService::schedule_index_repair(state, src_path);
             }
         }
     }
 
     if index_degraded {
-        NoteWriteService::schedule_index_repair(state, &new_path, IndexEmbeddingMode::Queue(state));
+        NoteWriteService::schedule_index_repair(state, &new_path);
     }
 
     Ok(FileWriteResult {
@@ -1102,7 +1098,7 @@ fn cascade_rewrite_wikilinks_on_disk(
 
         if changed {
             let updated = lines.join("\n");
-            NoteWriteService::write(state, &src_path, &updated, IndexEmbeddingMode::Queue(state))?;
+            NoteWriteService::write(state, &src_path, &updated)?;
             modified.push(src_path);
         }
     }
@@ -1151,7 +1147,7 @@ pub async fn file_create(
 }
 
 fn create_file_inner(state: &Arc<AppState>, path: &str, body: &str) -> AppResult<FileEntry> {
-    Ok(NoteWriteService::create(state, path, body, IndexEmbeddingMode::Queue(state))?.entry)
+    Ok(NoteWriteService::create(state, path, body)?.entry)
 }
 
 #[tauri::command]
@@ -1198,16 +1194,21 @@ pub fn vault_get(state: State<'_, Arc<AppState>>) -> AppResult<Option<String>> {
 #[tauri::command]
 pub async fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileEntry>> {
     let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let vault = state.vault_path()?;
-        let entries = state.db.with_conn(|conn| {
-            index_vault_incremental(conn, &vault, IndexEmbeddingMode::Queue(&state))
-        })?;
-        state.embedding_scheduler().mark_initial_index_complete();
-        Ok(entries)
-    })
-    .await
-    .map_err(|e| AppError::msg(format!("task join: {e}")))?
+    tokio::task::spawn_blocking(move || index_rescan_inner(&state))
+        .await
+        .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+/// Complete a Markdown index scan, then notify the embedding scheduler after
+/// the SQLite connection that committed the derived index has been released.
+fn index_rescan_inner(state: &Arc<AppState>) -> AppResult<Vec<FileEntry>> {
+    let vault = state.vault_path()?;
+    let entries = state
+        .db
+        .with_conn(|conn| index_vault_incremental(conn, &vault))?;
+    state.embedding_scheduler().notify_index_committed();
+    state.embedding_scheduler().mark_initial_index_complete();
+    Ok(entries)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1352,7 +1353,8 @@ mod file_io_pipeline_tests {
     use crate::storage::migrate::migrate_up;
     use crate::storage::note_write::FileWriteIndexStatus;
     use std::fs;
-    use std::sync::{Arc, OnceLock};
+    use std::sync::{mpsc, Arc, OnceLock};
+    use std::time::Duration;
     use tempfile::tempdir;
 
     static INIT_KEY: OnceLock<()> = OnceLock::new();
@@ -1397,6 +1399,30 @@ mod file_io_pipeline_tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn index_rescan_completes_for_multiple_notes() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        fs::write(vault.join("notes/one.md"), "# One\n").unwrap();
+        fs::write(vault.join("notes/two.md"), "# Two\n").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault).unwrap();
+
+        let (sent, received) = mpsc::channel();
+        let worker_state = Arc::clone(&state);
+        std::thread::spawn(move || {
+            let result = index_rescan_inner(&worker_state).map(|entries| entries.len());
+            let _ = sent.send(result);
+        });
+
+        let indexed = received
+            .recv_timeout(Duration::from_secs(1))
+            .expect("index rescan must not re-enter the SQLite write pool")
+            .expect("index rescan result");
+        assert_eq!(indexed, 2);
     }
 
     #[test]
@@ -1525,7 +1551,7 @@ Body",
         state
             .db
             .with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &vault.join("old.md"), IndexEmbeddingMode::Skip)?;
+                index_file(conn, &vault, &vault.join("old.md"))?;
                 conn.execute(
                     "INSERT INTO files (path, title, content_hash, created_at, updated_at)
                      VALUES ('new.md', 'Stale', 'stale', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
@@ -1584,28 +1610,16 @@ Body",
 
         let state = Arc::new(AppState::new(dir.path().join("data")).unwrap());
         state.set_vault(vault.clone()).unwrap();
-        NoteWriteService::write(
-            &state,
-            ".classified/secret.md",
-            "# Hi",
-            IndexEmbeddingMode::Skip,
-        )
-        .unwrap();
+        NoteWriteService::write(&state, ".classified/secret.md", "# Hi").unwrap();
         let data = fs::read(vault.join(".classified/secret.md")).unwrap();
         assert!(classified_io::has_csef_magic(&data));
 
-        NoteWriteService::write(&state, "notes/open.md", "# Hi", IndexEmbeddingMode::Skip).unwrap();
+        NoteWriteService::write(&state, "notes/open.md", "# Hi").unwrap();
         let plain = fs::read(vault.join("notes/open.md")).unwrap();
         assert!(!classified_io::has_csef_magic(&plain));
         assert_eq!(plain, b"# Hi");
 
-        let err = NoteWriteService::write(
-            &state,
-            ".CLASSIFIED/secret.md",
-            "# Hi",
-            IndexEmbeddingMode::Skip,
-        )
-        .unwrap_err();
+        let err = NoteWriteService::write(&state, ".CLASSIFIED/secret.md", "# Hi").unwrap_err();
         assert!(err.to_string().contains("classified"));
     }
 
@@ -1620,12 +1634,7 @@ Body",
         state
             .db
             .with_conn(|conn| {
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("old.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
+                index_file(conn, &vault, &vault.join("old.md"))?;
                 conn.execute_batch(
                     "CREATE TRIGGER fail_index_refresh
                      BEFORE UPDATE OF title ON files
@@ -1669,18 +1678,8 @@ Body",
         state
             .db
             .with_conn(|conn| {
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("old.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("source.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
+                index_file(conn, &vault, &vault.join("old.md"))?;
+                index_file(conn, &vault, &vault.join("source.md"))?;
                 Ok(())
             })
             .unwrap();
@@ -1729,12 +1728,7 @@ Body",
         state
             .db
             .with_conn(|conn| {
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("old/note.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
+                index_file(conn, &vault, &vault.join("old/note.md"))?;
                 conn.execute_batch(
                     "CREATE TRIGGER fail_folder_rename_index
                      BEFORE INSERT ON files
@@ -1769,18 +1763,8 @@ Body",
         state
             .db
             .with_conn(|conn| {
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("old/target.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("old/source.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
+                index_file(conn, &vault, &vault.join("old/target.md"))?;
+                index_file(conn, &vault, &vault.join("old/source.md"))?;
                 let target_id: i64 = conn.query_row(
                     "SELECT id FROM files WHERE path = 'old/target.md'",
                     [],
@@ -1821,18 +1805,8 @@ Body",
         state
             .db
             .with_conn(|conn| {
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("old/note.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("source.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
+                index_file(conn, &vault, &vault.join("old/note.md"))?;
+                index_file(conn, &vault, &vault.join("source.md"))?;
                 Ok(())
             })
             .unwrap();
@@ -1858,12 +1832,7 @@ Body",
         state
             .db
             .with_conn(|conn| {
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("note.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
+                index_file(conn, &vault, &vault.join("note.md"))?;
                 conn.execute_batch(
                     "CREATE TRIGGER fail_note_refresh
                      BEFORE UPDATE OF title ON files

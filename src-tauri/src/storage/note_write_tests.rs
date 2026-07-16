@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 
 use crate::app::AppState;
-use crate::indexer::scan::{index_file_with_embed, IndexEmbeddingMode};
+use crate::indexer::scan::index_file;
 use crate::storage::note_write::{FileWriteIndexStatus, NoteWriteService};
 
 #[test]
@@ -19,7 +19,7 @@ fn preserves_markdown_and_returns_degraded_when_index_refresh_fails() {
     state
         .db
         .with_conn(|conn| {
-            index_file_with_embed(conn, &vault, &note, IndexEmbeddingMode::Skip)?;
+            index_file(conn, &vault, &note)?;
             conn.execute_batch(
                 "CREATE TRIGGER fail_note_write_index
                  BEFORE UPDATE OF title ON files
@@ -33,8 +33,8 @@ fn preserves_markdown_and_returns_degraded_when_index_refresh_fails() {
         .expect("install failing index trigger");
     let body = "---\ntitle: New\n---\n\nPersist even if indexing is unavailable";
 
-    let result = NoteWriteService::write(&state, "note.md", body, IndexEmbeddingMode::Skip)
-        .expect("authoritative markdown write");
+    let result =
+        NoteWriteService::write(&state, "note.md", body).expect("authoritative markdown write");
 
     assert_eq!(result.index_status, FileWriteIndexStatus::Degraded);
     assert_eq!(fs::read_to_string(note).expect("persisted note"), body);

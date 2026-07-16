@@ -12,7 +12,7 @@ use iris_lib::ai_runtime::retrieval_broker::{
     hybrid_retrieve_with_diagnostics, RetrievalLayerStatus, RetrievalLayers, RetrievalRequest,
 };
 use iris_lib::ai_runtime::retrieval_scope::RetrievalScope;
-use iris_lib::indexer::scan::{index_vault_incremental, IndexEmbeddingMode};
+use iris_lib::indexer::scan::index_vault_incremental;
 use iris_lib::storage::migrate::migrate_up;
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -247,7 +247,7 @@ fn rag_v2_fixture_contract_has_48_notes_and_60_labeled_queries() {
     // Verify FTS CJK matching: index a known fixture and probe it.
     let conn = Connection::open_in_memory().expect("open in-memory database");
     migrate_up(&conn).expect("migrate database");
-    index_vault_incremental(&conn, &fixture_root(), IndexEmbeddingMode::Skip)
+    index_vault_incremental(&conn, &fixture_root())
         .expect("index fixture vault without embeddings");
 
     let probe_safe = iris_lib::ai_runtime::retrieval_broker::escape_fts5_query("要约");
@@ -270,7 +270,7 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
     let fixture = load_fixture();
     let conn = Connection::open_in_memory().expect("open in-memory database");
     migrate_up(&conn).expect("migrate database");
-    index_vault_incremental(&conn, &fixture_root(), IndexEmbeddingMode::Skip)
+    index_vault_incremental(&conn, &fixture_root())
         .expect("index fixture vault without embeddings");
 
     let indexed_files: i64 = conn
@@ -403,7 +403,7 @@ fn rag_v2_every_returned_packet_has_a_valid_source_span_and_hash() {
     let fixture = load_fixture();
     let conn = Connection::open_in_memory().expect("open in-memory database");
     migrate_up(&conn).expect("migrate database");
-    index_vault_incremental(&conn, &fixture_root(), IndexEmbeddingMode::Skip)
+    index_vault_incremental(&conn, &fixture_root())
         .expect("index fixture vault without embeddings");
 
     let mut violations = Vec::new();

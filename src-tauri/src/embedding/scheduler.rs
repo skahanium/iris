@@ -133,10 +133,13 @@ impl EmbeddingScheduler {
         self.db.with_read_conn(embedding_index_status)
     }
 
-    pub fn enqueue_file(self: &Arc<Self>, _file_id: i64) {
-        // A reindex invalidates vectors through FK cascade. Keep one owner for
-        // the repair by transitioning a previously-ready generation to paused;
-        // the normal idle policy resumes it without a second queue/worker.
+    /// Record that a derived Markdown index transaction has committed.
+    ///
+    /// Callers must invoke this only after their `Database::with_conn` scope has
+    /// ended. A reindex invalidates vectors through FK cascade; the scheduler
+    /// remains the sole owner of the repair state and resumes through its normal
+    /// idle policy without a second queue or worker.
+    pub fn notify_index_committed(self: &Arc<Self>) {
         let transitioned = self.db.with_conn(|conn| {
             Ok(conn.execute(
                 "UPDATE embedding_generation_state SET phase = 'paused', updated_at = datetime('now') WHERE singleton = 1 AND phase = 'ready'",
@@ -854,7 +857,7 @@ mod tests {
         let scheduler =
             EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(UnavailableBatcher));
 
-        scheduler.enqueue_file(1);
+        scheduler.notify_index_committed();
 
         assert_eq!(scheduler.status().unwrap().phase, "paused");
         assert_eq!(

@@ -112,13 +112,7 @@ fn template_create_inner(
         format!("# {}\n\n", path.trim_end_matches(".md"))
     };
 
-    Ok(NoteWriteService::create(
-        state,
-        path,
-        &content,
-        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
-    )?
-    .entry)
+    Ok(NoteWriteService::create(state, path, &content)?.entry)
 }
 
 /// Read template content by name.
@@ -166,7 +160,7 @@ pub fn template_delete(state: State<'_, Arc<AppState>>, name: String) -> AppResu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::indexer::scan::{index_file_with_embed, IndexEmbeddingMode};
+    use crate::indexer::scan::index_file;
     use tempfile::tempdir;
 
     #[test]
@@ -186,12 +180,7 @@ mod tests {
         state
             .db
             .with_conn(|conn| {
-                index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("note.md"),
-                    IndexEmbeddingMode::Skip,
-                )?;
+                index_file(conn, &vault, &vault.join("note.md"))?;
                 conn.execute_batch(
                     "CREATE TRIGGER fail_template_index_refresh
                      BEFORE UPDATE OF title ON files

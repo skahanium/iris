@@ -1,6 +1,56 @@
 import { Moon, Sun } from "lucide-react";
 
+import { PreVaultDesktopFrame } from "@/components/layout/PreVaultDesktopFrame";
+import { StartupSplash } from "@/components/layout/StartupSplash";
 import { Button } from "@/components/ui/button";
+
+interface AppPreVaultGateProps {
+  loading: boolean;
+  startupSplashVisible: boolean;
+  vaultError: string | null;
+  vaultPath: string | null;
+  theme: "dark" | "light";
+  onExited: () => void;
+  onPickVault: () => void;
+  onRetryVaultLoad: () => void;
+  onThemeChange: (theme: "dark" | "light") => void;
+}
+
+export function AppPreVaultGate({
+  loading,
+  startupSplashVisible,
+  vaultError,
+  vaultPath,
+  theme,
+  onExited,
+  onPickVault,
+  onRetryVaultLoad,
+  onThemeChange,
+}: AppPreVaultGateProps) {
+  if (startupSplashVisible) {
+    return (
+      <PreVaultDesktopFrame>
+        <StartupSplash ready={!loading} onExited={onExited} />
+      </PreVaultDesktopFrame>
+    );
+  }
+
+  if (!vaultPath) {
+    return (
+      <PreVaultDesktopFrame>
+        <VaultPickerScreen
+          theme={theme}
+          vaultError={vaultError}
+          onPickVault={onPickVault}
+          onRetryVaultLoad={onRetryVaultLoad}
+          onThemeChange={onThemeChange}
+        />
+      </PreVaultDesktopFrame>
+    );
+  }
+
+  return null;
+}
 
 export function BrowserRuntimeNotice() {
   return (
@@ -28,11 +78,13 @@ export function VaultPickerScreen({
   theme,
   vaultError,
   onPickVault,
+  onRetryVaultLoad,
   onThemeChange,
 }: {
   theme: "dark" | "light";
   vaultError: string | null;
   onPickVault: () => void;
+  onRetryVaultLoad: () => void;
   onThemeChange: (theme: "dark" | "light") => void;
 }) {
   return (
@@ -47,12 +99,17 @@ export function VaultPickerScreen({
         选择笔记目录
       </Button>
       {vaultError ? (
-        <p
-          className="max-w-md text-center text-sm text-destructive"
-          role="alert"
-        >
-          {vaultError}
-        </p>
+        <div className="flex flex-col items-center gap-3">
+          <p
+            className="max-w-md text-center text-sm text-destructive"
+            role="alert"
+          >
+            {vaultError}
+          </p>
+          <Button type="button" variant="outline" onClick={onRetryVaultLoad}>
+            重试启动检查
+          </Button>
+        </div>
       ) : null}
       <Button
         type="button"

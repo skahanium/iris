@@ -90,7 +90,6 @@ fn dispatch_context_with_plan<'a>(
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: plan,
-        embedding_state: None,
     }
 }
 
@@ -282,7 +281,6 @@ fn write_tool_approval_applies_patch_with_cas() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
-        embedding_state: None,
     };
     let result = markdown_impl::markdown_write_patch_apply(
         &state,
@@ -355,7 +353,6 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
-        embedding_state: None,
     };
     let result = markdown_impl::markdown_write_patch_apply(
         &state,

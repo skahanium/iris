@@ -10,7 +10,7 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::scan::{
     content_hash, index_file_from_content, index_workspace_media_file, remove_file_index,
-    remove_workspace_media_index, workspace_media_kind_for_path, IndexEmbeddingMode,
+    remove_workspace_media_index, workspace_media_kind_for_path,
 };
 use crate::storage::paths::{is_user_note_path, relative_path};
 
@@ -141,16 +141,10 @@ fn handle_file_event(
         tracing::debug!(path = %rel, "watcher skipped: recent app write");
         return Ok(());
     }
-    state.db.with_conn(|conn| {
-        index_file_from_content(
-            conn,
-            &vault,
-            path,
-            &content,
-            &hash,
-            IndexEmbeddingMode::Queue(state),
-        )
-    })?;
+    state
+        .db
+        .with_conn(|conn| index_file_from_content(conn, &vault, path, &content, &hash))?;
+    state.embedding_scheduler().notify_index_committed();
 
     info!(
         path = %path.display(),

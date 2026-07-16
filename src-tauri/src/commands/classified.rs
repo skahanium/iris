@@ -284,12 +284,7 @@ fn classified_import_inner(
     }
 
     let content = read_file_lossy(&src)?;
-    NoteWriteService::create(
-        state,
-        &dest_rel,
-        &content,
-        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
-    )?;
+    NoteWriteService::create(state, &dest_rel, &content)?;
     fs::remove_file(&src)?;
 
     if state
@@ -373,12 +368,7 @@ fn classified_export_inner(
     };
 
     drop(vk);
-    let receipt = NoteWriteService::write(
-        state,
-        &dest_rel,
-        &content,
-        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
-    )?;
+    let receipt = NoteWriteService::write(state, &dest_rel, &content)?;
     fs::remove_file(&src)?;
 
     let mut index_status = receipt.index_status;
@@ -922,12 +912,7 @@ mod tests {
             .db
             .with_conn(|conn| {
                 conn.execute_batch("DROP TRIGGER fail_export_index_refresh")?;
-                crate::indexer::scan::index_file_with_embed(
-                    conn,
-                    &vault,
-                    &vault.join("exported/source.md"),
-                    crate::indexer::scan::IndexEmbeddingMode::Queue(&state),
-                )?;
+                crate::indexer::scan::index_file(conn, &vault, &vault.join("exported/source.md"))?;
                 Ok(())
             })
             .unwrap();

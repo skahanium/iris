@@ -40,7 +40,6 @@ fn ctx() -> ToolDispatchContext<'static> {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
-        embedding_state: None,
     }
 }
 
@@ -267,6 +266,77 @@ async fn external_import_requires_authorized_root_and_writes_vault_note() {
     )
     .await;
     assert!(!blocked.success);
+}
+
+#[tokio::test]
+async fn external_import_rejects_oversized_markdown_without_creating_a_note() {
+    let (state, dir) = test_state();
+    let external = dir.path().join("external");
+    std::fs::create_dir_all(&external).unwrap();
+    let source = external.join("too-large.md");
+    std::fs::write(&source, "x".repeat(20 * 1024 * 1024 + 1)).unwrap();
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(),
+        "fs_import_to_vault",
+        &serde_json::json!({
+            "source_path": source,
+            "authorized_root": external,
+            "target_path": "imports/too-large.md"
+        }),
+    )
+    .await;
+
+    assert!(!result.success);
+    assert!(result.error.unwrap_or_default().contains("20MB"));
+    assert!(!state
+        .vault_path()
+        .unwrap()
+        .join("imports/too-large.md")
+        .exists());
+}
+
+#[tokio::test]
+async fn external_import_keeps_markdown_when_derived_index_is_degraded() {
+    let (state, dir) = test_state();
+    let external = dir.path().join("external");
+    std::fs::create_dir_all(&external).unwrap();
+    let source = external.join("degraded.md");
+    std::fs::write(&source, "# Imported\n\nMarkdown survives.").unwrap();
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_import_index
+                 BEFORE INSERT ON files
+                 WHEN NEW.path = 'imports/degraded.md'
+                 BEGIN
+                   SELECT RAISE(ABORT, 'simulated index failure');
+                 END;",
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(),
+        "fs_import_to_vault",
+        &serde_json::json!({
+            "source_path": source,
+            "authorized_root": external,
+            "target_path": "imports/degraded.md"
+        }),
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["indexStatus"], "degraded");
+    assert_eq!(
+        std::fs::read_to_string(state.vault_path().unwrap().join("imports/degraded.md")).unwrap(),
+        "# Imported\n\nMarkdown survives."
+    );
 }
 
 #[tokio::test]

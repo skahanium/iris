@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::error::AppError;
 use crate::error::AppResult;
-use crate::indexer::scan::{index_file_with_embed, remove_file_index, IndexEmbeddingMode};
+use crate::indexer::scan::{index_file, remove_file_index};
 use crate::storage::note_write::{FileWriteIndexStatus, FileWriteResult, NoteWriteService};
 use crate::storage::paths::resolve_vault_path;
 use crate::version::VersionEntry;
@@ -397,10 +397,14 @@ fn resume_deferred_restores(state: &AppState, vault: &Path) {
             continue;
         }
 
-        let entry = match state.db.with_conn(|conn| {
-            index_file_with_embed(conn, vault, &destination, IndexEmbeddingMode::Skip)
-        }) {
-            Ok(entry) => entry,
+        let entry = match state
+            .db
+            .with_conn(|conn| index_file(conn, vault, &destination))
+        {
+            Ok(entry) => {
+                state.embedding_scheduler().notify_index_committed();
+                entry
+            }
             Err(_) => {
                 tracing::warn!(
                     result_code = "recycle_restore_resume_index_degraded",
@@ -507,12 +511,7 @@ pub(crate) fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<Fil
             "回收站中的文档文件已损坏（document.md 缺失），无法恢复",
         ));
     }
-    let receipt = NoteWriteService::adopt(
-        state,
-        &doc,
-        &manifest.original_path,
-        crate::indexer::scan::IndexEmbeddingMode::Queue(state),
-    )?;
+    let receipt = NoteWriteService::adopt(state, &doc, &manifest.original_path)?;
 
     if receipt.index_status == FileWriteIndexStatus::Degraded {
         if manifest.versions.is_empty() {

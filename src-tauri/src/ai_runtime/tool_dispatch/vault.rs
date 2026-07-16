@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use crate::app::AppState;
 use crate::commands::file::is_vault_asset_path;
 use crate::error::{AppError, AppResult};
-use crate::indexer::scan::index_file_with_embed;
+use crate::indexer::scan::index_file;
 use crate::storage::atomic_write::{move_file_no_replace_locked, with_vault_move_lock};
 use crate::storage::note_write::NoteWriteService;
 use crate::storage::paths::{
@@ -27,7 +27,7 @@ struct LinkImpact {
 
 pub(super) fn vault_create_note_tool(
     state: &AppState,
-    ctx: &ToolDispatchContext<'_>,
+    _ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let target_path = args["target_path"]
@@ -46,8 +46,7 @@ pub(super) fn vault_create_note_tool(
 
     let vault = state.vault_path()?;
     let _ = resolve_new_vault_path(&vault, target_path)?;
-    let receipt =
-        NoteWriteService::create(state, target_path, content, ctx.index_embedding_mode())?;
+    let receipt = NoteWriteService::create(state, target_path, content)?;
     Ok(serde_json::json!({
         "type": "vault_create_note",
         "path": receipt.entry.path,
@@ -67,7 +66,7 @@ pub(super) fn vault_rename_move_tool(
 
 fn vault_rename_move_tool_locked(
     state: &AppState,
-    ctx: &ToolDispatchContext<'_>,
+    _ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let path = args["path"]
@@ -143,7 +142,7 @@ fn vault_rename_move_tool_locked(
         }
     }
 
-    if state
+    let destination_indexed = state
         .db
         .with_conn(|conn| {
             if crate::indexer::scan::rename_file_index(conn, path, new_path).is_err() {
@@ -153,10 +152,12 @@ fn vault_rename_move_tool_locked(
                     "AI vault rename continued after derived index path rename degradation"
                 );
             }
-            index_file_with_embed(conn, &vault, &new_abs, ctx.index_embedding_mode())
+            index_file(conn, &vault, &new_abs)
         })
-        .is_err()
-    {
+        .is_ok();
+    if destination_indexed {
+        state.embedding_scheduler().notify_index_committed();
+    } else {
         index_degraded = true;
         tracing::warn!(
             result_code = "ai_vault_rename_index_refresh_degraded",
@@ -172,20 +173,20 @@ fn vault_rename_move_tool_locked(
         if let Ok(hash) = crate::indexer::scan::file_hash(&abs_source) {
             state.storage.write_guard.mark(source_path, &hash);
         }
-        if state
+        let source_indexed = state
             .db
-            .with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &abs_source, ctx.index_embedding_mode())
-            })
-            .is_err()
-        {
+            .with_conn(|conn| index_file(conn, &vault, &abs_source))
+            .is_ok();
+        if source_indexed {
+            state.embedding_scheduler().notify_index_committed();
+        } else {
             index_degraded = true;
-            NoteWriteService::schedule_index_repair(state, source_path, ctx.index_embedding_mode());
+            NoteWriteService::schedule_index_repair(state, source_path);
         }
     }
 
     if index_degraded {
-        NoteWriteService::schedule_index_repair(state, new_path, ctx.index_embedding_mode());
+        NoteWriteService::schedule_index_repair(state, new_path);
     }
 
     Ok(serde_json::json!({
@@ -339,12 +340,7 @@ fn rewrite_source_wikilinks(
         &content,
         crate::version::SnapshotParams::manual(),
     )?;
-    NoteWriteService::write(
-        state,
-        source_path,
-        &updated,
-        crate::indexer::scan::IndexEmbeddingMode::Skip,
-    )?;
+    NoteWriteService::write(state, source_path, &updated)?;
     Ok(true)
 }
 

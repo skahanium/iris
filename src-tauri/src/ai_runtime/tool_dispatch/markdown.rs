@@ -140,9 +140,9 @@ pub(super) fn markdown_write_patch_apply(
                 &abs,
                 &current,
                 &current_hash,
-                ctx.index_embedding_mode(),
             )
         })?;
+        state.embedding_scheduler().notify_index_committed();
     }
     crate::version::create_snapshot(
         state,
@@ -150,8 +150,7 @@ pub(super) fn markdown_write_patch_apply(
         &current,
         crate::version::SnapshotParams::manual(),
     )?;
-    let receipt =
-        NoteWriteService::write(state, &target_path, &applied, ctx.index_embedding_mode())?;
+    let receipt = NoteWriteService::write(state, &target_path, &applied)?;
     let hash = receipt.content_hash;
     let mut warnings = Vec::new();
     if receipt.index_status == FileWriteIndexStatus::Degraded {

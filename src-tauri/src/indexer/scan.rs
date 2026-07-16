@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params_from_iter, Connection};
@@ -12,32 +11,10 @@ use super::frontmatter::{parse_note, resolve_display_title};
 use super::fts::{delete_fts, rename_fts, upsert_fts, upsert_metadata_fts};
 use super::image_ref::index_image_refs;
 use super::wikilink::index_wiki_links;
-use crate::app::AppState;
 use crate::error::AppResult;
 use crate::storage::paths::{
     has_reserved_path_root, is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
 };
-use std::sync::Arc;
-
-#[derive(Clone, Copy)]
-pub enum IndexEmbeddingMode<'a> {
-    Skip,
-    Queue(&'a Arc<AppState>),
-}
-
-fn should_yield_for_foreground_document_open(embedding_mode: IndexEmbeddingMode<'_>) -> bool {
-    match embedding_mode {
-        IndexEmbeddingMode::Queue(state) => state.has_foreground_document_open(),
-        IndexEmbeddingMode::Skip => false,
-    }
-}
-
-fn yield_for_foreground_document_open(embedding_mode: IndexEmbeddingMode<'_>) {
-    if should_yield_for_foreground_document_open(embedding_mode) {
-        std::thread::sleep(Duration::from_millis(8));
-    }
-}
-
 /// WalkDir `filter_entry` predicate: skip entire `.iris/` and `.classified/` subtrees.
 fn should_walk_vault_entry(vault: &Path, entry_path: &Path) -> bool {
     entry_path.strip_prefix(vault).is_ok_and(|rel| {
@@ -252,17 +229,10 @@ pub fn sync_file_tags(conn: &Connection, file_id: i64, tags: &[String]) -> AppRe
 }
 
 /// Index a single file into SQLite.
+///
+/// This function has no scheduler side effects. Callers must notify the
+/// embedding scheduler only after releasing their database connection.
 pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult<FileEntry> {
-    index_file_with_embed(conn, vault, absolute, IndexEmbeddingMode::Skip)
-}
-
-/// Index with an explicit embedding policy.
-pub fn index_file_with_embed(
-    conn: &Connection,
-    vault: &Path,
-    absolute: &Path,
-    #[allow(unused_variables)] embedding_mode: IndexEmbeddingMode<'_>,
-) -> AppResult<FileEntry> {
     let rel = relative_path(vault, absolute)?;
     if !is_user_note_path(&rel) {
         return Err(crate::error::AppError::msg(
@@ -354,8 +324,6 @@ pub fn index_file_with_embed(
 
     tx.commit()?;
 
-    handle_index_embedding(conn, file_id, embedding_mode);
-
     Ok(FileEntry {
         id: file_id,
         path: rel,
@@ -367,7 +335,7 @@ pub fn index_file_with_embed(
 
 /// 从内存中的 content 索引文件，避免 `file_write` 路径中的重复磁盘读取和哈希计算。
 ///
-/// 与 `index_file_with_embed` 逻辑相同，但接受已有的 content 和 hash，
+/// 与 `index_file` 逻辑相同，但接受已有的 content 和 hash，
 /// 跳过 `fs::read_to_string` 和重复的 `content_hash` 计算。
 pub fn index_file_from_content(
     conn: &Connection,
@@ -375,7 +343,6 @@ pub fn index_file_from_content(
     absolute: &Path,
     content: &str,
     hash: &str,
-    #[allow(unused_variables)] embedding_mode: IndexEmbeddingMode<'_>,
 ) -> AppResult<FileEntry> {
     let rel = relative_path(vault, absolute)?;
     if !is_user_note_path(&rel) {
@@ -465,8 +432,6 @@ pub fn index_file_from_content(
     )?;
 
     tx.commit()?;
-
-    handle_index_embedding(conn, file_id, embedding_mode);
 
     Ok(FileEntry {
         id: file_id,
@@ -574,15 +539,10 @@ pub fn peek_file_entry_after_write(
 }
 
 /// Incrementally index vault files whose content hash differs from the DB.
-pub fn index_vault_incremental(
-    conn: &Connection,
-    vault: &Path,
-    embedding_mode: IndexEmbeddingMode<'_>,
-) -> AppResult<Vec<FileEntry>> {
+pub fn index_vault_incremental(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> {
     let files = collect_vault_files(vault);
     let mut entries = Vec::with_capacity(files.len());
     for abs in files {
-        yield_for_foreground_document_open(embedding_mode);
         let rel = match relative_path(vault, &abs) {
             Ok(r) => r,
             Err(_) => continue,
@@ -621,13 +581,14 @@ pub fn index_vault_incremental(
                     })
                 },
             ) {
-                handle_index_embedding(conn, entry.id, embedding_mode);
                 entries.push(entry);
             }
             continue;
         }
-        match index_file_with_embed(conn, vault, &abs, embedding_mode) {
-            Ok(entry) => entries.push(entry),
+        match index_file(conn, vault, &abs) {
+            Ok(entry) => {
+                entries.push(entry);
+            }
             Err(_) => tracing::warn!(result_code = "index_file_failed", "index file failed"),
         }
     }
@@ -740,19 +701,7 @@ pub fn collect_vault_folders(vault: &Path) -> Vec<String> {
 
 /// Recursively scan vault for `.md` files (full index; prefer `index_vault_incremental`).
 pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> {
-    index_vault_incremental(conn, vault, IndexEmbeddingMode::Skip)
-}
-
-fn handle_index_embedding(
-    #[allow(unused_variables)] conn: &Connection,
-    #[allow(unused_variables)] file_id: i64,
-    #[allow(unused_variables)] embedding_mode: IndexEmbeddingMode<'_>,
-) {
-    #[cfg(not(test))]
-    match embedding_mode {
-        IndexEmbeddingMode::Skip => {}
-        IndexEmbeddingMode::Queue(state) => state.enqueue_embedding(file_id),
-    }
+    index_vault_incremental(conn, vault)
 }
 
 /// Collect all `.md` file paths in the vault without holding a DB lock.
@@ -793,36 +742,14 @@ mod tests {
     }
 
     #[test]
-    fn queued_index_mode_yields_when_a_document_open_is_active() {
-        let dir = tempdir().unwrap();
-        let state =
-            Arc::new(AppState::new_with_test_cas_key(dir.path().join("data"), [0xA6; 32]).unwrap());
-
-        assert!(!should_yield_for_foreground_document_open(
-            IndexEmbeddingMode::Queue(&state),
-        ));
-        let token = state.begin_document_open();
-        assert!(should_yield_for_foreground_document_open(
-            IndexEmbeddingMode::Queue(&state),
-        ));
-        assert!(!should_yield_for_foreground_document_open(
-            IndexEmbeddingMode::Skip
-        ));
-        assert!(state.end_document_open(&token));
-        assert!(!should_yield_for_foreground_document_open(
-            IndexEmbeddingMode::Queue(&state),
-        ));
-    }
-
-    #[test]
-    fn scan_vault_skips_classified_dir() {
+    fn incremental_scan_remains_pure_database_work() {
         let (_dir, vault, db) = setup_vault();
         fs::create_dir_all(vault.join(".classified")).unwrap();
         write_note(&vault, ".classified/secret.md", "# Secret\n\nContent.");
         write_note(&vault, "normal.md", "# Normal\n\nContent.");
 
         db.with_conn(|conn| {
-            let entries = index_vault_incremental(conn, &vault, IndexEmbeddingMode::Skip)?;
+            let entries = index_vault_incremental(conn, &vault)?;
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].path, "normal.md");
             let count: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;

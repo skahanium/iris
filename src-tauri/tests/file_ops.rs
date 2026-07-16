@@ -1,7 +1,5 @@
 use iris_lib::app::AppState;
-use iris_lib::indexer::scan::{
-    content_hash, index_file_from_content, scan_vault, IndexEmbeddingMode,
-};
+use iris_lib::indexer::scan::{content_hash, index_file_from_content, scan_vault};
 use iris_lib::storage::paths::resolve_vault_path;
 use std::fs;
 use tempfile::tempdir;
@@ -56,16 +54,7 @@ fn index_file_from_content_updates_all_derived_rows_immediately() {
     let updated_hash = content_hash(updated);
     let entry = state
         .db
-        .with_conn(|conn| {
-            index_file_from_content(
-                conn,
-                &vault,
-                &source,
-                updated,
-                &updated_hash,
-                IndexEmbeddingMode::Queue(&state),
-            )
-        })
+        .with_conn(|conn| index_file_from_content(conn, &vault, &source, updated, &updated_hash))
         .unwrap();
 
     state

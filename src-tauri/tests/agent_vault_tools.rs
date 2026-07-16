@@ -5,7 +5,6 @@ use iris_lib::ai_runtime::tool_dispatch::{
 };
 
 use iris_lib::app::AppState;
-use iris_lib::indexer::scan::IndexEmbeddingMode;
 
 fn test_state() -> (std::sync::Arc<AppState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -35,7 +34,6 @@ fn ctx_with_scope<'a>(
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
-        embedding_state: None,
     }
 }
 
@@ -50,14 +48,7 @@ fn index_note(state: &std::sync::Arc<AppState>, path: &str, content: &str) {
     state
         .db
         .with_conn(|conn| {
-            iris_lib::indexer::scan::index_file_from_content(
-                conn,
-                &vault,
-                &abs,
-                content,
-                &hash,
-                IndexEmbeddingMode::Skip,
-            )
+            iris_lib::indexer::scan::index_file_from_content(conn, &vault, &abs, content, &hash)
         })
         .unwrap();
 }

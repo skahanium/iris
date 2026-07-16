@@ -17,12 +17,10 @@ import { preloadManagementCenter } from "@/lib/preload-overlays";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
 import { DesktopFrame } from "@/components/layout/DesktopFrame";
-import { PreVaultDesktopFrame } from "@/components/layout/PreVaultDesktopFrame";
 import {
+  AppPreVaultGate,
   BrowserRuntimeNotice,
-  VaultPickerScreen,
 } from "@/components/layout/AppPreVaultScreens";
-import { StartupSplash } from "@/components/layout/StartupSplash";
 import { TabBar } from "@/components/layout/TabBar";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
@@ -108,7 +106,13 @@ function scheduleManagementCenterPreload(): () => void {
 }
 function App() {
   useMacOSWindowChromeSync();
-  const { vaultPath, loading, pickVault, error: vaultError } = useVault();
+  const {
+    vaultPath,
+    loading,
+    pickVault,
+    refresh: retryVaultLoad,
+    error: vaultError,
+  } = useVault();
   const { theme, setTheme } = useTheme();
   const [startupSplashVisible, setStartupSplashVisible] =
     useState(isTauriRuntime);
@@ -765,27 +769,19 @@ function App() {
     return <BrowserRuntimeNotice />;
   }
 
-  if (startupSplashVisible) {
+  if (startupSplashVisible || !vaultPath) {
     return (
-      <PreVaultDesktopFrame>
-        <StartupSplash
-          ready={!loading}
-          onExited={() => setStartupSplashVisible(false)}
-        />
-      </PreVaultDesktopFrame>
-    );
-  }
-
-  if (!vaultPath) {
-    return (
-      <PreVaultDesktopFrame>
-        <VaultPickerScreen
-          theme={theme}
-          vaultError={vaultError}
-          onPickVault={() => void pickVault()}
-          onThemeChange={(nextTheme) => void setTheme(nextTheme)}
-        />
-      </PreVaultDesktopFrame>
+      <AppPreVaultGate
+        loading={loading}
+        startupSplashVisible={startupSplashVisible}
+        vaultError={vaultError}
+        vaultPath={vaultPath}
+        theme={theme}
+        onExited={() => setStartupSplashVisible(false)}
+        onPickVault={() => void pickVault()}
+        onRetryVaultLoad={() => void retryVaultLoad()}
+        onThemeChange={(nextTheme) => void setTheme(nextTheme)}
+      />
     );
   }
 

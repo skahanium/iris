@@ -73,7 +73,6 @@ mod tests {
             app_handle: None,
             attachment_count: 2,
             skill_activation_plan: None,
-            embedding_state: None,
         };
 
         let time = dispatch_tool(&state, &ctx, "system_time_now", &serde_json::json!({})).await;

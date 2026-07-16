@@ -4,6 +4,7 @@ use std::process::Command;
 use crate::ai_runtime::sandbox_profile::sandbox_profile_for_tool;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+use crate::storage::note_write::NoteWriteService;
 use crate::storage::paths::is_user_note_path;
 
 use super::ToolDispatchContext;
@@ -159,7 +160,7 @@ fn write_text_atomic(path: &Path, content: &str, overwrite: bool) -> AppResult<(
 
 pub(super) fn fs_import_to_vault_tool(
     state: &AppState,
-    ctx: &ToolDispatchContext<'_>,
+    _ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let source = resolve_external_input(
@@ -172,26 +173,22 @@ pub(super) fn fs_import_to_vault_tool(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     let content = std::fs::read_to_string(&source)?;
+    if content.len() > MAX_EXTERNAL_TEXT_BYTES {
+        return Err(AppError::msg("content exceeds 20MB limit"));
+    }
     let vault = state.vault_path()?;
-    let dest = resolve_new_vault_note(&vault, target_path)?;
-    write_text_atomic(&dest, &content, overwrite)?;
-    let hash = crate::indexer::scan::content_hash(&content);
-    state.storage.write_guard.mark(target_path, &hash);
-    let entry = state.db.with_conn(|conn| {
-        crate::indexer::scan::index_file_from_content(
-            conn,
-            &vault,
-            &dest,
-            &content,
-            &hash,
-            ctx.index_embedding_mode(),
-        )
-    })?;
+    let _ = resolve_new_vault_note(&vault, target_path)?;
+    let receipt = if overwrite {
+        NoteWriteService::write(state, target_path, &content)?
+    } else {
+        NoteWriteService::create(state, target_path, &content)?
+    };
     Ok(serde_json::json!({
         "type": "fs_import_to_vault",
-        "path": entry.path,
+        "path": receipt.entry.path,
         "bytes": content.len(),
-        "title": entry.title,
+        "title": receipt.entry.title,
+        "indexStatus": receipt.index_status,
     }))
 }
 

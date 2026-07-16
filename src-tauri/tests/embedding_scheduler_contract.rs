@@ -386,7 +386,7 @@ fn unchanged_repair_enqueue_resumes_while_already_idle_without_foreground_round_
     );
     scheduler.set_foreground_busy(false);
     scheduler.mark_initial_index_complete();
-    scheduler.enqueue_file(1);
+    scheduler.notify_index_committed();
     assert_eq!(scheduler.status().unwrap().phase, "paused");
     thread::sleep(Duration::from_millis(100));
     assert_eq!(scheduler.status().unwrap().phase, "ready");

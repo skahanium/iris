@@ -440,7 +440,6 @@ impl<'a> NormalRunToolExecutor<'a> {
             app_handle: Some(self.app_handle.clone()),
             attachment_count: 0,
             skill_activation_plan: None,
-            embedding_state: Some(self.state),
         };
         dispatch_tool_with_retry(self.state.as_ref(), &dispatch_context, tool_name, args).await
     }

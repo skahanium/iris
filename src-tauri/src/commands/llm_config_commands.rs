@@ -64,8 +64,13 @@ pub fn llm_config_apply_deepseek_defaults(
 }
 
 #[tauri::command]
-pub fn connectivity_status(state: State<'_, Arc<AppState>>) -> AppResult<ConnectivityStatusDto> {
-    config::connectivity_status(&state.db)
+pub async fn connectivity_status(
+    state: State<'_, Arc<AppState>>,
+) -> AppResult<ConnectivityStatusDto> {
+    let db = Arc::clone(&state.db);
+    tokio::task::spawn_blocking(move || config::connectivity_status(&db))
+        .await
+        .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 #[derive(Debug, Serialize)]

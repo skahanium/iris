@@ -6,8 +6,9 @@ use serde::Serialize;
 use crate::app::AppState;
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
+use crate::embedding::scheduler::EmbeddingScheduler;
 use crate::error::{AppError, AppResult};
-use crate::indexer::scan::{content_hash, index_file_from_content, FileEntry, IndexEmbeddingMode};
+use crate::indexer::scan::{content_hash, index_file_from_content, FileEntry};
 use crate::storage::atomic_write::{
     atomic_create, atomic_write, move_file_no_replace_locked, with_vault_move_lock,
 };
@@ -37,13 +38,8 @@ pub(crate) struct NoteWriteService;
 
 impl NoteWriteService {
     /// Atomically persist a note body, then best-effort refresh its derived index.
-    pub(crate) fn write(
-        state: &AppState,
-        path: &str,
-        content: &str,
-        embedding_mode: IndexEmbeddingMode<'_>,
-    ) -> AppResult<FileWriteResult> {
-        Self::write_inner(state, path, content, embedding_mode, false)
+    pub(crate) fn write(state: &AppState, path: &str, content: &str) -> AppResult<FileWriteResult> {
+        Self::write_inner(state, path, content, false)
     }
 
     /// Atomically create a note body without replacing an existing Markdown file.
@@ -51,9 +47,8 @@ impl NoteWriteService {
         state: &AppState,
         path: &str,
         content: &str,
-        embedding_mode: IndexEmbeddingMode<'_>,
     ) -> AppResult<FileWriteResult> {
-        Self::write_inner(state, path, content, embedding_mode, true)
+        Self::write_inner(state, path, content, true)
     }
 
     /// Move an existing plain Markdown file into the vault, then refresh its derived index.
@@ -61,12 +56,7 @@ impl NoteWriteService {
     /// This is the persistence boundary for workflows such as recycle-bin
     /// restore: once the filesystem move succeeds, index failures are reported
     /// as degraded and queued for repair rather than negating the Markdown fact.
-    pub(crate) fn adopt(
-        state: &AppState,
-        source: &Path,
-        path: &str,
-        embedding_mode: IndexEmbeddingMode<'_>,
-    ) -> AppResult<FileWriteResult> {
+    pub(crate) fn adopt(state: &AppState, source: &Path, path: &str) -> AppResult<FileWriteResult> {
         if is_classified_note_path(path) {
             return Err(AppError::msg(
                 "classified notes cannot be adopted through the plain Markdown service",
@@ -84,23 +74,11 @@ impl NoteWriteService {
         let hash = content_hash(&content);
         state.storage.write_guard.mark(path, &hash);
 
-        Self::refresh_index_after_persist(
-            state,
-            vault,
-            path,
-            &absolute,
-            &content,
-            hash,
-            embedding_mode,
-        )
+        Self::refresh_index_after_persist(state, vault, path, &absolute, &content, hash)
     }
 
     /// Queue a best-effort repair for derived state after an already-persisted move.
-    pub(crate) fn schedule_index_repair(
-        state: &AppState,
-        path: &str,
-        embedding_mode: IndexEmbeddingMode<'_>,
-    ) {
+    pub(crate) fn schedule_index_repair(state: &AppState, path: &str) {
         let Ok(vault) = state.vault_path() else {
             tracing::warn!(
                 result_code = "note_index_repair_vault_unavailable",
@@ -112,10 +90,7 @@ impl NoteWriteService {
             Arc::clone(&state.db),
             vault,
             path.to_string(),
-            match embedding_mode {
-                IndexEmbeddingMode::Queue(state) => Some(Arc::clone(state)),
-                IndexEmbeddingMode::Skip => None,
-            },
+            state.embedding_scheduler(),
         );
     }
 
@@ -123,7 +98,6 @@ impl NoteWriteService {
         state: &AppState,
         path: &str,
         content: &str,
-        embedding_mode: IndexEmbeddingMode<'_>,
         reject_existing: bool,
     ) -> AppResult<FileWriteResult> {
         let vault = state.vault_path()?;
@@ -139,15 +113,7 @@ impl NoteWriteService {
         let hash = content_hash(content);
         state.storage.write_guard.mark(path, &hash);
 
-        Self::refresh_index_after_persist(
-            state,
-            vault,
-            path,
-            &absolute,
-            content,
-            hash,
-            embedding_mode,
-        )
+        Self::refresh_index_after_persist(state, vault, path, &absolute, content, hash)
     }
 
     fn refresh_index_after_persist(
@@ -157,7 +123,6 @@ impl NoteWriteService {
         absolute: &Path,
         content: &str,
         hash: String,
-        embedding_mode: IndexEmbeddingMode<'_>,
     ) -> AppResult<FileWriteResult> {
         if is_classified_note_path(path) {
             return Ok(FileWriteResult {
@@ -167,16 +132,20 @@ impl NoteWriteService {
             });
         }
 
-        match state.db.with_conn(|conn| {
-            index_file_from_content(conn, &vault, absolute, content, &hash, embedding_mode)
-        }) {
-            Ok(entry) => Ok(FileWriteResult {
-                entry,
-                content_hash: hash,
-                index_status: FileWriteIndexStatus::Synced,
-            }),
+        match state
+            .db
+            .with_conn(|conn| index_file_from_content(conn, &vault, absolute, content, &hash))
+        {
+            Ok(entry) => {
+                state.embedding_scheduler().notify_index_committed();
+                Ok(FileWriteResult {
+                    entry,
+                    content_hash: hash,
+                    index_status: FileWriteIndexStatus::Synced,
+                })
+            }
             Err(_) => {
-                Self::schedule_index_repair(state, path, embedding_mode);
+                Self::schedule_index_repair(state, path);
                 tracing::warn!(
                     result_code = "note_index_degraded",
                     "note markdown persisted while derived index refresh failed"
@@ -245,7 +214,7 @@ fn schedule_index_repair_task(
     db: Arc<crate::storage::db::Database>,
     vault: std::path::PathBuf,
     path: String,
-    queue_state: Option<Arc<AppState>>,
+    scheduler: Arc<EmbeddingScheduler>,
 ) {
     #[cfg(not(test))]
     tauri::async_runtime::spawn_blocking(move || {
@@ -253,18 +222,11 @@ fn schedule_index_repair_task(
         let result = (|| -> AppResult<()> {
             let absolute = resolve_vault_path(&vault, &path)?;
             db.with_conn(|conn| {
-                crate::indexer::scan::index_file_with_embed(
-                    conn,
-                    &vault,
-                    &absolute,
-                    queue_state
-                        .as_ref()
-                        .map(IndexEmbeddingMode::Queue)
-                        .unwrap_or(IndexEmbeddingMode::Skip),
-                )?;
+                crate::indexer::scan::index_file(conn, &vault, &absolute)?;
                 crate::indexer::scan::prune_stale_file_indexes(conn, &vault)?;
                 Ok(())
             })?;
+            scheduler.notify_index_committed();
             Ok(())
         })();
         if result.is_err() {
@@ -277,6 +239,6 @@ fn schedule_index_repair_task(
 
     #[cfg(test)]
     {
-        let _ = (db, vault, path, queue_state);
+        let _ = (db, vault, path, scheduler);
     }
 }

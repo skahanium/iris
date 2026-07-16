@@ -1,4 +1,4 @@
-import { act, createElement } from "react";
+import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,6 +16,7 @@ vi.mock("@/lib/ipc", () => ({
 }));
 
 import { StartupSplash } from "@/components/layout/StartupSplash";
+import { AppPreVaultGate } from "@/components/layout/AppPreVaultScreens";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -51,6 +52,21 @@ function rerenderSplash(
         ...props,
       }),
     );
+  });
+}
+
+function StartupRecoveryGateHarness() {
+  const [startupSplashVisible, setStartupSplashVisible] = useState(true);
+  return createElement(AppPreVaultGate, {
+    loading: false,
+    startupSplashVisible,
+    vaultError: "启动服务未响应。请重试。",
+    vaultPath: null,
+    theme: "light",
+    onExited: () => setStartupSplashVisible(false),
+    onPickVault: () => undefined,
+    onRetryVaultLoad: () => undefined,
+    onThemeChange: () => undefined,
   });
 }
 
@@ -136,6 +152,22 @@ describe("StartupSplash", () => {
 
     act(() => vi.advanceTimersByTime(1));
     expect(document.querySelector('[data-state="exiting"]')).not.toBeNull();
+  });
+
+  it("leaves the startup page for a retryable vault screen once readiness recovers", () => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => {
+      root?.render(createElement(StartupRecoveryGateHarness));
+    });
+
+    act(() => vi.advanceTimersByTime(1600));
+    act(() => vi.advanceTimersByTime(220));
+
+    expect(document.querySelector('[data-testid="startup-splash"]')).toBeNull();
+    expect(document.body.textContent).toContain("启动服务未响应。请重试。");
+    expect(document.body.textContent).toContain("重试启动检查");
   });
 
   it("marks the splash as reduced-motion when the user prefers less motion", () => {

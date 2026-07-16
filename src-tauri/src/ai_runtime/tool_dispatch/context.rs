@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use crate::ai_runtime::{retrieval_scope::RetrievalScope, ContextPacket, RuntimeDocumentSnapshot};
-use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -16,16 +13,9 @@ pub struct ToolDispatchContext<'a> {
     pub app_handle: Option<tauri::AppHandle>,
     pub attachment_count: usize,
     pub skill_activation_plan: Option<&'a crate::ai_types::SkillActivationPlanSummary>,
-    pub embedding_state: Option<&'a Arc<AppState>>,
 }
 
 impl<'a> ToolDispatchContext<'a> {
-    pub(crate) fn index_embedding_mode(&self) -> crate::indexer::scan::IndexEmbeddingMode<'_> {
-        self.embedding_state
-            .map(crate::indexer::scan::IndexEmbeddingMode::Queue)
-            .unwrap_or(crate::indexer::scan::IndexEmbeddingMode::Skip)
-    }
-
     pub(crate) fn ensure_active_skill_scope_allows_path(
         &self,
         db: &Database,

@@ -308,10 +308,6 @@ impl AppState {
         )
     }
 
-    pub fn enqueue_embedding(self: &Arc<Self>, file_id: i64) {
-        self.embedding_scheduler().enqueue_file(file_id);
-    }
-
     pub fn begin_document_open(&self) -> String {
         self.embedding_scheduler().set_foreground_busy(true);
         self.document_open.begin()
@@ -466,7 +462,7 @@ mod document_open_state_tests {
         let state = AppState::new_with_test_cas_key(dir.path().join("data"), [0xA7; 32]).unwrap();
         let weak = Arc::downgrade(&state);
 
-        state.enqueue_embedding(-1);
+        state.embedding_scheduler().notify_index_committed();
         drop(state);
 
         for _ in 0..20 {
