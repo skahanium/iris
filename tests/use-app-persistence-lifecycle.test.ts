@@ -12,6 +12,7 @@ import type { TabItem } from "@/components/layout/TabBar";
 const fileWrite = vi.fn();
 const setCachedEditorHtml = vi.fn();
 const fileSetLock = vi.fn();
+const versionFinalizeCurrent = vi.fn();
 const versionSaveManual = vi.fn();
 
 function deferred<T>() {
@@ -26,6 +27,8 @@ vi.mock("@/lib/ipc", () => ({
   appExit: vi.fn(),
   fileSetLock: (...args: unknown[]) => fileSetLock(...args),
   fileWrite: (...args: unknown[]) => fileWrite(...args),
+  versionFinalizeCurrent: (...args: unknown[]) =>
+    versionFinalizeCurrent(...args),
   versionSaveIdle: vi.fn(),
   versionSaveManual: (...args: unknown[]) => versionSaveManual(...args),
 }));
@@ -96,17 +99,15 @@ function Harness({
     autoVersionEnabled: false,
     autoVersionIdleMinutes: 5,
     dirtyRef,
-    editorContentTick,
+    persistenceContentTick: editorContentTick,
     editorReadyRef,
     editorRef,
     getLiveMarkdownRef,
     getTabMarkdownCached,
     markClean: vi.fn(),
     markdown,
-    noteTitle: "Note",
     onPersistenceBarrierStart,
     persistBeforeLeaveRef,
-    schedulePathSync: vi.fn(),
     setAiStatus: vi.fn(),
     setFileLocked: setFileLocked ?? vi.fn(),
     setMarkdown: vi.fn(),
@@ -133,6 +134,8 @@ describe("useAppPersistenceLifecycle", () => {
       word_count: 6,
     });
     setCachedEditorHtml.mockReset();
+    versionFinalizeCurrent.mockReset();
+    versionFinalizeCurrent.mockResolvedValue(null);
     versionSaveManual.mockReset();
     versionSaveManual.mockResolvedValue(undefined);
     host = document.createElement("div");
@@ -209,7 +212,7 @@ describe("useAppPersistenceLifecycle", () => {
     });
 
     await act(async () => {
-      api.notifyDirty();
+      api.notifyDirty("note.md");
     });
 
     expect(api.hasDirtyDocuments).toBe(true);
@@ -255,7 +258,7 @@ describe("useAppPersistenceLifecycle", () => {
     });
 
     await act(async () => {
-      api.notifyDirty();
+      api.notifyDirty("note.md");
       await persistBeforeLeaveRef.current("note.md");
     });
 
@@ -306,7 +309,7 @@ describe("useAppPersistenceLifecycle", () => {
         }),
       );
       await Promise.resolve();
-      api.notifyDirty();
+      api.notifyDirty("note.md");
     });
     let closing!: Promise<void>;
     await act(async () => {
@@ -329,7 +332,7 @@ describe("useAppPersistenceLifecycle", () => {
         }),
       );
       await Promise.resolve();
-      api.notifyDirty();
+      api.notifyDirty("note.md");
     });
 
     await act(async () => {
@@ -459,7 +462,7 @@ describe("useAppPersistenceLifecycle", () => {
           persistBeforeLeaveRef,
         }),
       );
-      api.notifyDirty();
+      api.notifyDirty("note.md");
     });
     fileWrite.mockRejectedValueOnce(new Error("disk unavailable"));
 
@@ -483,7 +486,7 @@ describe("useAppPersistenceLifecycle", () => {
       );
     });
     await act(async () => {
-      api.notifyDirty();
+      api.notifyDirty("note.md");
       await api.flushAllOpenTabs();
     });
 
@@ -511,7 +514,28 @@ describe("useAppPersistenceLifecycle", () => {
     expect(fileWrite).not.toHaveBeenCalled();
   });
 
-  it("does not create a manual version snapshot while the editor is not ready", async () => {
+  it("rejects a blank remount recovery snapshot instead of overwriting the loaded document", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorReady: false,
+          getTabMarkdownCached: () => "",
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await expect(persistBeforeLeaveRef.current("note.md")).rejects.toThrow(
+      "rejected unsafe recovery snapshot",
+    );
+    expect(fileWrite).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed finalize pre-save when the editor is still loading a blank recovery snapshot", async () => {
     const persistBeforeLeaveRef = {
       current: async () => null,
     } as React.MutableRefObject<PersistBeforeLeave>;
@@ -521,6 +545,32 @@ describe("useAppPersistenceLifecycle", () => {
       root.render(
         createElement(Harness, {
           editorReady: false,
+          getTabMarkdownCached: () => "",
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await expect(api.flushWhenEditorReady("定稿")).resolves.toEqual({
+      markdown: null,
+      ok: false,
+    });
+    expect(fileWrite).not.toHaveBeenCalled();
+  });
+
+  it("ignores a dirty event emitted by a retained background editor surface", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorReady: true,
           onReady: (next) => {
             api = next;
           },
@@ -530,11 +580,11 @@ describe("useAppPersistenceLifecycle", () => {
     });
 
     await act(async () => {
-      await api.handleSaveVersion();
+      api.notifyDirty("background.md");
+      await api.flushSave();
     });
 
     expect(fileWrite).not.toHaveBeenCalled();
-    expect(versionSaveManual).not.toHaveBeenCalled();
   });
 
   it("does not persist a lock change while the editor is not ready", async () => {
@@ -748,7 +798,7 @@ describe("useAppPersistenceLifecycle", () => {
           persistBeforeLeaveRef,
         }),
       );
-      api.notifyDirty();
+      api.notifyDirty("note.md");
       await Promise.resolve();
     });
     applySavedMarkdown.mockClear();

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   DocumentPersistenceCoordinator,
+  DocumentPersistenceSnapshotRejectedError,
   type DocumentPersistenceWriteResult,
 } from "@/lib/document-persistence-coordinator";
 
@@ -16,6 +17,84 @@ function deferred<T>() {
 const written: DocumentPersistenceWriteResult = { indexDegraded: false };
 
 describe("DocumentPersistenceCoordinator", () => {
+  it("keeps a dirty user-edit snapshot when a late load for the same path arrives", async () => {
+    const write = vi.fn(async () => written);
+    const coordinator = new DocumentPersistenceCoordinator({ write });
+
+    coordinator.load("note.md", "authoritative disk body", 1);
+    coordinator.capture("note.md", "user edit", "user_edit");
+    const lateLoad = coordinator.load("note.md", "", 2);
+
+    expect(lateLoad).toMatchObject({
+      markdown: "user edit",
+      source: "user_edit",
+      status: "dirty",
+    });
+
+    await coordinator.barrier("note.md");
+    expect(write).toHaveBeenCalledWith("note.md", "user edit");
+  });
+
+  it("adopts a newer disk load generation after the tracked document is clean", async () => {
+    const write = vi.fn(async () => written);
+    const coordinator = new DocumentPersistenceCoordinator({ write });
+
+    coordinator.load("note.md", "first disk body", 1);
+    coordinator.capture("note.md", "saved user edit", "user_edit");
+    await coordinator.barrier("note.md");
+
+    const reloaded = coordinator.load("note.md", "new disk body", 2);
+
+    expect(reloaded).toMatchObject({
+      baselineMarkdown: "new disk body",
+      baselineSource: "load",
+      loadGeneration: 2,
+      markdown: "new disk body",
+      source: "load",
+      status: "clean",
+    });
+    await coordinator.barrier("note.md");
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an empty recovery or leave snapshot before it can replace a non-empty document", () => {
+    const coordinator = new DocumentPersistenceCoordinator({
+      write: async () => written,
+    });
+
+    coordinator.load("note.md", "authoritative disk body", 1);
+
+    for (const source of ["recovery", "leave"] as const) {
+      expect(() => coordinator.capture("note.md", "", source)).toThrow(
+        DocumentPersistenceSnapshotRejectedError,
+      );
+    }
+
+    expect(coordinator.get("note.md")).toMatchObject({
+      baselineMarkdown: "authoritative disk body",
+      markdown: "authoritative disk body",
+      source: "load",
+    });
+  });
+
+  it("allows a deliberate user clear and preserves its provenance through the durable receipt", async () => {
+    const write = vi.fn(async () => written);
+    const coordinator = new DocumentPersistenceCoordinator({ write });
+
+    coordinator.load("note.md", "authoritative disk body", 1);
+    coordinator.capture("note.md", "", "user_edit");
+    await coordinator.barrier("note.md");
+
+    expect(write).toHaveBeenCalledWith("note.md", "");
+    expect(coordinator.get("note.md")).toMatchObject({
+      baselineMarkdown: "",
+      baselineSource: "user_edit",
+      markdown: "",
+      source: "user_edit",
+      status: "saved",
+    });
+  });
+
   it("keeps a newer revision dirty when an older write receipt arrives late", async () => {
     const firstWrite = deferred<DocumentPersistenceWriteResult>();
     const write = vi
@@ -29,10 +108,10 @@ describe("DocumentPersistenceCoordinator", () => {
       .mockResolvedValue(written);
     const coordinator = new DocumentPersistenceCoordinator({ write });
 
-    coordinator.load("note.md", "opened");
-    coordinator.capture("note.md", "first edit");
+    coordinator.load("note.md", "opened", 1);
+    coordinator.capture("note.md", "first edit", "user_edit");
     const firstCommit = coordinator.commit("note.md");
-    coordinator.capture("note.md", "newer edit");
+    coordinator.capture("note.md", "newer edit", "user_edit");
 
     firstWrite.resolve(written);
     await firstCommit;
@@ -64,10 +143,10 @@ describe("DocumentPersistenceCoordinator", () => {
       .mockResolvedValue(written);
     const coordinator = new DocumentPersistenceCoordinator({ write });
 
-    coordinator.load("note.md", "opened");
-    coordinator.capture("note.md", "temporary edit");
+    coordinator.load("note.md", "opened", 1);
+    coordinator.capture("note.md", "temporary edit", "user_edit");
     const firstCommit = coordinator.commit("note.md");
-    coordinator.capture("note.md", "opened");
+    coordinator.capture("note.md", "opened", "user_edit");
     firstWrite.resolve(written);
     await firstCommit;
     await coordinator.barrier("note.md");
@@ -87,8 +166,8 @@ describe("DocumentPersistenceCoordinator", () => {
     const write = vi.fn(async () => written);
     const coordinator = new DocumentPersistenceCoordinator({ write });
 
-    coordinator.load("note.md", "opened");
-    coordinator.capture("note.md", "edited");
+    coordinator.load("note.md", "opened", 1);
+    coordinator.capture("note.md", "edited", "user_edit");
     await Promise.all([
       coordinator.barrier("note.md"),
       coordinator.barrier("note.md"),
@@ -102,8 +181,8 @@ describe("DocumentPersistenceCoordinator", () => {
     const write = vi.fn(async () => written);
     const coordinator = new DocumentPersistenceCoordinator({ write });
 
-    coordinator.capture("first.md", "first tab");
-    coordinator.capture("second.md", "second tab");
+    coordinator.capture("first.md", "first tab", "user_edit");
+    coordinator.capture("second.md", "second tab", "user_edit");
     await Promise.all([
       coordinator.barrier("first.md"),
       coordinator.barrier("second.md"),
@@ -128,12 +207,16 @@ describe("DocumentPersistenceCoordinator", () => {
       .mockResolvedValue(written);
     const coordinator = new DocumentPersistenceCoordinator({ write });
 
-    coordinator.load("first.md", "opened");
-    coordinator.capture("first.md", "first edit");
+    coordinator.load("first.md", "opened", 1);
+    coordinator.capture("first.md", "first edit", "user_edit");
     const barrier = coordinator.barrierAll();
 
     expect(write).toHaveBeenCalledWith("first.md", "first edit");
-    coordinator.capture("second.md", "edit captured while closing");
+    coordinator.capture(
+      "second.md",
+      "edit captured while closing",
+      "user_edit",
+    );
     firstWrite.resolve(written);
 
     await barrier;
@@ -149,10 +232,10 @@ describe("DocumentPersistenceCoordinator", () => {
     const write = vi.fn(async () => written);
     const coordinator = new DocumentPersistenceCoordinator({ write });
 
-    coordinator.load("old.md", "opened");
-    coordinator.capture("old.md", "before rename");
+    coordinator.load("old.md", "opened", 1);
+    coordinator.capture("old.md", "before rename", "user_edit");
     await coordinator.rename("old.md", "suggested.md", async () => {
-      coordinator.capture("old.md", "edited during rename");
+      coordinator.capture("old.md", "edited during rename", "user_edit");
       return { path: "allocated.md", indexDegraded: false };
     });
     await coordinator.barrier("allocated.md");
@@ -181,8 +264,8 @@ describe("DocumentPersistenceCoordinator", () => {
         write,
       });
 
-      coordinator.load("old.md", "opened");
-      coordinator.capture("old.md", "before move");
+      coordinator.load("old.md", "opened", 1);
+      coordinator.capture("old.md", "before move", "user_edit");
       const rename = coordinator.rename("old.md", "new.md", () => {
         moveStarted.resolve();
         return move.promise;
@@ -190,7 +273,7 @@ describe("DocumentPersistenceCoordinator", () => {
 
       await moveStarted.promise;
 
-      coordinator.capture("old.md", "edited while moving");
+      coordinator.capture("old.md", "edited while moving", "user_edit");
       await vi.advanceTimersByTimeAsync(50);
 
       expect(write.mock.calls).toEqual([["old.md", "before move"]]);
@@ -213,8 +296,8 @@ describe("DocumentPersistenceCoordinator", () => {
     const write = vi.fn(async () => written);
     const coordinator = new DocumentPersistenceCoordinator({ write });
 
-    coordinator.load("old.md", "opened");
-    coordinator.capture("old.md", "unsaved");
+    coordinator.load("old.md", "opened", 1);
+    coordinator.capture("old.md", "unsaved", "user_edit");
     coordinator.rebind("old.md", "new.md");
     await coordinator.barrier("new.md");
 
@@ -226,7 +309,7 @@ describe("DocumentPersistenceCoordinator", () => {
       write: async () => written,
     });
 
-    coordinator.load("old.md", "opened");
+    coordinator.load("old.md", "opened", 1);
     await coordinator.rename("old.md", "new.md", async () => ({
       path: "new.md",
       indexDegraded: true,

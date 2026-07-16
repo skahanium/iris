@@ -234,6 +234,43 @@ impl CasObjectStore {
         &self.base_path
     }
 
+    /// Lists complete content-addressed object hashes currently present on disk.
+    ///
+    /// Invalid or partially-written object names are ignored so an interrupted
+    /// write cannot be mistaken for a recoverable document snapshot.
+    pub fn list_object_hashes(&self) -> AppResult<Vec<String>> {
+        let objects = self.base_path.join("objects");
+        let mut hashes = Vec::new();
+        if !objects.exists() {
+            return Ok(hashes);
+        }
+
+        for prefix in fs::read_dir(&objects)? {
+            let prefix = prefix?;
+            if !prefix.file_type()?.is_dir() {
+                continue;
+            }
+            let Some(prefix) = prefix.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            for object in fs::read_dir(self.base_path.join("objects").join(&prefix))? {
+                let object = object?;
+                if !object.file_type()?.is_file() {
+                    continue;
+                }
+                let Some(suffix) = object.file_name().to_str().map(str::to_owned) else {
+                    continue;
+                };
+                let hash = format!("{prefix}{suffix}");
+                if hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    hashes.push(hash);
+                }
+            }
+        }
+        hashes.sort();
+        Ok(hashes)
+    }
+
     /// 写入文件内容（写入CAS）
     pub fn write_content(&self, content: &str) -> AppResult<String> {
         let hash = super::hash::content_hash_str(content);

@@ -51,6 +51,11 @@ const VersionTimelineHarness = VersionTimeline as unknown as (props: {
   getCurrentContent?: () => string;
   hasUnsavedEdits?: boolean;
   onRestore: (content: string) => Promise<void>;
+  onFinalizeCurrent: (
+    path: string,
+    content: string,
+    label: string | null,
+  ) => Promise<VersionEntry | null>;
 }) => ReturnType<typeof VersionTimeline>;
 
 describe("VersionTimeline collapsed auto backups", () => {
@@ -91,6 +96,8 @@ describe("VersionTimeline collapsed auto backups", () => {
           notePath: "note.md",
           currentContent: "# current",
           onRestore: async () => {},
+          onFinalizeCurrent: (path, content, label) =>
+            versionFinalizeCurrent(path, content, label),
         }),
       );
       await Promise.resolve();
@@ -113,6 +120,8 @@ describe("VersionTimeline collapsed auto backups", () => {
           notePath: "note.md",
           currentContent: "# current",
           onRestore: async () => {},
+          onFinalizeCurrent: (path, content, label) =>
+            versionFinalizeCurrent(path, content, label),
         }),
       );
       await Promise.resolve();
@@ -147,6 +156,8 @@ describe("VersionTimeline collapsed auto backups", () => {
           currentContent: "# stale current",
           getCurrentContent,
           onRestore,
+          onFinalizeCurrent: (path, content, label) =>
+            versionFinalizeCurrent(path, content, label),
         }),
       );
       await Promise.resolve();
@@ -188,6 +199,8 @@ describe("VersionTimeline collapsed auto backups", () => {
           currentContent: "# stale current",
           getCurrentContent,
           onRestore: async () => {},
+          onFinalizeCurrent: (path, content, label) =>
+            versionFinalizeCurrent(path, content, label),
         }),
       );
       await Promise.resolve();

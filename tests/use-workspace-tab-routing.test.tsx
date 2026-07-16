@@ -16,7 +16,7 @@ function Harness({
 }: {
   activePath: string | null;
   apiRef: { current: HookApi | null };
-  closeTab: (path: string) => Promise<void> | void;
+  closeTab: (path: string) => Promise<boolean> | boolean;
   setHomeActive: (active: boolean) => void;
   showHome: () => void;
   tabs: Array<{ path: string; title: string }>;
@@ -52,7 +52,7 @@ describe("useWorkspaceTabRouting", () => {
 
   it("returns Home active after closing the last active note tab", async () => {
     const apiRef: { current: HookApi | null } = { current: null };
-    const closeTab = vi.fn(async () => undefined);
+    const closeTab = vi.fn(async () => true);
     const setHomeActive = vi.fn();
     const showHome = vi.fn();
 
@@ -76,5 +76,32 @@ describe("useWorkspaceTabRouting", () => {
     expect(closeTab).toHaveBeenCalledWith("only.md");
     expect(showHome).toHaveBeenCalledTimes(1);
     expect(setHomeActive).not.toHaveBeenCalled();
+  });
+
+  it("does not enter Home when closing the last tab is blocked", async () => {
+    const apiRef: { current: HookApi | null } = { current: null };
+    const closeTab = vi.fn(async () => false);
+    const showHome = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          activePath: "only.md",
+          apiRef,
+          closeTab,
+          setHomeActive: vi.fn(),
+          showHome,
+          tabs: [{ path: "only.md", title: "Only" }],
+        }),
+      );
+    });
+
+    await act(async () => {
+      apiRef.current!.handleCloseWorkspaceTab("only.md");
+      await Promise.resolve();
+    });
+
+    expect(closeTab).toHaveBeenCalledWith("only.md");
+    expect(showHome).not.toHaveBeenCalled();
   });
 });

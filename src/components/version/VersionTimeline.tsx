@@ -13,7 +13,6 @@ import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   versionDelete,
-  versionFinalizeCurrent,
   versionList,
   versionPreview,
   versionRestore,
@@ -40,9 +39,12 @@ interface VersionTimelineProps {
   hasUnsavedEdits?: boolean;
   /** Persists the restored Markdown through the document coordinator. */
   onRestore: (content: string) => Promise<void>;
-  /** Blocks low-priority `auto_idle` while finalize IPC is in flight. */
-  onHighPriorityStart?: (path: string) => void;
-  onHighPriorityEnd?: (path: string) => void;
+  /** Serializes finalization with all other version writes for this document. */
+  onFinalizeCurrent: (
+    path: string,
+    content: string,
+    label: string | null,
+  ) => Promise<VersionEntry | null>;
 }
 
 const PREVIEW_MAX = 2000;
@@ -56,14 +58,14 @@ export function VersionTimeline({
   onBeforeFinalizeCurrent,
   hasUnsavedEdits = false,
   onRestore,
-  onHighPriorityStart,
-  onHighPriorityEnd,
+  onFinalizeCurrent,
 }: VersionTimelineProps) {
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
   const [finalizeLabel, setFinalizeLabel] = useState("");
   const [finalizing, setFinalizing] = useState(false);
+  const [finalizeError, setFinalizeError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(),
@@ -139,21 +141,22 @@ export function VersionTimeline({
   const handleFinalizeCurrent = async () => {
     if (!notePath) return;
     setFinalizing(true);
-    onHighPriorityStart?.(notePath);
+    setFinalizeError(null);
     try {
       const liveContent = onBeforeFinalizeCurrent
         ? await onBeforeFinalizeCurrent()
         : (getCurrentContent?.() ?? currentContent ?? "");
       if (!liveContent) return;
-      await versionFinalizeCurrent(
+      await onFinalizeCurrent(
         notePath,
         liveContent,
         finalizeLabel.trim() || null,
       );
       setFinalizeLabel("");
       refresh();
+    } catch (error) {
+      setFinalizeError(error instanceof Error ? error.message : String(error));
     } finally {
-      onHighPriorityEnd?.(notePath);
       setFinalizing(false);
     }
   };
@@ -278,6 +281,11 @@ export function VersionTimeline({
               定稿
             </Button>
           </div>
+          {finalizeError && (
+            <p role="alert" className="mt-2 text-xs text-destructive">
+              定稿失败：{finalizeError}
+            </p>
+          )}
         </div>
       )}
 

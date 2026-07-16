@@ -10,10 +10,14 @@ describe("app close version guard", () => {
     const scheduler = createVersionSnapshotScheduler({ versionSaveIdle });
     const write = vi.fn(async () => ({ indexDegraded: false }));
     const coordinator = new DocumentPersistenceCoordinator({ write });
-    coordinator.load("notes/active.md", "active opened");
-    coordinator.load("notes/background.md", "background opened");
-    coordinator.capture("notes/active.md", "active saved");
-    coordinator.capture("notes/background.md", "background cached");
+    coordinator.load("notes/active.md", "active opened", 1);
+    coordinator.load("notes/background.md", "background opened", 1);
+    coordinator.capture("notes/active.md", "active saved", "user_edit");
+    coordinator.capture(
+      "notes/background.md",
+      "background cached",
+      "user_edit",
+    );
 
     const clearVersionIdleTimer = vi.fn();
     const flushAllOpenTabs = async () => {

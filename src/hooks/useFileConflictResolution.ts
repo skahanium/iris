@@ -8,7 +8,7 @@ interface UseFileConflictResolutionOptions {
   applyMarkdownToEditor: (content: string) => void;
   conflictState: ConflictState | null;
   dirtyRef: MutableRefObject<boolean>;
-  flushSave: () => void | Promise<unknown>;
+  flushWhenEditorReady: (actionLabel: string) => Promise<unknown>;
   invalidatePreparedNote: (path: string) => void;
   isMutationBlocked: () => boolean;
   markClean: (path: string, title: string) => void;
@@ -22,7 +22,7 @@ export function useFileConflictResolution({
   applyMarkdownToEditor,
   conflictState,
   dirtyRef,
-  flushSave,
+  flushWhenEditorReady,
   invalidatePreparedNote,
   isMutationBlocked,
   markClean,
@@ -33,8 +33,8 @@ export function useFileConflictResolution({
   const handleConflictKeepLocal = useCallback(() => {
     if (isMutationBlocked()) return;
     setConflictState(null);
-    void flushSave();
-  }, [flushSave, isMutationBlocked, setConflictState]);
+    void flushWhenEditorReady("保留本地修改");
+  }, [flushWhenEditorReady, isMutationBlocked, setConflictState]);
 
   const handleConflictAcceptExternal = useCallback(() => {
     if (isMutationBlocked()) return;

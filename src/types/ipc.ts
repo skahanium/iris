@@ -417,7 +417,65 @@ export interface VersionEntry {
   created_at: string;
 }
 
-/** Emitted on `version:save_complete` after async manual/idle snapshot IPC. */
+/** Durable result of a manual or idle version-save command. */
+export interface VersionSaveOutcome {
+  created: boolean;
+  versionId: number | null;
+  skipReason?:
+    | "duplicate_hash"
+    | "auto_idle_any_snapshot_cooldown"
+    | "auto_idle_interval_cooldown"
+    | null;
+}
+
+/** Read-only finding produced by the document-title recovery audit. */
+export interface DocumentTitleAuditItem {
+  path: string;
+  currentTitle: string;
+  candidateTitle: string | null;
+  candidateSource: "version" | "index" | "filename" | null;
+  contentHash: string | null;
+  reason:
+    | "missing_markdown"
+    | "missing_or_placeholder_title"
+    | "index_title_mismatch";
+}
+
+/** A missing indexed document that can be recreated from a retained version. */
+export interface MissingDocumentRecoveryItem {
+  path: string;
+  currentTitle: string;
+  candidateTitle: string | null;
+  versionId: number;
+  contentHash: string;
+  createdAt: string;
+  preview: string;
+}
+
+/** An unattached Markdown CAS object that needs a new user-selected destination. */
+export interface OrphanedDocumentRecoveryItem {
+  objectHash: string;
+  candidateTitle: string | null;
+  suggestedPath: string;
+  preview: string;
+}
+
+/** A missing indexed document for which no safe local recovery source remains. */
+export interface UnavailableDocumentRecoveryItem {
+  path: string;
+  currentTitle: string;
+  reason: "no_readable_version_snapshot";
+}
+
+/** Read-only recovery audit spanning title corruption, missing files, and CAS orphans. */
+export interface DocumentRecoveryAudit {
+  titleIssues: DocumentTitleAuditItem[];
+  missingDocuments: MissingDocumentRecoveryItem[];
+  orphanedDocuments: OrphanedDocumentRecoveryItem[];
+  unavailableDocuments: UnavailableDocumentRecoveryItem[];
+}
+
+/** Legacy completion event emitted by older app builds. */
 export interface VersionSaveCompleteEvent {
   path: string;
   kind: VersionKind | "manual" | "auto_idle";

@@ -84,7 +84,7 @@ interface AppEditorWorkspaceProps {
   editorZoom: number;
   findReplaceMode: "find" | "replace";
   findReplaceOpen: boolean;
-  handleDirty: () => void;
+  handleDirty: (path: string) => void;
   handleEditorReady: (editor: Editor | null) => void;
   handleLockToggle: (locked: boolean) => Promise<void>;
   handleNewNoteLeavingHome: () => void | Promise<void>;
@@ -768,7 +768,7 @@ export function AppEditorWorkspace({
                   ? (locked) => void handleLockToggle(locked)
                   : undefined
               }
-              onDirty={handleDirty}
+              onDirty={() => handleDirty(snapshot.path)}
               onSlashCommand={runEditorActionById}
               onBodyContextMenu={editorContextMenu.handleContextMenu}
               onEditorReady={(editor) => {

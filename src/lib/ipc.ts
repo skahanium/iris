@@ -45,8 +45,10 @@ import type {
   ClassifiedFileTakenEvent,
   ClassifiedFileEntry,
   ClassifiedStatus,
+  DocumentRecoveryAudit,
   CredentialStatus,
   DocumentOpenResult,
+  DocumentTitleAuditItem,
   DocumentOpenScopeResult,
   EmbeddingIndexStatus,
   EmbeddingSchedulerStartResult,
@@ -69,6 +71,7 @@ import type {
   SemanticHit,
   TagGroup,
   VersionEntry,
+  VersionSaveOutcome,
   VersionSaveCompleteEvent,
   WorkspaceItem,
 } from "@/types/ipc";
@@ -397,20 +400,76 @@ export async function versionFinalizeCurrent(
   });
 }
 
-/** Enqueues manual snapshot; completes on `version:save_complete`. */
+/** Creates a manual snapshot and resolves only after the durable result is known. */
 export async function versionSaveManual(
   path: string,
   content: string,
-): Promise<void> {
-  await invoke<void>("version_save_manual_cmd", { path, content });
+): Promise<VersionSaveOutcome> {
+  return invoke<VersionSaveOutcome>("version_save_manual_cmd", {
+    path,
+    content,
+  });
 }
 
-/** Enqueues idle snapshot; completes on `version:save_complete`. */
+/** Creates an idle snapshot and resolves only after the durable result is known. */
 export async function versionSaveIdle(
   path: string,
   content: string,
-): Promise<void> {
-  await invoke<void>("version_save_idle_cmd", { path, content });
+): Promise<VersionSaveOutcome> {
+  return invoke<VersionSaveOutcome>("version_save_idle_cmd", {
+    path,
+    content,
+  });
+}
+
+/** Find title corruption candidates without modifying Markdown. */
+export async function documentTitleAudit(): Promise<DocumentTitleAuditItem[]> {
+  return invoke<DocumentTitleAuditItem[]>("document_title_audit_cmd");
+}
+
+/** Audits title corruption, missing Markdown, and recoverable orphan CAS blobs. */
+export async function documentRecoveryAudit(): Promise<DocumentRecoveryAudit> {
+  return invoke<DocumentRecoveryAudit>("document_recovery_audit_cmd");
+}
+
+/** Recreates a missing indexed note from one audited version snapshot. */
+export async function documentRecoveryRestoreMissing(
+  path: string,
+  versionId: number,
+  expectedContentHash: string,
+): Promise<FileWriteResult> {
+  return invoke<FileWriteResult>("document_recovery_restore_missing_cmd", {
+    path,
+    versionId,
+    expectedContentHash,
+    confirmed: true,
+  });
+}
+
+/** Recreates an audited orphan CAS Markdown blob at a new user-selected path. */
+export async function documentRecoveryRestoreOrphan(
+  objectHash: string,
+  targetPath: string,
+): Promise<FileWriteResult> {
+  return invoke<FileWriteResult>("document_recovery_restore_orphan_cmd", {
+    objectHash,
+    targetPath,
+    confirmed: true,
+  });
+}
+
+/** Repair one audit-previewed title after explicit user confirmation. */
+export async function documentTitleRepair(
+  path: string,
+  expectedContentHash: string,
+  title: string,
+): Promise<FileWriteResult> {
+  return invoke<FileWriteResult>("document_title_repair_cmd", {
+    path,
+    expectedContentHash,
+    title,
+    confirmed: true,
+  });
 }
 
 export function listenVersionSaveComplete(

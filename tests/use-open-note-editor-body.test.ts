@@ -47,6 +47,7 @@ function Harness({
   editor,
   editorReady,
   dirty,
+  titleFallback,
   renamePersistedPath,
   replaceOpenTabPath,
 }: {
@@ -56,6 +57,7 @@ function Harness({
   editor?: Editor | null;
   editorReady?: boolean;
   dirty?: boolean;
+  titleFallback?: string;
   renamePersistedPath?: (
     path: string,
     newPath: string,
@@ -85,6 +87,7 @@ function Harness({
     renamePersistedPath,
     updateTabTitle: vi.fn(),
     replaceOpenTabPath: replaceOpenTabPath ?? vi.fn<ReplaceOpenTabPath>(),
+    titleFallback,
   });
   outRef.current = {
     editorBodyMarkdown: api.editorBodyMarkdown,
@@ -143,6 +146,28 @@ describe("useOpenNote editorBodyMarkdown", () => {
 
     expect(outRef.current?.editorBodyMarkdown.trim()).toBe("Hello body");
     expect(outRef.current?.bodyMarkdown.trim()).toBe("Hello body");
+  });
+
+  it("keeps the committed tab title when legacy markdown has no frontmatter title", async () => {
+    const outRef = { current: null } as {
+      current: ReturnType<typeof useOpenNote> | null;
+    };
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          activePath: "untitled-9.md",
+          markdown: "Existing body without a frontmatter title.",
+          editorContentTick: 1,
+          outRef,
+          titleFallback: "Already indexed title",
+        }),
+      );
+    });
+
+    expect(outRef.current?.getLiveMarkdown()).toContain(
+      'title: "Already indexed title"',
+    );
   });
 
   it("uses markdownRef body while the editor exists but is not ready and not dirty", async () => {

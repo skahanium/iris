@@ -72,6 +72,7 @@ interface ManagementCenterPanelProps {
   onRescanVault: () => void;
   onRecycleIndexChange: () => void;
   onIndexDegraded: () => void;
+  onOpenDocumentRecovery: () => void;
   onBeforeFilePathChange?: (oldPath: string, newPath: string) => Promise<void>;
   onFilePathChanged?: (
     oldPath: string,
@@ -387,6 +388,7 @@ export function ManagementCenterPanel({
   onRescanVault,
   onRecycleIndexChange,
   onIndexDegraded,
+  onOpenDocumentRecovery,
   onBeforeFilePathChange,
   onFilePathChanged,
   onFilePathChangeFailed,
@@ -700,6 +702,15 @@ export function ManagementCenterPanel({
             onClick={() => openNotesDetail("recycle-bin")}
           >
             打开
+          </Button>
+        </SettingRow>
+        <SettingRow
+          icon={AlertCircle}
+          title="文档恢复"
+          detail="只读检查标题污染、缺失 Markdown 和孤立快照；每一项写入恢复均需单独确认，且绝不覆盖现有文件。"
+        >
+          <Button size="sm" variant="outline" onClick={onOpenDocumentRecovery}>
+            检查
           </Button>
         </SettingRow>
       </PanelSection>

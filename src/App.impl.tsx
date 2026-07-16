@@ -62,11 +62,7 @@ import { useMacOSWindowChromeSync } from "@/hooks/useMacOSWindowChromeSync";
 import { useVault } from "@/hooks/useVault";
 import { displayTitleForChrome } from "@/lib/note-display";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
-import {
-  listenClassifiedFileTaken,
-  listenVersionSaveComplete,
-} from "@/lib/ipc";
-import { formatVersionSaveStatus } from "@/lib/version-save-status";
+import { listenClassifiedFileTaken } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import type { DocumentPersistenceMoveResult } from "@/lib/document-persistence-coordinator";
 
@@ -207,8 +203,8 @@ function App() {
     [activateTab, rejectDepartureInteraction],
   );
   const guardedCloseTab = useCallback(
-    (path: string): Promise<void> => {
-      if (rejectDepartureInteraction()) return Promise.resolve();
+    (path: string): Promise<boolean> => {
+      if (rejectDepartureInteraction()) return Promise.resolve(false);
       return closeTab(path);
     },
     [closeTab, rejectDepartureInteraction],
@@ -223,6 +219,10 @@ function App() {
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
+  const activeTabTitle = useMemo(
+    () => tabs.find((tab) => tab.path === activePath)?.title,
+    [activePath, tabs],
+  );
   const updateInstallBarrierRef = useRef<() => Promise<void>>(
     async () => undefined,
   );
@@ -347,10 +347,10 @@ function App() {
     applySavedMarkdown,
     onTitleChange,
     onTitleBlur,
-    schedulePathSync,
     loadBodyIntoEditor,
   } = useOpenNote({
     activePath,
+    titleFallback: activeTabTitle,
     editorContentTick,
     activePathRef,
     markdownRef,
@@ -373,7 +373,7 @@ function App() {
 
   const {
     notifyDirty,
-    flushSave,
+    flushWhenEditorReady,
     restoreCurrentVersion,
     cancelPendingSave,
     awaitSaveInFlight,
@@ -389,7 +389,6 @@ function App() {
     saveStatus,
     hasDirtyDocuments,
     isPersistenceBarrierActive,
-    isPersistenceBarrierActiveNow,
     releasePersistenceBarrier,
   } = useAppPersistenceLifecycle({
     activeFileLocked,
@@ -400,14 +399,13 @@ function App() {
     autoVersionEnabled: autoVersionSettings.autoVersionEnabled,
     autoVersionIdleMinutes: autoVersionSettings.autoVersionIdleMinutes,
     dirtyRef,
-    editorContentTick: persistenceContentTick,
+    persistenceContentTick,
     editorRef,
     editorReadyRef: editorReadyForPersistenceRef,
     getLiveMarkdownRef,
     getTabMarkdownCached,
     markClean,
     markdown,
-    noteTitle,
     onPersistenceBarrierRelease: () => {
       departureInteractionLockedRef.current = false;
     },
@@ -418,7 +416,6 @@ function App() {
     },
     onPersistenceBlocked: setPersistenceBlocker,
     persistBeforeLeaveRef,
-    schedulePathSync,
     setAiStatus,
     setFileLocked,
     setMarkdown,
@@ -434,8 +431,6 @@ function App() {
     () => activeFileLocked || departureInteractionLockedRef.current,
     [activeFileLocked],
   );
-  departureInteractionLockedRef.current =
-    activeFileLocked || isPersistenceBarrierActiveNow();
 
   const inlineAi = useInlineAi({
     domain: inlineAiDomain,
@@ -496,24 +491,6 @@ function App() {
     invalidateDocumentRuntimeState,
   });
 
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listenVersionSaveComplete((payload) => {
-      if (disposed) return;
-      if (payload.path !== activePathRef.current) return;
-      setAiStatus(formatVersionSaveStatus(payload));
-    }).then((fn) => {
-      if (disposed) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [activePathRef]);
-
   useCurrentFileChangeListener({
     activePathRef,
     awaitSaveInFlight,
@@ -526,13 +503,13 @@ function App() {
   });
 
   const handleBeforeFinalizeCurrent = useCallback(async () => {
-    const md = await flushSave();
-    if (md) {
+    const result = await flushWhenEditorReady("定稿");
+    if (result.ok && result.markdown) {
       bumpVaultIndex();
-      return md;
+      return result.markdown;
     }
     return null;
-  }, [bumpVaultIndex, flushSave]);
+  }, [bumpVaultIndex, flushWhenEditorReady]);
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let disposed = false;
@@ -573,7 +550,7 @@ function App() {
     applyMarkdownToEditor,
     conflictState,
     dirtyRef,
-    flushSave,
+    flushWhenEditorReady,
     invalidatePreparedNote,
     isMutationBlocked: isEditorMutationBlocked,
     markClean,
@@ -587,24 +564,29 @@ function App() {
     setFindReplaceOpen(true);
   }, []);
 
-  const handleDirty = useCallback(() => {
-    if (isEditorPersistenceBlocked) return;
-    if (!dirtyRef.current) {
-      dirtyRef.current = true;
-      markDirty();
-      invalidateActivePreparedNote();
-    }
-    notifyDirty();
-    void reportForegroundActivity();
-    resetVersionIdle();
-  }, [
-    isEditorPersistenceBlocked,
-    invalidateActivePreparedNote,
-    markDirty,
-    notifyDirty,
-    reportForegroundActivity,
-    resetVersionIdle,
-  ]);
+  const handleDirty = useCallback(
+    (sourcePath: string) => {
+      if (sourcePath !== activePathRef.current) return;
+      if (isEditorPersistenceBlocked) return;
+      if (!dirtyRef.current) {
+        dirtyRef.current = true;
+        markDirty();
+        invalidateActivePreparedNote();
+      }
+      notifyDirty(sourcePath);
+      void reportForegroundActivity();
+      resetVersionIdle();
+    },
+    [
+      activePathRef,
+      isEditorPersistenceBlocked,
+      invalidateActivePreparedNote,
+      markDirty,
+      notifyDirty,
+      reportForegroundActivity,
+      resetVersionIdle,
+    ],
+  );
 
   const handleTitleChange = useCallback(
     (raw: string) => {
@@ -615,11 +597,14 @@ function App() {
         markDirty();
         invalidateActivePreparedNote();
       }
-      notifyDirty();
+      if (activePathRef.current) {
+        notifyDirty(activePathRef.current);
+      }
       void reportForegroundActivity();
       resetVersionIdle();
     },
     [
+      activePathRef,
       isEditorPersistenceBlocked,
       invalidateActivePreparedNote,
       markDirty,
@@ -817,10 +802,7 @@ function App() {
             findReplaceOpen={findReplaceOpen}
             handleDirty={handleDirty}
             handleEditorReady={handleEditorReady}
-            handleLockToggle={async (locked) => {
-              if (isEditorMutationBlocked()) return;
-              await handleLockToggle(locked);
-            }}
+            handleLockToggle={handleLockToggle}
             handleNewNoteLeavingHome={handleNewWorkspaceNote}
             homeActive={homeActive}
             inlineAi={inlineAi}
@@ -929,6 +911,9 @@ function App() {
             onFileDeleted={handlePreparedFileDeleted}
             onClassifiedUnlocked={onClassifiedUnlocked}
             onIndexDegraded={() => setAiStatus("已保存但索引待修复")}
+            onOpenDocumentRecovery={() =>
+              overlays.openOverlay("documentRecovery")
+            }
             openClassifiedPaths={openClassifiedPaths}
             openNoteLeavingHome={openWorkspacePathLeavingHome}
             onPrepareNote={prepareVisibleNote}

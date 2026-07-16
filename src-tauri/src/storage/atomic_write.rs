@@ -350,7 +350,14 @@ fn sync_parent_directory(parent: &Path) -> AppResult<()> {
     }
 
     #[cfg(not(unix))]
-    let _ = parent;
+    {
+        // Rust exposes no portable directory fsync on Windows. We still must
+        // validate that the parent exists and is a directory, so a failed
+        // durability check is never acknowledged as a successful no-op.
+        if !fs::metadata(parent)?.is_dir() {
+            return Err(AppError::msg("atomic write parent is not a directory"));
+        }
+    }
 
     Ok(())
 }

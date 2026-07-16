@@ -9,7 +9,7 @@ useEditorStats
 editorStats
 onBodyStatsChange
 const md = await flushSave();
-versionSaveManual(path, md)
+versionSnapshotScheduler.saveManual(path, md)
 setMarkdown(md)
 DocumentPersistenceCoordinator
 flushAllOpenTabs

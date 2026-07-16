@@ -13,7 +13,9 @@ use tracing::info;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+use crate::indexer::scan::{content_hash as index_content_hash, index_file_from_content};
 use crate::storage::paths::is_classified_note_path;
+use crate::storage::paths::resolve_vault_path;
 
 pub use kind::VersionKind;
 pub use policy::{SnapshotDecisionInput, SnapshotSkipReason, AUTO_IDLE_MAX_PER_FILE};
@@ -162,10 +164,25 @@ fn ensure_snapshot_file_id(
     content: &str,
 ) -> AppResult<i64> {
     if !is_classified_note_path(path) {
-        return state.db.with_conn(|conn| {
+        let indexed = state.db.with_read_conn(|conn| {
             conn.query_row("SELECT id FROM files WHERE path = ?1", [path], |r| r.get(0))
-                .map_err(|e| AppError::msg(format!("File not indexed: {e}")))
-        });
+                .optional()
+                .map_err(Into::into)
+        })?;
+        if let Some(file_id) = indexed {
+            return Ok(file_id);
+        }
+
+        // Disk-first saves can succeed while derived indexing is temporarily
+        // degraded. Versioning has the authoritative Markdown in hand, so
+        // repair the missing file row before attaching the snapshot.
+        let vault = state.vault_path()?;
+        let absolute = resolve_vault_path(&vault, path)?;
+        let index_hash = index_content_hash(content);
+        let entry = state.db.with_conn(|conn| {
+            index_file_from_content(conn, &vault, &absolute, content, &index_hash)
+        })?;
+        return Ok(entry.id);
     }
 
     let title = title_from_path(path);

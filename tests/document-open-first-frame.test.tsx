@@ -12,6 +12,7 @@ const editorReadyCallbacks = vi.hoisted(
 const contentReadyCallbacks = vi.hoisted(
   () => new Map<string, (editor: unknown) => void>(),
 );
+const dirtyCallbacks = vi.hoisted(() => new Map<string, () => void>());
 const editorMountsByPath = vi.hoisted(() => new Map<string, number>());
 
 vi.mock("@/components/editor/TipTapEditor", () => ({
@@ -21,6 +22,7 @@ vi.mock("@/components/editor/TipTapEditor", () => ({
     initialEditorHtml?: string;
     mediaLoading?: unknown;
     onContentReady?: (editor: unknown) => void;
+    onDirty?: () => void;
     onEditorReady?: (editor: unknown) => void;
     onFirstFrameReady?: (editor: unknown) => void;
   }) => {
@@ -29,6 +31,7 @@ vi.mock("@/components/editor/TipTapEditor", () => ({
       initialBodyMarkdown,
       initialEditorHtml,
       onContentReady,
+      onDirty,
       onEditorReady,
       onFirstFrameReady,
     } = props;
@@ -48,11 +51,13 @@ vi.mock("@/components/editor/TipTapEditor", () => ({
       if (onContentReady) {
         contentReadyCallbacks.set(contentCacheKey, onContentReady);
       }
+      if (onDirty) dirtyCallbacks.set(contentCacheKey, onDirty);
       if (onFirstFrameReady) {
         firstFrameCallbacks.set(contentCacheKey, onFirstFrameReady);
       }
       return () => {
         contentReadyCallbacks.delete(contentCacheKey);
+        dirtyCallbacks.delete(contentCacheKey);
         editorReadyCallbacks.delete(contentCacheKey);
         firstFrameCallbacks.delete(contentCacheKey);
       };
@@ -166,6 +171,7 @@ describe("document open first frame surface", () => {
     root = createRoot(host);
     firstFrameCallbacks.clear();
     contentReadyCallbacks.clear();
+    dirtyCallbacks.clear();
     editorReadyCallbacks.clear();
     editorMountsByPath.clear();
   });
@@ -533,6 +539,43 @@ describe("document open first frame surface", () => {
         .querySelector('[data-path="old.md"]')
         ?.getAttribute("data-editor-visibility"),
     ).toBe("visible");
+  });
+
+  it("attributes a retained background surface dirty event to its own path", async () => {
+    const handleDirty = vi.fn();
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          handleDirty={handleDirty}
+          openNotePaths={["old.md", "new.md"]}
+        />,
+      );
+    });
+    act(() => {
+      firstFrameCallbacks.get("old.md")?.({ path: "old.md" });
+    });
+    await flushFrame();
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          activePath="new.md"
+          editorBodyMarkdown="new body"
+          editorContentTick={1}
+          handleDirty={handleDirty}
+          openNotePaths={["old.md", "new.md"]}
+        />,
+      );
+    });
+    act(() => {
+      firstFrameCallbacks.get("new.md")?.({ path: "new.md" });
+      dirtyCallbacks.get("old.md")?.();
+    });
+
+    expect(handleDirty).toHaveBeenCalledWith("old.md");
   });
   it("caps retained clean ready editor surfaces while keeping the active surface", async () => {
     const openNotePaths = Array.from(

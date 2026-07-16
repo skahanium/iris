@@ -112,6 +112,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const pendingNoteOpenCommitRef = useRef<PendingNoteOpenCommit | null>(null);
   const tabMarkdownCacheRef = useRef(new Map<string, string>());
   const tabLockCacheRef = useRef(new Map<string, boolean>());
+  /** Only a blank note created in this app session may bypass the recycle bin. */
+  const disposableNewPathsRef = useRef(new Set<string>());
   const [activeFileLocked, setActiveFileLocked] = useState(false);
 
   activePathRef.current = activePath;
@@ -205,6 +207,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
   const maybeDiscardOnLeave = useCallback(
     async (path: string): Promise<boolean> => {
+      if (!disposableNewPathsRef.current.has(path)) {
+        return false;
+      }
       if (isPathOpening(path)) {
         return false;
       }
@@ -223,7 +228,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         md,
       );
       if (discarded) {
+        disposableNewPathsRef.current.delete(path);
         onVaultIndexBump?.();
+      } else {
+        // A non-empty new note is a real user document from this point onward.
+        disposableNewPathsRef.current.delete(path);
       }
       return discarded;
     },
@@ -592,7 +601,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   );
 
   const closeTab = useCallback(
-    async (path: string) => {
+    async (path: string): Promise<boolean> => {
       const isActive = activePathRef.current === path;
       try {
         await persistAndCacheTab(path);
@@ -600,7 +609,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         onStatusChange?.(`关闭标签失败：${msg}`);
-        return;
+        return false;
       }
 
       tabMarkdownCacheRef.current.delete(path);
@@ -617,13 +626,14 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       setTabs(nextTabs);
 
       if (!isActive) {
-        return;
+        return true;
       }
       if (switchTo === null) {
         clearEditorState();
-        return;
+        return true;
       }
       await activateTab(switchTo);
+      return true;
     },
     [
       activateTab,
@@ -709,6 +719,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
             .filter((t) => t.path !== current)
             .map((t) => t.title),
         });
+        disposableNewPathsRef.current.add(created.path);
         onVaultIndexBump?.();
         const openStartedAt = performance.now();
         const openTraceRequest: PrepareNoteOpenRequest = {

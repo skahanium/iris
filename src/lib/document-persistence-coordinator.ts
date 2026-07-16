@@ -6,6 +6,33 @@ export type DocumentPersistenceStatus =
   | "saved_index_degraded"
   | "failed";
 
+/** The origin of a snapshot tracked by the persistence state machine. */
+export type DocumentPersistenceSnapshotSource =
+  | "load"
+  | "user_edit"
+  | "explicit_save"
+  | "leave"
+  | "recovery"
+  | "restore"
+  | "rename";
+
+/** Origins that may create a writeable snapshot. */
+export type DocumentPersistenceCaptureSource = Exclude<
+  DocumentPersistenceSnapshotSource,
+  "load"
+>;
+
+/** Raised before an unsafe background snapshot can replace known content. */
+export class DocumentPersistenceSnapshotRejectedError extends Error {
+  constructor(
+    readonly path: string,
+    readonly source: DocumentPersistenceCaptureSource,
+  ) {
+    super(`rejected unsafe ${source} snapshot for ${path}`);
+    this.name = "DocumentPersistenceSnapshotRejectedError";
+  }
+}
+
 export interface DocumentPersistenceWriteResult {
   indexDegraded: boolean;
 }
@@ -17,9 +44,12 @@ export interface DocumentPersistenceMoveResult {
 }
 
 export interface DocumentPersistenceSnapshot {
+  baselineSource: DocumentPersistenceSnapshotSource | null;
+  loadGeneration: number;
   path: string;
   markdown: string;
   revision: number;
+  source: DocumentPersistenceSnapshotSource;
   baselineMarkdown: string;
   baselineRevision: number;
   savedAt: number | null;
@@ -70,6 +100,18 @@ function deferred<T>(): Deferred<T> {
   return { promise, resolve };
 }
 
+function isBlankMarkdown(markdown: string): boolean {
+  return markdown.trim().length === 0;
+}
+
+function sourceAllowsIntentionalClear(
+  source: DocumentPersistenceSnapshotSource,
+): boolean {
+  return (
+    source === "user_edit" || source === "explicit_save" || source === "restore"
+  );
+}
+
 /**
  * Serializes Markdown persistence per document path and prevents stale write
  * receipts from acknowledging a newer captured revision.
@@ -91,17 +133,55 @@ export class DocumentPersistenceCoordinator {
     this.write = write;
   }
 
-  /** Establishes an authoritative on-disk baseline for a document. */
-  load(path: string, markdown: string): DocumentPersistenceSnapshot {
-    this.discard(path);
+  /**
+   * Establishes an authoritative on-disk baseline for a newly tracked document.
+   * A late load for an already tracked path is ignored so it cannot replace a
+   * newer editor, recovery, or rename snapshot. A later load generation may
+   * refresh a clean record after the document is opened again.
+   */
+  load(
+    path: string,
+    markdown: string,
+    loadGeneration: number,
+  ): DocumentPersistenceSnapshot {
+    const resolvedPath = this.resolvePath(path);
+    const existing = this.records.get(resolvedPath);
+    if (existing) {
+      if (existing.loadGeneration >= loadGeneration) {
+        return this.snapshot(existing);
+      }
+      existing.loadGeneration = loadGeneration;
+      if (
+        existing.baselineRevision !== existing.revision ||
+        existing.writeTask
+      ) {
+        return this.snapshot(existing);
+      }
+      const revision = this.nextRevision();
+      existing.markdown = markdown;
+      existing.revision = revision;
+      existing.baselineMarkdown = markdown;
+      existing.baselineRevision = revision;
+      existing.baselineSource = "load";
+      existing.savedAt = Date.now();
+      existing.indexDegraded = false;
+      existing.status = "clean";
+      existing.error = null;
+      existing.source = "load";
+      this.emit(existing);
+      return this.snapshot(existing);
+    }
     const revision = this.nextRevision();
     const record: DocumentRecord = {
-      path,
+      baselineSource: "load",
+      loadGeneration,
+      path: resolvedPath,
       markdown,
       revision,
       baselineMarkdown: markdown,
       baselineRevision: revision,
       savedAt: Date.now(),
+      source: "load",
       indexDegraded: false,
       status: "clean",
       error: null,
@@ -110,23 +190,40 @@ export class DocumentPersistenceCoordinator {
       timer: null,
       writeTask: null,
     };
-    this.records.set(path, record);
+    this.records.set(resolvedPath, record);
     this.emit(record);
     return this.snapshot(record);
   }
 
-  /** Captures a complete Markdown snapshot and schedules its delayed commit. */
-  capture(path: string, markdown: string): DocumentPersistenceSnapshot {
+  /**
+   * Captures a complete Markdown snapshot from an explicit origin and schedules
+   * its delayed commit. Leave/recovery snapshots cannot introduce an empty
+   * replacement for a known non-empty document.
+   */
+  capture(
+    path: string,
+    markdown: string,
+    source: DocumentPersistenceCaptureSource,
+  ): DocumentPersistenceSnapshot {
     const resolvedPath = this.resolvePath(path);
     if (!this.records.has(resolvedPath)) {
+      if (isBlankMarkdown(markdown) && !sourceAllowsIntentionalClear(source)) {
+        throw new DocumentPersistenceSnapshotRejectedError(
+          resolvedPath,
+          source,
+        );
+      }
       const revision = this.nextRevision();
       const record: DocumentRecord = {
+        baselineSource: null,
+        loadGeneration: -1,
         path: resolvedPath,
         markdown,
         revision,
         baselineMarkdown: "",
         baselineRevision: 0,
         savedAt: null,
+        source,
         indexDegraded: false,
         status: "dirty",
         error: null,
@@ -141,8 +238,21 @@ export class DocumentPersistenceCoordinator {
       return this.snapshot(record);
     }
     const record = this.requireRecord(resolvedPath);
+    if (
+      isBlankMarkdown(markdown) &&
+      (record.baselineMarkdown.trim().length > 0 ||
+        record.markdown.trim().length > 0) &&
+      !sourceAllowsIntentionalClear(source) &&
+      !(
+        isBlankMarkdown(record.markdown) &&
+        sourceAllowsIntentionalClear(record.source)
+      )
+    ) {
+      throw new DocumentPersistenceSnapshotRejectedError(record.path, source);
+    }
     record.markdown = markdown;
     record.revision = this.nextRevision();
+    record.source = source;
     record.error = null;
     if (record.baselineMarkdown === markdown && !record.writeTask) {
       record.baselineRevision = record.revision;
@@ -407,6 +517,7 @@ export class DocumentPersistenceCoordinator {
     const path = record.path;
     const markdown = record.markdown;
     const revision = record.revision;
+    const source = record.source;
     record.status = "saving";
     this.emit(record);
     const task = (async () => {
@@ -426,6 +537,7 @@ export class DocumentPersistenceCoordinator {
         }
         record.baselineMarkdown = markdown;
         record.baselineRevision = revision;
+        record.baselineSource = source;
         record.savedAt = Date.now();
         record.indexDegraded = result.indexDegraded;
         record.status = result.indexDegraded ? "saved_index_degraded" : "saved";
@@ -457,12 +569,15 @@ export class DocumentPersistenceCoordinator {
     const {
       baselineMarkdown,
       baselineRevision,
+      baselineSource,
       error,
       indexDegraded,
+      loadGeneration,
       markdown,
       path,
       revision,
       savedAt,
+      source,
       status,
     } = record;
     return {
@@ -471,10 +586,13 @@ export class DocumentPersistenceCoordinator {
       revision,
       baselineMarkdown,
       baselineRevision,
+      baselineSource,
+      loadGeneration,
       savedAt,
       indexDegraded,
       status,
       error,
+      source,
     };
   }
 }

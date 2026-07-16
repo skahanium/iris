@@ -78,7 +78,7 @@ function Harness({
 async function runAndWait(
   apiRef: { current: ReturnType<typeof useTabManager> | null },
   path: string,
-  action: () => Promise<void>,
+  action: () => Promise<unknown>,
 ) {
   await act(async () => {
     await action();
@@ -273,7 +273,7 @@ describe("useTabManager handleNewNote", () => {
     expect(apiRef.current!.editorContentTick).toBe(initialTick + 1);
   });
 
-  it("discards an empty active tab before creating the next note", async () => {
+  it("never permanently discards an existing empty tab before creating the next note", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,
     };
@@ -295,14 +295,14 @@ describe("useTabManager handleNewNote", () => {
       apiRef.current!.handleNewNote(),
     );
 
-    expect(fileDiscard).toHaveBeenCalledWith("未命名文档.md");
+    expect(fileDiscard).not.toHaveBeenCalled();
     expect(createDefaultNote).toHaveBeenCalledWith({
       extraTakenTitles: [],
     });
     expect(apiRef.current!.activePath).toBe("未命名文档（1）.md");
     expect(
       apiRef.current!.tabs.some((t: TabItem) => t.path === "未命名文档.md"),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       apiRef.current!.tabs.some(
         (t: TabItem) => t.path === "未命名文档（1）.md",

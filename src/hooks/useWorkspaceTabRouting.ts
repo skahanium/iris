@@ -14,7 +14,8 @@ interface NoteTabLike {
 
 interface UseWorkspaceTabRoutingOptions<OpenOptions> {
   activePath: string | null;
-  closeTab: (path: string) => MaybePromise<void>;
+  /** Resolves true only after the tab was actually removed. */
+  closeTab: (path: string) => MaybePromise<boolean>;
   currentNoteIsClassified: boolean;
   handleActivateNoteTab: (path: string) => void;
   handleNewNoteLeavingHome: () => MaybePromise<void>;
@@ -96,7 +97,11 @@ export function useWorkspaceTabRouting<OpenOptions>({
         activePath === path && tabs.length === 1 && mediaTabs.length === 0;
       const closeResult = closeTab(path);
       if (willCloseLastActiveNote) {
-        Promise.resolve(closeResult).then(() => showHome());
+        void Promise.resolve(closeResult)
+          .then((closed) => {
+            if (closed) showHome();
+          })
+          .catch(() => undefined);
       }
     },
     [activePath, closeMedia, closeTab, mediaTabs.length, showHome, tabs.length],

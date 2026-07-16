@@ -3,6 +3,7 @@ pub mod app_update;
 pub mod assistant_commands;
 pub mod classified;
 pub mod corpus_commands;
+pub mod document_recovery;
 pub mod file;
 pub mod graph;
 pub mod llm;

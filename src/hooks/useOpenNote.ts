@@ -39,6 +39,8 @@ function shouldSerializeEditorBody(
 
 interface UseOpenNoteOptions {
   activePath: string | null;
+  /** Resolved during open from frontmatter/index metadata; never infer a legacy title from the path again. */
+  titleFallback?: string;
   /** Bumped when a note is read from disk into tab state (openFile); not bumped on save. */
   editorContentTick: number;
   activePathRef: RefObject<string | null>;
@@ -65,6 +67,7 @@ interface UseOpenNoteOptions {
 
 export function useOpenNote({
   activePath,
+  titleFallback,
   editorContentTick,
   activePathRef,
   markdownRef,
@@ -82,21 +85,27 @@ export function useOpenNote({
   /** Parsed body for TipTap on disk/tab load only; layer-1 save must not remount editor. */
   const editorBodyMarkdown = useMemo(() => {
     if (!activePath) return "";
-    return parseNoteForEditor(markdownRef.current, pathStem(activePath)).bodyMd;
+    return parseNoteForEditor(
+      markdownRef.current,
+      titleFallback?.trim() || pathStem(activePath),
+    ).bodyMd;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- editorContentTick = disk load; omit `markdown` so save does not call setContent
-  }, [activePath, editorContentTick, markdownRef]);
+  }, [activePath, editorContentTick, markdownRef, titleFallback]);
 
   const pathSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathSyncGenRef = useRef(0);
   const editorIngestGenerationRef = useRef(0);
   const syncFromMarkdown = useCallback(
     (md: string, _path: string) => {
-      const parsed = parseNoteForEditor(md, pathStem(_path));
+      const parsed = parseNoteForEditor(
+        md,
+        titleFallback?.trim() || pathStem(_path),
+      );
       frontmatterYamlRef.current = parsed.yaml;
       setNoteTitle(parsed.title);
       setBodyMarkdown(parsed.bodyMd);
     },
-    [frontmatterYamlRef],
+    [frontmatterYamlRef, titleFallback],
   );
 
   useLayoutEffect(() => {
@@ -146,11 +155,14 @@ export function useOpenNote({
       frontmatterYamlRef.current = extractFrontmatterYaml(md);
       const path = activePathRef.current;
       if (path) {
-        const parsed = parseNoteForEditor(md, pathStem(path));
+        const parsed = parseNoteForEditor(
+          md,
+          titleFallback?.trim() || pathStem(path),
+        );
         setNoteTitle(parsed.title);
       }
     },
-    [activePathRef, frontmatterYamlRef, markdownRef],
+    [activePathRef, frontmatterYamlRef, markdownRef, titleFallback],
   );
 
   const onTitleChange = useCallback(
@@ -260,7 +272,10 @@ export function useOpenNote({
       const path = activePathRef.current;
       if (!path) return;
       syncFromMarkdown(content, path);
-      const parsed = parseNoteForEditor(content, pathStem(path));
+      const parsed = parseNoteForEditor(
+        content,
+        titleFallback?.trim() || pathStem(path),
+      );
       if (editorRef.current) {
         const generation = ++editorIngestGenerationRef.current;
         void ingestMarkdownForEditorAsync({ bodyMarkdown: parsed.bodyMd })
@@ -290,7 +305,7 @@ export function useOpenNote({
           });
       }
     },
-    [activePathRef, dirtyRef, editorRef, syncFromMarkdown],
+    [activePathRef, dirtyRef, editorRef, syncFromMarkdown, titleFallback],
   );
 
   return {

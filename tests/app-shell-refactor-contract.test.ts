@@ -38,7 +38,9 @@ describe("App shell refactor contract", () => {
     expect(hook).not.toContain("useEditorSave");
     expect(hook).not.toContain("persistActiveTabBeforeLeave");
     expect(hook).toContain("useTauriCloseSave");
-    expect(hook).toContain("handleSaveVersion");
+    expect(hook).toContain("createVersionSnapshotScheduler");
+    expect(hook).toContain("versionFinalizeCurrent");
+    expect(hook).not.toContain("const handleSaveVersion");
     expect(app).toContain("useAppPersistenceLifecycle");
     expect(app).not.toContain("const versionSnapshotScheduler = useMemo");
     expect(app).not.toContain("const flushAllOpenTabs = useCallback");

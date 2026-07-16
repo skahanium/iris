@@ -35,17 +35,14 @@ describe("VersionTimeline finalize", () => {
     host.remove();
   });
 
-  it("marks high priority around finalize IPC", async () => {
-    let resolveFinalize!: () => void;
-    versionFinalizeCurrent.mockImplementation(
+  it("delegates finalize to the supplied serialized version writer", async () => {
+    let resolveFinalize!: (value: null) => void;
+    const onFinalizeCurrent = vi.fn(
       () =>
-        new Promise<void>((resolve) => {
+        new Promise<null>((resolve) => {
           resolveFinalize = resolve;
         }),
     );
-
-    const onHighPriorityStart = vi.fn();
-    const onHighPriorityEnd = vi.fn();
 
     act(() => {
       root.render(
@@ -55,8 +52,7 @@ describe("VersionTimeline finalize", () => {
           notePath="notes/a.md"
           currentContent="body"
           onRestore={async () => {}}
-          onHighPriorityStart={onHighPriorityStart}
-          onHighPriorityEnd={onHighPriorityEnd}
+          onFinalizeCurrent={onFinalizeCurrent}
         />,
       );
     });
@@ -72,16 +68,20 @@ describe("VersionTimeline finalize", () => {
     });
 
     await vi.waitFor(() => {
-      expect(onHighPriorityStart).toHaveBeenCalledWith("notes/a.md");
+      expect(onFinalizeCurrent).toHaveBeenCalledWith(
+        "notes/a.md",
+        "body",
+        null,
+      );
     });
-    expect(onHighPriorityEnd).not.toHaveBeenCalled();
+    expect(versionFinalizeCurrent).not.toHaveBeenCalled();
 
     await act(async () => {
-      resolveFinalize();
+      resolveFinalize(null);
     });
 
     await vi.waitFor(() => {
-      expect(onHighPriorityEnd).toHaveBeenCalledWith("notes/a.md");
+      expect(finalizeBtn?.disabled).toBe(false);
     });
   });
 
@@ -99,6 +99,9 @@ describe("VersionTimeline finalize", () => {
           getCurrentContent={getCurrentContent}
           onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
           onRestore={async () => {}}
+          onFinalizeCurrent={(path, content, label) =>
+            versionFinalizeCurrent(path, content, label)
+          }
         />,
       );
     });
@@ -137,6 +140,9 @@ describe("VersionTimeline finalize", () => {
           currentContent="# stale state"
           onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
           onRestore={async () => {}}
+          onFinalizeCurrent={(path, content, label) =>
+            versionFinalizeCurrent(path, content, label)
+          }
         />,
       );
     });

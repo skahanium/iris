@@ -8,7 +8,8 @@ export type OverlayId =
   | "knowledgeRelations"
   | "graph"
   | "version"
-  | "recycleBin";
+  | "recycleBin"
+  | "documentRecovery";
 
 export type ManagementCenterSection = "overview" | "notes" | "knowledge" | "ai";
 
@@ -141,6 +142,7 @@ export function useOverlayManager() {
   const graphOpen = activeOverlay === "graph";
   const versionOpen = activeOverlay === "version";
   const recycleBinOpen = activeOverlay === "recycleBin";
+  const documentRecoveryOpen = activeOverlay === "documentRecovery";
 
   return {
     activeOverlay,
@@ -169,5 +171,8 @@ export function useOverlayManager() {
     setVersionOpen: (open: boolean) => setOverlayOpen("version", open),
     recycleBinOpen,
     setRecycleBinOpen: (open: boolean) => setOverlayOpen("recycleBin", open),
+    documentRecoveryOpen,
+    setDocumentRecoveryOpen: (open: boolean) =>
+      setOverlayOpen("documentRecovery", open),
   };
 }

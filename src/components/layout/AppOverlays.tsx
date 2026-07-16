@@ -5,6 +5,7 @@ import { ConflictDialog } from "@/components/file/ConflictDialog";
 import { VaultNavigator } from "@/components/file/VaultNavigator";
 import { QuickOpen } from "@/components/file/QuickOpen";
 import { RecycleBinSheet } from "@/components/file/RecycleBinSheet";
+import { DocumentRecoveryDialog } from "@/components/file/DocumentRecoveryDialog";
 import { SearchPanel } from "@/components/file/SearchPanel";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { KnowledgeRelationsPanel } from "@/components/knowledge/KnowledgeRelationsPanel";
@@ -30,6 +31,7 @@ import type {
   EmbeddingIndexStatus,
   EmbeddingSchedulerStartResult,
   FileListItem,
+  VersionEntry,
 } from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
 import type {
@@ -77,6 +79,7 @@ interface OverlayPort {
   quickOpen: boolean;
   fileSheet: boolean;
   recycleBinOpen: boolean;
+  documentRecoveryOpen: boolean;
   searchOpen: boolean;
   managementCenterOpen: boolean;
   managementCenterSection: ManagementCenterSection;
@@ -95,8 +98,11 @@ interface ConflictState {
 }
 
 interface VersionSchedulerPort {
-  markHighPriorityStart: (path: string) => void;
-  markHighPriorityEnd: (path: string) => void;
+  finalize: (
+    path: string,
+    content: string,
+    label: string | null,
+  ) => Promise<VersionEntry | null>;
 }
 
 interface AppOverlaysProps {
@@ -125,6 +131,7 @@ interface AppOverlaysProps {
   markdown: string;
   onClassifiedUnlocked: () => void;
   onIndexDegraded: () => void;
+  onOpenDocumentRecovery: () => void;
   onBeforeFilePathChange: (oldPath: string, newPath: string) => Promise<void>;
   onFilePathChanged: (oldPath: string, newPath: string, title?: string) => void;
   onFilePathChangeFailed: (oldPath: string) => void;
@@ -199,6 +206,7 @@ export function AppOverlays({
   markdown,
   onClassifiedUnlocked,
   onIndexDegraded,
+  onOpenDocumentRecovery,
   onBeforeFilePathChange,
   onFilePathChanged,
   onFilePathChangeFailed,
@@ -274,6 +282,11 @@ export function AppOverlays({
         onIndexDegraded={onIndexDegraded}
         onIndexChange={bumpVaultIndex}
       />
+      <DocumentRecoveryDialog
+        open={overlays.documentRecoveryOpen}
+        onClose={() => overlays.closeOverlay("documentRecovery")}
+        onRecovered={bumpVaultIndex}
+      />
       <SearchPanel
         open={overlays.searchOpen}
         onClose={() => overlays.closeOverlay("search")}
@@ -323,6 +336,7 @@ export function AppOverlays({
             onRescanVault={rescanVault}
             onRecycleIndexChange={bumpVaultIndex}
             onIndexDegraded={onIndexDegraded}
+            onOpenDocumentRecovery={onOpenDocumentRecovery}
             onBeforeFilePathChange={onBeforeFilePathChange}
             onFilePathChanged={onFilePathChanged}
             onFilePathChangeFailed={onFilePathChangeFailed}
@@ -385,11 +399,8 @@ export function AppOverlays({
               tabs.find((tab) => tab.path === activePath)?.dirty ?? false
             }
             onRestore={restoreVersion}
-            onHighPriorityStart={(path) =>
-              versionSnapshotScheduler.markHighPriorityStart(path)
-            }
-            onHighPriorityEnd={(path) =>
-              versionSnapshotScheduler.markHighPriorityEnd(path)
+            onFinalizeCurrent={(path, content, label) =>
+              versionSnapshotScheduler.finalize(path, content, label)
             }
           />
         </Suspense>

@@ -128,10 +128,12 @@ pub fn discard_document(state: &AppState, path: &str) -> AppResult<()> {
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, path)?;
 
-    state.db.with_conn(|conn| {
+    let cas_hashes = state.db.with_conn(|conn| {
+        let mut cas_hashes = Vec::new();
         if let Some(file_id) = lookup_file_id(conn, path)? {
             for v in load_versions_for_file(conn, file_id)? {
-                if crate::version::is_cas_storage_path(&v.storage_path) {
+                if let Some(hash) = v.storage_path.strip_prefix("cas:") {
+                    cas_hashes.push(hash.to_string());
                     continue;
                 }
                 let src = versions_root(&vault).join(&v.storage_path);
@@ -140,8 +142,15 @@ pub fn discard_document(state: &AppState, path: &str) -> AppResult<()> {
                 }
             }
         }
-        remove_file_index(conn, path)
+        remove_file_index(conn, path)?;
+        Ok(cas_hashes)
     })?;
+
+    for hash in cas_hashes {
+        if let Err(error) = state.ref_counter().decrement(&hash) {
+            tracing::warn!("CAS ref decrement failed while permanently discarding {path}: {error}");
+        }
+    }
 
     if abs.is_file() {
         fs::remove_file(abs)?;
@@ -792,5 +801,34 @@ mod tests {
         discard_document(&state, "blank.md").unwrap();
         assert!(!note.exists());
         assert!(list_recycle(&state).unwrap().is_empty());
+    }
+
+    #[test]
+    fn discard_releases_cas_reference_for_permanent_cleanup() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("discard-cas.md");
+        fs::write(&note, "# Discard\n\nCurrent body").unwrap();
+        state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
+        let snapshot = version_save_manual(&state, "discard-cas.md", "# Discard\n\nSnapshot")
+            .unwrap()
+            .expect("snapshot");
+        let storage_path: String = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [snapshot.id],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        let hash = storage_path.strip_prefix("cas:").expect("CAS snapshot");
+        assert_eq!(state.ref_counter().get_count(hash).unwrap(), 1);
+
+        discard_document(&state, "discard-cas.md").unwrap();
+
+        assert_eq!(state.ref_counter().get_count(hash).unwrap(), 0);
     }
 }
