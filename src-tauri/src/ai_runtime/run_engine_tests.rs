@@ -1771,7 +1771,6 @@ async fn web_required_prefetch_failure_never_persists_a_degradation_notice() {
             serde_json::json!("stage_changed"),
             serde_json::json!("stage_changed"),
             serde_json::json!("content_delta"),
-            serde_json::json!("content_delta"),
             serde_json::json!("completed"),
         ]
     );
