@@ -295,6 +295,7 @@ fn request() -> AssistantRunStartRequest {
         web_enabled: false,
         model_override: None,
         security_domain: SecurityDomain::Normal,
+        classified_context_ref: None,
     }
 }
 

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import {
@@ -7,10 +7,16 @@ import {
 } from "@/components/ai/AssistantRunCapabilityDegraded";
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { Button } from "@/components/ui/button";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
+import {
+  assistantClassifiedContextClear,
+  assistantClassifiedContextOpen,
+  assistantClassifiedRunTakeResult,
+} from "@/lib/ipc";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AssistantComposerDock } from "./AssistantComposerDock";
@@ -36,6 +42,7 @@ export function UnifiedAssistantPanel({
 }: UnifiedAssistantPanelProps) {
   const { profile: promptProfile } = usePromptProfile();
   const assistantRun = useAssistantRun();
+  const { reset: resetAssistantRun } = assistantRun;
   const aiRuntime = useAiDomainRuntime({
     domainState: {
       domain: aiDomain,
@@ -53,6 +60,13 @@ export function UnifiedAssistantPanel({
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [retryingWebVerification, setRetryingWebVerification] = useState(false);
+  const [classifiedContextRef, setClassifiedContextRef] = useState<
+    string | null
+  >(null);
+  const [
+    includeCurrentClassifiedDocument,
+    setIncludeCurrentClassifiedDocument,
+  ] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
 
@@ -81,6 +95,36 @@ export function UnifiedAssistantPanel({
     setStreaming,
     textareaRef,
   });
+  const resetAssistantRunRef = useRef(resetAssistantRun);
+  const handleNewChatRef = useRef(handleNewChat);
+  useEffect(() => {
+    resetAssistantRunRef.current = resetAssistantRun;
+    handleNewChatRef.current = handleNewChat;
+  }, [handleNewChat, resetAssistantRun]);
+
+  // A classified conversation is strictly tied to one unlocked document view.
+  // Domain/path changes invalidate both renderer and backend volatile state.
+  useEffect(() => {
+    let active = true;
+    setIncludeCurrentClassifiedDocument(false);
+    setClassifiedContextRef(null);
+    resetAssistantRunRef.current();
+    handleNewChatRef.current();
+    if (aiDomain === "classified" && classifiedPath) {
+      void assistantClassifiedContextOpen(classifiedPath)
+        .then((context) => {
+          if (active) setClassifiedContextRef(context.contextRef);
+        })
+        .catch(() => {
+          if (active)
+            setLastError("当前涉密文档不可用于 AI 分析，请确认保险库已解锁。");
+        });
+    }
+    return () => {
+      active = false;
+      void assistantClassifiedContextClear();
+    };
+  }, [aiDomain, classifiedPath]);
 
   const {
     handleComposerKeyDown,
@@ -108,10 +152,16 @@ export function UnifiedAssistantPanel({
     setStreaming,
     setActivityHint,
     setError: setLastError,
+    classifiedContextRef,
+    takeClassifiedResult: assistantClassifiedRunTakeResult,
   });
 
   const { isStarting, send } = useUnifiedAssistantSend({
     aiDomain,
+    classifiedContextRef,
+    includeCurrentClassifiedDocument,
+    clearClassifiedDocumentConsent: () =>
+      setIncludeCurrentClassifiedDocument(false),
     input,
     images,
     composerDisabled:
@@ -142,11 +192,24 @@ export function UnifiedAssistantPanel({
   const stopStreaming = useCallback(() => {
     void assistantRun.cancel();
   }, [assistantRun]);
+  const refreshClassifiedContext = useCallback(() => {
+    if (aiDomain !== "classified" || !classifiedPath) return;
+    setClassifiedContextRef(null);
+    setIncludeCurrentClassifiedDocument(false);
+    void assistantClassifiedContextClear().then(() =>
+      assistantClassifiedContextOpen(classifiedPath)
+        .then((context) => setClassifiedContextRef(context.contextRef))
+        .catch(() =>
+          setLastError("当前涉密文档不可用于 AI 分析，请确认保险库已解锁。"),
+        ),
+    );
+  }, [aiDomain, classifiedPath]);
   const resetAssistantSessionState = useCallback(() => {
-    assistantRun.reset();
+    resetAssistantRun();
     setLastError(null);
     handleNewChat();
-  }, [assistantRun, handleNewChat]);
+    refreshClassifiedContext();
+  }, [handleNewChat, refreshClassifiedContext, resetAssistantRun]);
   const handleConfirmation = useCallback(
     (decision: "approve" | "reject") => {
       setConfirming(true);
@@ -204,6 +267,14 @@ export function UnifiedAssistantPanel({
         webSearch={webSearch}
         webSearchProviderName={webSearchProviderName}
       />
+      <p
+        className="border-b border-border/60 px-3 py-1 text-[11px] text-muted-foreground"
+        data-testid="assistant-security-domain"
+      >
+        {aiDomain === "classified"
+          ? "涉密文档：仅可显式附带当前打开文档，本次对话不会保存。"
+          : "普通文档：可通过 @ 显式引用文档。"}
+      </p>
       {lastError ? (
         <p className="border-b border-destructive/30 px-3 py-2 text-xs text-destructive">
           {lastError}
@@ -262,6 +333,24 @@ export function UnifiedAssistantPanel({
         onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
       />
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
+      {aiDomain === "classified" ? (
+        <div className="border-t border-border/60 px-3 py-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={includeCurrentClassifiedDocument ? "secondary" : "outline"}
+            disabled={!classifiedContextRef || composerDisabled}
+            onClick={() =>
+              setIncludeCurrentClassifiedDocument((value) => !value)
+            }
+            data-testid="classified-current-document-context"
+          >
+            {includeCurrentClassifiedDocument
+              ? "已引用当前涉密文档（仅本次）"
+              : "引用当前涉密文档（仅本次）"}
+          </Button>
+        </div>
+      ) : null}
       <AssistantComposerDock
         composerDisabled={composerDisabled}
         images={images}

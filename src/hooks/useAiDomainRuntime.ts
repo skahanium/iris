@@ -4,12 +4,6 @@ import type { Dispatch, SetStateAction } from "react";
 import type { AiDomain, AiDomainState } from "@/lib/ai-domain";
 import { classifiedAiCacheClear, classifiedAiRetrievalClear } from "@/lib/ipc";
 
-interface ClassifiedThreadSnapshot {
-  path: string;
-  draft: string;
-  selectedMessageIds: Set<number>;
-}
-
 export interface UseAiDomainRuntimeOptions {
   domainState: AiDomainState;
 }
@@ -26,7 +20,6 @@ export interface UseAiDomainRuntimeReturn {
   toggleNormalMessageSelection: (id: number) => void;
   toggleClassifiedMessageSelection: (id: number) => void;
   clearClassifiedSelection: () => void;
-  classifiedThreadByPath: Map<string, ClassifiedThreadSnapshot>;
   abortClassifiedRequest: () => void;
   clearClassifiedVolatileState: (reason: string) => void;
 }
@@ -41,10 +34,6 @@ export function useAiDomainRuntime({
   );
   const [classifiedSelectedMessageIds, setClassifiedSelectedMessageIds] =
     useState(() => new Set<number>());
-  const [classifiedThreadByPath, setClassifiedThreadByPath] = useState(
-    () => new Map<string, ClassifiedThreadSnapshot>(),
-  );
-
   const abortControllerRef = useRef<AbortController | null>(null);
   const prevDomainRef = useRef<AiDomain>(domainState.domain);
   const prevClassifiedPathRef = useRef<string | null>(
@@ -68,7 +57,6 @@ export function useAiDomainRuntime({
       abortClassifiedRequest();
       setClassifiedDraft("");
       setClassifiedSelectedMessageIds(new Set());
-      setClassifiedThreadByPath(new Map());
       classifiedStreamBufRef.current = "";
       classifiedPendingPatchesRef.current = [];
       classifiedWritingArtifactsRef.current = [];
@@ -131,49 +119,26 @@ export function useAiDomainRuntime({
     prevDomainRef.current = currDomain;
   }, [domainState.domain, clearClassifiedVolatileState]);
 
-  // Handle classified path switch: save current, load target
+  // A classified document may never lend its draft or selected context to
+  // another document. Changing the active classified path is therefore a
+  // destructive in-memory boundary, not a conversation switch.
   useEffect(() => {
     const prevPath = prevClassifiedPathRef.current;
     const currPath = domainState.classifiedActivePath;
 
     if (
       domainState.domain === "classified" &&
-      prevPath !== null &&
-      prevPath !== currPath
-    ) {
-      setClassifiedThreadByPath((prev) => {
-        const next = new Map(prev);
-        next.set(prevPath, {
-          path: prevPath,
-          draft: classifiedDraft,
-          selectedMessageIds: new Set(classifiedSelectedMessageIds),
-        });
-        return next;
-      });
-    }
-
-    if (
-      domainState.domain === "classified" &&
       currPath !== null &&
       prevPath !== currPath
     ) {
-      const existing = classifiedThreadByPath.get(currPath);
-      if (existing) {
-        setClassifiedDraft(existing.draft);
-        setClassifiedSelectedMessageIds(new Set(existing.selectedMessageIds));
-      } else {
-        setClassifiedDraft("");
-        setClassifiedSelectedMessageIds(new Set());
-      }
+      clearClassifiedVolatileState("classified_document_switch");
     }
 
     prevClassifiedPathRef.current = currPath;
   }, [
     domainState.domain,
     domainState.classifiedActivePath,
-    classifiedDraft,
-    classifiedSelectedMessageIds,
-    classifiedThreadByPath,
+    clearClassifiedVolatileState,
   ]);
 
   return {
@@ -188,7 +153,6 @@ export function useAiDomainRuntime({
     toggleNormalMessageSelection,
     toggleClassifiedMessageSelection,
     clearClassifiedSelection,
-    classifiedThreadByPath,
     abortClassifiedRequest,
     clearClassifiedVolatileState,
   };

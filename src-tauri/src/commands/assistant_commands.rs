@@ -12,7 +12,8 @@ use crate::ai_runtime::run_contract::{
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingDirectAnswerProvider, FailoverStreamingToolLoopProvider,
-    ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink, TauriRunEventSink,
+    ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink,
+    StreamingDirectAnswerProvider, TauriRunEventSink,
 };
 use crate::ai_runtime::run_intake::{NormalRunControlOutcome, RunIntake};
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
@@ -94,6 +95,14 @@ pub struct AssistantSessionMessage {
     pub explicit_references: Vec<serde_json::Value>,
     pub created_at: String,
 }
+
+/// Request the one-time retrieval of an in-memory classified answer.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifiedRunResultRequest {
+    pub run_id: String,
+    pub context_ref: String,
+}
 /// List conversation history through one domain-routed API.
 #[tauri::command]
 pub async fn assistant_session_list(
@@ -124,24 +133,9 @@ pub async fn assistant_session_list(
             })
         }
         SecurityDomain::Classified => {
-            let vault = state.vault_path()?;
-            crate::ai_runtime::classified_session::classified_ai_thread_list(&vault).map(|items| {
-                items
-                    .into_iter()
-                    .skip(request.offset as usize)
-                    .take(request.limit as usize)
-                    .map(|item| AssistantSessionSummary {
-                        session: AssistantSessionRef {
-                            domain: SecurityDomain::Classified,
-                            session_key: item.thread_id,
-                        },
-                        title: item.title,
-                        message_count: item.message_count,
-                        created_at: item.created_at,
-                        updated_at: item.updated_at,
-                    })
-                    .collect()
-            })
+            // New classified conversations are deliberately volatile. Existing
+            // CEF history is left untouched but is never loaded by this API.
+            Ok(Vec::new())
         }
     }
 }
@@ -177,31 +171,8 @@ pub async fn assistant_session_load(
             })
         }
         SecurityDomain::Classified => {
-            let vault = state.vault_path()?;
-            crate::ai_runtime::classified_session::classified_ai_thread_load(
-                &vault,
-                request.session.session_key,
-            )
-            .map(|thread| {
-                thread
-                    .messages
-                    .into_iter()
-                    .rev()
-                    .take(request.limit as usize)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .map(|item| AssistantSessionMessage {
-                        seq: item.seq,
-                        role: item.role,
-                        content: item.content,
-                        content_parts: item.content_parts,
-                        tool_calls: item.tool_calls,
-                        explicit_references: item.explicit_references,
-                        created_at: item.created_at,
-                    })
-                    .collect()
-            })
+            let _ = request;
+            Err(AppError::msg("agent_run_classified_history_disabled"))
         }
     }
 }
@@ -221,12 +192,8 @@ pub async fn assistant_session_rename(
             )
         }
         SecurityDomain::Classified => {
-            let vault = state.vault_path()?;
-            crate::ai_runtime::classified_session::classified_ai_thread_rename(
-                &vault,
-                request.session.session_key,
-                request.title,
-            )
+            let _ = request;
+            Err(AppError::msg("agent_run_classified_history_disabled"))
         }
     }
 }
@@ -245,12 +212,8 @@ pub async fn assistant_session_delete(
             )
         }
         SecurityDomain::Classified => {
-            let vault = state.vault_path()?;
-            crate::ai_runtime::classified_session::classified_ai_thread_delete(
-                &vault,
-                request.session.session_key,
-            )?;
-            Ok(true)
+            let _ = request;
+            Err(AppError::msg("agent_run_classified_history_disabled"))
         }
     }
 }
@@ -270,12 +233,8 @@ pub async fn assistant_session_retract(
             )
         }
         SecurityDomain::Classified => {
-            let vault = state.vault_path()?;
-            crate::ai_runtime::classified_session::classified_ai_thread_retract(
-                &vault,
-                request.session.session_key,
-                request.from_seq,
-            )
+            let _ = request;
+            Err(AppError::msg("agent_run_classified_history_disabled"))
         }
     }
 }
@@ -300,16 +259,51 @@ pub async fn assistant_run_start(
         }
         SecurityDomain::Classified => {
             let vault = state.vault_path()?;
-            let accepted = RunIntake::start_classified(&vault, request)?;
-            let event = crate::ai_runtime::classified_session::classified_run_get(
-                &vault,
-                &accepted.session,
-                &accepted.run_id,
-            )?
-            .and_then(|response| response.events.into_iter().next())
-            .ok_or_else(|| AppError::msg("agent_run_accepted_event_missing"))?;
+            if request.session.is_some()
+                || request.web_enabled
+                || !request.explicit_references.is_empty()
+                || request.content_parts.is_some()
+                || request.explicit_action.is_some()
+            {
+                return Err(AppError::msg("agent_run_invalid_request"));
+            }
+            let context_ref = request
+                .classified_context_ref
+                .as_deref()
+                .ok_or_else(|| AppError::msg("agent_run_classified_context_required"))?;
+            if request.model_override.as_ref().is_some_and(|override_| {
+                override_.provider_id.trim().is_empty() || override_.model_id.trim().is_empty()
+            }) {
+                return Err(AppError::msg("agent_run_invalid_request"));
+            }
+            let model_override = request.model_override.clone();
+            let accepted = state
+                .ai
+                .classified_ephemeral
+                .lock()
+                .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+                .accept(
+                    &vault,
+                    &request.client_request_id,
+                    request.message,
+                    context_ref,
+                )?;
+            let event = state
+                .ai
+                .classified_ephemeral
+                .lock()
+                .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+                .get(&accepted.run_id)?
+                .and_then(|response| response.events.into_iter().next())
+                .ok_or_else(|| AppError::msg("agent_run_accepted_event_missing"))?;
             sink.emit(&event)?;
-            spawn_classified_direct_run(Arc::clone(&state.db), vault, app_handle, accepted.clone());
+            spawn_classified_direct_run(
+                Arc::clone(&state),
+                vault,
+                app_handle,
+                accepted.clone(),
+                model_override,
+            );
             Ok(accepted)
         }
     }
@@ -382,15 +376,13 @@ pub async fn assistant_run_control(
             ) {
                 return Err(AppError::msg("agent_run_control_not_available"));
             }
-            let vault = state.vault_path()?;
-            if let Some(event) = crate::ai_runtime::classified_session::classified_run_cancel(
-                &vault,
-                &request.session,
-                &request.run_id,
-                request.expected_state_version,
-            )? {
-                sink.emit(&event)?;
-            }
+            let event = state
+                .ai
+                .classified_ephemeral
+                .lock()
+                .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+                .cancel(&request.run_id)?;
+            sink.emit(&event)?;
             crate::ai_runtime::model_gateway::request_abort(&request.run_id);
             Ok(())
         }
@@ -408,21 +400,57 @@ pub async fn assistant_run_get(
             Some(run_id) => RunIntake::get(&state.db, &request.session, run_id),
             None => RunIntake::get_latest_active(&state.db, &request.session),
         },
-        SecurityDomain::Classified => {
-            let vault = state.vault_path()?;
-            match request.run_id.as_deref() {
-                Some(run_id) => crate::ai_runtime::classified_session::classified_run_get(
-                    &vault,
-                    &request.session,
-                    run_id,
-                ),
-                None => crate::ai_runtime::classified_session::classified_latest_active_run_get(
-                    &vault,
-                    &request.session,
-                ),
-            }
-        }
+        SecurityDomain::Classified => match request.run_id.as_deref() {
+            Some(run_id) => state
+                .ai
+                .classified_ephemeral
+                .lock()
+                .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+                .get(run_id),
+            None => Ok(None),
+        },
     }
+}
+
+/// Mint a short-lived capability for the currently open classified document.
+#[tauri::command]
+pub async fn assistant_classified_context_open(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> AppResult<crate::ai_runtime::classified_ephemeral::ClassifiedDocumentContext> {
+    let vault = state.vault_path()?;
+    state
+        .ai
+        .classified_ephemeral
+        .lock()
+        .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+        .open_context(&vault, &path)
+}
+
+/// Clear all volatile classified prompt, context, and result state.
+#[tauri::command]
+pub async fn assistant_classified_context_clear(state: State<'_, Arc<AppState>>) -> AppResult<()> {
+    state
+        .ai
+        .classified_ephemeral
+        .lock()
+        .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+        .clear();
+    Ok(())
+}
+
+/// Consume a classified answer once, while the same document context is active.
+#[tauri::command]
+pub async fn assistant_classified_run_take_result(
+    state: State<'_, Arc<AppState>>,
+    request: ClassifiedRunResultRequest,
+) -> AppResult<String> {
+    state
+        .ai
+        .classified_ephemeral
+        .lock()
+        .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+        .take_result(&request.run_id, &request.context_ref)
 }
 
 /// Rebuild and evaluate the persisted normal Run policy before Provider routing.
@@ -982,17 +1010,18 @@ fn dispatch_failure_code(error: &AppError) -> crate::ai_runtime::run_contract::S
     }
 }
 
-/// Start a CEF-only direct execution after its accepted event exists.
+/// Start a volatile, single-document classified execution after acceptance.
 fn spawn_classified_direct_run(
-    db: Arc<crate::storage::db::Database>,
+    state: Arc<AppState>,
     vault: std::path::PathBuf,
     app_handle: AppHandle,
     accepted: AssistantRunAccepted,
+    model_override: Option<crate::ai_runtime::run_contract::ModelOverride>,
 ) {
     tauri::async_runtime::spawn(async move {
         let sink = TauriRunEventSink::new(&app_handle);
         let route_result = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
-            &db,
+            &state.db,
             crate::llm::config::ModelPoolRequirements {
                 context_tokens: 0,
                 has_images: false,
@@ -1000,31 +1029,38 @@ fn spawn_classified_direct_run(
                 needs_reasoning: false,
             },
         )
-        .and_then(|route| {
-            crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route(
-                route,
-            )
-            .and_then(|route| {
-                route.hydrate_selected_streaming_dispatch(
-                    crate::ai_runtime::provider_router::ProviderRequirements {
-                        endpoint_family: None,
-                        streaming: true,
-                        tools: false,
-                        vision: false,
-                        reasoning: false,
-                        min_input_budget_tokens: 0,
-                        min_output_budget_tokens: 1,
-                        security_domain:
-                            crate::ai_runtime::provider_router::SecurityDomain::External,
-                    },
-                    0,
-                )
+        .and_then(
+            crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route,
+        )
+        .map(|route| {
+            model_override.as_ref().map_or(route.clone(), |override_| {
+                route.with_model_override(override_.provider_id.clone(), override_.model_id.clone())
             })
+        })
+        .and_then(|route| {
+            route.hydrate_selected_streaming_dispatch(
+                crate::ai_runtime::provider_router::ProviderRequirements {
+                    endpoint_family: None,
+                    streaming: true,
+                    tools: false,
+                    vision: false,
+                    reasoning: false,
+                    min_input_budget_tokens: 0,
+                    min_output_budget_tokens: 1,
+                    security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
+                },
+                0,
+            )
         });
         let dispatch = match route_result {
             Ok(dispatch) => dispatch,
             Err(_) => {
-                fail_classified_before_dispatch(&vault, &accepted, &sink);
+                fail_ephemeral_classified_run(
+                    &state,
+                    &accepted.run_id,
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::NoCapableModel,
+                    &sink,
+                );
                 return;
             }
         };
@@ -1035,7 +1071,12 @@ fn spawn_classified_direct_run(
         ) {
             Ok(gateway) => gateway,
             Err(_) => {
-                fail_classified_before_dispatch(&vault, &accepted, &sink);
+                fail_ephemeral_classified_run(
+                    &state,
+                    &accepted.run_id,
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                    &sink,
+                );
                 return;
             }
         };
@@ -1046,35 +1087,125 @@ fn spawn_classified_direct_run(
         ) {
             Ok(provider) => provider,
             Err(_) => {
-                fail_classified_before_dispatch(&vault, &accepted, &sink);
+                fail_ephemeral_classified_run(
+                    &state,
+                    &accepted.run_id,
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
+                    &sink,
+                );
                 return;
             }
         };
-        if crate::ai_runtime::classified_run_engine::execute_classified_direct_streaming_with_sink(
-            &vault,
-            &accepted.session,
-            &accepted.run_id,
-            &provider,
-            &sink,
-        )
-        .await
-        .is_err()
-        {
-            tracing::warn!(
-                run_id = %accepted.run_id,
-                "classified Agent Run exited without a successful result"
+        let _ = vault; // The context was decrypted server-side before dispatch.
+        let preparing = state
+            .ai
+            .classified_ephemeral
+            .lock()
+            .ok()
+            .and_then(|mut store| {
+                store
+                    .transition(
+                        &accepted.run_id,
+                        crate::ai_runtime::run_contract::RunState::Preparing,
+                        "preparing_classified_document",
+                    )
+                    .ok()
+            });
+        if let Some(event) = preparing {
+            let _ = sink.emit(&event);
+        }
+        let running = state
+            .ai
+            .classified_ephemeral
+            .lock()
+            .ok()
+            .and_then(|mut store| {
+                store
+                    .transition(
+                        &accepted.run_id,
+                        crate::ai_runtime::run_contract::RunState::Running,
+                        "analyzing_current_classified_document",
+                    )
+                    .ok()
+            });
+        if let Some(event) = running {
+            let _ = sink.emit(&event);
+        }
+        let prompt = state
+            .ai
+            .classified_ephemeral
+            .lock()
+            .ok()
+            .and_then(|store| store.prompt(&accepted.run_id).ok());
+        let Some((user_message, document)) = prompt else {
+            fail_ephemeral_classified_run(
+                &state,
+                &accepted.run_id,
+                crate::ai_runtime::run_contract::SafeRunErrorCode::ClassifiedContextExpired,
+                &sink,
             );
-            if let Ok(events) =
-                crate::ai_runtime::classified_session::classified_run_fail_unfinished(
-                    &vault,
-                    &accepted.session,
-                    &accepted.run_id,
-                    crate::ai_runtime::run_contract::SafeRunErrorCode::PersistenceFailed,
-                )
+            return;
+        };
+        let messages = [crate::ai_runtime::LlmMessage {
+            role: crate::ai_runtime::MessageRole::User,
+            content: crate::ai_types::MessageContent::Text(format!(
+                "You may analyze only the explicitly attached current classified document. Do not claim access to other documents, tools, Web, or history.\\n\\n<current_classified_document>\\n{document}\\n</current_classified_document>\\n\\nUser request: {user_message}"
+            )),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }];
+        struct SilentObserver;
+        impl crate::ai_runtime::model_gateway::StreamEventObserver for SilentObserver {
+            fn observe(
+                &mut self,
+                _: &crate::ai_runtime::model_gateway::StreamEvent,
+                _: u32,
+            ) -> AppResult<()> {
+                Ok(())
+            }
+        }
+        let response = provider
+            .answer_streaming(&accepted.run_id, &messages, &mut SilentObserver)
+            .await;
+        match response {
+            Ok(response)
+                if response.tool_calls.is_empty()
+                    && response
+                        .content
+                        .as_deref()
+                        .is_some_and(|content| !content.is_empty()) =>
             {
-                for event in events {
+                let event = state
+                    .ai
+                    .classified_ephemeral
+                    .lock()
+                    .ok()
+                    .and_then(|mut store| {
+                        store
+                            .complete(
+                                &accepted.run_id,
+                                response.content.expect("checked classified response"),
+                            )
+                            .ok()
+                    });
+                if let Some(event) = event {
                     let _ = sink.emit(&event);
                 }
+            }
+            Ok(_) => fail_ephemeral_classified_run(
+                &state,
+                &accepted.run_id,
+                crate::ai_runtime::run_contract::SafeRunErrorCode::InvalidRequest,
+                &sink,
+            ),
+            Err(error) => {
+                let code = if error.to_string().to_ascii_lowercase().contains("timeout") {
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderTimeout
+                } else {
+                    crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable
+                };
+                fail_ephemeral_classified_run(&state, &accepted.run_id, code, &sink);
             }
         }
         if crate::ai_runtime::model_gateway::is_abort_requested(&accepted.run_id) {
@@ -1083,28 +1214,16 @@ fn spawn_classified_direct_run(
     });
 }
 
-fn fail_classified_before_dispatch(
-    vault: &std::path::Path,
-    accepted: &AssistantRunAccepted,
+fn fail_ephemeral_classified_run(
+    state: &AppState,
+    run_id: &str,
+    code: crate::ai_runtime::run_contract::SafeRunErrorCode,
     sink: &impl crate::ai_runtime::run_engine::RunEventSink,
 ) {
-    let Ok(preparing) = crate::ai_runtime::classified_session::classified_run_mark_preparing(
-        vault,
-        &accepted.session,
-        &accepted.run_id,
-    ) else {
-        return;
-    };
-    if sink.emit(&preparing).is_err() {
-        return;
-    }
-    if let Ok(Some(failed)) = crate::ai_runtime::classified_session::classified_run_fail(
-        vault,
-        &accepted.session,
-        &accepted.run_id,
-        1,
-        crate::ai_runtime::run_contract::SafeRunErrorCode::ProviderUnavailable,
-    ) {
-        let _ = sink.emit(&failed);
+    if let Ok(mut store) = state.ai.classified_ephemeral.lock() {
+        let failed = store.fail(run_id, code);
+        if let Ok(failed) = failed {
+            let _ = sink.emit(&failed);
+        }
     }
 }

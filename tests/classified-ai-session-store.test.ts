@@ -35,7 +35,7 @@ describe("classified Agent Run storage contract", () => {
     expect(source).toContain("content_parts: Option<String>");
   });
 
-  it("persists classified conversation lifecycle only in the CEF thread schema", () => {
+  it("retains the legacy CEF schema without using it for new classified runs", () => {
     const source = read("src-tauri/src/ai_runtime/classified_session.rs");
     const schema =
       source
@@ -72,13 +72,21 @@ describe("classified Agent Run storage contract", () => {
     expect(atomicWrite).toContain("fs::rename");
   });
 
-  it("routes classified run start, replay, and history through the unified domain boundary", () => {
+  it("routes new classified runs through volatile document-bound capabilities", () => {
     const commands = read("src-tauri/src/commands/assistant_commands.rs");
+    const volatileStore = read(
+      "src-tauri/src/ai_runtime/classified_ephemeral.rs",
+    );
 
     expect(commands).toContain("SecurityDomain::Classified =>");
-    expect(commands).toContain("RunIntake::start_classified");
-    expect(commands).toContain("classified_run_get");
-    expect(commands).toContain("classified_ai_thread_list");
+    expect(commands).toContain("assistant_classified_context_open");
+    expect(commands).toContain("assistant_classified_run_take_result");
+    expect(commands).not.toContain("RunIntake::start_classified");
+    expect(commands).not.toContain("classified_run_get");
+    expect(commands).not.toContain("classified_ai_thread_list");
+    expect(volatileStore).toContain("Zeroizing<String>");
+    expect(volatileStore).toContain("take_result");
+    expect(volatileStore).not.toContain("write_thread_atomically");
     expect(commands).not.toContain("assistant_execute");
     expect(commands).not.toContain("harness_resume");
   });

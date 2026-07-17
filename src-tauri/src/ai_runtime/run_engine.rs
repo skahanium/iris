@@ -1426,6 +1426,9 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
         SafeRunErrorCode::PermissionDenied => "当前请求不具备执行权限",
         SafeRunErrorCode::Cancelled => "运行已取消",
+        SafeRunErrorCode::ClassifiedContextRequired => "请先明确附带当前打开的涉密文档",
+        SafeRunErrorCode::ClassifiedContextExpired => "当前涉密文档上下文已失效，请重新附带",
+        SafeRunErrorCode::ClassifiedVaultLocked => "涉密保险库已锁定，请解锁后重试",
         SafeRunErrorCode::SessionNotFound
         | SafeRunErrorCode::RunNotFound
         | SafeRunErrorCode::IllegalTransition

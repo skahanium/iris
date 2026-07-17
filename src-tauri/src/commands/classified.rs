@@ -167,11 +167,16 @@ async fn classified_unlock_async_inner(
     }
 }
 
-fn classified_lock_inner() -> AppResult<()> {
+fn classified_lock_inner(state: Option<&AppState>) -> AppResult<()> {
     let mut vk = vault_key_write()?;
     vk.lock();
     crate::ai_runtime::classified_session::classified_ai_cache_clear()?;
     crate::ai_runtime::classified_retrieval::clear_classified_index();
+    if let Some(state) = state {
+        if let Ok(mut ephemeral) = state.ai.classified_ephemeral.lock() {
+            ephemeral.clear();
+        }
+    }
     Ok(())
 }
 
@@ -515,8 +520,8 @@ pub async fn classified_unlock(state: State<'_, Arc<AppState>>, password: String
 }
 
 #[tauri::command]
-pub fn classified_lock() -> AppResult<()> {
-    classified_lock_inner()
+pub fn classified_lock(state: State<'_, Arc<AppState>>) -> AppResult<()> {
+    classified_lock_inner(Some(state.inner()))
 }
 
 #[tauri::command]
@@ -641,7 +646,7 @@ mod tests {
         let err = classified_setup_inner(&state, "other").unwrap_err();
         assert!(err.to_string().contains("已设置"));
 
-        classified_lock_inner().unwrap();
+        classified_lock_inner(None).unwrap();
         assert_eq!(classified_status_inner(&state).unwrap(), "locked");
 
         classified_unlock_inner(&state, "test-pass").unwrap();
@@ -656,7 +661,7 @@ mod tests {
         let _guard = key_test_lock();
         let (_dir, state) = test_state();
         classified_setup_inner(&state, "test-pass").unwrap();
-        classified_lock_inner().unwrap();
+        classified_lock_inner(None).unwrap();
 
         let err = classified_files_inner(&state, None).unwrap_err();
         assert!(err.to_string().contains("未解锁"));

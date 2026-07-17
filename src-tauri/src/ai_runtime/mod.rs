@@ -20,8 +20,11 @@ mod agent_tool_loop_tests;
 pub mod capability_resolver;
 pub mod circuit_breaker;
 pub(crate) mod classified_document_policy_repository;
+pub(crate) mod classified_ephemeral;
 pub mod classified_retrieval;
-pub(crate) mod classified_run_engine;
+// Legacy CEF history is retained only so users' pre-existing encrypted files
+// remain untouched. New classified Runs use `classified_ephemeral` exclusively.
+#[allow(dead_code)]
 pub mod classified_session;
 pub mod context_cache;
 pub mod conversation_memory;

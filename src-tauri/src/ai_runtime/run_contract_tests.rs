@@ -267,6 +267,9 @@ fn safe_run_errors_serialize_as_stable_agent_run_codes() {
         SafeRunErrorCode::WebEvidenceInvalid,
         SafeRunErrorCode::PersistenceFailed,
         SafeRunErrorCode::Cancelled,
+        SafeRunErrorCode::ClassifiedContextRequired,
+        SafeRunErrorCode::ClassifiedContextExpired,
+        SafeRunErrorCode::ClassifiedVaultLocked,
     ] {
         assert_eq!(
             serde_json::to_value(code).unwrap(),

@@ -434,6 +434,10 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
     }) {
         return Err(AppError::msg("agent_run_invalid_request"));
     }
+    if request.security_domain == SecurityDomain::Normal && request.classified_context_ref.is_some()
+    {
+        return Err(AppError::msg("agent_run_invalid_request"));
+    }
     validate_explicit_action(request)
 }
 

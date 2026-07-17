@@ -1079,6 +1079,18 @@ fn classified_safe_failure_message(
         crate::ai_runtime::run_contract::SafeRunErrorCode::InvalidRequest => {
             "请求无法按当前运行能力处理"
         }
+        crate::ai_runtime::run_contract::SafeRunErrorCode::PermissionDenied => {
+            "当前涉密文档未获授权读取或发送给模型"
+        }
+        crate::ai_runtime::run_contract::SafeRunErrorCode::ClassifiedContextRequired => {
+            "请先明确附带当前打开的涉密文档"
+        }
+        crate::ai_runtime::run_contract::SafeRunErrorCode::ClassifiedContextExpired => {
+            "当前涉密文档上下文已失效，请重新附带"
+        }
+        crate::ai_runtime::run_contract::SafeRunErrorCode::ClassifiedVaultLocked => {
+            "涉密保险库已锁定，请解锁后重试"
+        }
         _ => "运行暂时无法完成，请稍后重试",
     }
 }

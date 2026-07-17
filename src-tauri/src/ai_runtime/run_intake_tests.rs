@@ -23,6 +23,7 @@ fn request() -> AssistantRunStartRequest {
         web_enabled: false,
         model_override: None,
         security_domain: SecurityDomain::Normal,
+        classified_context_ref: None,
     }
 }
 
@@ -54,6 +55,19 @@ fn intake_rejects_actions_that_do_not_bind_to_the_explicit_reference() {
     assert_eq!(
         RunIntake::resolve_envelope(&invalid)
             .expect_err("an action target must be explicitly referenced")
+            .to_string(),
+        "agent_run_invalid_request"
+    );
+}
+
+#[test]
+fn intake_rejects_a_classified_context_capability_in_normal_domain() {
+    let mut invalid = request();
+    invalid.classified_context_ref = Some("opaque-classified-context".into());
+
+    assert_eq!(
+        RunIntake::resolve_envelope(&invalid)
+            .expect_err("normal Runs must not carry classified context")
             .to_string(),
         "agent_run_invalid_request"
     );

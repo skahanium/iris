@@ -55,6 +55,18 @@ describe("AI security-domain and Run routing", () => {
     expect(types).toContain("sessionKey: string");
   });
 
+  it("clears classified drafts and selections on every classified document switch", () => {
+    const runtime = read("src/hooks/useAiDomainRuntime.ts");
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+
+    expect(runtime).toContain('"classified_document_switch"');
+    expect(runtime).not.toContain("classifiedThreadByPath");
+    expect(runtime).not.toContain("save current, load target");
+    expect(panel).toContain("resetAssistantRunRef.current()");
+    expect(panel).toContain("handleNewChatRef.current()");
+    expect(panel).toContain("}, [aiDomain, classifiedPath]);");
+  });
+
   it("uses Run event streaming for both panel and inline editor actions", () => {
     const inline = read("src/hooks/useInlineAi.ts");
     const events = read("src/lib/ipc-events.ts");

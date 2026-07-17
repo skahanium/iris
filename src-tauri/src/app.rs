@@ -105,6 +105,8 @@ impl StorageState {
 pub struct AiRuntimeState {
     pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
     pub context_cache: Mutex<ContextAssemblyCache>,
+    pub(crate) classified_ephemeral:
+        Mutex<crate::ai_runtime::classified_ephemeral::ClassifiedEphemeralStore>,
     pub vector_index_ready: AtomicBool,
     embedding_scheduler: OnceLock<Arc<EmbeddingScheduler>>,
 }
@@ -154,6 +156,9 @@ impl AiRuntimeState {
         Self {
             pending_tool_calls: Mutex::new(HashMap::new()),
             context_cache: Mutex::new(ContextAssemblyCache::new(64, 30)),
+            classified_ephemeral: Mutex::new(
+                crate::ai_runtime::classified_ephemeral::ClassifiedEphemeralStore::default(),
+            ),
             vector_index_ready: AtomicBool::new(vector_ready),
             embedding_scheduler: OnceLock::new(),
         }
@@ -213,6 +218,9 @@ impl AiRuntimeState {
         }
 
         crate::llm::safe_lock(&self.context_cache).clear();
+        if let Ok(mut classified) = self.classified_ephemeral.lock() {
+            classified.clear();
+        }
         self.vector_index_ready
             .store(false, std::sync::atomic::Ordering::Relaxed);
         tracing::info!("vault switch: cleared pending tool calls and vector index");

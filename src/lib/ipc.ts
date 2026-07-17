@@ -11,6 +11,8 @@ import type {
   AssistantRunGetResponse,
   AssistantRunRetryRequest,
   AssistantRunStartRequest,
+  ClassifiedDocumentContext,
+  ClassifiedRunResultRequest,
   AssistantSessionListRequest,
   AssistantSessionLoadRequest,
   AssistantSessionMessage,
@@ -28,6 +30,8 @@ export type {
   AssistantRunGetResponse,
   AssistantRunRetryRequest,
   AssistantRunStartRequest,
+  ClassifiedDocumentContext,
+  ClassifiedRunResultRequest,
   AssistantSessionListRequest,
   AssistantSessionLoadRequest,
   AssistantSessionMessage,
@@ -966,6 +970,27 @@ export async function assistantRunGet(
   return invoke<AssistantRunGetResponse | null>("assistant_run_get", {
     request,
   });
+}
+
+export async function assistantClassifiedContextOpen(
+  path: string,
+): Promise<ClassifiedDocumentContext> {
+  return invoke<ClassifiedDocumentContext>(
+    "assistant_classified_context_open",
+    {
+      path,
+    },
+  );
+}
+
+export async function assistantClassifiedContextClear(): Promise<void> {
+  return invoke<void>("assistant_classified_context_clear");
+}
+
+export async function assistantClassifiedRunTakeResult(
+  request: ClassifiedRunResultRequest,
+): Promise<string> {
+  return invoke<string>("assistant_classified_run_take_result", { request });
 }
 
 /** List conversations through the only domain-routed history API. */

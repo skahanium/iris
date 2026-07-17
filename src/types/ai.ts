@@ -240,6 +240,8 @@ export interface AssistantRunStartRequest {
   };
   webEnabled: boolean;
   securityDomain: SecurityDomain;
+  /** Opaque, current-document capability for one classified request only. */
+  classifiedContextRef?: string;
   /** Optional until the backend accepts an explicit one-Run model override. */
   modelOverride?: AgentModelOverride;
 }
@@ -300,7 +302,19 @@ export type AssistantRunErrorCode =
   | "agent_run_web_provider_timeout"
   | "agent_run_web_provider_failed"
   | "agent_run_web_evidence_invalid"
-  | "agent_run_cancelled";
+  | "agent_run_cancelled"
+  | "agent_run_classified_context_required"
+  | "agent_run_classified_context_expired"
+  | "agent_run_classified_vault_locked";
+
+export interface ClassifiedDocumentContext {
+  contextRef: string;
+}
+
+export interface ClassifiedRunResultRequest {
+  runId: string;
+  contextRef: string;
+}
 
 export type ProviderSwitchReasonCode =
   | "transient_failure"

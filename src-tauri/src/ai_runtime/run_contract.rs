@@ -302,6 +302,10 @@ pub struct AssistantRunStartRequest {
     pub(crate) model_override: Option<ModelOverride>,
     /// Domain in which this Run must execute and persist.
     pub(crate) security_domain: SecurityDomain,
+    /// Opaque, one-document classified context capability. It is required only
+    /// for classified Runs and is never a filesystem path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) classified_context_ref: Option<String>,
 }
 
 /// Immediate accepted response returned by `assistant_run_start`.
@@ -850,6 +854,15 @@ pub(crate) enum SafeRunErrorCode {
     /// The Run was cancelled before completion.
     #[serde(rename = "agent_run_cancelled")]
     Cancelled,
+    /// No explicit current classified document was attached to this Run.
+    #[serde(rename = "agent_run_classified_context_required")]
+    ClassifiedContextRequired,
+    /// The active classified document changed, closed, or its short-lived scope expired.
+    #[serde(rename = "agent_run_classified_context_expired")]
+    ClassifiedContextExpired,
+    /// The classified vault was locked before the in-memory Run could complete.
+    #[serde(rename = "agent_run_classified_vault_locked")]
+    ClassifiedVaultLocked,
 }
 
 impl SafeRunErrorCode {
@@ -872,6 +885,9 @@ impl SafeRunErrorCode {
             Self::WebEvidenceInvalid => "agent_run_web_evidence_invalid",
             Self::PersistenceFailed => "agent_run_persistence_failed",
             Self::Cancelled => "agent_run_cancelled",
+            Self::ClassifiedContextRequired => "agent_run_classified_context_required",
+            Self::ClassifiedContextExpired => "agent_run_classified_context_expired",
+            Self::ClassifiedVaultLocked => "agent_run_classified_vault_locked",
         }
     }
 }

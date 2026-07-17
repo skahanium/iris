@@ -157,11 +157,19 @@ fn trace_log_safe_metadata_leaks_no_classified_plaintext() {
 #[test]
 fn classified_run_intake_stays_outside_normal_session_storage() {
     let assistant_src = include_str!("../src/commands/assistant_commands.rs");
+    let ephemeral_src = include_str!("../src/ai_runtime/classified_ephemeral.rs");
 
     assert!(assistant_src.contains("SecurityDomain::Classified"));
-    assert!(assistant_src.contains("RunIntake::start_classified"));
+    assert!(assistant_src.contains("assistant_classified_context_open"));
+    assert!(assistant_src.contains("classified_context_ref"));
+    assert!(assistant_src.contains("classified_ephemeral"));
     assert!(assistant_src.contains("spawn_classified_direct_run"));
-    assert!(assistant_src.contains("execute_classified_direct_streaming_with_sink"));
+    assert!(ephemeral_src.contains("Zeroizing<String>"));
+    assert!(ephemeral_src.contains("take_result"));
+    assert!(
+        !ephemeral_src.contains("write_thread_atomically"),
+        "new classified Runs must never persist a CEF conversation"
+    );
     assert!(
         !assistant_src.contains("SessionManager"),
         "classified Run intake must not write ordinary session storage"
@@ -251,7 +259,12 @@ fn classified_run_uses_direct_streaming_without_ordinary_session_writes() {
         .split("fn spawn_classified_direct_run")
         .nth(1)
         .unwrap_or("");
-    assert!(classified_run.contains("execute_classified_direct_streaming_with_sink"));
+    assert!(classified_run.contains("ModelGatewayStreamingDirectAnswerProvider::new"));
+    assert!(classified_run.contains("struct SilentObserver"));
+    assert!(
+        !classified_run.contains("content_delta"),
+        "classified output must not be put on the ordinary Run event bus"
+    );
     assert!(
         !classified_run.contains("SessionManager::append_message"),
         "classified Run must not write ordinary session_messages"

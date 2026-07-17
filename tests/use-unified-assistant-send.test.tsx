@@ -43,6 +43,42 @@ function Probe() {
   return null;
 }
 
+function ClassifiedProbe({ include = true }: { include?: boolean }) {
+  api = useUnifiedAssistantSend({
+    aiDomain: "classified",
+    classifiedContextRef: "opaque-current-document-context",
+    includeCurrentClassifiedDocument: include,
+    input: "请分析当前文档",
+    images: [],
+    composerDisabled: false,
+    session: null,
+    contextReferences: [
+      {
+        id: "must-not-leave-classified-domain",
+        kind: "note",
+        filePath: "notes/normal.md",
+        contentHash: "hash",
+        utf8Range: null,
+        editorRange: null,
+        excerpt: "",
+        stale: false,
+      },
+    ],
+    webSearch: false,
+    start,
+    appendUserMessage: vi.fn(),
+    ensureAssistantStreamSlot: vi.fn(),
+    clearContextReferences: vi.fn(),
+    setInput: vi.fn(),
+    setImages: vi.fn(),
+    setSession: vi.fn(),
+    setStreaming: vi.fn(),
+    setActivityHint: vi.fn(),
+    setError: vi.fn(),
+  });
+  return null;
+}
+
 afterEach(() => {
   act(() => root?.unmount());
   host?.remove();
@@ -78,5 +114,62 @@ describe("useUnifiedAssistantSend", () => {
       webEnabled: false,
       securityDomain: "normal",
     });
+  });
+
+  it("requires a one-request classified attachment before dispatch", async () => {
+    const setError = vi.fn();
+    function MissingConsentProbe() {
+      api = useUnifiedAssistantSend({
+        aiDomain: "classified",
+        classifiedContextRef: "opaque-current-document-context",
+        includeCurrentClassifiedDocument: false,
+        input: "分析当前文档",
+        images: [],
+        composerDisabled: false,
+        session: null,
+        contextReferences: [],
+        webSearch: false,
+        start,
+        appendUserMessage: vi.fn(),
+        ensureAssistantStreamSlot: vi.fn(),
+        clearContextReferences: vi.fn(),
+        setInput: vi.fn(),
+        setImages: vi.fn(),
+        setSession: vi.fn(),
+        setStreaming: vi.fn(),
+        setActivityHint: vi.fn(),
+        setError,
+      });
+      return null;
+    }
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root?.render(<MissingConsentProbe />));
+    await act(async () => {
+      await api?.send();
+    });
+    expect(start).not.toHaveBeenCalled();
+    expect(setError).toHaveBeenCalledWith(
+      expect.stringContaining("引用当前涉密文档"),
+    );
+  });
+
+  it("rejects cross-domain references instead of sending them with a classified request", async () => {
+    start.mockResolvedValue({
+      runId: "run-classified",
+      turnId: "turn-classified",
+      session: { domain: "classified", sessionKey: "ephemeral" },
+      state: "accepted",
+      stateVersion: 0,
+    });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root?.render(<ClassifiedProbe />));
+    await act(async () => {
+      await api?.send();
+    });
+    expect(start).not.toHaveBeenCalled();
   });
 });

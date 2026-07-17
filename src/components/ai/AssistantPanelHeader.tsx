@@ -55,21 +55,23 @@ export function AssistantPanelHeader({
             runState={runState}
             disabled={chromeActionsDisabled}
           />
-          <SessionHistoryDropdown
-            currentSession={currentSession}
-            disabled={chromeActionsDisabled}
-            domain={domain}
-            onSelectSession={onSelectSession}
-            onDeleted={(session) => {
-              onDeletedSession?.(session);
-              if (
-                currentSession?.domain === session.domain &&
-                currentSession.sessionKey === session.sessionKey
-              ) {
-                onDeletedCurrentSession();
-              }
-            }}
-          />
+          {domain === "normal" ? (
+            <SessionHistoryDropdown
+              currentSession={currentSession}
+              disabled={chromeActionsDisabled}
+              domain={domain}
+              onSelectSession={onSelectSession}
+              onDeleted={(session) => {
+                onDeletedSession?.(session);
+                if (
+                  currentSession?.domain === session.domain &&
+                  currentSession.sessionKey === session.sessionKey
+                ) {
+                  onDeletedCurrentSession();
+                }
+              }}
+            />
+          ) : null}
           <Button
             type="button"
             variant="outline"

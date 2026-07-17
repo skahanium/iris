@@ -1,5 +1,7 @@
 import { useCallback, useState } from "react";
 
+import { invokeErrorMessage } from "@/lib/credentials";
+
 import type { ImageAttachment } from "../AiMessageList";
 import type {
   AssistantRunAccepted,
@@ -12,6 +14,9 @@ import type {
 
 export interface UnifiedAssistantSendOptions {
   aiDomain: SecurityDomain;
+  classifiedContextRef?: string | null;
+  includeCurrentClassifiedDocument?: boolean;
+  clearClassifiedDocumentConsent?: () => void;
   input: string;
   images: ImageAttachment[];
   composerDisabled: boolean;
@@ -25,7 +30,7 @@ export interface UnifiedAssistantSendOptions {
   clearContextReferences: () => void;
   setInput: (value: string) => void;
   setImages: (images: ImageAttachment[]) => void;
-  setSession: (session: AssistantSessionRef) => void;
+  setSession: (session: AssistantSessionRef | null) => void;
   setStreaming: (streaming: boolean) => void;
   setActivityHint: (hint: string | null) => void;
   setError: (message: string | null) => void;
@@ -48,9 +53,25 @@ function contentPartsForImages(
   ];
 }
 
+function classifiedSubmissionError(reason: unknown): string {
+  const message = invokeErrorMessage(reason);
+  if (message.includes("agent_run_classified_context_required"))
+    return "请先明确附带当前打开的涉密文档。";
+  if (message.includes("agent_run_classified_context_expired"))
+    return "当前涉密文档上下文已失效，请重新附带。";
+  if (message.includes("agent_run_classified_vault_locked"))
+    return "涉密保险库已锁定，请解锁后重试。";
+  if (message.includes("agent_run_permission_denied"))
+    return "当前涉密文档未获授权读取或发送给模型。";
+  return "请求未能提交，请稍后重试。";
+}
+
 /** Starts the single production Run path from a user-authored prompt. */
 export function useUnifiedAssistantSend({
   aiDomain,
+  classifiedContextRef,
+  includeCurrentClassifiedDocument = false,
+  clearClassifiedDocumentConsent,
   input,
   images,
   composerDisabled,
@@ -80,6 +101,16 @@ export function useUnifiedAssistantSend({
       setError("图片请求需要附带文字说明。");
       return;
     }
+    if (aiDomain === "classified") {
+      if (!includeCurrentClassifiedDocument || !classifiedContextRef) {
+        setError("请先点击“引用当前涉密文档”，该授权仅对本次提问生效。");
+        return;
+      }
+      if (images.length > 0 || contextReferences.length > 0 || webSearch) {
+        setError("涉密分析仅支持当前文档文本，不支持图片、其他引用或联网。");
+        return;
+      }
+    }
 
     const explicitReferences = contextReferences.filter(
       (reference) => !reference.stale && !reference.invalidReason,
@@ -100,25 +131,34 @@ export function useUnifiedAssistantSend({
         ...(currentImages.length > 0
           ? { contentParts: contentPartsForImages(message, currentImages) }
           : {}),
-        explicitReferences,
-        webEnabled: webSearch,
+        explicitReferences: aiDomain === "classified" ? [] : explicitReferences,
+        webEnabled: aiDomain === "classified" ? false : webSearch,
         securityDomain: aiDomain,
+        ...(aiDomain === "classified" && classifiedContextRef
+          ? { classifiedContextRef }
+          : {}),
         ...(modelOverride ? { modelOverride } : {}),
       });
-      setSession(accepted.session);
+      setSession(aiDomain === "classified" ? null : accepted.session);
       setInput("");
       setImages([]);
       clearContextReferences();
+      if (aiDomain === "classified") clearClassifiedDocumentConsent?.();
       setActivityHint("正在准备回答…");
-    } catch {
+    } catch (reason) {
       setStreaming(false);
       setActivityHint(null);
+      if (aiDomain === "classified") {
+        setError(classifiedSubmissionError(reason));
+        return;
+      }
       setError("请求未能提交，请稍后重试。");
     } finally {
       setIsStarting(false);
     }
   }, [
     aiDomain,
+    classifiedContextRef,
     appendUserMessage,
     clearContextReferences,
     composerDisabled,
@@ -126,6 +166,8 @@ export function useUnifiedAssistantSend({
     ensureAssistantStreamSlot,
     images,
     input,
+    includeCurrentClassifiedDocument,
+    clearClassifiedDocumentConsent,
     isStarting,
     session,
     setActivityHint,
