@@ -37,7 +37,7 @@ impl RunIntake {
         request: &AssistantRunStartRequest,
     ) -> AppResult<ExecutionEnvelope> {
         validate_start_request(request)?;
-        let message = request.message.to_ascii_lowercase();
+        let message = request.turn.message.to_ascii_lowercase();
         let directive_text = strip_quoted_segments(&message);
         let local_only = contains_any(
             &directive_text,
@@ -81,15 +81,17 @@ impl RunIntake {
         };
         let context = if request.explicit_action.is_some() {
             ContextMode::ExplicitScope
-        } else if !request.explicit_references.is_empty() {
+        } else if !request.turn.explicit_references.is_empty() {
             ContextMode::ExplicitReferences
+        } else if has_retrieval_scope(request) {
+            ContextMode::ExplicitScope
         } else if is_novel_writing_request(&message) || request.session.is_some() {
             ContextMode::Conversation
         } else {
             ContextMode::None
         };
         let freshness = web_decision.freshness;
-        let has_images = request.content_parts.as_ref().is_some_and(|parts| {
+        let has_images = request.turn.content_parts.as_ref().is_some_and(|parts| {
             parts
                 .iter()
                 .any(|part| matches!(part, crate::ai_types::ContentPart::ImageUrl { .. }))
@@ -104,7 +106,7 @@ impl RunIntake {
             Effect::Answer | Effect::Draft => RiskClass::ReadOnly,
         };
         let mut material_needs = Vec::new();
-        if !request.explicit_references.is_empty() {
+        if !request.turn.explicit_references.is_empty() {
             material_needs.push(MaterialNeed::Reference);
         }
         if is_official_writing_request(&message) {
@@ -191,9 +193,11 @@ impl RunIntake {
                 client_request_id: request.client_request_id,
                 run_id: uuid::Uuid::new_v4().to_string(),
                 turn_id: uuid::Uuid::new_v4().to_string(),
-                message: request.message,
-                content_parts: request.content_parts,
-                explicit_references: request.explicit_references,
+                message: request.turn.message,
+                content_parts: request.turn.content_parts,
+                explicit_references: request.turn.explicit_references,
+                context_scope: request.turn.retrieval_scope,
+                display_mentions: request.turn.display_mentions,
                 explicit_action: request.explicit_action,
                 envelope,
             },
@@ -233,12 +237,14 @@ impl RunIntake {
                 session_key,
                 run_id: uuid::Uuid::new_v4().to_string(),
                 turn_id: uuid::Uuid::new_v4().to_string(),
-                message: request.message,
+                message: request.turn.message,
                 content_parts: request
+                    .turn
                     .content_parts
                     .map(serde_json::to_value)
                     .transpose()?,
                 explicit_references: request
+                    .turn
                     .explicit_references
                     .into_iter()
                     .map(serde_json::to_value)
@@ -424,8 +430,8 @@ impl RunIntake {
 fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
     if request.client_request_id.trim().is_empty()
         || request.client_request_id.chars().count() > MAX_CLIENT_REQUEST_ID_CHARS
-        || request.message.trim().is_empty()
-        || request.message.chars().count() > MAX_USER_MESSAGE_CHARS
+        || request.turn.message.trim().is_empty()
+        || request.turn.message.chars().count() > MAX_USER_MESSAGE_CHARS
     {
         return Err(AppError::msg("agent_run_invalid_request"));
     }
@@ -438,7 +444,36 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
     {
         return Err(AppError::msg("agent_run_invalid_request"));
     }
+    if request.security_domain == SecurityDomain::Classified
+        && (!request.turn.explicit_references.is_empty()
+            || has_retrieval_scope(request)
+            || !request.turn.display_mentions.is_empty())
+    {
+        return Err(AppError::msg("agent_run_invalid_request"));
+    }
+    validate_display_mentions(request)?;
     validate_explicit_action(request)
+}
+
+fn validate_display_mentions(request: &AssistantRunStartRequest) -> AppResult<()> {
+    let message_len = request.turn.message.encode_utf16().count();
+    if request.turn.display_mentions.iter().any(|mention| {
+        mention.label.trim().is_empty()
+            || mention.value.trim().is_empty()
+            || mention.range.from >= mention.range.to
+            || mention.range.to > message_len
+    }) {
+        return Err(AppError::msg("agent_run_invalid_request"));
+    }
+    Ok(())
+}
+
+fn has_retrieval_scope(request: &AssistantRunStartRequest) -> bool {
+    let scope = &request.turn.retrieval_scope;
+    !scope.paths.is_empty()
+        || !scope.path_prefixes.is_empty()
+        || !scope.corpus_ids.is_empty()
+        || !scope.required_tags.is_empty()
 }
 
 fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()> {
@@ -446,7 +481,7 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
         return Ok(());
     };
     let valid_reference = |id: &str, hash: &str| {
-        request.explicit_references.iter().any(|reference| {
+        request.turn.explicit_references.iter().any(|reference| {
             reference.id == id
                 && reference.content_hash.as_deref() == Some(hash)
                 && !reference.stale
@@ -467,7 +502,7 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
             .end
             .checked_sub(snapshot.utf8_range.start)
             .ok_or_else(|| AppError::msg("agent_run_invalid_request"))?;
-        let range_matches = request.explicit_references.iter().any(|reference| {
+        let range_matches = request.turn.explicit_references.iter().any(|reference| {
             reference.id == snapshot.reference_id
                 && reference.content_hash.as_deref() == Some(snapshot.content_hash.as_str())
                 && reference.utf8_range.as_ref().is_some_and(|range| {
@@ -584,7 +619,7 @@ fn is_material_bound_transformation(
     directive_text: &str,
 ) -> bool {
     request.explicit_action.is_some()
-        || !request.explicit_references.is_empty()
+        || !request.turn.explicit_references.is_empty()
         || contains_any(
             directive_text,
             &[

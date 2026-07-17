@@ -1,5 +1,6 @@
 //! Shared, scene-free contracts for the unified Agent Run control plane.
 
+use crate::ai_runtime::retrieval_scope::ContextScopeDto;
 use crate::ai_types::{ContentPart, ContextReferenceWire, SourceSpan};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -276,6 +277,56 @@ pub(crate) struct ModelOverride {
     pub(crate) model_id: String,
 }
 
+/// Kind of inline display annotation attached to plain user-visible text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DisplayMentionKind {
+    /// One normal-domain Markdown note.
+    File,
+    /// One normal-domain folder prefix.
+    Folder,
+    /// One indexed normal-domain tag.
+    Tag,
+}
+
+/// UTF-16 code-unit range used by the browser textarea and history renderer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DisplayMentionRange {
+    pub(crate) from: usize,
+    pub(crate) to: usize,
+}
+
+/// Inline display metadata kept separate from model input and retrieval facts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DisplayMention {
+    pub(crate) kind: DisplayMentionKind,
+    pub(crate) value: String,
+    pub(crate) label: String,
+    pub(crate) range: DisplayMentionRange,
+}
+
+/// Immutable, structured input for exactly one accepted assistant turn.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AssistantTurnDraft {
+    /// Plain user-visible and model-facing message text.
+    pub(crate) message: String,
+    /// Optional multimodal message parts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) content_parts: Option<Vec<ContentPart>>,
+    /// Document references explicitly attached to this Run.
+    #[serde(default)]
+    pub(crate) explicit_references: Vec<ContextReferenceWire>,
+    /// Hard local retrieval boundary for this Run.
+    #[serde(default)]
+    pub(crate) retrieval_scope: ContextScopeDto,
+    /// User-visible inline annotations; never model instructions.
+    #[serde(default)]
+    pub(crate) display_mentions: Vec<DisplayMention>,
+}
+
 /// Request accepted by `assistant_run_start`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -285,13 +336,8 @@ pub struct AssistantRunStartRequest {
     /// Existing session to continue, when selected explicitly by the user.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) session: Option<AssistantSessionRef>,
-    /// Current user message.
-    pub(crate) message: String,
-    /// Optional multimodal message parts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) content_parts: Option<Vec<ContentPart>>,
-    /// Document references explicitly attached to this Run.
-    pub(crate) explicit_references: Vec<ContextReferenceWire>,
+    /// Immutable structured facts for the accepted user turn.
+    pub(crate) turn: AssistantTurnDraft,
     /// Editor action and snapshot explicitly supplied for this Run only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) explicit_action: Option<ExplicitAction>,

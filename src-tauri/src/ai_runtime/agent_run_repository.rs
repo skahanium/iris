@@ -43,6 +43,10 @@ pub(crate) struct AcceptRunInput {
     pub(crate) content_parts: Option<Vec<ContentPart>>,
     /// Explicit references whose persisted form excludes excerpts.
     pub(crate) explicit_references: Vec<ContextReferenceWire>,
+    /// Immutable local retrieval boundary for this turn.
+    pub(crate) context_scope: crate::ai_runtime::retrieval_scope::ContextScopeDto,
+    /// Inline presentation annotations for history restoration.
+    pub(crate) display_mentions: Vec<crate::ai_runtime::run_contract::DisplayMention>,
     /// Explicit editor action and snapshot scoped to this Run only.
     pub(crate) explicit_action: Option<crate::ai_runtime::run_contract::ExplicitAction>,
     /// Already-resolved execution boundary for this Run.
@@ -157,6 +161,8 @@ impl AgentRunRepository {
                         .map(PersistedExplicitReference::from)
                         .collect::<Vec<_>>(),
                 )?;
+                let context_scope_json = serde_json::to_string(&input.context_scope)?;
+                let display_mentions_json = serde_json::to_string(&input.display_mentions)?;
                 let envelope_json = serde_json::to_string(&input.envelope)?;
                 let explicit_action_json = input
                     .explicit_action
@@ -178,8 +184,8 @@ impl AgentRunRepository {
                 conn.execute(
                     "INSERT INTO session_messages
                  (session_id, seq, role, content, content_parts, content_hash, created_at,
-                  turn_id, explicit_references_json)
-                 VALUES (?1, ?2, 'user', ?3, ?4, ?5, ?6, ?7, ?8)",
+                  turn_id, explicit_references_json, context_scope_json, display_mentions_json)
+                 VALUES (?1, ?2, 'user', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     rusqlite::params![
                         input.session_id,
                         seq,
@@ -189,6 +195,8 @@ impl AgentRunRepository {
                         now,
                         input.turn_id,
                         explicit_references_json,
+                        context_scope_json,
+                        display_mentions_json,
                     ],
                 )?;
                 conn.execute(
@@ -1084,7 +1092,8 @@ impl AgentRunRepository {
         db.with_read_conn(|conn| {
             let stored = conn
                 .query_row(
-                    "SELECT r.session_id, m.seq, m.content, m.content_parts, m.explicit_references_json
+                    "SELECT r.session_id, m.seq, m.content, m.content_parts,
+                            m.explicit_references_json, m.context_scope_json
                      FROM agent_runs r
                      JOIN sessions s ON s.id = r.session_id
                      JOIN session_messages m ON m.session_id = r.session_id AND m.turn_id = r.turn_id
@@ -1097,11 +1106,12 @@ impl AgentRunRepository {
                             row.get::<_, String>(2)?,
                             row.get::<_, Option<String>>(3)?,
                             row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
                         ))
                     },
                 )
                 .optional()?;
-            let Some((session_id, message_seq_first, message, content_parts_json, references_json)) = stored else {
+            let Some((session_id, message_seq_first, message, content_parts_json, references_json, context_scope_json)) = stored else {
                 return Ok(None);
             };
             let explicit_references = serde_json::from_str(&references_json)
@@ -1114,6 +1124,8 @@ impl AgentRunRepository {
                     .map(|value| serde_json::from_str(&value))
                     .transpose()?,
                 explicit_references,
+                retrieval_scope: serde_json::from_str(&context_scope_json)
+                    .map_err(|_| AppError::msg("agent_run_invalid_retrieval_scope"))?,
             }))
         })
     }
@@ -1146,6 +1158,7 @@ pub(crate) struct RunPromptInput {
     pub(crate) user_message: String,
     pub(crate) content_parts: Option<Vec<ContentPart>>,
     pub(crate) explicit_references: Vec<StoredExplicitReference>,
+    pub(crate) retrieval_scope: crate::ai_runtime::retrieval_scope::ContextScopeDto,
 }
 
 #[derive(Serialize)]

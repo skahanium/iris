@@ -107,3 +107,38 @@ fn normal_session_history_uses_only_opaque_keys() {
     );
     assert!(NormalSessionRepository::delete(&db, &created.session_key).expect("delete"));
 }
+
+#[test]
+fn normal_session_history_restores_new_turn_metadata_and_defaults_legacy_rows_to_arrays() {
+    let db = Database::open_in_memory().expect("database");
+    let created = NormalSessionRepository::create(&db).expect("create session");
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, created_at)
+             VALUES (?1, 1, 'user', 'legacy', ?2)",
+            rusqlite::params![created.session_id, "2026-07-13T00:00:00Z"],
+        )?;
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, context_scope_json,
+              display_mentions_json, created_at)
+             VALUES (?1, 2, 'user', '分析 路线图', ?2, ?3, ?4)",
+            rusqlite::params![
+                created.session_id,
+                r#"{"paths":["notes/roadmap.md"],"pathPrefixes":[],"corpusIds":[],"requiredTags":[]}"#,
+                r#"[{"kind":"file","value":"notes/roadmap.md","label":"路线图","range":{"from":3,"to":6}}]"#,
+                "2026-07-13T00:00:01Z",
+            ],
+        )?;
+        Ok(())
+    })
+    .expect("seed history");
+
+    let messages = NormalSessionRepository::load_messages(&db, &created.session_key, 20)
+        .expect("load history");
+    assert_eq!(messages[0].context_scope, serde_json::json!([]));
+    assert!(messages[0].display_mentions.is_empty());
+    assert_eq!(messages[1].context_scope["paths"][0], "notes/roadmap.md");
+    assert_eq!(messages[1].display_mentions[0]["label"], "路线图");
+}

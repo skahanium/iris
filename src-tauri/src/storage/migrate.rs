@@ -138,6 +138,10 @@ const MIGRATION_053_DOWN: &str =
     include_str!("../../migrations/053_remove_model_slot_capabilities.down.sql");
 const MIGRATION_054_UP: &str = include_str!("../../migrations/054_embedding_scheduler.sql");
 const MIGRATION_054_DOWN: &str = include_str!("../../migrations/054_embedding_scheduler.down.sql");
+const MIGRATION_055_UP: &str =
+    include_str!("../../migrations/055_session_message_turn_context.sql");
+const MIGRATION_055_DOWN: &str =
+    include_str!("../../migrations/055_session_message_turn_context.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -593,6 +597,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         false,
     )?;
     apply_migration(conn, "054_embedding_scheduler", MIGRATION_054_UP, false)?;
+    apply_migration(
+        conn,
+        "055_session_message_turn_context",
+        MIGRATION_055_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -604,6 +614,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "055_session_message_turn_context", MIGRATION_055_DOWN);
     rollback_migration(conn, "054_embedding_scheduler", MIGRATION_054_DOWN);
     rollback_migration(
         conn,
@@ -729,6 +740,91 @@ mod tests {
 
         assert_eq!(phase, "legacy_ready");
         assert_eq!(automatic_attempted, 0);
+    }
+
+    #[test]
+    fn migration_055_adds_immutable_turn_scope_and_display_mentions_with_empty_defaults() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let columns = conn
+            .prepare("PRAGMA table_info(session_messages)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(columns.contains(&"context_scope_json".to_string()));
+        assert!(columns.contains(&"display_mentions_json".to_string()));
+
+        conn.execute(
+            "INSERT INTO sessions (session_key, created_at, updated_at)
+             VALUES ('migration-055-session', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let session_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, created_at)
+             VALUES (?1, 1, 'user', 'legacy message', datetime('now'))",
+            [session_id],
+        )
+        .unwrap();
+        let stored: (String, String) = conn
+            .query_row(
+                "SELECT context_scope_json, display_mentions_json
+                 FROM session_messages WHERE session_id = ?1",
+                [session_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, ("[]".to_string(), "[]".to_string()));
+    }
+
+    #[test]
+    fn migration_055_down_rebuilds_messages_without_losing_existing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (session_key, created_at, updated_at)
+             VALUES ('migration-055-down', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let session_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, context_scope_json,
+              display_mentions_json, created_at)
+             VALUES (?1, 1, 'user', 'preserved', '{}', '[]', datetime('now'))",
+            [session_id],
+        )
+        .unwrap();
+
+        rollback_migration(
+            &conn,
+            "055_session_message_turn_context",
+            MIGRATION_055_DOWN,
+        );
+
+        let content: String = conn
+            .query_row(
+                "SELECT content FROM session_messages WHERE session_id = ?1",
+                [session_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(content, "preserved");
+        let columns = conn
+            .prepare("PRAGMA table_info(session_messages)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(!columns.contains(&"context_scope_json".to_string()));
+        assert!(!columns.contains(&"display_mentions_json".to_string()));
     }
 
     #[test]

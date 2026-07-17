@@ -288,9 +288,13 @@ fn request() -> AssistantRunStartRequest {
     AssistantRunStartRequest {
         client_request_id: "engine-client-request".to_string(),
         session: None,
-        message: "请给出最小直答".to_string(),
-        content_parts: None,
-        explicit_references: vec![],
+        turn: super::run_contract::AssistantTurnDraft {
+            message: "请给出最小直答".to_string(),
+            content_parts: None,
+            explicit_references: vec![],
+            retrieval_scope: Default::default(),
+            display_mentions: vec![],
+        },
         explicit_action: None,
         web_enabled: false,
         model_override: None,
@@ -1154,7 +1158,7 @@ async fn web_required_prefetch_failure_is_transient_and_emits_no_degradation() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "verify the latest public rule".to_string();
+    request.turn.message = "verify the latest public rule".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,
@@ -1211,7 +1215,7 @@ async fn transient_failure_output_is_retried_once_then_succeeds() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "Please search the web for current public facts".to_string();
+    request.turn.message = "Please search the web for current public facts".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,
@@ -1283,7 +1287,7 @@ async fn deterministic_failure_output_is_not_retried_and_is_not_retryable() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "Please search the web for current public facts".to_string();
+    request.turn.message = "Please search the web for current public facts".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,
@@ -1409,7 +1413,7 @@ async fn run_tool_loop_registers_bounded_web_evidence_before_provider_dispatch()
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "Please search the web for current public facts".to_string();
+    request.turn.message = "Please search the web for current public facts".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,
@@ -1495,7 +1499,7 @@ async fn web_required_pre_answer_stage_uses_search_snippets_without_page_fetches
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "Please search the web for current public facts".to_string();
+    request.turn.message = "Please search the web for current public facts".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,
@@ -1705,7 +1709,7 @@ async fn web_required_prefetch_failure_never_persists_a_degradation_notice() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
-    request.message = "Please search the web for current public facts".to_string();
+    request.turn.message = "Please search the web for current public facts".to_string();
     let accepted = RunIntake::start(&db, request).expect("accepted");
     let context = super::run_context::RunContextAssembler::assemble(
         &db,

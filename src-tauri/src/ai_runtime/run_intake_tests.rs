@@ -1,7 +1,8 @@
 use super::run_contract::{
-    AssistantRunControlRequest, AssistantRunStartRequest, ContextMode, Effect, Effort,
-    ExplicitAction, ExplicitTarget, Freshness, RiskClass, RunControlAction, RunEventPayload,
-    RunEventType, RunState, SecurityDomain, SelectionSnapshot, WebDecisionReason,
+    AssistantRunControlRequest, AssistantRunStartRequest, AssistantTurnDraft, ContextMode,
+    DisplayMention, DisplayMentionKind, DisplayMentionRange, Effect, Effort, ExplicitAction,
+    ExplicitTarget, Freshness, RiskClass, RunControlAction, RunEventPayload, RunEventType,
+    RunState, SecurityDomain, SelectionSnapshot, WebDecisionReason,
 };
 use super::run_engine::RunEventSink;
 use super::run_intake::RunIntake;
@@ -16,9 +17,13 @@ fn request() -> AssistantRunStartRequest {
     AssistantRunStartRequest {
         client_request_id: "intake-client-request".to_string(),
         session: None,
-        message: "请概述这份资料的要点".to_string(),
-        content_parts: None,
-        explicit_references: vec![],
+        turn: AssistantTurnDraft {
+            message: "请概述这份资料的要点".to_string(),
+            content_parts: None,
+            explicit_references: vec![],
+            retrieval_scope: Default::default(),
+            display_mentions: vec![],
+        },
         explicit_action: None,
         web_enabled: false,
         model_override: None,
@@ -74,9 +79,82 @@ fn intake_rejects_a_classified_context_capability_in_normal_domain() {
 }
 
 #[test]
+fn intake_rejects_normal_reference_scope_and_display_metadata_in_classified_domain() {
+    let mut classified = request();
+    classified.security_domain = SecurityDomain::Classified;
+    classified
+        .turn
+        .explicit_references
+        .push(crate::ai_types::ContextReferenceWire {
+            id: "ordinary-note".into(),
+            kind: crate::ai_types::ContextReferenceKind::Note,
+            file_path: Some("notes/ordinary.md".into()),
+            content_hash: Some("hash".into()),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        });
+    assert_eq!(
+        RunIntake::resolve_envelope(&classified)
+            .expect_err("classified requests must reject normal references")
+            .to_string(),
+        "agent_run_invalid_request"
+    );
+
+    classified.turn.explicit_references.clear();
+    classified.turn.retrieval_scope.paths = vec!["notes/ordinary.md".into()];
+    assert_eq!(
+        RunIntake::resolve_envelope(&classified)
+            .expect_err("classified requests must reject normal retrieval scope")
+            .to_string(),
+        "agent_run_invalid_request"
+    );
+
+    classified.turn.retrieval_scope.paths.clear();
+    classified.turn.display_mentions = vec![DisplayMention {
+        kind: DisplayMentionKind::File,
+        value: "notes/ordinary.md".into(),
+        label: "普通笔记".into(),
+        range: DisplayMentionRange { from: 0, to: 4 },
+    }];
+    assert_eq!(
+        RunIntake::resolve_envelope(&classified)
+            .expect_err("classified requests must reject normal display annotations")
+            .to_string(),
+        "agent_run_invalid_request"
+    );
+}
+
+#[test]
+fn intake_validates_display_mentions_against_utf16_message_ranges() {
+    let mut valid = request();
+    valid.turn.message = "分析 项目😀".into();
+    valid.turn.display_mentions = vec![DisplayMention {
+        kind: DisplayMentionKind::File,
+        value: "notes/project.md".into(),
+        label: "项目😀".into(),
+        range: DisplayMentionRange { from: 3, to: 7 },
+    }];
+    RunIntake::resolve_envelope(&valid).expect("UTF-16 range must accept a surrogate pair");
+
+    valid.turn.display_mentions[0].range.to = 8;
+    assert_eq!(
+        RunIntake::resolve_envelope(&valid)
+            .expect_err("range beyond UTF-16 message length must fail")
+            .to_string(),
+        "agent_run_invalid_request"
+    );
+}
+
+#[test]
 fn intake_rejects_selection_snapshot_with_inconsistent_utf8_range() {
     let mut invalid = request();
     invalid
+        .turn
         .explicit_references
         .push(crate::ai_types::ContextReferenceWire {
             id: "selection-reference".to_string(),
@@ -359,7 +437,7 @@ fn classified_intake_accepts_only_cef_facts_without_normal_sqlite_writes() {
 fn envelope_resolver_applies_security_action_and_web_rules_without_scene_inference() {
     let mut classified_apply = request();
     classified_apply.client_request_id = "classified-apply".into();
-    classified_apply.message = "请联网核实最新合规规则后应用这项变更".into();
+    classified_apply.turn.message = "请联网核实最新合规规则后应用这项变更".into();
     classified_apply.web_enabled = true;
     classified_apply.security_domain = SecurityDomain::Classified;
     classified_apply.explicit_action = Some(ExplicitAction {
@@ -392,7 +470,7 @@ fn envelope_resolver_applies_security_action_and_web_rules_without_scene_inferen
 fn envelope_resolver_uses_user_constraints_before_explicit_apply_action() {
     let mut constrained = request();
     constrained.client_request_id = "constrained-action".into();
-    constrained.message = "只用本地资料，不要修改文件；请继续创作小说。".into();
+    constrained.turn.message = "只用本地资料，不要修改文件；请继续创作小说。".into();
     constrained.web_enabled = true;
     constrained.explicit_action = Some(ExplicitAction {
         effect: Effect::Apply,
@@ -413,7 +491,7 @@ fn envelope_resolver_uses_user_constraints_before_explicit_apply_action() {
 fn envelope_resolver_keeps_novel_writing_in_conversation_without_implicit_retrieval() {
     let mut novel = request();
     novel.client_request_id = "novel-conversation".into();
-    novel.message = "请继续创作这部小说的下一章。".into();
+    novel.turn.message = "请继续创作这部小说的下一章。".into();
 
     let resolved = RunIntake::resolve_envelope(&novel).expect("resolve envelope");
 
@@ -766,7 +844,8 @@ fn event_state_version(event: &super::run_contract::AssistantRunEvent) -> u64 {
 fn web_enabled_pure_rewrite_remains_direct_without_tool_loop() {
     let mut request = request();
     request.web_enabled = true;
-    request.message = "Rewrite this sentence more clearly: The team met yesterday.".to_string();
+    request.turn.message =
+        "Rewrite this sentence more clearly: The team met yesterday.".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -782,7 +861,7 @@ fn web_enabled_pure_rewrite_remains_direct_without_tool_loop() {
 fn web_enabled_external_question_requires_engine_owned_web_evidence() {
     let mut request = request();
     request.web_enabled = true;
-    request.message = "最近世界杯战况如何？".to_string();
+    request.turn.message = "最近世界杯战况如何？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -797,7 +876,7 @@ fn web_enabled_external_question_requires_engine_owned_web_evidence() {
 fn web_enabled_general_question_requires_engine_owned_web_evidence_without_keywords() {
     let mut request = request();
     request.web_enabled = true;
-    request.message = "量子力学的核心概念是什么？".to_string();
+    request.turn.message = "量子力学的核心概念是什么？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -819,7 +898,7 @@ fn web_enabled_trusted_runtime_questions_remain_offline() {
     ] {
         let mut request = request();
         request.web_enabled = true;
-        request.message = message.to_string();
+        request.turn.message = message.to_string();
 
         let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -842,7 +921,7 @@ fn web_enabled_conversation_meta_questions_never_trigger_search() {
     ] {
         let mut request = request();
         request.web_enabled = true;
-        request.message = message.to_string();
+        request.turn.message = message.to_string();
 
         let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -874,7 +953,7 @@ fn bilingual_web_intent_fixture_has_120_deterministic_cases() {
             count += 1;
             let mut request = request();
             request.web_enabled = true;
-            request.message = message.clone();
+            request.turn.message = message.clone();
             let envelope = RunIntake::resolve_envelope(&request).expect("resolve fixture");
             let freshness = serde_json::to_value(envelope.freshness)
                 .expect("freshness")
@@ -902,7 +981,7 @@ fn bilingual_web_intent_fixture_has_120_deterministic_cases() {
 fn quoted_web_instruction_inside_a_transformation_remains_offline() {
     let mut request = request();
     request.web_enabled = true;
-    request.message = "把‘请联网搜索最新消息’翻译成英文。".to_string();
+    request.turn.message = "把‘请联网搜索最新消息’翻译成英文。".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -914,7 +993,7 @@ fn quoted_web_instruction_inside_a_transformation_remains_offline() {
 fn quoted_offline_instruction_inside_a_transformation_is_not_a_user_directive() {
     let mut request = request();
     request.web_enabled = true;
-    request.message =
+    request.turn.message =
         "Translate the quoted sentence 'Do not browse the web' into Chinese.".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
@@ -927,7 +1006,7 @@ fn quoted_offline_instruction_inside_a_transformation_is_not_a_user_directive() 
 fn transformation_word_does_not_hide_an_unbound_current_facts_request() {
     let mut request = request();
     request.web_enabled = true;
-    request.message = "Summarize the latest breaking news.".to_string();
+    request.turn.message = "Summarize the latest breaking news.".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -952,7 +1031,7 @@ fn continuing_a_normal_session_authorizes_bounded_conversation_context() {
 fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
     let mut request = request();
     request.web_enabled = true;
-    request.message = "你好！".to_string();
+    request.turn.message = "你好！".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -968,7 +1047,7 @@ fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
 fn explicit_web_instruction_overrides_the_local_transformation_shortcut() {
     let mut request = request();
     request.web_enabled = true;
-    request.message = "请联网搜索最新报道后翻译成中文。".to_string();
+    request.turn.message = "请联网搜索最新报道后翻译成中文。".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
@@ -979,7 +1058,7 @@ fn explicit_web_instruction_overrides_the_local_transformation_shortcut() {
 fn web_enabled_local_only_transformation_never_enters_the_web_tool_chain() {
     let mut request = request();
     request.web_enabled = true;
-    request.message = "只用本地资料，把“最近世界杯战况如何？”改写得更礼貌。".to_string();
+    request.turn.message = "只用本地资料，把“最近世界杯战况如何？”改写得更礼貌。".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 

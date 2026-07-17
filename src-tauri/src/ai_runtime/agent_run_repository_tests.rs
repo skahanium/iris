@@ -6,9 +6,9 @@ use super::agent_run_repository::{
 use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_contract::{
-    AssistantRunEvent, ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint,
-    Freshness, MaterialNeed, Modality, RiskClass, RunEventPayload, RunEventType, RunState,
-    SecurityDomain, WebDecisionReason,
+    AssistantRunEvent, ContextMode, DisplayMention, DisplayMentionKind, DisplayMentionRange,
+    Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed, Modality,
+    RiskClass, RunEventPayload, RunEventType, RunState, SecurityDomain, WebDecisionReason,
 };
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan};
 use crate::storage::db::Database;
@@ -64,6 +64,8 @@ fn accept_input(session_id: i64, session_key: String) -> AcceptRunInput {
         message: "用户的完整提问只能保存到 session_messages".to_string(),
         content_parts: None,
         explicit_references: vec![explicit_reference()],
+        context_scope: Default::default(),
+        display_mentions: vec![],
         explicit_action: None,
         envelope: envelope(),
     }
@@ -115,6 +117,68 @@ fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
         Ok(())
     })
     .expect("read accepted facts");
+}
+
+#[test]
+fn accept_persists_immutable_scope_and_display_mentions_for_prompt_and_history_consumers() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key.clone());
+    input.context_scope.paths = vec!["notes/roadmap.md".into()];
+    input.context_scope.path_prefixes = vec!["notes/".into()];
+    input.context_scope.required_tags = vec!["project".into()];
+    input.display_mentions = vec![DisplayMention {
+        kind: DisplayMentionKind::File,
+        value: "notes/roadmap.md".into(),
+        label: "路线图".into(),
+        range: DisplayMentionRange { from: 0, to: 3 },
+    }];
+
+    AgentRunRepository::accept(&db, input).expect("accepted scoped run");
+
+    let prompt = AgentRunRepository::prompt_input_for_session(&db, &session_key, "run-1")
+        .expect("prompt input")
+        .expect("run exists");
+    assert_eq!(prompt.retrieval_scope.paths, vec!["notes/roadmap.md"]);
+    db.with_read_conn(|conn| {
+        let stored: (String, String) = conn.query_row(
+            "SELECT context_scope_json, display_mentions_json
+             FROM session_messages WHERE session_id = ?1",
+            [session_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&stored.0)?["requiredTags"][0],
+            "project"
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&stored.1)?[0]["label"],
+            "路线图"
+        );
+        Ok(())
+    })
+    .expect("immutable turn inputs persisted");
+}
+
+#[test]
+fn prompt_input_treats_legacy_empty_array_scope_as_an_empty_boundary() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE session_messages SET context_scope_json = '[]' WHERE session_id = ?1",
+            [session_id],
+        )?;
+        Ok(())
+    })
+    .expect("simulate migration default");
+
+    let prompt = AgentRunRepository::prompt_input_for_session(&db, &session_key, "run-1")
+        .expect("legacy scope must remain readable")
+        .expect("run exists");
+    assert!(prompt.retrieval_scope.paths.is_empty());
+    assert!(prompt.retrieval_scope.path_prefixes.is_empty());
+    assert!(prompt.retrieval_scope.required_tags.is_empty());
 }
 
 #[test]

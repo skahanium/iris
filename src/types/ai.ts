@@ -181,6 +181,8 @@ export interface AssistantSessionMessage {
   contentParts?: unknown;
   toolCalls?: unknown;
   explicitReferences: unknown[];
+  contextScope: ContextScope | [];
+  displayMentions: DisplayMention[];
   createdAt: string;
 }
 
@@ -227,12 +229,35 @@ export type ContentPart =
       image_url: { url: string; detail?: "auto" | "low" | "high" };
     };
 
-export interface AssistantRunStartRequest {
-  clientRequestId: string;
-  session?: AssistantSessionRef;
+export type DisplayMentionKind = "file" | "folder" | "tag";
+
+/** UTF-16 code-unit range into the plain user-visible message. */
+export interface DisplayMentionRange {
+  from: number;
+  to: number;
+}
+
+/** Inline presentation metadata kept separate from model and retrieval input. */
+export interface DisplayMention {
+  kind: DisplayMentionKind;
+  value: string;
+  label: string;
+  range: DisplayMentionRange;
+}
+
+/** Immutable structured input for one assistant turn. */
+export interface AssistantTurnDraft {
   message: string;
   contentParts?: ContentPart[];
   explicitReferences: ContextReference[];
+  retrievalScope: ContextScope;
+  displayMentions: DisplayMention[];
+}
+
+export interface AssistantRunStartRequest {
+  clientRequestId: string;
+  session?: AssistantSessionRef;
+  turn: AssistantTurnDraft;
   explicitAction?: {
     effect: Effect;
     target?: ExplicitTarget;

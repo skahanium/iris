@@ -248,6 +248,8 @@ mod tests {
                 message: "record a sanitized tool result".to_string(),
                 content_parts: None,
                 explicit_references: vec![],
+                context_scope: Default::default(),
+                display_mentions: vec![],
                 explicit_action: None,
                 envelope: ExecutionEnvelope {
                     effect: Effect::Answer,

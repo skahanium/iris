@@ -451,8 +451,12 @@ fn run_ipc_dtos_keep_session_and_document_context_explicit() {
     let start: AssistantRunStartRequest = serde_json::from_value(serde_json::json!({
         "clientRequestId": "client-request-1",
         "session": { "domain": "normal", "sessionKey": "session-1" },
-        "message": "只根据明确资料回答",
-        "explicitReferences": [],
+        "turn": {
+            "message": "只根据明确资料回答",
+            "explicitReferences": [],
+            "retrievalScope": {},
+            "displayMentions": []
+        },
         "webEnabled": false,
         "securityDomain": "normal",
     }))
@@ -476,6 +480,42 @@ fn run_ipc_dtos_keep_session_and_document_context_explicit() {
         serde_json::to_value(accepted).unwrap()["state"],
         serde_json::json!("accepted")
     );
+}
+
+#[test]
+fn run_start_deserializes_one_structured_turn_draft_without_legacy_top_level_fields() {
+    let start: AssistantRunStartRequest = serde_json::from_value(serde_json::json!({
+        "clientRequestId": "client-request-structured-turn",
+        "turn": {
+            "message": "分析 项目计划",
+            "explicitReferences": [],
+            "retrievalScope": {
+                "paths": ["notes/project.md"],
+                "pathPrefixes": ["notes/"],
+                "corpusIds": [],
+                "requiredTags": ["project"]
+            },
+            "displayMentions": [{
+                "kind": "file",
+                "value": "notes/project.md",
+                "label": "项目计划",
+                "range": { "from": 3, "to": 7 }
+            }]
+        },
+        "webEnabled": false,
+        "securityDomain": "normal"
+    }))
+    .expect("structured turn draft must be the only message input");
+
+    let wire = serde_json::to_value(start).expect("serialize structured turn draft");
+    assert_eq!(wire["turn"]["message"], "分析 项目计划");
+    assert_eq!(
+        wire["turn"]["retrievalScope"]["paths"][0],
+        "notes/project.md"
+    );
+    assert_eq!(wire["turn"]["displayMentions"][0]["range"]["to"], 7);
+    assert!(wire.get("message").is_none());
+    assert!(wire.get("explicitReferences").is_none());
 }
 
 #[test]

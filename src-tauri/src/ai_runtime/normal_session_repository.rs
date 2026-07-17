@@ -33,6 +33,8 @@ pub(crate) struct NormalSessionMessage {
     pub(crate) content: String,
     pub(crate) content_parts: Option<String>,
     pub(crate) tool_calls: Option<serde_json::Value>,
+    pub(crate) context_scope: serde_json::Value,
+    pub(crate) display_mentions: Vec<serde_json::Value>,
     pub(crate) created_at: String,
 }
 
@@ -119,7 +121,8 @@ impl NormalSessionRepository {
             .ok_or_else(|| AppError::msg("assistant session not found"))?;
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at
+                "SELECT seq, role, content, content_parts, tool_calls, created_at,
+                        context_scope_json, display_mentions_json
                  FROM session_messages
                  WHERE session_id = ?1
                  ORDER BY seq DESC
@@ -136,6 +139,8 @@ impl NormalSessionRepository {
                             .get::<_, Option<String>>(4)?
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         created_at: row.get(5)?,
+                        context_scope: parse_json_value_or_empty_array(row.get(6)?),
+                        display_mentions: parse_json_array_or_empty(row.get(7)?),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -152,7 +157,8 @@ impl NormalSessionRepository {
     ) -> AppResult<Vec<NormalSessionMessage>> {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at
+                "SELECT seq, role, content, content_parts, tool_calls, created_at,
+                        context_scope_json, display_mentions_json
                  FROM session_messages
                  WHERE session_id = ?1
                  ORDER BY seq DESC
@@ -168,6 +174,8 @@ impl NormalSessionRepository {
                         .get::<_, Option<String>>(4)?
                         .and_then(|value| serde_json::from_str(&value).ok()),
                     created_at: row.get(5)?,
+                    context_scope: parse_json_value_or_empty_array(row.get(6)?),
+                    display_mentions: parse_json_array_or_empty(row.get(7)?),
                 })
             })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -185,7 +193,8 @@ impl NormalSessionRepository {
     ) -> AppResult<Vec<NormalSessionMessage>> {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at
+                "SELECT seq, role, content, content_parts, tool_calls, created_at,
+                        context_scope_json, display_mentions_json
                  FROM session_messages
                  WHERE session_id = ?1 AND seq < ?2 AND role IN ('user', 'assistant')
                  ORDER BY seq DESC
@@ -202,6 +211,8 @@ impl NormalSessionRepository {
                             .get::<_, Option<String>>(4)?
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         created_at: row.get(5)?,
+                        context_scope: parse_json_value_or_empty_array(row.get(6)?),
+                        display_mentions: parse_json_array_or_empty(row.get(7)?),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -291,4 +302,18 @@ fn derive_title(first_user_message: Option<&str>) -> String {
     } else {
         title
     }
+}
+
+fn parse_json_value_or_empty_array(value: Option<String>) -> serde_json::Value {
+    value
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_else(|| serde_json::json!([]))
+}
+
+fn parse_json_array_or_empty(value: Option<String>) -> Vec<serde_json::Value> {
+    value
+        .as_deref()
+        .and_then(|json| serde_json::from_str(json).ok())
+        .unwrap_or_default()
 }

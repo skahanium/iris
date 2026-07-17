@@ -93,6 +93,8 @@ pub struct AssistantSessionMessage {
     pub tool_calls: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub explicit_references: Vec<serde_json::Value>,
+    pub context_scope: serde_json::Value,
+    pub display_mentions: Vec<serde_json::Value>,
     pub created_at: String,
 }
 
@@ -165,6 +167,8 @@ pub async fn assistant_session_load(
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         tool_calls: item.tool_calls,
                         explicit_references: Vec::new(),
+                        context_scope: item.context_scope,
+                        display_mentions: item.display_mentions,
                         created_at: item.created_at,
                     })
                     .collect()
@@ -261,8 +265,13 @@ pub async fn assistant_run_start(
             let vault = state.vault_path()?;
             if request.session.is_some()
                 || request.web_enabled
-                || !request.explicit_references.is_empty()
-                || request.content_parts.is_some()
+                || !request.turn.explicit_references.is_empty()
+                || !request.turn.retrieval_scope.paths.is_empty()
+                || !request.turn.retrieval_scope.path_prefixes.is_empty()
+                || !request.turn.retrieval_scope.corpus_ids.is_empty()
+                || !request.turn.retrieval_scope.required_tags.is_empty()
+                || !request.turn.display_mentions.is_empty()
+                || request.turn.content_parts.is_some()
                 || request.explicit_action.is_some()
             {
                 return Err(AppError::msg("agent_run_invalid_request"));
@@ -285,7 +294,7 @@ pub async fn assistant_run_start(
                 .accept(
                     &vault,
                     &request.client_request_id,
-                    request.message,
+                    request.turn.message,
                     context_ref,
                 )?;
             let event = state

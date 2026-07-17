@@ -25,6 +25,8 @@ fn setup_run() -> (Database, i64, String) {
             message: "为证据账本建立可追溯运行".to_string(),
             content_parts: None,
             explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
             explicit_action: None,
             envelope: ExecutionEnvelope {
                 effect: Effect::Answer,
