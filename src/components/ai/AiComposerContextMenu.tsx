@@ -13,11 +13,12 @@ import {
   IrisClipboardError,
   pasteIntoTextField,
 } from "@/lib/iris-clipboard";
+import type { MentionTextEdit } from "@/lib/ai-context-scope";
 
 interface AiComposerContextMenuProps {
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   value: string;
-  onValueChange: (value: string) => void;
+  onValueChange: (value: string, edit?: MentionTextEdit) => void;
   children: React.ReactNode;
 }
 
@@ -76,7 +77,12 @@ export function AiComposerContextMenu({
           case "paste": {
             const pasted = await pasteIntoTextField(value, selection);
             if (!pasted) return;
-            onValueChange(pasted.value);
+            onValueChange(pasted.value, {
+              from: start,
+              to: end,
+              insertedTextLength:
+                pasted.value.length - (value.length - (end - start)),
+            });
             applyTextFieldCaret(el, pasted.caret);
             break;
           }

@@ -211,33 +211,33 @@ export function validDisplayMentions(
   return nonOverlapping;
 }
 
-interface TextEdit {
-  oldStart: number;
-  oldEnd: number;
-  newEnd: number;
+export interface MentionTextEdit {
+  /** UTF-16 range in the pre-edit textarea value. */
+  from: number;
+  to: number;
+  /** UTF-16 length inserted in place of the pre-edit range. */
+  insertedTextLength: number;
 }
 
-function inferSingleTextEdit(previousText: string, nextText: string): TextEdit {
-  let start = 0;
-  const maxPrefix = Math.min(previousText.length, nextText.length);
-  while (
-    start < maxPrefix &&
-    previousText.charCodeAt(start) === nextText.charCodeAt(start)
-  ) {
-    start += 1;
-  }
-
-  let oldEnd = previousText.length;
-  let newEnd = nextText.length;
-  while (
-    oldEnd > start &&
-    newEnd > start &&
-    previousText.charCodeAt(oldEnd - 1) === nextText.charCodeAt(newEnd - 1)
-  ) {
-    oldEnd -= 1;
-    newEnd -= 1;
-  }
-  return { oldStart: start, oldEnd, newEnd };
+function isValidMentionTextEdit(
+  previousText: string,
+  nextText: string,
+  edit: MentionTextEdit,
+): boolean {
+  return (
+    Number.isInteger(edit.from) &&
+    Number.isInteger(edit.to) &&
+    Number.isInteger(edit.insertedTextLength) &&
+    edit.from >= 0 &&
+    edit.to >= edit.from &&
+    edit.to <= previousText.length &&
+    edit.insertedTextLength >= 0 &&
+    nextText.length ===
+      previousText.length - (edit.to - edit.from) + edit.insertedTextLength &&
+    nextText.slice(0, edit.from) === previousText.slice(0, edit.from) &&
+    nextText.slice(edit.from + edit.insertedTextLength) ===
+      previousText.slice(edit.to)
+  );
 }
 
 /**
@@ -248,23 +248,22 @@ export function reconcileDisplayMentions(
   previousText: string,
   nextText: string,
   mentions: readonly DisplayMention[],
+  edit?: MentionTextEdit,
 ): DisplayMention[] {
   const current = validDisplayMentions(previousText, mentions);
   if (previousText === nextText) return validDisplayMentions(nextText, current);
+  if (!edit || !isValidMentionTextEdit(previousText, nextText, edit)) return [];
 
-  const edit = inferSingleTextEdit(previousText, nextText);
-  const delta = edit.newEnd - edit.oldEnd;
-  const insertion = edit.oldStart === edit.oldEnd;
+  const delta = edit.insertedTextLength - (edit.to - edit.from);
+  const insertion = edit.from === edit.to;
   const adjusted: DisplayMention[] = [];
 
   for (const mention of current) {
     const { from, to } = mention.range;
-    if (insertion && edit.oldStart > from && edit.oldStart < to) continue;
-    if (!insertion && edit.oldStart < to && edit.oldEnd > from) continue;
+    if (insertion && edit.from > from && edit.from < to) continue;
+    if (!insertion && edit.from < to && edit.to > from) continue;
 
-    const editIsBefore = insertion
-      ? edit.oldStart <= from
-      : edit.oldEnd <= from;
+    const editIsBefore = insertion ? edit.from <= from : edit.to <= from;
     adjusted.push(
       editIsBefore
         ? {

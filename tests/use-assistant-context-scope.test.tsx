@@ -186,11 +186,45 @@ describe("useAssistantContextScope", () => {
     )!;
     await act(async () => api.selectMention(guide));
 
-    await act(async () => api.handleInputChange(`please ${input}`));
+    await act(async () =>
+      api.handleInputChange(`please ${input}`, {
+        from: 0,
+        to: 0,
+        insertedTextLength: 7,
+      }),
+    );
     expect(api.displayMentions[0]?.range).toEqual({ from: 11, to: 16 });
 
-    await act(async () => api.handleInputChange("please ask GuXide "));
+    await act(async () =>
+      api.handleInputChange("please ask GuXide ", {
+        from: 13,
+        to: 13,
+        insertedTextLength: 1,
+      }),
+    );
     expect(api.displayMentions).toEqual([]);
+  });
+
+  it("keeps the second repeated label bound when the same text is inserted at the start", async () => {
+    await act(async () => setInput("Guide @"));
+    moveCursorToEnd();
+    await act(async () => api.syncMentionFromInput());
+    const guide = api.mentionCandidates.find(
+      (candidate) => candidate.value === "Policies/Guide.md",
+    )!;
+    await act(async () => api.selectMention(guide));
+    expect(api.displayMentions[0]?.range).toEqual({ from: 6, to: 11 });
+
+    await act(async () =>
+      api.handleInputChange("Guide Guide Guide ", {
+        from: 0,
+        to: 0,
+        insertedTextLength: 6,
+      }),
+    );
+
+    expect(api.displayMentions[0]?.range).toEqual({ from: 12, to: 17 });
+    expect(input.slice(12, 17)).toBe("Guide");
   });
 
   it("loads # tag candidates and maps them only to retrieval scope", async () => {

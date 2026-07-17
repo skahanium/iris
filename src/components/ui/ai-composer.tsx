@@ -12,13 +12,14 @@ import { cn } from "@/lib/utils";
 import {
   displayMentionTooltip,
   validDisplayMentions,
+  type MentionTextEdit,
 } from "@/lib/ai-context-scope";
 import type { DisplayMention } from "@/types/ai";
 import type { ImageAttachmentDto } from "@/types/ipc";
 
 interface AiComposerProps {
   value: string;
-  onChange: (value: string) => void;
+  onChange: (value: string, edit?: MentionTextEdit) => void;
   onSubmit: () => void;
   onStop?: () => void;
   streaming?: boolean;
@@ -42,6 +43,58 @@ interface AiComposerProps {
 
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB
 const ALLOWED_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+interface BeforeInputSnapshot {
+  value: string;
+  selectionStart: number;
+  selectionEnd: number;
+  inputType: string;
+}
+
+function editFromBeforeInput(
+  snapshot: BeforeInputSnapshot,
+  nextValue: string,
+): MentionTextEdit | undefined {
+  const { selectionStart, selectionEnd } = snapshot;
+  if (selectionStart !== selectionEnd) {
+    const insertedTextLength =
+      nextValue.length -
+      (snapshot.value.length - (selectionEnd - selectionStart));
+    return insertedTextLength >= 0
+      ? { from: selectionStart, to: selectionEnd, insertedTextLength }
+      : undefined;
+  }
+
+  if (snapshot.inputType.startsWith("delete")) {
+    const deletedTextLength = snapshot.value.length - nextValue.length;
+    if (deletedTextLength < 0) return undefined;
+    if (snapshot.inputType.endsWith("Backward")) {
+      return {
+        from: Math.max(0, selectionStart - deletedTextLength),
+        to: selectionStart,
+        insertedTextLength: 0,
+      };
+    }
+    return {
+      from: selectionStart,
+      to: Math.min(snapshot.value.length, selectionStart + deletedTextLength),
+      insertedTextLength: 0,
+    };
+  }
+
+  if (snapshot.inputType.startsWith("insert")) {
+    const insertedTextLength = nextValue.length - snapshot.value.length;
+    return insertedTextLength >= 0
+      ? {
+          from: selectionStart,
+          to: selectionStart,
+          insertedTextLength,
+        }
+      : undefined;
+  }
+
+  return undefined;
+}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -94,9 +147,25 @@ export function AiComposer({
 }: AiComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mentionLayerRef = useRef<HTMLDivElement>(null);
+  const composingRef = useRef(false);
+  const beforeInputRef = useRef<BeforeInputSnapshot | null>(null);
+  const selectionSnapshotRef = useRef<BeforeInputSnapshot | null>(null);
   const visibleMentions = validDisplayMentions(value, displayMentions);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    selectionSnapshotRef.current = {
+      value: e.currentTarget.value,
+      selectionStart: e.currentTarget.selectionStart,
+      selectionEnd: e.currentTarget.selectionEnd,
+      inputType: "",
+    };
+    if (
+      composingRef.current ||
+      e.nativeEvent.isComposing ||
+      e.nativeEvent.keyCode === 229
+    ) {
+      return;
+    }
     onComposerKeyDown?.(e);
     if (e.defaultPrevented) return;
     if (e.key === "Enter" && !e.shiftKey) {
@@ -104,6 +173,48 @@ export function AiComposer({
       if (!streaming && (value.trim() || (images && images.length > 0)))
         onSubmit();
     }
+  };
+
+  const handleBeforeInput = (event: React.FormEvent<HTMLTextAreaElement>) => {
+    const nativeEvent = event.nativeEvent as InputEvent;
+    beforeInputRef.current = {
+      value: event.currentTarget.value,
+      selectionStart: event.currentTarget.selectionStart,
+      selectionEnd: event.currentTarget.selectionEnd,
+      inputType:
+        nativeEvent.inputType ||
+        (typeof nativeEvent.data === "string" ? "insertText" : ""),
+    };
+  };
+
+  const captureSelection = (textarea: HTMLTextAreaElement) => {
+    selectionSnapshotRef.current = {
+      value: textarea.value,
+      selectionStart: textarea.selectionStart,
+      selectionEnd: textarea.selectionEnd,
+      inputType: "",
+    };
+  };
+
+  const handleSelection = (
+    event: React.SyntheticEvent<HTMLTextAreaElement>,
+  ) => {
+    captureSelection(event.currentTarget);
+    onSelect?.();
+  };
+
+  const handleCompositionStart = (
+    event: CompositionEvent<HTMLTextAreaElement>,
+  ) => {
+    composingRef.current = true;
+    onCompositionStart?.(event);
+  };
+
+  const handleCompositionEnd = (
+    event: CompositionEvent<HTMLTextAreaElement>,
+  ) => {
+    composingRef.current = false;
+    onCompositionEnd?.(event);
   };
 
   const handlePaste = useCallback(
@@ -191,7 +302,7 @@ export function AiComposer({
       nodes.push(
         <span
           key={`${mention.kind}:${mention.value}:${mention.range.from}:${index}`}
-          className="ai-composer-display-mention"
+          className="ai-composer-display-mention pointer-events-auto cursor-help"
           title={displayMentionTooltip(mention)}
           onMouseDown={(event) => {
             event.preventDefault();
@@ -260,7 +371,7 @@ export function AiComposer({
                 ref={mentionLayerRef}
                 aria-hidden="true"
                 data-testid="ai-mention-highlight-layer"
-                className="ai-composer-mention-layer pointer-events-none absolute inset-0 max-h-32 min-h-[2.5rem] overflow-hidden whitespace-pre-wrap break-words text-[15px] leading-[1.52] text-foreground"
+                className="ai-composer-mention-layer pointer-events-none absolute inset-0 z-[2] max-h-32 min-h-[2.5rem] overflow-hidden whitespace-pre-wrap break-words text-[15px] leading-[1.52] text-foreground"
               >
                 {mentionOverlay}
               </div>
@@ -278,14 +389,38 @@ export function AiComposer({
                 "relative z-[1] max-h-32 min-h-[2.5rem] w-full resize-none bg-transparent text-[15px] leading-[1.52] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50",
                 mentionOverlay && "ai-composer-textarea-with-mentions",
               )}
-              onChange={(e) => onChange(e.target.value)}
-              onCompositionStart={onCompositionStart}
-              onCompositionEnd={onCompositionEnd}
+              onBeforeInput={handleBeforeInput}
+              onChange={(event) => {
+                const nativeEvent = event.nativeEvent as InputEvent;
+                const baseSnapshot =
+                  beforeInputRef.current ?? selectionSnapshotRef.current;
+                beforeInputRef.current = null;
+                const snapshot = baseSnapshot
+                  ? {
+                      ...baseSnapshot,
+                      inputType:
+                        baseSnapshot.inputType ||
+                        nativeEvent.inputType ||
+                        (typeof nativeEvent.data === "string"
+                          ? "insertText"
+                          : ""),
+                    }
+                  : null;
+                onChange(
+                  event.target.value,
+                  snapshot
+                    ? editFromBeforeInput(snapshot, event.target.value)
+                    : undefined,
+                );
+                captureSelection(event.currentTarget);
+              }}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               onScroll={handleTextAreaScroll}
-              onSelect={onSelect}
-              onClick={onSelect}
+              onSelect={handleSelection}
+              onClick={handleSelection}
             />
           </div>
         </div>

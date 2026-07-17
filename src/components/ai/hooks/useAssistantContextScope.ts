@@ -19,6 +19,7 @@ import {
   mentionsToContextScope,
   reconcileDisplayMentions,
   validDisplayMentions,
+  type MentionTextEdit,
   type MentionCandidate,
 } from "@/lib/ai-context-scope";
 import { fileList, tagList } from "@/lib/ipc";
@@ -124,12 +125,13 @@ export function useAssistantContextScope({
   }, [commitDisplayMentions, input]);
 
   const handleInputChange = useCallback(
-    (nextInput: string) => {
+    (nextInput: string, edit?: MentionTextEdit) => {
       const previous = previousInputRef.current;
       const nextMentions = reconcileDisplayMentions(
         previous,
         nextInput,
         displayMentionsRef.current,
+        edit,
       );
       previousInputRef.current = nextInput;
       commitDisplayMentions(nextMentions);
@@ -172,6 +174,11 @@ export function useAssistantContextScope({
         input,
         next.text,
         displayMentionsRef.current,
+        {
+          from: mentionStart,
+          to: cursor,
+          insertedTextLength: next.cursor - mentionStart,
+        },
       );
       const nextMentions = validDisplayMentions(next.text, [
         ...shifted,

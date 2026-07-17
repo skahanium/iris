@@ -100,4 +100,50 @@ describe("AiMessageBubble inline display mentions", () => {
     expect(mention?.getAttribute("title")).toBe("文档");
     expect(host.innerHTML).not.toContain("/Users/example/private");
   });
+
+  it("only upgrades placeholders in rendered Markdown text nodes", async () => {
+    const content = [
+      "普通 Guide",
+      "[链接](Guide)",
+      "`Guide`",
+      "<mark>Guide</mark>",
+    ].join("\n\n");
+    const guideStarts = Array.from(
+      content.matchAll(/Guide/g),
+      (match) => match.index ?? -1,
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(AiMessageBubble, {
+          role: "user",
+          content,
+          displayMentions: guideStarts.map((from) => ({
+            kind: "file" as const,
+            value: "Policies/Guide.md",
+            label: "Guide",
+            range: { from, to: from + "Guide".length },
+          })),
+        }),
+      );
+    });
+
+    const mentions = host.querySelectorAll(".ai-display-mention");
+    expect(mentions).toHaveLength(1);
+    expect(mentions[0]?.parentElement?.tagName).toBe("P");
+
+    const link = host.querySelector<HTMLAnchorElement>("a");
+    expect(link?.textContent).toBe("链接");
+    expect(link?.getAttribute("href")).toBe("Guide");
+    expect(link?.querySelector(".ai-display-mention")).toBeNull();
+
+    const code = host.querySelector("code");
+    expect(code?.textContent).toBe("Guide");
+    expect(code?.querySelector(".ai-display-mention")).toBeNull();
+
+    const rawHtml = host.querySelector("mark");
+    expect(rawHtml?.textContent).toBe("Guide");
+    expect(rawHtml?.querySelector(".ai-display-mention")).toBeNull();
+    expect(host.innerHTML).not.toContain("IRISDISPLAYMENTIONPLACEHOLDER");
+  });
 });

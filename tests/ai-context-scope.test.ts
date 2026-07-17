@@ -100,9 +100,12 @@ describe("ai-context-scope", () => {
 
   it("shifts an annotation when text is inserted before it", () => {
     expect(
-      reconcileDisplayMentions("查 Guide 然后继续", "请先查 Guide 然后继续", [
-        guideMention,
-      ]),
+      reconcileDisplayMentions(
+        "查 Guide 然后继续",
+        "请先查 Guide 然后继续",
+        [guideMention],
+        { from: 0, to: 0, insertedTextLength: 2 },
+      ),
     ).toEqual([
       {
         ...guideMention,
@@ -111,16 +114,60 @@ describe("ai-context-scope", () => {
     ]);
   });
 
-  it.each([
-    ["输入", "查 GuXide 然后继续"],
-    ["删除", "查 Gude 然后继续"],
-    ["粘贴", "查 Gu粘贴ide 然后继续"],
-    ["IME 组合", "查 指南 然后继续"],
-  ])("unbinds a mention when %s touches its displayed label", (_kind, next) => {
+  it("uses the exact edit transaction when repeated text makes a prefix diff ambiguous", () => {
+    const secondGuide: DisplayMention = {
+      ...guideMention,
+      range: { from: 6, to: 11 },
+    };
+
     expect(
-      reconcileDisplayMentions("查 Guide 然后继续", next, [guideMention]),
+      reconcileDisplayMentions(
+        "Guide Guide",
+        "Guide Guide Guide",
+        [secondGuide],
+        { from: 0, to: 0, insertedTextLength: 6 },
+      ),
+    ).toEqual([
+      {
+        ...secondGuide,
+        range: { from: 12, to: 17 },
+      },
+    ]);
+  });
+
+  it("rejects a transaction that does not explain the changed text", () => {
+    expect(
+      reconcileDisplayMentions(
+        "查 Guide 然后继续",
+        "改 Guide 然后继续",
+        [guideMention],
+        { from: 12, to: 12, insertedTextLength: 0 },
+      ),
     ).toEqual([]);
   });
+
+  it.each([
+    ["输入", "查 GuXide 然后继续", { from: 4, to: 4, insertedTextLength: 1 }],
+    ["删除", "查 Gude 然后继续", { from: 4, to: 5, insertedTextLength: 0 }],
+    [
+      "粘贴",
+      "查 Gu粘贴ide 然后继续",
+      { from: 4, to: 4, insertedTextLength: 2 },
+    ],
+    ["IME 组合", "查 指南 然后继续", { from: 2, to: 7, insertedTextLength: 2 }],
+  ])(
+    "unbinds a mention when %s touches its displayed label",
+    (_kind, next, edit) => {
+      expect(
+        reconcileDisplayMentions(
+          "查 Guide 然后继续",
+          next,
+          [guideMention],
+          edit,
+        ),
+      ).toEqual([]);
+    },
+  );
 
   it("drops stale annotations whose range no longer matches the readable label", () => {
     expect(

@@ -89,6 +89,143 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function placeholdersInsideRawHtml(
+  markedContent: string,
+  placeholders: readonly string[],
+): Set<string> {
+  if (typeof DOMParser === "undefined") return new Set(placeholders);
+
+  const sourceDocument = new DOMParser().parseFromString(
+    markedContent,
+    "text/html",
+  );
+  const insideRawHtml = new Set<string>();
+  const walker = sourceDocument.createTreeWalker(
+    sourceDocument.body,
+    NodeFilter.SHOW_TEXT,
+  );
+  let node = walker.nextNode();
+  while (node) {
+    if (node.parentElement !== sourceDocument.body) {
+      placeholders.forEach((placeholder) => {
+        if (node?.nodeValue?.includes(placeholder)) {
+          insideRawHtml.add(placeholder);
+        }
+      });
+    }
+    node = walker.nextNode();
+  }
+  sourceDocument.body.querySelectorAll("*").forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      placeholders.forEach((placeholder) => {
+        if (attribute.value.includes(placeholder)) {
+          insideRawHtml.add(placeholder);
+        }
+      });
+    });
+  });
+  return insideRawHtml;
+}
+
+function restoreMentionPlaceholders(
+  rendered: string,
+  markedContent: string,
+  mentions: readonly DisplayMention[],
+  placeholders: readonly string[],
+): string {
+  if (typeof DOMParser === "undefined") {
+    return sanitizeHtml(
+      placeholders.reduce(
+        (html, placeholder, index) =>
+          html.replaceAll(
+            placeholder,
+            escapeHtml(mentions[index]?.label ?? ""),
+          ),
+        rendered,
+      ),
+    );
+  }
+
+  const rawHtmlPlaceholders = placeholdersInsideRawHtml(
+    markedContent,
+    placeholders,
+  );
+  const renderedDocument = new DOMParser().parseFromString(
+    rendered,
+    "text/html",
+  );
+  const mentionByPlaceholder = new Map(
+    placeholders.map((placeholder, index) => [placeholder, mentions[index]]),
+  );
+
+  renderedDocument.body.querySelectorAll("*").forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      let value = attribute.value;
+      mentionByPlaceholder.forEach((mention, placeholder) => {
+        if (mention) value = value.replaceAll(placeholder, mention.label);
+      });
+      if (value !== attribute.value)
+        element.setAttribute(attribute.name, value);
+    });
+  });
+
+  const walker = renderedDocument.createTreeWalker(
+    renderedDocument.body,
+    NodeFilter.SHOW_TEXT,
+  );
+  const textNodes: Text[] = [];
+  let node = walker.nextNode();
+  while (node) {
+    if (
+      placeholders.some((placeholder) => node?.nodeValue?.includes(placeholder))
+    ) {
+      textNodes.push(node as Text);
+    }
+    node = walker.nextNode();
+  }
+
+  textNodes.forEach((textNode) => {
+    const text = textNode.nodeValue ?? "";
+    const fragment = renderedDocument.createDocumentFragment();
+    let cursor = 0;
+    while (cursor < text.length) {
+      let nextPlaceholder = "";
+      let nextIndex = -1;
+      mentionByPlaceholder.forEach((_mention, placeholder) => {
+        const index = text.indexOf(placeholder, cursor);
+        if (index >= 0 && (nextIndex < 0 || index < nextIndex)) {
+          nextIndex = index;
+          nextPlaceholder = placeholder;
+        }
+      });
+      if (nextIndex < 0) {
+        fragment.append(text.slice(cursor));
+        break;
+      }
+      fragment.append(text.slice(cursor, nextIndex));
+      const mention = mentionByPlaceholder.get(nextPlaceholder);
+      if (mention) {
+        const plainOnly =
+          rawHtmlPlaceholders.has(nextPlaceholder) ||
+          Boolean(textNode.parentElement?.closest("code, pre"));
+        if (plainOnly) {
+          fragment.append(mention.label);
+        } else {
+          const span = renderedDocument.createElement("span");
+          span.className = "ai-display-mention";
+          span.title = displayMentionTooltip(mention);
+          span.textContent = mention.label;
+          fragment.append(span);
+        }
+      }
+      cursor = nextIndex + nextPlaceholder.length;
+    }
+    textNode.replaceWith(fragment);
+  });
+
+  return sanitizeHtml(renderedDocument.body.innerHTML);
+}
+
 function renderUserMessageHtml(
   content: string,
   displayMentions: readonly DisplayMention[],
@@ -113,16 +250,15 @@ function renderUserMessageHtml(
     markedContent = `${markedContent.slice(0, mention.range.from)}${placeholder}${markedContent.slice(mention.range.to)}`;
   }
 
-  let rendered = renderMarkdownWithProfile(markedContent, "chat_user", {
+  const rendered = renderMarkdownWithProfile(markedContent, "chat_user", {
     streaming: false,
   }).output;
-  mentions.forEach((mention, index) => {
-    const placeholder = placeholders[index];
-    if (!placeholder) return;
-    const inline = `<span class="ai-display-mention" title="${escapeHtml(displayMentionTooltip(mention))}">${escapeHtml(mention.label)}</span>`;
-    rendered = rendered.replace(placeholder, inline);
-  });
-  return sanitizeHtml(rendered);
+  return restoreMentionPlaceholders(
+    rendered,
+    markedContent,
+    mentions,
+    placeholders,
+  );
 }
 
 function formatProcessDuration(durationMs: number | null | undefined): string {

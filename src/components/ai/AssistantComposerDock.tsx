@@ -8,7 +8,7 @@ import type {
 } from "react";
 
 import { AiComposer } from "@/components/ui/ai-composer";
-import type { MentionCandidate } from "@/lib/ai-context-scope";
+import type { MentionCandidate, MentionTextEdit } from "@/lib/ai-context-scope";
 import type { DisplayMention } from "@/types/ai";
 
 import type { ImageAttachment } from "./AiMessageList";
@@ -35,7 +35,7 @@ interface AssistantComposerDockProps {
   onMentionHighlight: (index: number) => void;
   onMentionSelect: (candidate: MentionCandidate) => void;
   onSubmit: () => void;
-  onValueChange: (value: string) => void;
+  onValueChange: (value: string, edit?: MentionTextEdit) => void;
   onSelect: () => void;
   onStop: () => void;
 }
