@@ -13,7 +13,13 @@ use crate::ai_runtime::run_contract::{
     ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed, Modality, RiskClass,
     SafeRunErrorCode, SecurityDomain, WebDecisionReason,
 };
+use crate::ai_runtime::tool_dispatch::{dispatch_tool, ToolDispatchContext};
+use crate::ai_runtime::tool_execution_pipeline::{
+    audit_dispatched_tool, evaluate_tool_execution, ToolExecutionGate,
+};
+use crate::ai_runtime::tool_policy::ToolPolicyContext;
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
+use crate::app::AppState;
 use crate::storage::db::Database;
 
 fn envelope() -> ExecutionEnvelope {
@@ -1140,16 +1146,20 @@ fn explicit_materials_register_as_run_owned_evidence_without_storing_bodies() {
     .expect("ledger metadata");
 }
 
-#[test]
-fn completed_run_never_persists_transient_fallback_reference_bodies() {
+#[tokio::test]
+async fn completed_run_never_persists_transient_fallback_reference_bodies() {
     let dir = tempfile::tempdir().expect("vault");
     let vault = dir.path().join("vault");
     std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).expect("data directory");
     let marker = "TRANSIENT-FALLBACK-BODY-MUST-NOT-PERSIST";
     let body = format!("{marker} {}", "x".repeat(13_000));
     let indexed_excerpt = &body[..128];
     std::fs::write(vault.join("notes/transient.md"), &body).expect("long note");
-    let db = Database::open_in_memory().expect("database");
+    let state = AppState::new(data_dir).expect("app state");
+    state.set_vault(vault.clone()).expect("set vault");
+    let db = std::sync::Arc::clone(&state.db);
     index_scoped_note(
         &db,
         "notes/transient.md",
@@ -1228,6 +1238,54 @@ fn completed_run_never_persists_transient_fallback_reference_bodies() {
         },
     )
     .expect("tool started");
+    let dispatch_context = ToolDispatchContext {
+        note_path: None,
+        file_id: None,
+        web_search_enabled: false,
+        max_web_fetches: 5,
+        cold_start_packets: &context.local_retrieval_packets,
+        retrieval_scope: &context.retrieval_scope,
+        runtime_documents: &[],
+        app_handle: None,
+        attachment_count: context.materials.len(),
+        skill_activation_plan: None,
+    };
+    let tool_arguments = serde_json::json!({});
+    let tool_entry = crate::ai_runtime::tool_catalog::catalog_find("get_context_packets")
+        .expect("registered context packet tool");
+    let tool_policy = ToolPolicyContext {
+        autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
+        ..ToolPolicyContext::default()
+    };
+    let tool_gate = ToolExecutionGate {
+        run_id: "run-transient-body",
+        session_id: Some(session.session_id),
+        run_step: 1,
+        entry: tool_entry,
+        args: &tool_arguments,
+        policy_ctx: &tool_policy,
+        skill_id: None,
+        subagent_depth: 0,
+    };
+    let gate_outcome = evaluate_tool_execution(&db, tool_gate).expect("tool gate");
+    assert!(gate_outcome.tool_result.is_none());
+    let dispatch_result = dispatch_tool(
+        state.as_ref(),
+        &dispatch_context,
+        "get_context_packets",
+        &tool_arguments,
+    )
+    .await;
+    assert!(dispatch_result.success);
+    let transient_tool_result =
+        serde_json::to_string(&dispatch_result.output).expect("serialize transient tool result");
+    assert!(
+        transient_tool_result.contains(marker),
+        "the genuine dispatch result must prove that the transient fallback body was exercised"
+    );
+    assert!(transient_tool_result.contains(indexed_excerpt));
+    audit_dispatched_tool(&db, &tool_gate, &gate_outcome.decision, &dispatch_result)
+        .expect("audit dispatched tool");
     let tool_completed = AgentRunRepository::append_event(
         &db,
         AppendRunEventInput {
@@ -1237,7 +1295,7 @@ fn completed_run_never_persists_transient_fallback_reference_bodies() {
             payload: crate::ai_runtime::run_contract::RunEventPayload::ToolCompleted {
                 capability: "get_context_packets".into(),
                 tool_call_id: "tool-transient-body".into(),
-                summary: "已读取受限上下文元数据".into(),
+                summary: "工具调用完成".into(),
             },
         },
     )
@@ -1271,7 +1329,9 @@ fn completed_run_never_persists_transient_fallback_reference_bodies() {
                         WHERE session_id = r.session_id AND turn_id = r.turn_id
                     ), '') || '|' ||
                     COALESCE((SELECT group_concat(payload_json, '|') FROM agent_run_events WHERE run_id = r.run_id), '') || '|' ||
-                    COALESCE((SELECT group_concat(title || ':' || source_path || ':' || content_hash || ':' || COALESCE(retrieval_reason, ''), '|') FROM session_evidence WHERE origin_run_id = r.run_id), '')
+                    COALESCE((SELECT group_concat(title || ':' || source_path || ':' || content_hash || ':' || COALESCE(retrieval_reason, ''), '|') FROM session_evidence WHERE origin_run_id = r.run_id), '') || '|' ||
+                    COALESCE((SELECT group_concat(tool_name || ':' || COALESCE(arguments_summary, '') || ':' || COALESCE(result_summary, '') || ':' || success, '|') FROM tool_audit WHERE run_id = r.run_id), '') || '|' ||
+                    COALESCE((SELECT group_concat(tool_name || ':' || permission_name || ':' || decision || ':' || scope_summary || ':' || risk_level || ':' || result_status, '|') FROM agent_permission_audit WHERE run_id = r.run_id), '')
              FROM agent_runs r
              WHERE r.run_id = 'run-transient-body'",
             [],
@@ -1287,14 +1347,32 @@ fn completed_run_never_persists_transient_fallback_reference_bodies() {
         )?;
         assert_eq!(assistant_content, "已依据附件完成概述。");
         assert!(!assistant_content.contains(marker));
-        let tool_event_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM agent_run_events
-             WHERE run_id = 'run-transient-body'
-               AND event_type IN ('tool_started', 'tool_completed')",
-            [],
+        let explicit_references_json: String = conn.query_row(
+            "SELECT explicit_references_json FROM session_messages
+             WHERE session_id = ?1 AND turn_id = 'turn-transient-body' AND role = 'user'",
+            [session.session_id],
             |row| row.get(0),
         )?;
+        assert!(explicit_references_json.contains("notes/transient.md"));
+        assert!(!explicit_references_json.contains(marker));
+        assert!(!explicit_references_json.contains(indexed_excerpt));
+        let (run_state, tool_event_count, safe_tool_summary): (String, i64, String) =
+            conn.query_row(
+                "SELECT r.status,
+                        (SELECT COUNT(*) FROM agent_run_events
+             WHERE run_id = 'run-transient-body'
+                           AND event_type IN ('tool_started', 'tool_completed')),
+                        (SELECT payload_json FROM agent_run_events
+                         WHERE run_id = 'run-transient-body' AND event_type = 'tool_completed'
+                         ORDER BY event_seq DESC LIMIT 1)
+                 FROM agent_runs r WHERE r.run_id = 'run-transient-body'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )?;
+        assert_eq!(run_state, "completed");
         assert_eq!(tool_event_count, 2);
+        assert!(safe_tool_summary.contains("工具调用完成"));
+        assert!(!safe_tool_summary.contains(marker));
         let evidence_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM session_evidence
              WHERE origin_run_id = 'run-transient-body'",
@@ -1302,6 +1380,30 @@ fn completed_run_never_persists_transient_fallback_reference_bodies() {
             |row| row.get(0),
         )?;
         assert_eq!(evidence_count, 1);
+        let (tool_name, arguments_summary, result_summary, success): (
+            String,
+            String,
+            String,
+            i64,
+        ) = conn.query_row(
+            "SELECT tool_name, arguments_summary, result_summary, success
+             FROM tool_audit WHERE run_id = 'run-transient-body'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(tool_name, "get_context_packets");
+        assert_eq!(arguments_summary, "shape=object, keys=0");
+        assert_eq!(result_summary, "shape=object, keys=2");
+        assert_eq!(success, 1);
+        assert!(!result_summary.contains(marker));
+        let (permission_count, permission_status): (i64, String) = conn.query_row(
+            "SELECT COUNT(*), MIN(result_status) FROM agent_permission_audit
+             WHERE run_id = 'run-transient-body' AND tool_name = 'get_context_packets'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(permission_count, 1);
+        assert_eq!(permission_status, "executed");
         Ok(())
     })
     .expect("inspect completed run storage");
