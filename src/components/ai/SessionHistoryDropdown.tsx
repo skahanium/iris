@@ -35,7 +35,11 @@ function toChatLines(messages: AssistantSessionMessage[]): ChatLine[] {
   return messages.map((message) => ({
     role: message.role as ChatLine["role"],
     content: message.content,
+    ...(message.displayMentions.length > 0
+      ? { displayMentions: message.displayMentions }
+      : {}),
     seq: message.seq,
+    created_at: message.createdAt,
   }));
 }
 

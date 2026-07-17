@@ -20,7 +20,6 @@ import {
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AssistantComposerDock } from "./AssistantComposerDock";
-import { ContextScopeChips } from "./ContextScopeChips";
 import { ConversationSurface } from "./ConversationSurface";
 import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
 import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
@@ -127,15 +126,18 @@ export function UnifiedAssistantPanel({
   }, [aiDomain, classifiedPath]);
 
   const {
+    displayMentions,
+    handleCompositionEnd,
+    handleCompositionStart,
     handleComposerKeyDown,
+    handleInputChange,
     mentionCandidates,
     mentionHighlight,
     mentionNavDeltaRef,
     mentionOpen,
     mentionPrefix,
     mentionQuery,
-    mentionTokens,
-    removeMentionToken,
+    retrievalScope,
     selectMention,
     setMentionHighlight,
     syncMentionFromInput,
@@ -170,6 +172,8 @@ export function UnifiedAssistantPanel({
       assistantRun.pendingConfirmation !== null,
     session: runSession,
     contextReferences: bubbleSelection.contextReferences,
+    displayMentions,
+    retrievalScope,
     webSearch,
     modelOverride,
     start: assistantRun.start,
@@ -315,14 +319,12 @@ export function UnifiedAssistantPanel({
       <ErrorBoundary scope="AI 对话区">
         <ConversationSurface
           messages={messages}
-          contextReferences={bubbleSelection.contextReferences}
           streaming={streaming}
           messageListRef={messageListRef}
           onCitationClick={() => undefined}
           onRetract={handleRetract}
           onSelect={bubbleSelection.handleClick}
           onQuoteToInput={handleQuoteToInput}
-          onRemoveContextReference={bubbleSelection.removeContextReference}
         />
       </ErrorBoundary>
       <SelectedMessagesActionDock
@@ -332,7 +334,6 @@ export function UnifiedAssistantPanel({
         onExport={handleExportSelected}
         onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
       />
-      <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
       {aiDomain === "classified" ? (
         <div className="border-t border-border/60 px-3 py-2">
           <Button
@@ -355,6 +356,7 @@ export function UnifiedAssistantPanel({
         composerDisabled={composerDisabled}
         images={images}
         input={input}
+        displayMentions={displayMentions}
         mentionCandidates={mentionCandidates}
         mentionHighlight={mentionHighlight}
         mentionNavDeltaRef={mentionNavDeltaRef}
@@ -364,13 +366,15 @@ export function UnifiedAssistantPanel({
         streaming={streaming}
         textareaRef={textareaRef}
         onComposerKeyDown={handleComposerKeyDown}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
         onImagesChange={setImages}
         onMentionHighlight={setMentionHighlight}
         onMentionSelect={selectMention}
         onSelect={syncMentionFromInput}
         onStop={stopStreaming}
         onSubmit={() => void send()}
-        onValueChange={setInput}
+        onValueChange={handleInputChange}
       />
     </div>
   );

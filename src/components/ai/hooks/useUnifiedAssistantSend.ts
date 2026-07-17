@@ -1,16 +1,25 @@
 import { useCallback, useState } from "react";
 
 import { invokeErrorMessage } from "@/lib/credentials";
+import {
+  mentionsToContextScope,
+  trimMentionDraft,
+} from "@/lib/ai-context-scope";
+import { fileSignature } from "@/lib/ipc";
 
 import type { ImageAttachment } from "../AiMessageList";
 import type {
   AssistantRunAccepted,
   AgentModelOverride,
   AssistantRunStartRequest,
+  AssistantTurnDraft,
   AssistantSessionRef,
   ContextReference,
+  ContextScope,
+  DisplayMention,
   SecurityDomain,
 } from "@/types/ai";
+import type { FileSignatureResult } from "@/types/ipc";
 
 export interface UnifiedAssistantSendOptions {
   aiDomain: SecurityDomain;
@@ -22,10 +31,17 @@ export interface UnifiedAssistantSendOptions {
   composerDisabled: boolean;
   session: AssistantSessionRef | null;
   contextReferences: ContextReference[];
+  displayMentions: DisplayMention[];
+  retrievalScope: ContextScope;
   webSearch: boolean;
   modelOverride?: AgentModelOverride | null;
   start: (request: AssistantRunStartRequest) => Promise<AssistantRunAccepted>;
-  appendUserMessage: (message: string, images?: ImageAttachment[]) => void;
+  getFileSignature?: (path: string) => Promise<FileSignatureResult>;
+  appendUserMessage: (
+    message: string,
+    images?: ImageAttachment[],
+    displayMentions?: DisplayMention[],
+  ) => void;
   ensureAssistantStreamSlot: () => void;
   clearContextReferences: () => void;
   setInput: (value: string) => void;
@@ -36,10 +52,47 @@ export interface UnifiedAssistantSendOptions {
   setError: (message: string | null) => void;
 }
 
+async function referencesForFileMentions(
+  mentions: readonly DisplayMention[],
+  getFileSignature: (path: string) => Promise<FileSignatureResult>,
+): Promise<ContextReference[]> {
+  const paths = [
+    ...new Set(
+      mentions
+        .filter((mention) => mention.kind === "file")
+        .map((mention) => mention.value),
+    ),
+  ];
+  return Promise.all(
+    paths.map(async (path) => {
+      const signature = await getFileSignature(path);
+      return {
+        id: crypto.randomUUID(),
+        kind: "note" as const,
+        filePath: path,
+        contentHash: signature.contentHash,
+        utf8Range: null,
+        editorRange: null,
+        excerpt: "",
+        stale: false,
+      };
+    }),
+  );
+}
+
+function hasRetrievalScope(scope: ContextScope): boolean {
+  return (
+    scope.paths.length > 0 ||
+    scope.pathPrefixes.length > 0 ||
+    (scope.corpusIds?.length ?? 0) > 0 ||
+    (scope.requiredTags?.length ?? 0) > 0
+  );
+}
+
 function contentPartsForImages(
   message: string,
   images: ImageAttachment[],
-): AssistantRunStartRequest["contentParts"] | undefined {
+): AssistantTurnDraft["contentParts"] | undefined {
   if (images.length === 0) return undefined;
   return [
     { type: "text", text: message },
@@ -77,9 +130,12 @@ export function useUnifiedAssistantSend({
   composerDisabled,
   session,
   contextReferences,
+  displayMentions,
+  retrievalScope,
   webSearch,
   modelOverride,
   start,
+  getFileSignature = fileSignature,
   appendUserMessage,
   ensureAssistantStreamSlot,
   clearContextReferences,
@@ -93,7 +149,8 @@ export function useUnifiedAssistantSend({
   const [isStarting, setIsStarting] = useState(false);
 
   const send = useCallback(async () => {
-    const message = input.trim();
+    const draft = trimMentionDraft(input, displayMentions);
+    const message = draft.message;
     if ((!message && images.length === 0) || composerDisabled || isStarting) {
       return;
     }
@@ -106,7 +163,13 @@ export function useUnifiedAssistantSend({
         setError("请先点击“引用当前涉密文档”，该授权仅对本次提问生效。");
         return;
       }
-      if (images.length > 0 || contextReferences.length > 0 || webSearch) {
+      if (
+        images.length > 0 ||
+        contextReferences.length > 0 ||
+        draft.displayMentions.length > 0 ||
+        hasRetrievalScope(retrievalScope) ||
+        webSearch
+      ) {
         setError("涉密分析仅支持当前文档文本，不支持图片、其他引用或联网。");
         return;
       }
@@ -118,20 +181,39 @@ export function useUnifiedAssistantSend({
     const currentImages = images;
     setIsStarting(true);
     setError(null);
-    setStreaming(true);
-    setActivityHint("正在提交请求…");
-    appendUserMessage(message, currentImages);
-    ensureAssistantStreamSlot();
 
     try {
+      const mentionReferences =
+        aiDomain === "classified"
+          ? []
+          : await referencesForFileMentions(
+              draft.displayMentions,
+              getFileSignature,
+            );
+      const turnScope =
+        aiDomain === "classified"
+          ? { paths: [], pathPrefixes: [], requiredTags: [] }
+          : mentionsToContextScope(draft.displayMentions);
+      setStreaming(true);
+      setActivityHint("正在提交请求…");
+      appendUserMessage(message, currentImages, draft.displayMentions);
+      ensureAssistantStreamSlot();
       const accepted = await start({
         clientRequestId: crypto.randomUUID(),
         ...(session ? { session } : {}),
-        message,
-        ...(currentImages.length > 0
-          ? { contentParts: contentPartsForImages(message, currentImages) }
-          : {}),
-        explicitReferences: aiDomain === "classified" ? [] : explicitReferences,
+        turn: {
+          message,
+          ...(currentImages.length > 0
+            ? { contentParts: contentPartsForImages(message, currentImages) }
+            : {}),
+          explicitReferences:
+            aiDomain === "classified"
+              ? []
+              : [...explicitReferences, ...mentionReferences],
+          retrievalScope: turnScope,
+          displayMentions:
+            aiDomain === "classified" ? [] : draft.displayMentions,
+        },
         webEnabled: aiDomain === "classified" ? false : webSearch,
         securityDomain: aiDomain,
         ...(aiDomain === "classified" && classifiedContextRef
@@ -163,10 +245,12 @@ export function useUnifiedAssistantSend({
     clearContextReferences,
     composerDisabled,
     contextReferences,
+    displayMentions,
     ensureAssistantStreamSlot,
     images,
     input,
     includeCurrentClassifiedDocument,
+    getFileSignature,
     clearClassifiedDocumentConsent,
     isStarting,
     session,
@@ -177,6 +261,7 @@ export function useUnifiedAssistantSend({
     setSession,
     setStreaming,
     start,
+    retrievalScope,
     webSearch,
     modelOverride,
   ]);

@@ -83,8 +83,21 @@ describe("SessionHistoryDropdown", () => {
     const message: AssistantSessionMessage = {
       seq: 1,
       role: "user",
-      content: "hello",
+      content: "hello Guide",
       explicitReferences: [],
+      contextScope: {
+        paths: [],
+        pathPrefixes: [],
+        requiredTags: [],
+      },
+      displayMentions: [
+        {
+          kind: "file",
+          value: "notes/Guide.md",
+          label: "Guide",
+          range: { from: 6, to: 11 },
+        },
+      ],
       createdAt: "2026-06-22T08:01:00.000Z",
     };
     mockAssistantSessionList.mockResolvedValue([summary]);
@@ -123,7 +136,15 @@ describe("SessionHistoryDropdown", () => {
     });
     expect(onSelectSession).toHaveBeenCalledWith(
       summary.session,
-      [{ role: "user", content: "hello", seq: 1 }],
+      [
+        {
+          role: "user",
+          content: "hello Guide",
+          displayMentions: message.displayMentions,
+          seq: 1,
+          created_at: "2026-06-22T08:01:00.000Z",
+        },
+      ],
       null,
     );
   });

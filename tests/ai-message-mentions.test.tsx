@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 
-describe("AiMessageBubble mention metadata", () => {
+describe("AiMessageBubble inline display mentions", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -19,45 +19,85 @@ describe("AiMessageBubble mention metadata", () => {
     host.remove();
   });
 
-  it("renders user document mentions as a light metadata row outside the message body", async () => {
+  it("restores validated mentions inline without @, brackets, chips or a reference row", async () => {
+    const content = "请根据 Guide 与 Notes 给出思路";
     await act(async () => {
       root.render(
         createElement(AiMessageBubble, {
           role: "user",
-          content: "根据问题线索情况，请给出核查思路",
-          mentions: [
+          content,
+          displayMentions: [
             {
-              raw: "@[问题线索工作思路（WY）.md]",
-              value: "问题线索工作思路（WY）.md",
               kind: "file",
-              label: "问题线索工作思路（WY）.md",
+              value: "Policies/Guide.md",
+              label: "Guide",
+              range: { from: 4, to: 9 },
             },
             {
-              raw: "@[线索附件/]",
-              value: "线索附件/",
               kind: "folder",
-              label: "线索附件",
-            },
-            {
-              raw: "@[核查依据/初稿.md]",
-              value: "核查依据/初稿.md",
-              kind: "file",
-              label: "核查依据/初稿.md",
+              value: "Research/Notes/",
+              label: "Notes",
+              range: { from: 12, to: 17 },
             },
           ],
         }),
       );
     });
 
-    expect(host.textContent).toContain("引用：");
-    expect(host.textContent).toContain("问题线索工作思路（WY）.md");
-    expect(host.textContent).toContain("线索附件");
-    expect(host.textContent).toContain("+1");
-    expect(host.textContent).toContain("根据问题线索情况，请给出核查思路");
-    expect(host.textContent).not.toContain("@[");
+    const mentions = host.querySelectorAll(".ai-display-mention");
+    expect(mentions).toHaveLength(2);
+    expect(mentions[0]?.textContent).toBe("Guide");
+    expect(mentions[0]?.getAttribute("title")).toBe("文档：Policies/Guide.md");
+    expect(mentions[1]?.getAttribute("title")).toBe("文件夹：Research/Notes/");
+    expect(host.textContent?.trim()).toBe(content);
+    expect(host.textContent).not.toContain("引用：");
+    expect(host.textContent).not.toMatch(/@|\[|\]/);
+    expect(host.querySelector("[data-ai-message-mentions]")).toBeNull();
+  });
 
-    const metadata = host.querySelector("[data-ai-message-mentions]");
-    expect(metadata).not.toBeNull();
-    expect(metadata?.getAttribute("title")).toContain("核查依据/初稿.md");
+  it("renders stale or mismatched metadata as ordinary text", async () => {
+    await act(async () => {
+      root.render(
+        createElement(AiMessageBubble, {
+          role: "user",
+          content: "请根据 Guide",
+          displayMentions: [
+            {
+              kind: "file",
+              value: '<img src=x onerror="alert(1)">',
+              label: "Other",
+              range: { from: 4, to: 9 },
+            },
+          ],
+        }),
+      );
+    });
+
+    expect(host.textContent?.trim()).toBe("请根据 Guide");
+    expect(host.querySelector(".ai-display-mention")).toBeNull();
+    expect(host.querySelector("img")).toBeNull();
+  });
+
+  it("does not expose an unsafe absolute path through the tooltip", async () => {
+    await act(async () => {
+      root.render(
+        createElement(AiMessageBubble, {
+          role: "user",
+          content: "查 Guide",
+          displayMentions: [
+            {
+              kind: "file",
+              value: "/Users/example/private/Guide.md",
+              label: "Guide",
+              range: { from: 2, to: 7 },
+            },
+          ],
+        }),
+      );
+    });
+
+    const mention = host.querySelector(".ai-display-mention");
+    expect(mention?.getAttribute("title")).toBe("文档");
+    expect(host.innerHTML).not.toContain("/Users/example/private");
   });
 });

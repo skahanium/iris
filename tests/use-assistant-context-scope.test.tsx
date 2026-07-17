@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAssistantContextScope } from "@/components/ai/hooks/useAssistantContextScope";
-import type { FileListItem } from "@/types/ipc";
+import type { FileListItem, TagGroup } from "@/types/ipc";
 
 const files: FileListItem[] = [
   {
@@ -25,6 +25,7 @@ type HookApi = ReturnType<typeof useAssistantContextScope>;
 function Harness({
   input,
   loadVaultFiles = async () => files,
+  loadVaultTags = async () => [],
   runtimeDocumentCandidates = [],
   onInput,
   onReady,
@@ -32,6 +33,7 @@ function Harness({
 }: {
   input: string;
   loadVaultFiles?: () => Promise<FileListItem[]>;
+  loadVaultTags?: () => Promise<TagGroup[]>;
   runtimeDocumentCandidates?: FileListItem[];
   onInput: (next: string | ((prev: string) => string)) => void;
   onReady: (api: HookApi) => void;
@@ -42,6 +44,7 @@ function Harness({
     setInput: onInput,
     textareaRef,
     loadVaultFiles,
+    loadVaultTags,
     runtimeDocumentCandidates,
   });
   onReady(api);
@@ -56,6 +59,7 @@ describe("useAssistantContextScope", () => {
   let api!: HookApi;
   let textareaRef: RefObject<HTMLTextAreaElement | null>;
   let loadVaultFiles: () => Promise<FileListItem[]>;
+  let loadVaultTags: () => Promise<TagGroup[]>;
   let runtimeDocumentCandidates: FileListItem[];
 
   function setInput(next: string | ((prev: string) => string)) {
@@ -68,6 +72,7 @@ describe("useAssistantContextScope", () => {
       createElement(Harness, {
         input,
         loadVaultFiles,
+        loadVaultTags,
         runtimeDocumentCandidates,
         onInput: setInput,
         onReady: (value) => {
@@ -92,6 +97,7 @@ describe("useAssistantContextScope", () => {
     textarea = document.createElement("textarea");
     textareaRef = { current: textarea };
     loadVaultFiles = async () => files;
+    loadVaultTags = async () => [{ name: "project", files: [files[0]!] }];
     runtimeDocumentCandidates = [];
     await act(async () => {
       render();
@@ -135,7 +141,7 @@ describe("useAssistantContextScope", () => {
     expect(api.mentionCandidates).toEqual([]);
   });
 
-  it("selects and removes mention tokens through a stable hook API", async () => {
+  it("selects a candidate as readable text with separate display metadata", async () => {
     await act(async () => {
       setInput("ask @");
     });
@@ -152,13 +158,61 @@ describe("useAssistantContextScope", () => {
     await act(async () => {
       api.selectMention(guide!);
     });
-    expect(input).toContain("@[Policies/Guide.md]");
-
-    const [token] = api.mentionTokens;
-    await act(async () => {
-      api.removeMentionToken(token!);
+    expect(input).toBe("ask Guide ");
+    expect(input).not.toMatch(/@|\[|\]/);
+    expect(api.displayMentions).toEqual([
+      {
+        kind: "file",
+        value: "Policies/Guide.md",
+        label: "Guide",
+        range: { from: 4, to: 9 },
+      },
+    ]);
+    expect(api.retrievalScope).toEqual({
+      paths: [],
+      pathPrefixes: [],
+      requiredTags: [],
     });
-    expect(input).not.toContain("@[");
+  });
+
+  it("shifts or safely unbinds annotations as the editable text changes", async () => {
+    await act(async () => {
+      setInput("ask @");
+    });
+    moveCursorToEnd();
+    await act(async () => api.syncMentionFromInput());
+    const guide = api.mentionCandidates.find(
+      (candidate) => candidate.value === "Policies/Guide.md",
+    )!;
+    await act(async () => api.selectMention(guide));
+
+    await act(async () => api.handleInputChange(`please ${input}`));
+    expect(api.displayMentions[0]?.range).toEqual({ from: 11, to: 16 });
+
+    await act(async () => api.handleInputChange("please ask GuXide "));
+    expect(api.displayMentions).toEqual([]);
+  });
+
+  it("loads # tag candidates and maps them only to retrieval scope", async () => {
+    await act(async () => setInput("ask #pro"));
+    moveCursorToEnd();
+    await act(async () => {
+      api.syncMentionFromInput();
+      await Promise.resolve();
+    });
+
+    const project = api.mentionCandidates.find(
+      (candidate) => candidate.value === "project",
+    );
+    expect(project?.kind).toBe("tag");
+    await act(async () => api.selectMention(project!));
+
+    expect(input).toBe("ask project ");
+    expect(api.retrievalScope).toEqual({
+      paths: [],
+      pathPrefixes: [],
+      requiredTags: ["project"],
+    });
   });
 
   it("closes the mention popover on Escape", async () => {
@@ -211,6 +265,26 @@ describe("useAssistantContextScope", () => {
 
     expect(
       api.mentionCandidates.some((item) => item.value === "Drafts/新建文档.md"),
+    ).toBe(true);
+  });
+
+  it("keeps @ file candidates available when tag metadata cannot be loaded", async () => {
+    loadVaultTags = async () => Promise.reject(new Error("tag index offline"));
+    await act(async () => {
+      render();
+      await Promise.resolve();
+    });
+    await act(async () => setInput("ask @Guid"));
+    moveCursorToEnd();
+    await act(async () => {
+      api.syncMentionFromInput();
+      await Promise.resolve();
+    });
+
+    expect(
+      api.mentionCandidates.some(
+        (candidate) => candidate.value === "Policies/Guide.md",
+      ),
     ).toBe(true);
   });
 

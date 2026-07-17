@@ -1,9 +1,19 @@
 ﻿import { Paperclip, Send, Square, X } from "lucide-react";
-import type { KeyboardEvent, ReactNode, RefObject } from "react";
+import type {
+  CompositionEvent,
+  KeyboardEvent,
+  ReactNode,
+  RefObject,
+} from "react";
 import { useCallback, useRef } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import {
+  displayMentionTooltip,
+  validDisplayMentions,
+} from "@/lib/ai-context-scope";
+import type { DisplayMention } from "@/types/ai";
 import type { ImageAttachmentDto } from "@/types/ipc";
 
 interface AiComposerProps {
@@ -17,8 +27,11 @@ interface AiComposerProps {
   className?: string;
   textareaRef?: RefObject<HTMLTextAreaElement | null>;
   onComposerKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onCompositionStart?: (e: CompositionEvent<HTMLTextAreaElement>) => void;
+  onCompositionEnd?: (e: CompositionEvent<HTMLTextAreaElement>) => void;
   onSelect?: () => void;
   mentionPopover?: ReactNode;
+  displayMentions?: DisplayMention[];
   /** @deprecated 工具/检索状态已移至底栏，保留以兼容旧调用 */
   statusHint?: string | null;
   /** 已附加的图片列表 */
@@ -71,12 +84,17 @@ export function AiComposer({
   className,
   textareaRef,
   onComposerKeyDown,
+  onCompositionStart,
+  onCompositionEnd,
   onSelect,
   mentionPopover,
+  displayMentions = [],
   images,
   onImagesChange,
 }: AiComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mentionLayerRef = useRef<HTMLDivElement>(null);
+  const visibleMentions = validDisplayMentions(value, displayMentions);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     onComposerKeyDown?.(e);
@@ -152,6 +170,50 @@ export function AiComposer({
     [images, onImagesChange],
   );
 
+  const handleTextAreaScroll = useCallback(
+    (event: React.UIEvent<HTMLTextAreaElement>) => {
+      const layer = mentionLayerRef.current;
+      if (!layer) return;
+      layer.scrollTop = event.currentTarget.scrollTop;
+      layer.scrollLeft = event.currentTarget.scrollLeft;
+    },
+    [],
+  );
+
+  const mentionOverlay = (() => {
+    if (visibleMentions.length === 0) return null;
+    const nodes: ReactNode[] = [];
+    let cursor = 0;
+    visibleMentions.forEach((mention, index) => {
+      if (mention.range.from > cursor) {
+        nodes.push(value.slice(cursor, mention.range.from));
+      }
+      nodes.push(
+        <span
+          key={`${mention.kind}:${mention.value}:${mention.range.from}:${index}`}
+          className="ai-composer-display-mention"
+          title={displayMentionTooltip(mention)}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const textarea =
+              event.currentTarget.parentElement?.parentElement?.querySelector<HTMLTextAreaElement>(
+                "textarea",
+              );
+            if (!textarea) return;
+            textarea.focus();
+            textarea.setSelectionRange(mention.range.to, mention.range.to);
+          }}
+        >
+          {value.slice(mention.range.from, mention.range.to)}
+        </span>,
+      );
+      cursor = mention.range.to;
+    });
+    if (cursor < value.length) nodes.push(value.slice(cursor));
+    return nodes;
+  })();
+
   return (
     <div
       className={cn(
@@ -192,22 +254,40 @@ export function AiComposer({
               ))}
             </div>
           )}
-          <textarea
-            ref={textareaRef}
-            rows={2}
-            value={value}
-            disabled={disabled && !streaming}
-            placeholder={
-              images && images.length > 0 ? "描述图片内容…" : placeholder
-            }
-            aria-label="AI 输入"
-            className="max-h-32 min-h-[2.5rem] w-full resize-none bg-transparent text-[15px] leading-[1.52] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
-            onChange={(e) => onChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            onSelect={onSelect}
-            onClick={onSelect}
-          />
+          <div className="relative min-h-[2.5rem] w-full">
+            {mentionOverlay ? (
+              <div
+                ref={mentionLayerRef}
+                aria-hidden="true"
+                data-testid="ai-mention-highlight-layer"
+                className="ai-composer-mention-layer pointer-events-none absolute inset-0 max-h-32 min-h-[2.5rem] overflow-hidden whitespace-pre-wrap break-words text-[15px] leading-[1.52] text-foreground"
+              >
+                {mentionOverlay}
+              </div>
+            ) : null}
+            <textarea
+              ref={textareaRef}
+              rows={2}
+              value={value}
+              disabled={disabled && !streaming}
+              placeholder={
+                images && images.length > 0 ? "描述图片内容…" : placeholder
+              }
+              aria-label="AI 输入"
+              className={cn(
+                "relative z-[1] max-h-32 min-h-[2.5rem] w-full resize-none bg-transparent text-[15px] leading-[1.52] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50",
+                mentionOverlay && "ai-composer-textarea-with-mentions",
+              )}
+              onChange={(e) => onChange(e.target.value)}
+              onCompositionStart={onCompositionStart}
+              onCompositionEnd={onCompositionEnd}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
+              onScroll={handleTextAreaScroll}
+              onSelect={onSelect}
+              onClick={onSelect}
+            />
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {onImagesChange && (

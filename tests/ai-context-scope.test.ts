@@ -3,85 +3,168 @@ import { describe, expect, it } from "vitest";
 import {
   buildMentionCandidates,
   findActiveMentionQuery,
-  insertMentionToken,
-  isFolderMention,
-  normalizeFolderPrefix,
-  parseMentionTokens,
-  stripMentionTokensForDisplay,
-  tokensToContextScope,
+  insertDisplayMention,
+  mentionsToContextScope,
+  reconcileDisplayMentions,
 } from "@/lib/ai-context-scope";
-import type { FileListItem } from "@/types/ipc";
+import type { DisplayMention } from "@/types/ai";
+import type { FileListItem, TagGroup } from "@/types/ipc";
 
 const files: FileListItem[] = [
   {
-    path: "党纪法规/条例.md",
-    title: "条例",
+    path: "Policies/Guide.md",
+    title: "Guide",
     updatedAt: "2026-01-01",
     isLocked: false,
   },
   {
-    path: "范文/报告/样例.md",
-    title: "样例",
+    path: "Research/Guide.md",
+    title: "Guide",
+    updatedAt: "2026-01-01",
+    isLocked: false,
+  },
+  {
+    path: "Research/Notes/Alpha.md",
+    title: "Alpha",
     updatedAt: "2026-01-01",
     isLocked: false,
   },
 ];
 
+const tags: TagGroup[] = [{ name: "project", files: [files[0]!] }];
+
+const guideMention: DisplayMention = {
+  kind: "file",
+  value: "Policies/Guide.md",
+  label: "Guide",
+  range: { from: 2, to: 7 },
+};
+
 describe("ai-context-scope", () => {
-  it("parses folder and file mention tokens", () => {
-    const text = "请查 @[党纪法规/] 和 @[范文/报告/样例.md]";
-    const tokens = parseMentionTokens(text);
-    expect(tokens).toHaveLength(2);
-    expect(tokens[0]?.kind).toBe("folder");
-    expect(tokens[0]?.value).toBe("党纪法规/");
-    expect(tokens[1]?.kind).toBe("file");
-    expect(tokens[1]?.value).toBe("范文/报告/样例.md");
-  });
-
-  it("converts tokens to context scope", () => {
-    const scope = tokensToContextScope(parseMentionTokens("@[党纪法规/]"));
-    expect(scope.pathPrefixes).toEqual(["党纪法规/"]);
-    expect(scope.paths).toEqual([]);
-  });
-
-  it("keeps mention labels readable in display text", () => {
-    const display = stripMentionTokensForDisplay(
-      "@[问题线索工作思路（WY）.md] 根据问题线索情况，请给出核查思路",
+  it("builds readable file and leaf-folder candidates while retaining relative-path subtitles", () => {
+    const candidates = buildMentionCandidates(files, "", {
+      prefix: "@",
+      tags,
+    });
+    const duplicateGuides = candidates.filter(
+      (candidate) => candidate.kind === "file" && candidate.label === "Guide",
     );
-    expect(display).toBe(
-      "@问题线索工作思路（WY）.md 根据问题线索情况，请给出核查思路",
-    );
-    expect(display).toContain("问题线索工作思路");
-    expect(display).not.toContain("@[");
-  });
-
-  it("keeps readable mention metadata for Chinese document names", () => {
-    const [token] = parseMentionTokens(
-      "@[问题线索工作思路（WY）.md] 根据问题线索情况",
+    const notesFolder = candidates.find(
+      (candidate) => candidate.value === "Research/Notes/",
     );
 
-    expect(token).toMatchObject({
-      kind: "file",
-      value: "问题线索工作思路（WY）.md",
-      label: "问题线索工作思路（WY）.md",
+    expect(duplicateGuides.map((candidate) => candidate.subtitle)).toEqual([
+      "Policies/Guide.md",
+      "Research/Guide.md",
+    ]);
+    expect(notesFolder).toMatchObject({
+      kind: "folder",
+      label: "Notes",
+      subtitle: "Research/Notes/",
     });
   });
 
-  it("detects active @ query", () => {
-    const text = "hello @党纪";
-    const active = findActiveMentionQuery(text, text.length);
-    expect(active?.query).toBe("党纪");
+  it("builds tag candidates only for a # query", () => {
+    expect(buildMentionCandidates(files, "pro", { prefix: "#", tags })).toEqual(
+      [
+        {
+          id: "tag:project",
+          kind: "tag",
+          label: "project",
+          value: "project",
+        },
+      ],
+    );
   });
 
-  it("inserts mention token", () => {
-    const candidate = buildMentionCandidates(files, "")[0]!;
-    const { text } = insertMentionToken("问 @", 3, 2, candidate);
-    expect(text).toContain("@[");
+  it("inserts only the readable label and returns a positional annotation", () => {
+    const candidate = buildMentionCandidates(files, "Guid", {
+      prefix: "@",
+      tags,
+    }).find((item) => item.value === "Policies/Guide.md")!;
+
+    const result = insertDisplayMention("问 @Guid", 7, 2, candidate);
+
+    expect(result.text).toBe("问 Guide ");
+    expect(result.text).not.toMatch(/@|\[|\]/);
+    expect(result.mention).toEqual({
+      kind: "file",
+      value: "Policies/Guide.md",
+      label: "Guide",
+      range: { from: 2, to: 7 },
+    });
+    expect(
+      result.text.slice(result.mention.range.from, result.mention.range.to),
+    ).toBe(result.mention.label);
   });
 
-  it("classifies folder vs file mentions", () => {
-    expect(isFolderMention("党纪法规/")).toBe(true);
-    expect(isFolderMention("note.md")).toBe(false);
-    expect(normalizeFolderPrefix("a/b")).toBe("a/b/");
+  it("shifts an annotation when text is inserted before it", () => {
+    expect(
+      reconcileDisplayMentions("查 Guide 然后继续", "请先查 Guide 然后继续", [
+        guideMention,
+      ]),
+    ).toEqual([
+      {
+        ...guideMention,
+        range: { from: 4, to: 9 },
+      },
+    ]);
+  });
+
+  it.each([
+    ["输入", "查 GuXide 然后继续"],
+    ["删除", "查 Gude 然后继续"],
+    ["粘贴", "查 Gu粘贴ide 然后继续"],
+    ["IME 组合", "查 指南 然后继续"],
+  ])("unbinds a mention when %s touches its displayed label", (_kind, next) => {
+    expect(
+      reconcileDisplayMentions("查 Guide 然后继续", next, [guideMention]),
+    ).toEqual([]);
+  });
+
+  it("drops stale annotations whose range no longer matches the readable label", () => {
+    expect(
+      reconcileDisplayMentions("查 Guide", "查 Guide", [
+        { ...guideMention, label: "Other" },
+      ]),
+    ).toEqual([]);
+  });
+
+  it("maps folders and tags to retrieval scope but excludes file mentions", () => {
+    expect(
+      mentionsToContextScope([
+        guideMention,
+        {
+          kind: "folder",
+          value: "Research/Notes/",
+          label: "Notes",
+          range: { from: 8, to: 13 },
+        },
+        {
+          kind: "tag",
+          value: "project",
+          label: "project",
+          range: { from: 14, to: 21 },
+        },
+      ]),
+    ).toEqual({
+      paths: [],
+      pathPrefixes: ["Research/Notes/"],
+      requiredTags: ["project"],
+    });
+  });
+
+  it("detects active @ and # queries without treating selected labels as encoded tokens", () => {
+    expect(findActiveMentionQuery("hello @Pol", 10)).toEqual({
+      start: 6,
+      query: "Pol",
+      prefix: "@",
+    });
+    expect(findActiveMentionQuery("hello #pro", 10)).toEqual({
+      start: 6,
+      query: "pro",
+      prefix: "#",
+    });
+    expect(findActiveMentionQuery("hello Guide", 11)).toBeNull();
   });
 });

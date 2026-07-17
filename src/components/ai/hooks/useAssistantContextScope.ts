@@ -6,6 +6,7 @@ import {
   useState,
   type Dispatch,
   type KeyboardEvent,
+  type CompositionEvent,
   type RefObject,
   type SetStateAction,
 } from "react";
@@ -14,20 +15,22 @@ import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
 import {
   buildMentionCandidates,
   findActiveMentionQuery,
-  insertMentionToken,
-  parseMentionTokens,
-  tokensToContextScope,
+  insertDisplayMention,
+  mentionsToContextScope,
+  reconcileDisplayMentions,
+  validDisplayMentions,
   type MentionCandidate,
-  type MentionToken,
 } from "@/lib/ai-context-scope";
-import { fileList } from "@/lib/ipc";
-import type { FileListItem } from "@/types/ipc";
+import { fileList, tagList } from "@/lib/ipc";
+import type { DisplayMention } from "@/types/ai";
+import type { FileListItem, TagGroup } from "@/types/ipc";
 
 interface UseAssistantContextScopeOptions {
   input: string;
   setInput: Dispatch<SetStateAction<string>>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   loadVaultFiles?: () => Promise<FileListItem[]>;
+  loadVaultTags?: () => Promise<TagGroup[]>;
   runtimeDocumentCandidates?: FileListItem[];
 }
 
@@ -36,19 +39,24 @@ export function useAssistantContextScope({
   setInput,
   textareaRef,
   loadVaultFiles = fileList,
+  loadVaultTags = tagList,
   runtimeDocumentCandidates = [],
 }: UseAssistantContextScopeOptions) {
   const [vaultFiles, setVaultFiles] = useState<FileListItem[]>([]);
+  const [vaultTags, setVaultTags] = useState<TagGroup[]>([]);
+  const [displayMentions, setDisplayMentions] = useState<DisplayMention[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionStart, setMentionStart] = useState(0);
   const [mentionQuery, setMentionQuery] = useState("");
   const [mentionPrefix, setMentionPrefix] = useState<"@" | "#">("@");
   const loadSeqRef = useRef(0);
+  const previousInputRef = useRef(input);
+  const displayMentionsRef = useRef<DisplayMention[]>([]);
+  const composingRef = useRef(false);
 
-  const mentionTokens = useMemo(() => parseMentionTokens(input), [input]);
-  const contextScope = useMemo(
-    () => tokensToContextScope(mentionTokens),
-    [mentionTokens],
+  const retrievalScope = useMemo(
+    () => mentionsToContextScope(displayMentions),
+    [displayMentions],
   );
   const mentionSourceFiles = useMemo(() => {
     const byPath = new Map<string, FileListItem>();
@@ -59,38 +67,82 @@ export function useAssistantContextScope({
   const mentionCandidates = useMemo(
     () =>
       mentionOpen
-        ? buildMentionCandidates(mentionSourceFiles, mentionQuery)
+        ? buildMentionCandidates(mentionSourceFiles, mentionQuery, {
+            prefix: mentionPrefix,
+            tags: vaultTags,
+          })
         : [],
-    [mentionOpen, mentionSourceFiles, mentionQuery],
+    [mentionOpen, mentionPrefix, mentionQuery, mentionSourceFiles, vaultTags],
   );
 
-  const refreshVaultFiles = useCallback(() => {
+  const refreshMentionSources = useCallback(() => {
     const seq = loadSeqRef.current + 1;
     loadSeqRef.current = seq;
-    return loadVaultFiles()
-      .then((files) => {
-        if (loadSeqRef.current === seq) setVaultFiles(files);
-      })
-      .catch(() => {
-        if (loadSeqRef.current === seq) setVaultFiles([]);
-      });
-  }, [loadVaultFiles]);
+    return Promise.allSettled([loadVaultFiles(), loadVaultTags()]).then(
+      ([filesResult, tagsResult]) => {
+        if (loadSeqRef.current === seq) {
+          setVaultFiles(
+            filesResult.status === "fulfilled" ? filesResult.value : [],
+          );
+          setVaultTags(
+            tagsResult.status === "fulfilled" ? tagsResult.value : [],
+          );
+        }
+      },
+    );
+  }, [loadVaultFiles, loadVaultTags]);
 
   useEffect(() => {
-    void refreshVaultFiles();
-  }, [refreshVaultFiles]);
+    void refreshMentionSources();
+  }, [refreshMentionSources]);
 
   useEffect(() => {
-    if (mentionOpen) void refreshVaultFiles();
-  }, [mentionOpen, refreshVaultFiles]);
+    if (mentionOpen) void refreshMentionSources();
+  }, [mentionOpen, refreshMentionSources]);
 
   useEffect(() => {
     return () => {
       loadSeqRef.current += 1;
     };
-  }, [loadVaultFiles]);
+  }, [loadVaultFiles, loadVaultTags]);
+
+  const commitDisplayMentions = useCallback((mentions: DisplayMention[]) => {
+    displayMentionsRef.current = mentions;
+    setDisplayMentions(mentions);
+  }, []);
+
+  useEffect(() => {
+    const previous = previousInputRef.current;
+    if (previous === input) return;
+    const nextMentions = reconcileDisplayMentions(
+      previous,
+      input,
+      displayMentionsRef.current,
+    );
+    previousInputRef.current = input;
+    commitDisplayMentions(nextMentions);
+  }, [commitDisplayMentions, input]);
+
+  const handleInputChange = useCallback(
+    (nextInput: string) => {
+      const previous = previousInputRef.current;
+      const nextMentions = reconcileDisplayMentions(
+        previous,
+        nextInput,
+        displayMentionsRef.current,
+      );
+      previousInputRef.current = nextInput;
+      commitDisplayMentions(nextMentions);
+      setInput(nextInput);
+    },
+    [commitDisplayMentions, setInput],
+  );
 
   const syncMentionFromInput = useCallback(() => {
+    if (composingRef.current) {
+      setMentionOpen(false);
+      return;
+    }
     const ta = textareaRef.current;
     if (!ta) {
       setMentionOpen(false);
@@ -115,7 +167,18 @@ export function useAssistantContextScope({
     (candidate: MentionCandidate) => {
       const ta = textareaRef.current;
       const cursor = ta?.selectionStart ?? input.length;
-      const next = insertMentionToken(input, cursor, mentionStart, candidate);
+      const next = insertDisplayMention(input, cursor, mentionStart, candidate);
+      const shifted = reconcileDisplayMentions(
+        input,
+        next.text,
+        displayMentionsRef.current,
+      );
+      const nextMentions = validDisplayMentions(next.text, [
+        ...shifted,
+        next.mention,
+      ]);
+      previousInputRef.current = next.text;
+      commitDisplayMentions(nextMentions);
       setInput(next.text);
       setMentionOpen(false);
       requestAnimationFrame(() => {
@@ -125,14 +188,23 @@ export function useAssistantContextScope({
         el.setSelectionRange(next.cursor, next.cursor);
       });
     },
-    [input, mentionStart, setInput, textareaRef],
+    [commitDisplayMentions, input, mentionStart, setInput, textareaRef],
   );
 
-  const removeMentionToken = useCallback(
-    (token: MentionToken) => {
-      setInput((prev) => prev.replace(token.raw, "").replace(/\s{2,}/g, " "));
+  const handleCompositionStart = useCallback(
+    (_event: CompositionEvent<HTMLTextAreaElement>) => {
+      composingRef.current = true;
+      setMentionOpen(false);
     },
-    [setInput],
+    [],
+  );
+
+  const handleCompositionEnd = useCallback(
+    (_event: CompositionEvent<HTMLTextAreaElement>) => {
+      composingRef.current = false;
+      requestAnimationFrame(syncMentionFromInput);
+    },
+    [syncMentionFromInput],
   );
 
   const {
@@ -166,16 +238,18 @@ export function useAssistantContextScope({
   );
 
   return {
-    contextScope,
+    displayMentions,
+    handleCompositionEnd,
+    handleCompositionStart,
     handleComposerKeyDown,
+    handleInputChange,
     mentionCandidates,
     mentionHighlight,
     mentionNavDeltaRef,
     mentionOpen,
     mentionPrefix,
     mentionQuery,
-    mentionTokens,
-    removeMentionToken,
+    retrievalScope,
     selectMention,
     setMentionHighlight,
     syncMentionFromInput,

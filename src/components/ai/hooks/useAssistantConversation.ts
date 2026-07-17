@@ -10,10 +10,6 @@ import {
 
 import { useToast } from "@/components/ui/use-toast";
 import {
-  parseMentionTokens,
-  stripMentionTokensForDisplay,
-} from "@/lib/ai-context-scope";
-import {
   compactChatLinesForState,
   getAiPayloadStore,
   releaseChatLinePayloadRefs,
@@ -21,7 +17,7 @@ import {
   restoreChatLinesForPersistence,
 } from "@/lib/ai-payload-store";
 import { assistantSessionRetract } from "@/lib/ipc";
-import type { AssistantSessionRef } from "@/types/ai";
+import type { AssistantSessionRef, DisplayMention } from "@/types/ai";
 
 import type { ChatLine, ImageAttachment } from "../AiMessageList";
 
@@ -138,13 +134,16 @@ export function useAssistantConversation({
   );
 
   const appendUserMessage = useCallback(
-    (rawMessage: string, images?: ImageAttachment[]) => {
+    (
+      rawMessage: string,
+      images?: ImageAttachment[],
+      displayMentions?: DisplayMention[],
+    ) => {
       const next: ChatLine = {
         role: "user",
-        content: stripMentionTokensForDisplay(rawMessage),
+        content: rawMessage,
       };
-      const mentions = parseMentionTokens(rawMessage);
-      if (mentions.length > 0) next.mentions = mentions;
+      if (displayMentions?.length) next.displayMentions = displayMentions;
       if (images?.length) next.images = images;
       setMessages((previous) => [...previous, next]);
     },

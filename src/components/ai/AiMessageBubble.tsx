@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { ChevronDown, FileText, Folder } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 
@@ -17,14 +17,18 @@ import { AiThinkingIndicator } from "@/components/ui/ai-message-stream-pulse";
 
 import { createRenderableAssistantContent } from "@/lib/assistant-render-budget";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
+import {
+  displayMentionTooltip,
+  validDisplayMentions,
+} from "@/lib/ai-context-scope";
 
 import { cn } from "@/lib/utils";
 
 import { useStreamingContent } from "@/hooks/useStreamingContent";
 import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
 import type { AssistantProcessEvent } from "./AiMessageList";
-import type { MentionToken } from "@/lib/ai-context-scope";
-import { toTrustedHtml } from "@/lib/sanitize";
+import type { DisplayMention } from "@/types/ai";
+import { sanitizeHtml, toTrustedHtml } from "@/lib/sanitize";
 
 interface AiMessageBubbleProps {
   role: "user" | "assistant";
@@ -46,8 +50,8 @@ interface AiMessageBubbleProps {
   /** User-attached image list. */
   images?: import("./AiMessageList").ImageAttachment[];
 
-  /** User-visible @ document/folder references, rendered outside message text. */
-  mentions?: MentionToken[];
+  /** Validated inline presentation metadata, separate from prompt input. */
+  displayMentions?: DisplayMention[];
 
   /** Runtime-only safe process events. Never persisted as message content. */
   processEvents?: AssistantProcessEvent[];
@@ -76,49 +80,49 @@ function summarizeLogContent(value: string) {
   };
 }
 
-function MentionMetadataRow({ mentions }: { mentions?: MentionToken[] }) {
-  if (!mentions || mentions.length === 0) return null;
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
-  const visible = mentions.slice(0, 2);
-  const hiddenCount = mentions.length - visible.length;
-  const title = mentions
-    .map(
-      (mention) =>
-        `${mention.kind === "folder" ? "文件夹" : "文档"}：${mention.value}`,
-    )
-    .join("\n");
+function renderUserMessageHtml(
+  content: string,
+  displayMentions: readonly DisplayMention[],
+): string {
+  const mentions = validDisplayMentions(content, displayMentions);
+  if (mentions.length === 0) {
+    return renderMarkdownWithProfile(content, "chat_user", {
+      streaming: false,
+    }).output;
+  }
 
-  return (
-    <div
-      className="flex min-w-0 items-center gap-1.5 px-3 pt-2 text-[11px] leading-4 text-muted-foreground/75"
-      data-ai-message-mentions=""
-      title={title}
-    >
-      <span className="shrink-0 text-muted-foreground/60">引用：</span>
-      <span className="flex min-w-0 items-center gap-1">
-        {visible.map((mention, index) => {
-          const Icon = mention.kind === "folder" ? Folder : FileText;
-          return (
-            <span
-              key={`${mention.kind}:${mention.value}:${index}`}
-              className="inline-flex min-w-0 max-w-[9rem] items-center gap-1 text-muted-foreground/80"
-            >
-              <Icon className="h-3 w-3 shrink-0 text-muted-foreground/55" />
-              <span className="truncate">{mention.label}</span>
-              {index < visible.length - 1 ? (
-                <span className="shrink-0 text-muted-foreground/45">、</span>
-              ) : null}
-            </span>
-          );
-        })}
-        {hiddenCount > 0 ? (
-          <span className="shrink-0 text-muted-foreground/60">
-            +{hiddenCount}
-          </span>
-        ) : null}
-      </span>
-    </div>
+  let placeholderPrefix = "IRISDISPLAYMENTIONPLACEHOLDER";
+  while (content.includes(placeholderPrefix)) placeholderPrefix += "X";
+  const placeholders = mentions.map(
+    (_mention, index) => `${placeholderPrefix}${index}END`,
   );
+  let markedContent = content;
+  for (let index = mentions.length - 1; index >= 0; index -= 1) {
+    const mention = mentions[index];
+    const placeholder = placeholders[index];
+    if (!mention || !placeholder) continue;
+    markedContent = `${markedContent.slice(0, mention.range.from)}${placeholder}${markedContent.slice(mention.range.to)}`;
+  }
+
+  let rendered = renderMarkdownWithProfile(markedContent, "chat_user", {
+    streaming: false,
+  }).output;
+  mentions.forEach((mention, index) => {
+    const placeholder = placeholders[index];
+    if (!placeholder) return;
+    const inline = `<span class="ai-display-mention" title="${escapeHtml(displayMentionTooltip(mention))}">${escapeHtml(mention.label)}</span>`;
+    rendered = rendered.replace(placeholder, inline);
+  });
+  return sanitizeHtml(rendered);
 }
 
 function formatProcessDuration(durationMs: number | null | undefined): string {
@@ -406,7 +410,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
   images,
 
-  mentions,
+  displayMentions,
 
   processEvents = [],
 }: AiMessageBubbleProps) {
@@ -428,11 +432,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
     if (!isUser) return "";
 
     try {
-      const result = renderMarkdownWithProfile(content || "", "chat_user", {
-        streaming: false,
-      });
-
-      return result.output;
+      return renderUserMessageHtml(content || "", displayMentions ?? []);
     } catch {
       return (content || "")
 
@@ -444,7 +444,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
         .replace(/\n/g, "<br>");
     }
-  }, [isUser, content]);
+  }, [isUser, content, displayMentions]);
 
   if (isUser) {
     return (
@@ -470,13 +470,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
             ))}
           </div>
         )}
-        <MentionMetadataRow mentions={mentions} />
         <div
-          className={cn(
-            "ai-message-body",
-            proseConversation,
-            mentions && mentions.length > 0 && "pt-1.5",
-          )}
+          className={cn("ai-message-body", proseConversation)}
           data-prose-surface="conversation"
           dangerouslySetInnerHTML={{ __html: toTrustedHtml(userHtml) }}
         />

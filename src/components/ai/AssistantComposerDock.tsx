@@ -1,5 +1,6 @@
 import type {
   Dispatch,
+  CompositionEvent,
   KeyboardEvent,
   MutableRefObject,
   RefObject,
@@ -8,6 +9,7 @@ import type {
 
 import { AiComposer } from "@/components/ui/ai-composer";
 import type { MentionCandidate } from "@/lib/ai-context-scope";
+import type { DisplayMention } from "@/types/ai";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
@@ -17,6 +19,7 @@ interface AssistantComposerDockProps {
   composerDisabled: boolean;
   images: ImageAttachment[];
   input: string;
+  displayMentions: DisplayMention[];
   mentionCandidates: MentionCandidate[];
   mentionHighlight: number;
   mentionNavDeltaRef: MutableRefObject<1 | -1 | 0>;
@@ -26,11 +29,13 @@ interface AssistantComposerDockProps {
   streaming: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onComposerKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+  onCompositionStart: (e: CompositionEvent<HTMLTextAreaElement>) => void;
+  onCompositionEnd: (e: CompositionEvent<HTMLTextAreaElement>) => void;
   onImagesChange: Dispatch<SetStateAction<ImageAttachment[]>>;
   onMentionHighlight: (index: number) => void;
   onMentionSelect: (candidate: MentionCandidate) => void;
   onSubmit: () => void;
-  onValueChange: Dispatch<SetStateAction<string>>;
+  onValueChange: (value: string) => void;
   onSelect: () => void;
   onStop: () => void;
 }
@@ -39,6 +44,7 @@ export function AssistantComposerDock({
   composerDisabled,
   images,
   input,
+  displayMentions,
   mentionCandidates,
   mentionHighlight,
   mentionNavDeltaRef,
@@ -48,6 +54,8 @@ export function AssistantComposerDock({
   streaming,
   textareaRef,
   onComposerKeyDown,
+  onCompositionStart,
+  onCompositionEnd,
   onImagesChange,
   onMentionHighlight,
   onMentionSelect,
@@ -65,11 +73,14 @@ export function AssistantComposerDock({
       >
         <AiComposer
           value={input}
+          displayMentions={displayMentions}
           streaming={streaming}
           disabled={composerDisabled}
           placeholder="输入问题，或直接说明你想查、想改、想检、想整理什么"
           textareaRef={textareaRef}
           onComposerKeyDown={onComposerKeyDown}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
           onSelect={onSelect}
           onChange={onValueChange}
           onSubmit={onSubmit}

@@ -172,6 +172,7 @@
     --ai-stream-pulse: 210 18% 62%;
     --ai-citation: 212 85% 42%;
     --ai-citation-hover: 212 90% 36%;
+    --ai-mention: 150 34% 68%;
   }
 
   .light {
@@ -244,6 +245,7 @@
     --ai-stream-pulse: 210 12% 45%;
     --ai-citation: 212 72% 32%;
     --ai-citation-hover: 212 78% 26%;
+    --ai-mention: 150 38% 34%;
 
     --status-web-search: 199 89% 42%;
     --status-inactive: 0 0% 62%;
@@ -1090,6 +1092,32 @@
   .ai-composer-workbench {
     border-color: hsl(var(--ai-workspace-border) / 0.9);
     background: hsl(var(--surface-elevated));
+  }
+
+  .ai-display-mention,
+  .ai-composer-display-mention {
+    color: hsl(var(--ai-mention));
+  }
+
+  .ai-composer-display-mention {
+    pointer-events: auto;
+    cursor: text;
+  }
+
+  .ai-composer-mention-layer {
+    font-family: inherit;
+    letter-spacing: inherit;
+    tab-size: inherit;
+  }
+
+  .ai-composer-textarea-with-mentions {
+    color: transparent;
+    caret-color: hsl(var(--foreground));
+    scrollbar-width: none;
+  }
+
+  .ai-composer-textarea-with-mentions::-webkit-scrollbar {
+    display: none;
   }
 
   .ai-sidecar[data-ai-domain="classified"] .ai-composer-workbench {
