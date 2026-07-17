@@ -32,7 +32,11 @@
 
 在此闭环真实执行并留存证据前，状态只能写作“待验收”，不能声称 Windows E2E 已通过。
 
-自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中确认重命名后的新 `[data-path]` editor surface 已挂载，且其由 `surfaceRecords` 投影的生命周期处于非交互 `staging`；此时触发保存。随后必须确认同一 surface 进入 `visible`，明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。为避免短暂 staging 被普通轮询漏掉，该检查只对 remount 生命周期使用短轮询，并同时验证实际 DOM 和测试专用生命周期属性；它不向隐藏 editor 注入内容。该入口会在 PR CI 与发布打包 workflow 中运行；PR 是否因该检查而禁止合并，取决于仓库外 GitHub 分支保护规则是否将该状态设为 required。发布 workflow 内的 Windows 打包步骤则在该 E2E 成功前不会上传工件。静态 Vitest 契约不能替代其 Windows 运行日志。
+自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中确认重命名后的新 `[data-path]` editor surface 已稳定进入 `visible`，明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。E2E 不捕捉 React 生命周期的瞬时 `staging` 帧；重挂载期间保存的快照安全约束由确定性的组件与持久化生命周期测试覆盖。该入口会在 PR CI 与发布打包 workflow 中运行；PR 是否因该检查而禁止合并，取决于仓库外 GitHub 分支保护规则是否将该状态设为 required。发布 workflow 内的 Windows 打包步骤则在该 E2E 成功前不会上传工件。静态 Vitest 契约不能替代其 Windows 运行日志。
+
+### Windows E2E 的稳定边界
+
+真实 Windows E2E 必须等待重命名后的目标 editor surface 以 `visible` 状态稳定挂载后再触发保存，并验证保存、关闭、第二次启动、磁盘 Markdown 字节和 UI 重新打开的完整链路。它不得轮询或要求捕获 React 生命周期中的瞬时 `staging` 帧：WebDriver 的轮询与平台调度不能可靠观察该帧。`staging` 期间不得以空白状态覆盖已加载文档、且可恢复快照必须用于保存的约束，由确定性的组件与持久化生命周期测试覆盖。E2E 失败日志仅输出白名单稳定错误码，不记录正文、标题、路径或原始 WebDriver 错误。
 
 ## 隐私与可观测性
 
