@@ -139,7 +139,7 @@ async fn dispatch_tool_inner(
         "search_hybrid" | "search_semantic" | "search_keyword" => {
             search_impl::hybrid_search(state, tool_name, args, ctx).await
         }
-        "get_regulation" => search_impl::regulation_lookup(state, args).await,
+        "get_regulation" => search_impl::regulation_lookup(state, args, ctx).await,
         "get_context_packets" => Ok(serde_json::json!({
             "packets": ctx.cold_start_packets,
             "count": ctx.cold_start_packets.len(),
@@ -149,7 +149,7 @@ async fn dispatch_tool_inner(
         "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx),
         "web_search" => web_impl::web_search_tool(state, args, ctx).await,
         "read_note" => note_impl::read_note(state, ctx, args).await,
-        "list_vault" => note_impl::list_vault(state, args).await,
+        "list_vault" => note_impl::list_vault(state, args, ctx).await,
         "get_outline" => note_impl::get_outline(state, ctx, args).await,
         "get_backlinks" => note_impl::get_backlinks(state, ctx, args).await,
         "get_block_links" => note_impl::get_block_links(state, ctx, args).await,

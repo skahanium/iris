@@ -1,5 +1,4 @@
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
-use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 
@@ -57,6 +56,7 @@ pub(super) async fn hybrid_search(
 pub(super) async fn regulation_lookup(
     state: &AppState,
     args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
 ) -> AppResult<serde_json::Value> {
     let regulation_name = args["regulation_name"]
         .as_str()
@@ -78,7 +78,7 @@ pub(super) async fn regulation_lookup(
             },
             note_context: None,
             file_id_context: None,
-            scope: RetrievalScope::default(),
+            scope: ctx.retrieval_scope.clone(),
             runtime_documents: Vec::new(),
             corpus_config: None,
         };

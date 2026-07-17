@@ -252,6 +252,10 @@ fn web_preferred_and_reason_use_stable_wire_values() {
 fn safe_run_errors_serialize_as_stable_agent_run_codes() {
     for code in [
         SafeRunErrorCode::InvalidRequest,
+        SafeRunErrorCode::InvalidExplicitReference,
+        SafeRunErrorCode::ExplicitReferenceChanged,
+        SafeRunErrorCode::InvalidRetrievalScope,
+        SafeRunErrorCode::LocalReferenceIndexUnavailable,
         SafeRunErrorCode::SessionNotFound,
         SafeRunErrorCode::RunNotFound,
         SafeRunErrorCode::IllegalTransition,

@@ -250,7 +250,9 @@ pub(crate) struct SelectionSnapshot {
     pub(crate) content_hash: String,
     /// UTF-8 byte range of the supplied snapshot.
     pub(crate) utf8_range: SourceSpan,
-    /// Explicitly supplied selection text used only by this Run.
+    /// Legacy client field retained only for source compatibility. It is never
+    /// deserialized, persisted, or trusted; the backend rereads the byte range.
+    #[serde(skip)]
     pub(crate) text: String,
 }
 
@@ -855,6 +857,18 @@ pub(crate) enum SafeRunErrorCode {
     /// Input did not satisfy the Run contract.
     #[serde(rename = "agent_run_invalid_request")]
     InvalidRequest,
+    /// An explicit local reference is missing required immutable metadata or has an invalid range.
+    #[serde(rename = "agent_run_invalid_explicit_reference")]
+    InvalidExplicitReference,
+    /// An explicit local reference changed after the Run was accepted.
+    #[serde(rename = "agent_run_explicit_reference_changed")]
+    ExplicitReferenceChanged,
+    /// The persisted local retrieval boundary is invalid or cannot be resolved safely.
+    #[serde(rename = "agent_run_invalid_retrieval_scope")]
+    InvalidRetrievalScope,
+    /// A required long-reference or scoped lookup cannot be served by the local index.
+    #[serde(rename = "agent_run_local_reference_index_unavailable")]
+    LocalReferenceIndexUnavailable,
     /// The opaque session reference was not found in its declared domain.
     #[serde(rename = "agent_run_session_not_found")]
     SessionNotFound,
@@ -916,6 +930,10 @@ impl SafeRunErrorCode {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidRequest => "agent_run_invalid_request",
+            Self::InvalidExplicitReference => "agent_run_invalid_explicit_reference",
+            Self::ExplicitReferenceChanged => "agent_run_explicit_reference_changed",
+            Self::InvalidRetrievalScope => "agent_run_invalid_retrieval_scope",
+            Self::LocalReferenceIndexUnavailable => "agent_run_local_reference_index_unavailable",
             Self::SessionNotFound => "agent_run_session_not_found",
             Self::RunNotFound => "agent_run_not_found",
             Self::IllegalTransition => "agent_run_illegal_transition",

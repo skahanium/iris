@@ -151,6 +151,132 @@ fn intake_validates_display_mentions_against_utf16_message_ranges() {
 }
 
 #[test]
+fn intake_rejects_unsafe_retrieval_scope_paths_before_persistence() {
+    for unsafe_path in [
+        "../outside.md",
+        "/absolute.md",
+        ".iris/runtime.md",
+        ".classified/secret.md",
+        "notes/../../outside.md",
+    ] {
+        let mut invalid = request();
+        invalid.client_request_id = format!("unsafe-scope-{unsafe_path}");
+        invalid.turn.retrieval_scope.paths = vec![unsafe_path.to_string()];
+
+        assert_eq!(
+            RunIntake::resolve_envelope(&invalid)
+                .expect_err("unsafe retrieval paths must be rejected at intake")
+                .to_string(),
+            "agent_run_invalid_retrieval_scope",
+            "{unsafe_path}"
+        );
+    }
+}
+
+#[test]
+fn intake_persists_only_the_canonical_deduplicated_retrieval_scope() {
+    let db = Database::open_in_memory().expect("database");
+    let mut scoped = request();
+    scoped.client_request_id = "canonical-scope".into();
+    scoped.turn.retrieval_scope.paths = vec![" ./notes\\same.md ".into(), "notes/same.md".into()];
+    scoped.turn.retrieval_scope.path_prefixes =
+        vec![" ./projects\\alpha ".into(), "projects/alpha/".into()];
+    scoped.turn.retrieval_scope.required_tags = vec![" #Project ".into(), "project".into()];
+
+    let accepted = RunIntake::start(&db, scoped).expect("accepted scoped run");
+    let prompt = AgentRunRepository::prompt_input_for_session(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("prompt input")
+    .expect("run exists");
+
+    assert_eq!(prompt.retrieval_scope.paths, vec!["notes/same.md"]);
+    assert_eq!(
+        prompt.retrieval_scope.path_prefixes,
+        vec!["projects/alpha/"]
+    );
+    assert_eq!(prompt.retrieval_scope.required_tags, vec!["project"]);
+}
+
+#[test]
+fn intake_normalizes_explicit_reference_paths_before_persistence() {
+    let db = Database::open_in_memory().expect("database");
+    let mut referenced = request();
+    referenced.client_request_id = "canonical-reference-path".into();
+    referenced
+        .turn
+        .explicit_references
+        .push(crate::ai_types::ContextReferenceWire {
+            id: "note".into(),
+            kind: crate::ai_types::ContextReferenceKind::Note,
+            file_path: Some(" ./notes\\a.md ".into()),
+            content_hash: Some("hash".into()),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        });
+
+    let accepted = RunIntake::start(&db, referenced).expect("accepted referenced run");
+    let prompt = AgentRunRepository::prompt_input_for_session(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("prompt input")
+    .expect("run exists");
+
+    assert_eq!(
+        prompt.explicit_references[0].file_path.as_deref(),
+        Some("notes/a.md")
+    );
+}
+
+#[test]
+fn intake_rejects_unsafe_explicit_reference_paths_before_persistence() {
+    let mut invalid = request();
+    invalid
+        .turn
+        .explicit_references
+        .push(crate::ai_types::ContextReferenceWire {
+            id: "unsafe".into(),
+            kind: crate::ai_types::ContextReferenceKind::Note,
+            file_path: Some("../outside.md".into()),
+            content_hash: Some("hash".into()),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        });
+
+    assert_eq!(
+        RunIntake::resolve_envelope(&invalid)
+            .expect_err("unsafe explicit reference paths must fail at intake")
+            .to_string(),
+        "agent_run_invalid_explicit_reference"
+    );
+}
+
+#[test]
+fn retrieval_scope_without_full_material_forces_a_local_tool_loop() {
+    let mut scoped = request();
+    scoped.turn.retrieval_scope.path_prefixes = vec!["notes/".into()];
+
+    let envelope = RunIntake::resolve_envelope(&scoped).expect("resolve scoped envelope");
+
+    assert_eq!(envelope.context, ContextMode::ExplicitScope);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+}
+
+#[test]
 fn intake_rejects_selection_snapshot_with_inconsistent_utf8_range() {
     let mut invalid = request();
     invalid
@@ -186,6 +312,53 @@ fn intake_rejects_selection_snapshot_with_inconsistent_utf8_range() {
             .to_string(),
         "agent_run_invalid_request"
     );
+}
+
+#[test]
+fn intake_ignores_and_never_persists_client_selection_snapshot_text() {
+    let db = Database::open_in_memory().expect("database");
+    let mut scoped = request();
+    scoped.client_request_id = "ignore-selection-client-body".into();
+    scoped
+        .turn
+        .explicit_references
+        .push(crate::ai_types::ContextReferenceWire {
+            id: "selection-reference".into(),
+            kind: crate::ai_types::ContextReferenceKind::Selection,
+            file_path: Some("notes/a.md".into()),
+            content_hash: Some("selection-hash".into()),
+            utf8_range: Some(crate::ai_types::SourceSpan { start: 0, end: 5 }),
+            editor_range: None,
+            excerpt: "also untrusted".into(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        });
+    scoped.explicit_action = Some(ExplicitAction {
+        effect: Effect::Draft,
+        target: None,
+        selection_snapshot: Some(SelectionSnapshot {
+            reference_id: "selection-reference".into(),
+            content_hash: "selection-hash".into(),
+            utf8_range: crate::ai_types::SourceSpan { start: 0, end: 5 },
+            text: "CLIENT BODY MUST BE IGNORED".into(),
+        }),
+    });
+
+    let accepted = RunIntake::start(&db, scoped)
+        .expect("client selection text must not participate in request validation");
+    db.with_read_conn(|conn| {
+        let stored: String = conn.query_row(
+            "SELECT explicit_action_json FROM agent_runs WHERE run_id = ?1",
+            [&accepted.run_id],
+            |row| row.get(0),
+        )?;
+        assert!(!stored.contains("CLIENT BODY MUST BE IGNORED"));
+        assert!(!stored.contains("text"));
+        Ok(())
+    })
+    .expect("inspect persisted action");
 }
 #[test]
 fn intake_creates_scene_free_normal_session_and_accepted_run_without_legacy_writes() {

@@ -16,7 +16,10 @@ use crate::ai_runtime::domain_executor::{
 };
 use crate::ai_runtime::normal_session_repository::NormalSessionMessage;
 use crate::ai_runtime::prompt_profile::PromptProfile;
-use crate::ai_runtime::run_contract::ExecutionEnvelope;
+use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
+use crate::ai_runtime::retrieval_scope::RetrievalScope;
+use crate::ai_runtime::run_contract::{ExecutionEnvelope, SafeRunErrorCode};
+use crate::ai_types::{ContextPacket, ContextReferenceKind};
 use crate::error::{AppError, AppResult};
 
 const MAX_EXPLICIT_MATERIALS: usize = 12;
@@ -34,6 +37,7 @@ pub(crate) struct RunContextMaterial {
     pub(crate) source_span_start: i64,
     pub(crate) source_span_end: i64,
     pub(crate) content: String,
+    pub(crate) retrieval_reason: String,
 }
 
 /// The transient, single-Run context sent to a Provider.
@@ -46,6 +50,10 @@ pub(crate) struct RunContext {
     pub(crate) content_parts: Option<Vec<crate::ai_types::ContentPart>>,
     pub(crate) envelope: ExecutionEnvelope,
     pub(crate) materials: Vec<RunContextMaterial>,
+    /// Immutable hard boundary shared by deterministic retrieval and every later tool dispatch.
+    pub(crate) retrieval_scope: RetrievalScope,
+    /// Provider-before-model local retrieval output, also exposed through get_context_packets.
+    pub(crate) local_retrieval_packets: Vec<ContextPacket>,
     /// Bounded user/assistant history strictly before this Run's current message.
     pub(crate) recent_messages: Vec<NormalSessionMessage>,
     /// Existing durable memory summary, when one has already been built.
@@ -187,6 +195,19 @@ impl RunContext {
 /// Assembles normal-domain context from one persisted Run and one vault.
 pub(crate) struct RunContextAssembler;
 
+/// Map context-assembly internals to the stable, content-free terminal vocabulary.
+pub(crate) fn classify_context_assembly_failure(error: &AppError) -> SafeRunErrorCode {
+    match error.to_string().as_str() {
+        "agent_run_invalid_explicit_reference" => SafeRunErrorCode::InvalidExplicitReference,
+        "agent_run_explicit_reference_changed" => SafeRunErrorCode::ExplicitReferenceChanged,
+        "agent_run_invalid_retrieval_scope" => SafeRunErrorCode::InvalidRetrievalScope,
+        "agent_run_local_reference_index_unavailable" => {
+            SafeRunErrorCode::LocalReferenceIndexUnavailable
+        }
+        _ => SafeRunErrorCode::PersistenceFailed,
+    }
+}
+
 impl RunContextAssembler {
     /// Read only explicit references persisted with the Run, then validate every source.
     pub(crate) fn assemble(
@@ -216,13 +237,72 @@ impl RunContextAssembler {
         let previous_run_summary =
             load_previous_run_safety_summary(db, input.session_id, input.message_seq_first)?;
         let mut materials = Vec::with_capacity(input.explicit_references.len());
+        let mut fallback_paths = Vec::new();
         let mut total_chars = 0usize;
         for reference in &input.explicit_references {
-            let material = resolve_explicit_reference(vault, reference)?;
-            total_chars = total_chars.saturating_add(material.content.chars().count());
-            if total_chars > MAX_TOTAL_MATERIAL_CHARS {
-                return Err(AppError::msg("agent_run_context_too_large"));
+            match resolve_explicit_reference(vault, reference)? {
+                ResolvedExplicitReference::Material(material) => {
+                    let material_chars = material.content.chars().count();
+                    if total_chars.saturating_add(material_chars) > MAX_TOTAL_MATERIAL_CHARS {
+                        if reference.kind == ContextReferenceKind::Note {
+                            fallback_paths.push(material.source_path);
+                            continue;
+                        }
+                        return Err(AppError::msg("agent_run_invalid_explicit_reference"));
+                    }
+                    total_chars = total_chars.saturating_add(material_chars);
+                    materials.push(material);
+                }
+                ResolvedExplicitReference::ExactScopeFallback(path) => {
+                    fallback_paths.push(path);
+                }
             }
+        }
+        let mut retrieval_scope_input = input.retrieval_scope;
+        retrieval_scope_input
+            .paths
+            .extend(fallback_paths.iter().cloned());
+        let has_requested_scope = !retrieval_scope_input.paths.is_empty()
+            || !retrieval_scope_input.path_prefixes.is_empty()
+            || !retrieval_scope_input.corpus_ids.is_empty()
+            || !retrieval_scope_input.required_tags.is_empty();
+        let corpus_config = vault
+            .map(crate::knowledge::corpora::load_corpora)
+            .transpose()?
+            .unwrap_or_default();
+        let retrieval_scope = if has_requested_scope {
+            crate::ai_runtime::retrieval_scope::resolve_retrieval_scope(
+                &corpus_config,
+                crate::ai_types::AgentIntent::AskNotes,
+                &retrieval_scope_input,
+            )?
+        } else {
+            RetrievalScope::default()
+        };
+        let requires_scoped_retrieval =
+            !fallback_paths.is_empty() || (has_requested_scope && materials.is_empty());
+        let local_retrieval_packets = if requires_scoped_retrieval {
+            retrieve_scoped_materials(
+                db,
+                &input.user_message,
+                &retrieval_scope,
+                &corpus_config,
+                &fallback_paths,
+            )?
+        } else {
+            Vec::new()
+        };
+        for packet in &local_retrieval_packets {
+            let Some(material) = material_from_packet(packet) else {
+                continue;
+            };
+            let material_chars = material.content.chars().count();
+            if material_chars > MAX_EXPLICIT_MATERIAL_CHARS
+                || total_chars.saturating_add(material_chars) > MAX_TOTAL_MATERIAL_CHARS
+            {
+                return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+            }
+            total_chars = total_chars.saturating_add(material_chars);
             materials.push(material);
         }
         Ok(RunContext {
@@ -232,6 +312,8 @@ impl RunContextAssembler {
             content_parts: input.content_parts,
             envelope,
             materials,
+            retrieval_scope,
+            local_retrieval_packets,
             recent_messages,
             conversation_memory,
             prompt_profile,
@@ -263,7 +345,7 @@ impl RunContextAssembler {
                         source_span_end: material.source_span_end,
                         heading_path: None,
                         content_hash: material.content_hash.clone(),
-                        retrieval_reason: Some("explicit_reference".to_string()),
+                        retrieval_reason: Some(material.retrieval_reason.clone()),
                         score: None,
                     },
                 )
@@ -375,10 +457,15 @@ fn evidence_material_role(role: DomainMaterialRole) -> MaterialRole {
         DomainMaterialRole::Lookup => MaterialRole::Lookup,
     }
 }
+enum ResolvedExplicitReference {
+    Material(RunContextMaterial),
+    ExactScopeFallback(String),
+}
+
 fn resolve_explicit_reference(
     vault: Option<&Path>,
     reference: &StoredExplicitReference,
-) -> AppResult<RunContextMaterial> {
+) -> AppResult<ResolvedExplicitReference> {
     if reference.stale || reference.invalid_reason.is_some() {
         return Err(AppError::msg("agent_run_invalid_explicit_reference"));
     }
@@ -387,21 +474,37 @@ fn resolve_explicit_reference(
         .as_deref()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_reference"))?;
-    let vault = vault.ok_or_else(|| AppError::msg("agent_run_invalid_explicit_reference"))?;
-    let resolved = crate::storage::paths::validate_user_note_relative_path(vault, path)
+    let path = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
         .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
-    let full_content = crate::storage::paths::read_file_lossy(&resolved)
+    let vault = vault.ok_or_else(|| AppError::msg("agent_run_invalid_explicit_reference"))?;
+    let resolved = crate::storage::paths::validate_user_note_relative_path(vault, &path)
+        .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+    let full_content = std::fs::read_to_string(&resolved)
         .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
     let actual_hash = crate::cas::hash::content_hash_str(&full_content);
-    if reference
+    let expected_hash = reference
         .content_hash
         .as_deref()
-        .is_some_and(|expected| expected != actual_hash)
-    {
+        .filter(|hash| !hash.trim().is_empty())
+        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_reference"))?;
+    if expected_hash != actual_hash {
         return Err(AppError::msg("agent_run_explicit_reference_changed"));
+    }
+    let requires_range = matches!(
+        reference.kind,
+        ContextReferenceKind::Selection
+            | ContextReferenceKind::Paragraph
+            | ContextReferenceKind::Heading
+    );
+    if reference.kind == ContextReferenceKind::Note && reference.utf8_range.is_some()
+        || requires_range && reference.utf8_range.is_none()
+        || reference.kind == ContextReferenceKind::Artifact
+    {
+        return Err(AppError::msg("agent_run_invalid_explicit_reference"));
     }
     let (source_span_start, source_span_end, content) = if let Some(range) = &reference.utf8_range {
         if range.start > range.end
+            || range.start == range.end
             || range.end > full_content.len()
             || !full_content.is_char_boundary(range.start)
             || !full_content.is_char_boundary(range.end)
@@ -417,14 +520,88 @@ fn resolve_explicit_reference(
         (0, full_content.len() as i64, full_content)
     };
     if content.chars().count() > MAX_EXPLICIT_MATERIAL_CHARS {
-        return Err(AppError::msg("agent_run_context_too_large"));
+        if reference.kind == ContextReferenceKind::Note {
+            return Ok(ResolvedExplicitReference::ExactScopeFallback(path));
+        }
+        return Err(AppError::msg("agent_run_invalid_explicit_reference"));
     }
-    Ok(RunContextMaterial {
+    Ok(ResolvedExplicitReference::Material(RunContextMaterial {
         role: DomainMaterialRole::Reference,
-        source_path: path.replace('\\', "/"),
+        source_path: path,
         content_hash: actual_hash,
         source_span_start,
         source_span_end,
         content,
+        retrieval_reason: "explicit_reference".to_string(),
+    }))
+}
+
+fn retrieve_scoped_materials(
+    db: &crate::storage::db::Database,
+    query: &str,
+    scope: &RetrievalScope,
+    corpus_config: &crate::knowledge::corpora::CorpusConfig,
+    required_paths: &[String],
+) -> AppResult<Vec<ContextPacket>> {
+    let outcome = db
+        .with_read_conn(|conn| {
+            crate::ai_runtime::retrieval_broker::hybrid_retrieve_with_diagnostics(
+                conn,
+                &RetrievalRequest {
+                    query: query.to_string(),
+                    max_results: 8,
+                    layers: RetrievalLayers {
+                        fts: true,
+                        vector: true,
+                        graph: false,
+                        exact: false,
+                        template: false,
+                    },
+                    note_context: None,
+                    file_id_context: None,
+                    scope: scope.clone(),
+                    runtime_documents: Vec::new(),
+                    corpus_config: Some(corpus_config.clone()),
+                },
+            )
+        })
+        .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+    let local_index_responded = outcome.diagnostics.iter().any(|diagnostic| {
+        matches!(
+            diagnostic.layer.as_str(),
+            "fts" | "metadata" | "vector_chunks"
+        ) && matches!(
+            diagnostic.status,
+            crate::ai_runtime::retrieval_broker::RetrievalLayerStatus::Ok
+                | crate::ai_runtime::retrieval_broker::RetrievalLayerStatus::Empty
+        )
+    });
+    if !local_index_responded
+        || required_paths.iter().any(|required| {
+            !outcome
+                .packets
+                .iter()
+                .any(|packet| packet.source_path.as_deref() == Some(required.as_str()))
+        })
+    {
+        return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+    }
+    Ok(outcome.packets)
+}
+
+fn material_from_packet(packet: &ContextPacket) -> Option<RunContextMaterial> {
+    let path = packet.source_path.as_deref()?;
+    let span = packet.source_span.as_ref()?;
+    if packet.stale || packet.content_hash.trim().is_empty() || span.start >= span.end {
+        return None;
+    }
+    Some(RunContextMaterial {
+        role: DomainMaterialRole::Reference,
+        source_path: path.to_string(),
+        content_hash: packet.content_hash.clone(),
+        source_span_start: span.start as i64,
+        source_span_end: span.end as i64,
+        content: packet.excerpt.clone(),
+        retrieval_reason: "scoped_local_retrieval".to_string(),
     })
 }

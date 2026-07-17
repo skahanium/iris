@@ -1,14 +1,16 @@
 //! Retrieval path scope for hybrid search (corpus + @ mentions).
 
 use std::collections::HashSet;
+use std::path::{Component, Path};
 
 use rusqlite::{params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 
 use crate::knowledge::corpora::{self, CorpusConfig};
+use crate::{error::AppError, error::AppResult};
 
 /// User-provided scope from IPC (`@` mentions + optional corpus IDs).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextScopeDto {
     #[serde(default)]
@@ -39,6 +41,9 @@ impl RetrievalScope {
     }
 
     pub fn matches_path(&self, path: &str) -> bool {
+        if self.is_path_unrestricted() {
+            return true;
+        }
         let norm = path.replace('\\', "/");
         for exact in &self.paths {
             if norm == exact.replace('\\', "/") {
@@ -51,6 +56,31 @@ impl RetrievalScope {
             }
         }
         false
+    }
+
+    /// Return whether one indexed normal-domain note is inside every path and tag boundary.
+    pub(crate) fn allows_path(&self, conn: &Connection, path: &str) -> AppResult<bool> {
+        let path = normalize_relative(path, false)?;
+        if !self.matches_path(&path) {
+            return Ok(false);
+        }
+        if self.required_tags.is_empty() {
+            return Ok(true);
+        }
+        let placeholders = vec!["?"; self.required_tags.len()].join(",");
+        let sql = format!(
+            "SELECT COUNT(DISTINCT lower(t.name))
+             FROM files f
+             JOIN file_tags ft ON ft.file_id = f.id
+             JOIN tags t ON t.id = ft.tag_id
+             WHERE f.path = ?1 AND lower(t.name) IN ({placeholders})"
+        );
+        let mut values = Vec::with_capacity(self.required_tags.len() + 1);
+        values.push(path);
+        values.extend(self.required_tags.iter().cloned());
+        let matched: usize =
+            conn.query_row(&sql, params_from_iter(values.iter()), |row| row.get(0))?;
+        Ok(matched == self.required_tags.len())
     }
 
     fn push_prefix(&mut self, prefix: String) {
@@ -84,6 +114,97 @@ impl RetrievalScope {
     }
 }
 
+/// Canonicalize and validate one normal-domain retrieval boundary before it is persisted.
+pub(crate) fn normalize_context_scope(input: &ContextScopeDto) -> AppResult<ContextScopeDto> {
+    Ok(ContextScopeDto {
+        paths: normalize_unique(&input.paths, |value| normalize_relative(value, false))?,
+        path_prefixes: normalize_unique(&input.path_prefixes, |value| {
+            normalize_relative(value, true)
+        })?,
+        corpus_ids: normalize_unique(&input.corpus_ids, normalize_identifier)?,
+        required_tags: normalize_unique(&input.required_tags, normalize_tag)?,
+    })
+}
+
+/// Canonicalize one explicit normal-domain note path using the same boundary rules as retrieval.
+pub(crate) fn normalize_note_path(value: &str) -> AppResult<String> {
+    normalize_relative(value, false)
+}
+
+fn normalize_unique(
+    values: &[String],
+    normalize: impl Fn(&str) -> AppResult<String>,
+) -> AppResult<Vec<String>> {
+    let mut normalized = Vec::with_capacity(values.len());
+    for value in values {
+        let value = normalize(value)?;
+        if !normalized.iter().any(|item| item == &value) {
+            normalized.push(value);
+        }
+    }
+    Ok(normalized)
+}
+
+fn normalize_relative(value: &str, prefix: bool) -> AppResult<String> {
+    let value = value.trim().replace('\\', "/");
+    if value.is_empty()
+        || value.starts_with('/')
+        || value.chars().any(char::is_control)
+        || value
+            .split('/')
+            .next()
+            .is_some_and(|segment| segment.ends_with(':'))
+    {
+        return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+    }
+    let mut parts = Vec::new();
+    for component in Path::new(&value).components() {
+        match component {
+            Component::Normal(part) => {
+                let part = part
+                    .to_str()
+                    .filter(|part| !part.is_empty())
+                    .ok_or_else(|| AppError::msg("agent_run_invalid_retrieval_scope"))?;
+                parts.push(part);
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+            }
+        }
+    }
+    let normalized = parts.join("/");
+    if normalized.is_empty() || crate::storage::paths::has_reserved_path_root(&normalized) {
+        return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+    }
+    Ok(if prefix {
+        corpora::normalize_prefix(&normalized)
+    } else {
+        normalized
+    })
+}
+
+fn normalize_identifier(value: &str) -> AppResult<String> {
+    let value = value.trim();
+    if value.is_empty()
+        || value == "."
+        || value == ".."
+        || value.chars().any(char::is_control)
+        || value.contains(['/', '\\'])
+    {
+        return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+    }
+    Ok(value.to_string())
+}
+
+fn normalize_tag(value: &str) -> AppResult<String> {
+    let value = value.trim().trim_start_matches('#').trim().to_lowercase();
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+    }
+    Ok(value)
+}
+
 /// Resolve retrieval scope.
 ///
 /// User-provided `@` paths, prefixes, or corpus IDs are a hard boundary: when
@@ -92,7 +213,8 @@ pub fn resolve_retrieval_scope(
     vault_corpora: &CorpusConfig,
     intent: crate::ai_types::AgentIntent,
     user: &ContextScopeDto,
-) -> RetrievalScope {
+) -> AppResult<RetrievalScope> {
+    let user = normalize_context_scope(user)?;
     let mut scope = RetrievalScope::default();
 
     let has_user_scope = !user.paths.is_empty()
@@ -101,8 +223,13 @@ pub fn resolve_retrieval_scope(
         || !user.required_tags.is_empty();
 
     if has_user_scope {
-        for prefix in corpora::prefixes_for_corpus_ids(vault_corpora, &user.corpus_ids) {
-            scope.push_prefix(prefix);
+        for corpus_id in &user.corpus_ids {
+            let corpus = vault_corpora
+                .corpus
+                .iter()
+                .find(|corpus| corpus.id == *corpus_id)
+                .ok_or_else(|| AppError::msg("agent_run_invalid_retrieval_scope"))?;
+            scope.push_prefix(normalize_relative(&corpus.path_prefix, true)?);
         }
         for prefix in &user.path_prefixes {
             scope.push_prefix(prefix.clone());
@@ -119,7 +246,7 @@ pub fn resolve_retrieval_scope(
         }
     }
 
-    scope
+    Ok(scope)
 }
 
 pub fn filter_packets_by_scope<T>(
@@ -131,7 +258,7 @@ pub fn filter_packets_by_scope<T>(
         return;
     }
     packets.retain(|p| match path_fn(p) {
-        None => true,
+        None => false,
         Some(path) => scope.matches_path(path),
     });
 }
@@ -215,6 +342,42 @@ mod tests {
         assert!(scope.matches_path("党纪法规/条例.md"));
         assert!(scope.matches_path("范文/样例.md"));
         assert!(!scope.matches_path("其他/笔记.md"));
+        assert!(!scope.matches_path("党纪法规-归档/条例.md"));
+    }
+
+    #[test]
+    fn path_scoped_filter_drops_packets_without_a_source_path() {
+        let scope = RetrievalScope {
+            path_prefixes: vec!["notes/".into()],
+            paths: Vec::new(),
+            required_tags: Vec::new(),
+        };
+        let mut packets = vec![Some("notes/in.md"), None, Some("other/out.md")];
+
+        filter_packets_by_scope(&mut packets, &scope, |path| *path);
+
+        assert_eq!(packets, vec![Some("notes/in.md")]);
+    }
+
+    #[test]
+    fn user_scope_is_canonicalized_and_deduplicated_before_resolution() {
+        let user = ContextScopeDto {
+            paths: vec![" ./notes\\same.md ".into(), "notes/same.md".into()],
+            path_prefixes: vec![" ./projects\\alpha ".into(), "projects/alpha/".into()],
+            corpus_ids: Vec::new(),
+            required_tags: vec![" #Project ".into(), "project".into()],
+        };
+
+        let scope = resolve_retrieval_scope(
+            &corpus_config(),
+            crate::ai_types::AgentIntent::AskNotes,
+            &user,
+        )
+        .expect("resolve scope");
+
+        assert_eq!(scope.paths, vec!["notes/same.md"]);
+        assert_eq!(scope.path_prefixes, vec!["projects/alpha/"]);
+        assert_eq!(scope.required_tags, vec!["project"]);
     }
 
     fn corpus_config() -> CorpusConfig {
@@ -251,7 +414,8 @@ mod tests {
             &corpus_config(),
             crate::ai_types::AgentIntent::AskNotes,
             &user,
-        );
+        )
+        .expect("resolve scope");
 
         assert!(scope.matches_path("草稿/指定.md"));
         assert!(scope.matches_path("项目/计划.md"));
@@ -273,10 +437,28 @@ mod tests {
             &corpus_config(),
             crate::ai_types::AgentIntent::AskNotes,
             &user,
-        );
+        )
+        .expect("resolve scope");
 
         assert!(scope.matches_path("草稿/备忘.md"));
         assert!(!scope.matches_path("制度/条例.md"));
         assert_eq!(scope.path_prefixes, vec!["草稿/"]);
+    }
+
+    #[test]
+    fn unknown_corpus_ids_fail_closed() {
+        let user = ContextScopeDto {
+            corpus_ids: vec!["missing".into()],
+            ..Default::default()
+        };
+
+        let error = resolve_retrieval_scope(
+            &corpus_config(),
+            crate::ai_types::AgentIntent::AskNotes,
+            &user,
+        )
+        .expect_err("unknown corpus IDs must never become an unrestricted scope");
+
+        assert_eq!(error.to_string(), "agent_run_invalid_retrieval_scope");
     }
 }

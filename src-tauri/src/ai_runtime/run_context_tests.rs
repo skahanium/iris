@@ -1,5 +1,7 @@
 use super::domain_executor::DomainMaterialRole;
-use super::run_context::{RunContext, RunContextAssembler, RunContextMaterial};
+use super::run_context::{
+    classify_context_assembly_failure, RunContext, RunContextAssembler, RunContextMaterial,
+};
 use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, LocalEvidenceInput, MaterialRole,
 };
@@ -9,7 +11,7 @@ use crate::ai_runtime::agent_run_repository::{
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed, Modality, RiskClass,
-    SecurityDomain, WebDecisionReason,
+    SafeRunErrorCode, SecurityDomain, WebDecisionReason,
 };
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
 use crate::storage::db::Database;
@@ -28,6 +30,37 @@ fn envelope() -> ExecutionEnvelope {
         required_capabilities: vec![],
         explicit_constraints: vec![],
     }
+}
+
+#[test]
+fn context_assembly_failures_map_to_precise_safe_codes() {
+    for (internal, expected) in [
+        (
+            "agent_run_invalid_explicit_reference",
+            SafeRunErrorCode::InvalidExplicitReference,
+        ),
+        (
+            "agent_run_explicit_reference_changed",
+            SafeRunErrorCode::ExplicitReferenceChanged,
+        ),
+        (
+            "agent_run_invalid_retrieval_scope",
+            SafeRunErrorCode::InvalidRetrievalScope,
+        ),
+        (
+            "agent_run_local_reference_index_unavailable",
+            SafeRunErrorCode::LocalReferenceIndexUnavailable,
+        ),
+    ] {
+        assert_eq!(
+            classify_context_assembly_failure(&crate::error::AppError::msg(internal)),
+            expected
+        );
+    }
+    assert_eq!(
+        classify_context_assembly_failure(&crate::error::AppError::msg("database unavailable")),
+        SafeRunErrorCode::PersistenceFailed
+    );
 }
 
 #[test]
@@ -55,7 +88,7 @@ fn assemble_reads_only_the_run_persisted_explicit_reference() {
                 id: "attached".into(),
                 kind: ContextReferenceKind::Note,
                 file_path: Some("notes/attached.md".into()),
-                content_hash: None,
+                content_hash: Some(crate::cas::hash::content_hash_str("attached evidence")),
                 utf8_range: None,
                 editor_range: None,
                 excerpt: "untrusted client excerpt".into(),
@@ -115,7 +148,7 @@ fn assemble_rejects_reserved_or_changed_explicit_references() {
                 id: "secret".into(),
                 kind: ContextReferenceKind::Note,
                 file_path: Some(".classified/secret.md".into()),
-                content_hash: None,
+                content_hash: Some(crate::cas::hash::content_hash_str("secret")),
                 utf8_range: None,
                 editor_range: None,
                 excerpt: String::new(),
@@ -234,6 +267,515 @@ fn assemble_rejects_reference_when_persisted_hash_no_longer_matches() {
 }
 
 #[test]
+fn assemble_rejects_a_note_reference_without_a_backend_content_hash() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    std::fs::write(vault.join("notes/unhashed.md"), "disk authority").expect("note");
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "unhashed-note-reference".into(),
+            run_id: "run-unhashed-note-reference".into(),
+            turn_id: "turn-unhashed-note-reference".into(),
+            message: "请总结附件".into(),
+            content_parts: None,
+            explicit_references: vec![ContextReferenceWire {
+                id: "unhashed".into(),
+                kind: ContextReferenceKind::Note,
+                file_path: Some("notes/unhashed.md".into()),
+                content_hash: None,
+                utf8_range: None,
+                editor_range: None,
+                excerpt: "client supplied body must not be trusted".into(),
+                heading_path: None,
+                anchor: None,
+                stale: false,
+                invalid_reason: None,
+            }],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: envelope(),
+        },
+    )
+    .expect("accepted run");
+
+    let error = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-unhashed-note-reference",
+    )
+    .expect_err("unhashed note references must fail closed");
+
+    assert_eq!(error.to_string(), "agent_run_invalid_explicit_reference");
+}
+
+#[test]
+fn assemble_requires_selection_and_paragraph_references_to_have_valid_ranges() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let body = "alpha beta gamma";
+    std::fs::write(vault.join("notes/ranged.md"), body).expect("note");
+    let hash = crate::cas::hash::content_hash_str(body);
+
+    for (index, kind) in [
+        ContextReferenceKind::Selection,
+        ContextReferenceKind::Paragraph,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        let run_id = format!("run-invalid-range-{index}");
+        AgentRunRepository::accept(
+            &db,
+            AcceptRunInput {
+                session_id: session.session_id,
+                session_key: session.session_key.clone(),
+                client_request_id: format!("invalid-range-{index}"),
+                run_id: run_id.clone(),
+                turn_id: format!("turn-invalid-range-{index}"),
+                message: "请分析选区".into(),
+                content_parts: None,
+                explicit_references: vec![ContextReferenceWire {
+                    id: format!("range-{index}"),
+                    kind,
+                    file_path: Some("notes/ranged.md".into()),
+                    content_hash: Some(hash.clone()),
+                    utf8_range: None,
+                    editor_range: None,
+                    excerpt: "alpha".into(),
+                    heading_path: None,
+                    anchor: None,
+                    stale: false,
+                    invalid_reason: None,
+                }],
+                context_scope: Default::default(),
+                display_mentions: vec![],
+                explicit_action: None,
+                envelope: envelope(),
+            },
+        )
+        .expect("accepted run");
+
+        let error = RunContextAssembler::assemble(&db, Some(&vault), &session.session_key, &run_id)
+            .expect_err("selection and paragraph references require a disk range");
+        assert_eq!(error.to_string(), "agent_run_invalid_explicit_reference");
+    }
+}
+
+#[test]
+fn assemble_rereads_an_exact_chinese_utf8_selection_from_disk() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let body = "甲乙😀丙丁";
+    std::fs::write(vault.join("notes/chinese.md"), body).expect("note");
+    let start = "甲".len();
+    let end = "甲乙😀丙".len();
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "valid-chinese-selection".into(),
+            run_id: "run-valid-chinese-selection".into(),
+            turn_id: "turn-valid-chinese-selection".into(),
+            message: "请分析选区".into(),
+            content_parts: None,
+            explicit_references: vec![ContextReferenceWire {
+                id: "selection".into(),
+                kind: ContextReferenceKind::Selection,
+                file_path: Some("notes/chinese.md".into()),
+                content_hash: Some(crate::cas::hash::content_hash_str(body)),
+                utf8_range: Some(crate::ai_types::SourceSpan { start, end }),
+                editor_range: None,
+                excerpt: "客户端伪造内容".into(),
+                heading_path: None,
+                anchor: None,
+                stale: false,
+                invalid_reason: None,
+            }],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: envelope(),
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-valid-chinese-selection",
+    )
+    .expect("assembled exact selection");
+
+    assert_eq!(context.materials.len(), 1);
+    assert_eq!(context.materials[0].content, "乙😀丙");
+    assert_eq!(context.materials[0].source_span_start, start as i64);
+    assert_eq!(context.materials[0].source_span_end, end as i64);
+}
+
+#[test]
+fn assemble_rejects_a_non_utf8_explicit_reference() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    std::fs::write(vault.join("notes/invalid.md"), [0xff, 0xfe]).expect("invalid note");
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "invalid-utf8-reference".into(),
+            run_id: "run-invalid-utf8-reference".into(),
+            turn_id: "turn-invalid-utf8-reference".into(),
+            message: "请分析附件".into(),
+            content_parts: None,
+            explicit_references: vec![ContextReferenceWire {
+                id: "invalid".into(),
+                kind: ContextReferenceKind::Note,
+                file_path: Some("notes/invalid.md".into()),
+                content_hash: Some("unusable".into()),
+                utf8_range: None,
+                editor_range: None,
+                excerpt: String::new(),
+                heading_path: None,
+                anchor: None,
+                stale: false,
+                invalid_reason: None,
+            }],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: envelope(),
+        },
+    )
+    .expect("accepted run");
+
+    let error = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-invalid-utf8-reference",
+    )
+    .expect_err("non-UTF-8 notes must fail closed");
+
+    assert_eq!(error.to_string(), "agent_run_invalid_explicit_reference");
+}
+
+fn index_scoped_note(db: &Database, path: &str, title: &str, body: &str, excerpt: &str) {
+    db.with_conn(|conn| {
+        let hash = crate::cas::hash::content_hash_str(body);
+        conn.execute(
+            "INSERT INTO files
+             (path, title, content_hash, word_count, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 1, datetime('now'), datetime('now'))",
+            rusqlite::params![path, title, hash],
+        )?;
+        let file_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO chunks
+             (file_id, chunk_index, content, char_count, source_start, source_end, content_hash)
+             VALUES (?1, 0, ?2, ?3, 0, ?4, ?5)",
+            rusqlite::params![
+                file_id,
+                excerpt,
+                excerpt.chars().count() as i64,
+                excerpt.len() as i64,
+                crate::cas::hash::content_hash_str(excerpt),
+            ],
+        )?;
+        conn.execute(
+            "INSERT INTO files_fts (path, title, content) VALUES (?1, ?2, ?3)",
+            rusqlite::params![path, title, body],
+        )?;
+        Ok(())
+    })
+    .expect("index scoped note");
+}
+
+#[test]
+fn scope_only_context_performs_deterministic_retrieval_before_provider_dispatch() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/in.md",
+        "In",
+        "scope-needle authorized evidence",
+        "scope-needle authorized evidence",
+    );
+    index_scoped_note(
+        &db,
+        "outside.md",
+        "Outside",
+        "scope-needle forbidden evidence",
+        "scope-needle forbidden evidence",
+    );
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "scope-only-retrieval".into(),
+            run_id: "run-scope-only-retrieval".into(),
+            turn_id: "turn-scope-only-retrieval".into(),
+            message: "scope-needle".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: crate::ai_runtime::retrieval_scope::ContextScopeDto {
+                path_prefixes: vec!["notes/".into()],
+                ..Default::default()
+            },
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::ExplicitScope,
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-scope-only-retrieval",
+    )
+    .expect("assembled scoped context");
+
+    assert_eq!(context.materials.len(), 1);
+    assert_eq!(context.materials[0].source_path, "notes/in.md");
+    assert!(context.materials[0].content.contains("authorized evidence"));
+    assert!(!context
+        .prompt_with_domain_plan(&context.domain_plan())
+        .contains("forbidden evidence"));
+}
+
+#[test]
+fn oversized_note_falls_back_to_exact_scope_retrieval_without_truncating_fulltext() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let body = format!("long-note-needle {}", "x".repeat(13_000));
+    std::fs::write(vault.join("notes/long.md"), &body).expect("long note");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/long.md",
+        "Long",
+        &body,
+        "long-note-needle exact scoped excerpt",
+    );
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "long-note-fallback".into(),
+            run_id: "run-long-note-fallback".into(),
+            turn_id: "turn-long-note-fallback".into(),
+            message: "long-note-needle".into(),
+            content_parts: None,
+            explicit_references: vec![ContextReferenceWire {
+                id: "long-note".into(),
+                kind: ContextReferenceKind::Note,
+                file_path: Some("notes/long.md".into()),
+                content_hash: Some(crate::cas::hash::content_hash_str(&body)),
+                utf8_range: None,
+                editor_range: None,
+                excerpt: "client truncation must be ignored".into(),
+                heading_path: None,
+                anchor: None,
+                stale: false,
+                invalid_reason: None,
+            }],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-long-note-fallback",
+    )
+    .expect("long note must use indexed exact-scope retrieval");
+
+    assert_eq!(context.materials.len(), 1);
+    assert_eq!(context.materials[0].source_path, "notes/long.md");
+    assert_eq!(
+        context.materials[0].content,
+        "long-note-needle exact scoped excerpt"
+    );
+    assert_ne!(context.materials[0].content, body);
+}
+
+#[test]
+fn total_material_budget_falls_back_only_the_overflowing_note_to_exact_scope_retrieval() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let first = format!("first {}", "a".repeat(10_900));
+    let second = format!("second {}", "b".repeat(10_900));
+    let third = format!("third-budget-needle {}", "c".repeat(10_900));
+    for (name, body) in [
+        ("first.md", &first),
+        ("second.md", &second),
+        ("third.md", &third),
+    ] {
+        std::fs::write(vault.join("notes").join(name), body).expect("note");
+    }
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/third.md",
+        "Third",
+        &third,
+        "third-budget-needle exact scoped excerpt",
+    );
+    let session = NormalSessionRepository::create(&db).expect("session");
+    let references = [("first", &first), ("second", &second), ("third", &third)]
+        .into_iter()
+        .map(|(name, body)| ContextReferenceWire {
+            id: name.into(),
+            kind: ContextReferenceKind::Note,
+            file_path: Some(format!("notes/{name}.md")),
+            content_hash: Some(crate::cas::hash::content_hash_str(body)),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: "client truncation must be ignored".into(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        })
+        .collect();
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "total-material-budget".into(),
+            run_id: "run-total-material-budget".into(),
+            turn_id: "turn-total-material-budget".into(),
+            message: "third-budget-needle".into(),
+            content_parts: None,
+            explicit_references: references,
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-total-material-budget",
+    )
+    .expect("overflowing note must use exact-scope retrieval");
+
+    assert_eq!(context.materials.len(), 3);
+    assert_eq!(context.materials[0].content, first);
+    assert_eq!(context.materials[1].content, second);
+    assert_eq!(
+        context.materials[2].content,
+        "third-budget-needle exact scoped excerpt"
+    );
+}
+
+#[test]
+fn oversized_note_fails_closed_when_exact_scope_index_material_is_unavailable() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let body = format!("unindexed-long-note {}", "x".repeat(13_000));
+    std::fs::write(vault.join("notes/unindexed.md"), &body).expect("long note");
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "unindexed-long-note".into(),
+            run_id: "run-unindexed-long-note".into(),
+            turn_id: "turn-unindexed-long-note".into(),
+            message: "unindexed-long-note".into(),
+            content_parts: None,
+            explicit_references: vec![ContextReferenceWire {
+                id: "unindexed".into(),
+                kind: ContextReferenceKind::Note,
+                file_path: Some("notes/unindexed.md".into()),
+                content_hash: Some(crate::cas::hash::content_hash_str(&body)),
+                utf8_range: None,
+                editor_range: None,
+                excerpt: String::new(),
+                heading_path: None,
+                anchor: None,
+                stale: false,
+                invalid_reason: None,
+            }],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let error = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-unindexed-long-note",
+    )
+    .expect_err("long note without indexed material must fail closed");
+
+    assert_eq!(
+        error.to_string(),
+        "agent_run_local_reference_index_unavailable"
+    );
+}
+
+#[test]
 fn explicit_materials_register_as_run_owned_evidence_without_storing_bodies() {
     let dir = tempfile::tempdir().expect("vault");
     let vault = dir.path().join("vault");
@@ -256,7 +798,7 @@ fn explicit_materials_register_as_run_owned_evidence_without_storing_bodies() {
                 id: "evidence".into(),
                 kind: ContextReferenceKind::Note,
                 file_path: Some("notes/evidence.md".into()),
-                content_hash: None,
+                content_hash: Some(crate::cas::hash::content_hash_str("evidence body")),
                 utf8_range: None,
                 editor_range: None,
                 excerpt: String::new(),
@@ -316,7 +858,10 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
             source_span_start: 0,
             source_span_end: 8,
             content: "用户明确附上的事实".into(),
+            retrieval_reason: "explicit_reference".into(),
         }],
+        retrieval_scope: Default::default(),
+        local_retrieval_packets: vec![],
         recent_messages: vec![],
         conversation_memory: None,
         prompt_profile: Default::default(),

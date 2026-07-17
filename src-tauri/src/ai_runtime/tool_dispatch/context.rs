@@ -16,6 +16,21 @@ pub struct ToolDispatchContext<'a> {
 }
 
 impl<'a> ToolDispatchContext<'a> {
+    pub(crate) fn ensure_retrieval_scope_allows_path(
+        &self,
+        db: &Database,
+        path: &str,
+    ) -> AppResult<()> {
+        let allowed = db
+            .with_read_conn(|conn| self.retrieval_scope.allows_path(conn, path))
+            .unwrap_or(false);
+        if allowed {
+            Ok(())
+        } else {
+            Err(AppError::msg("agent_run_retrieval_scope_violation"))
+        }
+    }
+
     pub(crate) fn ensure_active_skill_scope_allows_path(
         &self,
         db: &Database,

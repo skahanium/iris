@@ -14,6 +14,7 @@ pub(super) async fn read_note(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
     let abs = validate_user_note_relative_path(&vault, path)?;
@@ -31,9 +32,10 @@ pub(super) async fn read_note(
 pub(super) async fn list_vault(
     state: &AppState,
     args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
 ) -> AppResult<serde_json::Value> {
     let prefix = args["prefix"].as_str().unwrap_or("");
-    let limit = args["limit"].as_u64().unwrap_or(50) as usize;
+    let limit = (args["limit"].as_u64().unwrap_or(50) as usize).clamp(1, 100);
     let items = state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT path, title FROM files
@@ -42,17 +44,23 @@ pub(super) async fn list_vault(
                AND path <> '.classified'
                AND path NOT LIKE '.classified/%'
                AND (?1 = '' OR path LIKE ?2)
-             ORDER BY path
-             LIMIT ?3",
+             ORDER BY path",
         )?;
         let pattern = format!("{prefix}%");
-        let rows = stmt.query_map(rusqlite::params![prefix, pattern, limit as i64], |row| {
-            Ok(serde_json::json!({
-                "path": row.get::<_, String>(0)?,
-                "title": row.get::<_, String>(1)?,
-            }))
+        let rows = stmt.query_map(rusqlite::params![prefix, pattern], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
-        Ok(rows.flatten().collect::<Vec<_>>())
+        let mut items = Vec::new();
+        for row in rows {
+            let (path, title) = row?;
+            if ctx.retrieval_scope.allows_path(conn, &path)? {
+                items.push(serde_json::json!({ "path": path, "title": title }));
+                if items.len() == limit {
+                    break;
+                }
+            }
+        }
+        Ok(items)
     })?;
     Ok(serde_json::json!({ "files": items, "count": items.len() }))
 }
@@ -65,6 +73,7 @@ pub(super) async fn get_outline(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
     let abs = validate_user_note_relative_path(&vault, path)?;
@@ -95,6 +104,7 @@ pub(super) async fn get_backlinks(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
     let _abs = validate_user_note_relative_path(&vault, path)?;
@@ -112,13 +122,24 @@ pub(super) async fn get_backlinks(
              ORDER BY f.title",
         )?;
         let rows = stmt.query_map([path], |row| {
-            Ok(serde_json::json!({
-                "source_path": row.get::<_, String>(0)?,
-                "source_title": row.get::<_, String>(1)?,
-                "context": row.get::<_, Option<String>>(2)?,
-            }))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?;
-        Ok(rows.flatten().collect::<Vec<_>>())
+        let mut entries = Vec::new();
+        for row in rows {
+            let (source_path, source_title, context) = row?;
+            if ctx.retrieval_scope.allows_path(conn, &source_path)? {
+                entries.push(serde_json::json!({
+                    "source_path": source_path,
+                    "source_title": source_title,
+                    "context": context,
+                }));
+            }
+        }
+        Ok(entries)
     })?;
     Ok(serde_json::json!({ "backlinks": entries, "count": entries.len() }))
 }
@@ -131,6 +152,7 @@ pub(super) async fn get_block_links(
     let note_path = args["note_path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing note_path"))?;
+    ctx.ensure_retrieval_scope_allows_path(&state.db, note_path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, note_path)?;
     let vault: &Path = &state.vault_path()?;
     let _abs = validate_user_note_relative_path(vault, note_path)?;
@@ -152,14 +174,29 @@ pub(super) async fn get_block_links(
              LIMIT 30",
         )?;
         let rows = stmt.query_map([fid], |row| {
-            Ok(serde_json::json!({
-                "id": row.get::<_, i64>(0)?,
-                "target_path": row.get::<_, Option<String>>(1)?,
-                "link_type": row.get::<_, String>(2)?,
-                "is_confirmed": row.get::<_, i64>(3)? != 0,
-            }))
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)? != 0,
+            ))
         })?;
-        Ok(rows.flatten().collect::<Vec<_>>())
+        let mut links = Vec::new();
+        for row in rows {
+            let (id, target_path, link_type, is_confirmed) = row?;
+            if target_path.as_deref().is_some_and(|path| {
+                !ctx.retrieval_scope.allows_path(conn, path).unwrap_or(false)
+            }) {
+                continue;
+            }
+            links.push(serde_json::json!({
+                "id": id,
+                "target_path": target_path,
+                "link_type": link_type,
+                "is_confirmed": is_confirmed,
+            }));
+        }
+        Ok(links)
     })?;
     Ok(serde_json::json!({ "links": links }))
 }

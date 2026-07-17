@@ -98,7 +98,9 @@ impl RunIntake {
         });
         let effort = match effect {
             Effect::Apply => Effort::Durable,
-            _ if freshness != Freshness::Offline || has_images => Effort::ToolLoop,
+            _ if freshness != Freshness::Offline || has_images || has_retrieval_scope(request) => {
+                Effort::ToolLoop
+            }
             _ => Effort::Direct,
         };
         let risk = match effect {
@@ -178,8 +180,17 @@ impl RunIntake {
     /// Atomically accept a normal-domain Run before routing or context assembly.
     pub(crate) fn start(
         db: &Database,
-        request: AssistantRunStartRequest,
+        mut request: AssistantRunStartRequest,
     ) -> AppResult<AssistantRunAccepted> {
+        request.turn.retrieval_scope = crate::ai_runtime::retrieval_scope::normalize_context_scope(
+            &request.turn.retrieval_scope,
+        )?;
+        for reference in &mut request.turn.explicit_references {
+            if let Some(path) = reference.file_path.as_mut() {
+                *path = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
+                    .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+            }
+        }
         let envelope = Self::resolve_envelope(&request)?;
         if envelope.security_domain != SecurityDomain::Normal {
             return Err(AppError::msg("agent_run_classified_domain_not_supported"));
@@ -452,6 +463,13 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
     {
         return Err(AppError::msg("agent_run_invalid_request"));
     }
+    crate::ai_runtime::retrieval_scope::normalize_context_scope(&request.turn.retrieval_scope)?;
+    for reference in &request.turn.explicit_references {
+        if let Some(path) = reference.file_path.as_deref() {
+            crate::ai_runtime::retrieval_scope::normalize_note_path(path)
+                .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+        }
+    }
     validate_display_mentions(request)?;
     validate_explicit_action(request)
 }
@@ -498,11 +516,6 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
         }
     }
     if let Some(snapshot) = action.selection_snapshot.as_ref() {
-        let length = snapshot
-            .utf8_range
-            .end
-            .checked_sub(snapshot.utf8_range.start)
-            .ok_or_else(|| AppError::msg("agent_run_invalid_request"))?;
         let range_matches = request.turn.explicit_references.iter().any(|reference| {
             reference.id == snapshot.reference_id
                 && reference.content_hash.as_deref() == Some(snapshot.content_hash.as_str())
@@ -512,9 +525,7 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
         });
         if snapshot.reference_id.trim().is_empty()
             || snapshot.content_hash.trim().is_empty()
-            || snapshot.text.is_empty()
-            || snapshot.text.chars().count() > MAX_USER_MESSAGE_CHARS
-            || length != snapshot.text.len()
+            || snapshot.utf8_range.start >= snapshot.utf8_range.end
             || !valid_reference(&snapshot.reference_id, &snapshot.content_hash)
             || !range_matches
         {

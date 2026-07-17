@@ -655,12 +655,12 @@ fn spawn_normal_direct_run(
             &accepted.run_id,
         ) {
             Ok(context) => context,
-            Err(_) => {
+            Err(error) => {
                 let _ = RunEngine::fail_before_dispatch_with_sink(
                     &db,
                     &accepted.session,
                     &accepted.run_id,
-                    crate::ai_runtime::run_contract::SafeRunErrorCode::InvalidRequest,
+                    crate::ai_runtime::run_context::classify_context_assembly_failure(&error),
                     &sink,
                 );
                 return;

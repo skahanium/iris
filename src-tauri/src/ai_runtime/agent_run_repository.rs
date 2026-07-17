@@ -1143,6 +1143,7 @@ impl AgentRunRepository {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StoredExplicitReference {
+    pub(crate) kind: ContextReferenceKind,
     pub(crate) file_path: Option<String>,
     pub(crate) content_hash: Option<String>,
     pub(crate) utf8_range: Option<SourceSpan>,

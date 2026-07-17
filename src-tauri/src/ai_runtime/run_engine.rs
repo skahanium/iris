@@ -1424,6 +1424,12 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::WebProviderFailed => "联网证据服务暂时不可用，请稍后重试",
         SafeRunErrorCode::WebEvidenceInvalid => "联网证据服务未返回可用结果，请稍后重试",
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
+        SafeRunErrorCode::InvalidExplicitReference => "引用材料无效，请重新附带后重试",
+        SafeRunErrorCode::ExplicitReferenceChanged => "引用材料已发生变化，请重新附带后重试",
+        SafeRunErrorCode::InvalidRetrievalScope => "资料范围无效，请重新选择后重试",
+        SafeRunErrorCode::LocalReferenceIndexUnavailable => {
+            "本地资料索引暂不可用，请完成索引后重试"
+        }
         SafeRunErrorCode::PermissionDenied => "当前请求不具备执行权限",
         SafeRunErrorCode::Cancelled => "运行已取消",
         SafeRunErrorCode::ClassifiedContextRequired => "请先明确附带当前打开的涉密文档",

@@ -93,6 +93,23 @@ fn dispatch_context_with_plan<'a>(
     }
 }
 
+fn dispatch_context_with_retrieval_scope<'a>(
+    retrieval_scope: &'a crate::ai_runtime::retrieval_scope::RetrievalScope,
+) -> ToolDispatchContext<'a> {
+    ToolDispatchContext {
+        note_path: None,
+        file_id: None,
+        web_search_enabled: false,
+        max_web_fetches: 3,
+        cold_start_packets: &[],
+        retrieval_scope,
+        runtime_documents: &[],
+        app_handle: None,
+        attachment_count: 0,
+        skill_activation_plan: None,
+    }
+}
+
 #[test]
 fn timeout_result_has_retryable_structured_error_shape() {
     let result = timeout_tool_result("web_search", Instant::now(), Duration::from_secs(30));
@@ -147,6 +164,117 @@ async fn read_note_accepts_valid_path() {
     let val = result.unwrap();
     assert_eq!(val["path"], "notes/test.md");
     assert_eq!(val["content"], "# Test\nHello world");
+}
+
+#[tokio::test]
+async fn note_read_tools_reject_paths_outside_the_immutable_run_scope() {
+    let (state, _dir) = test_state();
+    let scope = crate::ai_runtime::retrieval_scope::RetrievalScope {
+        path_prefixes: Vec::new(),
+        paths: vec!["notes/test.md".into()],
+        required_tags: Vec::new(),
+    };
+    let ctx = dispatch_context_with_retrieval_scope(&scope);
+
+    for result in [
+        note_impl::read_note(
+            &state,
+            &ctx,
+            &serde_json::json!({ "path": "private/secret.md" }),
+        )
+        .await,
+        note_impl::get_outline(
+            &state,
+            &ctx,
+            &serde_json::json!({ "path": "private/secret.md" }),
+        )
+        .await,
+        note_impl::get_backlinks(
+            &state,
+            &ctx,
+            &serde_json::json!({ "path": "private/secret.md" }),
+        )
+        .await,
+        note_impl::get_block_links(
+            &state,
+            &ctx,
+            &serde_json::json!({ "note_path": "private/secret.md" }),
+        )
+        .await,
+    ] {
+        assert_eq!(
+            result
+                .expect_err("out-of-scope note reads must fail closed")
+                .to_string(),
+            "agent_run_retrieval_scope_violation"
+        );
+    }
+}
+
+#[tokio::test]
+async fn list_vault_returns_only_paths_inside_the_immutable_run_scope() {
+    let (state, _dir) = test_state();
+    state
+        .db
+        .with_conn(|conn| {
+            for (path, title) in [("notes/test.md", "Test"), ("private/secret.md", "Secret")] {
+                conn.execute(
+                    "INSERT OR REPLACE INTO files
+                     (path, title, content_hash, word_count, created_at, updated_at)
+                     VALUES (?1, ?2, 'hash', 1, datetime('now'), datetime('now'))",
+                    rusqlite::params![path, title],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("index notes");
+    let scope = crate::ai_runtime::retrieval_scope::RetrievalScope {
+        path_prefixes: vec!["notes/".into()],
+        paths: Vec::new(),
+        required_tags: Vec::new(),
+    };
+    let ctx = dispatch_context_with_retrieval_scope(&scope);
+
+    let result = dispatch_tool(&state, &ctx, "list_vault", &serde_json::json!({})).await;
+
+    assert!(
+        result.success,
+        "scoped vault list failed: {:?}",
+        result.error
+    );
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["files"][0]["path"], "notes/test.md");
+}
+
+#[tokio::test]
+async fn tag_only_run_scope_applies_to_direct_note_reads() {
+    let (state, _dir) = test_state();
+    index_tagged_note(&state, "notes/test.md", "daily");
+    let scope = crate::ai_runtime::retrieval_scope::RetrievalScope {
+        path_prefixes: Vec::new(),
+        paths: Vec::new(),
+        required_tags: vec!["daily".into()],
+    };
+    let ctx = dispatch_context_with_retrieval_scope(&scope);
+
+    assert!(note_impl::read_note(
+        &state,
+        &ctx,
+        &serde_json::json!({ "path": "notes/test.md" })
+    )
+    .await
+    .is_ok());
+    assert_eq!(
+        note_impl::read_note(
+            &state,
+            &ctx,
+            &serde_json::json!({ "path": "private/secret.md" })
+        )
+        .await
+        .expect_err("untagged note must be outside a tag-only scope")
+        .to_string(),
+        "agent_run_retrieval_scope_violation"
+    );
 }
 
 #[tokio::test]
