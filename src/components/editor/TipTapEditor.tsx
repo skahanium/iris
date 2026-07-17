@@ -50,6 +50,7 @@ import {
 import { resetEditorContentBaseline } from "@/lib/editor-baseline";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 import { normalizePastedEditorHtml } from "@/lib/iris-clipboard";
+import { parseNoteForEditor } from "@/lib/markdown";
 
 import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
 
@@ -672,7 +673,7 @@ function TipTapEditorInner({
     installEditorMarkdownSourceProjection(editor, {
       filePath: contentCacheKey,
       committedMarkdown: committedSourceMarkdown,
-      bodyMarkdown: initialBodyMarkdown,
+      bodyMarkdown: parseNoteForEditor(committedSourceMarkdown).bodyMd,
     });
   }, [
     committedSourceMarkdown,

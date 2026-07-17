@@ -369,6 +369,58 @@ describe("useInlineAi", () => {
     editor.destroy();
   });
 
+  it("retries a failed first Start with the reference bound to its ai stream", async () => {
+    const editor = createEditor("first selection");
+    editor.commands.setTextSelection({ from: 1, to: 6 });
+    mockAssistantRunStart
+      .mockRejectedValueOnce(new Error("start failed"))
+      .mockResolvedValueOnce(acceptedRun());
+
+    await act(async () => {
+      await api.run(editor, "rewrite");
+      await api.retry(editor);
+    });
+
+    const firstReference =
+      mockAssistantRunStart.mock.calls[0]?.[0].turn.explicitReferences[0];
+    expect(firstReference).toBeDefined();
+    expect(
+      mockAssistantRunStart.mock.calls[1]?.[0].turn.explicitReferences,
+    ).toEqual([firstReference]);
+    editor.destroy();
+  });
+
+  it("never leaks a previous Run reference into retry after a new Start fails", async () => {
+    const editor = createEditor("first second");
+    editor.commands.setTextSelection({ from: 1, to: 6 });
+    mockAssistantRunStart
+      .mockResolvedValueOnce(acceptedRun())
+      .mockRejectedValueOnce(new Error("new start failed"))
+      .mockResolvedValueOnce({
+        ...acceptedRun(),
+        runId: "run-inline-3",
+      });
+
+    await act(async () => {
+      await api.run(editor, "rewrite");
+    });
+    editor.commands.removeAiStream();
+    editor.commands.setTextSelection({ from: 7, to: 13 });
+    await act(async () => {
+      await api.run(editor, "rewrite");
+      await api.abort();
+      await api.retry(editor);
+    });
+
+    expect(mockAssistantRunControl).not.toHaveBeenCalled();
+    expect(
+      mockAssistantRunStart.mock.calls[2]?.[0].turn.explicitReferences[0],
+    ).toMatchObject({
+      utf8Range: { start: 6, end: 12 },
+    });
+    editor.destroy();
+  });
+
   it("receives the document-level dirty state from the app", () => {
     const app = readFileSync("src/App.impl.tsx", "utf8");
     expect(app).toContain("isDocumentDirty: () => dirtyRef.current");

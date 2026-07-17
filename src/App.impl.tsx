@@ -79,14 +79,12 @@ function saveOutlineOpen(open: boolean): void {
     return;
   }
 }
-
 interface IdlePreloadScheduler {
   requestIdleCallback?: (callback: () => void) => number;
   cancelIdleCallback?: (handle: number) => void;
   setTimeout: Window["setTimeout"];
   clearTimeout: Window["clearTimeout"];
 }
-
 function scheduleManagementCenterPreload(): () => void {
   const scheduler = window as unknown as IdlePreloadScheduler;
   if (scheduler.requestIdleCallback) {
@@ -95,7 +93,6 @@ function scheduleManagementCenterPreload(): () => void {
     );
     return () => scheduler.cancelIdleCallback?.(handle);
   }
-
   const handle = scheduler.setTimeout(() => preloadManagementCenter(), 0);
   return () => scheduler.clearTimeout(handle);
 }
@@ -243,6 +240,8 @@ function App() {
   const {
     aiPanelOpen,
     assistantChrome,
+    consumeEditorSelectionReference,
+    editorSelectionReference,
     setAiPanelOpen,
     setWebSearch,
     setWebSearchProviderId,
@@ -440,7 +439,6 @@ function App() {
   });
   discardPristineNoteRef.current = discardPristineNote;
   updateInstallBarrierRef.current = flushAllOpenTabs;
-
   const isEditorPersistenceBlocked =
     activeFileLocked || isPersistenceBarrierActive;
   const isEditorMutationBlocked = useCallback(
@@ -853,6 +851,8 @@ function App() {
           <AppAiPanelSlot
             aiDomain={aiDomain}
             classifiedPath={classifiedPath}
+            consumeEditorSelectionReference={consumeEditorSelectionReference}
+            editorSelectionReference={editorSelectionReference}
             editorInteractionLocked={isEditorPersistenceBlocked}
             runtimeDocumentCandidates={assistantRuntimeDocumentCandidates}
             handleInsertToEditor={handleAssistantInsertToEditor}

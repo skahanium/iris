@@ -39,22 +39,43 @@ export interface AiStreamRequest {
   message: string;
 }
 
-export function getActiveAiStreamAttrs(
-  editor: Editor,
-): { originalText: string; action: string } | null {
-  let result: { originalText: string; action: string } | null = null;
+interface AiStreamState {
+  action: string;
+  originalText: string;
+  sourceFrom: number;
+  sourceTo: number;
+}
+
+function getActiveAiStreamState(editor: Editor): AiStreamState | null {
+  let result: AiStreamState | null = null;
   editor.state.doc.descendants((node) => {
     if (node.type.name !== "aiStream" || result) return;
-    const attrs = node.attrs as { originalText?: unknown; action?: unknown };
+    const attrs = node.attrs as {
+      originalText?: unknown;
+      action?: unknown;
+      sourceFrom?: unknown;
+      sourceTo?: unknown;
+    };
     if (typeof attrs.action === "string" && attrs.action) {
       result = {
         action: attrs.action,
         originalText:
           typeof attrs.originalText === "string" ? attrs.originalText : "",
+        sourceFrom: typeof attrs.sourceFrom === "number" ? attrs.sourceFrom : 0,
+        sourceTo: typeof attrs.sourceTo === "number" ? attrs.sourceTo : 0,
       };
     }
   });
   return result;
+}
+
+export function getActiveAiStreamAttrs(
+  editor: Editor,
+): { originalText: string; action: string } | null {
+  const state = getActiveAiStreamState(editor);
+  return state
+    ? { action: state.action, originalText: state.originalText }
+    : null;
 }
 
 export function buildRetryRequest(ctx: {
@@ -87,7 +108,25 @@ interface ActiveInlineRun {
   runId: string;
   stateVersion: number;
   session: AssistantSessionRef;
+}
+
+interface BoundInlineStream extends AiStreamState {
+  editor: Editor;
   reference: ContextReference | null;
+}
+
+function isSameInlineStream(
+  binding: BoundInlineStream,
+  editor: Editor,
+  stream: AiStreamState,
+): boolean {
+  return (
+    binding.editor === editor &&
+    binding.action === stream.action &&
+    binding.originalText === stream.originalText &&
+    binding.sourceFrom === stream.sourceFrom &&
+    binding.sourceTo === stream.sourceTo
+  );
 }
 
 /** Inline AI presents the same persistent Run lifecycle as the assistant panel. */
@@ -98,6 +137,8 @@ export function useInlineAi({
   onStatus,
 }: UseInlineAiOptions = {}) {
   const activeRef = useRef<ActiveInlineRun | null>(null);
+  const boundStreamRef = useRef<BoundInlineStream | null>(null);
+  const startGenerationRef = useRef(0);
   const bufferRef = useRef("");
   const rafRef = useRef<number | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -132,7 +173,16 @@ export function useInlineAi({
       reference?: ContextReference | null,
     ) => {
       if (mutationBlocked()) return;
+      const generation = ++startGenerationRef.current;
       detach();
+      activeRef.current = null;
+      const stream = getActiveAiStreamState(editor);
+      boundStreamRef.current =
+        stream &&
+        stream.action === request.action &&
+        stream.originalText === request.originalText
+          ? { ...stream, editor, reference: reference ?? null }
+          : null;
       bufferRef.current = "";
       editor.commands.clearAiStreamContent();
       editor.commands.setAiStreamStatus("streaming");
@@ -161,11 +211,11 @@ export function useInlineAi({
           webEnabled: false,
           securityDomain: domain,
         });
+        if (generation !== startGenerationRef.current) return;
         activeRef.current = {
           runId: accepted.runId,
           stateVersion: accepted.stateVersion,
           session: accepted.session,
-          reference: reference ?? null,
         };
         unlistenRef.current = await listenAssistantRunEvent((event) => {
           const active = activeRef.current;
@@ -201,6 +251,8 @@ export function useInlineAi({
           }
         });
       } catch (error) {
+        if (generation !== startGenerationRef.current) return;
+        activeRef.current = null;
         if (mutationBlocked()) return;
         editor.commands.setAiStreamStatus("error");
         onStatus?.(
@@ -255,9 +307,17 @@ export function useInlineAi({
   const retry = useCallback(
     async (editor: Editor) => {
       if (mutationBlocked()) return;
-      const context = getActiveAiStreamAttrs(editor);
+      const context = getActiveAiStreamState(editor);
       if (!context) return;
-      const reference = activeRef.current?.reference ?? null;
+      const binding = boundStreamRef.current;
+      const reference =
+        binding && isSameInlineStream(binding, editor, context)
+          ? binding.reference
+          : null;
+      if (context.originalText && !reference) {
+        onStatus?.(EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE);
+        return;
+      }
       if (reference && isDocumentDirtyRef.current()) {
         onStatus?.(EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE);
         return;
@@ -285,6 +345,8 @@ export function useInlineAi({
   const abortAndDetach = useCallback(() => {
     const active = activeRef.current;
     activeRef.current = null;
+    boundStreamRef.current = null;
+    startGenerationRef.current += 1;
     bufferRef.current = "";
     detach();
     if (!active) return;
@@ -298,10 +360,18 @@ export function useInlineAi({
     ).catch(() => undefined);
   }, [detach]);
 
-  const dismiss = useCallback((_editor?: Editor) => void abort(), [abort]);
+  const dismiss = useCallback(
+    (_editor?: Editor) => {
+      boundStreamRef.current = null;
+      void abort();
+    },
+    [abort],
+  );
 
   const finish = useCallback(() => {
     activeRef.current = null;
+    boundStreamRef.current = null;
+    startGenerationRef.current += 1;
     bufferRef.current = "";
     detach();
     onStatus?.("AI 空闲");

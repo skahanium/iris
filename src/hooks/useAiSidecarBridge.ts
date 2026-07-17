@@ -138,9 +138,9 @@ export function useAiSidecarBridge({
 
   const sendSelectionToAi = useCallback(
     async (options?: { prefill?: string }) => {
+      setEditorSelectionReference(null);
       const ed = editorRef.current;
       if (!ed) {
-        setEditorSelectionReference(null);
         setAiStatus("请先在编辑器中选中文本");
         return;
       }
@@ -150,7 +150,6 @@ export function useAiSidecarBridge({
         isDirty: isDocumentDirty,
       });
       if (!result.ok) {
-        setEditorSelectionReference(null);
         setAiStatus(result.message);
         return;
       }
@@ -160,10 +159,14 @@ export function useAiSidecarBridge({
     },
     [editorRef, isDocumentDirty, setAiStatus],
   );
+  const consumeEditorSelectionReference = useCallback(() => {
+    setEditorSelectionReference(null);
+  }, []);
 
   return {
     aiPanelOpen,
     assistantChrome,
+    consumeEditorSelectionReference,
     editorSelectionReference,
     prefillMessage,
     setAiPanelOpen,

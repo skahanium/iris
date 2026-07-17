@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -83,6 +83,71 @@ afterEach(() => {
 });
 
 describe("useUnifiedAssistantSend", () => {
+  it("consumes one editor selection reference after adding it to one normal-domain Run", async () => {
+    const consumeOneShotContextReference = vi.fn();
+    const reference = normalOptions().contextReferences[0]!;
+    start.mockResolvedValue({
+      runId: "run-one-shot",
+      turnId: "turn-one-shot",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        oneShotContextReference: reference,
+        consumeOneShotContextReference,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start.mock.calls[0]?.[0].turn.explicitReferences).toEqual([
+      reference,
+    ]);
+    expect(consumeOneShotContextReference).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not repeat a consumed editor selection reference on the next Run", async () => {
+    const reference = normalOptions().contextReferences[0]!;
+    const options = normalOptions({
+      contextReferences: [],
+      displayMentions: [],
+    });
+    function StatefulProbe() {
+      const [oneShotReference, setOneShotReference] = useState<
+        typeof reference | null
+      >(reference);
+      api = useUnifiedAssistantSend({
+        ...options,
+        oneShotContextReference: oneShotReference,
+        consumeOneShotContextReference: () => setOneShotReference(null),
+      });
+      return null;
+    }
+    start.mockResolvedValue({
+      runId: "run-one-shot",
+      turnId: "turn-one-shot",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root?.render(<StatefulProbe />));
+
+    await act(async () => api?.send());
+    await act(async () => api?.send());
+
+    expect(start.mock.calls[0]?.[0].turn.explicitReferences).toEqual([
+      reference,
+    ]);
+    expect(start.mock.calls[1]?.[0].turn.explicitReferences).toEqual([]);
+  });
+
   it("builds a nested normal-domain turn with a backend-compatible note hash", async () => {
     getFileSignature.mockResolvedValue({
       byteLength: 128,

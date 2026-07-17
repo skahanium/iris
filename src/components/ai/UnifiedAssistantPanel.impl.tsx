@@ -32,6 +32,8 @@ import type { UnifiedAssistantPanelProps } from "./types";
 export function UnifiedAssistantPanel({
   aiDomain = "normal",
   classifiedPath = null,
+  oneShotContextReference = null,
+  consumeOneShotContextReference,
   runtimeDocumentCandidates = [],
   webSearch = false,
   webSearchProviderName = null,
@@ -172,6 +174,8 @@ export function UnifiedAssistantPanel({
       assistantRun.pendingConfirmation !== null,
     session: runSession,
     contextReferences: bubbleSelection.contextReferences,
+    oneShotContextReference,
+    consumeOneShotContextReference,
     displayMentions,
     retrievalScope,
     webSearch,

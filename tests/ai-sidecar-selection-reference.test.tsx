@@ -1,5 +1,6 @@
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
+import { readFileSync } from "node:fs";
 import { act, createElement, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -108,5 +109,29 @@ describe("assistant sidecar selection reference bridge", () => {
     expect(api.editorSelectionReference).toBeNull();
     expect(status).toBe(EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE);
     expect(JSON.stringify(api)).not.toContain(markdown);
+  });
+
+  it("plumbs the one-shot reference from App into the unified sender", () => {
+    const app = readFileSync("src/App.impl.tsx", "utf8");
+    const slot = readFileSync(
+      "src/components/layout/AppAiPanelSlot.tsx",
+      "utf8",
+    );
+    const panel = readFileSync(
+      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+      "utf8",
+    );
+
+    expect(app).toContain(
+      "editorSelectionReference={editorSelectionReference}",
+    );
+    expect(app).toContain(
+      "consumeEditorSelectionReference={consumeEditorSelectionReference}",
+    );
+    expect(slot).toContain(
+      "oneShotContextReference={editorSelectionReference}",
+    );
+    expect(panel).toContain("oneShotContextReference");
+    expect(panel).toContain("consumeOneShotContextReference");
   });
 });

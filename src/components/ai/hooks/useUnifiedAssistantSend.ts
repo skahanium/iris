@@ -31,6 +31,8 @@ export interface UnifiedAssistantSendOptions {
   composerDisabled: boolean;
   session: AssistantSessionRef | null;
   contextReferences: ContextReference[];
+  oneShotContextReference?: ContextReference | null;
+  consumeOneShotContextReference?: () => void;
   displayMentions: DisplayMention[];
   retrievalScope: ContextScope;
   webSearch: boolean;
@@ -130,6 +132,8 @@ export function useUnifiedAssistantSend({
   composerDisabled,
   session,
   contextReferences,
+  oneShotContextReference = null,
+  consumeOneShotContextReference,
   displayMentions,
   retrievalScope,
   webSearch,
@@ -178,9 +182,25 @@ export function useUnifiedAssistantSend({
     const explicitReferences = contextReferences.filter(
       (reference) => !reference.stale && !reference.invalidReason,
     );
+    const oneShotReference =
+      aiDomain === "normal" &&
+      oneShotContextReference &&
+      !oneShotContextReference.stale &&
+      !oneShotContextReference.invalidReason
+        ? oneShotContextReference
+        : null;
+    if (
+      oneShotReference &&
+      !explicitReferences.some(
+        (reference) => reference.id === oneShotReference.id,
+      )
+    ) {
+      explicitReferences.push(oneShotReference);
+    }
     const currentImages = images;
     setIsStarting(true);
     setError(null);
+    if (oneShotReference) consumeOneShotContextReference?.();
 
     try {
       const mentionReferences =
@@ -245,6 +265,8 @@ export function useUnifiedAssistantSend({
     clearContextReferences,
     composerDisabled,
     contextReferences,
+    oneShotContextReference,
+    consumeOneShotContextReference,
     displayMentions,
     ensureAssistantStreamSlot,
     images,

@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo } from "react";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import type { AiDomain } from "@/types/ai";
+import type { AiDomain, ContextReference } from "@/types/ai";
 import type { FileListItem } from "@/types/ipc";
 
 const UnifiedAssistantPanel = lazy(() =>
@@ -25,6 +25,8 @@ function AssistantPanelLoading() {
 interface AppAiPanelSlotProps {
   aiDomain: AiDomain;
   classifiedPath: string | null;
+  consumeEditorSelectionReference?: () => void;
+  editorSelectionReference?: ContextReference | null;
   editorInteractionLocked?: boolean;
   runtimeDocumentCandidates?: FileListItem[];
   handleInsertToEditor: (content: string) => void;
@@ -37,6 +39,8 @@ interface AppAiPanelSlotProps {
 export function AppAiPanelSlot({
   aiDomain,
   classifiedPath,
+  consumeEditorSelectionReference,
+  editorSelectionReference = null,
   editorInteractionLocked = false,
   runtimeDocumentCandidates = [],
   handleInsertToEditor,
@@ -58,6 +62,8 @@ export function AppAiPanelSlot({
         <UnifiedAssistantPanel
           aiDomain={aiDomain}
           classifiedPath={classifiedPath}
+          oneShotContextReference={editorSelectionReference}
+          consumeOneShotContextReference={consumeEditorSelectionReference}
           runtimeDocumentCandidates={mentionRuntimeCandidates}
           webSearch={webSearch}
           webSearchProviderName={webSearchProviderName}
