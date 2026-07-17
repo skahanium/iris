@@ -67,6 +67,13 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     ) -> Option<crate::ai_runtime::run_contract::SafeRunErrorCode> {
         None
     }
+
+    /// Number of concrete Web requests attempted by this executor.
+    /// The engine combines this with deterministic-prefetch attempts for the
+    /// terminal, Run-wide diagnostic payload.
+    fn web_evidence_attempt_count(&self) -> u32 {
+        0
+    }
 }
 
 /// Executes the only permitted shape of an Agent tool loop.
@@ -119,12 +126,11 @@ impl AgentToolLoop {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
                 }
                 if require_web_evidence && !executor.has_web_evidence() {
-                    if executor.web_evidence_failure_code().is_some() {
-                        return Ok(AgentToolLoopOutcome {
-                            content,
-                            model_turns,
-                            tool_calls,
-                        });
+                    if let Some(code) = executor.web_evidence_failure_code() {
+                        // WebRequired runs must never turn a failed retrieval into a
+                        // model-authored "best effort" answer. The engine records the
+                        // safe terminal failure before any provisional delta is flushed.
+                        return Err(AppError::msg(code.as_str()));
                     }
                     if required_evidence_correction_sent {
                         return Err(AppError::msg("agent_run_web_evidence_required"));

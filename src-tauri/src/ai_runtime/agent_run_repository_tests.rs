@@ -1,7 +1,7 @@
 use super::agent_evidence_repository::{AgentEvidenceRepository, LocalEvidenceInput, MaterialRole};
 use super::agent_run_repository::{
     AcceptRunInput, AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput,
-    FinalizeRunInput,
+    FinalizeRunInput, RetryRunInput,
 };
 use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
 use super::normal_session_repository::NormalSessionRepository;
@@ -159,6 +159,98 @@ fn accept_is_idempotent_for_client_request_id_without_duplicate_message_or_event
         Ok(())
     })
     .expect("idempotency facts");
+}
+
+#[test]
+fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key.clone());
+    input.envelope.freshness = Freshness::WebRequired;
+    input.envelope.effort = Effort::ToolLoop;
+    AgentRunRepository::accept(&db, input).expect("accepted source run");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".into(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "Preparing".into(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".into(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "Running".into(),
+            },
+        },
+    )
+    .expect("running");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".into(),
+            state_version: running.state_version(),
+            event_type: RunEventType::WebVerificationFailed,
+            payload: RunEventPayload::WebVerificationFailed {
+                code: super::run_contract::SafeRunErrorCode::WebProviderTimeout,
+                retryable: true,
+                attempt_count: 4,
+                duration_bucket: "budget_exhausted".into(),
+                diagnostic_id: "run-1".into(),
+            },
+        },
+    )
+    .expect("safe diagnostic");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".into(),
+            state_version: running.state_version(),
+            event_type: RunEventType::Failed,
+            payload: RunEventPayload::Failed {
+                code: super::run_contract::SafeRunErrorCode::WebProviderTimeout,
+                message: "Timed out".into(),
+            },
+        },
+    )
+    .expect("terminal source");
+
+    let retry = AgentRunRepository::accept_web_retry(
+        &db,
+        RetryRunInput {
+            session_key: session_key.clone(),
+            source_run_id: "run-1".into(),
+            client_request_id: "retry-request-1".into(),
+            run_id: "run-2".into(),
+        },
+    )
+    .expect("accepted retry");
+    assert_eq!(retry.turn_id, "turn-1");
+    db.with_read_conn(|conn| {
+        let messages: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_messages WHERE session_id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )?;
+        let retry_turn: String = conn.query_row(
+            "SELECT turn_id FROM agent_runs WHERE run_id = 'run-2'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(messages, 1);
+        assert_eq!(retry_turn, "turn-1");
+        Ok(())
+    })
+    .expect("retry persistence facts");
 }
 
 #[test]

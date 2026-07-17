@@ -39,6 +39,8 @@ export interface TabItem {
   dirty?: boolean;
   locked?: boolean;
   kind?: "note" | "media" | "artifact";
+  /** A newly created disk-backed note may be discarded only before user intent promotes it. */
+  lifecycle?: "session_pristine" | "persisted";
 }
 
 export type DesktopTitleBarVariant = "document" | "splash";

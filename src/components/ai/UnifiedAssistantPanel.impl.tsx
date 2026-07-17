@@ -1,7 +1,10 @@
 import { useCallback, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
-import { AssistantRunCapabilityDegraded } from "@/components/ai/AssistantRunCapabilityDegraded";
+import {
+  AssistantRunCapabilityDegraded,
+  AssistantRunWebVerificationFailed,
+} from "@/components/ai/AssistantRunCapabilityDegraded";
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
@@ -29,6 +32,7 @@ export function UnifiedAssistantPanel({
   webSearchProviderName = null,
   modelOverride = null,
   onInsertToEditor,
+  onOpenWebVerificationSettings,
 }: UnifiedAssistantPanelProps) {
   const { profile: promptProfile } = usePromptProfile();
   const assistantRun = useAssistantRun();
@@ -48,6 +52,7 @@ export function UnifiedAssistantPanel({
   const [lastError, setLastError] = useState<string | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [confirming, setConfirming] = useState(false);
+  const [retryingWebVerification, setRetryingWebVerification] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
 
@@ -159,6 +164,23 @@ export function UnifiedAssistantPanel({
     },
     [assistantRun],
   );
+  const handleWebRetry = useCallback(() => {
+    setRetryingWebVerification(true);
+    setLastError(null);
+    setStreaming(true);
+    setActivityHint("正在重新联网核实…");
+    void assistantRun
+      .retryWebVerification()
+      .then((accepted) => {
+        if (!accepted) setLastError("当前联网失败不可重试，请检查联网配置。");
+      })
+      .catch(() => {
+        setStreaming(false);
+        setActivityHint(null);
+        setLastError("联网重试未能提交，请稍后再试。");
+      })
+      .finally(() => setRetryingWebVerification(false));
+  }, [assistantRun]);
 
   return (
     <div
@@ -190,6 +212,14 @@ export function UnifiedAssistantPanel({
       {assistantRun.eventState?.capabilityDegradation ? (
         <AssistantRunCapabilityDegraded
           degradation={assistantRun.eventState.capabilityDegradation}
+        />
+      ) : null}
+      {assistantRun.eventState?.webVerificationFailure ? (
+        <AssistantRunWebVerificationFailed
+          failure={assistantRun.eventState.webVerificationFailure}
+          retrying={retryingWebVerification}
+          onRetry={handleWebRetry}
+          onCheckConfiguration={onOpenWebVerificationSettings}
         />
       ) : null}
       {assistantRun.pendingConfirmation ? (

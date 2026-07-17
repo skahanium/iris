@@ -18,6 +18,7 @@ interface UseCurrentFileChangeListenerParams {
   discardOpenTab: (path: string) => Promise<void>;
   getLiveMarkdownRef: MutableRefObject<() => string>;
   onFileChanged?: (path: string) => void;
+  onExternalModification?: (path: string) => void;
   setConflictState: (state: ConflictState | null) => void;
 }
 
@@ -29,6 +30,7 @@ export function useCurrentFileChangeListener({
   discardOpenTab,
   getLiveMarkdownRef,
   onFileChanged,
+  onExternalModification,
   setConflictState,
 }: UseCurrentFileChangeListenerParams) {
   useEffect(() => {
@@ -54,6 +56,7 @@ export function useCurrentFileChangeListener({
         .then(({ content: externalContent }) => {
           const localContent = getLiveMarkdownRef.current();
           if (externalContent !== localContent) {
+            onExternalModification?.(event.path);
             setConflictState({
               open: true,
               localContent,
@@ -81,6 +84,7 @@ export function useCurrentFileChangeListener({
     discardOpenTab,
     getLiveMarkdownRef,
     onFileChanged,
+    onExternalModification,
     setConflictState,
   ]);
 }

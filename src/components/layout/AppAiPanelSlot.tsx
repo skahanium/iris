@@ -30,6 +30,7 @@ interface AppAiPanelSlotProps {
   handleInsertToEditor: (content: string) => void;
   webSearch: boolean;
   webSearchProviderName?: string | null;
+  onOpenWebVerificationSettings?: () => void;
 }
 
 /** Lazily loads the Run-only side panel without passing implicit document state. */
@@ -41,6 +42,7 @@ export function AppAiPanelSlot({
   handleInsertToEditor,
   webSearch,
   webSearchProviderName = null,
+  onOpenWebVerificationSettings,
 }: AppAiPanelSlotProps) {
   const mentionRuntimeCandidates = useMemo(
     () =>
@@ -59,6 +61,7 @@ export function AppAiPanelSlot({
           runtimeDocumentCandidates={mentionRuntimeCandidates}
           webSearch={webSearch}
           webSearchProviderName={webSearchProviderName}
+          onOpenWebVerificationSettings={onOpenWebVerificationSettings}
           onInsertToEditor={
             editorInteractionLocked ? undefined : handleInsertToEditor
           }

@@ -7,8 +7,8 @@ use tauri::{AppHandle, State};
 
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetRequest,
-    AssistantRunGetResponse, AssistantRunStartRequest, AssistantSessionRef, Effect, Effort,
-    Freshness, Modality, SecurityDomain,
+    AssistantRunGetResponse, AssistantRunRetryRequest, AssistantRunStartRequest,
+    AssistantSessionRef, Effect, Effort, Freshness, Modality, SecurityDomain,
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingDirectAnswerProvider, FailoverStreamingToolLoopProvider,
@@ -315,6 +315,24 @@ pub async fn assistant_run_start(
     }
 }
 
+/// Retry one terminal WebRequired verification failure without duplicating its user turn.
+#[tauri::command]
+pub async fn assistant_run_retry(
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+    request: AssistantRunRetryRequest,
+) -> AppResult<AssistantRunAccepted> {
+    let sink = TauriRunEventSink::new(&app_handle);
+    let accepted = RunIntake::retry_with_sink(&state.db, request, &sink)?;
+    spawn_normal_direct_run(
+        Arc::clone(&state),
+        app_handle,
+        accepted.clone(),
+        state.vault_path().ok(),
+    );
+    Ok(accepted)
+}
+
 /// Apply one explicit control action to an isolated Agent Run.
 #[tauri::command]
 pub async fn assistant_run_control(
@@ -523,6 +541,7 @@ fn spawn_confirmed_change_execution(
             &context,
             tool_policy,
             &sink,
+            None,
         );
         match executor.execute_confirmed_frozen_change(&plan).await {
             Ok(result) if result.success => {
@@ -636,17 +655,41 @@ fn spawn_normal_direct_run(
                 &accepted.run_id,
                 &sink,
                 || {
-                    crate::ai_runtime::run_tool_loop::collect_web_evidence_for_run(
-                        &db,
-                        &accepted,
-                        &context,
-                        &sink,
-                        |input| {
-                            crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
-                                &db, input,
-                            )
-                        },
-                    )
+                    let provider_snapshot =
+                        crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(&db)
+                            .ok();
+                    async {
+                        match provider_snapshot {
+                            Some(provider_snapshot) => {
+                                crate::ai_runtime::run_tool_loop::collect_web_evidence_for_run(
+                                    &db,
+                                    &accepted,
+                                    &context,
+                                    &sink,
+                                    Some(provider_snapshot),
+                                    |input| {
+                                        crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
+                                            &db, input,
+                                        )
+                                    },
+                                )
+                                .await
+                            }
+                            None => Ok(crate::ai_runtime::run_tool_loop::RunWebEvidence {
+                                evidence_ids: Vec::new(),
+                                prompt_addendum: String::new(),
+                                status: crate::ai_runtime::run_tool_loop::RunWebStatus::Degraded,
+                                failure_code: Some(
+                                    crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderUnavailable,
+                                ),
+                                retryable: false,
+                                attempt_count: 0,
+                                duration_bucket: "not_started",
+                                remaining_budget_ms: 10_000,
+                                provider_snapshot: None,
+                            }),
+                        }
+                    }
                 },
                 |web_evidence| {
                     dispatch_normal_run_after_context(
@@ -712,6 +755,12 @@ async fn dispatch_normal_run_after_context(
     let has_initial_web_evidence = web_evidence.as_ref().is_some_and(|outcome| {
         outcome.status == crate::ai_runtime::run_tool_loop::RunWebStatus::Succeeded
     });
+    let initial_web_attempt_count = web_evidence
+        .as_ref()
+        .map_or(0, |outcome| outcome.attempt_count);
+    let required_web_provider_snapshot = web_evidence
+        .as_ref()
+        .and_then(|outcome| outcome.provider_snapshot.clone());
     tracing::info!(
         run_id = %accepted.run_id,
         web_mode = ?context.envelope.freshness,
@@ -748,10 +797,11 @@ async fn dispatch_normal_run_after_context(
     evidence_ids.sort_unstable();
     evidence_ids.dedup();
 
+    // A WebRequired answer whose deterministic prefetch failed must get one
+    // constrained recovery surface. Previously this exact combination skipped
+    // the tool loop and silently fell through to a direct answer.
     let base_needs_follow_up_tools =
-        matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable)
-            && !(context.envelope.freshness == Freshness::WebRequired
-                && context.envelope.effect == Effect::Answer);
+        matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable);
     let preferred_web_tools_available = if context.envelope.freshness == Freshness::WebPreferred {
         crate::ai_runtime::capability_resolver::resolve_required_capability_app(db, "web.search")
             .is_ok()
@@ -772,6 +822,9 @@ async fn dispatch_normal_run_after_context(
     };
     let needs_follow_up_tools = base_needs_follow_up_tools && preferred_web_tools_available;
     if needs_follow_up_tools {
+        let web_recovery_only = context.envelope.freshness == Freshness::WebRequired
+            && context.envelope.effect == Effect::Answer
+            && !has_initial_web_evidence;
         let tool_policy = ToolPolicyContext {
             autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
             web_search_enabled: context.envelope.freshness != Freshness::Offline,
@@ -779,8 +832,13 @@ async fn dispatch_normal_run_after_context(
             allow_research: context.envelope.freshness != Freshness::Offline,
             allow_skill_management: false,
         };
-        let tools = ToolRegistry::new()
-            .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable);
+        let registry = ToolRegistry::new();
+        let tools = if web_recovery_only {
+            registry.find("web_search").cloned().into_iter().collect()
+        } else {
+            registry
+                .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable)
+        };
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
             streaming: true,
@@ -817,6 +875,7 @@ async fn dispatch_normal_run_after_context(
             context,
             tool_policy,
             sink,
+            required_web_provider_snapshot,
         );
         return RunEngine::execute_tool_loop_with_sink(
             db,
@@ -825,7 +884,8 @@ async fn dispatch_normal_run_after_context(
             messages,
             tools,
             &evidence_ids,
-            context.envelope.freshness == Freshness::WebRequired && !has_initial_web_evidence,
+            web_recovery_only,
+            initial_web_attempt_count,
             Some(domain_plan),
             &provider,
             &executor,

@@ -92,6 +92,10 @@ pub(crate) struct RunWebEvidence {
     pub(crate) attempt_count: u32,
     pub(crate) duration_bucket: &'static str,
     pub(crate) remaining_budget_ms: u64,
+    /// Selected provider and mappings captured before this Run started its
+    /// required evidence phase. Recovery may use only this snapshot.
+    pub(crate) provider_snapshot:
+        Option<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
 }
 
 impl Default for RunWebEvidence {
@@ -105,6 +109,7 @@ impl Default for RunWebEvidence {
             attempt_count: 0,
             duration_bucket: "not_attempted",
             remaining_budget_ms: bounded_duration_ms(INITIAL_WEB_EVIDENCE_DEADLINE),
+            provider_snapshot: None,
         }
     }
 }
@@ -128,6 +133,8 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     web_attempt_count: Mutex<u32>,
     web_budget: RunWebBudget,
     web_degradation_emitted: Mutex<bool>,
+    required_web_provider_snapshot:
+        Option<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
 }
 
 impl<'a> NormalRunToolExecutor<'a> {
@@ -139,6 +146,9 @@ impl<'a> NormalRunToolExecutor<'a> {
         context: &'a RunContext,
         policy_ctx: ToolPolicyContext,
         sink: &'a dyn RunEventSink,
+        required_web_provider_snapshot: Option<
+            crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
+        >,
     ) -> Self {
         Self {
             state,
@@ -155,6 +165,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             web_attempt_count: Mutex::new(0),
             web_budget: RunWebBudget::default(),
             web_degradation_emitted: Mutex::new(false),
+            required_web_provider_snapshot,
         }
     }
 
@@ -163,6 +174,18 @@ impl<'a> NormalRunToolExecutor<'a> {
         args: &serde_json::Value,
         state_version: u64,
     ) -> AppResult<ToolCallResult> {
+        if self.context.envelope.freshness == Freshness::WebRequired
+            && self.required_web_provider_snapshot.is_none()
+        {
+            let failure = WebFailure::new(SafeRunErrorCode::WebProviderUnavailable, false);
+            self.set_web_failure(Some(failure))?;
+            return Ok(failed_web_tool_call(
+                failure,
+                self.web_attempt_count(),
+                Duration::ZERO,
+                bounded_duration_ms(INITIAL_WEB_EVIDENCE_DEADLINE),
+            ));
+        }
         let query = args
             .get("query")
             .and_then(serde_json::Value::as_str)
@@ -195,6 +218,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             enabled: self.policy_ctx.web_search_enabled,
             max_search_results: remaining,
             max_fetches: remaining,
+            provider_snapshot: self.required_web_provider_snapshot.clone(),
         };
         let budget_started = self.web_budget.started()?;
         let call_started = Instant::now();
@@ -526,7 +550,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 &call.id,
                 summary,
             )?;
-            if call.function.name == WEB_TOOL_NAME && !result.success {
+            if call.function.name == WEB_TOOL_NAME
+                && !result.success
+                && self.context.envelope.freshness != Freshness::WebRequired
+            {
                 if let Some(failure) = self.web_failure() {
                     if self.mark_web_degradation_emitted()? {
                         append_capability_degraded(
@@ -573,6 +600,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             .lock()
             .ok()
             .and_then(|failure| failure.map(|value| value.code))
+    }
+
+    fn web_evidence_attempt_count(&self) -> u32 {
+        self.web_attempt_count()
     }
 }
 
@@ -884,6 +915,9 @@ pub(crate) async fn collect_web_evidence_for_run<F, Fut>(
     accepted: &AssistantRunAccepted,
     context: &RunContext,
     sink: &impl RunEventSink,
+    provider_snapshot: Option<
+        crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
+    >,
     mut collector: F,
 ) -> AppResult<RunWebEvidence>
 where
@@ -940,6 +974,7 @@ where
         enabled: true,
         max_search_results: MAX_INITIAL_WEB_SEARCH_RESULTS,
         max_fetches: 0,
+        provider_snapshot: provider_snapshot.clone(),
     };
     let started = Instant::now();
     let mut attempt_count = 0;
@@ -986,6 +1021,7 @@ where
                 failure,
                 attempt_count,
                 started.elapsed(),
+                provider_snapshot.clone(),
             );
         }
     };
@@ -1078,6 +1114,7 @@ where
             classify_web_evidence_output_failure(&output),
             attempt_count,
             elapsed,
+            provider_snapshot,
         );
     }
 
@@ -1090,6 +1127,7 @@ where
         attempt_count,
         duration_bucket: web_duration_bucket(elapsed),
         remaining_budget_ms: remaining_web_budget_ms(elapsed),
+        provider_snapshot,
     })
 }
 
@@ -1167,29 +1205,37 @@ fn required_web_failure(
         )),
         1,
         Duration::ZERO,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn required_web_result(
-    db: &Database,
-    accepted: &AssistantRunAccepted,
+    _db: &Database,
+    _accepted: &AssistantRunAccepted,
     context: &RunContext,
-    sink: &impl RunEventSink,
+    _sink: &impl RunEventSink,
     failure: WebFailure,
     attempt_count: u32,
     elapsed: Duration,
+    provider_snapshot: Option<
+        crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
+    >,
 ) -> AppResult<RunWebEvidence> {
     debug_assert_eq!(context.envelope.freshness, Freshness::WebRequired);
-    append_capability_degraded(db, accepted, sink, failure, attempt_count)?;
+    // The caller may still enter the bounded recovery tool loop. Do not emit a
+    // nonterminal degradation or inject a prompt that permits an unverified
+    // answer; only the terminal recovery failure is user-visible.
     Ok(RunWebEvidence {
         evidence_ids: Vec::new(),
-        prompt_addendum: constrained_web_degradation_prompt(failure.code),
+        prompt_addendum: String::new(),
         status: RunWebStatus::Degraded,
         failure_code: Some(failure.code),
         retryable: failure.retryable,
         attempt_count,
         duration_bucket: web_duration_bucket(elapsed),
         remaining_budget_ms: remaining_web_budget_ms(elapsed),
+        provider_snapshot,
     })
 }
 
@@ -1245,13 +1291,6 @@ fn append_capability_degraded(
         },
     )?;
     sink.emit(&event)
-}
-
-fn constrained_web_degradation_prompt(code: SafeRunErrorCode) -> String {
-    format!(
-        "\n\n<web_degradation code=\"{}\">Web verification produced no usable evidence. Explicitly say that current facts could not be verified. Do not invent current claims or citations. Answer only stable, non-current parts and suggest retrying or providing a source.</web_degradation>",
-        code.as_str()
-    )
 }
 
 fn failed_web_result(reason: &str) -> ToolCallResult {

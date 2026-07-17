@@ -254,7 +254,9 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeNull();
-    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="home-workbench"]'),
+    ).toBeTruthy();
   });
 
   it("clears a home new-note pending open by home sequence after first frame", () => {

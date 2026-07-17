@@ -6,6 +6,7 @@ import { useAssistantRun } from "@/hooks/useAssistantRun";
 import {
   assistantRunControl,
   assistantRunGet,
+  assistantRunRetry,
   assistantRunStart,
   listenAssistantRunEvent,
 } from "@/lib/ipc";
@@ -14,12 +15,14 @@ import type { AssistantRunStartRequest } from "@/types/ai";
 vi.mock("@/lib/ipc", () => ({
   assistantRunControl: vi.fn(),
   assistantRunGet: vi.fn(),
+  assistantRunRetry: vi.fn(),
   assistantRunStart: vi.fn(),
   listenAssistantRunEvent: vi.fn(),
 }));
 
 const mockAssistantRunControl = vi.mocked(assistantRunControl);
 const mockAssistantRunGet = vi.mocked(assistantRunGet);
+const mockAssistantRunRetry = vi.mocked(assistantRunRetry);
 const mockAssistantRunStart = vi.mocked(assistantRunStart);
 const mockListenAssistantRunEvent = vi.mocked(listenAssistantRunEvent);
 
@@ -59,6 +62,7 @@ afterEach(() => {
   runApi = null;
   mockAssistantRunControl.mockReset();
   mockAssistantRunGet.mockReset();
+  mockAssistantRunRetry.mockReset();
   mockAssistantRunStart.mockReset();
   mockListenAssistantRunEvent.mockReset();
 });
@@ -88,6 +92,97 @@ describe("useAssistantRun", () => {
       stateVersion: 1,
       session: { domain: "normal", sessionKey: "session-1" },
     });
+  });
+
+  it("retries a terminal Web-verification failure as a distinct Run", async () => {
+    let emit:
+      | ((
+          event: Parameters<Parameters<typeof listenAssistantRunEvent>[0]>[0],
+        ) => void)
+      | null = null;
+    mockAssistantRunStart.mockResolvedValue({
+      runId: "run-web-1",
+      turnId: "turn-web-1",
+      session: { domain: "normal", sessionKey: "session-web" },
+      state: "accepted",
+      stateVersion: 0,
+    });
+    mockAssistantRunRetry.mockResolvedValue({
+      runId: "run-web-2",
+      turnId: "turn-web-1",
+      session: { domain: "normal", sessionKey: "session-web" },
+      state: "accepted",
+      stateVersion: 0,
+    });
+    mockAssistantRunGet.mockResolvedValue(null);
+    mockListenAssistantRunEvent.mockImplementation(async (handler) => {
+      emit = handler;
+      return () => undefined;
+    });
+    mountProbe();
+    await act(async () => {
+      await runApi?.start({ ...request(), webEnabled: true });
+    });
+    act(() => {
+      emit?.({
+        runId: "run-web-1",
+        seq: 2,
+        stateVersion: 1,
+        timestamp: "2026-07-17T00:00:00Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "preparing",
+          stage: "Preparing",
+        },
+      });
+      emit?.({
+        runId: "run-web-1",
+        seq: 3,
+        stateVersion: 2,
+        timestamp: "2026-07-17T00:00:01Z",
+        type: "stage_changed",
+        payload: { kind: "stage_changed", state: "running", stage: "Running" },
+      });
+      emit?.({
+        runId: "run-web-1",
+        seq: 4,
+        stateVersion: 2,
+        timestamp: "2026-07-17T00:00:02Z",
+        type: "web_verification_failed",
+        payload: {
+          kind: "web_verification_failed",
+          code: "agent_run_web_provider_timeout",
+          retryable: true,
+          attemptCount: 4,
+          durationBucket: "budget_exhausted",
+          diagnosticId: "run-web-1",
+        },
+      });
+      emit?.({
+        runId: "run-web-1",
+        seq: 5,
+        stateVersion: 3,
+        timestamp: "2026-07-17T00:00:03Z",
+        type: "failed",
+        payload: {
+          kind: "failed",
+          code: "agent_run_web_provider_timeout",
+          message: "Timed out",
+        },
+      });
+    });
+    await act(async () => {
+      await runApi?.retryWebVerification();
+    });
+    expect(mockAssistantRunRetry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceRunId: "run-web-1",
+        session: { domain: "normal", sessionKey: "session-web" },
+      }),
+    );
+    expect(mockAssistantRunStart).toHaveBeenCalledTimes(1);
+    expect(runApi?.currentRun?.runId).toBe("run-web-2");
   });
 
   it("keeps one event subscription while the active Run changes", async () => {

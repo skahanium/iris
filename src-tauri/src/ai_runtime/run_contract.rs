@@ -346,6 +346,19 @@ pub struct AssistantRunGetRequest {
     pub(crate) run_id: Option<String>,
 }
 
+/// Start a fresh attempt from one terminal Web-verification failure without
+/// duplicating the user turn in the persisted conversation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantRunRetryRequest {
+    /// Session that owns the failed Run.
+    pub(crate) session: AssistantSessionRef,
+    /// Terminal Run that emitted `web_verification_failed`.
+    pub(crate) source_run_id: String,
+    /// Fresh idempotency key for this retry attempt.
+    pub(crate) client_request_id: String,
+}
+
 /// Pending confirmation summary safe to replay after reconnecting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -492,6 +505,8 @@ pub(crate) enum RunEventType {
     ToolCompleted,
     /// A recoverable capability failure occurred without terminating the Run.
     CapabilityDegraded,
+    /// Required Web verification exhausted its bounded recovery path.
+    WebVerificationFailed,
     /// A frozen change plan needs user confirmation.
     ConfirmationRequired,
     /// Policy denied an action.
@@ -567,6 +582,19 @@ pub(crate) enum RunEventPayload {
         attempt_count: u32,
         /// User-safe explanation without raw provider output.
         message: String,
+    },
+    /// WebRequired could not obtain usable evidence after every permitted attempt.
+    WebVerificationFailed {
+        /// Stable sanitized failure code.
+        code: SafeRunErrorCode,
+        /// Whether retrying the same selected provider may succeed.
+        retryable: bool,
+        /// Total evidence attempts across the initial and recovery stages.
+        attempt_count: u32,
+        /// Bounded duration classification, never a raw provider diagnostic.
+        duration_bucket: String,
+        /// Opaque support identifier; equal to the owning Run identifier.
+        diagnostic_id: String,
     },
     /// A frozen confirmation summary.
     ConfirmationRequired {
@@ -857,6 +885,7 @@ impl RunEventPayload {
             Self::ToolStarted { .. } => RunEventType::ToolStarted,
             Self::ToolCompleted { .. } => RunEventType::ToolCompleted,
             Self::CapabilityDegraded { .. } => RunEventType::CapabilityDegraded,
+            Self::WebVerificationFailed { .. } => RunEventType::WebVerificationFailed,
             Self::ConfirmationRequired { .. } => RunEventType::ConfirmationRequired,
             Self::PermissionDenied { .. } => RunEventType::PermissionDenied,
             Self::ProviderSwitched { .. } => RunEventType::ProviderSwitched,

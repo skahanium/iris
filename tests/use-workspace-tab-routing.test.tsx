@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useWorkspaceTabRouting } from "@/hooks/useWorkspaceTabRouting";
+import type { CloseTabResult } from "@/hooks/useTabManager";
 
 type HookApi = ReturnType<typeof useWorkspaceTabRouting<unknown>>;
 
@@ -16,7 +17,7 @@ function Harness({
 }: {
   activePath: string | null;
   apiRef: { current: HookApi | null };
-  closeTab: (path: string) => Promise<boolean> | boolean;
+  closeTab: (path: string) => Promise<CloseTabResult> | CloseTabResult;
   setHomeActive: (active: boolean) => void;
   showHome: () => void;
   tabs: Array<{ path: string; title: string }>;
@@ -52,7 +53,12 @@ describe("useWorkspaceTabRouting", () => {
 
   it("returns Home active after closing the last active note tab", async () => {
     const apiRef: { current: HookApi | null } = { current: null };
-    const closeTab = vi.fn(async () => true);
+    const closeTab = vi.fn(async () => ({
+      closed: true,
+      discardedPristine: false,
+      nextActivePath: null,
+      remainingNoteCount: 0,
+    }));
     const setHomeActive = vi.fn();
     const showHome = vi.fn();
 
@@ -80,7 +86,12 @@ describe("useWorkspaceTabRouting", () => {
 
   it("does not enter Home when closing the last tab is blocked", async () => {
     const apiRef: { current: HookApi | null } = { current: null };
-    const closeTab = vi.fn(async () => false);
+    const closeTab = vi.fn(async () => ({
+      closed: false,
+      discardedPristine: false,
+      nextActivePath: "only.md",
+      remainingNoteCount: 1,
+    }));
     const showHome = vi.fn();
 
     await act(async () => {

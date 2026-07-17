@@ -978,6 +978,11 @@ export function McpProfileCard({
             </p>
           ))}
           <p>
+            {diagnostics?.isRuntimeSelected
+              ? "这是当前运行使用的提供方。"
+              : "这是非当前运行提供方；其诊断不代表当前 Run 已就绪。"}
+          </p>
+          <p>
             实时可用性：搜索
             {diagnostics?.canUseForSearch ? "可用" : "不可用"}
             ，网页读取{diagnostics?.canUseForFetch ? "可用" : "不可用"}

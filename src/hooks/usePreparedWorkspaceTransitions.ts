@@ -33,6 +33,7 @@ interface UsePreparedWorkspaceTransitionsOptions<
 > {
   activePathRef: CurrentRef<string | null>;
   activateTab: (path: string) => MaybePromise<void>;
+  cancelPendingDocumentOpen?: () => void;
   classifiedVaultStatus: ClassifiedStatus;
   handleNewNote: () => Promise<void>;
   openNote: (
@@ -50,6 +51,7 @@ export function usePreparedWorkspaceTransitions<
 >({
   activePathRef,
   activateTab,
+  cancelPendingDocumentOpen,
   classifiedVaultStatus,
   handleNewNote,
   openNote,
@@ -93,6 +95,7 @@ export function usePreparedWorkspaceTransitions<
   const transitions = useHomeWorkspaceTransitions<OpenOptions>({
     activePathRef,
     activateTab,
+    cancelPendingDocumentOpen,
     handleNewNote,
     openNote: openPreparedNote,
     openTabs: tabs,

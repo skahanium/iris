@@ -992,6 +992,7 @@ impl RunEngine {
         tools: Vec<crate::ai_runtime::ToolSpec>,
         evidence_ids: &[i64],
         require_web_evidence: bool,
+        initial_web_attempt_count: u32,
         domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
         provider: &impl ToolLoopProvider,
         executor: &impl ToolLoopExecutor,
@@ -1072,6 +1073,37 @@ impl RunEngine {
                     }
                 }
                 let code = classify_tool_loop_failure(&error);
+                if require_web_evidence
+                    && matches!(
+                        code,
+                        SafeRunErrorCode::WebProviderUnavailable
+                            | SafeRunErrorCode::WebProviderTimeout
+                            | SafeRunErrorCode::WebProviderFailed
+                            | SafeRunErrorCode::WebEvidenceInvalid
+                    )
+                {
+                    let verification_failed = AgentRunRepository::append_event(
+                        db,
+                        AppendRunEventInput {
+                            run_id: run_id.to_string(),
+                            state_version: running_state_version,
+                            event_type: RunEventType::WebVerificationFailed,
+                            payload: RunEventPayload::WebVerificationFailed {
+                                code,
+                                retryable: matches!(
+                                    code,
+                                    SafeRunErrorCode::WebProviderTimeout
+                                        | SafeRunErrorCode::WebProviderFailed
+                                ),
+                                attempt_count: initial_web_attempt_count
+                                    .saturating_add(executor.web_evidence_attempt_count()),
+                                duration_bucket: "recovery_exhausted".to_string(),
+                                diagnostic_id: run_id.to_string(),
+                            },
+                        },
+                    )?;
+                    sink.emit(&verification_failed)?;
+                }
                 let failed = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {

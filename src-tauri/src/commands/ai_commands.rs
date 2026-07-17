@@ -120,6 +120,7 @@ pub struct WebEvidenceProviderDiagnosticCheck {
 #[serde(rename_all = "camelCase")]
 pub struct WebEvidenceProviderDiagnostics {
     pub provider_id: Option<String>,
+    pub is_runtime_selected: bool,
     pub status: String,
     pub failures: Vec<String>,
     pub checks: Vec<WebEvidenceProviderDiagnosticCheck>,
@@ -231,6 +232,7 @@ pub async fn web_evidence_provider_diagnostics(
 
     Ok(WebEvidenceProviderDiagnostics {
         provider_id: Some(provider_id),
+        is_runtime_selected: false,
         status: "missing".into(),
         failures: vec!["未找到提供方记录".into()],
         checks: vec![provider_diagnostic_check(
@@ -440,7 +442,11 @@ async fn run_mcp_search_smoke_test(
             &provider.id,
             "Iris note app",
             1,
-            Duration::from_secs(20),
+            // A required Run gives one individual MCP search attempt at most
+            // ten seconds (and may reserve the second ten seconds for its
+            // constrained recovery). Diagnostics must not advertise a
+            // provider as ready solely because a looser probe succeeds.
+            Duration::from_secs(10),
         )
         .await?;
     Ok((probe.diagnostic.parsed_row_count, probe.summary()))
@@ -629,8 +635,13 @@ async fn provider_diagnostics_for_summary(
         .collect::<Vec<_>>();
     let mapping_status =
         provider_mapping_status(provider.has_search_mapping, provider.has_fetch_mapping);
+    let is_runtime_selected =
+        crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)
+            .ok()
+            .is_some_and(|selected| selected.id == provider.id);
     Ok(WebEvidenceProviderDiagnostics {
         provider_id: Some(provider.id.clone()),
+        is_runtime_selected,
         status: if failures.is_empty() && provider.enabled {
             "ready".into()
         } else {

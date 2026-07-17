@@ -27,10 +27,8 @@ import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
 import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
 import { useAppUpdateController } from "@/hooks/useAppUpdate";
 import { useEmbeddingScheduler } from "@/hooks/useEmbeddingScheduler";
-import {
-  useCurrentFileChangeListener,
-  type ConflictState,
-} from "@/hooks/useCurrentFileChangeListener";
+import type { ConflictState } from "@/hooks/useCurrentFileChangeListener";
+import { useExternalDocumentLifecycle } from "@/hooks/useExternalDocumentLifecycle";
 import { useAppShortcuts } from "@/hooks/useAppShortcuts";
 import { useAppEditorActions } from "@/hooks/useAppEditorActions";
 import {
@@ -43,6 +41,7 @@ import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useOpenNote } from "@/hooks/useOpenNote";
 import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
+import { useNoteLifecycleIntentActions } from "@/hooks/useNoteLifecycleIntentActions";
 import { useFileConflictResolution } from "@/hooks/useFileConflictResolution";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useEditorStats } from "@/hooks/useEditorStats";
@@ -152,6 +151,9 @@ function App() {
   const autoSnapshotGenerationRef = useRef(0);
   const departureInteractionLockedRef = useRef(false);
   const persistBeforeLeaveRef = useRef<PersistBeforeLeave>(async () => null);
+  const discardPristineNoteRef = useRef<
+    (path: string, markdown: string) => Promise<void>
+  >(async () => undefined);
   const {
     tabs,
     activePath,
@@ -164,10 +166,12 @@ function App() {
     openNote,
     activateTab,
     closeTab,
+    cancelOpenTransaction,
     discardOpenTab,
     handleNewNote,
     markDirty,
     markClean,
+    promoteTab,
     updateTabTitle,
     replaceOpenTabPath,
     syncTabMarkdownCache,
@@ -182,6 +186,8 @@ function App() {
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
     persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
+    discardPristineNote: (path, content) =>
+      discardPristineNoteRef.current(path, content),
   });
   const rejectDepartureInteraction = useCallback(() => {
     if (!departureInteractionLockedRef.current) return false;
@@ -203,11 +209,18 @@ function App() {
     [activateTab, rejectDepartureInteraction],
   );
   const guardedCloseTab = useCallback(
-    (path: string): Promise<boolean> => {
-      if (rejectDepartureInteraction()) return Promise.resolve(false);
+    (path: string) => {
+      if (rejectDepartureInteraction()) {
+        return Promise.resolve({
+          closed: false,
+          discardedPristine: false,
+          nextActivePath: activePathRef.current,
+          remainingNoteCount: tabs.length,
+        });
+      }
       return closeTab(path);
     },
-    [closeTab, rejectDepartureInteraction],
+    [activePathRef, closeTab, rejectDepartureInteraction, tabs.length],
   );
   const guardedOpenNote = useCallback(
     async (...args: Parameters<typeof openNote>): Promise<void> => {
@@ -285,6 +298,7 @@ function App() {
   >({
     activePathRef,
     activateTab: guardedActivateTab,
+    cancelPendingDocumentOpen: cancelOpenTransaction,
     classifiedVaultStatus,
     handleNewNote: guardedHandleNewNote,
     openNote: guardedOpenNote,
@@ -375,6 +389,7 @@ function App() {
     notifyDirty,
     flushWhenEditorReady,
     restoreCurrentVersion,
+    discardPristineNote,
     cancelPendingSave,
     awaitSaveInFlight,
     resetVersionIdle,
@@ -423,6 +438,7 @@ function App() {
     tabsRef,
   });
 
+  discardPristineNoteRef.current = discardPristineNote;
   updateInstallBarrierRef.current = flushAllOpenTabs;
 
   const isEditorPersistenceBlocked =
@@ -491,25 +507,18 @@ function App() {
     invalidateDocumentRuntimeState,
   });
 
-  useCurrentFileChangeListener({
+  useExternalDocumentLifecycle({
     activePathRef,
     awaitSaveInFlight,
     bumpVaultIndex,
     cancelPendingSave,
     discardOpenTab,
     getLiveMarkdownRef,
-    onFileChanged: invalidatePreparedNote,
+    invalidatePreparedNote,
+    promoteTab,
     setConflictState,
   });
 
-  const handleBeforeFinalizeCurrent = useCallback(async () => {
-    const result = await flushWhenEditorReady("定稿");
-    if (result.ok && result.markdown) {
-      bumpVaultIndex();
-      return result.markdown;
-    }
-    return null;
-  }, [bumpVaultIndex, flushWhenEditorReady]);
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let disposed = false;
@@ -531,6 +540,21 @@ function App() {
       unlisten?.();
     };
   }, [closeTab, bumpVaultIndex, invalidatePreparedNote]);
+
+  const {
+    finalizeCurrentWithPromotion,
+    handleLockToggleWithPromotion,
+    handleSaveNoteWithPromotion,
+    restoreCurrentVersionWithPromotion,
+  } = useNoteLifecycleIntentActions({
+    activePathRef,
+    bumpVaultIndex,
+    flushWhenEditorReady,
+    handleLockToggle,
+    handleSaveNote,
+    promoteTab,
+    restoreCurrentVersion,
+  });
 
   const applyMarkdownToEditor = useCallback(
     (content: string) => {
@@ -615,7 +639,7 @@ function App() {
     ],
   );
 
-  const { rescanVault } = useAutoVaultIndex(vaultPath, loading, {
+  const { rescanVaultManually } = useAutoVaultIndex(vaultPath, loading, {
     onStatus: setAiStatus,
     onIndexed: bumpVaultIndex,
   });
@@ -624,15 +648,6 @@ function App() {
     if (!activePath) return;
     void reportForegroundActivity();
   }, [activePath, reportForegroundActivity]);
-
-  const handleVaultRescan = useCallback(() => {
-    void rescanVault("manual");
-  }, [rescanVault]);
-
-  const handleOpenConnectivitySettings = useCallback(
-    () => overlays.openManagementCenter("ai"),
-    [overlays],
-  );
 
   const {
     canRedo,
@@ -708,8 +723,8 @@ function App() {
     activePathRef,
     closeTab: guardedCloseTab,
     handleNewNote: guardedHandleNewNote,
-    handleSaveNote,
-    handleVaultRescan,
+    handleSaveNote: handleSaveNoteWithPromotion,
+    handleVaultRescan: rescanVaultManually,
     openFindReplace,
     overlays,
     resetZoom,
@@ -802,7 +817,7 @@ function App() {
             findReplaceOpen={findReplaceOpen}
             handleDirty={handleDirty}
             handleEditorReady={handleEditorReady}
-            handleLockToggle={handleLockToggle}
+            handleLockToggle={handleLockToggleWithPromotion}
             handleNewNoteLeavingHome={handleNewWorkspaceNote}
             homeActive={homeActive}
             inlineAi={inlineAi}
@@ -845,6 +860,9 @@ function App() {
             webSearchProviderName={
               webSearchAvailability.effectiveProvider?.name ?? null
             }
+            onOpenWebVerificationSettings={() =>
+              overlays.openManagementCenter("ai", "web-search")
+            }
           />
         }
         statusBar={
@@ -874,7 +892,9 @@ function App() {
             onThemeChange={(nextTheme) => void setTheme(nextTheme)}
             connectivity={connectivityStatus}
             appUpdate={appUpdateController.statusBar}
-            onOpenConnectivitySettings={handleOpenConnectivitySettings}
+            onOpenConnectivitySettings={() =>
+              overlays.openManagementCenter("ai")
+            }
             onOpenManagementCenter={() =>
               overlays.openManagementCenter("overview")
             }
@@ -888,7 +908,7 @@ function App() {
         overlays={
           <AppOverlays
             activePath={activePath}
-            restoreVersion={restoreCurrentVersion}
+            restoreVersion={restoreCurrentVersionWithPromotion}
             bumpVaultIndex={bumpVaultIndex}
             classifiedIdleDeadline={classifiedIdleDeadline}
             classifiedOpen={classifiedOpen}
@@ -899,7 +919,7 @@ function App() {
             embeddingStatus={embeddingStatus}
             embeddingStatusLoading={embeddingStatusLoading}
             getCurrentContent={() => getLiveMarkdownRef.current()}
-            onBeforeFinalizeCurrent={handleBeforeFinalizeCurrent}
+            onBeforeFinalizeCurrent={finalizeCurrentWithPromotion}
             handleConflictAcceptExternal={handleConflictAcceptExternal}
             handleConflictKeepLocal={handleConflictKeepLocal}
             handleConflictManualEdit={handleConflictManualEdit}
@@ -936,7 +956,7 @@ function App() {
             onSetEmbeddingPaused={setEmbeddingPaused}
             onStartEmbeddingRebuild={startEmbeddingRebuild}
             openVersion={() => overlays.openOverlay("version")}
-            rescanVault={handleVaultRescan}
+            rescanVault={rescanVaultManually}
             autoVersionSettings={autoVersionSettings}
             tabs={tabs}
             touchClassifiedActivity={touchClassifiedActivity}
@@ -964,7 +984,6 @@ function App() {
     </DesktopFrame>
   );
 }
-
 App.displayName = "App";
 
 export default App;

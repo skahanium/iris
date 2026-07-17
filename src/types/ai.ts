@@ -270,6 +270,7 @@ export type RunEventType =
   | "tool_started"
   | "tool_completed"
   | "capability_degraded"
+  | "web_verification_failed"
   | "confirmation_required"
   | "permission_denied"
   | "provider_switched"
@@ -350,6 +351,14 @@ export type AssistantRunEventPayload =
       message: string;
     }
   | {
+      kind: "web_verification_failed";
+      code: AssistantRunErrorCode;
+      retryable: boolean;
+      attemptCount: number;
+      durationBucket: string;
+      diagnosticId: string;
+    }
+  | {
       kind: "confirmation_required";
       confirmationId: PendingConfirmation["confirmationId"];
       planHash: PendingConfirmation["planHash"];
@@ -411,6 +420,12 @@ export interface AssistantRunGetRequest {
   session: AssistantSessionRef;
   /** Omit to recover this session's latest non-terminal Run after reconnecting. */
   runId?: string;
+}
+
+export interface AssistantRunRetryRequest {
+  session: AssistantSessionRef;
+  sourceRunId: string;
+  clientRequestId: string;
 }
 
 export interface AssistantRunSnapshot {

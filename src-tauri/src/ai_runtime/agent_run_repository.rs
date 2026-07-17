@@ -49,6 +49,15 @@ pub(crate) struct AcceptRunInput {
     pub(crate) envelope: ExecutionEnvelope,
 }
 
+/// Immutable facts required to create a new attempt from an existing user turn.
+#[derive(Debug, Clone)]
+pub(crate) struct RetryRunInput {
+    pub(crate) session_key: String,
+    pub(crate) source_run_id: String,
+    pub(crate) client_request_id: String,
+    pub(crate) run_id: String,
+}
+
 /// Safe event append request. Sequence numbers are allocated by the repository.
 #[derive(Debug, Clone)]
 pub(crate) struct AppendRunEventInput {
@@ -228,6 +237,70 @@ impl AgentRunRepository {
                         domain: SecurityDomain::Normal,
                         session_key: input.session_key,
                     },
+                    state: RunState::Accepted,
+                    state_version: 0,
+                })
+            })
+        })
+    }
+
+    /// Atomically create a retry Run for the same persisted user turn.
+    ///
+    /// The source must already have exhausted required Web verification. This
+    /// deliberately does not insert a second `session_messages` record.
+    pub(crate) fn accept_web_retry(
+        db: &Database,
+        input: RetryRunInput,
+    ) -> AppResult<AssistantRunAccepted> {
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                if let Some(existing) = accepted_for_client_request(conn, &input.client_request_id)? {
+                    return Ok(existing);
+                }
+                let source = conn
+                    .query_row(
+                        "SELECT r.session_id, r.turn_id, r.effect, r.effort, r.security_domain, r.risk,
+                                r.envelope_json, r.explicit_action_json, r.goal_summary
+                         FROM agent_runs r
+                         JOIN sessions s ON s.id = r.session_id
+                         WHERE r.run_id = ?1 AND s.session_key = ?2 AND r.status = 'failed'
+                           AND EXISTS (SELECT 1 FROM agent_run_events e
+                                       WHERE e.run_id = r.run_id
+                                         AND e.event_type = 'web_verification_failed')",
+                        rusqlite::params![input.source_run_id, input.session_key],
+                        |row| Ok((
+                            row.get::<_, i64>(0)?, row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?, row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?, row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?, row.get::<_, Option<String>>(7)?,
+                            row.get::<_, String>(8)?,
+                        )),
+                    )
+                    .optional()?;
+                let Some((session_id, turn_id, effect, effort, security_domain, risk, envelope_json, explicit_action_json, goal_summary)) = source else {
+                    return Err(AppError::msg("agent_run_retry_not_available"));
+                };
+                let now = chrono::Utc::now().to_rfc3339();
+                conn.execute(
+                    "INSERT INTO agent_runs
+                     (run_id, client_request_id, session_id, turn_id, status, state_version,
+                      effect, effort, security_domain, risk, envelope_json, explicit_action_json,
+                      goal_summary, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                    rusqlite::params![input.run_id, input.client_request_id, session_id, turn_id,
+                        effect, effort, security_domain, risk, envelope_json, explicit_action_json,
+                        goal_summary, now],
+                )?;
+                let event = AssistantRunEvent::new(
+                    &input.run_id, 1, 0, RunEventType::Accepted, &now,
+                    RunEventPayload::Accepted { turn_id: turn_id.clone(), session_key: input.session_key.clone() },
+                ).map_err(AppError::msg)?;
+                insert_event(conn, &event)?;
+                conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;
+                Ok(AssistantRunAccepted {
+                    run_id: input.run_id,
+                    turn_id,
+                    session: AssistantSessionRef { domain: SecurityDomain::Normal, session_key: input.session_key },
                     state: RunState::Accepted,
                     state_version: 0,
                 })
@@ -1314,6 +1387,7 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
         | RunEventPayload::ToolStarted { .. }
         | RunEventPayload::ToolCompleted { .. }
         | RunEventPayload::CapabilityDegraded { .. }
+        | RunEventPayload::WebVerificationFailed { .. }
         | RunEventPayload::PermissionDenied { .. }
         | RunEventPayload::ProviderSwitched { .. }
         | RunEventPayload::EvidenceRegistered { .. } => None,

@@ -11,4 +11,6 @@ export interface UnifiedAssistantPanelProps {
   /** Per-composer model override. The backend validates all hard capabilities. */
   modelOverride?: AgentModelOverride | null;
   onInsertToEditor?: (content: string) => void;
+  /** Open the selected Web provider's diagnostics in the management center. */
+  onOpenWebVerificationSettings?: () => void;
 }

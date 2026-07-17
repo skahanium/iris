@@ -18,6 +18,10 @@ export interface AssistantRunEventState {
     AssistantRunEventPayload,
     { kind: "capability_degraded" }
   > | null;
+  webVerificationFailure: Extract<
+    AssistantRunEventPayload,
+    { kind: "web_verification_failed" }
+  > | null;
   pendingConfirmation: PendingConfirmation | null;
   provider: {
     providerId: string;
@@ -45,6 +49,7 @@ export function createAssistantRunEventState(
     stage: null,
     summary: null,
     capabilityDegradation: null,
+    webVerificationFailure: null,
     pendingConfirmation: null,
     provider: null,
     content: "",
@@ -145,6 +150,10 @@ function applyEvent(
       payload.kind === "capability_degraded"
         ? payload
         : state.capabilityDegradation,
+    webVerificationFailure:
+      payload.kind === "web_verification_failed"
+        ? payload
+        : state.webVerificationFailure,
     pendingConfirmation:
       payload.kind === "confirmation_required"
         ? confirmationForPayload(payload)
@@ -227,6 +236,8 @@ function summaryForPayload(payload: AssistantRunEventPayload): string | null {
       return payload.summary;
     case "capability_degraded":
       return payload.message;
+    case "web_verification_failed":
+      return "联网核实未取得可用证据";
     case "permission_denied":
     case "failed":
       return payload.message;

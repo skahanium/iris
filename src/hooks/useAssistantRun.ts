@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   assistantRunControl,
   assistantRunGet,
+  assistantRunRetry,
   assistantRunStart,
   listenAssistantRunEvent,
 } from "@/lib/ipc";
@@ -15,6 +16,7 @@ import {
 import type {
   AssistantRunEvent,
   AssistantRunGetResponse,
+  AssistantRunAccepted,
   AssistantRunStartRequest,
   AssistantSessionRef,
   PendingConfirmation,
@@ -158,9 +160,8 @@ export function useAssistantRun() {
     };
   }, [reduceLiveEvent]);
 
-  const start = useCallback(
-    async (request: AssistantRunStartRequest) => {
-      const accepted = await assistantRunStart(request);
+  const activateAccepted = useCallback(
+    (accepted: AssistantRunAccepted) => {
       const run = activeRunFromAccepted(accepted);
       activeRunIdRef.current = accepted.runId;
       setRunIdentity(run);
@@ -188,6 +189,26 @@ export function useAssistantRun() {
     },
     [replay],
   );
+
+  const start = useCallback(
+    async (request: AssistantRunStartRequest) => {
+      const accepted = await assistantRunStart(request);
+      return activateAccepted(accepted);
+    },
+    [activateAccepted],
+  );
+
+  const retryWebVerification = useCallback(async () => {
+    const run = currentRun;
+    const failure = eventState?.webVerificationFailure;
+    if (!run || !failure || !failure.retryable) return null;
+    const accepted = await assistantRunRetry({
+      session: run.session,
+      sourceRunId: run.runId,
+      clientRequestId: crypto.randomUUID(),
+    });
+    return activateAccepted(accepted);
+  }, [activateAccepted, currentRun, eventState?.webVerificationFailure]);
 
   const cancel = useCallback(async () => {
     const run = currentRun;
@@ -263,6 +284,7 @@ export function useAssistantRun() {
     eventState,
     pendingConfirmation,
     start,
+    retryWebVerification,
     cancel,
     approveChange,
     rejectChange,

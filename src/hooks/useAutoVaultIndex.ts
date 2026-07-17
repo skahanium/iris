@@ -65,5 +65,9 @@ export function useAutoVaultIndex(
     };
   }, [vaultPath, vaultLoading, rescanVault]);
 
-  return { rescanVault };
+  const rescanVaultManually = useCallback(() => {
+    void rescanVault("manual");
+  }, [rescanVault]);
+
+  return { rescanVault, rescanVaultManually };
 }

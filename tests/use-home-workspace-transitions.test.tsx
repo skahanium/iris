@@ -28,6 +28,7 @@ function Harness({
   activePath = null,
   activateTab = vi.fn(),
   apiRef,
+  cancelPendingDocumentOpen,
   handleNewNote = vi.fn(async () => undefined),
   openTabs = [],
   openNote,
@@ -36,6 +37,7 @@ function Harness({
   activePath?: string | null;
   activateTab?: ActivateTabFn;
   apiRef: { current: ReturnType<typeof useHomeWorkspaceTransitions> | null };
+  cancelPendingDocumentOpen?: () => void;
   handleNewNote?: HandleNewNoteFn;
   openTabs?: Array<{ path: string }>;
   openNote: OpenNoteFn;
@@ -44,6 +46,7 @@ function Harness({
   apiRef.current = useHomeWorkspaceTransitions({
     activePathRef: { current: activePath },
     activateTab,
+    cancelPendingDocumentOpen,
     handleNewNote,
     openNote,
     openTabs,
@@ -319,5 +322,29 @@ describe("useHomeWorkspaceTransitions", () => {
     // flipping homeActive off, or the user would be dragged out of Home.
     expect(setHomeActive).toHaveBeenCalledWith(true);
     expect(setHomeActive).not.toHaveBeenCalledWith(false);
+  });
+
+  it("cancels the editor tab activation as well as the Home transition", async () => {
+    const apiRef: {
+      current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
+    } = { current: null };
+    const cancelPendingDocumentOpen = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          apiRef,
+          cancelPendingDocumentOpen,
+          openNote: vi.fn(async () => undefined),
+          setHomeActive: vi.fn(),
+        }),
+      );
+    });
+
+    await act(async () => {
+      apiRef.current!.showHome();
+    });
+
+    expect(cancelPendingDocumentOpen).toHaveBeenCalledTimes(1);
   });
 });

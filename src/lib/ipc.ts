@@ -9,6 +9,7 @@ import type {
   AssistantRunEvent,
   AssistantRunGetRequest,
   AssistantRunGetResponse,
+  AssistantRunRetryRequest,
   AssistantRunStartRequest,
   AssistantSessionListRequest,
   AssistantSessionLoadRequest,
@@ -25,6 +26,7 @@ export type {
   AssistantRunEvent,
   AssistantRunGetRequest,
   AssistantRunGetResponse,
+  AssistantRunRetryRequest,
   AssistantRunStartRequest,
   AssistantSessionListRequest,
   AssistantSessionLoadRequest,
@@ -827,6 +829,7 @@ export interface WebEvidenceProviderDiagnosticCheck {
 
 export interface WebEvidenceProviderDiagnostics {
   providerId?: string | null;
+  isRuntimeSelected: boolean;
   status: string;
   failures: string[];
   checks: WebEvidenceProviderDiagnosticCheck[];
@@ -943,6 +946,12 @@ export async function assistantRunStart(
   request: AssistantRunStartRequest,
 ): Promise<AssistantRunAccepted> {
   return invoke<AssistantRunAccepted>("assistant_run_start", { request });
+}
+
+export async function assistantRunRetry(
+  request: AssistantRunRetryRequest,
+): Promise<AssistantRunAccepted> {
+  return invoke<AssistantRunAccepted>("assistant_run_retry", { request });
 }
 
 export async function assistantRunControl(

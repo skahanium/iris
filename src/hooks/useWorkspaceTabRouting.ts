@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 
 import type { TabItem } from "@/components/layout/TabBar";
+import type { CloseTabResult } from "@/hooks/useTabManager";
 import { useMediaTabs } from "@/hooks/useMediaTabs";
 
 type MaybePromise<T> = T | Promise<T>;
@@ -14,8 +15,8 @@ interface NoteTabLike {
 
 interface UseWorkspaceTabRoutingOptions<OpenOptions> {
   activePath: string | null;
-  /** Resolves true only after the tab was actually removed. */
-  closeTab: (path: string) => MaybePromise<boolean>;
+  /** Resolves only after the tab lifecycle and active destination are settled. */
+  closeTab: (path: string) => MaybePromise<CloseTabResult>;
   currentNoteIsClassified: boolean;
   handleActivateNoteTab: (path: string) => void;
   handleNewNoteLeavingHome: () => MaybePromise<void>;
@@ -93,18 +94,20 @@ export function useWorkspaceTabRouting<OpenOptions>({
         closeMedia(path);
         return;
       }
-      const willCloseLastActiveNote =
-        activePath === path && tabs.length === 1 && mediaTabs.length === 0;
-      const closeResult = closeTab(path);
-      if (willCloseLastActiveNote) {
-        void Promise.resolve(closeResult)
-          .then((closed) => {
-            if (closed) showHome();
-          })
-          .catch(() => undefined);
-      }
+      void Promise.resolve(closeTab(path))
+        .then((result) => {
+          if (!result.closed || result.remainingNoteCount > 0) return;
+          const nextMedia = mediaTabs[0];
+          if (nextMedia) {
+            setHomeActive(false);
+            activateMedia(nextMedia.id);
+            return;
+          }
+          showHome();
+        })
+        .catch(() => undefined);
     },
-    [activePath, closeMedia, closeTab, mediaTabs.length, showHome, tabs.length],
+    [activateMedia, closeMedia, closeTab, mediaTabs, setHomeActive, showHome],
   );
 
   const workspaceTabs: TabItem[] = useMemo(

@@ -285,7 +285,7 @@ async fn required_web_evidence_sends_one_correction_before_final_answer() {
 }
 
 #[tokio::test]
-async fn failed_follow_up_web_tool_returns_a_structured_result_for_a_degraded_final_answer() {
+async fn failed_follow_up_web_tool_rejects_an_unverified_final_answer() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
             super::model_gateway::GatewayResponse {
@@ -337,9 +337,9 @@ async fn failed_follow_up_web_tool_returns_a_structured_result_for_a_degraded_fi
             &mut observer,
         )
         .await
-        .expect("a failed Web tool is recoverable");
+        .expect_err("WebRequired must not complete with an unverified answer");
 
-    assert!(outcome.content.contains("could not verify"));
+    assert_eq!(outcome.to_string(), "agent_run_web_provider_timeout");
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     let messages = provider
         .second_turn_messages

@@ -769,6 +769,7 @@ async fn tool_loop_engine_never_persists_a_meta_analysis_prefix() {
         vec![],
         &[],
         false,
+        0,
         None,
         &MetaAnalysisToolLoopProvider,
         &UnusedToolLoopExecutor,
@@ -1148,7 +1149,7 @@ async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final
 }
 
 #[tokio::test]
-async fn run_tool_loop_web_required_degrades_without_evidence() {
+async fn web_required_prefetch_failure_is_transient_and_emits_no_degradation() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
@@ -1169,6 +1170,7 @@ async fn run_tool_loop_web_required_degrades_without_evidence() {
         &accepted,
         &context,
         &sink,
+        None,
         |input| {
             calls.fetch_add(1, Ordering::SeqCst);
             assert!(input.enabled);
@@ -1183,7 +1185,7 @@ async fn run_tool_loop_web_required_degrades_without_evidence() {
         },
     )
     .await
-    .expect("web_required continues with a constrained degradation");
+    .expect("prefetch returns a recoverable internal outcome");
 
     assert_eq!(outcome.status, super::run_tool_loop::RunWebStatus::Degraded);
     assert_eq!(
@@ -1198,8 +1200,8 @@ async fn run_tool_loop_web_required_degrades_without_evidence() {
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
-    assert!(replay.events.iter().any(|event| {
-        serde_json::to_value(event).expect("event")["type"] == "capability_degraded"
+    assert!(replay.events.iter().all(|event| {
+        serde_json::to_value(event).expect("event")["type"] != "capability_degraded"
     }));
 }
 
@@ -1220,8 +1222,13 @@ async fn transient_failure_output_is_retried_once_then_succeeds() {
     let calls = AtomicU32::new(0);
     let sink = RecordingSink::default();
 
-    let outcome =
-        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
+    let outcome = super::run_tool_loop::collect_web_evidence_for_run(
+        &db,
+        &accepted,
+        &context,
+        &sink,
+        None,
+        |_| {
             let call = calls.fetch_add(1, Ordering::SeqCst);
             async move {
                 if call == 0 {
@@ -1256,9 +1263,10 @@ async fn transient_failure_output_is_retried_once_then_succeeds() {
                     },
                 )
             }
-        })
-        .await
-        .expect("transient provider output should recover");
+        },
+    )
+    .await
+    .expect("transient provider output should recover");
 
     assert_eq!(calls.load(Ordering::SeqCst), 2);
     assert_eq!(
@@ -1286,17 +1294,23 @@ async fn deterministic_failure_output_is_not_retried_and_is_not_retryable() {
     let calls = AtomicU32::new(0);
     let sink = RecordingSink::default();
 
-    let outcome =
-        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
+    let outcome = super::run_tool_loop::collect_web_evidence_for_run(
+        &db,
+        &accepted,
+        &context,
+        &sink,
+        None,
+        |_| {
             calls.fetch_add(1, Ordering::SeqCst);
             async {
                 Ok(failed_web_output(
                     "mcp_search_parse_empty:unrecognized_schema",
                 ))
             }
-        })
-        .await
-        .expect("schema failure should degrade");
+        },
+    )
+    .await
+    .expect("schema failure should degrade");
 
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(outcome.status, super::run_tool_loop::RunWebStatus::Degraded);
@@ -1308,13 +1322,9 @@ async fn deterministic_failure_output_is_not_retried_and_is_not_retryable() {
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
-    let degraded = replay
-        .events
-        .iter()
-        .map(|event| serde_json::to_value(event).expect("event"))
-        .find(|event| event["type"] == "capability_degraded")
-        .expect("degradation event");
-    assert_eq!(degraded["payload"]["retryable"], false);
+    assert!(replay.events.iter().all(|event| {
+        serde_json::to_value(event).expect("event")["type"] != "capability_degraded"
+    }));
 }
 
 #[tokio::test]
@@ -1331,8 +1341,13 @@ async fn offline_direct_run_never_calls_web_collector() {
     let calls = AtomicU32::new(0);
     let sink = RecordingSink::default();
 
-    let result =
-        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
+    let result = super::run_tool_loop::collect_web_evidence_for_run(
+        &db,
+        &accepted,
+        &context,
+        &sink,
+        None,
+        |_| {
             calls.fetch_add(1, Ordering::SeqCst);
             async {
                 Ok(
@@ -1342,9 +1357,10 @@ async fn offline_direct_run_never_calls_web_collector() {
                     },
                 )
             }
-        })
-        .await
-        .expect("offline direct run skips web");
+        },
+    )
+    .await
+    .expect("offline direct run skips web");
 
     assert!(result.evidence_ids.is_empty());
     assert!(result.prompt_addendum.is_empty());
@@ -1369,13 +1385,19 @@ async fn direct_run_does_not_scan_or_dispatch_tools() {
     let calls = AtomicU32::new(0);
     let sink = RecordingSink::default();
 
-    let result =
-        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
+    let result = super::run_tool_loop::collect_web_evidence_for_run(
+        &db,
+        &accepted,
+        &context,
+        &sink,
+        None,
+        |_| {
             calls.fetch_add(1, Ordering::SeqCst);
             async { Err(AppError::msg("collector must not be touched")) }
-        })
-        .await
-        .expect("direct run skips the tool loop");
+        },
+    )
+    .await
+    .expect("direct run skips the tool loop");
 
     assert!(result.evidence_ids.is_empty());
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -1421,13 +1443,19 @@ async fn run_tool_loop_registers_bounded_web_evidence_before_provider_dispatch()
         usage: Default::default(),
     };
 
-    let result =
-        super::run_tool_loop::collect_web_evidence_for_run(&db, &accepted, &context, &sink, |_| {
+    let result = super::run_tool_loop::collect_web_evidence_for_run(
+        &db,
+        &accepted,
+        &context,
+        &sink,
+        None,
+        |_| {
             let output = output.clone();
             async move { Ok(output) }
-        })
-        .await
-        .expect("web evidence is registered");
+        },
+    )
+    .await
+    .expect("web evidence is registered");
 
     assert_eq!(result.evidence_ids.len(), 1);
     assert!(result.prompt_addendum.contains("bounded page evidence"));
@@ -1516,6 +1544,7 @@ async fn web_required_pre_answer_stage_uses_search_snippets_without_page_fetches
                 &accepted,
                 &context,
                 &sink,
+                None,
                 |input| {
                     let output = output.clone();
                     async move {
@@ -1671,7 +1700,7 @@ fn tool_loop_web_failures_keep_their_web_safe_codes() {
 }
 
 #[tokio::test]
-async fn web_required_evidence_failure_degrades_and_still_dispatches_the_model() {
+async fn web_required_prefetch_failure_never_persists_a_degradation_notice() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
@@ -1702,6 +1731,7 @@ async fn web_required_evidence_failure_degrades_and_still_dispatches_the_model()
                 &accepted,
                 &context,
                 &sink,
+                None,
                 |_| {
                     web_calls.fetch_add(1, Ordering::SeqCst);
                     async { Err(AppError::msg("deadline exceeded")) }
@@ -1719,7 +1749,7 @@ async fn web_required_evidence_failure_degrades_and_still_dispatches_the_model()
         },
     )
     .await
-    .expect("required Web failure still permits a constrained model answer");
+    .expect("the generic orchestration helper dispatches its supplied recovery closure");
 
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     assert_eq!(web_calls.load(Ordering::SeqCst), 2);
@@ -1738,7 +1768,6 @@ async fn web_required_evidence_failure_degrades_and_still_dispatches_the_model()
             serde_json::json!("accepted"),
             serde_json::json!("tool_started"),
             serde_json::json!("tool_completed"),
-            serde_json::json!("capability_degraded"),
             serde_json::json!("stage_changed"),
             serde_json::json!("stage_changed"),
             serde_json::json!("content_delta"),
@@ -1746,17 +1775,6 @@ async fn web_required_evidence_failure_degrades_and_still_dispatches_the_model()
             serde_json::json!("completed"),
         ]
     );
-    let degraded = replay
-        .events
-        .iter()
-        .map(|event| serde_json::to_value(event).expect("event"))
-        .find(|event| event["type"] == "capability_degraded")
-        .expect("degradation event");
-    assert_eq!(
-        degraded["payload"]["code"],
-        "agent_run_web_provider_timeout"
-    );
-    assert_eq!(degraded["payload"]["attemptCount"], 2);
     let persisted: String = db
         .with_read_conn(|conn| {
             conn.query_row(
@@ -1768,6 +1786,6 @@ async fn web_required_evidence_failure_degrades_and_still_dispatches_the_model()
             )
             .map_err(Into::into)
         })
-        .expect("persisted degraded answer");
-    assert!(persisted.contains("联网核实暂不可用"));
+        .expect("persisted answer");
+    assert!(!persisted.contains("联网核实暂不可用"));
 }

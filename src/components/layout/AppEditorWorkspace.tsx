@@ -497,6 +497,7 @@ export function AppEditorWorkspace({
     !activeMediaTab &&
     pendingOpen &&
     !pendingOpen.error &&
+    pendingOpen.loadingPolicy !== "disabled" &&
     (!currentEditorSurface ||
       homePendingMatchesPath(pendingOpen, currentEditorSurface.path)) &&
     !activeSurfaceRecord?.ready,

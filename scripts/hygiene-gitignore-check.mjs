@@ -26,14 +26,24 @@ const tracked = [
   "tests/hygiene-scripts-contract.test.ts",
 ];
 
-function check(path, expectedIgnored) {
-  const result = spawnSync("git", ["check-ignore", "--quiet", path], {
+function checkAll(paths) {
+  const result = spawnSync("git", ["check-ignore", "--stdin"], {
+    input: `${paths.join("\n")}\n`,
     encoding: "utf8",
   });
-  const ignoredByGit = result.status === 0;
-  if (ignoredByGit !== expectedIgnored) {
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(result.stderr || "git check-ignore failed");
+  }
+  return new Set(result.stdout.split("\n").filter(Boolean));
+}
+
+const ignoredByGit = checkAll([...ignored, ...tracked]);
+
+function check(path, expectedIgnored) {
+  const isIgnored = ignoredByGit.has(path);
+  if (isIgnored !== expectedIgnored) {
     throw new Error(
-      `${path} expected ${expectedIgnored ? "ignored" : "tracked"}, got ${ignoredByGit ? "ignored" : "tracked"}`,
+      `${path} expected ${expectedIgnored ? "ignored" : "tracked"}, got ${isIgnored ? "ignored" : "tracked"}`,
     );
   }
 }

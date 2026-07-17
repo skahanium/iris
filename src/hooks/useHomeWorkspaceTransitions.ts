@@ -27,6 +27,7 @@ const HOME_OPEN_WATCHDOG_MS = 15_000;
 interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
   activePathRef: CurrentRef<string | null>;
   activateTab: (path: string, options?: OpenNoteOptions) => MaybePromise<void>;
+  cancelPendingDocumentOpen?: () => void;
   handleNewNote: (options?: HomeNewNoteOpenOptions) => Promise<void>;
   openNote: (
     path: string,
@@ -39,6 +40,7 @@ interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
 
 export function useHomeWorkspaceTransitions<OpenNoteOptions>({
   activateTab,
+  cancelPendingDocumentOpen,
   handleNewNote,
   openNote,
   openTabs = [],
@@ -92,8 +94,14 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
   const showHome = useCallback(() => {
     clearOpenWatchdog();
     cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
+    cancelPendingDocumentOpen?.();
     setHomeActive(true);
-  }, [clearOpenWatchdog, setHomeActive, setPendingOpen]);
+  }, [
+    cancelPendingDocumentOpen,
+    clearOpenWatchdog,
+    setHomeActive,
+    setPendingOpen,
+  ]);
 
   useEffect(() => clearOpenWatchdog, [clearOpenWatchdog]);
 

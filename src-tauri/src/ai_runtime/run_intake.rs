@@ -2,13 +2,15 @@
 
 use crate::ai_runtime::agent_run_repository::{
     AcceptRunInput, AgentRunRepository, FrozenConfirmationApproval, FrozenConfirmationRejection,
+    RetryRunInput,
 };
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetResponse,
-    AssistantRunStartRequest, AssistantSessionRef, CapabilityId, ContextMode, Effect, Effort,
-    ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed, Modality, RiskClass,
-    RunControlAction, RunEventPayload, RunEventType, SecurityDomain, WebDecisionReason,
+    AssistantRunRetryRequest, AssistantRunStartRequest, AssistantSessionRef, CapabilityId,
+    ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed,
+    Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType, SecurityDomain,
+    WebDecisionReason,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -258,6 +260,39 @@ impl RunIntake {
         sink: &impl crate::ai_runtime::run_engine::RunEventSink,
     ) -> AppResult<AssistantRunAccepted> {
         let accepted = Self::start(db, request)?;
+        let event = AgentRunRepository::get_for_session(
+            db,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )?
+        .and_then(|response| response.events.into_iter().next())
+        .ok_or_else(|| AppError::msg("agent_run_accepted_event_missing"))?;
+        sink.emit(&event)?;
+        Ok(accepted)
+    }
+
+    /// Accept a fresh Web-verification retry while preserving the original user turn.
+    pub(crate) fn retry_with_sink(
+        db: &Database,
+        request: AssistantRunRetryRequest,
+        sink: &impl crate::ai_runtime::run_engine::RunEventSink,
+    ) -> AppResult<AssistantRunAccepted> {
+        if request.session.domain != SecurityDomain::Normal
+            || request.source_run_id.trim().is_empty()
+            || request.client_request_id.trim().is_empty()
+            || request.client_request_id.chars().count() > MAX_CLIENT_REQUEST_ID_CHARS
+        {
+            return Err(AppError::msg("agent_run_invalid_request"));
+        }
+        let accepted = AgentRunRepository::accept_web_retry(
+            db,
+            RetryRunInput {
+                session_key: request.session.session_key,
+                source_run_id: request.source_run_id,
+                client_request_id: request.client_request_id,
+                run_id: uuid::Uuid::new_v4().to_string(),
+            },
+        )?;
         let event = AgentRunRepository::get_for_session(
             db,
             &accepted.session.session_key,

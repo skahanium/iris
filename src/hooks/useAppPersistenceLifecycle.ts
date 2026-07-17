@@ -23,6 +23,7 @@ import {
 import { editorHtmlDigest, setCachedEditorHtml } from "@/lib/editor-html-cache";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import {
+  fileDiscard,
   fileSetLock,
   fileWrite,
   versionFinalizeCurrent,
@@ -305,6 +306,29 @@ export function useAppPersistenceLifecycle({
     await cancelledWriteRef.current;
   }, []);
 
+  /**
+   * Stops this path's delayed/in-flight persistence before deleting its
+   * temporary disk file. On deletion failure the coordinator is restored so
+   * the still-existing file remains protected by normal save handling.
+   */
+  const discardPristineNote = useCallback(
+    async (path: string, markdownSnapshot: string): Promise<void> => {
+      const beforeDiscard = coordinator.get(path);
+      await coordinator.discard(path);
+      try {
+        await fileDiscard(path);
+      } catch (error) {
+        coordinator.load(
+          path,
+          beforeDiscard?.markdown ?? markdownSnapshot,
+          beforeDiscard?.loadGeneration ?? -1,
+        );
+        throw error;
+      }
+    },
+    [coordinator],
+  );
+
   persistBeforeLeaveRef.current = async (
     path: string,
     options: PersistBeforeLeaveOptions = {},
@@ -405,10 +429,25 @@ export function useAppPersistenceLifecycle({
         // been captured by the coordinator. Stage those snapshots first, then
         // make the coordinator own the completion condition. `barrierAll` keeps
         // scanning until no new revision was observed during a write pass.
+        const tabsAtClose = [...tabsRef.current];
+        for (const tab of tabsAtClose) {
+          if (tab.lifecycle !== "session_pristine") continue;
+          const snapshot =
+            getTabMarkdownCached(tab.path) ??
+            coordinator.get(tab.path)?.markdown;
+          if (snapshot === undefined) {
+            throw new Error(
+              `temporary note has no discard snapshot: ${tab.path}`,
+            );
+          }
+          await discardPristineNote(tab.path, snapshot);
+        }
         await Promise.all(
-          tabsRef.current.map((tab) =>
-            persistBeforeLeaveRef.current(tab.path, { reason: "app_close" }),
-          ),
+          tabsAtClose
+            .filter((tab) => tab.lifecycle !== "session_pristine")
+            .map((tab) =>
+              persistBeforeLeaveRef.current(tab.path, { reason: "app_close" }),
+            ),
         );
         await coordinator.barrierAll();
       } catch (error) {
@@ -421,6 +460,8 @@ export function useAppPersistenceLifecycle({
   }, [
     clearVersionIdleTimer,
     coordinator,
+    discardPristineNote,
+    getTabMarkdownCached,
     onPersistenceBarrierStart,
     persistBeforeLeaveRef,
     releasePersistenceBarrier,
@@ -542,6 +583,7 @@ export function useAppPersistenceLifecycle({
     restoreCurrentVersion,
     cancelPendingSave,
     awaitSaveInFlight,
+    discardPristineNote,
     resetVersionIdle,
     handleSaveNote,
     handleLockToggle,

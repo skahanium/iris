@@ -10,6 +10,7 @@ import {
 import type { TabItem } from "@/components/layout/TabBar";
 
 const fileWrite = vi.fn();
+const fileDiscard = vi.fn();
 const setCachedEditorHtml = vi.fn();
 const fileSetLock = vi.fn();
 const versionFinalizeCurrent = vi.fn();
@@ -25,6 +26,7 @@ function deferred<T>() {
 
 vi.mock("@/lib/ipc", () => ({
   appExit: vi.fn(),
+  fileDiscard: (...args: unknown[]) => fileDiscard(...args),
   fileSetLock: (...args: unknown[]) => fileSetLock(...args),
   fileWrite: (...args: unknown[]) => fileWrite(...args),
   versionFinalizeCurrent: (...args: unknown[]) =>
@@ -133,6 +135,8 @@ describe("useAppPersistenceLifecycle", () => {
       updated_at: "",
       word_count: 6,
     });
+    fileDiscard.mockReset();
+    fileDiscard.mockResolvedValue(undefined);
     setCachedEditorHtml.mockReset();
     versionFinalizeCurrent.mockReset();
     versionFinalizeCurrent.mockResolvedValue(null);
@@ -584,6 +588,43 @@ describe("useAppPersistenceLifecycle", () => {
       await api.flushSave();
     });
 
+    expect(fileWrite).not.toHaveBeenCalled();
+  });
+
+  it("discards pristine session notes before flushing persisted notes during app close", async () => {
+    const persistBeforeLeave = vi.fn(async () => null);
+    const persistBeforeLeaveRef = {
+      current: persistBeforeLeave,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorReady: true,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          tabs: [
+            {
+              dirty: false,
+              lifecycle: "session_pristine",
+              locked: false,
+              path: "note.md",
+              title: "Note",
+            },
+          ],
+        }),
+      );
+    });
+
+    await act(async () => {
+      await api.flushAllOpenTabs();
+    });
+
+    expect(fileDiscard).toHaveBeenCalledWith("note.md");
+    expect(persistBeforeLeave).not.toHaveBeenCalled();
     expect(fileWrite).not.toHaveBeenCalled();
   });
 

@@ -218,6 +218,7 @@ pub fn run() {
             commands::corpus_commands::corpus_upsert,
             commands::file::path_sync_suggest,
             commands::assistant_commands::assistant_run_start,
+            commands::assistant_commands::assistant_run_retry,
             commands::assistant_commands::assistant_run_control,
             commands::assistant_commands::assistant_run_get,
             commands::assistant_commands::assistant_session_list,
