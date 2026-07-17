@@ -63,7 +63,10 @@ import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
 
 import { AiSourceHighlightExtension } from "./extensions/AiSourceHighlightExtension";
-import { AiStreamExtension } from "./extensions/AiStreamExtension";
+import {
+  AI_STREAM_TRANSIENT_TRANSACTION_META,
+  AiStreamExtension,
+} from "./extensions/AiStreamExtension";
 
 import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
 import { HeadingFoldOverlay } from "./HeadingFoldOverlay";
@@ -579,7 +582,8 @@ function TipTapEditorInner({
 
       shouldRerenderOnTransaction: false,
 
-      onUpdate: ({ editor: updatedEditor }) => {
+      onUpdate: ({ editor: updatedEditor, transaction }) => {
+        if (transaction.getMeta(AI_STREAM_TRANSIENT_TRANSACTION_META)) return;
         onDirtyRef.current?.();
 
         scheduleBodyStats(updatedEditor);

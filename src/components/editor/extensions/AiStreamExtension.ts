@@ -5,6 +5,8 @@ import { ReactNodeViewRenderer } from "@tiptap/react";
 import { AiNodeView } from "../AiNodeView";
 
 export type AiStreamStatus = "streaming" | "ready" | "error";
+export const AI_STREAM_TRANSIENT_TRANSACTION_META =
+  "irisAiStreamTransientTransaction";
 
 export interface AiStreamOptions {
   HTMLAttributes: Record<string, unknown>;
@@ -103,9 +105,11 @@ function clearHighlightForSource(
   }
 }
 
-/** AI 候选 UI 变更不进 undo 栈，避免 Cmd+Z 恢复候选框或重新进入流式态 */
+/** AI 候选 UI 不进 undo/持久化 dirty，接受结果后的正文事务仍按普通编辑处理。 */
 function withoutHistory(tr: import("@tiptap/pm/state").Transaction) {
-  return tr.setMeta("addToHistory", false);
+  return tr
+    .setMeta("addToHistory", false)
+    .setMeta(AI_STREAM_TRANSIENT_TRANSACTION_META, true);
 }
 
 export const AiStreamExtension = Node.create<AiStreamOptions>({

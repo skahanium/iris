@@ -11,6 +11,7 @@ import {
   installEditorMarkdownSourceProjection,
 } from "@/lib/context-reference";
 import { fileSignature } from "@/lib/ipc";
+import type { FileSignatureResult } from "@/types/ipc";
 
 vi.mock("@/lib/ipc", () => ({
   fileSignature: vi.fn(),
@@ -22,13 +23,24 @@ vi.mock("@/lib/ipc", () => ({
 const mockFileSignature = vi.mocked(fileSignature);
 
 describe("assistant sidecar selection reference bridge", () => {
-  let root: Root;
+  let root: Root | null;
   let container: HTMLDivElement;
   let editor: Editor;
   let dirty = false;
   let status = "";
   let api: ReturnType<typeof useAiSidecarBridge>;
   const markdown = "侧栏共享精确选区";
+  let validSignature: FileSignatureResult;
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    return { promise, reject, resolve };
+  }
 
   function Host() {
     const editorRef = useRef<Editor | null>(editor);
@@ -60,26 +72,28 @@ describe("assistant sidecar selection reference bridge", () => {
       "SHA-256",
       new TextEncoder().encode(markdown),
     );
-    mockFileSignature.mockResolvedValue({
+    validSignature = {
       byteLength: new TextEncoder().encode(markdown).length,
       contentHash: Array.from(new Uint8Array(digest), (byte) =>
         byte.toString(16).padStart(2, "0"),
       ).join(""),
       isLocked: false,
       modifiedMs: 1,
-    });
+    };
+    mockFileSignature.mockResolvedValue(validSignature);
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
     await act(async () => {
-      root.render(createElement(Host));
+      root?.render(createElement(Host));
       await Promise.resolve();
       await Promise.resolve();
     });
   });
 
   afterEach(() => {
-    act(() => root.unmount());
+    if (root) act(() => root?.unmount());
+    root = null;
     editor.destroy();
     container.remove();
   });
@@ -109,6 +123,58 @@ describe("assistant sidecar selection reference bridge", () => {
     expect(api.editorSelectionReference).toBeNull();
     expect(status).toBe(EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE);
     expect(JSON.stringify(api)).not.toContain(markdown);
+  });
+
+  it("keeps the later selection when an older signature request finishes last", async () => {
+    const firstSignature = deferred<FileSignatureResult>();
+    const secondSignature = deferred<FileSignatureResult>();
+    mockFileSignature
+      .mockImplementationOnce(() => firstSignature.promise)
+      .mockImplementationOnce(() => secondSignature.promise);
+    editor.commands.setTextSelection({ from: 1, to: 3 });
+    let firstRequest!: Promise<void>;
+    await act(async () => {
+      firstRequest = api.sendSelectionToAi({ prefill: "旧选区" });
+      await Promise.resolve();
+    });
+    editor.commands.setTextSelection({ from: 5, to: 7 });
+    let secondRequest!: Promise<void>;
+    await act(async () => {
+      secondRequest = api.sendSelectionToAi({ prefill: "新选区" });
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      secondSignature.resolve(validSignature);
+      await secondRequest;
+    });
+    await act(async () => {
+      firstSignature.resolve(validSignature);
+      await firstRequest;
+    });
+
+    expect(api.editorSelectionReference?.utf8Range).toEqual({
+      start: 12,
+      end: 18,
+    });
+    expect(api.prefillMessage).toBe("新选区");
+  });
+
+  it("ignores a pending signature failure after unmount", async () => {
+    const signature = deferred<FileSignatureResult>();
+    mockFileSignature.mockImplementationOnce(() => signature.promise);
+    let request!: Promise<void>;
+    await act(async () => {
+      request = api.sendSelectionToAi();
+      await Promise.resolve();
+    });
+
+    act(() => root?.unmount());
+    root = null;
+    signature.reject(new Error("late failure"));
+    await request;
+
+    expect(status).toBe("");
   });
 
   it("plumbs the one-shot reference from App into the unified sender", () => {

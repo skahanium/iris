@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type RefObject,
 } from "react";
@@ -45,6 +46,16 @@ export function useAiSidecarBridge({
     useState<ContextReference | null>(null);
   const [assistantChrome, setAssistantChrome] =
     useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
+  const selectionRequestGenerationRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      selectionRequestGenerationRef.current += 1;
+    };
+  }, []);
 
   const webSearchAvailability = useMemo(
     () => getWebSearchAvailability(webSearchProviders, webSearchProviderId),
@@ -138,6 +149,7 @@ export function useAiSidecarBridge({
 
   const sendSelectionToAi = useCallback(
     async (options?: { prefill?: string }) => {
+      const generation = ++selectionRequestGenerationRef.current;
       setEditorSelectionReference(null);
       const ed = editorRef.current;
       if (!ed) {
@@ -149,6 +161,12 @@ export function useAiSidecarBridge({
         kind: "selection",
         isDirty: isDocumentDirty,
       });
+      if (
+        !mountedRef.current ||
+        generation !== selectionRequestGenerationRef.current
+      ) {
+        return;
+      }
       if (!result.ok) {
         setAiStatus(result.message);
         return;
