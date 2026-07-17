@@ -481,6 +481,8 @@ fn assemble_rejects_a_non_utf8_explicit_reference() {
 fn index_scoped_note(db: &Database, path: &str, title: &str, body: &str, excerpt: &str) {
     db.with_conn(|conn| {
         let hash = crate::cas::hash::content_hash_str(body);
+        let source_start = body.find(excerpt).unwrap_or(0);
+        let source_end = source_start + excerpt.len();
         conn.execute(
             "INSERT INTO files
              (path, title, content_hash, word_count, created_at, updated_at)
@@ -491,12 +493,13 @@ fn index_scoped_note(db: &Database, path: &str, title: &str, body: &str, excerpt
         conn.execute(
             "INSERT INTO chunks
              (file_id, chunk_index, content, char_count, source_start, source_end, content_hash)
-             VALUES (?1, 0, ?2, ?3, 0, ?4, ?5)",
+             VALUES (?1, 0, ?2, ?3, ?4, ?5, ?6)",
             rusqlite::params![
                 file_id,
                 excerpt,
                 excerpt.chars().count() as i64,
-                excerpt.len() as i64,
+                source_start as i64,
+                source_end as i64,
                 crate::cas::hash::content_hash_str(excerpt),
             ],
         )?;
@@ -507,6 +510,22 @@ fn index_scoped_note(db: &Database, path: &str, title: &str, body: &str, excerpt
         Ok(())
     })
     .expect("index scoped note");
+}
+
+fn note_reference(id: &str, path: &str, body: &str) -> ContextReferenceWire {
+    ContextReferenceWire {
+        id: id.into(),
+        kind: ContextReferenceKind::Note,
+        file_path: Some(path.into()),
+        content_hash: Some(crate::cas::hash::content_hash_str(body)),
+        utf8_range: None,
+        editor_range: None,
+        excerpt: "client body must be ignored".into(),
+        heading_path: None,
+        anchor: None,
+        stale: false,
+        invalid_reason: None,
+    }
 }
 
 #[test]
@@ -573,20 +592,71 @@ fn scope_only_context_performs_deterministic_retrieval_before_provider_dispatch(
 }
 
 #[test]
+fn mixed_full_material_and_scope_still_retrieves_uncovered_scoped_paths() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    std::fs::create_dir_all(vault.join("scoped")).expect("scoped directory");
+    let full_body = "full explicit evidence";
+    std::fs::write(vault.join("notes/full.md"), full_body).expect("full note");
+    let scoped_body = "mixed-scope-needle additional evidence";
+    std::fs::write(vault.join("scoped/other.md"), scoped_body).expect("scoped note");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(&db, "scoped/other.md", "Other", scoped_body, scoped_body);
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "mixed-material-scope".into(),
+            run_id: "run-mixed-material-scope".into(),
+            turn_id: "turn-mixed-material-scope".into(),
+            message: "mixed-scope-needle".into(),
+            content_parts: None,
+            explicit_references: vec![note_reference("full", "notes/full.md", full_body)],
+            context_scope: crate::ai_runtime::retrieval_scope::ContextScopeDto {
+                path_prefixes: vec!["scoped/".into()],
+                ..Default::default()
+            },
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::ExplicitScope,
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-mixed-material-scope",
+    )
+    .expect("mixed context");
+
+    let paths = context
+        .materials
+        .iter()
+        .map(|material| material.source_path.as_str())
+        .collect::<Vec<_>>();
+    assert!(paths.contains(&"notes/full.md"));
+    assert!(paths.contains(&"scoped/other.md"));
+}
+
+#[test]
 fn oversized_note_falls_back_to_exact_scope_retrieval_without_truncating_fulltext() {
     let dir = tempfile::tempdir().expect("vault");
     let vault = dir.path().join("vault");
     std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
     let body = format!("long-note-needle {}", "x".repeat(13_000));
+    let indexed_excerpt = &body[..128];
     std::fs::write(vault.join("notes/long.md"), &body).expect("long note");
     let db = Database::open_in_memory().expect("database");
-    index_scoped_note(
-        &db,
-        "notes/long.md",
-        "Long",
-        &body,
-        "long-note-needle exact scoped excerpt",
-    );
+    index_scoped_note(&db, "notes/long.md", "Long", &body, indexed_excerpt);
     let session = NormalSessionRepository::create(&db).expect("session");
     AgentRunRepository::accept(
         &db,
@@ -632,11 +702,243 @@ fn oversized_note_falls_back_to_exact_scope_retrieval_without_truncating_fulltex
 
     assert_eq!(context.materials.len(), 1);
     assert_eq!(context.materials[0].source_path, "notes/long.md");
-    assert_eq!(
-        context.materials[0].content,
-        "long-note-needle exact scoped excerpt"
-    );
+    assert_eq!(context.materials[0].content, indexed_excerpt);
+    assert!(context.retrieval_scope.is_unrestricted());
     assert_ne!(context.materials[0].content, body);
+}
+
+#[test]
+fn oversized_note_fallback_is_query_independent_and_does_not_expand_tool_scope() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let body = format!("indexed first chunk {}", "x".repeat(13_000));
+    let excerpt = &body[..128];
+    std::fs::write(vault.join("notes/query-independent.md"), &body).expect("long note");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/query-independent.md",
+        "Query Independent",
+        &body,
+        excerpt,
+    );
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "query-independent-fallback".into(),
+            run_id: "run-query-independent-fallback".into(),
+            turn_id: "turn-query-independent-fallback".into(),
+            message: "this query does not occur in the note".into(),
+            content_parts: None,
+            explicit_references: vec![note_reference("long", "notes/query-independent.md", &body)],
+            context_scope: crate::ai_runtime::retrieval_scope::ContextScopeDto {
+                path_prefixes: vec!["allowed/".into()],
+                ..Default::default()
+            },
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-query-independent-fallback",
+    )
+    .expect("query-independent exact-path fallback");
+
+    assert_eq!(context.materials[0].content, excerpt);
+    assert!(!context
+        .retrieval_scope
+        .matches_path("notes/query-independent.md"));
+}
+
+#[test]
+fn oversized_note_fallback_prefers_a_later_current_chunk_that_matches_the_query() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let relevant = "later-query-needle evidence";
+    let body = format!("{}\n{relevant}\n{}", "a".repeat(256), "x".repeat(13_000));
+    let first_excerpt = &body[..128];
+    let relevant_start = body.find(relevant).expect("relevant span");
+    let relevant_end = relevant_start + relevant.len();
+    std::fs::write(vault.join("notes/later-chunk.md"), &body).expect("long note");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/later-chunk.md",
+        "Later Chunk",
+        &body,
+        first_excerpt,
+    );
+    db.with_conn(|conn| {
+        let file_id: i64 = conn.query_row(
+            "SELECT id FROM files WHERE path = 'notes/later-chunk.md'",
+            [],
+            |row| row.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO chunks
+             (file_id, chunk_index, content, char_count, source_start, source_end, content_hash)
+             VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![
+                file_id,
+                relevant,
+                relevant.chars().count() as i64,
+                relevant_start as i64,
+                relevant_end as i64,
+                crate::cas::hash::content_hash_str(relevant),
+            ],
+        )?;
+        Ok(())
+    })
+    .expect("index relevant chunk");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "later-relevant-chunk".into(),
+            run_id: "run-later-relevant-chunk".into(),
+            turn_id: "turn-later-relevant-chunk".into(),
+            message: "later-query-needle".into(),
+            content_parts: None,
+            explicit_references: vec![note_reference("later", "notes/later-chunk.md", &body)],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-later-relevant-chunk",
+    )
+    .expect("relevant exact-path chunk");
+
+    assert_eq!(context.materials[0].content, relevant);
+    assert!(context.retrieval_scope.is_unrestricted());
+}
+
+#[test]
+fn oversized_note_fallback_rejects_a_chunk_that_does_not_match_current_disk() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let body = format!("real disk content {}", "x".repeat(13_000));
+    std::fs::write(vault.join("notes/dirty-index.md"), &body).expect("long note");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/dirty-index.md",
+        "Dirty",
+        &body,
+        "fabricated indexed chunk",
+    );
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "dirty-index-fallback".into(),
+            run_id: "run-dirty-index-fallback".into(),
+            turn_id: "turn-dirty-index-fallback".into(),
+            message: "real disk content".into(),
+            content_parts: None,
+            explicit_references: vec![note_reference("dirty", "notes/dirty-index.md", &body)],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let error = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-dirty-index-fallback",
+    )
+    .expect_err("dirty indexed chunks must fail closed");
+
+    assert_eq!(
+        error.to_string(),
+        "agent_run_local_reference_index_unavailable"
+    );
+}
+
+#[test]
+fn exact_path_fallback_supports_more_than_eight_long_references() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let db = Database::open_in_memory().expect("database");
+    let mut references = Vec::new();
+    for index in 0..9 {
+        let path = format!("notes/long-{index}.md");
+        let body = format!("shared-fallback-term-{index} {}", "x".repeat(13_000));
+        let excerpt = &body[..96];
+        std::fs::write(vault.join(&path), &body).expect("long note");
+        index_scoped_note(&db, &path, &format!("Long {index}"), &body, excerpt);
+        references.push(note_reference(&format!("long-{index}"), &path, &body));
+    }
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "nine-long-fallbacks".into(),
+            run_id: "run-nine-long-fallbacks".into(),
+            turn_id: "turn-nine-long-fallbacks".into(),
+            message: "shared-fallback-term".into(),
+            content_parts: None,
+            explicit_references: references,
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-nine-long-fallbacks",
+    )
+    .expect("all exact fallback paths must be resolved independently");
+
+    assert_eq!(context.materials.len(), 9);
+    assert_eq!(context.local_retrieval_packets.len(), 9);
 }
 
 #[test]
@@ -647,6 +949,7 @@ fn total_material_budget_falls_back_only_the_overflowing_note_to_exact_scope_ret
     let first = format!("first {}", "a".repeat(10_900));
     let second = format!("second {}", "b".repeat(10_900));
     let third = format!("third-budget-needle {}", "c".repeat(10_900));
+    let third_indexed_excerpt = &third[..128];
     for (name, body) in [
         ("first.md", &first),
         ("second.md", &second),
@@ -660,7 +963,7 @@ fn total_material_budget_falls_back_only_the_overflowing_note_to_exact_scope_ret
         "notes/third.md",
         "Third",
         &third,
-        "third-budget-needle exact scoped excerpt",
+        third_indexed_excerpt,
     );
     let session = NormalSessionRepository::create(&db).expect("session");
     let references = [("first", &first), ("second", &second), ("third", &third)]
@@ -712,10 +1015,7 @@ fn total_material_budget_falls_back_only_the_overflowing_note_to_exact_scope_ret
     assert_eq!(context.materials.len(), 3);
     assert_eq!(context.materials[0].content, first);
     assert_eq!(context.materials[1].content, second);
-    assert_eq!(
-        context.materials[2].content,
-        "third-budget-needle exact scoped excerpt"
-    );
+    assert_eq!(context.materials[2].content, third_indexed_excerpt);
 }
 
 #[test]
@@ -838,6 +1138,123 @@ fn explicit_materials_register_as_run_owned_evidence_without_storing_bodies() {
         Ok(())
     })
     .expect("ledger metadata");
+}
+
+#[test]
+fn completed_run_never_persists_transient_fallback_reference_bodies() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let marker = "TRANSIENT-FALLBACK-BODY-MUST-NOT-PERSIST";
+    let body = format!("{marker} {}", "x".repeat(13_000));
+    let indexed_excerpt = &body[..128];
+    std::fs::write(vault.join("notes/transient.md"), &body).expect("long note");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/transient.md",
+        "Transient",
+        &body,
+        indexed_excerpt,
+    );
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "transient-body-run".into(),
+            run_id: "run-transient-body".into(),
+            turn_id: "turn-transient-body".into(),
+            message: "请概述附件".into(),
+            content_parts: None,
+            explicit_references: vec![note_reference("transient", "notes/transient.md", &body)],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-transient-body",
+    )
+    .expect("assembled context");
+    assert!(context.materials[0].content.contains(marker));
+    let evidence_ids = RunContextAssembler::register_evidence(&db, "run-transient-body", &context)
+        .expect("registered evidence");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-transient-body".into(),
+            state_version: 0,
+            event_type: crate::ai_runtime::run_contract::RunEventType::StageChanged,
+            payload: crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
+                state: crate::ai_runtime::run_contract::RunState::Preparing,
+                stage: "正在准备".into(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-transient-body".into(),
+            state_version: preparing.state_version(),
+            event_type: crate::ai_runtime::run_contract::RunEventType::StageChanged,
+            payload: crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
+                state: crate::ai_runtime::run_contract::RunState::Running,
+                stage: "正在回答".into(),
+            },
+        },
+    )
+    .expect("running");
+    AgentRunRepository::finalize(
+        &db,
+        FinalizeRunInput {
+            run_id: "run-transient-body".into(),
+            state_version: running.state_version(),
+            content: "已依据附件完成概述。".into(),
+            evidence_ids,
+            citation_map: serde_json::json!({}),
+        },
+    )
+    .expect("completed run");
+
+    db.with_read_conn(|conn| {
+        let persisted: String = conn.query_row(
+            "SELECT r.envelope_json || '|' ||
+                    COALESCE(r.explicit_action_json, '') || '|' ||
+                    r.goal_summary || '|' ||
+                    COALESCE((
+                        SELECT group_concat(
+                            COALESCE(content, '') || ':' ||
+                            COALESCE(explicit_references_json, '') || ':' ||
+                            COALESCE(context_scope_json, '') || ':' ||
+                            COALESCE(display_mentions_json, ''),
+                            '|'
+                        )
+                        FROM session_messages
+                        WHERE session_id = r.session_id AND turn_id = r.turn_id
+                    ), '') || '|' ||
+                    COALESCE((SELECT group_concat(payload_json, '|') FROM agent_run_events WHERE run_id = r.run_id), '') || '|' ||
+                    COALESCE((SELECT group_concat(title || ':' || source_path || ':' || content_hash || ':' || COALESCE(retrieval_reason, ''), '|') FROM session_evidence WHERE origin_run_id = r.run_id), '')
+             FROM agent_runs r
+             WHERE r.run_id = 'run-transient-body'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(!persisted.contains(marker));
+        assert!(!persisted.contains(indexed_excerpt));
+        Ok(())
+    })
+    .expect("inspect completed run storage");
 }
 
 #[test]

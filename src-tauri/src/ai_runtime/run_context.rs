@@ -4,7 +4,10 @@
 //! single Run. It never accepts client excerpts, reads active editor state, or
 //! scans a vault for related documents.
 
+use std::collections::HashSet;
 use std::path::Path;
+
+use rusqlite::OptionalExtension;
 
 use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, LocalEvidenceInput, MaterialRole,
@@ -19,7 +22,7 @@ use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::run_contract::{ExecutionEnvelope, SafeRunErrorCode};
-use crate::ai_types::{ContextPacket, ContextReferenceKind};
+use crate::ai_types::{ContextPacket, ContextReferenceKind, SourceSpan, SourceType, TrustLevel};
 use crate::error::{AppError, AppResult};
 
 const MAX_EXPLICIT_MATERIALS: usize = 12;
@@ -258,10 +261,7 @@ impl RunContextAssembler {
                 }
             }
         }
-        let mut retrieval_scope_input = input.retrieval_scope;
-        retrieval_scope_input
-            .paths
-            .extend(fallback_paths.iter().cloned());
+        let retrieval_scope_input = input.retrieval_scope;
         let has_requested_scope = !retrieval_scope_input.paths.is_empty()
             || !retrieval_scope_input.path_prefixes.is_empty()
             || !retrieval_scope_input.corpus_ids.is_empty()
@@ -279,19 +279,41 @@ impl RunContextAssembler {
         } else {
             RetrievalScope::default()
         };
-        let requires_scoped_retrieval =
-            !fallback_paths.is_empty() || (has_requested_scope && materials.is_empty());
-        let local_retrieval_packets = if requires_scoped_retrieval {
-            retrieve_scoped_materials(
+        let mut local_retrieval_packets = if fallback_paths.is_empty() {
+            Vec::new()
+        } else {
+            retrieve_exact_fallback_materials(db, vault, &input.user_message, &fallback_paths)?
+        };
+        if has_requested_scope {
+            let full_material_paths = materials
+                .iter()
+                .map(|material| material.source_path.as_str())
+                .collect::<HashSet<_>>();
+            let fallback_path_set = fallback_paths
+                .iter()
+                .map(String::as_str)
+                .collect::<HashSet<_>>();
+            let mut scoped_packets = retrieve_scoped_materials(
                 db,
                 &input.user_message,
                 &retrieval_scope,
                 &corpus_config,
-                &fallback_paths,
-            )?
-        } else {
-            Vec::new()
-        };
+            )?;
+            scoped_packets.retain(|packet| {
+                packet.source_path.as_deref().is_some_and(|path| {
+                    !full_material_paths.contains(path) && !fallback_path_set.contains(path)
+                })
+            });
+            for packet in scoped_packets {
+                let duplicate = local_retrieval_packets.iter().any(|existing| {
+                    existing.source_path == packet.source_path
+                        && existing.source_span == packet.source_span
+                });
+                if !duplicate {
+                    local_retrieval_packets.push(packet);
+                }
+            }
+        }
         for packet in &local_retrieval_packets {
             let Some(material) = material_from_packet(packet) else {
                 continue;
@@ -503,8 +525,7 @@ fn resolve_explicit_reference(
         return Err(AppError::msg("agent_run_invalid_explicit_reference"));
     }
     let (source_span_start, source_span_end, content) = if let Some(range) = &reference.utf8_range {
-        if range.start > range.end
-            || range.start == range.end
+        if range.start >= range.end
             || range.end > full_content.len()
             || !full_content.is_char_boundary(range.start)
             || !full_content.is_char_boundary(range.end)
@@ -541,7 +562,6 @@ fn retrieve_scoped_materials(
     query: &str,
     scope: &RetrievalScope,
     corpus_config: &crate::knowledge::corpora::CorpusConfig,
-    required_paths: &[String],
 ) -> AppResult<Vec<ContextPacket>> {
     let outcome = db
         .with_read_conn(|conn| {
@@ -576,17 +596,131 @@ fn retrieve_scoped_materials(
                 | crate::ai_runtime::retrieval_broker::RetrievalLayerStatus::Empty
         )
     });
-    if !local_index_responded
-        || required_paths.iter().any(|required| {
-            !outcome
-                .packets
-                .iter()
-                .any(|packet| packet.source_path.as_deref() == Some(required.as_str()))
-        })
-    {
+    if !local_index_responded {
         return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
     }
     Ok(outcome.packets)
+}
+
+fn retrieve_exact_fallback_materials(
+    db: &crate::storage::db::Database,
+    vault: Option<&Path>,
+    query: &str,
+    required_paths: &[String],
+) -> AppResult<Vec<ContextPacket>> {
+    let vault =
+        vault.ok_or_else(|| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+    let mut packets = Vec::with_capacity(required_paths.len());
+    for (index, path) in required_paths.iter().enumerate() {
+        let resolved = crate::storage::paths::validate_user_note_relative_path(vault, path)
+            .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+        let disk_content = std::fs::read_to_string(resolved)
+            .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+        let current_file_hash = crate::cas::hash::content_hash_str(&disk_content);
+        let indexed = db
+            .with_read_conn(|conn| {
+                let file = conn
+                    .query_row(
+                        "SELECT id, title, content_hash
+                         FROM files WHERE path = ?1 ORDER BY id DESC LIMIT 1",
+                        [path],
+                        |row| {
+                            Ok((
+                                row.get::<_, i64>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()?;
+                let Some((file_id, title, file_hash)) = file else {
+                    return Ok(None);
+                };
+                let mut statement = conn.prepare(
+                    "SELECT content, heading_path, source_start, source_end, content_hash
+                     FROM chunks
+                     WHERE file_id = ?1
+                     ORDER BY CASE
+                         WHEN ?2 <> '' AND instr(lower(content), lower(?2)) > 0 THEN 0
+                         ELSE 1
+                     END,
+                     COALESCE(source_start, 9223372036854775807), chunk_index",
+                )?;
+                let chunks = statement
+                    .query_map(rusqlite::params![file_id, query], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, Option<String>>(1)?,
+                            row.get::<_, Option<i64>>(2)?,
+                            row.get::<_, Option<i64>>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Some((title, file_hash, chunks)))
+            })
+            .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+        let Some((title, Some(indexed_file_hash), chunks)) = indexed else {
+            return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+        };
+        if indexed_file_hash != current_file_hash {
+            return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+        }
+        let selected =
+            chunks
+                .into_iter()
+                .find_map(|(content, heading_path, start, end, content_hash)| {
+                    let (Some(start), Some(end), Some(content_hash)) = (start, end, content_hash)
+                    else {
+                        return None;
+                    };
+                    let (Ok(start), Ok(end)) = (usize::try_from(start), usize::try_from(end))
+                    else {
+                        return None;
+                    };
+                    if start >= end
+                        || end > disk_content.len()
+                        || !disk_content.is_char_boundary(start)
+                        || !disk_content.is_char_boundary(end)
+                        || content.is_empty()
+                        || content.chars().count() > MAX_EXPLICIT_MATERIAL_CHARS
+                        || content_hash.trim().is_empty()
+                        || crate::cas::hash::content_hash_str(&content) != content_hash
+                        || disk_content.get(start..end) != Some(content.as_str())
+                    {
+                        return None;
+                    }
+                    Some((content, heading_path, start, end, content_hash))
+                });
+        let Some((content, heading_path, start, end, content_hash)) = selected else {
+            return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+        };
+        packets.push(ContextPacket {
+            id: format!("explicit-fallback-{index}"),
+            source_type: SourceType::Note,
+            source_path: Some(path.clone()),
+            title: title.unwrap_or_else(|| path.clone()),
+            heading_path,
+            source_span: Some(SourceSpan { start, end }),
+            content_hash,
+            excerpt: content,
+            retrieval_reason: "explicit_reference_exact_path_fallback".to_string(),
+            score: 1.0,
+            trust_level: TrustLevel::UserNote,
+            citation_label: format!("[L{}]", index + 1),
+            stale: false,
+            web: None,
+            corpus: None,
+        });
+    }
+    if required_paths.iter().any(|required| {
+        !packets
+            .iter()
+            .any(|packet| packet.source_path.as_deref() == Some(required.as_str()))
+    }) {
+        return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+    }
+    Ok(packets)
 }
 
 fn material_from_packet(packet: &ContextPacket) -> Option<RunContextMaterial> {
@@ -602,6 +736,6 @@ fn material_from_packet(packet: &ContextPacket) -> Option<RunContextMaterial> {
         source_span_start: span.start as i64,
         source_span_end: span.end as i64,
         content: packet.excerpt.clone(),
-        retrieval_reason: "scoped_local_retrieval".to_string(),
+        retrieval_reason: packet.retrieval_reason.clone(),
     })
 }

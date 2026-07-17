@@ -184,9 +184,14 @@ pub(super) async fn get_block_links(
         let mut links = Vec::new();
         for row in rows {
             let (id, target_path, link_type, is_confirmed) = row?;
-            if target_path.as_deref().is_some_and(|path| {
-                !ctx.retrieval_scope.allows_path(conn, path).unwrap_or(false)
-            }) {
+            let Some(target_path) = target_path else {
+                continue;
+            };
+            if !ctx
+                .retrieval_scope
+                .allows_path(conn, &target_path)
+                .unwrap_or(false)
+            {
                 continue;
             }
             links.push(serde_json::json!({

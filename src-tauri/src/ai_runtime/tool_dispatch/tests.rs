@@ -247,6 +247,46 @@ async fn list_vault_returns_only_paths_inside_the_immutable_run_scope() {
 }
 
 #[tokio::test]
+async fn get_block_links_drops_rows_without_a_resolved_target_path() {
+    let (state, _dir) = test_state();
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files
+                 (path, title, content_hash, word_count, created_at, updated_at)
+                 VALUES ('notes/test.md', 'Test', 'hash', 1, datetime('now'), datetime('now'))",
+                [],
+            )?;
+            let source_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO block_links
+                 (source_file_id, source_anchor_key, target_file_id, target_anchor_key,
+                  link_type, confidence, is_confirmed, created_by, created_at)
+                 VALUES (?1, NULL, NULL, 'missing-target', 'wikilink', 1.0, 0, 'test', datetime('now'))",
+                [source_id],
+            )?;
+            Ok(())
+        })
+        .expect("seed unresolved block link");
+    let scope = crate::ai_runtime::retrieval_scope::RetrievalScope {
+        path_prefixes: vec!["notes/".into()],
+        ..Default::default()
+    };
+    let ctx = dispatch_context_with_retrieval_scope(&scope);
+
+    let result = note_impl::get_block_links(
+        &state,
+        &ctx,
+        &serde_json::json!({ "note_path": "notes/test.md" }),
+    )
+    .await
+    .expect("block links");
+
+    assert_eq!(result["links"], serde_json::json!([]));
+}
+
+#[tokio::test]
 async fn tag_only_run_scope_applies_to_direct_note_reads() {
     let (state, _dir) = test_state();
     index_tagged_note(&state, "notes/test.md", "daily");

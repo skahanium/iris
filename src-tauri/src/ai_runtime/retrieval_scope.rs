@@ -41,12 +41,14 @@ impl RetrievalScope {
     }
 
     pub fn matches_path(&self, path: &str) -> bool {
+        let Ok(norm) = normalize_relative(path, false) else {
+            return false;
+        };
         if self.is_path_unrestricted() {
             return true;
         }
-        let norm = path.replace('\\', "/");
         for exact in &self.paths {
-            if norm == exact.replace('\\', "/") {
+            if norm == *exact {
                 return true;
             }
         }
@@ -254,11 +256,8 @@ pub fn filter_packets_by_scope<T>(
     scope: &RetrievalScope,
     path_fn: impl Fn(&T) -> Option<&str>,
 ) {
-    if scope.is_path_unrestricted() {
-        return;
-    }
     packets.retain(|p| match path_fn(p) {
-        None => false,
+        None => scope.is_path_unrestricted(),
         Some(path) => scope.matches_path(path),
     });
 }
@@ -298,7 +297,11 @@ pub fn filter_packets_by_required_tags<T>(
         .query_map(params_from_iter(tags.iter()), |row| row.get::<_, String>(0))?
         .collect::<Result<_, _>>()?;
 
-    packets.retain(|packet| path_fn(packet).is_some_and(|path| allowed_paths.contains(path)));
+    packets.retain(|packet| {
+        path_fn(packet)
+            .and_then(|path| normalize_relative(path, false).ok())
+            .is_some_and(|path| allowed_paths.contains(&path))
+    });
     Ok(())
 }
 
@@ -343,6 +346,23 @@ mod tests {
         assert!(scope.matches_path("范文/样例.md"));
         assert!(!scope.matches_path("其他/笔记.md"));
         assert!(!scope.matches_path("党纪法规-归档/条例.md"));
+    }
+
+    #[test]
+    fn candidate_paths_are_canonicalized_and_unsafe_candidates_fail_closed() {
+        let exact = RetrievalScope {
+            paths: vec!["notes/safe.md".into()],
+            ..RetrievalScope::default()
+        };
+        assert!(exact.matches_path("notes/./safe.md"));
+
+        let prefix = RetrievalScope {
+            path_prefixes: vec!["notes/".into()],
+            ..RetrievalScope::default()
+        };
+        assert!(!prefix.matches_path("notes/../private/secret.md"));
+        assert!(!prefix.matches_path("notes/../.classified/secret.md"));
+        assert!(!prefix.matches_path(".iris/runtime.md"));
     }
 
     #[test]

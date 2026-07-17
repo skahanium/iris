@@ -74,8 +74,21 @@ fn accept_input(session_id: i64, session_key: String) -> AcceptRunInput {
 #[test]
 fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
     let (db, session_id, session_key) = setup();
-    let accepted = AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
-        .expect("accepted run");
+    let mut input = accept_input(session_id, session_key.clone());
+    input.explicit_references.push(ContextReferenceWire {
+        id: "note-ref".into(),
+        kind: ContextReferenceKind::Note,
+        file_path: Some("notes/full.md".into()),
+        content_hash: Some("note-hash".into()),
+        utf8_range: None,
+        editor_range: None,
+        excerpt: "整篇笔记的客户端正文同样不得持久化".into(),
+        heading_path: None,
+        anchor: None,
+        stale: false,
+        invalid_reason: None,
+    });
+    let accepted = AgentRunRepository::accept(&db, input).expect("accepted run");
 
     assert_eq!(accepted.run_id, "run-1");
     assert_eq!(accepted.turn_id, "turn-1");
@@ -104,6 +117,7 @@ fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
         assert!(!goal_summary.contains("完整提问"));
         assert!(refs_json.contains("notes/roadmap.md"));
         assert!(!refs_json.contains("秘密正文"));
+        assert!(!refs_json.contains("整篇笔记的客户端正文"));
         assert!(!refs_json.contains("excerpt"));
 
         let (event_seq, event_type, payload): (i64, String, String) = conn.query_row(
