@@ -210,7 +210,6 @@ export interface SelectionSnapshot {
   referenceId: string;
   contentHash: string;
   utf8Range: SourceSpan;
-  text: string;
 }
 
 /** Safe ledger projection: never includes source body, location, or prompts. */

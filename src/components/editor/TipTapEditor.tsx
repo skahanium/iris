@@ -42,6 +42,7 @@ import {
   ingestMarkdownForEditorSafely,
   type EditorIngestResult,
 } from "@/lib/editor-ingest";
+import { installEditorMarkdownSourceProjection } from "@/lib/context-reference";
 import {
   EDITOR_INGEST_WORKER_THRESHOLD_BYTES,
   ingestMarkdownForEditorAsync,
@@ -102,6 +103,9 @@ interface TipTapEditorProps {
   /** Body markdown only (frontmatter / document title are separate). */
 
   initialBodyMarkdown: string;
+
+  /** Complete last-committed note used only for range projection. */
+  committedSourceMarkdown?: string | null;
 
   /** Already-ingested TipTap HTML prepared before this editor becomes visible. */
   initialEditorHtml?: string | null;
@@ -178,6 +182,8 @@ interface TipTapEditorProps {
 
 function TipTapEditorInner({
   initialBodyMarkdown,
+
+  committedSourceMarkdown = null,
 
   initialEditorHtml = null,
 
@@ -652,6 +658,29 @@ function TipTapEditorInner({
       if (secondFrameId !== null) cancelFrame(secondFrameId);
     };
   }, [editor, flushBodyStats, parsedContentRevision]);
+
+  useEffect(() => {
+    if (
+      !editor ||
+      editor.isDestroyed ||
+      !committedSourceMarkdown ||
+      !contentCacheKey ||
+      !contentReadyRef.current
+    ) {
+      return;
+    }
+    installEditorMarkdownSourceProjection(editor, {
+      filePath: contentCacheKey,
+      committedMarkdown: committedSourceMarkdown,
+      bodyMarkdown: initialBodyMarkdown,
+    });
+  }, [
+    committedSourceMarkdown,
+    contentCacheKey,
+    editor,
+    initialBodyMarkdown,
+    parsedContentRevision,
+  ]);
 
   const openLinkEditor = useCallback(
     (targetEditor: Editor) => {

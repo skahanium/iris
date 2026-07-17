@@ -44,6 +44,7 @@ interface EditorSurfaceSnapshot {
   activeFileLocked: boolean;
   activeNoteIsClassified: boolean;
   cacheNamespace: EditorHtmlCacheNamespace;
+  committedSourceMarkdown: string;
   editorBodyMarkdown: string;
   editorContentTick: number;
   editorPreparedHtml: string | null;
@@ -75,6 +76,7 @@ interface AppEditorWorkspaceProps {
   activeMediaTab: MediaTab | null;
   activeNoteIsClassified: boolean;
   activePath: string | null;
+  committedSourceMarkdown?: string;
   editorBodyMarkdown: string;
   editorContentTick: number;
   editorContextMenu: EditorMenuPort;
@@ -199,6 +201,7 @@ export function AppEditorWorkspace({
   activeMediaTab,
   activeNoteIsClassified,
   activePath,
+  committedSourceMarkdown = "",
   editorBodyMarkdown,
   editorContentTick,
   editorContextMenu,
@@ -247,6 +250,8 @@ export function AppEditorWorkspace({
   const effectiveNotePath = pendingNoteOpen?.path ?? activePath;
   const effectiveBodyMarkdown =
     pendingNoteOpen?.bodyMarkdown ?? editorBodyMarkdown;
+  const effectiveCommittedSourceMarkdown =
+    pendingNoteOpen?.content ?? committedSourceMarkdown;
   const effectivePreparedHtml =
     pendingNoteOpen?.preparedEditorHtml ?? editorPreparedHtml;
   const workspaceInteractionLocked =
@@ -283,6 +288,7 @@ export function AppEditorWorkspace({
       activeFileLocked: effectiveLocked,
       activeNoteIsClassified: effectiveNamespace === "classified",
       cacheNamespace: effectiveNamespace,
+      committedSourceMarkdown: effectiveCommittedSourceMarkdown,
       editorBodyMarkdown: effectiveBodyMarkdown,
       editorContentTick,
       editorPreparedHtml: prepared,
@@ -295,6 +301,7 @@ export function AppEditorWorkspace({
     editorContentTick,
     editorTitleSlot,
     effectiveBodyMarkdown,
+    effectiveCommittedSourceMarkdown,
     effectiveLocked,
     effectiveNamespace,
     effectiveNotePath,
@@ -752,6 +759,7 @@ export function AppEditorWorkspace({
           <ErrorBoundary scope="editor">
             <TipTapEditor
               initialBodyMarkdown={snapshot.editorBodyMarkdown}
+              committedSourceMarkdown={snapshot.committedSourceMarkdown}
               initialEditorHtml={snapshot.editorPreparedHtml}
               contentCacheKey={snapshot.path}
               contentCacheNamespace={snapshot.cacheNamespace}

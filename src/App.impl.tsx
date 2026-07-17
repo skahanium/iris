@@ -255,6 +255,7 @@ function App() {
     webSearchProviders,
   } = useAiSidecarBridge({
     editorRef,
+    isDocumentDirty: () => dirtyRef.current,
     setAiStatus,
   });
   const openClassifiedPaths = useMemo(
@@ -437,7 +438,6 @@ function App() {
     syncTabMarkdownCache,
     tabsRef,
   });
-
   discardPristineNoteRef.current = discardPristineNote;
   updateInstallBarrierRef.current = flushAllOpenTabs;
 
@@ -447,14 +447,13 @@ function App() {
     () => activeFileLocked || departureInteractionLockedRef.current,
     [activeFileLocked],
   );
-
   const inlineAi = useInlineAi({
     domain: inlineAiDomain,
+    isDocumentDirty: () => dirtyRef.current,
     isMutationBlocked: isEditorMutationBlocked,
     onStatus: setAiStatus,
   });
   abortInlineAiForPersistenceRef.current = inlineAi.abortAndDetach;
-
   const {
     loading: embeddingStatusLoading,
     reportForegroundActivity,
@@ -807,6 +806,7 @@ function App() {
             activeMediaTab={activeMediaTab}
             activeNoteIsClassified={activeNoteIsClassified}
             activePath={activePath}
+            committedSourceMarkdown={markdown}
             editorBodyMarkdown={editorBodyMarkdown}
             editorContentTick={editorContentTick}
             editorContextMenu={editorContextMenu}

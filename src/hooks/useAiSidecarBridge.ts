@@ -7,7 +7,7 @@ import {
   type RefObject,
 } from "react";
 
-import { getEditorSelectionSnapshot } from "@/lib/iris-clipboard";
+import { createEditorContextReference } from "@/lib/context-reference";
 import {
   getWebSearchAvailability,
   type WebSearchProviderOption,
@@ -17,14 +17,17 @@ import {
   EMPTY_ASSISTANT_CHROME,
   type AssistantChromeSnapshot,
 } from "@/types/assistant-chrome";
+import type { ContextReference } from "@/types/ai";
 
 interface UseAiSidecarBridgeParams {
   editorRef: RefObject<Editor | null>;
+  isDocumentDirty?: () => boolean;
   setAiStatus: (message: string) => void;
 }
 
 export function useAiSidecarBridge({
   editorRef,
+  isDocumentDirty = () => false,
   setAiStatus,
 }: UseAiSidecarBridgeParams) {
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
@@ -38,6 +41,8 @@ export function useAiSidecarBridge({
   const [webSearchProvidersLoaded, setWebSearchProvidersLoaded] =
     useState(false);
   const [prefillMessage, setPrefillMessage] = useState<string | null>(null);
+  const [editorSelectionReference, setEditorSelectionReference] =
+    useState<ContextReference | null>(null);
   const [assistantChrome, setAssistantChrome] =
     useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
 
@@ -132,21 +137,34 @@ export function useAiSidecarBridge({
   }, []);
 
   const sendSelectionToAi = useCallback(
-    (options?: { prefill?: string }) => {
+    async (options?: { prefill?: string }) => {
       const ed = editorRef.current;
-      if (!ed || !getEditorSelectionSnapshot(ed)) {
+      if (!ed) {
+        setEditorSelectionReference(null);
         setAiStatus("请先在编辑器中选中文本");
         return;
       }
+      const result = await createEditorContextReference({
+        editor: ed,
+        kind: "selection",
+        isDirty: isDocumentDirty,
+      });
+      if (!result.ok) {
+        setEditorSelectionReference(null);
+        setAiStatus(result.message);
+        return;
+      }
+      setEditorSelectionReference(result.reference);
       setPrefillMessage(options?.prefill ?? null);
       setAiPanelOpen(true);
     },
-    [editorRef, setAiStatus],
+    [editorRef, isDocumentDirty, setAiStatus],
   );
 
   return {
     aiPanelOpen,
     assistantChrome,
+    editorSelectionReference,
     prefillMessage,
     setAiPanelOpen,
     setAssistantChrome,

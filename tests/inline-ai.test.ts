@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { act, createElement } from "react";
@@ -8,19 +10,26 @@ import { AiSourceHighlightExtension } from "@/components/editor/extensions/AiSou
 import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtension";
 import { getActiveAiStreamAttrs, useInlineAi } from "@/hooks/useInlineAi";
 import {
+  EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE,
+  installEditorMarkdownSourceProjection,
+} from "@/lib/context-reference";
+import {
   assistantRunControl,
   assistantRunStart,
+  fileSignature,
   listenAssistantRunEvent,
 } from "@/lib/ipc";
 
 vi.mock("@/lib/ipc", () => ({
   assistantRunControl: vi.fn(),
   assistantRunStart: vi.fn(),
+  fileSignature: vi.fn(),
   listenAssistantRunEvent: vi.fn(),
 }));
 
 const mockAssistantRunControl = vi.mocked(assistantRunControl);
 const mockAssistantRunStart = vi.mocked(assistantRunStart);
+const mockFileSignature = vi.mocked(fileSignature);
 const mockListenAssistantRunEvent = vi.mocked(listenAssistantRunEvent);
 
 const editorExtensions = [
@@ -29,21 +38,49 @@ const editorExtensions = [
   AiStreamExtension,
 ];
 
+let diskMarkdown = "";
+
+async function signatureFor(content: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(content),
+  );
+  return {
+    byteLength: new TextEncoder().encode(content).length,
+    contentHash: Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join(""),
+    isLocked: false,
+    modifiedMs: 1,
+  };
+}
+
+async function sha256ForExpectation(content: string): Promise<string> {
+  return (await signatureFor(content)).contentHash;
+}
+
 function createEditor(text = "selected source text"): Editor {
-  return new Editor({
+  const editor = new Editor({
     extensions: editorExtensions,
     content: {
       type: "doc",
       content: [{ type: "paragraph", content: [{ type: "text", text }] }],
     },
   });
+  diskMarkdown = text;
+  installEditorMarkdownSourceProjection(editor, {
+    filePath: "notes/inline.md",
+    committedMarkdown: text,
+    bodyMarkdown: text,
+  });
+  return editor;
 }
 
 function acceptedRun() {
   return {
     runId: "run-inline-1",
     turnId: "turn-inline-1",
-    session: { domain: "classified" as const, sessionKey: "session-inline-1" },
+    session: { domain: "normal" as const, sessionKey: "session-inline-1" },
     state: "accepted" as const,
     stateVersion: 1,
   };
@@ -96,6 +133,8 @@ describe("useInlineAi", () => {
   let container: HTMLDivElement;
   let api: ReturnType<typeof useInlineAi>;
   let mutationBlocked = false;
+  let documentDirty = false;
+  let status = "";
   let emit:
     | ((
         event: Parameters<Parameters<typeof listenAssistantRunEvent>[0]>[0],
@@ -104,8 +143,12 @@ describe("useInlineAi", () => {
 
   function Host() {
     api = useInlineAi({
-      domain: "classified",
+      domain: "normal",
+      isDocumentDirty: () => documentDirty,
       isMutationBlocked: () => mutationBlocked,
+      onStatus: (message) => {
+        status = message;
+      },
     });
     return null;
   }
@@ -113,9 +156,13 @@ describe("useInlineAi", () => {
   beforeEach(() => {
     mockAssistantRunControl.mockReset();
     mockAssistantRunStart.mockReset();
+    mockFileSignature.mockReset();
     mockListenAssistantRunEvent.mockReset();
     emit = null;
     mutationBlocked = false;
+    documentDirty = false;
+    status = "";
+    mockFileSignature.mockImplementation(() => signatureFor(diskMarkdown));
     mockAssistantRunStart.mockResolvedValue(acceptedRun());
     mockListenAssistantRunEvent.mockImplementation(async (handler) => {
       emit = handler;
@@ -147,21 +194,28 @@ describe("useInlineAi", () => {
     expect(mockAssistantRunStart).toHaveBeenCalledTimes(1);
     expect(mockAssistantRunStart).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: expect.stringContaining("selected"),
-        securityDomain: "classified",
+        securityDomain: "normal",
         webEnabled: false,
         explicitAction: expect.objectContaining({ effect: "draft" }),
-        explicitReferences: [
-          expect.objectContaining({
-            kind: "selection",
-            filePath: null,
-            editorRange: null,
-          }),
-        ],
+        turn: expect.objectContaining({
+          message: "请改写当前选区的文字，保持原意。",
+          explicitReferences: [
+            expect.objectContaining({
+              kind: "selection",
+              filePath: "notes/inline.md",
+              contentHash: await sha256ForExpectation(diskMarkdown),
+              utf8Range: expect.objectContaining({ start: 0 }),
+            }),
+          ],
+          retrievalScope: { paths: [], pathPrefixes: [] },
+          displayMentions: [],
+        }),
       }),
     );
     const request = mockAssistantRunStart.mock.calls[0]?.[0];
-    expect(request?.message).not.toContain("unrelated document body");
+    expect(JSON.stringify(request)).not.toContain("selected source text");
+    expect(JSON.stringify(request)).not.toContain("unrelated document body");
+    expect(JSON.stringify(request)).not.toContain("selectionSnapshot");
     expect(JSON.stringify(request)).not.toContain(".classified/secret.md");
     editor.destroy();
   });
@@ -215,13 +269,16 @@ describe("useInlineAi", () => {
 
     expect(mockAssistantRunStart).toHaveBeenCalledWith(
       expect.objectContaining({
-        explicitReferences: [],
         explicitAction: { effect: "draft" },
-        securityDomain: "classified",
+        securityDomain: "normal",
+        turn: expect.objectContaining({
+          explicitReferences: [],
+          retrievalScope: { paths: [], pathPrefixes: [] },
+          displayMentions: [],
+        }),
       }),
     );
     const request = mockAssistantRunStart.mock.calls[0]?.[0];
-    expect(request?.message).not.toContain("document body must stay out");
     expect(JSON.stringify(request)).not.toContain(
       "document body must stay out",
     );
@@ -237,7 +294,7 @@ describe("useInlineAi", () => {
     });
 
     expect(mockAssistantRunControl).toHaveBeenCalledWith({
-      session: { domain: "classified", sessionKey: "session-inline-1" },
+      session: { domain: "normal", sessionKey: "session-inline-1" },
       runId: "run-inline-1",
       expectedStateVersion: 1,
       action: { type: "cancel" },
@@ -272,11 +329,48 @@ describe("useInlineAi", () => {
 
     expect(editor.getText()).toBe(beforeBarrier);
     expect(mockAssistantRunControl).toHaveBeenCalledWith({
-      session: { domain: "classified", sessionKey: "session-inline-1" },
+      session: { domain: "normal", sessionKey: "session-inline-1" },
       runId: "run-inline-1",
       expectedStateVersion: 1,
       action: { type: "cancel" },
     });
     editor.destroy();
+  });
+
+  it("refuses a dirty selection before inserting a stream or starting a Run", async () => {
+    const editor = createEditor("selected source text");
+    editor.commands.setTextSelection({ from: 1, to: 9 });
+    documentDirty = true;
+
+    await act(async () => {
+      await api.run(editor, "rewrite");
+    });
+
+    expect(mockAssistantRunStart).not.toHaveBeenCalled();
+    expect(editor.state.doc.content.lastChild?.type.name).not.toBe("aiStream");
+    expect(status).toBe(EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE);
+    editor.destroy();
+  });
+
+  it("refuses to reuse a selection reference after the document becomes dirty", async () => {
+    const editor = createEditor("selected source text");
+    editor.commands.setTextSelection({ from: 1, to: 9 });
+
+    await act(async () => {
+      await api.run(editor, "rewrite");
+    });
+    documentDirty = true;
+    await act(async () => {
+      await api.retry(editor);
+    });
+
+    expect(mockAssistantRunStart).toHaveBeenCalledTimes(1);
+    expect(status).toBe(EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE);
+    editor.destroy();
+  });
+
+  it("receives the document-level dirty state from the app", () => {
+    const app = readFileSync("src/App.impl.tsx", "utf8");
+    expect(app).toContain("isDocumentDirty: () => dirtyRef.current");
   });
 });

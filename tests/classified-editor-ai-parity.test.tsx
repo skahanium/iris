@@ -88,7 +88,8 @@ describe("classified editor AI parity contract", () => {
 
     it("send selection to AI only opens the Run panel after an explicit selection", () => {
       const src = read("src/hooks/useAiSidecarBridge.ts");
-      expect(src).toContain("getEditorSelectionSnapshot");
+      expect(src).toContain("createEditorContextReference");
+      expect(src).toContain("editorSelectionReference");
       expect(src).toContain("setAiPanelOpen(true)");
       expect(src).not.toContain("isClassifiedVaultPath");
       expect(src).not.toContain("getNoteContent");

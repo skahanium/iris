@@ -52,8 +52,12 @@ describe("Assistant Run 前端合同", () => {
   it("keeps model overrides and structured run diagnostics forward-compatible", () => {
     const request = {
       clientRequestId: "client-request-routing-001",
-      message: "Find current MCP guidance",
-      explicitReferences: [],
+      turn: {
+        message: "Find current MCP guidance",
+        explicitReferences: [],
+        retrievalScope: { paths: [], pathPrefixes: [] },
+        displayMentions: [],
+      },
       webEnabled: true,
       securityDomain: "normal",
       modelOverride: { providerId: "openai", modelId: "gpt-5" },
@@ -227,9 +231,13 @@ describe("Assistant Run 前端合同", () => {
     const request = {
       clientRequestId: "client-request-001",
       session,
-      message: "请仅根据这段选区起草摘要",
-      contentParts: [{ type: "text", text: "请仅根据这段选区起草摘要" }],
-      explicitReferences: [],
+      turn: {
+        message: "请仅根据这段选区起草摘要",
+        contentParts: [{ type: "text", text: "请仅根据这段选区起草摘要" }],
+        explicitReferences: [],
+        retrievalScope: { paths: [], pathPrefixes: [] },
+        displayMentions: [],
+      },
       explicitAction: {
         effect: "draft",
         target: { referenceId: "ref-001", contentHash: "sha256:target" },
@@ -237,7 +245,6 @@ describe("Assistant Run 前端合同", () => {
           referenceId: "ref-001",
           contentHash: "sha256:selection",
           utf8Range: { start: 0, end: 12 },
-          text: "显式选区正文",
         },
       },
       webEnabled: false,
@@ -246,12 +253,10 @@ describe("Assistant Run 前端合同", () => {
 
     expect(Object.keys(request).sort()).toEqual([
       "clientRequestId",
-      "contentParts",
       "explicitAction",
-      "explicitReferences",
-      "message",
       "securityDomain",
       "session",
+      "turn",
       "webEnabled",
     ]);
   });

@@ -1,14 +1,17 @@
 import type { Editor } from "@tiptap/react";
 import { useCallback, useEffect, useRef } from "react";
 
-import { createContextReference } from "@/lib/context-reference";
-import { getEditorSelectionSnapshot } from "@/lib/iris-clipboard";
+import {
+  createEditorContextReference,
+  EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE,
+  type EditorContextReferenceResult,
+} from "@/lib/context-reference";
 import {
   buildSlashCommandMessage,
   parseSlashActionId,
   slashActionId,
 } from "@/lib/slash-command-prompts";
-import { buildInlineAiUserMessage } from "@/lib/inline-ai-prompts";
+import { buildInlineAiSelectionReferentPrompt } from "@/lib/inline-ai-prompts";
 import {
   assistantRunControl,
   assistantRunStart,
@@ -25,6 +28,7 @@ export const INLINE_AI_REPLACE_SELECTION = "replace_selection";
 
 export interface UseInlineAiOptions {
   domain?: AiDomain;
+  isDocumentDirty?: () => boolean;
   isMutationBlocked?: () => boolean;
   onStatus?: (status: string) => void;
 }
@@ -63,35 +67,33 @@ export function buildRetryRequest(ctx: {
     originalText: ctx.originalText,
     message: slash
       ? buildSlashCommandMessage(slash)
-      : buildInlineAiUserMessage(ctx.action, ctx.originalText),
+      : buildInlineAiSelectionReferentPrompt(ctx.action),
   };
 }
 
-/** Builds a Run reference from exactly the text the user selected, never editor-wide state. */
-export function buildInlineSelectionReference(
+/** Use the same disk-verified projection factory as the assistant sidecar. */
+export async function buildInlineSelectionReference(
   editor: Editor,
-): ContextReference | null {
-  const snapshot = getEditorSelectionSnapshot(editor);
-  return snapshot
-    ? createContextReference({
-        kind: "selection",
-        filePath: null,
-        content: snapshot.text,
-        utf8Range: null,
-        editorRange: null,
-      })
-    : null;
+  isDirty: () => boolean = () => false,
+): Promise<EditorContextReferenceResult> {
+  return createEditorContextReference({
+    editor,
+    kind: "selection",
+    isDirty,
+  });
 }
 
 interface ActiveInlineRun {
   runId: string;
   stateVersion: number;
   session: AssistantSessionRef;
+  reference: ContextReference | null;
 }
 
 /** Inline AI presents the same persistent Run lifecycle as the assistant panel. */
 export function useInlineAi({
   domain = "normal",
+  isDocumentDirty = () => false,
   isMutationBlocked = () => false,
   onStatus,
 }: UseInlineAiOptions = {}) {
@@ -101,6 +103,8 @@ export function useInlineAi({
   const unlistenRef = useRef<(() => void) | null>(null);
   const isMutationBlockedRef = useRef(isMutationBlocked);
   isMutationBlockedRef.current = isMutationBlocked;
+  const isDocumentDirtyRef = useRef(isDocumentDirty);
+  isDocumentDirtyRef.current = isDocumentDirty;
 
   const mutationBlocked = useCallback(() => isMutationBlockedRef.current(), []);
 
@@ -137,8 +141,12 @@ export function useInlineAi({
       try {
         const accepted = await assistantRunStart({
           clientRequestId: crypto.randomUUID(),
-          message: request.message,
-          explicitReferences: reference ? [reference] : [],
+          turn: {
+            message: request.message,
+            explicitReferences: reference ? [reference] : [],
+            retrievalScope: { paths: [], pathPrefixes: [] },
+            displayMentions: [],
+          },
           explicitAction: reference
             ? {
                 effect: "draft",
@@ -157,6 +165,7 @@ export function useInlineAi({
           runId: accepted.runId,
           stateVersion: accepted.stateVersion,
           session: accepted.session,
+          reference: reference ?? null,
         };
         unlistenRef.current = await listenAssistantRunEvent((event) => {
           const active = activeRef.current;
@@ -208,18 +217,25 @@ export function useInlineAi({
       const { from, to } = editor.state.selection;
       const originalText = editor.state.doc.textBetween(from, to, "\n").trim();
       if (!originalText) return;
+      const referenceResult = await buildInlineSelectionReference(editor, () =>
+        isDocumentDirtyRef.current(),
+      );
+      if (!referenceResult.ok) {
+        onStatus?.(referenceResult.message);
+        return;
+      }
       editor.commands.insertAiStreamForSelection({ originalText, action });
       await start(
         editor,
         {
           action,
           originalText,
-          message: buildInlineAiUserMessage(action, originalText),
+          message: buildInlineAiSelectionReferentPrompt(action),
         },
-        buildInlineSelectionReference(editor),
+        referenceResult.reference,
       );
     },
-    [mutationBlocked, start],
+    [mutationBlocked, onStatus, start],
   );
 
   const runSlash = useCallback(
@@ -241,13 +257,18 @@ export function useInlineAi({
       if (mutationBlocked()) return;
       const context = getActiveAiStreamAttrs(editor);
       if (!context) return;
+      const reference = activeRef.current?.reference ?? null;
+      if (reference && isDocumentDirtyRef.current()) {
+        onStatus?.(EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE);
+        return;
+      }
       await start(
         editor,
         buildRetryRequest(context),
-        context.originalText ? buildInlineSelectionReference(editor) : null,
+        context.originalText ? reference : null,
       );
     },
-    [mutationBlocked, start],
+    [mutationBlocked, onStatus, start],
   );
 
   const abort = useCallback(async () => {

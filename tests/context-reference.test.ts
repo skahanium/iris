@@ -2,77 +2,27 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import {
-  contextReferenceDisplayText,
-  createContextReference,
-  validateContextReference,
-} from "@/lib/context-reference";
+import { contextReferenceDisplayText } from "@/lib/context-reference";
+import type { ContextReference } from "@/types/ai";
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
 describe("context references", () => {
-  it("preserves an irregular partial selection range", () => {
-    const content = "第一段：甲乙丙丁。";
-    const start = new TextEncoder().encode("第一段：甲").length;
-    const end = new TextEncoder().encode("第一段：甲乙丙").length;
-
-    const reference = createContextReference({
-      kind: "selection",
-      filePath: "notes/a.md",
-      content,
-      utf8Range: { start, end },
-      editorRange: { from: 4, to: 7 },
-    });
-
-    expect(reference.utf8Range).toEqual({ start, end });
-    expect(reference.editorRange).toEqual({ from: 4, to: 7 });
-    expect(reference.excerpt).toBe("乙丙");
-  });
-
-  it("preserves a cross-paragraph selection without expanding to full paragraphs", () => {
-    const content = "第一段开头\n第二段中间\n第三段结尾";
-    const start = new TextEncoder().encode("第一段开").length;
-    const end = new TextEncoder().encode("第一段开头\n第二段中").length;
-
-    const reference = createContextReference({
-      kind: "selection",
-      filePath: "notes/a.md",
-      content,
-      utf8Range: { start, end },
-      editorRange: { from: 3, to: 10 },
-    });
-
-    expect(reference.excerpt).toBe("头\n第二段中");
-    expect(reference.excerpt).not.toContain("第一段开");
-    expect(reference.excerpt).not.toContain("间\n第三段");
-  });
-
-  it("marks a reference stale when content hash changes", () => {
-    const reference = createContextReference({
-      kind: "selection",
-      filePath: "notes/a.md",
-      content: "原始内容",
-      utf8Range: null,
-      editorRange: null,
-    });
-
-    const checked = validateContextReference(reference, "修改后的内容");
-
-    expect(checked.stale).toBe(true);
-    expect(checked.invalidReason).toBe("content_changed");
-  });
-
   it("creates a lightweight display capsule without dumping the whole source text", () => {
     const content = "很长的选区".repeat(30);
-    const reference = createContextReference({
+    const reference = {
+      id: "selection:notes/long-note.md:hash:0:12",
       kind: "selection",
       filePath: "/vault/projects/long-note.md",
-      content,
-      utf8Range: null,
-      editorRange: null,
-    });
+      contentHash: "a".repeat(64),
+      utf8Range: { start: 0, end: 12 },
+      editorRange: { from: 1, to: 5 },
+      excerpt: "选区摘要",
+      stale: false,
+      invalidReason: null,
+    } satisfies ContextReference;
 
     const display = contextReferenceDisplayText(reference);
 
@@ -90,6 +40,8 @@ describe("context references", () => {
     expect(routing).not.toContain("RuntimeDocumentSnapshot");
     expect(bridge).not.toContain("getNoteContent");
     expect(bridge).not.toContain("content: classifiedSelection");
+    expect(bridge).toContain("createEditorContextReference");
+    expect(bridge).not.toContain("getEditorSelectionSnapshot");
   });
   it("serializes references through the unified Run sender", () => {
     const sender = read("src/components/ai/hooks/useUnifiedAssistantSend.ts");
