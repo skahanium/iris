@@ -248,7 +248,10 @@ impl RunContextAssembler {
                     let material_chars = material.content.chars().count();
                     if total_chars.saturating_add(material_chars) > MAX_TOTAL_MATERIAL_CHARS {
                         if reference.kind == ContextReferenceKind::Note {
-                            fallback_paths.push(material.source_path);
+                            fallback_paths.push(ExactScopeFallback {
+                                path: material.source_path,
+                                full_content_hash: material.content_hash,
+                            });
                             continue;
                         }
                         return Err(AppError::msg("agent_run_invalid_explicit_reference"));
@@ -291,7 +294,7 @@ impl RunContextAssembler {
                 .collect::<HashSet<_>>();
             let fallback_path_set = fallback_paths
                 .iter()
-                .map(String::as_str)
+                .map(|fallback| fallback.path.as_str())
                 .collect::<HashSet<_>>();
             let mut scoped_packets = retrieve_scoped_materials(
                 db,
@@ -481,7 +484,12 @@ fn evidence_material_role(role: DomainMaterialRole) -> MaterialRole {
 }
 enum ResolvedExplicitReference {
     Material(RunContextMaterial),
-    ExactScopeFallback(String),
+    ExactScopeFallback(ExactScopeFallback),
+}
+
+struct ExactScopeFallback {
+    path: String,
+    full_content_hash: String,
 }
 
 fn resolve_explicit_reference(
@@ -542,7 +550,12 @@ fn resolve_explicit_reference(
     };
     if content.chars().count() > MAX_EXPLICIT_MATERIAL_CHARS {
         if reference.kind == ContextReferenceKind::Note {
-            return Ok(ResolvedExplicitReference::ExactScopeFallback(path));
+            return Ok(ResolvedExplicitReference::ExactScopeFallback(
+                ExactScopeFallback {
+                    path,
+                    full_content_hash: actual_hash,
+                },
+            ));
         }
         return Err(AppError::msg("agent_run_invalid_explicit_reference"));
     }
@@ -606,17 +619,21 @@ fn retrieve_exact_fallback_materials(
     db: &crate::storage::db::Database,
     vault: Option<&Path>,
     query: &str,
-    required_paths: &[String],
+    required_fallbacks: &[ExactScopeFallback],
 ) -> AppResult<Vec<ContextPacket>> {
     let vault =
         vault.ok_or_else(|| AppError::msg("agent_run_local_reference_index_unavailable"))?;
-    let mut packets = Vec::with_capacity(required_paths.len());
-    for (index, path) in required_paths.iter().enumerate() {
+    let mut packets = Vec::with_capacity(required_fallbacks.len());
+    for (index, fallback) in required_fallbacks.iter().enumerate() {
+        let path = &fallback.path;
         let resolved = crate::storage::paths::validate_user_note_relative_path(vault, path)
             .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
         let disk_content = std::fs::read_to_string(resolved)
             .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
         let current_file_hash = crate::cas::hash::content_hash_str(&disk_content);
+        if current_file_hash != fallback.full_content_hash {
+            return Err(AppError::msg("agent_run_explicit_reference_changed"));
+        }
         let indexed = db
             .with_read_conn(|conn| {
                 let file = conn
@@ -713,10 +730,10 @@ fn retrieve_exact_fallback_materials(
             corpus: None,
         });
     }
-    if required_paths.iter().any(|required| {
+    if required_fallbacks.iter().any(|required| {
         !packets
             .iter()
-            .any(|packet| packet.source_path.as_deref() == Some(required.as_str()))
+            .any(|packet| packet.source_path.as_deref() == Some(required.path.as_str()))
     }) {
         return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
     }
@@ -738,4 +755,94 @@ fn material_from_packet(packet: &ContextPacket) -> Option<RunContextMaterial> {
         content: packet.excerpt.clone(),
         retrieval_reason: packet.retrieval_reason.clone(),
     })
+}
+
+#[cfg(test)]
+mod fallback_version_tests {
+    use super::*;
+
+    #[test]
+    fn exact_fallback_rejects_a_new_file_version_even_when_its_index_is_synchronized() {
+        let dir = tempfile::tempdir().expect("vault");
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+        let version_a = format!("version-a {}", "a".repeat(13_000));
+        let version_b = format!("version-b {}", "b".repeat(13_000));
+        std::fs::write(vault.join("notes/changing.md"), &version_a).expect("version A");
+        let db = crate::storage::db::Database::open_in_memory().expect("database");
+        let hash_a = crate::cas::hash::content_hash_str(&version_a);
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files
+                 (path, title, content_hash, word_count, created_at, updated_at)
+                 VALUES ('notes/changing.md', 'Changing', ?1, 1, datetime('now'), datetime('now'))",
+                [&hash_a],
+            )?;
+            let file_id = conn.last_insert_rowid();
+            let excerpt = &version_a[..128];
+            conn.execute(
+                "INSERT INTO chunks
+                 (file_id, chunk_index, content, char_count, source_start, source_end, content_hash)
+                 VALUES (?1, 0, ?2, ?3, 0, ?4, ?5)",
+                rusqlite::params![
+                    file_id,
+                    excerpt,
+                    excerpt.chars().count() as i64,
+                    excerpt.len() as i64,
+                    crate::cas::hash::content_hash_str(excerpt),
+                ],
+            )?;
+            Ok(())
+        })
+        .expect("index version A");
+        let reference = StoredExplicitReference {
+            kind: ContextReferenceKind::Note,
+            file_path: Some("notes/changing.md".into()),
+            content_hash: Some(hash_a),
+            utf8_range: None,
+            stale: false,
+            invalid_reason: None,
+        };
+        let fallback = match resolve_explicit_reference(Some(&vault), &reference)
+            .expect("first read validates version A")
+        {
+            ResolvedExplicitReference::ExactScopeFallback(fallback) => fallback,
+            ResolvedExplicitReference::Material(_) => panic!("long note must use fallback"),
+        };
+
+        std::fs::write(vault.join("notes/changing.md"), &version_b).expect("version B");
+        let hash_b = crate::cas::hash::content_hash_str(&version_b);
+        db.with_conn(|conn| {
+            let file_id: i64 = conn.query_row(
+                "SELECT id FROM files WHERE path = 'notes/changing.md'",
+                [],
+                |row| row.get(0),
+            )?;
+            conn.execute(
+                "UPDATE files SET content_hash = ?1 WHERE id = ?2",
+                rusqlite::params![hash_b, file_id],
+            )?;
+            conn.execute("DELETE FROM chunks WHERE file_id = ?1", [file_id])?;
+            let excerpt = &version_b[..128];
+            conn.execute(
+                "INSERT INTO chunks
+                 (file_id, chunk_index, content, char_count, source_start, source_end, content_hash)
+                 VALUES (?1, 0, ?2, ?3, 0, ?4, ?5)",
+                rusqlite::params![
+                    file_id,
+                    excerpt,
+                    excerpt.chars().count() as i64,
+                    excerpt.len() as i64,
+                    crate::cas::hash::content_hash_str(excerpt),
+                ],
+            )?;
+            Ok(())
+        })
+        .expect("synchronize index to version B");
+
+        let error = retrieve_exact_fallback_materials(&db, Some(&vault), "version-b", &[fallback])
+            .expect_err("fallback must remain bound to initially validated version A");
+
+        assert_eq!(error.to_string(), "agent_run_explicit_reference_changed");
+    }
 }

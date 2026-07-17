@@ -1215,11 +1215,38 @@ fn completed_run_never_persists_transient_fallback_reference_bodies() {
         },
     )
     .expect("running");
+    let tool_started = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-transient-body".into(),
+            state_version: running.state_version(),
+            event_type: crate::ai_runtime::run_contract::RunEventType::ToolStarted,
+            payload: crate::ai_runtime::run_contract::RunEventPayload::ToolStarted {
+                capability: "get_context_packets".into(),
+                tool_call_id: "tool-transient-body".into(),
+            },
+        },
+    )
+    .expect("tool started");
+    let tool_completed = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-transient-body".into(),
+            state_version: tool_started.state_version(),
+            event_type: crate::ai_runtime::run_contract::RunEventType::ToolCompleted,
+            payload: crate::ai_runtime::run_contract::RunEventPayload::ToolCompleted {
+                capability: "get_context_packets".into(),
+                tool_call_id: "tool-transient-body".into(),
+                summary: "已读取受限上下文元数据".into(),
+            },
+        },
+    )
+    .expect("tool completed");
     AgentRunRepository::finalize(
         &db,
         FinalizeRunInput {
             run_id: "run-transient-body".into(),
-            state_version: running.state_version(),
+            state_version: tool_completed.state_version(),
             content: "已依据附件完成概述。".into(),
             evidence_ids,
             citation_map: serde_json::json!({}),
@@ -1252,6 +1279,29 @@ fn completed_run_never_persists_transient_fallback_reference_bodies() {
         )?;
         assert!(!persisted.contains(marker));
         assert!(!persisted.contains(indexed_excerpt));
+        let assistant_content: String = conn.query_row(
+            "SELECT content FROM session_messages
+             WHERE session_id = ?1 AND turn_id = 'turn-transient-body' AND role = 'assistant'",
+            [session.session_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(assistant_content, "已依据附件完成概述。");
+        assert!(!assistant_content.contains(marker));
+        let tool_event_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM agent_run_events
+             WHERE run_id = 'run-transient-body'
+               AND event_type IN ('tool_started', 'tool_completed')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(tool_event_count, 2);
+        let evidence_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_evidence
+             WHERE origin_run_id = 'run-transient-body'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(evidence_count, 1);
         Ok(())
     })
     .expect("inspect completed run storage");
