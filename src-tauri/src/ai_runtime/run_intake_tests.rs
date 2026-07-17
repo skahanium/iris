@@ -433,6 +433,42 @@ fn classified_intake_accepts_only_cef_facts_without_normal_sqlite_writes() {
     .expect("no normal-domain facts");
     std::fs::remove_dir_all(vault).unwrap();
 }
+
+#[test]
+fn classified_intake_rejects_nonempty_content_parts_at_the_start_boundary() {
+    let _test_lock = crate::crypto::vault_key::VAULT_KEY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    crate::crypto::vault_key::init_vault_key();
+    let mut key = crate::crypto::vault_key::VAULT_KEY
+        .get()
+        .expect("vault key initialized")
+        .write()
+        .expect("vault key write lock");
+    key.set_test_key([12; 32]);
+    drop(key);
+    let vault = std::env::temp_dir().join(format!(
+        "iris-classified-content-parts-{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&vault).unwrap();
+    let mut classified = request();
+    classified.client_request_id = "classified-content-parts".into();
+    classified.security_domain = SecurityDomain::Classified;
+    classified.turn.content_parts = Some(vec![crate::ai_types::ContentPart::Text {
+        text: "不得写入 CEF 的普通域内容分片".into(),
+    }]);
+
+    let result = RunIntake::start_classified(&vault, classified);
+    std::fs::remove_dir_all(vault).unwrap();
+
+    assert_eq!(
+        result
+            .expect_err("classified intake must reject content parts before CEF acceptance")
+            .to_string(),
+        "agent_run_invalid_request"
+    );
+}
 #[test]
 fn envelope_resolver_applies_security_action_and_web_rules_without_scene_inference() {
     let mut classified_apply = request();

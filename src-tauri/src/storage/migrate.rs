@@ -747,16 +747,11 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
-        let columns = conn
-            .prepare("PRAGMA table_info(session_messages)")
-            .unwrap()
-            .query_map([], |row| row.get::<_, String>(1))
-            .unwrap()
-            .flatten()
-            .collect::<Vec<_>>();
-        assert!(columns.contains(&"context_scope_json".to_string()));
-        assert!(columns.contains(&"display_mentions_json".to_string()));
-
+        rollback_migration(
+            &conn,
+            "055_session_message_turn_context",
+            MIGRATION_055_DOWN,
+        );
         conn.execute(
             "INSERT INTO sessions (session_key, created_at, updated_at)
              VALUES ('migration-055-session', datetime('now'), datetime('now'))",
@@ -767,19 +762,55 @@ mod tests {
         conn.execute(
             "INSERT INTO session_messages
              (session_id, seq, role, content, created_at)
-             VALUES (?1, 1, 'user', 'legacy message', datetime('now'))",
+             VALUES (?1, 1, 'user', 'legacy message', '2026-01-02T03:04:05Z')",
             [session_id],
         )
         .unwrap();
-        let stored: (String, String) = conn
+        let pre_055_columns = conn
+            .prepare("PRAGMA table_info(session_messages)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(!pre_055_columns.contains(&"context_scope_json".to_string()));
+        assert!(!pre_055_columns.contains(&"display_mentions_json".to_string()));
+
+        apply_migration(
+            &conn,
+            "055_session_message_turn_context",
+            MIGRATION_055_UP,
+            false,
+        )
+        .unwrap();
+
+        let columns = conn
+            .prepare("PRAGMA table_info(session_messages)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(columns.contains(&"context_scope_json".to_string()));
+        assert!(columns.contains(&"display_mentions_json".to_string()));
+
+        let stored: (String, String, String, String) = conn
             .query_row(
-                "SELECT context_scope_json, display_mentions_json
+                "SELECT content, created_at, context_scope_json, display_mentions_json
                  FROM session_messages WHERE session_id = ?1",
                 [session_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
-        assert_eq!(stored, ("[]".to_string(), "[]".to_string()));
+        assert_eq!(
+            stored,
+            (
+                "legacy message".to_string(),
+                "2026-01-02T03:04:05Z".to_string(),
+                "[]".to_string(),
+                "[]".to_string(),
+            )
+        );
     }
 
     #[test]
@@ -795,10 +826,29 @@ mod tests {
         let session_id = conn.last_insert_rowid();
         conn.execute(
             "INSERT INTO session_messages
-             (session_id, seq, role, content, context_scope_json,
-              display_mentions_json, created_at)
-             VALUES (?1, 1, 'user', 'preserved', '{}', '[]', datetime('now'))",
-            [session_id],
+             (id, session_id, seq, role, content, content_parts, tool_calls, turn_id,
+              explicit_references_json, evidence_refs_json, citation_map_json,
+              content_hash, vault_id, context_scope_json, display_mentions_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                     ?14, ?15, ?16)",
+            params![
+                501_i64,
+                session_id,
+                7_i64,
+                "assistant",
+                "preserved content",
+                r#"[{"type":"text","text":"part sentinel"}]"#,
+                r#"[{"id":"tool-call-sentinel"}]"#,
+                "turn-sentinel",
+                r#"[{"id":"reference-sentinel"}]"#,
+                r#"["evidence-sentinel"]"#,
+                r#"{"citation":"sentinel"}"#,
+                "content-hash-sentinel",
+                "vault-sentinel",
+                r#"{"paths":["notes/sentinel.md"]}"#,
+                r#"[{"label":"mention-sentinel"}]"#,
+                "2026-02-03T04:05:06Z",
+            ],
         )
         .unwrap();
 
@@ -808,14 +858,48 @@ mod tests {
             MIGRATION_055_DOWN,
         );
 
-        let content: String = conn
+        let stored = conn
             .query_row(
-                "SELECT content FROM session_messages WHERE session_id = ?1",
+                "SELECT id, session_id, seq, role, content, content_parts, tool_calls,
+                        turn_id, explicit_references_json, evidence_refs_json,
+                        citation_map_json, content_hash, vault_id, created_at
+                 FROM session_messages WHERE session_id = ?1",
                 [session_id],
-                |row| row.get(0),
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, String>(9)?,
+                        row.get::<_, String>(10)?,
+                        row.get::<_, String>(11)?,
+                        row.get::<_, String>(12)?,
+                        row.get::<_, String>(13)?,
+                    ))
+                },
             )
             .unwrap();
-        assert_eq!(content, "preserved");
+        assert_eq!(stored.0, 501);
+        assert_eq!(stored.1, session_id);
+        assert_eq!(stored.2, 7);
+        assert_eq!(stored.3, "assistant");
+        assert_eq!(stored.4, "preserved content");
+        assert_eq!(stored.5, r#"[{"type":"text","text":"part sentinel"}]"#);
+        assert_eq!(stored.6, r#"[{"id":"tool-call-sentinel"}]"#);
+        assert_eq!(stored.7, "turn-sentinel");
+        assert_eq!(stored.8, r#"[{"id":"reference-sentinel"}]"#);
+        assert_eq!(stored.9, r#"["evidence-sentinel"]"#);
+        assert_eq!(stored.10, r#"{"citation":"sentinel"}"#);
+        assert_eq!(stored.11, "content-hash-sentinel");
+        assert_eq!(stored.12, "vault-sentinel");
+        assert_eq!(stored.13, "2026-02-03T04:05:06Z");
+
         let columns = conn
             .prepare("PRAGMA table_info(session_messages)")
             .unwrap()
@@ -825,6 +909,60 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(!columns.contains(&"context_scope_json".to_string()));
         assert!(!columns.contains(&"display_mentions_json".to_string()));
+
+        let indexes = conn
+            .prepare("PRAGMA index_list(session_messages)")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(indexes
+            .iter()
+            .any(|(name, unique, _)| { name == "idx_session_messages_session" && *unique == 0 }));
+        assert!(indexes
+            .iter()
+            .any(|(name, unique, _)| { name == "idx_session_messages_vault_id" && *unique == 0 }));
+        assert!(indexes
+            .iter()
+            .any(|(_, unique, origin)| *unique == 1 && origin == "u"));
+
+        let duplicate = conn
+            .execute(
+                "INSERT INTO session_messages
+                 (session_id, seq, role, content, created_at)
+                 VALUES (?1, 7, 'user', 'duplicate', datetime('now'))",
+                [session_id],
+            )
+            .expect_err("rollback must preserve UNIQUE(session_id, seq)");
+        assert_eq!(
+            duplicate.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::ConstraintViolation)
+        );
+
+        let foreign_keys = conn
+            .prepare("PRAGMA foreign_key_list(session_messages)")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(foreign_keys.iter().any(|(table, from, to, on_delete)| {
+            table == "sessions" && from == "session_id" && to == "id" && on_delete == "CASCADE"
+        }));
     }
 
     #[test]

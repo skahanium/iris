@@ -447,7 +447,8 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
     if request.security_domain == SecurityDomain::Classified
         && (!request.turn.explicit_references.is_empty()
             || has_retrieval_scope(request)
-            || !request.turn.display_mentions.is_empty())
+            || !request.turn.display_mentions.is_empty()
+            || request.turn.content_parts.is_some())
     {
         return Err(AppError::msg("agent_run_invalid_request"));
     }
