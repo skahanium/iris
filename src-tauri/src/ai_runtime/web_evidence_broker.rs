@@ -2336,12 +2336,23 @@ mod tests {
 
         assert_eq!(arguments["query"], "latest news");
         assert_eq!(arguments["max_results"], 5);
-        assert_eq!(
-            crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&db).unwrap()[0]
-                .web_search_mapping_json
-                .as_deref(),
-            Some(legacy_mapping)
-        );
+        let stored_mapping: String = db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT web_search_mapping_json FROM web_evidence_providers WHERE id = ?1",
+                    ["anysearch-legacy"],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        let stored: serde_json::Value = serde_json::from_str(&stored_mapping).unwrap();
+        let expected: serde_json::Value = serde_json::json!({
+            "tool": "search",
+            "queryArg": "query",
+            "maxResultsArg": "max_results",
+        });
+        assert_eq!(stored, expected);
     }
 
     #[test]

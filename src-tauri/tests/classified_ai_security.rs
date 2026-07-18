@@ -280,7 +280,8 @@ fn classified_stream_events_and_abort_use_unified_gateway_contract() {
         "ModelGateway must expose observer-owned streaming entry"
     );
     assert!(
-        streaming_src.contains("pub classified: bool") && streaming_src.contains("\"classified\""),
+        streaming_src.contains("pub classified: bool")
+            && streaming_src.contains("classified,"),
         "stream event payloads must carry classified metadata"
     );
     assert!(

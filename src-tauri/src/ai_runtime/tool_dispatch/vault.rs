@@ -341,7 +341,7 @@ fn rewrite_source_wikilinks(
         &content,
         crate::version::SnapshotParams::manual(),
     )?;
-    NoteWriteService::write(state, source_path, &updated)?;
+    NoteWriteService::write_under_move_lock(state, source_path, &updated)?;
     Ok(true)
 }
 

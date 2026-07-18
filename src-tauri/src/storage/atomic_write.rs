@@ -70,6 +70,10 @@ pub(crate) fn atomic_create(path: &Path, data: &[u8]) -> AppResult<()> {
 }
 
 /// Serialize one vault move operation, including its post-move bookkeeping.
+///
+/// This lock is **not reentrant**. Callers that already hold it must use
+/// [`crate::storage::note_write::NoteWriteService::write_under_move_lock`]
+/// instead of APIs that acquire this lock again.
 pub(crate) fn with_vault_move_lock<T>(operation: impl FnOnce() -> AppResult<T>) -> AppResult<T> {
     let _guard = VAULT_MOVE_LOCK
         .lock()

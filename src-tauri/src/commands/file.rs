@@ -1081,7 +1081,7 @@ fn cascade_rewrite_wikilinks_on_disk(
 
         if changed {
             let updated = lines.join("\n");
-            NoteWriteService::write(state, &src_path, &updated)?;
+            NoteWriteService::write_under_move_lock(state, &src_path, &updated)?;
             modified.push(src_path);
         }
     }

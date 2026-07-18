@@ -40,7 +40,7 @@ pub(crate) struct NoteWriteService;
 impl NoteWriteService {
     /// Atomically persist a note body, then best-effort refresh its derived index.
     pub(crate) fn write(state: &AppState, path: &str, content: &str) -> AppResult<FileWriteResult> {
-        Self::write_inner(state, path, content, false)
+        with_vault_move_lock(|| Self::write_body(state, path, content, false))
     }
 
     /// Atomically create a note body without replacing an existing Markdown file.
@@ -49,7 +49,19 @@ impl NoteWriteService {
         path: &str,
         content: &str,
     ) -> AppResult<FileWriteResult> {
-        Self::write_inner(state, path, content, true)
+        with_vault_move_lock(|| Self::write_body(state, path, content, true))
+    }
+
+    /// Persist a note body when the caller already holds [`with_vault_move_lock`].
+    ///
+    /// `VAULT_MOVE_LOCK` is not reentrant; rename/trash cascades must use this
+    /// instead of [`Self::write`] to avoid deadlocking the coordinator.
+    pub(crate) fn write_under_move_lock(
+        state: &AppState,
+        path: &str,
+        content: &str,
+    ) -> AppResult<FileWriteResult> {
+        Self::write_body(state, path, content, false)
     }
 
     /// Move an existing plain Markdown file into the vault, then refresh its derived index.
@@ -95,7 +107,7 @@ impl NoteWriteService {
         );
     }
 
-    fn write_inner(
+    fn write_body(
         state: &AppState,
         path: &str,
         content: &str,
@@ -103,19 +115,15 @@ impl NoteWriteService {
     ) -> AppResult<FileWriteResult> {
         let vault = state.vault_path()?;
         let payload = encode_payload(path, content)?;
-        // Resolve the absolute path under the vault move lock so a concurrent
-        // rename/trash cannot move the target between path resolution and the
-        // durable write (which would recreate a ghost file at the old path).
-        let absolute = with_vault_move_lock(|| {
-            ensure_note_parent(&vault, path)?;
-            let absolute = resolve_vault_path(&vault, path)?;
-            if reject_existing {
-                atomic_create(&absolute, &payload)?;
-            } else {
-                atomic_write(&absolute, &payload)?;
-            }
-            Ok(absolute)
-        })?;
+        // Callers must hold the vault move lock so a concurrent rename/trash
+        // cannot move the target between path resolution and the durable write.
+        ensure_note_parent(&vault, path)?;
+        let absolute = resolve_vault_path(&vault, path)?;
+        if reject_existing {
+            atomic_create(&absolute, &payload)?;
+        } else {
+            atomic_write(&absolute, &payload)?;
+        }
 
         let hash = content_hash(content);
         state.storage.write_guard.mark(path, &hash);
