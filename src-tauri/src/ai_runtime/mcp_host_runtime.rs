@@ -666,7 +666,17 @@ where
             .filter(|item| !item.is_empty());
         if let Some(scheme) = scheme {
             if scheme.eq_ignore_ascii_case("bearer") {
-                value = format!("Bearer {value}");
+                let raw_key = value.trim();
+                if raw_key
+                    .get(..7)
+                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("bearer "))
+                {
+                    return Err(runtime_error(
+                        McpRuntimeFailureKind::AuthFailed,
+                        "MCP Bearer credential must contain the raw key only",
+                    ));
+                }
+                value = format!("Bearer {raw_key}");
             } else {
                 value = format!("{scheme} {value}");
             }
@@ -2246,6 +2256,23 @@ mod tests {
             headers,
             vec![("Authorization".into(), "Bearer test-header-key".into())]
         );
+    }
+
+    #[test]
+    fn bearer_binding_rejects_a_stored_bearer_prefix_before_network_access() {
+        let error = resolve_http_header_bindings_with_lookup(
+            r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.codex_header_present"}}}"#,
+            |service| match service {
+                "iris.mcp.codex_header_present" => Ok("Bearer test-header-key".into()),
+                _ => missing_test_credential(service),
+            },
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("auth_failed"), "{error}");
+        assert!(error.contains("raw key"), "{error}");
+        assert!(!error.contains("test-header-key"), "{error}");
     }
 
     #[test]

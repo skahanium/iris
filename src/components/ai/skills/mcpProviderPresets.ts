@@ -47,7 +47,10 @@ export const MCP_PROVIDER_PRESETS: McpProviderPreset[] = [
     transportKind: "https",
     providerName: "AnySearch",
     url: "https://api.anysearch.com/mcp",
-    searchMapping: mapping("search", { queryArg: "query" }),
+    searchMapping: mapping("search", {
+      queryArg: "query",
+      maxResultsArg: "max_results",
+    }),
     fetchMapping: mapping("extract", { urlArg: "url" }),
     credentials: [
       {

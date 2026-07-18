@@ -4,6 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
+  credentialDelete,
   credentialSet,
   webEvidenceProviderDelete,
   webEvidenceProviderDiagnostics,
@@ -222,6 +223,24 @@ export function McpProfilesPanel({
     }
   };
 
+  const clearCredential = async (service: string) => {
+    setSaving(true);
+    setMessage(null);
+    invalidateDiagnostics();
+    try {
+      await credentialDelete(service);
+      await load();
+      onProvidersChanged?.();
+      setMessage(
+        "已清除保存的 API Key；可保持为空并主动使用匿名额度，或重新输入原始 Key。",
+      );
+    } catch (error) {
+      setMessage(invokeErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const runDiagnostics = async (providerId: string) => {
     setMessage(null);
     invalidateDiagnostics();
@@ -288,6 +307,9 @@ export function McpProfilesPanel({
             invalidateDiagnostics();
             setDraft(null);
           }}
+          onClearCredential={() => {
+            setMessage("草稿尚未保存，没有可清除的 API Key。");
+          }}
           onDiagnostics={() => {
             setMessage("请先保存 MCP 提供方，再执行实时诊断。");
           }}
@@ -306,6 +328,7 @@ export function McpProfilesPanel({
               onSave={saveProvider}
               onToggle={(enabled) => toggleProvider(provider.id, enabled)}
               onDelete={() => deleteProvider(provider.id)}
+              onClearCredential={clearCredential}
               onDiagnostics={() => void runDiagnostics(provider.id)}
               onConfigurationChanged={invalidateDiagnostics}
             />

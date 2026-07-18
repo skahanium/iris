@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { McpProfilesPanel } from "@/components/ai/skills/McpProfilesPanel";
 
 const ipcMocks = vi.hoisted(() => ({
+  credentialDelete: vi.fn(),
   credentialSet: vi.fn(),
   webEvidenceProviderDelete: vi.fn(),
   webEvidenceProviderDiagnostics: vi.fn(),
@@ -29,7 +30,15 @@ const provider = {
   transportConfigJson: JSON.stringify({
     url: "https://api.anysearch.com/mcp",
   }),
-  credentialRefsJson: "{}",
+  credentialRefsJson: JSON.stringify({
+    headers: {
+      Authorization: {
+        credential: "credential://iris.mcp.anysearch",
+        scheme: "bearer",
+        optional: true,
+      },
+    },
+  }),
   searchMapping: "search",
   fetchMapping: "extract",
   mappingStatus: "complete",
@@ -78,6 +87,7 @@ describe("McpProfilesPanel 实时诊断", () => {
     document.body.append(host);
     root = createRoot(host);
     vi.clearAllMocks();
+    ipcMocks.credentialDelete.mockResolvedValue(undefined);
     ipcMocks.credentialSet.mockResolvedValue(undefined);
     ipcMocks.webEvidenceProviderDelete.mockResolvedValue(undefined);
     ipcMocks.webEvidenceProviderDiagnostics.mockResolvedValue(liveDiagnostics);
@@ -204,5 +214,49 @@ describe("McpProfilesPanel 实时诊断", () => {
     await flush();
 
     expect(host.textContent).not.toContain("实时可用性");
+  });
+
+  it("清除已保存 Key 会删除加密凭据并使实时诊断失效", async () => {
+    await act(async () => {
+      root.render(<McpProfilesPanel open />);
+    });
+    await flush();
+
+    await act(async () => {
+      button(host, "清除 Key").click();
+    });
+    await flush();
+
+    expect(ipcMocks.credentialDelete).toHaveBeenCalledWith(
+      "iris.mcp.anysearch",
+    );
+    expect(host.textContent).toContain("已清除保存的 API Key");
+  });
+
+  it("拒绝把 Bearer 前缀作为 API Key 保存", async () => {
+    await act(async () => {
+      root.render(<McpProfilesPanel open />);
+    });
+    await flush();
+
+    const input = host.querySelector<HTMLInputElement>(
+      'input[type="password"]',
+    );
+    if (!input) throw new Error("missing API Key input");
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setValue?.call(input, "Bearer test-key");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      button(host, "保存 MCP 提供方").click();
+    });
+    await flush();
+
+    expect(ipcMocks.credentialSet).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("只填写原始 Key");
   });
 });

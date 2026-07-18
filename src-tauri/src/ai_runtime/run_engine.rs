@@ -1184,6 +1184,7 @@ impl RunEngine {
                         code,
                         SafeRunErrorCode::WebProviderUnavailable
                             | SafeRunErrorCode::WebProviderTimeout
+                            | SafeRunErrorCode::WebProviderAuthFailed
                             | SafeRunErrorCode::WebProviderFailed
                             | SafeRunErrorCode::WebEvidenceInvalid
                     )
@@ -1714,6 +1715,9 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
             "未配置可用的联网证据提供方，请在联网与证据中完成配置"
         }
         SafeRunErrorCode::WebProviderTimeout => "联网证据服务响应超时，请稍后重试",
+        SafeRunErrorCode::WebProviderAuthFailed => {
+            "联网 API Key 无效，请在联网配置中重新输入原始 Key"
+        }
         SafeRunErrorCode::WebProviderFailed => "联网证据服务暂时不可用，请稍后重试",
         SafeRunErrorCode::WebEvidenceInvalid => "联网证据服务未返回可用结果，请稍后重试",
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
@@ -1745,6 +1749,7 @@ fn classify_web_evidence_stage_failure(error: &AppError) -> SafeRunErrorCode {
     match error.to_string().as_str() {
         "agent_run_mcp_unavailable" => SafeRunErrorCode::WebProviderUnavailable,
         "agent_run_web_provider_timeout" => SafeRunErrorCode::WebProviderTimeout,
+        "agent_run_web_provider_auth_failed" => SafeRunErrorCode::WebProviderAuthFailed,
         "agent_run_web_provider_failed" => SafeRunErrorCode::WebProviderFailed,
         "agent_run_web_evidence_invalid" => SafeRunErrorCode::WebEvidenceInvalid,
         _ => SafeRunErrorCode::WebProviderFailed,
@@ -1773,6 +1778,7 @@ pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
     match error.to_string().as_str() {
         "agent_run_mcp_unavailable" => SafeRunErrorCode::WebProviderUnavailable,
         "agent_run_web_provider_timeout" => SafeRunErrorCode::WebProviderTimeout,
+        "agent_run_web_provider_auth_failed" => SafeRunErrorCode::WebProviderAuthFailed,
         "agent_run_web_provider_failed" => SafeRunErrorCode::WebProviderFailed,
         "agent_run_web_evidence_invalid" | "agent_run_web_evidence_required" => {
             SafeRunErrorCode::WebEvidenceInvalid

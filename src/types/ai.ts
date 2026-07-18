@@ -333,6 +333,7 @@ export type AssistantRunErrorCode =
   | "agent_run_mcp_unavailable"
   | "agent_run_web_evidence_required"
   | "agent_run_web_provider_timeout"
+  | "agent_run_web_provider_auth_failed"
   | "agent_run_web_provider_failed"
   | "agent_run_web_evidence_invalid"
   | "agent_run_cancelled"

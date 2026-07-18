@@ -73,4 +73,25 @@ describe("AssistantRunCapabilityDegraded", () => {
     (buttons[1] as HTMLButtonElement).click();
     expect(openSettings).toHaveBeenCalledOnce();
   });
+
+  it("renders the precise non-retryable API Key remediation message", () => {
+    act(() => {
+      root.render(
+        <AssistantRunCapabilityDegraded
+          degradation={{
+            kind: "capability_degraded",
+            capability: "web.search",
+            code: "agent_run_web_provider_auth_failed",
+            retryable: false,
+            attemptCount: 1,
+            message:
+              "联网 API Key 无效，请重新输入原始 Key；已继续生成不依赖联网证据的受约束答复。",
+          }}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("联网 API Key 无效，请重新输入原始 Key");
+    expect(host.textContent).not.toContain("可稍后重试");
+  });
 });

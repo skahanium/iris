@@ -2172,6 +2172,12 @@ fn web_evidence_failure_classification_never_uses_model_provider_codes() {
         )),
         SafeRunErrorCode::WebProviderFailed,
     );
+    assert_eq!(
+        super::run_tool_loop::classify_web_evidence_failure(&AppError::msg(
+            "agent_run_web_provider_auth_failed",
+        )),
+        SafeRunErrorCode::WebProviderAuthFailed,
+    );
 }
 
 #[test]
@@ -2180,6 +2186,7 @@ fn web_failure_retryability_is_limited_to_known_transient_conditions() {
         "web_search_provider_missing",
         "provider_disabled: circuit_open",
         "unauthorized: invalid api key",
+        "agent_run_web_provider_auth_failed",
         "policy denied",
         "mcp_search_parse_empty:unrecognized_schema",
         "output too large",

@@ -435,21 +435,35 @@ fn provider_search_smoke_error_message(
 async fn run_mcp_search_smoke_test(
     db: &crate::storage::db::Database,
     provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
-) -> AppResult<(usize, String)> {
-    let probe =
-        crate::ai_runtime::web_evidence_broker::probe_mcp_search_provider_without_recording(
-            db,
-            &provider.id,
-            "Iris note app",
-            1,
-            // A required Run gives one individual MCP search attempt at most
-            // ten seconds (and may reserve the second ten seconds for its
-            // constrained recovery). Diagnostics must not advertise a
-            // provider as ready solely because a looser probe succeeds.
-            Duration::from_secs(10),
-        )
-        .await?;
-    Ok((probe.diagnostic.parsed_row_count, probe.summary()))
+) -> AppResult<crate::ai_runtime::web_evidence_broker::McpSearchProviderProbe> {
+    crate::ai_runtime::web_evidence_broker::probe_mcp_search_provider_without_recording(
+        db,
+        &provider.id,
+        "Iris note app",
+        1,
+        // A required Run gives one individual MCP search attempt at most
+        // ten seconds (and may reserve the second ten seconds for its
+        // constrained recovery). Diagnostics must not advertise a
+        // provider as ready solely because a looser probe succeeds.
+        Duration::from_secs(10),
+    )
+    .await
+}
+
+fn mcp_search_probe_failure_message(
+    failure: crate::ai_runtime::web_evidence_broker::McpApplicationFailureKind,
+) -> &'static str {
+    use crate::ai_runtime::web_evidence_broker::McpApplicationFailureKind;
+
+    match failure {
+        McpApplicationFailureKind::AuthFailed => {
+            "Key 无效、已撤销、仍是旧 Key，或保存值错误包含 Bearer 前缀"
+        }
+        McpApplicationFailureKind::RateLimited => "搜索服务触发限流，请稍后重试",
+        McpApplicationFailureKind::QuotaExceeded => "搜索服务额度已耗尽，请检查服务账户",
+        McpApplicationFailureKind::InvalidArguments => "搜索工具参数无效，请检查工具映射",
+        McpApplicationFailureKind::ProviderFailed => "搜索服务返回应用层错误",
+    }
 }
 
 async fn provider_diagnostics_for_summary(
@@ -554,25 +568,35 @@ async fn provider_diagnostics_for_summary(
                     ));
                     if exists && provider.web_search_mapping_json.is_some() {
                         match run_mcp_search_smoke_test(db, provider).await {
-                            Ok((parsed_row_count, diagnostic)) => {
-                                let parseable = parsed_row_count > 0;
-                                let auth_header_reported =
-                                    diagnostic.contains("auth header present");
+                            Ok(probe) => {
+                                let parseable = probe.diagnostic.parsed_row_count > 0;
+                                let call_succeeded = probe.diagnostic.application_failure.is_none();
                                 checks.push(provider_diagnostic_check(
                                     "searchSmokeAuthHeader",
-                                    auth_header_reported,
+                                    probe.auth_header_present,
                                     &format!(
-                                        "MCP search probe reported auth header present state: {auth_header_reported}"
+                                        "MCP search probe auth header present: {}",
+                                        probe.auth_header_present
                                     ),
                                 ));
                                 checks.push(provider_diagnostic_check(
                                     "searchSmokeLive",
-                                    true,
-                                    &format!(
-                                        "搜索调用正常，解析出 {parsed_row_count} 条网页证据；{diagnostic}"
-                                    ),
+                                    call_succeeded,
+                                    &if let Some(failure) = probe.diagnostic.application_failure {
+                                        format!(
+                                            "搜索调用失败：{}",
+                                            mcp_search_probe_failure_message(failure)
+                                        )
+                                    } else {
+                                        format!(
+                                            "搜索调用正常，解析出 {} 条网页证据；{}",
+                                            probe.diagnostic.parsed_row_count,
+                                            probe.summary()
+                                        )
+                                    },
                                 ));
-                                can_use_for_search = can_use_for_search && parseable;
+                                can_use_for_search =
+                                    can_use_for_search && call_succeeded && parseable;
                                 checks.push(provider_diagnostic_check(
                                     "searchResultParseLive",
                                     parseable,
@@ -644,6 +668,8 @@ async fn provider_diagnostics_for_summary(
         is_runtime_selected,
         status: if failures.is_empty() && provider.enabled {
             "ready".into()
+        } else if provider.enabled && mapping_status == "complete" {
+            "degraded".into()
         } else {
             provider_diagnostic_status(provider.enabled, &mapping_status)
         },

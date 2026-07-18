@@ -497,11 +497,17 @@ async fn collect_mcp_search_provider_fetch(
     .await;
     let probe = match probe_result {
         Ok(probe) => {
-            record_provider_success(provider_id);
+            match probe.diagnostic.application_failure {
+                None => record_provider_success(provider_id),
+                Some(failure) if failure.is_transient() => record_provider_failure(provider_id),
+                Some(_) => {}
+            }
             probe
         }
         Err(error) => {
-            record_provider_failure(provider_id);
+            if is_transient_provider_error(&error) {
+                record_provider_failure(provider_id);
+            }
             return Err(error);
         }
     };
@@ -554,7 +560,8 @@ async fn call_mcp_search_provider(
             crate::ai_runtime::mcp_host_runtime::provider_http_auth_header_present(
                 db,
                 &provider.profile_id,
-            )?
+            )
+            .map_err(sanitize_mcp_runtime_error)?
         } else {
             false
         };
@@ -575,41 +582,37 @@ async fn call_mcp_search_provider(
     )
     .await;
     let call = match call_result {
-        Ok(call) => {
-            observe_mcp_search_provider_call(
-                db,
-                &provider.profile_id,
-                true,
-                started.elapsed(),
-                None,
-                record_health,
-            );
-            call
-        }
+        Ok(call) => call,
         Err(error) => {
-            let code = error
-                .to_string()
-                .split(':')
-                .next()
-                .unwrap_or("unavailable")
-                .to_string();
+            let error = sanitize_mcp_runtime_error(error);
             observe_mcp_search_provider_call(
                 db,
                 &provider.profile_id,
                 false,
                 started.elapsed(),
-                Some(&code),
+                Some("mcp_transport_error"),
                 record_health,
             );
             return Err(error);
         }
     };
+    let diagnostic = diagnose_mcp_search_result(&call.provider_id, &call.result);
+    observe_mcp_search_provider_call(
+        db,
+        &provider.profile_id,
+        diagnostic.application_failure.is_none(),
+        started.elapsed(),
+        diagnostic
+            .application_failure
+            .map(McpApplicationFailureKind::failure_code),
+        record_health,
+    );
     Ok(McpSearchProviderProbe {
         provider_id: call.provider_id.clone(),
         tool_name: provider.tool_name.clone(),
         argument_keys,
         auth_header_present,
-        diagnostic: diagnose_mcp_search_result(&call.provider_id, &call.result),
+        diagnostic,
     })
 }
 
@@ -657,6 +660,28 @@ fn record_provider_success(provider_id: &str) {
 
 fn record_provider_failure(provider_id: &str) {
     crate::ai_runtime::circuit_breaker::record_failure(provider_id);
+}
+
+fn is_transient_provider_error(error: &AppError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("timeout")
+        || message.contains("deadline")
+        || message.contains("connection reset")
+        || message.contains("connection refused")
+        || message.contains("connection aborted")
+        || message.contains("broken pipe")
+        || message.contains("temporarily unavailable")
+        || message.contains("service unavailable")
+        || message.contains("network unreachable")
+}
+
+fn sanitize_mcp_runtime_error(error: AppError) -> AppError {
+    let code = error.to_string().to_ascii_lowercase();
+    if code.contains("auth_failed") || code.contains("auth_missing") {
+        AppError::msg("agent_run_web_provider_auth_failed")
+    } else {
+        error
+    }
 }
 
 fn resolve_mcp_provider_mapping(
@@ -796,6 +821,34 @@ pub(crate) struct McpSearchResultDiagnostic {
     pub parsed_row_count: usize,
     pub first_url_domain: Option<String>,
     pub failure_reason: Option<String>,
+    pub application_failure: Option<McpApplicationFailureKind>,
+}
+
+/// Bounded classification for MCP application-level errors. Provider text is only inspected in
+/// memory to select a safe code; it is not persisted, logged, or passed to the model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum McpApplicationFailureKind {
+    AuthFailed,
+    RateLimited,
+    QuotaExceeded,
+    InvalidArguments,
+    ProviderFailed,
+}
+
+impl McpApplicationFailureKind {
+    const fn failure_code(self) -> &'static str {
+        match self {
+            Self::AuthFailed => "agent_run_web_provider_auth_failed",
+            Self::RateLimited => "mcp_provider_rate_limited",
+            Self::QuotaExceeded => "mcp_provider_quota_exhausted",
+            Self::InvalidArguments => "mcp_provider_invalid_arguments",
+            Self::ProviderFailed => "mcp_search_provider_error",
+        }
+    }
+
+    const fn is_transient(self) -> bool {
+        matches!(self, Self::RateLimited | Self::ProviderFailed)
+    }
 }
 
 impl McpSearchResultDiagnostic {
@@ -830,8 +883,10 @@ pub(crate) fn diagnose_mcp_search_result(
         || body.to_ascii_lowercase().contains("url");
     let result_shape = mcp_result_shape(result);
     let first_url_domain = rows.first().and_then(|row| domain_from_url(&row.url));
-    let failure_reason = if mcp_result_is_error(result) {
-        Some("mcp_search_provider_error".into())
+    let application_failure =
+        mcp_result_is_error(result).then(|| classify_mcp_application_failure(&body));
+    let failure_reason = if let Some(failure) = application_failure {
+        Some(failure.failure_code().into())
     } else if rows.is_empty() && result.get("content").is_some() && content_text_length == 0 {
         Some("mcp_search_parse_empty:empty_body".into())
     } else if rows.is_empty() {
@@ -847,6 +902,43 @@ pub(crate) fn diagnose_mcp_search_result(
         parsed_row_count: rows.len(),
         first_url_domain,
         failure_reason,
+        application_failure,
+    }
+}
+
+fn classify_mcp_application_failure(body: &str) -> McpApplicationFailureKind {
+    let bounded = body
+        .chars()
+        .take(2048)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if bounded.contains("invalid_api_key")
+        || bounded.contains("invalid api key")
+        || bounded.contains("missing api key")
+        || bounded.contains("api key required")
+        || bounded.contains("unauthorized")
+        || bounded.contains("forbidden")
+        || bounded.contains("authentication")
+    {
+        McpApplicationFailureKind::AuthFailed
+    } else if bounded.contains("rate_limit")
+        || bounded.contains("rate limit")
+        || bounded.contains("too many requests")
+    {
+        McpApplicationFailureKind::RateLimited
+    } else if bounded.contains("quota")
+        || bounded.contains("credit")
+        || bounded.contains("insufficient balance")
+    {
+        McpApplicationFailureKind::QuotaExceeded
+    } else if bounded.contains("invalid argument")
+        || bounded.contains("invalid_arguments")
+        || bounded.contains("query is required")
+        || bounded.contains("validation")
+    {
+        McpApplicationFailureKind::InvalidArguments
+    } else {
+        McpApplicationFailureKind::ProviderFailed
     }
 }
 
@@ -1484,36 +1576,38 @@ async fn collect_mcp_page_fetch(
     )
     .await;
     let call = match call_result {
-        Ok(call) => {
-            let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
-                db,
-                provider_id,
-                true,
-                started.elapsed().as_millis() as u64,
-                None,
-            );
-            record_provider_success(provider_id);
-            call
-        }
+        Ok(call) => call,
         Err(error) => {
-            let code = error
-                .to_string()
-                .split(':')
-                .next()
-                .unwrap_or("unavailable")
-                .to_string();
+            let error = sanitize_mcp_runtime_error(error);
             let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
                 db,
                 provider_id,
                 false,
                 started.elapsed().as_millis() as u64,
-                Some(&code),
+                Some("mcp_transport_error"),
             );
-            record_provider_failure(provider_id);
+            if is_transient_provider_error(&error) {
+                record_provider_failure(provider_id);
+            }
             return Err(error);
         }
     };
-    Ok(mcp_page_fetch_result(provider_id, url, &call.result))
+    let failure_kind = mcp_result_is_error(&call.result)
+        .then(|| classify_mcp_application_failure(&mcp_search_result_body(&call.result)));
+    let result = mcp_page_fetch_result(provider_id, url, &call.result);
+    let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
+        db,
+        provider_id,
+        result.is_ok(),
+        started.elapsed().as_millis() as u64,
+        failure_kind.map(McpApplicationFailureKind::failure_code),
+    );
+    match failure_kind {
+        None => record_provider_success(provider_id),
+        Some(kind) if kind.is_transient() => record_provider_failure(provider_id),
+        Some(_) => {}
+    }
+    result
 }
 
 fn page_provider_fetch_from_native(page: PageFetchResult) -> PageProviderFetch {
@@ -1530,7 +1624,12 @@ fn mcp_page_fetch_result(
     provider_id: &str,
     url: &str,
     result: &serde_json::Value,
-) -> PageProviderFetch {
+) -> AppResult<PageProviderFetch> {
+    if mcp_result_is_error(result) {
+        return Err(AppError::msg(
+            classify_mcp_application_failure(&mcp_search_result_body(result)).failure_code(),
+        ));
+    }
     let title = result
         .get("title")
         .and_then(|value| value.as_str())
@@ -1547,13 +1646,13 @@ fn mcp_page_fetch_result(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| mcp_search_result_body(result));
-    PageProviderFetch {
+    Ok(PageProviderFetch {
         title,
         text,
         provider_id: provider_id.into(),
         provider_kind: "mcp".into(),
         extraction_method: "mcp_fetch".into(),
-    }
+    })
 }
 
 fn apply_page_provider_fetch(item: &mut WebEvidenceItem, page: PageProviderFetch) {
@@ -2277,11 +2376,16 @@ mod tests {
                 "content": [
                     {
                         "type": "text",
-                        "text": "query is required"
+                        "text": "invalid_api_key\nInvalid API key."
                     }
                 ],
                 "isError": true
             }),
+        );
+        assert_eq!(diagnostic.content_text_length, 32);
+        assert_eq!(
+            diagnostic.application_failure,
+            Some(McpApplicationFailureKind::AuthFailed)
         );
         let fetch = SearchProviderFetch {
             body: diagnostic.body,
@@ -2296,8 +2400,9 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(
             items[0].failure_reason.as_deref(),
-            Some("mcp_search_provider_error")
+            Some("agent_run_web_provider_auth_failed")
         );
+        assert!(!items[0].snippet.contains("Invalid API key"));
     }
     #[test]
     fn mcp_success_suppresses_mcp_search_failure_item() {
@@ -2335,6 +2440,31 @@ mod tests {
         let err = ensure_provider_circuit_allows(provider_id).unwrap_err();
         assert!(err.to_string().contains("provider_disabled"));
         assert!(err.to_string().contains("circuit_open"));
+    }
+
+    #[test]
+    fn credential_and_mapping_errors_do_not_participate_in_provider_circuit_breaking() {
+        assert_eq!(
+            sanitize_mcp_runtime_error(AppError::msg(
+                "auth_failed: bearer credential must contain the raw key only",
+            ))
+            .to_string(),
+            "agent_run_web_provider_auth_failed"
+        );
+        assert_eq!(
+            sanitize_mcp_runtime_error(AppError::msg("auth_missing: credential_unreadable",))
+                .to_string(),
+            "agent_run_web_provider_auth_failed"
+        );
+        assert!(!is_transient_provider_error(&AppError::msg(
+            "agent_run_web_provider_auth_failed",
+        )));
+        assert!(!is_transient_provider_error(&AppError::msg(
+            "auth_missing: credential_unreadable",
+        )));
+        assert!(is_transient_provider_error(&AppError::msg(
+            "connection reset by peer",
+        )));
     }
 
     #[test]
@@ -2376,13 +2506,34 @@ mod tests {
                 "title": "Fetched title",
                 "text": "Fetched body"
             }),
-        );
+        )
+        .unwrap();
 
         assert_eq!(fetch.provider_id, "mcp-fetch");
         assert_eq!(fetch.provider_kind, "mcp");
         assert_eq!(fetch.title, "Fetched title");
         assert_eq!(fetch.text, "Fetched body");
         assert_eq!(fetch.extraction_method, "mcp_fetch");
+    }
+
+    #[test]
+    fn mcp_page_fetch_rejects_application_error_without_exposing_error_body() {
+        let error = mcp_page_fetch_result(
+            "mcp-fetch",
+            "https://example.com/a",
+            &serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": "invalid_api_key\nInvalid API key."
+                }],
+                "isError": true
+            }),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert_eq!(error, "agent_run_web_provider_auth_failed");
+        assert!(!error.contains("Invalid API key"));
     }
 
     #[test]

@@ -1286,7 +1286,12 @@ fn append_capability_degraded(
                 code: failure.code,
                 retryable: failure.retryable,
                 attempt_count,
-                message: "联网核实暂不可用，已继续生成受约束答复。".to_string(),
+                message: if failure.code == SafeRunErrorCode::WebProviderAuthFailed {
+                    "联网 API Key 无效，请重新输入原始 Key；已继续生成不依赖联网证据的受约束答复。"
+                        .to_string()
+                } else {
+                    "联网核实暂不可用，已继续生成受约束答复。".to_string()
+                },
             },
         },
     )?;
@@ -1381,6 +1386,9 @@ fn classify_web_failure(error: &AppError) -> WebFailure {
         }
         "agent_run_web_provider_timeout" => {
             WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
+        }
+        "agent_run_web_provider_auth_failed" => {
+            WebFailure::new(SafeRunErrorCode::WebProviderAuthFailed, false)
         }
         "agent_run_web_provider_failed" => {
             WebFailure::new(SafeRunErrorCode::WebProviderFailed, false)

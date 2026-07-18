@@ -40,6 +40,7 @@ interface McpProfileCardProps {
   ) => void | Promise<void>;
   onToggle: (enabled: boolean) => void | Promise<void>;
   onDelete: () => void | Promise<void>;
+  onClearCredential: (service: string) => void | Promise<void>;
   onDiagnostics: () => void | Promise<void>;
   onConfigurationChanged: () => void;
 }
@@ -381,6 +382,8 @@ function checkLabelText(label: string): string {
       return "实时连接";
     case "searchToolLive":
       return "搜索工具";
+    case "searchSmokeAuthHeader":
+      return "鉴权请求头";
     case "searchSmokeLive":
       return "搜索调用";
     case "searchResultParseLive":
@@ -413,6 +416,7 @@ export function McpProfileCard({
   onSave,
   onToggle,
   onDelete,
+  onClearCredential,
   onDiagnostics,
   onConfigurationChanged,
 }: McpProfileCardProps) {
@@ -431,6 +435,7 @@ export function McpProfileCard({
   const [credentialRows, setCredentialRows] = useState(() =>
     parseCredentialRows(provider.credentialRefsJson),
   );
+  const [credentialError, setCredentialError] = useState<string | null>(null);
   const [searchMappingRaw, setSearchMappingRaw] = useState(
     provider.searchMapping ?? "",
   );
@@ -452,6 +457,7 @@ export function McpProfileCard({
     setHttpsConfig(parseHttpsConfig(provider.transportConfigJson));
     setStdioConfig(parseStdioConfig(provider.transportConfigJson));
     setCredentialRows(parseCredentialRows(provider.credentialRefsJson));
+    setCredentialError(null);
     setSearchMappingRaw(provider.searchMapping ?? "");
     setFetchMappingRaw(provider.fetchMapping ?? "");
     setSearchTool(mappingToolName(provider.searchMapping));
@@ -546,6 +552,16 @@ export function McpProfileCard({
   };
 
   const handleSave = () => {
+    setCredentialError(null);
+    const bearerRow = credentialRows.find(
+      (row) =>
+        row.scheme?.trim().toLowerCase() === "bearer" &&
+        /^bearer\s+/i.test(row.secretValue.trim()),
+    );
+    if (bearerRow) {
+      setCredentialError("Bearer 凭据只填写原始 Key，不要包含“Bearer ”前缀。");
+      return;
+    }
     const plainEnv = plainEnvRowsToRecord(stdioConfig.envRows);
     const transportConfigJson =
       transportKind === "stdio"
@@ -889,7 +905,7 @@ export function McpProfileCard({
             {credentialRows.map((row) => (
               <div
                 key={row.id}
-                className="grid gap-2 md:grid-cols-[110px_minmax(0,0.7fr)_minmax(0,0.9fr)_minmax(0,1fr)_auto]"
+                className="grid gap-2 md:grid-cols-[110px_minmax(0,0.7fr)_minmax(0,0.9fr)_minmax(0,1fr)_auto_auto]"
               >
                 <Select
                   value={row.target}
@@ -935,7 +951,7 @@ export function McpProfileCard({
                   spellCheck={false}
                   placeholder={
                     row.placeholder ??
-                    `${row.label ?? "API Key"}${row.optional ? "（可选）" : ""}`
+                    `${row.label ?? "API Key"}${row.optional ? "（可选）" : ""}；仅填原始 Key，不含 Bearer`
                   }
                   onChange={(event) =>
                     updateCredentialRow(row.id, {
@@ -943,6 +959,22 @@ export function McpProfileCard({
                     })
                   }
                 />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={saving || !persisted || row.ref.trim().length === 0}
+                  title={
+                    !persisted ? "请先保存提供方，再清除已保存 Key" : undefined
+                  }
+                  onClick={() => {
+                    setCredentialError(null);
+                    void onClearCredential(row.ref.trim());
+                    updateCredentialRow(row.id, { secretValue: "" });
+                  }}
+                >
+                  清除 Key
+                </Button>
                 <Button
                   type="button"
                   size="sm"
@@ -961,6 +993,11 @@ export function McpProfileCard({
             凭据引用。
           </p>
         )}
+        {credentialError ? (
+          <p role="alert" className="text-xs text-destructive">
+            {credentialError}
+          </p>
+        ) : null}
       </section>
 
       {!persisted ? (

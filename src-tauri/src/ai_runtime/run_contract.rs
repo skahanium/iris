@@ -916,6 +916,9 @@ pub(crate) enum SafeRunErrorCode {
     /// The selected Web evidence provider exceeded the bounded evidence-stage deadline.
     #[serde(rename = "agent_run_web_provider_timeout")]
     WebProviderTimeout,
+    /// The selected Web evidence provider rejected the configured credential.
+    #[serde(rename = "agent_run_web_provider_auth_failed")]
+    WebProviderAuthFailed,
     /// The selected Web evidence provider failed while executing a search request.
     #[serde(rename = "agent_run_web_provider_failed")]
     WebProviderFailed,
@@ -963,6 +966,7 @@ impl SafeRunErrorCode {
             Self::NoCapableModel => "agent_run_no_capable_model",
             Self::WebProviderUnavailable => "agent_run_mcp_unavailable",
             Self::WebProviderTimeout => "agent_run_web_provider_timeout",
+            Self::WebProviderAuthFailed => "agent_run_web_provider_auth_failed",
             Self::WebProviderFailed => "agent_run_web_provider_failed",
             Self::WebEvidenceInvalid => "agent_run_web_evidence_invalid",
             Self::PersistenceFailed => "agent_run_persistence_failed",

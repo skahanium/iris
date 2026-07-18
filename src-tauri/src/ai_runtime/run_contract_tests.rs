@@ -267,6 +267,7 @@ fn safe_run_errors_serialize_as_stable_agent_run_codes() {
         SafeRunErrorCode::NoCapableModel,
         SafeRunErrorCode::WebProviderUnavailable,
         SafeRunErrorCode::WebProviderTimeout,
+        SafeRunErrorCode::WebProviderAuthFailed,
         SafeRunErrorCode::WebProviderFailed,
         SafeRunErrorCode::WebEvidenceInvalid,
         SafeRunErrorCode::PersistenceFailed,
@@ -375,6 +376,18 @@ fn run_event_types_match_the_stable_event_contract() {
     ];
 
     assert_eq!(event_types.len(), 15);
+}
+
+#[test]
+fn web_provider_auth_failure_has_a_stable_wire_code() {
+    assert_eq!(
+        SafeRunErrorCode::WebProviderAuthFailed.as_str(),
+        "agent_run_web_provider_auth_failed"
+    );
+    assert_eq!(
+        serde_json::to_value(SafeRunErrorCode::WebProviderAuthFailed).unwrap(),
+        serde_json::json!("agent_run_web_provider_auth_failed")
+    );
 }
 
 #[test]
