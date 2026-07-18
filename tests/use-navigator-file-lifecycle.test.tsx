@@ -57,7 +57,12 @@ describe("useNavigatorFileLifecycle", () => {
               replaceOpenTabPath: vi.fn(),
               tabsRef: {
                 current: [
-                  { dirty: true, locked: false, path: "note.md", title: "Note" },
+                  {
+                    dirty: true,
+                    locked: false,
+                    path: "note.md",
+                    title: "Note",
+                  },
                 ] as TabItem[],
               },
             });

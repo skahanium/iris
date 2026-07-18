@@ -20,12 +20,12 @@
 
 ## 编辑器有、索引器无（或不同）
 
-| 构造 | 编辑器 | Rust 索引器 |
-|---|---|---|
+| 构造                           | 编辑器                | Rust 索引器                            |
+| ------------------------------ | --------------------- | -------------------------------------- |
 | `![[media\|alias]]` wiki embed | `wikiMediaEmbed` 节点 | 不索引（产品契约：仅渲染，不进链接图） |
-| Body `#tag` | 无专门语义 | 合并进 frontmatter tags |
-| Callout `> [!type]` | 可编辑 blockquote | 进 FTS 原文，无特殊结构 |
-| `data-iris-indent` | 段落/标题缩进 | 进 FTS 原文 |
+| Body `#tag`                    | 无专门语义            | 合并进 frontmatter tags                |
+| Callout `> [!type]`            | 可编辑 blockquote     | 进 FTS 原文，无特殊结构                |
+| `data-iris-indent`             | 段落/标题缩进         | 进 FTS 原文                            |
 
 ## Frontmatter
 

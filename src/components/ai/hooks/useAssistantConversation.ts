@@ -29,7 +29,8 @@ const MAX_CONVERSATION_UI_MESSAGES = 240;
 
 // Keep user-facing toast literals ASCII-only in source: a legacy WebView code-page decode
 // must not turn UTF-8 string literals into mojibake before React receives them.
-const COPY_SELECTED_SUCCESS_TOAST = "\u5df2\u590d\u5236\u9009\u4e2d\u6d88\u606f";
+const COPY_SELECTED_SUCCESS_TOAST =
+  "\u5df2\u590d\u5236\u9009\u4e2d\u6d88\u606f";
 const COPY_SELECTED_FAILURE_TOAST = "\u590d\u5236\u5931\u8d25";
 const RETRACT_SYNC_FAILURE_TOAST =
   "\u64a4\u56de\u672a\u540c\u6b65\u5230\u4f1a\u8bdd\u8bb0\u5f55";

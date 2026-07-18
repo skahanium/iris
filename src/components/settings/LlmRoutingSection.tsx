@@ -37,14 +37,13 @@ import {
 } from "@/types/llm";
 import builtinLlmProviders from "../../../config/llm-builtin-providers.json";
 
-const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = builtinLlmProviders.map(
-  (provider) => ({
+const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] =
+  builtinLlmProviders.map((provider) => ({
     id: provider.id,
     name: provider.name,
     default_model: provider.defaultModel,
     endpointManaged: "builtin",
-  }),
-);
+  }));
 
 const REASONING_STRENGTH_OPTIONS: ReasoningMode[] = [
   "off",

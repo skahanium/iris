@@ -129,8 +129,7 @@ describe("PM serialize restores preserve original text", () => {
   });
 
   it("multiple preserveBlocks are all restored in correct order", () => {
-    const md =
-      "start\n\n<div class='a'>A</div>\n\nmiddle\n\n<!-- B -->\n\nend";
+    const md = "start\n\n<div class='a'>A</div>\n\nmiddle\n\n<!-- B -->\n\nend";
     const bodyMarkdown = serializeBody(md);
     expect(bodyMarkdown).toContain("<div class='a'>A</div>");
     expect(bodyMarkdown).toContain("<!-- B -->");

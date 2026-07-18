@@ -17,13 +17,8 @@ import type {
 } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
-import {
-  ensureProviderSearchMappingResultLimit,
-} from "./mcpSearchMappingHeal";
-import {
-  credentialStateText,
-  mappingForSave,
-} from "./mcpProfileHelpers";
+import { ensureProviderSearchMappingResultLimit } from "./mcpSearchMappingHeal";
+import { credentialStateText, mappingForSave } from "./mcpProfileHelpers";
 import {
   findMcpProviderPreset,
   MCP_PROVIDER_PRESETS,

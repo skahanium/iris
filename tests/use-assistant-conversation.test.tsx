@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useAssistantConversation } from "@/components/ai/hooks/useAssistantConversation";
 import type { ChatLine } from "@/components/ai/AiMessageList";
 
-const COPY_SELECTED_SUCCESS_TOAST = "\u5df2\u590d\u5236\u9009\u4e2d\u6d88\u606f";
+const COPY_SELECTED_SUCCESS_TOAST =
+  "\u5df2\u590d\u5236\u9009\u4e2d\u6d88\u606f";
 
 const { retract, toast } = vi.hoisted(() => ({
   retract: vi.fn(),
@@ -107,7 +108,10 @@ describe("useAssistantConversation", () => {
 
     act(() => {
       api?.handleLoadSession({ domain: "normal", sessionKey: "session-1" }, [
-        { role: "assistant", content: "\u590d\u5236\u8fd9\u4e00\u6bb5\u6587\u5b57" },
+        {
+          role: "assistant",
+          content: "\u590d\u5236\u8fd9\u4e00\u6bb5\u6587\u5b57",
+        },
       ]);
     });
     await act(async () => {
