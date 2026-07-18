@@ -275,6 +275,30 @@ function mappingForSave(raw: string, toolName: string): string | null {
   return JSON.stringify({ tool });
 }
 
+function mappingHasMaxResultsArgument(raw: string | null | undefined): boolean {
+  return typeof parseJsonRecord(raw).maxResultsArg === "string";
+}
+
+function isAnySearchProvider(provider: WebEvidenceProviderSummary): boolean {
+  if (provider.name.trim().toLowerCase() === "anysearch") return true;
+  const url = parseHttpsConfig(provider.transportConfigJson).url;
+  try {
+    return new URL(url).hostname.toLowerCase() === "api.anysearch.com";
+  } catch {
+    return false;
+  }
+}
+
+function needsAnySearchResultLimitUpdate(
+  provider: WebEvidenceProviderSummary,
+): boolean {
+  return (
+    isAnySearchProvider(provider) &&
+    provider.hasSearchMapping &&
+    !mappingHasMaxResultsArgument(provider.searchMapping)
+  );
+}
+
 function credentialRowsToJson(rows: CredentialRefRow[]): string {
   const headers: Record<string, unknown> = {};
   const env: Record<string, unknown> = {};
@@ -380,6 +404,8 @@ function checkLabelText(label: string): string {
       return "提供方注册表";
     case "liveConnection":
       return "实时连接";
+    case "circuit":
+      return "熔断状态";
     case "searchToolLive":
       return "搜索工具";
     case "searchSmokeAuthHeader":
@@ -470,6 +496,7 @@ export function McpProfileCard({
   );
   const diagnosticLines = diagnostics?.checks ?? [];
   const credentialState = credentialStateText(credentialRows);
+  const needsResultLimitUpdate = needsAnySearchResultLimitUpdate(provider);
 
   const applyPreset = (preset: McpProviderPreset) => {
     onConfigurationChanged();
@@ -720,6 +747,17 @@ export function McpProfileCard({
           </Select>
         </label>
       </div>
+
+      {needsResultLimitUpdate ? (
+        <div
+          className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
+          role="status"
+        >
+          当前已保存的 AnySearch 搜索映射未配置 <code>max_results</code>。请选择
+          “AnySearch”预设并保存，以持久化限制。保存前 Iris 会临时补全
+          <code>max_results</code>，避免服务默认返回过大结果而被安全上限拒绝。
+        </div>
+      ) : null}
 
       {transportKind === "stdio" ? (
         <section className="space-y-3">
@@ -1019,6 +1057,7 @@ export function McpProfileCard({
               ? "这是当前运行使用的提供方。"
               : "这是非当前运行提供方；其诊断不代表当前 Run 已就绪。"}
           </p>
+          <p>诊断仅代表本次探针结果；实际 Run 仍会逐条执行安全证据归一化。</p>
           <p>
             实时可用性：搜索
             {diagnostics?.canUseForSearch ? "可用" : "不可用"}

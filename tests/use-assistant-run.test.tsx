@@ -153,6 +153,7 @@ describe("useAssistantRun", () => {
         payload: {
           kind: "web_verification_failed",
           code: "agent_run_web_provider_timeout",
+          failureReason: "provider_timeout",
           retryable: true,
           attemptCount: 4,
           durationBucket: "budget_exhausted",

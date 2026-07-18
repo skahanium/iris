@@ -346,12 +346,15 @@ describe("management center contract", () => {
     expect(diagnostics).toContain("Key 已绑定");
     expect(diagnostics).toContain("可选凭据未绑定，使用匿名模式");
     expect(diagnostics).toContain("必填凭据缺失");
-    expect(diagnostics).toContain("搜索调用正常，解析出");
+    expect(diagnostics).toContain("本次探针调用正常，解析出");
+    expect(diagnostics).toContain("可安全注册为 HTTPS 证据");
+    expect(diagnostics).toContain("本次探针未返回可安全注册的 HTTPS 证据");
+    expect(diagnostics).toContain("Agent 请求当前受熔断保护");
     expect(broker).toContain("auth header present");
     expect(broker).toContain("parsed rows");
     expect(diagnostics).toContain("提供方未启用");
     expect(diagnostics).toContain("连接方式不支持 MCP 联网证据");
-    expect(diagnostics).toContain("MCP 搜索结果无法归一化为联网证据");
+    expect(diagnostics).toContain("本次探针结果已归一化为可注册的联网证据");
     expect(diagnostics).toContain(
       "MCP 服务要求 OAuth 鉴权流程，当前预设不兼容",
     );

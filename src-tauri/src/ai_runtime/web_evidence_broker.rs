@@ -546,7 +546,8 @@ async fn call_mcp_search_provider(
     request_timeout: Duration,
     record_health: bool,
 ) -> AppResult<McpSearchProviderProbe> {
-    let arguments = build_mcp_search_arguments(mapping_json, query, max_results);
+    let effective_mapping = effective_mcp_search_mapping(db, &provider.profile_id, mapping_json);
+    let arguments = build_mcp_search_arguments(&effective_mapping, query, max_results);
     let argument_keys = arguments
         .as_object()
         .map(|object| {
@@ -584,13 +585,14 @@ async fn call_mcp_search_provider(
     let call = match call_result {
         Ok(call) => call,
         Err(error) => {
+            let failure_code = mcp_runtime_failure_code(&error);
             let error = sanitize_mcp_runtime_error(error);
             observe_mcp_search_provider_call(
                 db,
                 &provider.profile_id,
                 false,
                 started.elapsed(),
-                Some("mcp_transport_error"),
+                Some(failure_code),
                 record_health,
             );
             return Err(error);
@@ -673,14 +675,45 @@ fn is_transient_provider_error(error: &AppError) -> bool {
         || message.contains("temporarily unavailable")
         || message.contains("service unavailable")
         || message.contains("network unreachable")
+        || message.contains("mcp_provider_transport_error")
+}
+
+/// Classify a host-runtime failure before its details cross the evidence boundary.
+/// The returned identifier is safe to persist in provider health state and contains
+/// neither provider output nor request material.
+fn mcp_runtime_failure_code(error: &AppError) -> &'static str {
+    let message = error.to_string().to_ascii_lowercase();
+    if message.contains("auth_failed") || message.contains("auth_missing") {
+        "mcp_provider_authentication"
+    } else if message.contains("output_too_large") || message.contains("output too large") {
+        "mcp_provider_output_too_large"
+    } else if message.contains("timeout")
+        || message.contains("timed out")
+        || message.contains("deadline")
+    {
+        "mcp_provider_timeout"
+    } else if message.contains("connection reset")
+        || message.contains("connection refused")
+        || message.contains("connection aborted")
+        || message.contains("broken pipe")
+        || message.contains("temporarily unavailable")
+        || message.contains("service unavailable")
+        || message.contains("network unreachable")
+        || message.contains("transport")
+    {
+        "mcp_provider_transport_error"
+    } else {
+        "mcp_provider_runtime_error"
+    }
 }
 
 fn sanitize_mcp_runtime_error(error: AppError) -> AppError {
-    let code = error.to_string().to_ascii_lowercase();
-    if code.contains("auth_failed") || code.contains("auth_missing") {
-        AppError::msg("agent_run_web_provider_auth_failed")
-    } else {
-        error
+    match mcp_runtime_failure_code(&error) {
+        "mcp_provider_authentication" => AppError::msg("agent_run_web_provider_auth_failed"),
+        "mcp_provider_output_too_large" => AppError::msg("mcp_provider_output_too_large"),
+        "mcp_provider_timeout" => AppError::msg("agent_run_web_provider_timeout"),
+        "mcp_provider_transport_error" => AppError::msg("mcp_provider_transport_error"),
+        _ => AppError::msg("mcp_provider_runtime_error"),
     }
 }
 
@@ -746,6 +779,55 @@ fn mapping_tool_name(mapping_json: &str) -> Option<String> {
 
 fn mapping_json_value(mapping_json: &str) -> serde_json::Value {
     serde_json::from_str(mapping_json).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+/// Keep saved custom mappings immutable while making legacy AnySearch mappings safe at runtime.
+/// Earlier Iris builds saved only `queryArg`, which lets AnySearch choose an unbounded default and
+/// can exceed the MCP response cap before evidence normalization begins.
+fn effective_mcp_search_mapping(db: &Database, provider_id: &str, mapping_json: &str) -> String {
+    if !is_anysearch_provider(db, provider_id) {
+        return mapping_json.to_string();
+    }
+    let mut mapping = mapping_json_value(mapping_json);
+    let Some(object) = mapping.as_object_mut() else {
+        return mapping_json.to_string();
+    };
+    let is_search = object
+        .get("tool")
+        .or_else(|| object.get("tool_name"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|tool| tool.trim().eq_ignore_ascii_case("search"));
+    if !is_search || object.contains_key("maxResultsArg") {
+        return mapping_json.to_string();
+    }
+    object.insert(
+        "maxResultsArg".into(),
+        serde_json::Value::String("max_results".into()),
+    );
+    serde_json::to_string(&mapping).unwrap_or_else(|_| mapping_json.to_string())
+}
+
+fn is_anysearch_provider(db: &Database, provider_id: &str) -> bool {
+    let transport = db.with_read_conn(|conn| {
+        conn.query_row(
+            "SELECT transport_config_json FROM web_evidence_providers WHERE id = ?1 AND kind = 'mcp'",
+            [provider_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(Into::into)
+    });
+    transport
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|value| {
+            value
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .and_then(|url| reqwest::Url::parse(&url).ok())
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .is_some_and(|host| host.eq_ignore_ascii_case("api.anysearch.com"))
 }
 
 fn mapping_string(value: &serde_json::Value, key: &str) -> Option<String> {
@@ -819,6 +901,10 @@ pub(crate) struct McpSearchResultDiagnostic {
     pub content_text_length: usize,
     pub contains_url_marker: bool,
     pub parsed_row_count: usize,
+    /// Rows that pass the same HTTPS safety gate used before evidence registration.
+    pub usable_https_row_count: usize,
+    /// Parsed rows rejected solely because their URL is not HTTPS.
+    pub rejected_non_https_row_count: usize,
     pub first_url_domain: Option<String>,
     pub failure_reason: Option<String>,
     pub application_failure: Option<McpApplicationFailureKind>,
@@ -861,12 +947,14 @@ impl McpSearchResultDiagnostic {
     ) -> String {
         let first_domain = self.first_url_domain.as_deref().unwrap_or("none");
         format!(
-            "provider {provider_id}; tool {tool_name}; argument keys [{}]; auth header present: {auth_header_present}; result shape: {}; content text length: {}; URL marker: {}; parsed rows: {}; first domain: {first_domain}",
+            "provider {provider_id}; tool {tool_name}; argument keys [{}]; auth header present: {auth_header_present}; result shape: {}; content text length: {}; URL marker: {}; parsed rows: {}; usable HTTPS rows: {}; rejected non-HTTPS rows: {}; first domain: {first_domain}",
             argument_keys.join(","),
             self.result_shape,
             self.content_text_length,
             self.contains_url_marker,
             self.parsed_row_count,
+            self.usable_https_row_count,
+            self.rejected_non_https_row_count,
         )
     }
 }
@@ -883,6 +971,8 @@ pub(crate) fn diagnose_mcp_search_result(
         || body.to_ascii_lowercase().contains("url");
     let result_shape = mcp_result_shape(result);
     let first_url_domain = rows.first().and_then(|row| domain_from_url(&row.url));
+    let usable_https_row_count = rows.iter().filter(|row| is_https_url(&row.url)).count();
+    let rejected_non_https_row_count = rows.len().saturating_sub(usable_https_row_count);
     let application_failure =
         mcp_result_is_error(result).then(|| classify_mcp_application_failure(&body));
     let failure_reason = if let Some(failure) = application_failure {
@@ -891,6 +981,8 @@ pub(crate) fn diagnose_mcp_search_result(
         Some("mcp_search_parse_empty:empty_body".into())
     } else if rows.is_empty() {
         Some(classify_mcp_search_parse_empty(&body))
+    } else if usable_https_row_count == 0 {
+        Some("mcp_search_no_usable_https_results".into())
     } else {
         None
     };
@@ -900,6 +992,8 @@ pub(crate) fn diagnose_mcp_search_result(
         content_text_length,
         contains_url_marker,
         parsed_row_count: rows.len(),
+        usable_https_row_count,
+        rejected_non_https_row_count,
         first_url_domain,
         failure_reason,
         application_failure,
@@ -1578,13 +1672,14 @@ async fn collect_mcp_page_fetch(
     let call = match call_result {
         Ok(call) => call,
         Err(error) => {
+            let failure_code = mcp_runtime_failure_code(&error);
             let error = sanitize_mcp_runtime_error(error);
             let _ = crate::ai_runtime::mcp_runtime_registry::record_web_evidence_provider_call(
                 db,
                 provider_id,
                 false,
                 started.elapsed().as_millis() as u64,
-                Some("mcp_transport_error"),
+                Some(failure_code),
             );
             if is_transient_provider_error(&error) {
                 record_provider_failure(provider_id);
@@ -2226,6 +2321,40 @@ mod tests {
     }
 
     #[test]
+    fn legacy_anysearch_mapping_gets_a_runtime_result_limit_without_mutation() {
+        let db = Database::open_in_memory().unwrap();
+        let legacy_mapping = r#"{"tool":"search","queryArg":"query"}"#;
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "anysearch-legacy".into(),
+                name: "AnySearch".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "https".into(),
+                transport_config_json:
+                    r#"{"url":"https://api.anysearch.com/mcp","allow_localhost_dev":false}"#.into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(legacy_mapping.into()),
+                web_fetch_mapping_json: Some(r#"{"tool":"extract","urlArg":"url"}"#.into()),
+            },
+        )
+        .unwrap();
+
+        let effective = effective_mcp_search_mapping(&db, "anysearch-legacy", legacy_mapping);
+        let arguments = build_mcp_search_arguments(&effective, "latest news", 5);
+
+        assert_eq!(arguments["query"], "latest news");
+        assert_eq!(arguments["max_results"], 5);
+        assert_eq!(
+            crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&db).unwrap()[0]
+                .web_search_mapping_json
+                .as_deref(),
+            Some(legacy_mapping)
+        );
+    }
+
+    #[test]
     fn mcp_search_body_normalizes_structured_result_arrays() {
         let body = mcp_search_result_body(&serde_json::json!({
             "results": [
@@ -2369,6 +2498,27 @@ mod tests {
     }
 
     #[test]
+    fn mcp_search_diagnostic_rejects_http_only_rows_as_unusable_evidence() {
+        let diagnostic = diagnose_mcp_search_result(
+            "anysearch",
+            &serde_json::json!({
+                "content": [{
+                    "type": "text",
+                    "text": "### 1. Insecure result\n- **URL**: http://example.com/news\n- **Snippet**: must not become evidence"
+                }]
+            }),
+        );
+
+        assert_eq!(diagnostic.parsed_row_count, 1);
+        assert_eq!(diagnostic.usable_https_row_count, 0);
+        assert_eq!(diagnostic.rejected_non_https_row_count, 1);
+        assert_eq!(
+            diagnostic.failure_reason.as_deref(),
+            Some("mcp_search_no_usable_https_results")
+        );
+    }
+
+    #[test]
     fn mcp_search_is_error_result_is_not_reported_as_parse_empty() {
         let diagnostic = diagnose_mcp_search_result(
             "anysearch",
@@ -2464,6 +2614,26 @@ mod tests {
         )));
         assert!(is_transient_provider_error(&AppError::msg(
             "connection reset by peer",
+        )));
+    }
+
+    #[test]
+    fn host_runtime_failures_are_reduced_to_safe_distinct_health_codes() {
+        assert_eq!(
+            mcp_runtime_failure_code(&AppError::msg("output_too_large: response exceeded cap")),
+            "mcp_provider_output_too_large"
+        );
+        assert_eq!(
+            sanitize_mcp_runtime_error(AppError::msg("output_too_large: private provider body"))
+                .to_string(),
+            "mcp_provider_output_too_large"
+        );
+        assert_eq!(
+            mcp_runtime_failure_code(&AppError::msg("connection reset by peer")),
+            "mcp_provider_transport_error"
+        );
+        assert!(is_transient_provider_error(&AppError::msg(
+            "mcp_provider_transport_error",
         )));
     }
 

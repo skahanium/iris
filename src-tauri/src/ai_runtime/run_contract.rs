@@ -641,6 +641,9 @@ pub(crate) enum RunEventPayload {
     WebVerificationFailed {
         /// Stable sanitized failure code.
         code: SafeRunErrorCode,
+        /// Structured, provider-content-free explanation for the failed evidence stage.
+        #[serde(default)]
+        failure_reason: WebEvidenceFailureReason,
         /// Whether retrying the same selected provider may succeed.
         retryable: bool,
         /// Total evidence attempts across the initial and recovery stages.
@@ -850,6 +853,46 @@ pub enum RunControlAction {
     Resume,
     /// Cancel an active Run.
     Cancel,
+}
+
+/// Safe, bounded reason for a Web evidence failure. These values never contain provider output,
+/// request arguments, credentials, URLs, or user content.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WebEvidenceFailureReason {
+    ProviderUnavailable,
+    ProviderTransport,
+    ProviderTimeout,
+    ProviderAuthentication,
+    ProviderOutputTooLarge,
+    ProviderRateLimited,
+    ProviderQuotaExhausted,
+    ProviderInvalidArguments,
+    SearchResultUnparseable,
+    SearchResultNoUsableHttps,
+    EvidenceContentEmpty,
+    #[default]
+    Unknown,
+}
+
+impl WebEvidenceFailureReason {
+    /// Stable wire value persisted in safe Run diagnostics and tool audit summaries.
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::ProviderUnavailable => "provider_unavailable",
+            Self::ProviderTransport => "provider_transport",
+            Self::ProviderTimeout => "provider_timeout",
+            Self::ProviderAuthentication => "provider_authentication",
+            Self::ProviderOutputTooLarge => "provider_output_too_large",
+            Self::ProviderRateLimited => "provider_rate_limited",
+            Self::ProviderQuotaExhausted => "provider_quota_exhausted",
+            Self::ProviderInvalidArguments => "provider_invalid_arguments",
+            Self::SearchResultUnparseable => "search_result_unparseable",
+            Self::SearchResultNoUsableHttps => "search_result_no_usable_https",
+            Self::EvidenceContentEmpty => "evidence_content_empty",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// Stable, safe error codes exposed across the Rust/TypeScript boundary.

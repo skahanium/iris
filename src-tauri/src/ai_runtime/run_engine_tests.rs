@@ -2178,6 +2178,12 @@ fn web_evidence_failure_classification_never_uses_model_provider_codes() {
         )),
         SafeRunErrorCode::WebProviderAuthFailed,
     );
+    assert_eq!(
+        super::run_tool_loop::web_evidence_failure_reason(&AppError::msg(
+            "output_too_large: MCP HTTP response exceeded configured cap",
+        )),
+        super::run_contract::WebEvidenceFailureReason::ProviderOutputTooLarge,
+    );
 }
 
 #[test]
@@ -2229,7 +2235,7 @@ fn tool_loop_web_failures_keep_their_web_safe_codes() {
 }
 
 #[tokio::test]
-async fn web_required_prefetch_failure_never_persists_a_degradation_notice() {
+async fn web_required_prefetch_failure_terminalizes_before_model_dispatch() {
     let db = Database::open_in_memory().expect("database");
     let mut request = request();
     request.web_enabled = true;
@@ -2249,7 +2255,7 @@ async fn web_required_prefetch_failure_never_persists_a_degradation_notice() {
     };
     let web_calls = AtomicU32::new(0);
 
-    RunEngine::execute_web_required_evidence_then_dispatch_with_sink(
+    let error = RunEngine::execute_web_required_evidence_then_dispatch_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -2278,14 +2284,18 @@ async fn web_required_prefetch_failure_never_persists_a_degradation_notice() {
         },
     )
     .await
-    .expect("the generic orchestration helper dispatches its supplied recovery closure");
+    .expect_err("WebRequired must not enter the model loop without usable evidence");
 
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::WebProviderTimeout.as_str()
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
     assert_eq!(web_calls.load(Ordering::SeqCst), 2);
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
-        .expect("completed degraded run");
-    assert_eq!(replay.run.state, RunState::Completed);
+        .expect("failed run");
+    assert_eq!(replay.run.state, RunState::Failed);
     let event_types = replay
         .events
         .iter()
@@ -2297,23 +2307,101 @@ async fn web_required_prefetch_failure_never_persists_a_degradation_notice() {
             serde_json::json!("accepted"),
             serde_json::json!("tool_started"),
             serde_json::json!("tool_completed"),
+            serde_json::json!("web_verification_failed"),
             serde_json::json!("stage_changed"),
-            serde_json::json!("stage_changed"),
-            serde_json::json!("content_delta"),
-            serde_json::json!("completed"),
+            serde_json::json!("failed"),
         ]
     );
-    let persisted: String = db
-        .with_read_conn(|conn| {
-            conn.query_row(
-                "SELECT m.content FROM agent_runs r JOIN session_messages m
-                 ON m.session_id = r.session_id
-                 WHERE r.run_id = ?1 AND m.role = 'assistant'",
-                [&accepted.run_id],
-                |row| row.get(0),
+    assert!(replay.run.final_message_id.is_none());
+}
+
+#[tokio::test]
+async fn web_required_invalid_evidence_preserves_the_first_failure_before_model_dispatch() {
+    let db = Database::open_in_memory().expect("database");
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "Please search the web for current public facts".to_string();
+    let accepted = RunIntake::start(&db, request).expect("accepted");
+    let context = super::run_context::RunContextAssembler::assemble(
+        &db,
+        None,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("context");
+    let sink = RecordingSink::default();
+    let provider = MockStreamingProvider {
+        calls: AtomicU32::new(0),
+        failure: None,
+    };
+    let web_calls = AtomicU32::new(0);
+
+    let error = RunEngine::execute_web_required_evidence_then_dispatch_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &sink,
+        || {
+            super::run_tool_loop::collect_web_evidence_for_run(
+                &db,
+                &accepted,
+                &context,
+                &sink,
+                None,
+                |_| {
+                    web_calls.fetch_add(1, Ordering::SeqCst);
+                    async { Ok(failed_web_output("mcp_search_no_usable_https_results")) }
+                },
             )
-            .map_err(Into::into)
+        },
+        |_| {
+            RunEngine::execute_direct_streaming_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                &provider,
+                &sink,
+            )
+        },
+    )
+    .await
+    .expect_err("invalid Web evidence must not be overwritten by a later model Web timeout");
+
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::WebEvidenceInvalid.as_str()
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(web_calls.load(Ordering::SeqCst), 1);
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("failed run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert!(replay.run.final_message_id.is_none());
+    let verification = replay
+        .events
+        .iter()
+        .find_map(|event| {
+            let event = serde_json::to_value(event).expect("serialize event");
+            (event["type"] == "web_verification_failed")
+                .then(|| event["payload"]["code"].as_str().map(str::to_owned))
+                .flatten()
         })
-        .expect("persisted answer");
-    assert!(!persisted.contains("联网核实暂不可用"));
+        .expect("web verification failure event");
+    assert_eq!(verification, SafeRunErrorCode::WebEvidenceInvalid.as_str());
+    let verification_reason = replay
+        .events
+        .iter()
+        .find_map(|event| {
+            let event = serde_json::to_value(event).expect("serialize event");
+            (event["type"] == "web_verification_failed")
+                .then(|| {
+                    event["payload"]["failureReason"]
+                        .as_str()
+                        .map(str::to_owned)
+                })
+                .flatten()
+        })
+        .expect("web verification failure reason");
+    assert_eq!(verification_reason, "search_result_no_usable_https");
 }

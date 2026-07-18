@@ -19,6 +19,7 @@ use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, Freshness, RunEventPayload, RunEventType, SafeRunErrorCode,
+    WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::tool_catalog::catalog_find;
@@ -36,9 +37,14 @@ use crate::storage::db::Database;
 
 const WEB_TOOL_NAME: &str = "web_search";
 const MAX_WEB_EVIDENCE_PER_RUN: usize = 8;
-const MAX_INITIAL_WEB_SEARCH_RESULTS: usize = 5;
+/// Required-run and diagnostic search limit. Keeping this shared prevents a one-row smoke probe
+/// from passing while the actual evidence request exceeds a provider's output budget.
+pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 5;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
-const INITIAL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(10);
+/// One WebRequired preflight may use at most two attempts, sharing this total budget.
+const REQUIRED_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(15);
+/// Model-requested follow-up searches retain their own bounded interaction budget.
+const MODEL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(10);
 /// Internal control-flow signal: the Run was durably moved to confirmation,
 /// so the model loop must stop without terminalizing it.
 pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
@@ -56,11 +62,39 @@ pub(crate) enum RunWebStatus {
 struct WebFailure {
     code: SafeRunErrorCode,
     retryable: bool,
+    reason: WebEvidenceFailureReason,
 }
 
 impl WebFailure {
     const fn new(code: SafeRunErrorCode, retryable: bool) -> Self {
-        Self { code, retryable }
+        Self {
+            code,
+            retryable,
+            reason: failure_reason_for_code(code),
+        }
+    }
+
+    const fn with_reason(
+        code: SafeRunErrorCode,
+        retryable: bool,
+        reason: WebEvidenceFailureReason,
+    ) -> Self {
+        Self {
+            code,
+            retryable,
+            reason,
+        }
+    }
+}
+
+const fn failure_reason_for_code(code: SafeRunErrorCode) -> WebEvidenceFailureReason {
+    match code {
+        SafeRunErrorCode::WebProviderUnavailable => WebEvidenceFailureReason::ProviderUnavailable,
+        SafeRunErrorCode::WebProviderTimeout => WebEvidenceFailureReason::ProviderTimeout,
+        SafeRunErrorCode::WebProviderAuthFailed => WebEvidenceFailureReason::ProviderAuthentication,
+        SafeRunErrorCode::WebProviderFailed => WebEvidenceFailureReason::ProviderTransport,
+        SafeRunErrorCode::WebEvidenceInvalid => WebEvidenceFailureReason::Unknown,
+        _ => WebEvidenceFailureReason::Unknown,
     }
 }
 
@@ -88,6 +122,7 @@ pub(crate) struct RunWebEvidence {
     pub(crate) prompt_addendum: String,
     pub(crate) status: RunWebStatus,
     pub(crate) failure_code: Option<SafeRunErrorCode>,
+    pub(crate) failure_reason: Option<WebEvidenceFailureReason>,
     pub(crate) retryable: bool,
     pub(crate) attempt_count: u32,
     pub(crate) duration_bucket: &'static str,
@@ -105,10 +140,11 @@ impl Default for RunWebEvidence {
             prompt_addendum: String::new(),
             status: RunWebStatus::Skipped,
             failure_code: None,
+            failure_reason: None,
             retryable: false,
             attempt_count: 0,
             duration_bucket: "not_attempted",
-            remaining_budget_ms: bounded_duration_ms(INITIAL_WEB_EVIDENCE_DEADLINE),
+            remaining_budget_ms: bounded_duration_ms(REQUIRED_WEB_EVIDENCE_DEADLINE),
             provider_snapshot: None,
         }
     }
@@ -183,7 +219,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 failure,
                 self.web_attempt_count(),
                 Duration::ZERO,
-                bounded_duration_ms(INITIAL_WEB_EVIDENCE_DEADLINE),
+                bounded_duration_ms(MODEL_WEB_EVIDENCE_DEADLINE),
             ));
         }
         let query = args
@@ -230,11 +266,11 @@ impl<'a> NormalRunToolExecutor<'a> {
                     failure,
                     self.web_attempt_count(),
                     call_started.elapsed(),
-                    remaining_web_budget_ms(budget_started.elapsed()),
+                    remaining_model_web_budget_ms(budget_started.elapsed()),
                 ));
             };
             let remaining_time =
-                INITIAL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
+                MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
             if remaining_time.is_zero() {
                 let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
                 self.set_web_failure(Some(failure))?;
@@ -242,7 +278,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                     failure,
                     attempt_count,
                     call_started.elapsed(),
-                    remaining_web_budget_ms(budget_started.elapsed()),
+                    remaining_model_web_budget_ms(budget_started.elapsed()),
                 ));
             }
             let failure = match tokio::time::timeout(
@@ -262,7 +298,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             if attempt_count < 2
                 && failure.retryable
                 && budget_started.elapsed() + Duration::from_millis(250)
-                    < INITIAL_WEB_EVIDENCE_DEADLINE
+                    < MODEL_WEB_EVIDENCE_DEADLINE
             {
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 continue;
@@ -272,7 +308,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 failure,
                 attempt_count,
                 call_started.elapsed(),
-                remaining_web_budget_ms(budget_started.elapsed()),
+                remaining_model_web_budget_ms(budget_started.elapsed()),
             ));
         };
         let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets(
@@ -295,7 +331,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 failure,
                 self.web_attempt_count(),
                 call_started.elapsed(),
-                remaining_web_budget_ms(budget_started.elapsed()),
+                remaining_model_web_budget_ms(budget_started.elapsed()),
             ));
         }
         self.set_web_failure(None)?;
@@ -311,7 +347,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "evidenceIds": evidence_ids,
                 "count": evidence_ids.len(),
                 "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
-                "remainingBudgetMs": remaining_web_budget_ms(budget_started.elapsed()),
+                "remainingBudgetMs": remaining_model_web_budget_ms(budget_started.elapsed()),
                 "webUsage": output.usage,
             }),
             duration_ms: bounded_duration_ms(call_started.elapsed()),
@@ -972,7 +1008,7 @@ where
         query: context.user_message.clone(),
         urls: Vec::new(),
         enabled: true,
-        max_search_results: MAX_INITIAL_WEB_SEARCH_RESULTS,
+        max_search_results: INITIAL_WEB_SEARCH_RESULTS,
         max_fetches: 0,
         provider_snapshot: provider_snapshot.clone(),
     };
@@ -980,7 +1016,7 @@ where
     let mut attempt_count = 0;
     let collection = loop {
         attempt_count += 1;
-        let remaining = INITIAL_WEB_EVIDENCE_DEADLINE.saturating_sub(started.elapsed());
+        let remaining = REQUIRED_WEB_EVIDENCE_DEADLINE.saturating_sub(started.elapsed());
         if remaining.is_zero() {
             break Err(WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true));
         }
@@ -992,7 +1028,7 @@ where
         };
         if attempt_count < 2
             && failure.retryable
-            && started.elapsed() + Duration::from_millis(250) < INITIAL_WEB_EVIDENCE_DEADLINE
+            && started.elapsed() + Duration::from_millis(250) < REQUIRED_WEB_EVIDENCE_DEADLINE
         {
             tokio::time::sleep(Duration::from_millis(250)).await;
             continue;
@@ -1003,7 +1039,7 @@ where
     let output = match collection {
         Ok(output) => output,
         Err(failure) => {
-            let mut result = failed_web_result(failure.code.as_str());
+            let mut result = failed_web_result(failure);
             result.duration_ms = bounded_duration_ms(started.elapsed());
             audit_dispatched_tool(db, &gate, &gate_outcome.decision, &result)?;
             append_tool_completed(
@@ -1079,8 +1115,11 @@ where
     }
 
     let elapsed = started.elapsed();
-    let result = if evidence_ids.is_empty() {
-        let mut result = failed_web_result("web_evidence_unavailable");
+    let evidence_failure = evidence_ids
+        .is_empty()
+        .then(|| classify_web_evidence_output_failure(&output));
+    let result = if let Some(failure) = evidence_failure {
+        let mut result = failed_web_result(failure);
         result.duration_ms = bounded_duration_ms(elapsed);
         result
     } else {
@@ -1105,13 +1144,13 @@ where
             "Web evidence registered"
         },
     )?;
-    if evidence_ids.is_empty() {
+    if let Some(failure) = evidence_failure {
         return required_web_result(
             db,
             accepted,
             context,
             sink,
-            classify_web_evidence_output_failure(&output),
+            failure,
             attempt_count,
             elapsed,
             provider_snapshot,
@@ -1123,10 +1162,11 @@ where
         prompt_addendum: render_prompt_addendum(&prompt_items),
         status: RunWebStatus::Succeeded,
         failure_code: None,
+        failure_reason: None,
         retryable: false,
         attempt_count,
         duration_bucket: web_duration_bucket(elapsed),
-        remaining_budget_ms: remaining_web_budget_ms(elapsed),
+        remaining_budget_ms: remaining_required_web_budget_ms(elapsed),
         provider_snapshot,
     })
 }
@@ -1223,18 +1263,18 @@ fn required_web_result(
     >,
 ) -> AppResult<RunWebEvidence> {
     debug_assert_eq!(context.envelope.freshness, Freshness::WebRequired);
-    // The caller may still enter the bounded recovery tool loop. Do not emit a
-    // nonterminal degradation or inject a prompt that permits an unverified
-    // answer; only the terminal recovery failure is user-visible.
+    // The Run Engine terminalizes this degraded WebRequired outcome before model dispatch.
+    // Do not inject a prompt that could permit an unverified answer.
     Ok(RunWebEvidence {
         evidence_ids: Vec::new(),
         prompt_addendum: String::new(),
         status: RunWebStatus::Degraded,
         failure_code: Some(failure.code),
+        failure_reason: Some(failure.reason),
         retryable: failure.retryable,
         attempt_count,
         duration_bucket: web_duration_bucket(elapsed),
-        remaining_budget_ms: remaining_web_budget_ms(elapsed),
+        remaining_budget_ms: remaining_required_web_budget_ms(elapsed),
         provider_snapshot,
     })
 }
@@ -1247,8 +1287,12 @@ fn bounded_duration_ms(duration: Duration) -> u64 {
     }
 }
 
-fn remaining_web_budget_ms(elapsed: Duration) -> u64 {
-    bounded_duration_ms(INITIAL_WEB_EVIDENCE_DEADLINE.saturating_sub(elapsed))
+fn remaining_required_web_budget_ms(elapsed: Duration) -> u64 {
+    bounded_duration_ms(REQUIRED_WEB_EVIDENCE_DEADLINE.saturating_sub(elapsed))
+}
+
+fn remaining_model_web_budget_ms(elapsed: Duration) -> u64 {
+    bounded_duration_ms(MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(elapsed))
 }
 
 fn web_duration_bucket(duration: Duration) -> &'static str {
@@ -1258,8 +1302,8 @@ fn web_duration_bucket(duration: Duration) -> &'static str {
         "under_1s"
     } else if duration < Duration::from_secs(3) {
         "1s_to_3s"
-    } else if duration < INITIAL_WEB_EVIDENCE_DEADLINE {
-        "3s_to_10s"
+    } else if duration < REQUIRED_WEB_EVIDENCE_DEADLINE {
+        "3s_to_15s"
     } else {
         "budget_exhausted"
     }
@@ -1298,14 +1342,17 @@ fn append_capability_degraded(
     sink.emit(&event)
 }
 
-fn failed_web_result(reason: &str) -> ToolCallResult {
+fn failed_web_result(failure: WebFailure) -> ToolCallResult {
     ToolCallResult {
         tool_name: WEB_TOOL_NAME.to_string(),
         success: false,
-        output: serde_json::json!({ "failure_class": reason }),
+        output: serde_json::json!({
+            "error": failure.code.as_str(),
+            "failure_class": failure.reason.as_str(),
+        }),
         duration_ms: 0,
         tokens_used: None,
-        error: Some(reason.to_string()),
+        error: Some(failure.code.as_str().to_string()),
     }
 }
 
@@ -1378,6 +1425,12 @@ pub(crate) fn web_evidence_failure_is_retryable(error: &AppError) -> bool {
     classify_web_failure(error).retryable
 }
 
+/// Return the structured safe reason selected for a Broker/MCP failure.
+#[cfg(test)]
+pub(crate) fn web_evidence_failure_reason(error: &AppError) -> WebEvidenceFailureReason {
+    classify_web_failure(error).reason
+}
+
 fn classify_web_failure(error: &AppError) -> WebFailure {
     let message = error.to_string().to_ascii_lowercase();
     match message.as_str() {
@@ -1402,15 +1455,52 @@ fn classify_web_failure(error: &AppError) -> WebFailure {
         {
             WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
         }
+        _ if message.contains("output_too_large") || message.contains("output too large") => {
+            WebFailure::with_reason(
+                SafeRunErrorCode::WebEvidenceInvalid,
+                false,
+                WebEvidenceFailureReason::ProviderOutputTooLarge,
+            )
+        }
         _ if message.contains("mcp_search_parse_empty")
             || message.contains("unrecognized_schema")
-            || message.contains("text_without_url")
-            || message.contains("web_evidence_unavailable")
-            || message.contains("output_too_large")
-            || message.contains("output too large") =>
+            || message.contains("text_without_url") =>
         {
-            WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+            WebFailure::with_reason(
+                SafeRunErrorCode::WebEvidenceInvalid,
+                false,
+                WebEvidenceFailureReason::SearchResultUnparseable,
+            )
         }
+        _ if message.contains("mcp_search_no_usable_https_results")
+            || message.contains("non_https_rejected") =>
+        {
+            WebFailure::with_reason(
+                SafeRunErrorCode::WebEvidenceInvalid,
+                false,
+                WebEvidenceFailureReason::SearchResultNoUsableHttps,
+            )
+        }
+        _ if message.contains("web_evidence_unavailable") => WebFailure::with_reason(
+            SafeRunErrorCode::WebEvidenceInvalid,
+            false,
+            WebEvidenceFailureReason::EvidenceContentEmpty,
+        ),
+        _ if message.contains("mcp_provider_rate_limited") => WebFailure::with_reason(
+            SafeRunErrorCode::WebProviderFailed,
+            true,
+            WebEvidenceFailureReason::ProviderRateLimited,
+        ),
+        _ if message.contains("mcp_provider_quota_exhausted") => WebFailure::with_reason(
+            SafeRunErrorCode::WebProviderFailed,
+            false,
+            WebEvidenceFailureReason::ProviderQuotaExhausted,
+        ),
+        _ if message.contains("mcp_provider_invalid_arguments") => WebFailure::with_reason(
+            SafeRunErrorCode::WebProviderFailed,
+            false,
+            WebEvidenceFailureReason::ProviderInvalidArguments,
+        ),
         _ if message.contains("web_search_provider_missing")
             || message.contains("web_search_provider_unselected")
             || message.contains("web_search_provider_unavailable")
@@ -1426,9 +1516,14 @@ fn classify_web_failure(error: &AppError) -> WebFailure {
             || message.contains("temporarily unavailable")
             || message.contains("service unavailable")
             || message.contains("transport interrupted")
-            || message.contains("network unreachable") =>
+            || message.contains("network unreachable")
+            || message.contains("mcp_provider_transport_error") =>
         {
-            WebFailure::new(SafeRunErrorCode::WebProviderFailed, true)
+            WebFailure::with_reason(
+                SafeRunErrorCode::WebProviderFailed,
+                true,
+                WebEvidenceFailureReason::ProviderTransport,
+            )
         }
         _ => WebFailure::new(SafeRunErrorCode::WebProviderFailed, false),
     }

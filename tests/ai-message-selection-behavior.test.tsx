@@ -5,6 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiMessageList } from "@/components/ai/AiMessageList";
 import { ConversationSurface } from "@/components/ai/ConversationSurface";
 
+const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
+
+vi.mock("@/components/ui/use-toast", () => ({
+  useToast: () => toast,
+}));
+
 vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
     getTotalSize: () => count * 112,
@@ -29,6 +35,7 @@ describe("AI message selection behavior", () => {
     root = createRoot(host);
     writeText.mockReset();
     writeText.mockResolvedValue(undefined);
+    toast.mockReset();
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText },
@@ -155,6 +162,7 @@ describe("AI message selection behavior", () => {
     expect(writeText).not.toHaveBeenCalledWith(
       expect.stringContaining("正在检索笔记"),
     );
+    expect(toast).toHaveBeenCalledWith("已复制回答", { tone: "success" });
   });
 
   it("shows the latest process step only in the collapsed timeline header", async () => {

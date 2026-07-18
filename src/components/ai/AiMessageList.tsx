@@ -75,6 +75,10 @@ type MessageRow =
   | { type: "message"; messageIndex: number };
 
 const SCROLL_WRITE_EPSILON_PX = 1;
+// Keep copy feedback ASCII-only in source: a legacy WebView code-page decode must not turn the
+// user-facing UTF-8 literals into mojibake before React receives them.
+const COPY_SUCCESS_TOAST = "\u5df2\u590d\u5236\u56de\u7b54";
+const COPY_FAILURE_TOAST = "\u590d\u5236\u5931\u8d25";
 
 function isRenderableMessageRow(
   message: ChatLine,
@@ -382,9 +386,9 @@ export const AiMessageList = memo(function AiMessageList({
           throw new Error("Clipboard API is unavailable");
         }
         await navigator.clipboard.writeText(content);
-        toast("已复制回答", { tone: "success" });
+        toast(COPY_SUCCESS_TOAST, { tone: "success" });
       } catch {
-        toast("复制失败", { tone: "error" });
+        toast(COPY_FAILURE_TOAST, { tone: "error" });
       }
     },
     [toast],

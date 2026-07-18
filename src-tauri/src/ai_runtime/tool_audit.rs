@@ -186,7 +186,23 @@ fn classify_failure(result: &serde_json::Value, error: Option<&str>) -> Option<S
         .or(error)
         .or_else(|| result.get("error").and_then(|value| value.as_str()))?;
     let lower = raw.to_ascii_lowercase();
-    let class = if lower.contains("auth") || lower.contains("credential") {
+    let class = if matches!(
+        lower.as_str(),
+        "provider_unavailable"
+            | "provider_transport"
+            | "provider_timeout"
+            | "provider_authentication"
+            | "provider_output_too_large"
+            | "provider_rate_limited"
+            | "provider_quota_exhausted"
+            | "provider_invalid_arguments"
+            | "search_result_unparseable"
+            | "search_result_no_usable_https"
+            | "evidence_content_empty"
+            | "unknown"
+    ) {
+        lower.as_str()
+    } else if lower.contains("auth") || lower.contains("credential") {
         "provider_auth_missing"
     } else if lower.contains("timeout") {
         "provider_timeout"
@@ -303,5 +319,16 @@ mod tests {
         assert!(summary.contains("query_hash="));
         assert!(!summary.contains("private query"));
         assert!(!summary.contains("private body"));
+    }
+
+    #[test]
+    fn safe_web_failure_class_is_preserved_without_provider_detail() {
+        assert_eq!(
+            classify_failure(
+                &serde_json::json!({"failure_class":"provider_output_too_large"}),
+                Some("private provider output must not be persisted"),
+            ),
+            Some("provider_output_too_large".into())
+        );
     }
 }

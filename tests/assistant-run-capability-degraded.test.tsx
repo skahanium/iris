@@ -54,6 +54,7 @@ describe("AssistantRunCapabilityDegraded", () => {
           failure={{
             kind: "web_verification_failed",
             code: "agent_run_web_provider_timeout",
+            failureReason: "provider_timeout",
             retryable: true,
             attemptCount: 4,
             durationBucket: "budget_exhausted",
@@ -72,6 +73,29 @@ describe("AssistantRunCapabilityDegraded", () => {
     expect(retry).toHaveBeenCalledOnce();
     (buttons[1] as HTMLButtonElement).click();
     expect(openSettings).toHaveBeenCalledOnce();
+  });
+
+  it("explains a response safety-cap failure without provider output", () => {
+    act(() => {
+      root.render(
+        <AssistantRunWebVerificationFailed
+          failure={{
+            kind: "web_verification_failed",
+            code: "agent_run_web_evidence_invalid",
+            failureReason: "provider_output_too_large",
+            retryable: false,
+            attemptCount: 1,
+            durationBucket: "3s_to_15s",
+            diagnosticId: "run-output-limit",
+          }}
+          retrying={false}
+          onRetry={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("超过安全上限");
+    expect(host.textContent).not.toContain("private provider output");
   });
 
   it("renders the precise non-retryable API Key remediation message", () => {

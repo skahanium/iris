@@ -401,6 +401,19 @@ export type AssistantRunEventPayload =
   | {
       kind: "web_verification_failed";
       code: AssistantRunErrorCode;
+      failureReason:
+        | "provider_unavailable"
+        | "provider_transport"
+        | "provider_timeout"
+        | "provider_authentication"
+        | "provider_output_too_large"
+        | "provider_rate_limited"
+        | "provider_quota_exhausted"
+        | "provider_invalid_arguments"
+        | "search_result_unparseable"
+        | "search_result_no_usable_https"
+        | "evidence_content_empty"
+        | "unknown";
       retryable: boolean;
       attemptCount: number;
       durationBucket: string;

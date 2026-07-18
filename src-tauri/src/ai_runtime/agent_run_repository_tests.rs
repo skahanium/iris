@@ -280,6 +280,7 @@ fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
             event_type: RunEventType::WebVerificationFailed,
             payload: RunEventPayload::WebVerificationFailed {
                 code: super::run_contract::SafeRunErrorCode::WebProviderTimeout,
+                failure_reason: super::run_contract::WebEvidenceFailureReason::ProviderTimeout,
                 retryable: true,
                 attempt_count: 4,
                 duration_bucket: "budget_exhausted".into(),

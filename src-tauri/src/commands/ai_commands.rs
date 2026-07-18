@@ -440,12 +440,11 @@ async fn run_mcp_search_smoke_test(
         db,
         &provider.id,
         "Iris note app",
-        1,
-        // A required Run gives one individual MCP search attempt at most
-        // ten seconds (and may reserve the second ten seconds for its
-        // constrained recovery). Diagnostics must not advertise a
-        // provider as ready solely because a looser probe succeeds.
-        Duration::from_secs(10),
+        crate::ai_runtime::run_tool_loop::INITIAL_WEB_SEARCH_RESULTS,
+        // A WebRequired Run gives its first MCP search attempt this same
+        // bounded budget. Diagnostics must not advertise readiness using a
+        // looser timeout than the actual preflight path.
+        Duration::from_secs(15),
     )
     .await
 }
@@ -523,6 +522,28 @@ async fn provider_diagnostics_for_summary(
 
     let mut can_use_for_search = provider.enabled && provider.has_search_mapping && credentials_ok;
     let mut can_use_for_fetch = provider.enabled && provider.has_fetch_mapping && credentials_ok;
+    let circuit = crate::ai_runtime::circuit_breaker::inspect_readiness(&provider.id);
+    let circuit_ready = circuit.request_allowed;
+    checks.push(provider_diagnostic_check(
+        "circuit",
+        circuit_ready,
+        match (circuit.status, circuit_ready) {
+            (crate::ai_runtime::circuit_breaker::CircuitStatus::Open, false) => {
+                "Agent 请求当前受熔断保护；请等待冷却结束后重试"
+            }
+            (crate::ai_runtime::circuit_breaker::CircuitStatus::Open, true) => {
+                "熔断冷却已结束，下一次 Agent 请求将作为恢复探测"
+            }
+            (crate::ai_runtime::circuit_breaker::CircuitStatus::HalfOpen, _) => {
+                "熔断器正在恢复探测阶段"
+            }
+            (crate::ai_runtime::circuit_breaker::CircuitStatus::Closed, _) => {
+                "Agent 请求未受熔断限制"
+            }
+        },
+    ));
+    can_use_for_search = can_use_for_search && circuit_ready;
+    can_use_for_fetch = can_use_for_fetch && circuit_ready;
 
     if provider.kind == "mcp" && provider.enabled {
         let options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
@@ -569,7 +590,7 @@ async fn provider_diagnostics_for_summary(
                     if exists && provider.web_search_mapping_json.is_some() {
                         match run_mcp_search_smoke_test(db, provider).await {
                             Ok(probe) => {
-                                let parseable = probe.diagnostic.parsed_row_count > 0;
+                                let parseable = probe.diagnostic.usable_https_row_count > 0;
                                 let call_succeeded = probe.diagnostic.application_failure.is_none();
                                 checks.push(provider_diagnostic_check(
                                     "searchSmokeAuthHeader",
@@ -589,8 +610,9 @@ async fn provider_diagnostics_for_summary(
                                         )
                                     } else {
                                         format!(
-                                            "搜索调用正常，解析出 {} 条网页证据；{}",
+                                            "本次探针调用正常，解析出 {} 条记录，其中 {} 条可安全注册为 HTTPS 证据；{}",
                                             probe.diagnostic.parsed_row_count,
+                                            probe.diagnostic.usable_https_row_count,
                                             probe.summary()
                                         )
                                     },
@@ -601,9 +623,9 @@ async fn provider_diagnostics_for_summary(
                                     "searchResultParseLive",
                                     parseable,
                                     if parseable {
-                                        "MCP 搜索结果已归一化为联网证据"
+                                        "本次探针结果已归一化为可注册的联网证据"
                                     } else {
-                                        "MCP 搜索结果无法归一化为联网证据"
+                                        "本次探针未返回可安全注册的 HTTPS 证据"
                                     },
                                 ));
                             }

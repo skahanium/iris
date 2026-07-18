@@ -21,6 +21,14 @@ pub enum CircuitStatus {
     HalfOpen,
 }
 
+/// Read-only circuit state used by diagnostics. This never changes a circuit or consumes a
+/// half-open probe slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CircuitReadiness {
+    pub status: CircuitStatus,
+    pub request_allowed: bool,
+}
+
 #[derive(Debug)]
 struct CircuitState {
     consecutive_failures: u32,
@@ -99,6 +107,27 @@ pub fn is_request_allowed(provider_id: &str) -> bool {
             false
         }
         CircuitStatus::HalfOpen => true,
+    }
+}
+
+/// Inspect whether a real provider request would currently be allowed without mutating state.
+pub fn inspect_readiness(provider_id: &str) -> CircuitReadiness {
+    let map = CIRCUITS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(state) = map.get(provider_id) else {
+        return CircuitReadiness {
+            status: CircuitStatus::Closed,
+            request_allowed: true,
+        };
+    };
+    let request_allowed = match state.status {
+        CircuitStatus::Closed | CircuitStatus::HalfOpen => true,
+        CircuitStatus::Open => state.opened_at.is_some_and(|opened_at| {
+            opened_at.elapsed() >= Duration::from_secs(COOLDOWN_DURATION_SECS)
+        }),
+    };
+    CircuitReadiness {
+        status: state.status,
+        request_allowed,
     }
 }
 
@@ -219,6 +248,20 @@ mod tests {
         let prov = "circuit-test-unknown";
         reset_circuit(prov);
         assert!(is_request_allowed(prov));
+        reset_circuit(prov);
+    }
+
+    #[test]
+    fn readiness_inspection_does_not_consume_an_open_circuit_probe() {
+        let prov = "circuit-test-readiness";
+        reset_circuit(prov);
+        for _ in 0..CONSECUTIVE_FAILURES_TO_OPEN {
+            record_failure(prov);
+        }
+        let readiness = inspect_readiness(prov);
+        assert_eq!(readiness.status, CircuitStatus::Open);
+        assert!(!readiness.request_allowed);
+        assert!(!is_request_allowed(prov));
         reset_circuit(prov);
     }
 }

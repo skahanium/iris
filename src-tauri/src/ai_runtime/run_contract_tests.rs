@@ -35,6 +35,27 @@ fn execution_envelope_keeps_orthogonal_execution_dimensions() {
 }
 
 #[test]
+fn historical_web_verification_event_defaults_to_unknown_failure_reason() {
+    let payload: RunEventPayload = serde_json::from_value(serde_json::json!({
+        "kind": "web_verification_failed",
+        "code": "agent_run_web_provider_timeout",
+        "retryable": true,
+        "attemptCount": 1,
+        "durationBucket": "under_3s",
+        "diagnosticId": "historic-run"
+    }))
+    .expect("historical payload remains replayable");
+
+    assert!(matches!(
+        payload,
+        RunEventPayload::WebVerificationFailed {
+            failure_reason: super::run_contract::WebEvidenceFailureReason::Unknown,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn execution_envelope_allows_composable_material_needs() {
     let mut envelope = direct_answer_envelope();
     envelope.effect = Effect::Draft;

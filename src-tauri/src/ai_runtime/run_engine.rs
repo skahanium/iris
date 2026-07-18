@@ -13,6 +13,7 @@ use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLo
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
+    WebEvidenceFailureReason,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -750,12 +751,10 @@ impl RunEngine {
         sink.emit(&failed)
     }
 
-    /// Execute the bounded Web evidence stage before any model route, credential hydration, or
-    /// provider dispatch. Expected provider failures are represented by a degraded evidence
-    /// outcome and still reach `dispatch`; only an unexpected orchestration error terminalizes
-    /// the accepted Run with a Web-specific safe code.
+    /// Execute required Web evidence before any model route, credential hydration, or provider
+    /// dispatch. A WebRequired Run may enter the model loop only after usable evidence has been
+    /// registered; a degraded preflight is terminal and preserves its original safe cause.
     pub(crate) async fn execute_web_required_evidence_then_dispatch_with_sink<
-        Evidence,
         Output,
         Collector,
         CollectorFuture,
@@ -771,8 +770,9 @@ impl RunEngine {
     ) -> AppResult<Output>
     where
         Collector: FnOnce() -> CollectorFuture,
-        CollectorFuture: Future<Output = AppResult<Evidence>>,
-        Dispatch: FnOnce(Evidence) -> DispatchFuture,
+        CollectorFuture:
+            Future<Output = AppResult<crate::ai_runtime::run_tool_loop::RunWebEvidence>>,
+        Dispatch: FnOnce(crate::ai_runtime::run_tool_loop::RunWebEvidence) -> DispatchFuture,
         DispatchFuture: Future<Output = AppResult<Output>>,
     {
         let evidence = match collector().await {
@@ -783,6 +783,37 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
+        if evidence.status != crate::ai_runtime::run_tool_loop::RunWebStatus::Succeeded {
+            let code = evidence
+                .failure_code
+                .unwrap_or(SafeRunErrorCode::WebEvidenceInvalid);
+            let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
+                .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            if snapshot.run.state != RunState::Accepted {
+                return Err(AppError::msg("agent_run_illegal_transition"));
+            }
+            let verification_failed = AgentRunRepository::append_event(
+                db,
+                AppendRunEventInput {
+                    run_id: run_id.to_string(),
+                    state_version: snapshot.run.state_version,
+                    event_type: RunEventType::WebVerificationFailed,
+                    payload: RunEventPayload::WebVerificationFailed {
+                        code,
+                        failure_reason: evidence
+                            .failure_reason
+                            .unwrap_or(WebEvidenceFailureReason::Unknown),
+                        retryable: evidence.retryable,
+                        attempt_count: evidence.attempt_count,
+                        duration_bucket: evidence.duration_bucket.to_string(),
+                        diagnostic_id: run_id.to_string(),
+                    },
+                },
+            )?;
+            sink.emit(&verification_failed)?;
+            Self::fail_before_dispatch_with_sink(db, session, run_id, code, sink)?;
+            return Err(AppError::msg(code.as_str()));
+        }
         dispatch(evidence).await
     }
 
@@ -1197,6 +1228,7 @@ impl RunEngine {
                             event_type: RunEventType::WebVerificationFailed,
                             payload: RunEventPayload::WebVerificationFailed {
                                 code,
+                                failure_reason: WebEvidenceFailureReason::Unknown,
                                 retryable: matches!(
                                     code,
                                     SafeRunErrorCode::WebProviderTimeout

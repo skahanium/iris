@@ -721,10 +721,13 @@ fn spawn_normal_direct_run(
                                 failure_code: Some(
                                     crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderUnavailable,
                                 ),
+                                failure_reason: Some(
+                                    crate::ai_runtime::run_contract::WebEvidenceFailureReason::ProviderUnavailable,
+                                ),
                                 retryable: false,
                                 attempt_count: 0,
                                 duration_bucket: "not_started",
-                                remaining_budget_ms: 10_000,
+                                remaining_budget_ms: 15_000,
                                 provider_snapshot: None,
                             }),
                         }
