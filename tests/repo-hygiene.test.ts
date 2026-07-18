@@ -25,6 +25,7 @@ const checkedUserFacingFiles = [
   "src/components/ai/AgentStatusBadge.tsx",
   "src/components/ai/SkillsPanel.tsx",
   "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+  "src/components/ai/hooks/useAssistantConversation.ts",
   "src/hooks/useAssistantRun.ts",
   "src/hooks/useInlineAi.ts",
   "src/lib/ipc.ts",
@@ -60,7 +61,7 @@ describe("repository text hygiene", () => {
 
   it("does not expose mojibake in AI-facing UI and IPC contract text", () => {
     const mojibakePattern =
-      /[鈹€鍘熸枃鐮旂┒缁煎悎鍐欀綔寮曠敤鏍告煡杞婚噺瀵硅瘽鐘舵€褰撳墠瀹夎璺緞鏃ф牸闇€纭]/;
+      /[鈹€鍘熸枃鐮旂┒缁煎悎鍐欀綔寮曠敤鏍告煡杞婚噺瀵硅瘽鐘舵€褰撳墠瀹夎璺緞鏃ф牸闇€纭娑堟伅宸插鍒堕€変腑澶嶅埗澶辫触鎾ゅ洖鏈悓姝ュ埌浼氳瘽璁板綍]/;
     const offenders = checkedUserFacingFiles.filter((path) =>
       mojibakePattern.test(read(path)),
     );

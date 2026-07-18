@@ -27,6 +27,13 @@ import type { ChatLine, ImageAttachment } from "../AiMessageList";
 
 const MAX_CONVERSATION_UI_MESSAGES = 240;
 
+// Keep user-facing toast literals ASCII-only in source: a legacy WebView code-page decode
+// must not turn UTF-8 string literals into mojibake before React receives them.
+const COPY_SELECTED_SUCCESS_TOAST = "\u5df2\u590d\u5236\u9009\u4e2d\u6d88\u606f";
+const COPY_SELECTED_FAILURE_TOAST = "\u590d\u5236\u5931\u8d25";
+const RETRACT_SYNC_FAILURE_TOAST =
+  "\u64a4\u56de\u672a\u540c\u6b65\u5230\u4f1a\u8bdd\u8bb0\u5f55";
+
 interface BubbleSelectionPort {
   selected: Set<number>;
   clear: () => void;
@@ -127,7 +134,7 @@ export function useAssistantConversation({
             fromSeq: target.seq,
           });
         } catch {
-          toast("鎾ゅ洖鏈悓姝ュ埌浼氳瘽璁板綍", { tone: "error" });
+          toast(RETRACT_SYNC_FAILURE_TOAST, { tone: "error" });
           return;
         }
       }
@@ -241,9 +248,9 @@ export function useAssistantConversation({
     if (!content) return;
     try {
       await navigator.clipboard.writeText(content);
-      toast("宸插鍒堕€変腑娑堟伅", { tone: "success" });
+      toast(COPY_SELECTED_SUCCESS_TOAST, { tone: "success" });
     } catch {
-      toast("澶嶅埗澶辫触", { tone: "error" });
+      toast(COPY_SELECTED_FAILURE_TOAST, { tone: "error" });
     }
     bubbleSelection.clear();
   }, [bubbleSelection, toast]);
