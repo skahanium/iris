@@ -248,12 +248,16 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "web_evidence_budget_exhausted",
             ));
         }
+        // Model web calls share MODEL_WEB_EVIDENCE_DEADLINE (10s). MCP search alone
+        // commonly takes ~4s; scheduling deep page fetches (WEB_FETCH_TURN_BUDGET=8s)
+        // after that exceeds the outer timeout and discards already-usable search
+        // snippets. Match WebRequired preflight: register search snippets first.
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.to_owned(),
             urls,
             enabled: self.policy_ctx.web_search_enabled,
             max_search_results: remaining,
-            max_fetches: remaining,
+            max_fetches: 0,
             provider_snapshot: self.required_web_provider_snapshot.clone(),
         };
         let budget_started = self.web_budget.started()?;

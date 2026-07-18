@@ -6,6 +6,7 @@ import { invokeErrorMessage } from "@/lib/credentials";
 import {
   credentialDelete,
   credentialSet,
+  credentialStatus,
   webEvidenceProviderDelete,
   webEvidenceProviderDiagnostics,
   webEvidenceProvidersList,
@@ -25,6 +26,45 @@ interface McpProfilesPanelProps {
 }
 
 type DiagnosticsByProvider = Record<string, WebEvidenceProviderDiagnostics>;
+
+function credentialServicesFromRefsJson(raw: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return [];
+    }
+    const record = parsed as Record<string, unknown>;
+    const services: string[] = [];
+    for (const section of ["headers", "env"] as const) {
+      const bindings = record[section];
+      if (
+        !bindings ||
+        typeof bindings !== "object" ||
+        Array.isArray(bindings)
+      ) {
+        continue;
+      }
+      for (const value of Object.values(bindings as Record<string, unknown>)) {
+        if (typeof value === "string") {
+          const service = value.replace(/^credential:\/\//, "").trim();
+          if (service) services.push(service);
+          continue;
+        }
+        if (!value || typeof value !== "object" || Array.isArray(value))
+          continue;
+        const binding = value as Record<string, unknown>;
+        const ref = binding.credential ?? binding.service ?? binding.ref;
+        if (typeof ref === "string") {
+          const service = ref.replace(/^credential:\/\//, "").trim();
+          if (service) services.push(service);
+        }
+      }
+    }
+    return [...new Set(services)];
+  } catch {
+    return [];
+  }
+}
 
 function mappingStatus(
   searchMapping?: string | null,
@@ -130,6 +170,8 @@ export function McpProfilesPanel({
 }: McpProfilesPanelProps) {
   const [providers, setProviders] = useState<WebEvidenceProviderSummary[]>([]);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsByProvider>({});
+  const [credentialConfiguredByService, setCredentialConfiguredByService] =
+    useState<Record<string, boolean>>({});
   const [draft, setDraft] = useState<WebEvidenceProviderSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -141,6 +183,34 @@ export function McpProfilesPanel({
     setDiagnostics({});
   }, []);
 
+  const refreshCredentialStatuses = useCallback(
+    async (items: WebEvidenceProviderSummary[]) => {
+      const services = [
+        ...new Set(
+          items.flatMap((item) =>
+            credentialServicesFromRefsJson(item.credentialRefsJson),
+          ),
+        ),
+      ];
+      if (services.length === 0) {
+        setCredentialConfiguredByService({});
+        return;
+      }
+      const entries = await Promise.all(
+        services.map(async (service) => {
+          try {
+            const status = await credentialStatus(service);
+            return [service, status.configured] as const;
+          } catch {
+            return [service, false] as const;
+          }
+        }),
+      );
+      setCredentialConfiguredByService(Object.fromEntries(entries));
+    },
+    [],
+  );
+
   const load = useCallback(async () => {
     if (!isTauri()) return;
     setLoading(true);
@@ -149,12 +219,13 @@ export function McpProfilesPanel({
     try {
       const nextProviders = await webEvidenceProvidersList();
       setProviders(nextProviders);
+      await refreshCredentialStatuses(nextProviders);
     } catch (error) {
       setMessage(invokeErrorMessage(error));
     } finally {
       setLoading(false);
     }
-  }, [invalidateDiagnostics]);
+  }, [invalidateDiagnostics, refreshCredentialStatuses]);
 
   useEffect(() => {
     invalidateDiagnostics();
@@ -294,6 +365,7 @@ export function McpProfilesPanel({
         <McpProfileCard
           provider={draft}
           diagnostics={diagnostics[draft.id]}
+          credentialConfiguredByService={credentialConfiguredByService}
           saving={saving}
           persisted={false}
           onSave={saveProvider}
@@ -324,6 +396,7 @@ export function McpProfilesPanel({
               key={provider.id}
               provider={provider}
               diagnostics={diagnostics[provider.id]}
+              credentialConfiguredByService={credentialConfiguredByService}
               saving={saving}
               onSave={saveProvider}
               onToggle={(enabled) => toggleProvider(provider.id, enabled)}

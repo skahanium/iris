@@ -327,6 +327,93 @@ pub(crate) fn validate_mcp_runtime_transport_security(
     Ok(())
 }
 
+fn transport_url_host(transport_config_json: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(transport_config_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .and_then(|url| reqwest::Url::parse(&url).ok())
+        .and_then(|url| url.host_str().map(str::to_owned))
+}
+
+fn is_anysearch_transport_config(transport_config_json: &str) -> bool {
+    transport_url_host(transport_config_json)
+        .is_some_and(|host| host.eq_ignore_ascii_case("api.anysearch.com"))
+}
+
+/// Persist AnySearch search mappings with `maxResultsArg: "max_results"`.
+/// Returns `None` when the mapping already contains the field or cannot be patched.
+fn ensure_anysearch_max_results_mapping(mapping_json: &str) -> Option<String> {
+    let mut mapping = serde_json::from_str::<serde_json::Value>(mapping_json).ok()?;
+    let object = mapping.as_object_mut()?;
+    let is_search = object
+        .get("tool")
+        .or_else(|| object.get("tool_name"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|tool| tool.trim().eq_ignore_ascii_case("search"));
+    if !is_search || object.contains_key("maxResultsArg") {
+        return None;
+    }
+    object.insert(
+        "maxResultsArg".into(),
+        serde_json::Value::String("max_results".into()),
+    );
+    serde_json::to_string(&mapping).ok()
+}
+
+fn heal_legacy_anysearch_search_mappings(conn: &rusqlite::Connection) -> AppResult<()> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, kind, enabled, transport_kind, transport_config_json,
+                credential_refs_json, web_search_mapping_json, web_fetch_mapping_json
+         FROM web_evidence_providers
+         WHERE kind = 'mcp' AND transport_kind = 'https'
+           AND web_search_mapping_json IS NOT NULL",
+    )?;
+    let candidates = stmt
+        .query_map([], |row| {
+            Ok(WebEvidenceProviderInput {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                kind: row.get(2)?,
+                enabled: row.get::<_, i64>(3)? != 0,
+                transport_kind: row.get(4)?,
+                transport_config_json: row.get(5)?,
+                credential_refs_json: row.get(6)?,
+                web_search_mapping_json: row.get(7)?,
+                web_fetch_mapping_json: row.get(8)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
+    for mut input in candidates {
+        if !is_anysearch_transport_config(&input.transport_config_json) {
+            continue;
+        }
+        let Some(current) = input.web_search_mapping_json.as_deref() else {
+            continue;
+        };
+        let Some(healed) = ensure_anysearch_max_results_mapping(current) else {
+            continue;
+        };
+        input.web_search_mapping_json = Some(healed.clone());
+        let config_hash = provider_config_hash(&input);
+        conn.execute(
+            "UPDATE web_evidence_providers
+             SET web_search_mapping_json = ?2,
+                 provider_config_hash = ?3,
+                 updated_at = datetime('now')
+             WHERE id = ?1",
+            params![input.id, healed, config_hash],
+        )?;
+    }
+    Ok(())
+}
+
 fn normalize_provider_input(
     input: &WebEvidenceProviderInput,
 ) -> AppResult<WebEvidenceProviderInput> {
@@ -380,12 +467,19 @@ fn normalize_provider_input(
         transport_kind,
         transport_config_json: input.transport_config_json.trim().to_string(),
         credential_refs_json: input.credential_refs_json.trim().to_string(),
-        web_search_mapping_json: input
-            .web_search_mapping_json
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string),
+        web_search_mapping_json: {
+            let mapping = input
+                .web_search_mapping_json
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            if is_anysearch_transport_config(input.transport_config_json.trim()) {
+                mapping.map(|value| ensure_anysearch_max_results_mapping(&value).unwrap_or(value))
+            } else {
+                mapping
+            }
+        },
         web_fetch_mapping_json: input
             .web_fetch_mapping_json
             .as_deref()
@@ -560,6 +654,7 @@ pub fn web_evidence_provider_health(
 
 pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidenceProviderSummary>> {
     db.with_conn(|conn| {
+        heal_legacy_anysearch_search_mappings(conn)?;
         let mut stmt = conn.prepare(
             "SELECT id, name, kind, enabled, transport_kind,
                     transport_config_json, credential_refs_json,
@@ -768,6 +863,62 @@ mod tests {
             web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
             web_fetch_mapping_json: Some(r#"{"tool":"fetch"}"#.into()),
         }
+    }
+
+    #[test]
+    fn upsert_persists_anysearch_max_results_arg_without_runtime_patch() {
+        let db = Database::open_in_memory().unwrap();
+        let mut input = provider();
+        input.transport_kind = "https".into();
+        input.transport_config_json =
+            r#"{"url":"https://api.anysearch.com/mcp","allow_localhost_dev":false}"#.into();
+        input.credential_refs_json = r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.anysearch","optional":true}}}"#.into();
+        input.web_search_mapping_json = Some(r#"{"tool":"search","queryArg":"query"}"#.into());
+
+        upsert_web_evidence_provider(&db, &input).unwrap();
+
+        let stored = list_web_evidence_providers(&db).unwrap();
+        let mapping = stored[0]
+            .web_search_mapping_json
+            .as_deref()
+            .expect("search mapping");
+        let parsed: serde_json::Value = serde_json::from_str(mapping).unwrap();
+        assert_eq!(
+            parsed.get("maxResultsArg").and_then(|v| v.as_str()),
+            Some("max_results")
+        );
+    }
+
+    #[test]
+    fn list_silently_heals_legacy_anysearch_mappings() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO web_evidence_providers
+                 (id, name, kind, enabled, transport_kind, transport_config_json,
+                  credential_refs_json, web_search_mapping_json, web_fetch_mapping_json,
+                  provider_config_hash, updated_at)
+                 VALUES (?1, ?2, 'mcp', 1, 'https', ?3, '{}', ?4, NULL, 'legacy', datetime('now'))",
+                params![
+                    "anysearch-legacy",
+                    "AnySearch",
+                    r#"{"url":"https://api.anysearch.com/mcp"}"#,
+                    r#"{"tool":"search"}"#,
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let stored = list_web_evidence_providers(&db).unwrap();
+        let mapping = stored[0]
+            .web_search_mapping_json
+            .as_deref()
+            .expect("search mapping");
+        assert!(
+            mapping.contains("maxResultsArg"),
+            "expected healed mapping, got {mapping}"
+        );
     }
 
     #[test]

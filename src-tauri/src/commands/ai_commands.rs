@@ -354,14 +354,14 @@ fn provider_credential_diagnostic_checks(
                 checks.push(provider_diagnostic_check(
                     "credential",
                     true,
-                    &format!("{label} Key 已绑定：{service}"),
+                    &format!("{label} Key 已绑定，请求将携带鉴权：{service}"),
                 ));
             }
             false if optional => {
                 checks.push(provider_diagnostic_check(
                     "credential",
                     true,
-                    &format!("{label} 可选凭据未绑定，使用匿名模式：{service}"),
+                    &format!("{label} 未配置 Key，将使用匿名额度：{service}"),
                 ));
             }
             false => {
@@ -595,11 +595,22 @@ async fn provider_diagnostics_for_summary(
                                 checks.push(provider_diagnostic_check(
                                     "searchSmokeAuthHeader",
                                     probe.auth_header_present,
-                                    &format!(
-                                        "MCP search probe auth header present: {}",
-                                        probe.auth_header_present
-                                    ),
+                                    if probe.auth_header_present {
+                                        "搜索探针请求将携带 Authorization"
+                                    } else {
+                                        "搜索探针未携带 Authorization（匿名额度）"
+                                    },
                                 ));
+                                if let Ok(fingerprint) = crate::ai_runtime::mcp_host_runtime::provider_http_auth_fingerprint(
+                                    db,
+                                    &provider.id,
+                                ) {
+                                    checks.push(provider_diagnostic_check(
+                                        "authFingerprint",
+                                        true,
+                                        &fingerprint.summary(),
+                                    ));
+                                }
                                 checks.push(provider_diagnostic_check(
                                     "searchSmokeLive",
                                     call_succeeded,

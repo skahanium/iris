@@ -8,6 +8,7 @@ import { McpProfilesPanel } from "@/components/ai/skills/McpProfilesPanel";
 const ipcMocks = vi.hoisted(() => ({
   credentialDelete: vi.fn(),
   credentialSet: vi.fn(),
+  credentialStatus: vi.fn(),
   webEvidenceProviderDelete: vi.fn(),
   webEvidenceProviderDiagnostics: vi.fn(),
   webEvidenceProvidersList: vi.fn(),
@@ -89,6 +90,12 @@ describe("McpProfilesPanel 实时诊断", () => {
     vi.clearAllMocks();
     ipcMocks.credentialDelete.mockResolvedValue(undefined);
     ipcMocks.credentialSet.mockResolvedValue(undefined);
+    ipcMocks.credentialStatus.mockResolvedValue({
+      service: "iris.mcp.anysearch",
+      state: "available",
+      configured: true,
+      checkedAt: new Date().toISOString(),
+    });
     ipcMocks.webEvidenceProviderDelete.mockResolvedValue(undefined);
     ipcMocks.webEvidenceProviderDiagnostics.mockResolvedValue(liveDiagnostics);
     ipcMocks.webEvidenceProvidersList.mockResolvedValue([provider]);

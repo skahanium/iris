@@ -584,9 +584,10 @@ fn load_remote_provider(db: &Database, provider_id: &str) -> AppResult<StoredRem
             .and_then(|value| value.as_bool())
             == Some(true);
         validate_mcp_http_runtime_url(&url, allow_localhost_dev)?;
+        let headers = resolve_http_header_bindings(db, &credential_refs_json)?;
         Ok(StoredRemoteProvider {
             url,
-            headers: resolve_http_header_bindings(db, &credential_refs_json)?,
+            headers,
             allow_localhost_dev,
         })
     })
@@ -601,6 +602,70 @@ pub(crate) fn provider_http_auth_header_present(
         .headers
         .iter()
         .any(|(name, _)| name.eq_ignore_ascii_case("authorization")))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HttpAuthFingerprint {
+    pub host: String,
+    pub auth_header_present: bool,
+    pub auth_looks_bearer: bool,
+    pub token_prefix_as_sk: bool,
+    pub token_len: usize,
+}
+
+impl HttpAuthFingerprint {
+    pub(crate) fn summary(&self) -> String {
+        format!(
+            "host={}; authHeaderPresent={}; authLooksBearer={}; tokenPrefixAsSk={}; tokenLen={}. 厂商控制台 Last Used 不一定统计 MCP，不能作为未带 Key 的证据",
+            self.host,
+            self.auth_header_present,
+            self.auth_looks_bearer,
+            self.token_prefix_as_sk,
+            self.token_len
+        )
+    }
+}
+
+/// Non-sensitive Authorization header fingerprint for diagnostics UI.
+pub(crate) fn provider_http_auth_fingerprint(
+    db: &Database,
+    provider_id: &str,
+) -> AppResult<HttpAuthFingerprint> {
+    let provider = load_remote_provider(db, provider_id)?;
+    let host = reqwest::Url::parse(&provider.url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "unknown".into());
+    let auth_value = provider
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+        .map(|(_, value)| value.as_str());
+    let Some(value) = auth_value else {
+        return Ok(HttpAuthFingerprint {
+            host,
+            auth_header_present: false,
+            auth_looks_bearer: false,
+            token_prefix_as_sk: false,
+            token_len: 0,
+        });
+    };
+    let trimmed = value.trim();
+    let auth_looks_bearer = trimmed
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("bearer "));
+    let token = if auth_looks_bearer {
+        trimmed[7..].trim()
+    } else {
+        trimmed
+    };
+    Ok(HttpAuthFingerprint {
+        host,
+        auth_header_present: true,
+        auth_looks_bearer,
+        token_prefix_as_sk: token.starts_with("as_sk_"),
+        token_len: token.chars().count(),
+    })
 }
 
 fn load_stdio_provider(db: &Database, provider_id: &str) -> AppResult<StoredStdioProvider> {
@@ -1176,6 +1241,24 @@ mod tests {
     use super::*;
     fn missing_test_credential(_service: &str) -> AppResult<String> {
         Err(AppError::msg("missing test credential"))
+    }
+
+    #[test]
+    fn http_auth_fingerprint_summarizes_without_token_material() {
+        let fingerprint = HttpAuthFingerprint {
+            host: "api.anysearch.com".into(),
+            auth_header_present: true,
+            auth_looks_bearer: true,
+            token_prefix_as_sk: true,
+            token_len: 38,
+        };
+        let summary = fingerprint.summary();
+        assert!(summary.contains("host=api.anysearch.com"));
+        assert!(summary.contains("authHeaderPresent=true"));
+        assert!(summary.contains("tokenPrefixAsSk=true"));
+        assert!(summary.contains("tokenLen=38"));
+        assert!(!summary.contains("as_sk_"));
+        assert!(!summary.to_lowercase().contains("bearer as_sk"));
     }
 
     #[test]

@@ -17,6 +17,12 @@ import type {
 } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
+import { ensureAnySearchSearchMapping } from "./mcpAnySearchMapping";
+import {
+  credentialStateText,
+  isAnySearchProvider,
+  mappingForSave,
+} from "./mcpProfileHelpers";
 import {
   findMcpProviderPreset,
   MCP_PROVIDER_PRESETS,
@@ -32,6 +38,8 @@ export interface McpCredentialSave {
 interface McpProfileCardProps {
   provider: WebEvidenceProviderSummary;
   diagnostics?: WebEvidenceProviderDiagnostics | null;
+  /** service → whether a Key is already stored locally */
+  credentialConfiguredByService?: Record<string, boolean>;
   saving?: boolean;
   persisted?: boolean;
   onSave: (
@@ -258,47 +266,6 @@ function mappingToolName(
   }
 }
 
-function mappingForSave(raw: string, toolName: string): string | null {
-  const tool = toolName.trim();
-  if (!tool) {
-    const noMapping: null = null;
-    return noMapping;
-  }
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return JSON.stringify({ ...parsed, tool });
-    }
-  } catch {
-    // fall through to simple mapping
-  }
-  return JSON.stringify({ tool });
-}
-
-function mappingHasMaxResultsArgument(raw: string | null | undefined): boolean {
-  return typeof parseJsonRecord(raw).maxResultsArg === "string";
-}
-
-function isAnySearchProvider(provider: WebEvidenceProviderSummary): boolean {
-  if (provider.name.trim().toLowerCase() === "anysearch") return true;
-  const url = parseHttpsConfig(provider.transportConfigJson).url;
-  try {
-    return new URL(url).hostname.toLowerCase() === "api.anysearch.com";
-  } catch {
-    return false;
-  }
-}
-
-function needsAnySearchResultLimitUpdate(
-  provider: WebEvidenceProviderSummary,
-): boolean {
-  return (
-    isAnySearchProvider(provider) &&
-    provider.hasSearchMapping &&
-    !mappingHasMaxResultsArgument(provider.searchMapping)
-  );
-}
-
 function credentialRowsToJson(rows: CredentialRefRow[]): string {
   const headers: Record<string, unknown> = {};
   const env: Record<string, unknown> = {};
@@ -410,6 +377,8 @@ function checkLabelText(label: string): string {
       return "搜索工具";
     case "searchSmokeAuthHeader":
       return "鉴权请求头";
+    case "authFingerprint":
+      return "鉴权指纹";
     case "searchSmokeLive":
       return "搜索调用";
     case "searchResultParseLive":
@@ -421,14 +390,6 @@ function checkLabelText(label: string): string {
   }
 }
 
-function credentialStateText(rows: CredentialRefRow[]): string {
-  if (rows.length === 0) return "不需要凭据";
-  const hasPendingKey = rows.some((row) => row.secretValue.trim().length > 0);
-  if (hasPendingKey) return "本次保存会更新 Key";
-  if (rows.every((row) => row.optional)) return "匿名模式";
-  return "必填凭据缺失或待填写";
-}
-
 function presetIdFromProvider(provider: WebEvidenceProviderSummary): string {
   const parsed = parseJsonRecord(provider.transportConfigJson);
   return typeof parsed.preset_id === "string" ? parsed.preset_id : "custom";
@@ -437,6 +398,7 @@ function presetIdFromProvider(provider: WebEvidenceProviderSummary): string {
 export function McpProfileCard({
   provider,
   diagnostics,
+  credentialConfiguredByService,
   saving = false,
   persisted = true,
   onSave,
@@ -484,9 +446,14 @@ export function McpProfileCard({
     setStdioConfig(parseStdioConfig(provider.transportConfigJson));
     setCredentialRows(parseCredentialRows(provider.credentialRefsJson));
     setCredentialError(null);
-    setSearchMappingRaw(provider.searchMapping ?? "");
+    const healedSearch =
+      isAnySearchProvider(provider) && provider.searchMapping
+        ? (ensureAnySearchSearchMapping(provider.searchMapping) ??
+          provider.searchMapping)
+        : (provider.searchMapping ?? "");
+    setSearchMappingRaw(healedSearch);
     setFetchMappingRaw(provider.fetchMapping ?? "");
-    setSearchTool(mappingToolName(provider.searchMapping));
+    setSearchTool(mappingToolName(healedSearch || provider.searchMapping));
     setFetchTool(mappingToolName(provider.fetchMapping));
   }, [provider]);
 
@@ -495,8 +462,10 @@ export function McpProfileCard({
     [presetId],
   );
   const diagnosticLines = diagnostics?.checks ?? [];
-  const credentialState = credentialStateText(credentialRows);
-  const needsResultLimitUpdate = needsAnySearchResultLimitUpdate(provider);
+  const credentialState = credentialStateText(
+    credentialRows,
+    credentialConfiguredByService,
+  );
 
   const applyPreset = (preset: McpProviderPreset) => {
     onConfigurationChanged();
@@ -629,7 +598,16 @@ export function McpProfileCard({
         transportKind,
         transportConfigJson,
         credentialRefsJson: credentialRowsToJson(credentialRows),
-        searchMapping: mappingForSave(searchMappingRaw, searchTool),
+        searchMapping: mappingForSave(searchMappingRaw, searchTool, {
+          ensureAnySearchMaxResults:
+            isAnySearchProvider({
+              name,
+              transportConfigJson:
+                transportKind === "https"
+                  ? JSON.stringify({ url: httpsConfig.url.trim() })
+                  : provider.transportConfigJson,
+            }) || presetId === "anysearch",
+        }),
         fetchMapping: mappingForSave(fetchMappingRaw, fetchTool),
       },
       credentialSaves,
@@ -747,17 +725,6 @@ export function McpProfileCard({
           </Select>
         </label>
       </div>
-
-      {needsResultLimitUpdate ? (
-        <div
-          className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs text-foreground"
-          role="status"
-        >
-          当前已保存的 AnySearch 搜索映射未配置 <code>max_results</code>。请选择
-          “AnySearch”预设并保存，以持久化限制。保存前 Iris 会临时补全
-          <code>max_results</code>，避免服务默认返回过大结果而被安全上限拒绝。
-        </div>
-      ) : null}
 
       {transportKind === "stdio" ? (
         <section className="space-y-3">
@@ -923,8 +890,9 @@ export function McpProfileCard({
             <p className="text-xs font-medium text-foreground">系统凭据引用</p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               API Key 只写入本地加密凭据；Provider
-              配置只保存引用名、请求头/环境变量名和 Bearer 方案。 当前状态：
-              {credentialState}。
+              配置只保存引用名、请求头/环境变量名和 Bearer 方案。当前状态：
+              {credentialState}。厂商控制台「Last Used」不一定统计
+              MCP，不能单独作为是否带 Key 的依据。
             </p>
           </div>
           <Button

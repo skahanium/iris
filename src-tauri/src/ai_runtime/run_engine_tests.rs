@@ -767,6 +767,79 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
     assert_eq!(sink.events.lock().expect("sink lock").len(), 1);
 }
 
+#[test]
+fn run_stream_observer_flushes_long_validated_content_in_safe_chunks() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".to_string(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: event_state_version(&preparing),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在生成答复".to_string(),
+            },
+        },
+    )
+    .expect("running");
+    let sink = RecordingSink::default();
+    let mut observer =
+        AgentRunStreamObserver::new(&db, &accepted.run_id, event_state_version(&running), &sink);
+
+    let long_answer = "联网证据说明"
+        .chars()
+        .cycle()
+        .take(4_500)
+        .collect::<String>();
+    observer.bind_validated_content(&long_answer);
+    observer
+        .flush()
+        .expect("long validated content must flush in safe chunks");
+
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run exists");
+    let deltas: String = replay
+        .events
+        .iter()
+        .filter_map(|event| {
+            let value = serde_json::to_value(event).ok()?;
+            (value["type"] == "content_delta")
+                .then(|| value["payload"]["delta"].as_str().map(str::to_owned))
+                .flatten()
+        })
+        .collect();
+    assert_eq!(deltas, long_answer);
+    assert!(
+        replay
+            .events
+            .iter()
+            .filter(|event| {
+                serde_json::to_value(event)
+                    .ok()
+                    .is_some_and(|value| value["type"] == "content_delta")
+            })
+            .count()
+            >= 3,
+        "expected multiple content_delta events for a long answer"
+    );
+}
+
 #[tokio::test]
 async fn streaming_direct_engine_persists_deltas_and_one_terminal_message() {
     let db = Database::open_in_memory().expect("database");

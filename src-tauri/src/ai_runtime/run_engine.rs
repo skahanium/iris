@@ -530,23 +530,57 @@ impl AgentRunStreamObserver<'_> {
         Ok(())
     }
 
-    /// Persist and emit at most one bounded, already-observed visible fragment.
+    /// Persist and emit bounded, already-validated visible fragments.
+    ///
+    /// Final answers are bound as one string but must be split before persistence:
+    /// Run events reject payloads over the 2_000-char safe-event budget. A single long
+    /// web-grounded answer previously failed flush as `agent_run_persistence_failed`
+    /// after evidence had already registered.
     pub(crate) fn flush(&mut self) -> AppResult<()> {
         if self.pending_delta.is_empty() {
             return Ok(());
         }
-        let persisted = AgentRunRepository::append_event(
-            self.db,
-            AppendRunEventInput {
-                run_id: self.run_id.to_string(),
-                state_version: self.running_state_version,
-                event_type: RunEventType::ContentDelta,
-                payload: RunEventPayload::ContentDelta {
-                    delta: mem::take(&mut self.pending_delta),
+        let mut remaining = mem::take(&mut self.pending_delta);
+        while !remaining.is_empty() {
+            let chunk = take_safe_content_delta_chunk(&mut remaining)?;
+            if chunk.is_empty() {
+                break;
+            }
+            let persisted = AgentRunRepository::append_event(
+                self.db,
+                AppendRunEventInput {
+                    run_id: self.run_id.to_string(),
+                    state_version: self.running_state_version,
+                    event_type: RunEventType::ContentDelta,
+                    payload: RunEventPayload::ContentDelta { delta: chunk },
                 },
-            },
-        )?;
-        self.sink.emit(&persisted)
+            )?;
+            self.sink.emit(&persisted)?;
+        }
+        Ok(())
+    }
+}
+
+/// Keep each ContentDelta JSON under the Run event safe-text budget (2_000 chars).
+fn take_safe_content_delta_chunk(remaining: &mut String) -> AppResult<String> {
+    const SAFE_EVENT_BUDGET_CHARS: usize = 2_000;
+    const INITIAL_CHUNK_CHARS: usize = 1_500;
+    if remaining.is_empty() {
+        return Ok(String::new());
+    }
+    let total = remaining.chars().count();
+    let mut end = total.min(INITIAL_CHUNK_CHARS);
+    loop {
+        let chunk: String = remaining.chars().take(end).collect();
+        let payload = RunEventPayload::ContentDelta {
+            delta: chunk.clone(),
+        };
+        let encoded = serde_json::to_string(&payload)?;
+        if encoded.chars().count() <= SAFE_EVENT_BUDGET_CHARS || end <= 1 {
+            *remaining = remaining.chars().skip(chunk.chars().count()).collect();
+            return Ok(chunk);
+        }
+        end = (end * 3 / 4).max(1);
     }
 }
 
