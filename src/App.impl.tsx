@@ -479,12 +479,9 @@ function App() {
     handleBeforeFileDelete,
     handleFileDeleted,
   } = useNavigatorFileLifecycle({
-    activePathRef,
-    awaitSaveInFlight,
     abortPathMigration,
     beginPathMigration,
     bumpVaultIndex,
-    cancelPendingSave,
     completePathMigration,
     discardOpenTab,
     persistBeforeLeaveRef,
@@ -831,6 +828,7 @@ function App() {
             openNoteLeavingHome={openWorkspacePathLeavingHome}
             onPrepareNotePath={prepareNotePath}
             onPrepareNote={prepareVisibleNote}
+            onBeforeFileDelete={handleBeforeFileDelete}
             outlineOpen={outlineOpen}
             pendingOpen={pendingOpen}
             pendingNoteOpen={pendingNoteOpen}

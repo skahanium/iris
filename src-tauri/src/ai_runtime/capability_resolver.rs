@@ -97,7 +97,7 @@ pub fn resolve_required_capability(
         ));
     }
 
-    if capability == "web.search" {
+    if capability == "web.search" || capability == "web.fetch" {
         let provider =
             crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)
                 .map_err(|err| {
@@ -107,46 +107,19 @@ pub fn resolve_required_capability(
                         err.to_string(),
                     )
                 })?;
-        let Some(tool_name) = provider
-            .web_search_mapping_json
-            .as_deref()
-            .and_then(mapping_tool_name)
-        else {
+        let mapping_json = if capability == "web.search" {
+            provider.web_search_mapping_json.as_deref()
+        } else {
+            provider.web_fetch_mapping_json.as_deref()
+        };
+        let Some(tool_name) = mapping_json.and_then(mapping_tool_name) else {
             return Err(blocked(
                 &capability,
                 CapabilityBlockReason::MissingMcpProfile,
-                "selected MCP web evidence provider has no web.search tool mapping",
+                format!(
+                    "selected MCP web evidence provider has no explicit {capability} tool mapping"
+                ),
             ));
-        };
-        return Ok(ResolvedCapabilityProvider {
-            capability,
-            provider_kind: "mcp".into(),
-            profile_id: provider.id,
-            tool_name,
-            schema_hash: provider.provider_config_hash,
-            requires_confirmation: true,
-        });
-    }
-
-    let providers = crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(db)
-        .map_err(|err| {
-            blocked(
-                &capability,
-                CapabilityBlockReason::ProviderNotImplemented,
-                format!("failed to read web evidence provider mappings: {err}"),
-            )
-        })?;
-
-    for provider in providers {
-        if provider.kind != "mcp" {
-            continue;
-        }
-        let Some(tool_name) = provider
-            .web_fetch_mapping_json
-            .as_deref()
-            .and_then(mapping_tool_name)
-        else {
-            continue;
         };
         return Ok(ResolvedCapabilityProvider {
             capability,
@@ -160,8 +133,8 @@ pub fn resolve_required_capability(
 
     Err(blocked(
         &capability,
-        CapabilityBlockReason::MissingMcpProfile,
-        "no enabled MCP web evidence provider exposes an explicit mapping for this capability",
+        CapabilityBlockReason::UnsupportedCapability,
+        "capability is not part of the Iris capability vocabulary",
     ))
 }
 
@@ -301,6 +274,28 @@ mod tests {
 
         assert_eq!(resolved.profile_id, "brave");
         assert_eq!(resolved.tool_name, "brave_web_search");
+    }
+
+    #[test]
+    fn web_fetch_follows_selected_web_search_provider() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        let mut second = provider();
+        second.id = "brave".into();
+        second.name = "Brave Search".into();
+        second.web_search_mapping_json = Some(r#"{"tool":"brave_web_search"}"#.into());
+        second.web_fetch_mapping_json = Some(r#"{"tool":"brave_fetch"}"#.into());
+        upsert_web_evidence_provider(&db, &second).unwrap();
+        crate::ai_runtime::mcp_runtime_registry::save_selected_web_search_provider_id(
+            &db,
+            Some("brave"),
+        )
+        .unwrap();
+
+        let resolved = resolve_required_capability(&db, "web.fetch").unwrap();
+
+        assert_eq!(resolved.profile_id, "brave");
+        assert_eq!(resolved.tool_name, "brave_fetch");
     }
 
     #[test]

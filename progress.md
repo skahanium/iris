@@ -62,9 +62,9 @@
 
 ## 2026-07-13 前端与旧链路依赖审查
 
-- `UnifiedAssistantPanel.impl.tsx` 仍注入 TaskPlan/scene、Harness resume、Research 和 AgentTask 状态；`useAssistantTasks` 直接调用 `context_assemble` / `assistant_execute`。
-- `SessionHistoryDropdown` 与 `useAssistantConversation` 仍使用旧 numeric session 与 `classified_ai_thread_*` IPC；`useInlineAi` 也在 classified 路径调用 `assistant_execute`。
-- 现有新 Run 仅具备 direct answer，不能无损承接 writing/citation/organize/chapter/document 与 explicit action。根据重构规范，必须先将领域算法转为无生命周期 executor/capability 并接到 Run Engine，然后前端一次性切换并删除旧入口；不得提前删 UI 造成能力退化。
+- **2026-07-18 更新**：`useAssistantTasks` 与 `assistant_execute` 已删除；`useAssistantRun`/`assistantRunStart` 为主发送入口；`useInlineAi` 已走 `assistantRunStart`。
+- 仍待清理：TaskPlan/scene 类型残留、旧数据表与领域 executor 未完全迁入 Run Engine。
+- 现有新 Run 仅具备 direct answer，不能无损承接 writing/citation/organize/chapter/document 与 explicit action。根据重构规范，必须先将领域算法转为无生命周期 executor/capability 并接到 Run Engine，然后删除旧数据依赖；不得提前删 UI 造成能力退化。
 
 ## 2026-07-13 — Run 显式引用上下文装配
 
@@ -117,5 +117,12 @@
 
 - `useAssistantRun` 已从纯 UI 状态映射扩展为统一 Run client：调用 `assistantRunStart`、订阅 `assistant:run_event`、保存 opaque session ref 与 `stateVersion`、通过 `assistantRunControl` 发取消请求。
 - 新增测试覆盖 start acknowledgement 与事件驱动版本推进。
-- 该 client 尚未替换 `useAssistantTasks` 的旧 `assistantExecute` 发送入口；后续需将 event delta 接入消息 UI，并删除旧 Harness/TaskPlan 分支后才能满足单入口要求。
+- **2026-07-18**：`useAssistantTasks` 已删除；`assistantRunStart` 为生产发送入口。后续需将 event delta 全面接入消息 UI，并删除 TaskPlan/scene 兼容层。
 - 验证：`tests/use-assistant-run.test.tsx` 2 项通过；之前的 `npm run typecheck`、会话历史测试保持通过。
+
+## 2026-07-18 技术债深挖与还债启动
+
+- 审计报告：`docs/audits/2026-07-18-tech-debt-deep-dive.md`
+- Phase 1–3 **已收口**：删除前 flush、锁内 resolve+write + 真并发测、orphan LLM IPC、涉密单栈、fetch/Tavily、PM round-trip、chunker fence、MCP legacy、`allow(dead_code)` 清零、`AppError::Provider` failover、`config/*.json` preset 单源、`note_title` 收敛、temperature 文档化为固定 `None`
+- DeepSeek 报告纠偏：生产 panic 误报；commands 零测试夸大
+- Phase 4 仍外：IPC codegen、temperature UI、大文件拆分

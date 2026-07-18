@@ -276,12 +276,8 @@ fn classified_stream_events_and_abort_use_unified_gateway_contract() {
     let streaming_src = include_str!("../src/ai_runtime/model_gateway/streaming.rs");
 
     assert!(
-        gateway_src.contains("send_classified_streaming_request"),
-        "ModelGateway must expose classified streaming wrapper"
-    );
-    assert!(
-        gateway_src.contains("send_streaming_request_with_meta") && gateway_src.contains("true"),
-        "classified wrapper must mark emitted stream events"
+        gateway_src.contains("send_streaming_request_to_observer"),
+        "ModelGateway must expose observer-owned streaming entry"
     );
     assert!(
         streaming_src.contains("pub classified: bool") && streaming_src.contains("\"classified\""),
@@ -290,8 +286,7 @@ fn classified_stream_events_and_abort_use_unified_gateway_contract() {
     assert!(
         streaming_src.contains("is_abort_requested(request_id)")
             && streaming_src.contains("finish_stream_with_error")
-            && streaming_src.contains("\"llm:error\"")
             && streaming_src.contains("clear_abort(request_id)"),
-        "streaming path must emit error and clear abort state when request id is aborted"
+        "streaming path must finish and clear abort state when request id is aborted"
     );
 }

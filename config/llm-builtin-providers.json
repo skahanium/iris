@@ -1,0 +1,62 @@
+[
+  {
+    "id": "deepseek",
+    "name": "DeepSeek",
+    "defaultModel": "deepseek-v4-flash"
+  },
+  {
+    "id": "openai",
+    "name": "OpenAI",
+    "defaultModel": "gpt-4o-mini"
+  },
+  {
+    "id": "anthropic",
+    "name": "Anthropic",
+    "defaultModel": "claude-3-5-haiku-20241022"
+  },
+  {
+    "id": "google",
+    "name": "Gemini / Google",
+    "defaultModel": "gemini-2.5-flash"
+  },
+  {
+    "id": "qwen",
+    "name": "Qwen / DashScope",
+    "defaultModel": "qwen3-235b-a22b"
+  },
+  {
+    "id": "zhipu",
+    "name": "GLM / Zhipu",
+    "defaultModel": "glm-4-flash"
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi",
+    "defaultModel": "moonshot-v1-128k"
+  },
+  {
+    "id": "doubao",
+    "name": "Doubao / Volcengine",
+    "defaultModel": "doubao-1-5-pro-256k"
+  },
+  {
+    "id": "minimax",
+    "name": "MiniMax",
+    "defaultModel": "MiniMax-M3"
+  },
+  {
+    "id": "hunyuan",
+    "name": "Hunyuan / Tencent",
+    "defaultModel": "hunyuan-t1-latest"
+  },
+  {
+    "id": "ernie",
+    "name": "ERNIE / Baidu",
+    "defaultModel": "ernie-x1"
+  },
+  {
+    "id": "mimo",
+    "name": "MiMo",
+    "defaultModel": "MiMo-V2.5-Pro"
+  }
+]

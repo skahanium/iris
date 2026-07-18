@@ -140,11 +140,13 @@ impl EffectiveDocumentScope {
     }
 
     /// Returns the policy level from which one capability was resolved.
+    #[cfg(test)]
     pub(crate) fn source_for(&self, capability: DocumentCapability) -> &DocumentPolicySource {
         &self.sources[capability.index()]
     }
 
     /// Returns every resolved capability decision in stable capability order.
+    #[cfg(test)]
     pub(crate) fn decisions(&self) -> [(DocumentCapability, CapabilityDecision); 6] {
         DocumentCapability::ALL.map(|capability| (capability, self.decision_for(capability)))
     }
@@ -172,6 +174,7 @@ pub(crate) struct RunPolicyDecision {
     pub(crate) denial_code: Option<crate::ai_runtime::run_contract::SafeRunErrorCode>,
 }
 /// Role that determines how a folder's material may be used as evidence.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MaterialRole {
     /// Normative material used as a governing authority.
@@ -185,6 +188,7 @@ pub(crate) enum MaterialRole {
 }
 
 /// Safe diagnostic emitted when a persisted material role must be downgraded.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PolicyDiagnostic {
     /// An unrecognized persisted role was interpreted as least-privileged lookup.
@@ -192,6 +196,7 @@ pub(crate) enum PolicyDiagnostic {
 }
 
 /// Result of parsing a persisted material role.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MaterialRoleResolution {
     /// Effective role after canonical, legacy, or safe-fallback parsing.
@@ -319,6 +324,7 @@ impl PolicyDecisionEngine {
         }
     }
     /// Parses canonical and legacy folder roles without granting unknown roles authority.
+    #[cfg(test)]
     pub(crate) fn parse_material_role(value: &str) -> MaterialRoleResolution {
         let role = match value {
             "authority" | "regulation" => MaterialRole::Authority,

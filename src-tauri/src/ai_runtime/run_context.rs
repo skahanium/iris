@@ -21,7 +21,7 @@ use crate::ai_runtime::normal_session_repository::NormalSessionMessage;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
-use crate::ai_runtime::run_contract::{ExecutionEnvelope, SafeRunErrorCode};
+use crate::ai_runtime::run_contract::{ExecutionEnvelope, MaterialNeed, SafeRunErrorCode};
 use crate::ai_types::{ContextPacket, ContextReferenceKind, SourceSpan, SourceType, TrustLevel};
 use crate::error::{AppError, AppResult};
 
@@ -228,6 +228,10 @@ impl RunContextAssembler {
         let envelope = AgentRunRepository::policy_request_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::msg("agent_run_not_found"))?
             .envelope;
+        let corpus_config = vault
+            .map(crate::knowledge::corpora::load_corpora)
+            .transpose()?
+            .unwrap_or_default();
         let recent_messages =
             crate::ai_runtime::normal_session_repository::NormalSessionRepository::recent_messages_before(
                 db,
@@ -243,7 +247,7 @@ impl RunContextAssembler {
         let mut fallback_paths = Vec::new();
         let mut total_chars = 0usize;
         for reference in &input.explicit_references {
-            match resolve_explicit_reference(vault, reference)? {
+            match resolve_explicit_reference(vault, reference, &envelope, &corpus_config)? {
                 ResolvedExplicitReference::Material(material) => {
                     let material_chars = material.content.chars().count();
                     if total_chars.saturating_add(material_chars) > MAX_TOTAL_MATERIAL_CHARS {
@@ -269,10 +273,6 @@ impl RunContextAssembler {
             || !retrieval_scope_input.path_prefixes.is_empty()
             || !retrieval_scope_input.corpus_ids.is_empty()
             || !retrieval_scope_input.required_tags.is_empty();
-        let corpus_config = vault
-            .map(crate::knowledge::corpora::load_corpora)
-            .transpose()?
-            .unwrap_or_default();
         let retrieval_scope = if has_requested_scope {
             crate::ai_runtime::retrieval_scope::resolve_retrieval_scope(
                 &corpus_config,
@@ -318,7 +318,7 @@ impl RunContextAssembler {
             }
         }
         for packet in &local_retrieval_packets {
-            let Some(material) = material_from_packet(packet) else {
+            let Some(material) = material_from_packet(packet, &envelope) else {
                 continue;
             };
             let material_chars = material.content.chars().count();
@@ -495,6 +495,8 @@ struct ExactScopeFallback {
 fn resolve_explicit_reference(
     vault: Option<&Path>,
     reference: &StoredExplicitReference,
+    envelope: &ExecutionEnvelope,
+    corpus_config: &crate::knowledge::corpora::CorpusConfig,
 ) -> AppResult<ResolvedExplicitReference> {
     if reference.stale || reference.invalid_reason.is_some() {
         return Err(AppError::msg("agent_run_invalid_explicit_reference"));
@@ -560,7 +562,7 @@ fn resolve_explicit_reference(
         return Err(AppError::msg("agent_run_invalid_explicit_reference"));
     }
     Ok(ResolvedExplicitReference::Material(RunContextMaterial {
-        role: DomainMaterialRole::Reference,
+        role: explicit_reference_material_role(envelope, corpus_config, &path),
         source_path: path,
         content_hash: actual_hash,
         source_span_start,
@@ -740,14 +742,18 @@ fn retrieve_exact_fallback_materials(
     Ok(packets)
 }
 
-fn material_from_packet(packet: &ContextPacket) -> Option<RunContextMaterial> {
+fn material_from_packet(
+    packet: &ContextPacket,
+    envelope: &ExecutionEnvelope,
+) -> Option<RunContextMaterial> {
     let path = packet.source_path.as_deref()?;
     let span = packet.source_span.as_ref()?;
     if packet.stale || packet.content_hash.trim().is_empty() || span.start >= span.end {
         return None;
     }
+    let corpus_kind = packet.corpus.as_ref().map(|corpus| corpus.kind.as_str());
     Some(RunContextMaterial {
-        role: DomainMaterialRole::Reference,
+        role: resolve_domain_material_role(envelope, &packet.retrieval_reason, corpus_kind),
         source_path: path.to_string(),
         content_hash: packet.content_hash.clone(),
         source_span_start: span.start as i64,
@@ -755,6 +761,45 @@ fn material_from_packet(packet: &ContextPacket) -> Option<RunContextMaterial> {
         content: packet.excerpt.clone(),
         retrieval_reason: packet.retrieval_reason.clone(),
     })
+}
+
+fn resolve_domain_material_role(
+    envelope: &ExecutionEnvelope,
+    retrieval_reason: &str,
+    corpus_kind: Option<&str>,
+) -> DomainMaterialRole {
+    if let Some(kind) = corpus_kind {
+        return match crate::knowledge::corpora::canonical_kind(kind) {
+            "authority" => DomainMaterialRole::Authority,
+            "exemplar" => DomainMaterialRole::Exemplar,
+            "lookup" => DomainMaterialRole::Lookup,
+            _ => DomainMaterialRole::Reference,
+        };
+    }
+
+    let reason = retrieval_reason.to_ascii_lowercase();
+    if envelope.material_needs.contains(&MaterialNeed::Authority)
+        && (reason.contains("authority") || reason.contains("regulation"))
+    {
+        return DomainMaterialRole::Authority;
+    }
+    if envelope.material_needs.contains(&MaterialNeed::Exemplar) && reason.contains("exemplar") {
+        return DomainMaterialRole::Exemplar;
+    }
+    if reason.contains("lookup") {
+        return DomainMaterialRole::Lookup;
+    }
+    DomainMaterialRole::Reference
+}
+
+fn explicit_reference_material_role(
+    envelope: &ExecutionEnvelope,
+    corpus_config: &crate::knowledge::corpora::CorpusConfig,
+    path: &str,
+) -> DomainMaterialRole {
+    let corpus_kind = crate::knowledge::corpora::corpus_for_path(corpus_config, path)
+        .map(|entry| entry.kind.as_str());
+    resolve_domain_material_role(envelope, "explicit_reference", corpus_kind)
 }
 
 #[cfg(test)]
@@ -803,12 +848,27 @@ mod fallback_version_tests {
             stale: false,
             invalid_reason: None,
         };
-        let fallback = match resolve_explicit_reference(Some(&vault), &reference)
-            .expect("first read validates version A")
-        {
-            ResolvedExplicitReference::ExactScopeFallback(fallback) => fallback,
-            ResolvedExplicitReference::Material(_) => panic!("long note must use fallback"),
+        let envelope = ExecutionEnvelope {
+            effect: crate::ai_runtime::run_contract::Effect::Answer,
+            context: crate::ai_runtime::run_contract::ContextMode::None,
+            freshness: crate::ai_runtime::run_contract::Freshness::Offline,
+            web_reason: crate::ai_runtime::run_contract::WebDecisionReason::LegacyUnknown,
+            effort: crate::ai_runtime::run_contract::Effort::Direct,
+            security_domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
+            risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,
+            modalities: vec![crate::ai_runtime::run_contract::Modality::Text],
+            material_needs: vec![MaterialNeed::Reference],
+            required_capabilities: Vec::new(),
+            explicit_constraints: Vec::new(),
         };
+        let corpus_config = crate::knowledge::corpora::CorpusConfig::default();
+        let fallback =
+            match resolve_explicit_reference(Some(&vault), &reference, &envelope, &corpus_config)
+                .expect("first read validates version A")
+            {
+                ResolvedExplicitReference::ExactScopeFallback(fallback) => fallback,
+                ResolvedExplicitReference::Material(_) => panic!("long note must use fallback"),
+            };
 
         std::fs::write(vault.join("notes/changing.md"), &version_b).expect("version B");
         let hash_b = crate::cas::hash::content_hash_str(&version_b);

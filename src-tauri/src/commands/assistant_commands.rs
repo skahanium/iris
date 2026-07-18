@@ -925,7 +925,6 @@ async fn dispatch_normal_run_after_context(
         let provider = FailoverStreamingToolLoopProvider::new(
             route,
             requirements,
-            app_handle.clone(),
             db,
             &accepted.session,
             sink,
@@ -978,7 +977,6 @@ async fn dispatch_normal_run_after_context(
     let provider = FailoverStreamingDirectAnswerProvider::new(
         route,
         direct_requirements,
-        app_handle.clone(),
         db,
         &accepted.session,
         sink,
@@ -1099,10 +1097,9 @@ fn spawn_classified_direct_run(
             }
         };
         let provider_config = dispatch.provider;
-        let gateway = match crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
-            app_handle.clone(),
-            vec![provider_config.clone()],
-        ) {
+        let gateway = match crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![
+            provider_config.clone(),
+        ]) {
             Ok(gateway) => gateway,
             Err(_) => {
                 fail_ephemeral_classified_run(

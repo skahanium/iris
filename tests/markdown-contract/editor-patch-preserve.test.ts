@@ -1,17 +1,29 @@
 ﻿/**
- * editor-patch-preserve.test.ts — TDD 红灯测试
+ * editor-patch-preserve.test.ts
  *
- * 测试 AI 补丁回灌时 preserve 块的完整性和安全性。
- * 当前所有测试必须 FAIL（ingestMarkdownForEditor / exportEditorToMarkdown 尚未实现）。
- * 子项目 2 阶段 1-3 实现后全部 GREEN。
+ * Preserve-block safety under AI patch re-ingest.
+ * Production save path: ingest → TipTap → PM serialize.
  */
 import { describe, expect, it } from "vitest";
 
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
-import { exportEditorToMarkdown } from "@/lib/editor-export";
 import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/contract";
 import { serializePreservedMarkdown } from "@/lib/markdown-contract/contract";
 import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
+
+import {
+  createProductionEditorFromIngestedBody,
+  pmSerializeBody,
+} from "../helpers/tiptap-serialize-harness";
+
+function serializeBody(md: string): string {
+  const editor = createProductionEditorFromIngestedBody(md);
+  try {
+    return pmSerializeBody(editor);
+  } finally {
+    editor.destroy();
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Helper: simulate a patch application + re-ingest
@@ -40,7 +52,7 @@ function simulatePatchAndReIngest(
 // 补丁不破坏 preserve 块
 // ═══════════════════════════════════════════════════════════════
 
-describe("TDD: patch safety — preserve blocks survive patches", () => {
+describe("patch safety — preserve blocks survive patches", () => {
   it("native content patch does not affect adjacent preserve block", () => {
     const original =
       "**old** text.\n\n<div class='x'>preserved</div>\n\nafter.";
@@ -51,7 +63,6 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
       patched,
     );
 
-    // preserve block original content must be unchanged
     const preserveBefore = beforeFragments.filter(
       (f) => f.capability === "preserve_only",
     );
@@ -60,7 +71,6 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
     );
     expect(preserveBefore.length).toBeGreaterThan(0);
     expect(preserveAfter.length).toBeGreaterThan(0);
-    // preserve content unchanged
     expect(preserveAfter[0]?.raw).toBe(preserveBefore[0]?.raw);
   });
 
@@ -102,15 +112,11 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
     const patched =
       "# Doc\n\nUpdated text.\n\n<!-- comment -->\n\n<div>raw</div>";
 
-    const fragments = classifyMarkdownCapabilities(patched);
-    const exported = exportEditorToMarkdown({
-      editorHtml: "<h1>Doc</h1><p>Updated text.</p>",
-      originalMarkdown: patched,
-      classifiedFragments: fragments,
-    });
+    const exported = serializeBody(patched);
 
-    expect(exported.bodyMarkdown).toContain("<!-- comment -->");
-    expect(exported.bodyMarkdown).toContain("<div>raw</div>");
+    expect(exported).toContain("<!-- comment -->");
+    expect(exported).toContain("<div>raw</div>");
+    expect(exported).toContain("Updated text");
   });
 
   it("preserve-only content is identical after round-trip through contract", () => {
@@ -118,9 +124,7 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
     const fragments = classifyMarkdownCapabilities(source);
     const preserved = serializePreservedMarkdown(source, fragments);
 
-    // preserve-only content must survive
     expect(preserved).toContain('<div class="box">preserved</div>');
-    // native content must survive
     expect(preserved).toContain("**bold**");
     expect(preserved).toContain("`code`");
   });
@@ -130,7 +134,7 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
 // 补丁边界安全
 // ═══════════════════════════════════════════════════════════════
 
-describe("TDD: patch boundary safety", () => {
+describe("patch boundary safety", () => {
   it("patch on native content does not shift preserve block offsets", () => {
     const original = [
       "Text before.",
@@ -146,7 +150,6 @@ describe("TDD: patch boundary safety", () => {
     );
     expect(preserveFrags.length).toBeGreaterThan(0);
 
-    // After re-classifying, offsets should be consistent
     const afterFrags = classifyMarkdownCapabilities(original);
     for (let i = 0; i < beforeFrags.length; i++) {
       expect(afterFrags[i]?.offset).toBe(beforeFrags[i]?.offset);
@@ -159,7 +162,6 @@ describe("TDD: patch boundary safety", () => {
     const result1 = ingestMarkdownForEditor({ bodyMarkdown: md });
     const result2 = ingestMarkdownForEditor({ bodyMarkdown: md });
 
-    // Ingest should be deterministic
     expect(result1.preserveFragments.length).toBeGreaterThan(0);
     expect(result1.preserveFragments.length).toBe(
       result2.preserveFragments.length,
@@ -170,7 +172,6 @@ describe("TDD: patch boundary safety", () => {
     const source = "# Doc\n\n**Content**.\n\n<!-- comment -->";
     const fragments = classifyMarkdownCapabilities(source);
     const preserved = serializePreservedMarkdown(source, fragments);
-    // The round-tripped content should contain all original elements
     expect(preserved).toContain("Doc");
     expect(preserved).toContain("Content");
     expect(preserved).toContain("<!-- comment -->");

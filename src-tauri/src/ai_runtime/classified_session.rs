@@ -11,10 +11,11 @@ use std::sync::RwLock;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::ai_runtime::run_contract::RunEventPayload;
+#[cfg(test)]
 use crate::ai_runtime::run_contract::{
     transition_if_version, AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse,
-    AssistantRunSnapshot, AssistantSessionRef, RunEventPayload, RunEventType, RunState,
-    SecurityDomain,
+    AssistantRunSnapshot, AssistantSessionRef, RunEventType, RunState, SecurityDomain,
 };
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
@@ -151,6 +152,7 @@ pub struct ClassifiedAiThreadSummary {
 }
 
 /// CEF-only acceptance facts for a classified Agent Run.
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct ClassifiedRunAcceptInput {
     pub(crate) client_request_id: String,
@@ -507,6 +509,7 @@ pub fn classified_ai_thread_load(vault: &Path, thread_id: String) -> AppResult<C
 }
 
 /// Accept a classified Run into CEF storage only, before any provider or tool work.
+#[cfg(test)]
 pub(crate) fn classified_run_accept(
     vault: &Path,
     input: ClassifiedRunAcceptInput,
@@ -585,6 +588,7 @@ pub(crate) fn classified_run_accept(
     })
 }
 
+#[cfg(test)]
 fn new_classified_thread() -> ClassifiedAiThread {
     let now = chrono::Utc::now().to_rfc3339();
     ClassifiedAiThread {
@@ -602,6 +606,7 @@ fn new_classified_thread() -> ClassifiedAiThread {
     }
 }
 
+#[cfg(test)]
 fn find_classified_run_by_client_request(
     vault: &Path,
     client_request_id: &str,
@@ -631,6 +636,7 @@ fn find_classified_run_by_client_request(
     Ok(None)
 }
 /// Replay one classified Run from its CEF conversation without touching SQLite.
+#[cfg(test)]
 pub(crate) fn classified_run_get(
     vault: &Path,
     session: &AssistantSessionRef,
@@ -670,116 +676,8 @@ pub(crate) fn classified_run_get(
     }))
 }
 
-/// Return the latest recoverable classified Run without exposing CEF internals.
-pub(crate) fn classified_latest_active_run_get(
-    vault: &Path,
-    session: &AssistantSessionRef,
-) -> AppResult<Option<AssistantRunGetResponse>> {
-    if session.domain != SecurityDomain::Classified {
-        return Err(AppError::msg("agent_run_session_not_found"));
-    }
-    let thread = classified_ai_thread_load(vault, session.session_key.clone())?;
-    let run_id = thread
-        .runs
-        .iter()
-        .rev()
-        .find(|run| {
-            matches!(
-                run.status.as_str(),
-                "accepted"
-                    | "preparing"
-                    | "running"
-                    | "awaiting_confirmation"
-                    | "paused"
-                    | "verifying"
-            )
-        })
-        .map(|run| run.run_id.clone());
-    match run_id {
-        Some(run_id) => classified_run_get(vault, session, &run_id),
-        None => Ok(None),
-    }
-}
-
-/// Rebuild a classified Run policy request solely from CEF-persisted facts.
-pub(crate) fn classified_run_policy_request(
-    vault: &Path,
-    session: &AssistantSessionRef,
-    run_id: &str,
-) -> AppResult<crate::ai_runtime::policy_decision_engine::RunPolicyRequest> {
-    if session.domain != SecurityDomain::Classified {
-        return Err(AppError::msg("agent_run_session_not_found"));
-    }
-    let thread = classified_ai_thread_load(vault, session.session_key.clone())?;
-    let run_index = find_classified_run_index(&thread, run_id)?;
-    let envelope = serde_json::from_value(thread.runs[run_index].envelope.clone())?;
-    let turn_id = &thread.runs[run_index].turn_id;
-    let explicit_reference_paths = thread
-        .turns
-        .iter()
-        .find(|turn| &turn.turn_id == turn_id)
-        .map(|turn| {
-            turn.explicit_references
-                .iter()
-                .filter_map(|reference| reference.get("filePath"))
-                .map(|value| {
-                    value
-                        .as_str()
-                        .filter(|path| !path.trim().is_empty())
-                        .map(str::to_string)
-                        .ok_or_else(|| AppError::msg("agent_run_invalid_request"))
-                })
-                .collect::<AppResult<Vec<_>>>()
-        })
-        .transpose()?
-        .unwrap_or_default();
-    Ok(
-        crate::ai_runtime::policy_decision_engine::RunPolicyRequest {
-            envelope,
-            explicit_reference_paths,
-            requested_capabilities: Vec::new(),
-        },
-    )
-}
-
-/// Persist a classified policy denial before any Provider dispatch.
-pub(crate) fn classified_run_deny_before_dispatch(
-    vault: &Path,
-    session: &AssistantSessionRef,
-    run_id: &str,
-    decision: &crate::ai_runtime::policy_decision_engine::RunPolicyDecision,
-) -> AppResult<Vec<AssistantRunEvent>> {
-    let Some(code) = decision.denial_code else {
-        return Ok(Vec::new());
-    };
-    if session.domain != SecurityDomain::Classified {
-        return Err(AppError::msg("agent_run_session_not_found"));
-    }
-    let mut thread = classified_ai_thread_load(vault, session.session_key.clone())?;
-    let run_index = find_classified_run_index(&thread, run_id)?;
-    if run_state_from_wire(&thread.runs[run_index].status)? != RunState::Accepted {
-        return Err(AppError::msg("agent_run_illegal_transition"));
-    }
-    let now = chrono::Utc::now().to_rfc3339();
-    let state_version = thread.runs[run_index].state_version;
-    let denied = append_classified_run_event(
-        &mut thread,
-        run_id,
-        state_version,
-        RunEventType::PermissionDenied,
-        RunEventPayload::PermissionDenied {
-            code,
-            message: "当前请求不具备执行权限".into(),
-        },
-        now,
-    )?;
-    classified_ai_thread_save(vault, thread)?;
-    let preparing = classified_run_mark_preparing(vault, session, run_id)?;
-    let failed = classified_run_fail(vault, session, run_id, 1, code)?
-        .ok_or_else(|| AppError::msg("agent_run_cancelled"))?;
-    Ok(vec![denied, preparing, failed])
-}
 /// Persist the preparing stage for a classified Run inside its CEF conversation.
+#[cfg(test)]
 pub(crate) fn classified_run_mark_preparing(
     vault: &Path,
     session: &AssistantSessionRef,
@@ -800,6 +698,7 @@ pub(crate) fn classified_run_mark_preparing(
 }
 
 /// Persist the running stage for a classified Run inside its CEF conversation.
+#[cfg(test)]
 pub(crate) fn classified_run_mark_running(
     vault: &Path,
     session: &AssistantSessionRef,
@@ -824,6 +723,7 @@ pub(crate) fn classified_run_mark_running(
 ///
 /// The CEF write is atomic. A cancellation that wins the optimistic version race
 /// prevents this function from adding either an assistant message or completed event.
+#[cfg(test)]
 pub(crate) fn classified_run_complete(
     vault: &Path,
     session: &AssistantSessionRef,
@@ -877,6 +777,7 @@ pub(crate) fn classified_run_complete(
 }
 
 /// Persist a safe classified failure unless cancellation has already won the race.
+#[cfg(test)]
 pub(crate) fn classified_run_fail(
     vault: &Path,
     session: &AssistantSessionRef,
@@ -924,6 +825,7 @@ pub(crate) fn classified_run_fail(
 /// The returned events are already durably stored and must be emitted in order by
 /// the caller. Waiting-for-confirmation and paused Runs deliberately remain
 /// untouched: they are not live provider work and may be recovered safely later.
+#[cfg(test)]
 pub(crate) fn classified_run_fail_unfinished(
     vault: &Path,
     session: &AssistantSessionRef,
@@ -957,26 +859,7 @@ pub(crate) fn classified_run_fail_unfinished(
     Ok(events)
 }
 
-/// Read the originating user message from the CEF conversation only.
-pub(crate) fn classified_run_user_message(
-    vault: &Path,
-    session: &AssistantSessionRef,
-    run_id: &str,
-) -> AppResult<String> {
-    if session.domain != SecurityDomain::Classified {
-        return Err(AppError::msg("agent_run_session_not_found"));
-    }
-    let thread = classified_ai_thread_load(vault, session.session_key.clone())?;
-    let run_index = find_classified_run_index(&thread, run_id)?;
-    let turn_id = &thread.runs[run_index].turn_id;
-    thread
-        .messages
-        .iter()
-        .find(|message| message.role == "user" && message.turn_id.as_deref() == Some(turn_id))
-        .map(|message| message.content.clone())
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))
-}
-
+#[cfg(test)]
 fn classified_run_transition(
     vault: &Path,
     session: &AssistantSessionRef,
@@ -1015,6 +898,7 @@ fn classified_run_transition(
     Ok(event)
 }
 
+#[cfg(test)]
 fn find_classified_run_index(thread: &ClassifiedAiThread, run_id: &str) -> AppResult<usize> {
     thread
         .runs
@@ -1023,6 +907,7 @@ fn find_classified_run_index(thread: &ClassifiedAiThread, run_id: &str) -> AppRe
         .ok_or_else(|| AppError::msg("agent_run_not_found"))
 }
 
+#[cfg(test)]
 fn append_classified_run_event(
     thread: &mut ClassifiedAiThread,
     run_id: &str,
@@ -1068,6 +953,7 @@ fn classified_final_message_id(run_id: &str, message_seq: i64) -> String {
     format!("{run_id}:message:{message_seq}")
 }
 
+#[cfg(test)]
 fn classified_safe_failure_message(
     code: crate::ai_runtime::run_contract::SafeRunErrorCode,
 ) -> &'static str {
@@ -1098,6 +984,7 @@ fn classified_safe_failure_message(
 }
 /// Cancel a classified Run by appending the same durable lifecycle event shape
 /// used by normal-domain Runs, but solely inside the CEF conversation.
+#[cfg(test)]
 pub(crate) fn classified_run_cancel(
     vault: &Path,
     session: &AssistantSessionRef,
@@ -1162,6 +1049,7 @@ pub(crate) fn classified_run_cancel(
     Ok(Some(event))
 }
 
+#[cfg(test)]
 fn classified_event_to_run_event(event: &ClassifiedAiRunEvent) -> AppResult<AssistantRunEvent> {
     AssistantRunEvent::new(
         event.run_id.clone(),
@@ -1176,11 +1064,13 @@ fn classified_event_to_run_event(event: &ClassifiedAiRunEvent) -> AppResult<Assi
     .map_err(AppError::msg)
 }
 
+#[cfg(test)]
 fn run_state_from_wire(value: &str) -> AppResult<RunState> {
     serde_json::from_value(serde_json::Value::String(value.to_string()))
         .map_err(|_| AppError::msg("invalid classified run state"))
 }
 
+#[cfg(test)]
 fn run_state_wire(state: RunState) -> AppResult<String> {
     serde_json::to_value(state)?
         .as_str()

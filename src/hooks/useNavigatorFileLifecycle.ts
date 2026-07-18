@@ -4,12 +4,9 @@ import type { TabItem } from "@/components/layout/TabBar";
 import type { PersistBeforeLeave } from "@/hooks/useAppPersistenceLifecycle";
 
 interface UseNavigatorFileLifecycleParams {
-  activePathRef: MutableRefObject<string | null>;
-  awaitSaveInFlight: () => Promise<void>;
   abortPathMigration: (oldPath: string) => void;
   beginPathMigration: (oldPath: string, newPath: string) => Promise<void>;
   bumpVaultIndex: () => void;
-  cancelPendingSave: () => void;
   completePathMigration: (oldPath: string, newPath: string) => string;
   discardOpenTab: (path: string) => Promise<void>;
   persistBeforeLeaveRef: MutableRefObject<PersistBeforeLeave>;
@@ -23,12 +20,9 @@ interface UseNavigatorFileLifecycleParams {
 }
 
 export function useNavigatorFileLifecycle({
-  activePathRef,
-  awaitSaveInFlight,
   abortPathMigration,
   beginPathMigration,
   bumpVaultIndex,
-  cancelPendingSave,
   completePathMigration,
   discardOpenTab,
   persistBeforeLeaveRef,
@@ -63,19 +57,10 @@ export function useNavigatorFileLifecycle({
   const handleBeforeFileDelete = useCallback(
     async (path: string) => {
       if (!tabsRef.current.some((tab) => tab.path === path)) return;
-      if (activePathRef.current === path) {
-        cancelPendingSave();
-        await awaitSaveInFlight();
-      }
+      await persistBeforeLeaveRef.current(path);
       await discardOpenTab(path);
     },
-    [
-      activePathRef,
-      awaitSaveInFlight,
-      cancelPendingSave,
-      discardOpenTab,
-      tabsRef,
-    ],
+    [discardOpenTab, persistBeforeLeaveRef, tabsRef],
   );
 
   const handleFileDeleted = useCallback(

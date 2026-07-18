@@ -17,8 +17,6 @@ use crate::error::AppResult;
 pub(crate) enum SecurityDomain {
     /// The candidate communicates with an external provider.
     External,
-    /// The candidate stays in the local security domain.
-    Local,
 }
 
 /// Current availability reported by provider diagnostics.
@@ -26,15 +24,11 @@ pub(crate) enum SecurityDomain {
 pub(crate) enum CandidateAvailability {
     /// The provider is enabled and available for dispatch.
     Available,
-    /// The provider must not be selected.
-    Unavailable,
 }
 
 /// Recent health state used during candidate selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CandidateHealth {
-    /// A recent diagnostic or successful request marked the candidate healthy.
-    Healthy,
     /// No sufficiently recent health result is available.
     Unknown,
     /// A recent diagnostic marked the candidate unhealthy.
@@ -114,16 +108,8 @@ pub(crate) enum ProviderFailure {
     Unauthorized,
     /// The provider denied access to the resource.
     Forbidden,
-    /// The submitted request did not match the provider schema.
-    Schema,
-    /// The request exceeded the model context window.
-    ContextLimit,
     /// The user or runtime cancelled the request.
     Cancelled,
-    /// Policy denied the dispatch or its required capability.
-    PolicyDenied,
-    /// The selected provider is not allowed in the requested security domain.
-    SecurityDomainMismatch,
     /// A failure that cannot be safely classified as transient.
     Unknown,
 }
@@ -142,6 +128,86 @@ impl ProviderFailure {
     }
 }
 
+/// Classify an application error for provider failover routing.
+pub(crate) fn classify_provider_failure_from_app_error(
+    error: &crate::error::AppError,
+) -> ProviderFailure {
+    use crate::error::{AppError, ProviderErrorKind};
+
+    match error {
+        AppError::Provider { kind, message } => match kind {
+            ProviderErrorKind::Connection => ProviderFailure::Connection,
+            ProviderErrorKind::Timeout => ProviderFailure::Timeout,
+            ProviderErrorKind::RateLimited => ProviderFailure::HttpStatus(429),
+            ProviderErrorKind::Unauthorized => ProviderFailure::Unauthorized,
+            ProviderErrorKind::Forbidden => ProviderFailure::Forbidden,
+            ProviderErrorKind::TemporarilyUnavailable => ProviderFailure::TemporarilyUnavailable,
+            ProviderErrorKind::Cancelled => ProviderFailure::Cancelled,
+            ProviderErrorKind::HttpStatus(status) => ProviderFailure::HttpStatus(*status),
+            ProviderErrorKind::InvalidResponse | ProviderErrorKind::Unknown => {
+                // Preserve legacy message-token fallback for gateway edges that
+                // still emit Provider{Unknown} with a descriptive message.
+                let from_message = classify_provider_failure_from_message(message);
+                if from_message == ProviderFailure::Unknown {
+                    ProviderFailure::Unknown
+                } else {
+                    from_message
+                }
+            }
+        },
+        AppError::Http(err) => {
+            if err.is_timeout() {
+                ProviderFailure::Timeout
+            } else if err.is_connect() {
+                ProviderFailure::Connection
+            } else if let Some(status) = err.status() {
+                let code = status.as_u16();
+                match code {
+                    401 => ProviderFailure::Unauthorized,
+                    403 => ProviderFailure::Forbidden,
+                    429 => ProviderFailure::HttpStatus(429),
+                    503 => ProviderFailure::TemporarilyUnavailable,
+                    500..=599 => ProviderFailure::HttpStatus(code),
+                    _ => ProviderFailure::HttpStatus(code),
+                }
+            } else {
+                ProviderFailure::Unknown
+            }
+        }
+        AppError::Message(message) => classify_provider_failure_from_message(message),
+        _ => classify_provider_failure_from_message(&error.to_string()),
+    }
+}
+
+fn classify_provider_failure_from_message(message: &str) -> ProviderFailure {
+    let message = message.to_ascii_lowercase();
+    if message.contains("request aborted") || message.contains("partial_visible_stream_error") {
+        return ProviderFailure::Cancelled;
+    }
+    if message.contains("timeout") || message.contains("deadline") {
+        return ProviderFailure::Timeout;
+    }
+    if message.contains("429") || message.contains("too many requests") {
+        return ProviderFailure::HttpStatus(429);
+    }
+    if message.contains("502") {
+        return ProviderFailure::HttpStatus(502);
+    }
+    if message.contains("503") || message.contains("service unavailable") {
+        return ProviderFailure::TemporarilyUnavailable;
+    }
+    if message.contains("connection") || message.contains("sending request") {
+        return ProviderFailure::Connection;
+    }
+    if message.contains("unauthorized") || message.contains("api key") {
+        return ProviderFailure::Unauthorized;
+    }
+    if message.contains("500") {
+        return ProviderFailure::HttpStatus(500);
+    }
+    ProviderFailure::Unknown
+}
+
 /// A candidate with its credential hydrated for one immediate dispatch.
 pub(crate) struct HydratedProviderCandidate {
     candidate: ProviderCandidate,
@@ -152,16 +218,6 @@ impl HydratedProviderCandidate {
     /// Return the selected candidate metadata.
     pub(crate) fn candidate(&self) -> &ProviderCandidate {
         &self.candidate
-    }
-
-    /// Return the credential for immediate adapter request construction.
-    pub(crate) fn credential(&self) -> Option<&Zeroizing<String>> {
-        self.credential.as_ref()
-    }
-
-    /// Report credential presence without exposing its value.
-    pub(crate) fn has_credential(&self) -> bool {
-        self.credential.is_some()
     }
 
     /// Consume the short-lived credential and produce one dispatch configuration.
@@ -219,14 +275,6 @@ impl ProviderRouter {
             .collect()
     }
 
-    /// Hydrate this candidate's credential only for its immediate dispatch.
-    pub(crate) fn hydrate_candidate(
-        &self,
-        candidate: &ProviderCandidate,
-    ) -> AppResult<HydratedProviderCandidate> {
-        self.hydrate_candidate_with(candidate, crate::credentials::get_runtime_secret)
-    }
-
     /// Hydrate a candidate with an injected credential reader for tests/adapters.
     pub(crate) fn hydrate_candidate_with<F>(
         &self,
@@ -274,4 +322,46 @@ fn candidate_satisfies(candidate: &ProviderCandidate, requirements: &ProviderReq
         && candidate.security_domain == requirements.security_domain
         && candidate.availability == CandidateAvailability::Available
         && candidate.health != CandidateHealth::Unhealthy
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::{AppError, ProviderErrorKind};
+
+    #[test]
+    fn classifies_cancelled_message_tokens() {
+        let err = AppError::msg("request aborted by user");
+        assert_eq!(
+            classify_provider_failure_from_app_error(&err),
+            ProviderFailure::Cancelled
+        );
+    }
+
+    #[test]
+    fn classifies_structured_provider_rate_limit_without_message_scan() {
+        let err = AppError::provider(ProviderErrorKind::RateLimited, "请求过于频繁，请稍后再试。");
+        assert_eq!(
+            classify_provider_failure_from_app_error(&err),
+            ProviderFailure::HttpStatus(429)
+        );
+    }
+
+    #[test]
+    fn classifies_structured_provider_timeout() {
+        let err = AppError::provider(ProviderErrorKind::Timeout, "deadline exceeded");
+        assert_eq!(
+            classify_provider_failure_from_app_error(&err),
+            ProviderFailure::Timeout
+        );
+    }
+
+    #[test]
+    fn classifies_rate_limited_message_fallback() {
+        let err = AppError::msg("provider returned HTTP 429 too many requests");
+        assert_eq!(
+            classify_provider_failure_from_app_error(&err),
+            ProviderFailure::HttpStatus(429)
+        );
+    }
 }

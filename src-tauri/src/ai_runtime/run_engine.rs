@@ -19,6 +19,7 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 /// Provider adapter contract for one direct, normal-domain answer.
+#[cfg(test)]
 pub(crate) trait DirectAnswerProvider {
     /// Produce exactly one final answer for an already accepted Run.
     fn answer(&self, run_id: &str, message: &str) -> AppResult<String>;
@@ -151,7 +152,6 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
 pub(crate) struct FailoverStreamingDirectAnswerProvider<'a> {
     route: DirectProviderRoute,
     requirements: crate::ai_runtime::provider_router::ProviderRequirements,
-    app_handle: AppHandle,
     db: &'a Database,
     session: &'a AssistantSessionRef,
     sink: &'a dyn RunEventSink,
@@ -161,7 +161,6 @@ impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
     pub(crate) fn new(
         route: DirectProviderRoute,
         requirements: crate::ai_runtime::provider_router::ProviderRequirements,
-        app_handle: AppHandle,
         db: &'a Database,
         session: &'a AssistantSessionRef,
         sink: &'a dyn RunEventSink,
@@ -169,7 +168,6 @@ impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
         Self {
             route,
             requirements,
-            app_handle,
             db,
             session,
             sink,
@@ -196,10 +194,10 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
-                let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
-                    self.app_handle.clone(),
-                    vec![dispatch.provider.clone()],
-                )?;
+                let gateway =
+                    crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![dispatch
+                        .provider
+                        .clone()])?;
                 let provider =
                     ModelGatewayStreamingDirectAnswerProvider::from_dispatch(&gateway, dispatch)?;
                 match provider.answer_streaming(run_id, messages, observer).await {
@@ -252,7 +250,6 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
 pub(crate) struct FailoverStreamingToolLoopProvider<'a> {
     route: DirectProviderRoute,
     requirements: crate::ai_runtime::provider_router::ProviderRequirements,
-    app_handle: AppHandle,
     db: &'a Database,
     session: &'a AssistantSessionRef,
     sink: &'a dyn RunEventSink,
@@ -262,7 +259,6 @@ impl<'a> FailoverStreamingToolLoopProvider<'a> {
     pub(crate) fn new(
         route: DirectProviderRoute,
         requirements: crate::ai_runtime::provider_router::ProviderRequirements,
-        app_handle: AppHandle,
         db: &'a Database,
         session: &'a AssistantSessionRef,
         sink: &'a dyn RunEventSink,
@@ -270,7 +266,6 @@ impl<'a> FailoverStreamingToolLoopProvider<'a> {
         Self {
             route,
             requirements,
-            app_handle,
             db,
             session,
             sink,
@@ -298,10 +293,10 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
-                let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
-                    self.app_handle.clone(),
-                    vec![dispatch.provider.clone()],
-                )?;
+                let gateway =
+                    crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![dispatch
+                        .provider
+                        .clone()])?;
                 let provider =
                     ModelGatewayStreamingDirectAnswerProvider::from_dispatch(&gateway, dispatch)?;
                 match provider
@@ -373,8 +368,10 @@ pub(crate) trait RunEventSink: Send + Sync {
     }
 }
 
+#[cfg(test)]
 struct NoopRunEventSink;
 
+#[cfg(test)]
 impl RunEventSink for NoopRunEventSink {
     fn emit(&self, _event: &crate::ai_runtime::run_contract::AssistantRunEvent) -> AppResult<()> {
         Ok(())
@@ -469,6 +466,7 @@ pub(crate) struct AgentRunStreamObserver<'a> {
 
 impl<'a> AgentRunStreamObserver<'a> {
     /// Create an observer bound to one already-running normal-domain Run.
+    #[cfg(test)]
     pub(crate) fn new(
         db: &'a Database,
         run_id: &'a str,
@@ -901,6 +899,7 @@ impl RunEngine {
     }
 
     /// Drive accepted → preparing → running → completed for one direct answer.
+    #[cfg(test)]
     pub(crate) fn execute_direct(
         db: &Database,
         session: &AssistantSessionRef,
@@ -911,6 +910,7 @@ impl RunEngine {
     }
 
     /// Drive a direct Run and emit each event only after its durable write succeeds.
+    #[cfg(test)]
     pub(crate) fn execute_direct_with_sink(
         db: &Database,
         session: &AssistantSessionRef,
@@ -999,6 +999,7 @@ impl RunEngine {
     }
 
     /// Drive a streaming direct answer using the persisted user message only.
+    #[cfg(test)]
     pub(crate) async fn execute_direct_streaming_with_sink(
         db: &Database,
         session: &AssistantSessionRef,
@@ -1021,28 +1022,7 @@ impl RunEngine {
         .await
     }
 
-    /// Drive a streaming Run using an already authorized, transient prompt.
-    pub(crate) async fn execute_direct_streaming_with_prompt_and_sink(
-        db: &Database,
-        session: &AssistantSessionRef,
-        run_id: &str,
-        prompt: &str,
-        provider: &impl StreamingDirectAnswerProvider,
-        sink: &impl RunEventSink,
-    ) -> AppResult<()> {
-        Self::execute_direct_streaming_with_prompt_and_evidence_with_sink(
-            db,
-            session,
-            run_id,
-            prompt,
-            &[],
-            provider,
-            sink,
-        )
-        .await
-    }
-
-    /// Drive a streaming Run with evidence IDs already committed to its ledger.
+    #[cfg(test)]
     pub(crate) async fn execute_direct_streaming_with_prompt_and_evidence_with_sink(
         db: &Database,
         session: &AssistantSessionRef,
@@ -1067,6 +1047,7 @@ impl RunEngine {
     }
 
     /// Drive a streaming Run with a stateless domain verification gate.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_direct_streaming_with_prompt_evidence_and_domain_plan_with_sink(
         db: &Database,
@@ -1543,6 +1524,7 @@ fn apply_required_web_degradation_notice(
     Ok(())
 }
 
+#[cfg(test)]
 fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessage {
     crate::ai_runtime::LlmMessage {
         role: crate::ai_runtime::MessageRole::User,
@@ -1825,34 +1807,7 @@ pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
 fn classify_failover_failure(
     error: &AppError,
 ) -> crate::ai_runtime::provider_router::ProviderFailure {
-    use crate::ai_runtime::provider_router::ProviderFailure;
-
-    let message = error.to_string().to_ascii_lowercase();
-    if message.contains("request aborted") || message.contains("partial_visible_stream_error") {
-        return ProviderFailure::Cancelled;
-    }
-    if message.contains("timeout") || message.contains("deadline") {
-        return ProviderFailure::Timeout;
-    }
-    if message.contains("429") || message.contains("too many requests") {
-        return ProviderFailure::HttpStatus(429);
-    }
-    if message.contains("500") {
-        return ProviderFailure::HttpStatus(500);
-    }
-    if message.contains("502") {
-        return ProviderFailure::HttpStatus(502);
-    }
-    if message.contains("503") || message.contains("service unavailable") {
-        return ProviderFailure::TemporarilyUnavailable;
-    }
-    if message.contains("connection") || message.contains("sending request") {
-        return ProviderFailure::Connection;
-    }
-    if message.contains("unauthorized") || message.contains("api key") {
-        return ProviderFailure::Unauthorized;
-    }
-    ProviderFailure::Unknown
+    crate::ai_runtime::provider_router::classify_provider_failure_from_app_error(error)
 }
 
 fn failover_reason(failure: crate::ai_runtime::provider_router::ProviderFailure) -> &'static str {
@@ -1866,16 +1821,13 @@ fn failover_reason(failure: crate::ai_runtime::provider_router::ProviderFailure)
         ProviderFailure::TemporarilyUnavailable => "temporarily_unavailable",
         ProviderFailure::Unauthorized
         | ProviderFailure::Forbidden
-        | ProviderFailure::Schema
-        | ProviderFailure::ContextLimit
         | ProviderFailure::Cancelled
-        | ProviderFailure::PolicyDenied
-        | ProviderFailure::SecurityDomainMismatch
         | ProviderFailure::Unknown
         | ProviderFailure::HttpStatus(_) => "provider_failure",
     }
 }
 
+#[cfg(test)]
 fn user_message_for_run(db: &Database, session_key: &str, run_id: &str) -> AppResult<String> {
     db.with_read_conn(|conn| {
         conn.query_row(
@@ -1890,6 +1842,7 @@ fn user_message_for_run(db: &Database, session_key: &str, run_id: &str) -> AppRe
     })
 }
 
+#[cfg(test)]
 pub(crate) fn direct_gateway_request(
     provider: crate::ai_types::ProviderConfig,
     message: &str,
@@ -1906,6 +1859,7 @@ pub(crate) fn direct_gateway_request(
 }
 
 /// Construct the stable system boundary and one transient user prompt for a Run.
+#[cfg(test)]
 pub(crate) fn run_messages_for_prompt(message: &str) -> Vec<crate::ai_runtime::LlmMessage> {
     vec![
             crate::ai_runtime::model_gateway::LlmMessage {
@@ -1940,6 +1894,8 @@ pub(crate) fn gateway_request_for_messages(
         tools: crate::ai_runtime::model_gateway::ModelGateway::tools_to_llm_format(tools),
         max_tokens: Some(max_tokens),
         input_token_budget: None,
+        // Intentionally fixed: Run path does not expose temperature in settings UI.
+        // Model gateway accepts Option<f64>; keep None until product adds a routing control.
         temperature: None,
         stream: true,
         thinking,

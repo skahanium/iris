@@ -2,25 +2,22 @@
 //!
 //! 与前端 `globals.css`、`get_desktop_chrome_metrics` IPC 共用数值。
 
-/// Windows / Linux 顶栏逻辑高度（px）。
-#[cfg_attr(target_os = "macos", allow(dead_code))]
+/// 顶栏逻辑高度（px）；全平台共用同一数值。
 pub const DEFAULT_TITLEBAR_HEIGHT: f64 = 44.0;
 
 /// macOS Overlay 顶栏指标（仅 macOS 目标编译）。
 #[cfg(target_os = "macos")]
 pub mod macos {
     /// Overlay 顶栏逻辑高度（px），与 `html[data-iris-platform-macos]` 的 `2.75rem` 一致。
-    pub const TITLEBAR_HEIGHT: f64 = 44.0;
+    pub const TITLEBAR_HEIGHT: f64 = super::DEFAULT_TITLEBAR_HEIGHT;
 
     /// 系统原生红黄绿独占的左侧安全区（px）。
     pub const TRAFFIC_INSET: f64 = 88.0;
 }
 
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 pub use macos::TITLEBAR_HEIGHT as MACOS_TITLEBAR_HEIGHT;
 #[cfg(target_os = "macos")]
-#[allow(unused_imports)]
 pub use macos::TRAFFIC_INSET as MACOS_TRAFFIC_INSET;
 
 #[cfg(test)]

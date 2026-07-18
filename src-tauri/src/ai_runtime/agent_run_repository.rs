@@ -20,8 +20,12 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 const MAX_SAFE_EVENT_TEXT_CHARS: usize = 2_000;
+
+#[cfg(test)]
 const MAX_CHECKPOINT_STRING_CHARS: usize = 512;
+#[cfg(test)]
 const MAX_CHECKPOINT_SAFE_STATE_DEPTH: usize = 4;
+#[cfg(test)]
 const MAX_CHECKPOINT_SAFE_STATE_ITEMS: usize = 64;
 
 /// Facts Request Intake must atomically write before any execution work.
@@ -76,6 +80,7 @@ pub(crate) struct AppendRunEventInput {
 }
 
 /// One durable, summary-shaped checkpoint for a recoverable Run Step.
+#[cfg(test)]
 #[derive(Debug, Clone)]
 pub(crate) struct AppendRunCheckpointInput {
     /// Owning Run identifier.
@@ -353,6 +358,7 @@ impl AgentRunRepository {
                         crate::ai_runtime::run_contract::RunStateTransitionError::IllegalTransition => {
                             "agent_run_illegal_transition"
                         }
+                        #[cfg(test)]
                         crate::ai_runtime::run_contract::RunStateTransitionError::StateVersionConflict => {
                             "agent_run_state_version_conflict"
                         }
@@ -400,6 +406,7 @@ impl AgentRunRepository {
     }
 
     /// Persist a validated checkpoint only for a durable or safely blocked Run.
+    #[cfg(test)]
     pub(crate) fn append_checkpoint_step(
         db: &Database,
         input: AppendRunCheckpointInput,
@@ -562,6 +569,7 @@ impl AgentRunRepository {
     }
 
     /// Persist one immutable confirmation plan for its owning Run.
+    #[cfg(test)]
     pub(crate) fn save_frozen_confirmation(
         db: &Database,
         plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
@@ -736,6 +744,7 @@ impl AgentRunRepository {
     }
 
     /// Atomically consume exactly one unexpired plan with its original hash.
+    #[cfg(test)]
     pub(crate) fn consume_frozen_confirmation(
         db: &Database,
         run_id: &str,
@@ -1471,6 +1480,7 @@ fn validate_tool_call_lifecycle(
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_checkpoint_step_input(input: &AppendRunCheckpointInput) -> AppResult<()> {
     for value in [&input.kind, &input.status] {
         if value.trim().is_empty() || value.chars().count() > 120 {
@@ -1485,6 +1495,7 @@ fn validate_checkpoint_step_input(input: &AppendRunCheckpointInput) -> AppResult
     Ok(())
 }
 
+#[cfg(test)]
 fn is_safe_checkpoint_summary(summary: &str) -> bool {
     if summary.chars().count() > MAX_SAFE_EVENT_TEXT_CHARS || summary.lines().count() > 3 {
         return false;
@@ -1525,6 +1536,7 @@ fn ensure_evidence_ids_belong_to_session(
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_checkpoint_schema(checkpoint: &Value) -> AppResult<Vec<i64>> {
     let object = checkpoint
         .as_object()
@@ -1581,6 +1593,7 @@ fn validate_checkpoint_schema(checkpoint: &Value) -> AppResult<Vec<i64>> {
     Ok(evidence_ids)
 }
 
+#[cfg(test)]
 fn validate_checkpoint_string(
     object: &serde_json::Map<String, Value>,
     field: &str,
@@ -1601,6 +1614,7 @@ fn validate_checkpoint_string(
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_checkpoint_optional_string(
     object: &serde_json::Map<String, Value>,
     field: &str,
@@ -1608,6 +1622,7 @@ fn validate_checkpoint_optional_string(
     validate_checkpoint_string(object, field, true)
 }
 
+#[cfg(test)]
 fn validate_checkpoint_string_array(
     object: &serde_json::Map<String, Value>,
     field: &str,
@@ -1633,6 +1648,7 @@ fn validate_checkpoint_string_array(
         .collect()
 }
 
+#[cfg(test)]
 fn validate_checkpoint_evidence_id_array(
     object: &serde_json::Map<String, Value>,
     field: &str,
@@ -1654,6 +1670,7 @@ fn validate_checkpoint_evidence_id_array(
         .collect()
 }
 
+#[cfg(test)]
 fn validate_checkpoint_safe_value(value: &Value, depth: usize) -> AppResult<()> {
     if depth > MAX_CHECKPOINT_SAFE_STATE_DEPTH {
         return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));

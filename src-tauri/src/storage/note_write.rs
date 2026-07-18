@@ -12,6 +12,7 @@ use crate::indexer::scan::{content_hash, index_file_from_content, FileEntry};
 use crate::storage::atomic_write::{
     atomic_create, atomic_write, move_file_no_replace_locked, with_vault_move_lock,
 };
+use crate::storage::note_title::title_from_path;
 use crate::storage::paths::{
     has_reserved_path_root, is_classified_note_path, read_file_lossy, resolve_vault_path,
 };
@@ -101,14 +102,20 @@ impl NoteWriteService {
         reject_existing: bool,
     ) -> AppResult<FileWriteResult> {
         let vault = state.vault_path()?;
-        ensure_note_parent(&vault, path)?;
-        let absolute = resolve_vault_path(&vault, path)?;
         let payload = encode_payload(path, content)?;
-        if reject_existing {
-            atomic_create(&absolute, &payload)?;
-        } else {
-            atomic_write(&absolute, &payload)?;
-        }
+        // Resolve the absolute path under the vault move lock so a concurrent
+        // rename/trash cannot move the target between path resolution and the
+        // durable write (which would recreate a ghost file at the old path).
+        let absolute = with_vault_move_lock(|| {
+            ensure_note_parent(&vault, path)?;
+            let absolute = resolve_vault_path(&vault, path)?;
+            if reject_existing {
+                atomic_create(&absolute, &payload)?;
+            } else {
+                atomic_write(&absolute, &payload)?;
+            }
+            Ok(absolute)
+        })?;
 
         let hash = content_hash(content);
         state.storage.write_guard.mark(path, &hash);
@@ -199,15 +206,6 @@ fn fallback_entry(path: &str, content: &str) -> FileEntry {
         updated_at: chrono::Utc::now().to_rfc3339(),
         word_count: content.split_whitespace().count() as i64,
     }
-}
-
-fn title_from_path(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| !stem.is_empty())
-        .unwrap_or(path)
-        .to_string()
 }
 
 fn schedule_index_repair_task(

@@ -10,6 +10,7 @@ import type { NoteOpenSource } from "@/lib/document-open-runtime";
 import type { FileListItem } from "@/types/ipc";
 
 interface WelcomeEmptyProps {
+  onBeforeFileDelete?: (path: string) => Promise<void>;
   onOpen: (
     path: string,
     titleHint: string | undefined,
@@ -26,6 +27,7 @@ interface WelcomeEmptyProps {
 }
 
 export const WelcomeEmpty = memo(function WelcomeEmpty({
+  onBeforeFileDelete,
   onOpen,
   onNew,
   onPrepare,
@@ -168,6 +170,7 @@ export const WelcomeEmpty = memo(function WelcomeEmpty({
         onConfirm={() => {
           if (!deleteTarget) return;
           void (async () => {
+            await onBeforeFileDelete?.(deleteTarget.path);
             await fileDelete(deleteTarget.path);
             setDeleteTarget(null);
             await onRefreshRecent();

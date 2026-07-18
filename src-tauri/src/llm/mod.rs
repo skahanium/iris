@@ -1,4 +1,3 @@
-pub mod anthropic;
 pub mod config;
 pub mod engine;
 pub mod fetch_web_page;
@@ -8,10 +7,7 @@ pub mod model_registry;
 pub mod providers;
 pub mod search_web;
 
-use std::sync::{Arc, Mutex, MutexGuard};
-
-use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use std::sync::{Mutex, MutexGuard};
 
 /// 安全获取 mutex 锁，处理中毒情况
 pub fn safe_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -23,34 +19,6 @@ pub fn safe_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         );
         poisoned.into_inner()
     })
-}
-
-/// 单次流式 LLM 请求的共享上下文（OpenAI 兼容 / Anthropic Messages）。
-pub struct LlmStreamContext<'a> {
-    pub app: &'a AppHandle,
-    pub request_id: &'a str,
-    pub abort_flag: Arc<Mutex<bool>>,
-    pub api_key: &'a str,
-    pub base: &'a str,
-    pub model: &'a str,
-    pub messages: Vec<ChatMessage>,
-    pub system: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChatMessage {
-    pub role: String,
-    pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmGenerateParams {
-    pub provider: String,
-    pub model: Option<String>,
-    pub messages: Vec<ChatMessage>,
-    pub system: Option<String>,
-    pub stream: Option<bool>,
-    pub custom_base_url: Option<String>,
 }
 
 #[cfg(test)]

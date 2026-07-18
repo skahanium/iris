@@ -1,4 +1,10 @@
-/// Split markdown into chunks at heading and paragraph boundaries (simplified v0.1).
+//! Split markdown into chunks at heading and paragraph boundaries.
+//!
+//! Heading boundaries are ignored inside fenced code blocks so FTS/citation spans
+//! stay aligned with editor-visible structure.
+
+use super::code_fence::FenceState;
+
 pub fn chunk_markdown(content: &str, max_chars: usize) -> Vec<String> {
     chunk_markdown_with_metadata(content, max_chars)
         .into_iter()
@@ -31,9 +37,11 @@ pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<Mark
     let mut heading_stack: Vec<String> = Vec::new();
     let max_chars = max_chars.max(1);
     const MIN_CHARS: usize = 100;
+    let mut fence = FenceState::new();
 
     for (line_start, line, line_with_eol_len) in lines_with_offsets(content) {
-        let is_boundary = line.starts_with('#') || line.trim().is_empty();
+        let in_fence = fence.feed(line);
+        let is_boundary = !in_fence && (line.starts_with('#') || line.trim().is_empty());
         if is_boundary && !current.is_empty() && current_chars >= MIN_CHARS {
             push_non_empty_trimmed(
                 &mut chunks,
@@ -45,9 +53,11 @@ pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<Mark
             current_chars = 0;
         }
         if let Some((level, heading)) = parse_heading(line) {
-            heading_stack.truncate(level.saturating_sub(1));
-            heading_stack.push(heading);
-            current_heading_path = heading_path(&heading_stack);
+            if !in_fence {
+                heading_stack.truncate(level.saturating_sub(1));
+                heading_stack.push(heading);
+                current_heading_path = heading_path(&heading_stack);
+            }
         }
         if !line.is_empty() || !current.is_empty() {
             if !current.is_empty() {
@@ -267,6 +277,14 @@ mod tests {
     fn empty_content_returns_empty() {
         let chunks = chunk_markdown("", 512);
         assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn ignores_heading_markers_inside_fenced_code() {
+        let md = "```python\n# not a heading\nprint('x')\n```\n\n# Real\n\nBody.";
+        let chunks = chunk_markdown_with_metadata(md, 512);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].heading_path.as_deref(), Some("Real"));
     }
 
     #[test]

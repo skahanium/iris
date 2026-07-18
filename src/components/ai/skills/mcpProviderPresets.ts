@@ -108,31 +108,6 @@ export const MCP_PROVIDER_PRESETS: McpProviderPreset[] = [
     plainEnv: [],
   },
   {
-    id: "tavily",
-    label: "Tavily",
-    description:
-      "官方远程 MCP；Iris 使用 Authorization 请求头，不把 tavilyApiKey 写进 URL。",
-    transportKind: "https",
-    providerName: "Tavily",
-    url: "https://mcp.tavily.com/mcp/",
-    searchMapping: mapping("tavily-search", {
-      queryArg: "query",
-      maxResultsArg: "max_results",
-    }),
-    fetchMapping: mapping("tavily-extract", { urlListArg: "urls" }),
-    credentials: [
-      {
-        target: "header",
-        name: "Authorization",
-        label: "Tavily API Key",
-        service: "iris.mcp.tavily",
-        scheme: "bearer",
-        placeholder: "tvly-...",
-      },
-    ],
-    plainEnv: [],
-  },
-  {
     id: "brave",
     label: "Brave Search",
     description:

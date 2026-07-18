@@ -35,81 +35,16 @@ import {
   type ReasoningMode,
   type ProviderOverride,
 } from "@/types/llm";
+import builtinLlmProviders from "../../../config/llm-builtin-providers.json";
 
-const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = [
-  {
-    id: "deepseek",
-    name: "DeepSeek",
-    default_model: "deepseek-v4-flash",
+const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = builtinLlmProviders.map(
+  (provider) => ({
+    id: provider.id,
+    name: provider.name,
+    default_model: provider.defaultModel,
     endpointManaged: "builtin",
-  },
-  {
-    id: "openai",
-    name: "OpenAI",
-    default_model: "gpt-4o-mini",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "anthropic",
-    name: "Anthropic",
-    default_model: "claude-3-5-haiku-20241022",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "google",
-    name: "Gemini / Google",
-    default_model: "gemini-2.5-flash",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "qwen",
-    name: "Qwen / DashScope",
-    default_model: "qwen3-235b-a22b",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "zhipu",
-    name: "GLM / Zhipu",
-    default_model: "glm-4-flash",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "kimi",
-    name: "Kimi",
-    default_model: "moonshot-v1-128k",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "doubao",
-    name: "Doubao / Volcengine",
-    default_model: "doubao-1-5-pro-256k",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "minimax",
-    name: "MiniMax",
-    default_model: "MiniMax-M3",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "hunyuan",
-    name: "Hunyuan / Tencent",
-    default_model: "hunyuan-t1-latest",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "ernie",
-    name: "ERNIE / Baidu",
-    default_model: "ernie-x1",
-    endpointManaged: "builtin",
-  },
-  {
-    id: "mimo",
-    name: "MiMo",
-    default_model: "MiMo-V2.5-Pro",
-    endpointManaged: "builtin",
-  },
-];
+  }),
+);
 
 const REASONING_STRENGTH_OPTIONS: ReasoningMode[] = [
   "off",

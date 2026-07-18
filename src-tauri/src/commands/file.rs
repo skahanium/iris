@@ -24,6 +24,7 @@ use crate::storage::atomic_write::{
     atomic_write, move_directory_no_replace_locked, move_file_no_replace_locked,
     with_vault_move_lock,
 };
+use crate::storage::note_title::{is_placeholder_title, title_from_path};
 use crate::storage::note_write::{FileWriteIndexStatus, FileWriteResult, NoteWriteService};
 use crate::storage::paths::{
     is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
@@ -127,14 +128,6 @@ pub(crate) fn allow_vault_assets_in_asset_protocol(app: &AppHandle, vault: &std:
             assets_dir.display()
         );
     }
-}
-
-fn title_from_path(path: &str) -> String {
-    path.trim_end_matches(".md")
-        .split('/')
-        .next_back()
-        .unwrap_or(path)
-        .to_string()
 }
 
 fn default_create_content(_document_title: &str) -> String {
@@ -741,16 +734,6 @@ pub struct PathSyncSuggest {
 }
 
 const UNNAMED_DOCUMENT_TITLE: &str = "未命名文档";
-const PLACEHOLDER_TITLE_MARKERS: &[&str] = &["未命名文档", "新建文档", "无标题", "untitled"];
-
-fn is_placeholder_title(title: &str) -> bool {
-    let t = title.trim();
-    if t.is_empty() {
-        return false;
-    }
-    let lower = t.to_lowercase();
-    PLACEHOLDER_TITLE_MARKERS.iter().any(|p| lower.contains(p))
-}
 
 fn sanitize_title_for_path(title: &str) -> String {
     const INVALID: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
@@ -901,7 +884,7 @@ fn fallback_file_entry(path: &str, content: &str) -> FileEntry {
     }
 }
 
-fn file_rename_inner(
+pub(crate) fn file_rename_inner(
     state: Arc<AppState>,
     path: String,
     new_path: String,
@@ -1972,6 +1955,7 @@ mod path_sync_tests {
     #[test]
     fn placeholder_skips_sync() {
         assert!(is_placeholder_title("新建文档"));
+        assert!(is_placeholder_title(""));
         assert!(!is_placeholder_title("民法总则笔记"));
     }
 

@@ -18,42 +18,12 @@ type HookApi = ReturnType<typeof useNavigatorFileLifecycle>;
 type BeginPathMigration = (oldPath: string, newPath: string) => Promise<void>;
 type CompletePathMigration = (oldPath: string, newPath: string) => string;
 
-function Harness({
-  onReady,
-  beginPathMigration,
-  completePathMigration,
-}: {
-  onReady: (api: HookApi) => void;
-  beginPathMigration: BeginPathMigration;
-  completePathMigration: CompletePathMigration;
-}) {
-  const api = useNavigatorFileLifecycle({
-    activePathRef: { current: "old.md" },
-    awaitSaveInFlight: vi.fn(async () => undefined),
-    abortPathMigration: vi.fn(),
-    beginPathMigration,
-    bumpVaultIndex: vi.fn(),
-    cancelPendingSave: vi.fn(),
-    completePathMigration,
-    discardOpenTab: vi.fn(async () => undefined),
-    persistBeforeLeaveRef: {
-      current: vi.fn(async () => "saved before move"),
-    } as MutableRefObject<PersistBeforeLeave>,
-    replaceOpenTabPath: vi.fn(),
-    tabsRef: {
-      current: [
-        { dirty: false, locked: false, path: "old.md", title: "Old" },
-      ] as TabItem[],
-    },
-  });
-  onReady(api);
-  return null;
-}
-
 describe("useNavigatorFileLifecycle", () => {
   let api!: HookApi;
   let beginPathMigration: Mock<BeginPathMigration>;
   let completePathMigration: Mock<CompletePathMigration>;
+  let discardOpenTab: Mock<(path: string) => Promise<void>>;
+  let persistBeforeLeave: Mock<PersistBeforeLeave>;
   let container: HTMLDivElement;
   let root: Root;
 
@@ -62,18 +32,44 @@ describe("useNavigatorFileLifecycle", () => {
     completePathMigration = vi.fn<CompletePathMigration>(
       () => "edited while moving",
     );
+    discardOpenTab = vi.fn(async () => undefined);
+    persistBeforeLeave = vi.fn(async () => "saved before delete");
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => {
       root.render(
-        createElement(Harness, {
-          beginPathMigration,
-          completePathMigration,
-          onReady: (next) => {
-            api = next;
+        createElement(
+          function HarnessWithDelete({
+            onReady,
+          }: {
+            onReady: (api: HookApi) => void;
+          }) {
+            const next = useNavigatorFileLifecycle({
+              abortPathMigration: vi.fn(),
+              beginPathMigration,
+              bumpVaultIndex: vi.fn(),
+              completePathMigration,
+              discardOpenTab,
+              persistBeforeLeaveRef: {
+                current: persistBeforeLeave,
+              } as MutableRefObject<PersistBeforeLeave>,
+              replaceOpenTabPath: vi.fn(),
+              tabsRef: {
+                current: [
+                  { dirty: true, locked: false, path: "note.md", title: "Note" },
+                ] as TabItem[],
+              },
+            });
+            onReady(next);
+            return null;
           },
-        }),
+          {
+            onReady: (next) => {
+              api = next;
+            },
+          },
+        ),
       );
     });
   });
@@ -85,14 +81,22 @@ describe("useNavigatorFileLifecycle", () => {
 
   it("routes a navigator rename through migration and rebind before replacing the tab", async () => {
     await act(async () => {
-      await api.handleBeforeFilePathChange("old.md", "new.md");
+      await api.handleBeforeFilePathChange("note.md", "renamed.md");
     });
-    expect(beginPathMigration).toHaveBeenCalledWith("old.md", "new.md");
+    expect(beginPathMigration).toHaveBeenCalledWith("note.md", "renamed.md");
 
     act(() => {
-      api.handleFilePathChanged("old.md", "new.md", "New");
+      api.handleFilePathChanged("note.md", "renamed.md", "Renamed");
     });
 
-    expect(completePathMigration).toHaveBeenCalledWith("old.md", "new.md");
+    expect(completePathMigration).toHaveBeenCalledWith("note.md", "renamed.md");
+  });
+
+  it("flushes dirty content before deleting an open tab", async () => {
+    await act(async () => {
+      await api.handleBeforeFileDelete("note.md");
+    });
+    expect(persistBeforeLeave).toHaveBeenCalledWith("note.md");
+    expect(discardOpenTab).toHaveBeenCalledWith("note.md");
   });
 });

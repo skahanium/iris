@@ -530,11 +530,13 @@ pub(crate) enum RunStateTransitionError {
     #[error("agent_run_illegal_transition")]
     IllegalTransition,
     /// The client attempted a control action against a stale state version.
+    #[cfg(test)]
     #[error("agent_run_state_version_conflict")]
     StateVersionConflict,
 }
 
 /// Lifecycle state paired with the optimistic version stored by the Run repository.
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct VersionedRunState {
     /// Current lifecycle state.
@@ -1096,6 +1098,7 @@ pub(crate) fn transition_to(
 /// When a repeated control request carries an older version but asks for the
 /// already-observed state, it is treated as a successful no-op. Any other
 /// stale or future version is rejected with a stable conflict error.
+#[cfg(test)]
 pub(crate) fn transition_if_version(
     current: RunState,
     state_version: u64,

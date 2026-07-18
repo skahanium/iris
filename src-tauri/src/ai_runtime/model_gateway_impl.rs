@@ -5,7 +5,6 @@ pub use crate::ai_types::{
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
 #[path = "model_gateway/abort.rs"]
 mod abort_impl;
 #[path = "model_gateway/anthropic_response.rs"]
@@ -32,9 +31,8 @@ pub use messages_impl::{
     remove_orphan_tool_messages, repair_tool_api_messages, tool_api_message_chain_valid,
 };
 pub use streaming_impl::{
-    emit_stream_reset, emit_stream_reset_with_reason, emit_stream_reset_with_surface,
-    LegacyTauriStreamObserver, StreamEvent, StreamEventData, StreamEventObserver, StreamEventType,
-    StreamSurface,
+    emit_stream_reset, emit_stream_reset_with_reason, emit_stream_reset_with_surface, StreamEvent,
+    StreamEventData, StreamEventObserver, StreamEventType, StreamSurface,
 };
 use usage_impl::parse_usage;
 
@@ -51,7 +49,6 @@ pub struct GatewayResponse {
 
 /// Model Gateway: handles LLM provider communication.
 pub struct ModelGateway {
-    app_handle: AppHandle,
     client: Client,
     providers: Vec<ProviderConfig>,
 }
@@ -137,18 +134,14 @@ fn select_failover_provider(
 
 impl ModelGateway {
     /// Create a new gateway with injected HTTP client and provider configurations.
-    pub fn new(app_handle: AppHandle, client: Client, providers: Vec<ProviderConfig>) -> Self {
-        Self {
-            app_handle,
-            client,
-            providers,
-        }
+    pub fn new(client: Client, providers: Vec<ProviderConfig>) -> Self {
+        Self { client, providers }
     }
 
     /// Create a gateway with default pinned HTTP client.
-    pub fn with_defaults(app_handle: AppHandle, providers: Vec<ProviderConfig>) -> AppResult<Self> {
+    pub fn with_defaults(providers: Vec<ProviderConfig>) -> AppResult<Self> {
         let client = crate::network::cert_pinning::create_https_client()?;
-        Ok(Self::new(app_handle, client, providers))
+        Ok(Self::new(client, providers))
     }
 
     /// Select the next configured model only for provider-level failures.
@@ -221,12 +214,15 @@ impl ModelGateway {
             .json(&body)
             .send()
             .await
-            .map_err(|e| AppError::msg(format!("LLM request failed: {}", e)))?;
+            .map_err(AppError::from_reqwest_transport)?;
 
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(AppError::msg(format_llm_http_error(status, &text)));
+            return Err(AppError::from_llm_http_status(
+                status,
+                format_llm_http_error(status, &text),
+            ));
         }
 
         let response_text = response
@@ -240,15 +236,6 @@ impl ModelGateway {
             request.provider.endpoint_family,
             &json,
         ))
-    }
-
-    pub async fn send_streaming_request(
-        &self,
-        request_id: &str,
-        request: GatewayRequest,
-    ) -> AppResult<GatewayResponse> {
-        streaming_impl::send_streaming_request(&self.app_handle, &self.client, request_id, request)
-            .await
     }
 
     /// Send a streaming request to a caller-owned observer without Tauri event emission.
@@ -269,40 +256,6 @@ impl ModelGateway {
             false,
             run_observer_stream_surface(),
             true,
-        )
-        .await
-    }
-
-    pub async fn send_streaming_request_with_surface(
-        &self,
-        request_id: &str,
-        request: GatewayRequest,
-        surface: StreamSurface,
-        emit_error_event: bool,
-    ) -> AppResult<GatewayResponse> {
-        streaming_impl::send_streaming_request_with_surface(
-            &self.app_handle,
-            &self.client,
-            request_id,
-            request,
-            surface,
-            emit_error_event,
-        )
-        .await
-    }
-
-    pub async fn send_classified_streaming_request(
-        &self,
-        request_id: &str,
-        request: GatewayRequest,
-    ) -> AppResult<GatewayResponse> {
-        streaming_impl::send_streaming_request_with_meta(
-            &self.app_handle,
-            &self.client,
-            request_id,
-            request,
-            true,
-            StreamSurface::VisibleAnswer,
         )
         .await
     }

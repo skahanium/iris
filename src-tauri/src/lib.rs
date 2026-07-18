@@ -6,6 +6,7 @@ pub mod crypto;
 pub mod cas;
 mod chrome_metrics;
 mod commands;
+mod config_manifest;
 mod credentials;
 pub mod embedding;
 pub mod error;
@@ -182,9 +183,6 @@ pub fn run() {
             commands::search::embedding_scheduler_set_paused,
             commands::search::embedding_scheduler_set_foreground_busy,
             commands::llm::llm_providers,
-            commands::llm::llm_generate,
-            commands::llm::llm_chat,
-            commands::llm::llm_abort_cmd,
             commands::llm_config_commands::llm_config_get,
             commands::llm_config_commands::llm_config_set,
             commands::llm_config_commands::llm_config_apply_deepseek_defaults,

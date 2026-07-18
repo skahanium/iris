@@ -1052,14 +1052,6 @@ fn provider_label(provider_id: &str) -> &str {
     }
 }
 
-pub fn resolve_for_provider(
-    db: &Database,
-    provider_id: &str,
-    model: Option<&str>,
-) -> AppResult<ResolvedLlmConfig> {
-    resolve_for_provider_without_secret(db, provider_id, model)
-}
-
 pub fn resolve_for_provider_without_secret(
     db: &Database,
     provider_id: &str,

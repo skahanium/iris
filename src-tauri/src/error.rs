@@ -1,5 +1,64 @@
+//! Application errors with sanitized frontend serialization.
+
 use serde::{ser::SerializeStruct, Serialize};
 use thiserror::Error;
+
+/// Structured provider-dispatch failure kind used for failover routing.
+///
+/// Prefer emitting [`AppError::Provider`] from the model gateway over free-form
+/// [`AppError::Message`] strings so classifiers do not depend on English prose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderErrorKind {
+    /// TCP/TLS connect failure before an HTTP response.
+    Connection,
+    /// Request deadline exceeded.
+    Timeout,
+    /// HTTP 429 / explicit rate limit.
+    RateLimited,
+    /// HTTP 401 / invalid API key.
+    Unauthorized,
+    /// HTTP 403.
+    Forbidden,
+    /// HTTP 503 / overloaded.
+    TemporarilyUnavailable,
+    /// User or runtime cancellation.
+    Cancelled,
+    /// Other HTTP status from the provider.
+    HttpStatus(u16),
+    /// Provider returned an unusable body.
+    InvalidResponse,
+    /// Unclassified provider failure.
+    Unknown,
+}
+
+impl ProviderErrorKind {
+    /// Stable wire/log token for this kind.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Connection => "provider_connection",
+            Self::Timeout => "provider_timeout",
+            Self::RateLimited => "provider_rate_limited",
+            Self::Unauthorized => "provider_unauthorized",
+            Self::Forbidden => "provider_forbidden",
+            Self::TemporarilyUnavailable => "provider_temporarily_unavailable",
+            Self::Cancelled => "provider_cancelled",
+            Self::HttpStatus(_) => "provider_http_status",
+            Self::InvalidResponse => "provider_invalid_response",
+            Self::Unknown => "provider_unknown",
+        }
+    }
+
+    /// Map an HTTP status to the most specific provider kind.
+    pub fn from_http_status(status: u16) -> Self {
+        match status {
+            401 => Self::Unauthorized,
+            403 => Self::Forbidden,
+            429 => Self::RateLimited,
+            503 => Self::TemporarilyUnavailable,
+            other => Self::HttpStatus(other),
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -15,6 +74,12 @@ pub enum AppError {
     Credential(String),
     #[error("Embedding error")]
     Embed(String),
+    /// Provider-facing failure with a structured kind for failover.
+    #[error("{message}")]
+    Provider {
+        kind: ProviderErrorKind,
+        message: String,
+    },
     #[error("{0}")]
     Message(String),
 }
@@ -22,6 +87,34 @@ pub enum AppError {
 impl AppError {
     pub fn msg(s: impl Into<String>) -> Self {
         Self::Message(s.into())
+    }
+
+    /// Build a structured provider error (preferred over free-form messages).
+    pub fn provider(kind: ProviderErrorKind, message: impl Into<String>) -> Self {
+        Self::Provider {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    /// Classify a failed `reqwest` send (no HTTP status yet) into a provider error.
+    pub fn from_reqwest_transport(error: reqwest::Error) -> Self {
+        let message = format!("LLM request failed: {error}");
+        if error.is_timeout() {
+            Self::provider(ProviderErrorKind::Timeout, message)
+        } else if error.is_connect() {
+            Self::provider(ProviderErrorKind::Connection, message)
+        } else {
+            Self::Http(error)
+        }
+    }
+
+    /// Classify an HTTP error status from an LLM provider response.
+    pub fn from_llm_http_status(status: reqwest::StatusCode, message: impl Into<String>) -> Self {
+        Self::provider(
+            ProviderErrorKind::from_http_status(status.as_u16()),
+            message,
+        )
     }
 
     fn code(&self) -> &'static str {
@@ -32,6 +125,7 @@ impl AppError {
             Self::Http(_) => "http",
             Self::Credential(_) => "credential",
             Self::Embed(_) => "embedding",
+            Self::Provider { kind, .. } => kind.as_str(),
             Self::Message(_) => "message",
         }
     }
@@ -44,6 +138,7 @@ impl AppError {
             Self::Http(_) => "HTTP error".to_string(),
             Self::Credential(_) => credential_access_message().to_string(),
             Self::Embed(_) => "Embedding error".to_string(),
+            Self::Provider { message, .. } => message.clone(),
             Self::Message(s) => s.clone(),
         }
     }
@@ -91,6 +186,13 @@ pub fn log_error(error: &AppError) {
         AppError::Embed(s) => {
             tracing::error!(kind = "embed", detail = %redacted_log_detail(s), "Embedding error")
         }
+        AppError::Provider { kind, message } => {
+            tracing::error!(
+                kind = kind.as_str(),
+                detail = %redacted_log_detail(message),
+                "Provider error"
+            )
+        }
         AppError::Message(s) => {
             tracing::error!(kind = "message", detail = %redacted_log_detail(s), "App error")
         }
@@ -108,6 +210,14 @@ mod tests {
         let err = AppError::msg("something broke");
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("something broke"));
+    }
+
+    #[test]
+    fn provider_variant_serializes_kind_code_and_message() {
+        let err = AppError::provider(ProviderErrorKind::RateLimited, "请求过于频繁，请稍后再试。");
+        let value = serde_json::to_value(&err).unwrap();
+        assert_eq!(value["code"], "provider_rate_limited");
+        assert_eq!(value["message"], "请求过于频繁，请稍后再试。");
     }
 
     #[test]
@@ -159,10 +269,10 @@ mod tests {
 
     #[test]
     fn embed_error_serializes_sanitized() {
-        let err = AppError::Embed("failed to compute embedding for file /secret/path.md".into());
+        let err = AppError::Embed("failed to compute embedding for file /vault/secret.md".into());
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("Embedding error"));
-        assert!(!json.contains("/secret/path.md"));
+        assert!(!json.contains("/vault/secret.md"));
     }
 
     #[test]

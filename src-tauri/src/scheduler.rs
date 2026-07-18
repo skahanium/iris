@@ -16,10 +16,11 @@ pub struct Scheduler {
     shutdown_rx: watch::Receiver<bool>,
 }
 
-/// Handle held by `lib.rs` for scheduler lifetime; Drop sends the shutdown signal.
+/// Handle returned by [`Scheduler::start`]. Currently a lifetime token only:
+/// spawned tasks listen on the scheduler's own receiver; dropping this handle
+/// does not stop them.
 pub struct ShutdownHandle {
-    #[allow(dead_code)]
-    tx: watch::Sender<bool>,
+    _tx: watch::Sender<bool>,
 }
 
 impl Scheduler {
@@ -105,7 +106,7 @@ impl Scheduler {
         });
 
         ShutdownHandle {
-            tx: self.shutdown_tx.clone(),
+            _tx: self.shutdown_tx.clone(),
         }
     }
 

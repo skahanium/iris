@@ -72,6 +72,8 @@ pub fn validate_https_url(url: &str) -> AppResult<()> {
 }
 
 /// Validate LLM base URL: all LLM provider endpoints must use HTTPS.
+/// Validates custom LLM base URLs for connectivity probes and routing overrides.
+#[cfg(test)]
 pub fn validate_llm_base_url(url: &str) -> AppResult<()> {
     validate_https_url(url)
 }

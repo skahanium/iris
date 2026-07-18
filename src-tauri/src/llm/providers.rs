@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use crate::config_manifest::builtin_llm_providers;
 use crate::llm::config::{LlmRoutingConfig, ProviderOverride};
 
 #[derive(Debug, Clone, Serialize)]
@@ -11,30 +12,15 @@ pub struct LlmProviderInfo {
     pub endpoint_managed: String,
 }
 
-const BUILTIN_PROVIDERS: &[(&str, &str, &str)] = &[
-    ("deepseek", "DeepSeek", "deepseek-v4-flash"),
-    ("openai", "OpenAI", "gpt-4o-mini"),
-    ("anthropic", "Anthropic", "claude-3-5-haiku-20241022"),
-    ("google", "Gemini / Google", "gemini-2.5-flash"),
-    ("qwen", "Qwen / DashScope", "qwen3-235b-a22b"),
-    ("zhipu", "GLM / Zhipu", "glm-4-flash"),
-    ("kimi", "Kimi", "moonshot-v1-128k"),
-    ("doubao", "Doubao / Volcengine", "doubao-1-5-pro-256k"),
-    ("minimax", "MiniMax", "MiniMax-M3"),
-    ("hunyuan", "Hunyuan / Tencent", "hunyuan-t1-latest"),
-    ("ernie", "ERNIE / Baidu", "ernie-x1"),
-    ("mimo", "MiMo", "MiMo-V2.5-Pro"),
-];
-
 /// 设置页允许的厂商：Phase3 内置厂商 + 任意自定义 OpenAI 兼容端点。
 pub fn is_custom_provider(provider_id: &str) -> bool {
     provider_id == "custom" || provider_id.starts_with("custom_")
 }
 
 pub fn is_allowed_provider(provider_id: &str) -> bool {
-    BUILTIN_PROVIDERS
-        .iter()
-        .any(|(id, _, _)| *id == provider_id)
+    builtin_llm_providers()
+        .map(|providers| providers.iter().any(|(id, _, _)| id == provider_id))
+        .unwrap_or(false)
         || is_custom_provider(provider_id)
 }
 
@@ -55,12 +41,13 @@ fn endpoint_managed(provider_id: &str) -> String {
 }
 
 pub fn list_providers() -> Vec<LlmProviderInfo> {
-    BUILTIN_PROVIDERS
+    builtin_llm_providers()
+        .unwrap_or(&[])
         .iter()
         .map(|(id, name, default_model)| LlmProviderInfo {
-            id: (*id).into(),
-            name: (*name).into(),
-            default_model: (*default_model).into(),
+            id: id.clone(),
+            name: name.clone(),
+            default_model: default_model.clone(),
             endpoint_managed: endpoint_managed(id),
         })
         .collect()
@@ -132,11 +119,6 @@ pub fn api_base(provider: &str, custom_base: Option<&str>) -> String {
         id if is_custom_provider(id) => custom_base.unwrap_or("").to_string(),
         _ => custom_base.unwrap_or("").to_string(),
     }
-}
-
-/// Anthropic Messages API（保留供内联/旧路径；设置页已不暴露）。
-pub fn uses_anthropic_messages_api(provider: &str) -> bool {
-    provider == "anthropic"
 }
 
 pub const ANTHROPIC_API_VERSION: &str = "2023-06-01";

@@ -116,6 +116,7 @@ interface AppEditorWorkspaceProps {
     titleHint?: string,
     source?: NoteOpenSource,
   ) => void;
+  onBeforeFileDelete?: (path: string) => Promise<void>;
   outlineOpen: boolean;
   pendingOpen: HomePendingOpen | null;
   pendingNoteOpen: PendingNoteOpen | null;
@@ -226,6 +227,7 @@ export function AppEditorWorkspace({
   openNoteLeavingHome,
   onPrepareNote,
   onPrepareNotePath,
+  onBeforeFileDelete,
   outlineOpen,
   pendingOpen,
   pendingNoteOpen,
@@ -874,6 +876,7 @@ export function AppEditorWorkspace({
       ) : (
         <>
           <WelcomeEmpty
+            onBeforeFileDelete={onBeforeFileDelete}
             onOpen={(path, titleHint, source) =>
               openNoteLeavingHome(path, titleHint, {
                 priority: "foreground",

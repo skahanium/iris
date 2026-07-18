@@ -13,6 +13,8 @@ use crate::app::AppState;
 use crate::error::AppError;
 use crate::error::AppResult;
 use crate::indexer::scan::{index_file, remove_file_index};
+use crate::storage::atomic_write::with_vault_move_lock;
+use crate::storage::note_title::title_from_path;
 use crate::storage::note_write::{FileWriteIndexStatus, FileWriteResult, NoteWriteService};
 use crate::storage::paths::resolve_vault_path;
 use crate::version::VersionEntry;
@@ -115,14 +117,6 @@ fn lookup_file_id(conn: &rusqlite::Connection, path: &str) -> AppResult<Option<i
     .map_err(Into::into)
 }
 
-fn title_from_path(path: &str) -> String {
-    path.trim_end_matches(".md")
-        .split('/')
-        .next_back()
-        .unwrap_or(path)
-        .to_string()
-}
-
 /// Permanently remove a note, all version blobs, and index rows (no recycle).
 pub fn discard_document(state: &AppState, path: &str) -> AppResult<()> {
     let vault = state.vault_path()?;
@@ -161,11 +155,9 @@ pub fn discard_document(state: &AppState, path: &str) -> AppResult<()> {
 /// Move current note + all versions/finalized snapshots into recycle bin.
 pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
     let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, path)?;
     let trash_id = Uuid::new_v4().to_string();
     let bundle_dir = trash_root(&vault).join(&trash_id);
     let versions_dir = bundle_dir.join("versions");
-    fs::create_dir_all(&versions_dir)?;
 
     let (title, version_metas) = state.db.with_conn(|conn| {
         let file_id = lookup_file_id(conn, path)?;
@@ -186,21 +178,6 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
         let mut metas = Vec::new();
         if let Some(fid) = file_id {
             for v in load_versions_for_file(conn, fid)? {
-                let trash_file = format!("{}.md", v.entry.version_no);
-                let dest = versions_dir.join(&trash_file);
-                if let Some(parent) = dest.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                if crate::version::is_cas_storage_path(&v.storage_path) {
-                    let content =
-                        crate::version::read_version_content(state, &vault, &v.storage_path)?;
-                    fs::write(&dest, content)?;
-                } else {
-                    let src = versions_root(&vault).join(&v.storage_path);
-                    if src.is_file() {
-                        fs::rename(&src, &dest)?;
-                    }
-                }
                 metas.push(TrashVersionMeta {
                     version_no: v.entry.version_no.clone(),
                     label: v.entry.label.clone(),
@@ -210,16 +187,37 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
                     is_finalized: v.entry.is_finalized,
                     kind: v.entry.kind.as_str().to_string(),
                     created_at: v.entry.created_at.clone(),
-                    trash_file,
+                    trash_file: format!("{}.md", v.entry.version_no),
                 });
             }
         }
         Ok((title, metas))
     })?;
 
-    if abs.is_file() {
-        fs::rename(&abs, bundle_dir.join("document.md"))?;
-    }
+    with_vault_move_lock(|| {
+        fs::create_dir_all(&versions_dir)?;
+        let abs = resolve_vault_path(&vault, path)?;
+        for meta in &version_metas {
+            let dest = versions_dir.join(&meta.trash_file);
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            if crate::version::is_cas_storage_path(&meta.storage_path) {
+                let content =
+                    crate::version::read_version_content(state, &vault, &meta.storage_path)?;
+                fs::write(&dest, content)?;
+            } else {
+                let src = versions_root(&vault).join(&meta.storage_path);
+                if src.is_file() {
+                    fs::rename(&src, &dest)?;
+                }
+            }
+        }
+        if abs.is_file() {
+            fs::rename(&abs, bundle_dir.join("document.md"))?;
+        }
+        Ok(())
+    })?;
 
     let deleted_at = Utc::now();
     let expires_at = deleted_at + Duration::days(RECYCLE_RETENTION_DAYS);

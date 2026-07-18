@@ -101,22 +101,6 @@ pub(crate) fn credential_available_for_runtime(
     Ok(available)
 }
 
-#[allow(dead_code)]
-pub(crate) fn credential_marker_configured(
-    db: &crate::storage::db::Database,
-    service: &str,
-) -> AppResult<bool> {
-    let key = credentials::credential_marker_key(service)?;
-    db.with_read_conn(|conn| {
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM settings WHERE key = ?1",
-            [key],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
-    })
-}
-
 pub(crate) fn set_credential_marker(
     db: &crate::storage::db::Database,
     service: &str,

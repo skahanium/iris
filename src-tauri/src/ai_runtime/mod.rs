@@ -5,12 +5,10 @@
 
 pub use crate::ai_types::*;
 
-#[allow(dead_code)]
 pub(crate) mod agent_evidence_repository;
 #[cfg(test)]
 mod agent_evidence_repository_tests;
 pub mod agent_permissions;
-#[allow(dead_code)]
 pub(crate) mod agent_run_repository;
 #[cfg(test)]
 mod agent_run_repository_tests;
@@ -24,17 +22,14 @@ pub(crate) mod classified_ephemeral;
 pub mod classified_retrieval;
 // Legacy CEF history is retained only so users' pre-existing encrypted files
 // remain untouched. New classified Runs use `classified_ephemeral` exclusively.
-#[allow(dead_code)]
 pub mod classified_session;
 pub mod context_cache;
 pub mod conversation_memory;
-#[allow(dead_code)]
 pub(crate) mod direct_provider_route;
 pub(crate) mod document_policy_repository;
 pub(crate) mod domain_executor;
 #[cfg(test)]
 mod domain_executor_tests;
-#[allow(dead_code)]
 pub(crate) mod frozen_change_plan;
 #[cfg(test)]
 mod frozen_change_plan_tests;
@@ -42,30 +37,24 @@ pub mod guardrails;
 pub mod mcp_host_runtime;
 pub mod mcp_runtime_registry;
 pub mod model_gateway;
-#[allow(dead_code)]
 pub(crate) mod normal_session_repository;
 #[cfg(test)]
 mod normal_session_repository_tests;
 pub mod permission_decision;
-#[allow(dead_code)]
 pub(crate) mod policy_decision_engine;
 pub mod prompt_profile;
-#[allow(dead_code)]
 pub(crate) mod provider_router;
 pub mod retrieval_broker;
 pub mod retrieval_scope;
 pub(crate) mod run_context;
 #[cfg(test)]
 mod run_context_tests;
-#[allow(dead_code)]
 pub(crate) mod run_contract;
 #[cfg(test)]
 mod run_contract_tests;
-#[allow(dead_code)]
 pub(crate) mod run_engine;
 #[cfg(test)]
 mod run_engine_tests;
-#[allow(dead_code)]
 pub(crate) mod run_intake;
 #[cfg(test)]
 mod run_intake_tests;

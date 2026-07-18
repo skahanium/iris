@@ -2,7 +2,6 @@ mod kind;
 mod policy;
 
 use std::fs;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -14,6 +13,7 @@ use tracing::info;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::scan::{content_hash as index_content_hash, index_file_from_content};
+use crate::storage::note_title::title_from_path;
 use crate::storage::paths::is_classified_note_path;
 use crate::storage::paths::resolve_vault_path;
 
@@ -125,15 +125,6 @@ fn timestamp_version_no() -> String {
 /// Non-whitespace character count; aligned with frontend `characterCountExcludingWhitespace`.
 pub fn character_count_excluding_whitespace(content: &str) -> i64 {
     content.chars().filter(|c| !c.is_whitespace()).count() as i64
-}
-
-fn title_from_path(path: &str) -> String {
-    PathBuf::from(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .filter(|s| !s.is_empty())
-        .unwrap_or(path)
-        .to_string()
 }
 
 fn purge_classified_derived_rows(

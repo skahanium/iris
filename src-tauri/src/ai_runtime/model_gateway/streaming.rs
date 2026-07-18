@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, ProviderErrorKind};
 
 use super::{
     abort_impl::{clear_abort, is_abort_requested},
@@ -99,18 +99,6 @@ pub enum StreamEventData {
 pub trait StreamEventObserver: Send {
     /// Handle a stream event together with its emitted token index.
     fn observe(&mut self, event: &StreamEvent, token_index: u32) -> AppResult<()>;
-}
-
-/// Bridges streaming lifecycle events to the legacy Tauri event contract.
-pub struct LegacyTauriStreamObserver<'a> {
-    app_handle: &'a AppHandle,
-}
-
-impl<'a> LegacyTauriStreamObserver<'a> {
-    /// Create an observer that emits the established `llm:*` and `ai:tool_call` events.
-    pub fn new(app_handle: &'a AppHandle) -> Self {
-        Self { app_handle }
-    }
 }
 
 fn lifecycle_content_hash(value: &str) -> String {
@@ -597,7 +585,18 @@ fn finish_stream_with_error(
     if visible_partial && !emit_error_event {
         AppError::msg(format!("{PARTIAL_VISIBLE_STREAM_ERROR}: {sanitized}"))
     } else {
-        AppError::msg(sanitized)
+        classify_known_stream_failure(sanitized)
+    }
+}
+
+fn classify_known_stream_failure(message: String) -> AppError {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("request aborted") {
+        AppError::provider(ProviderErrorKind::Cancelled, message)
+    } else if lower.contains("llm_stream_first_response_timeout") {
+        AppError::provider(ProviderErrorKind::Timeout, message)
+    } else {
+        AppError::msg(message)
     }
 }
 
@@ -641,70 +640,6 @@ fn emit_visible_token_delta(
     observer.observe(&event, *token_index)?;
     *token_index += 1;
     Ok(())
-}
-
-/// Send a streaming request and emit events to frontend.
-pub async fn send_streaming_request(
-    app_handle: &AppHandle,
-    _client: &Client,
-    request_id: &str,
-    request: GatewayRequest,
-) -> AppResult<GatewayResponse> {
-    let mut observer = LegacyTauriStreamObserver::new(app_handle);
-    send_streaming_request_to_observer(
-        _client,
-        request_id,
-        request,
-        &mut observer,
-        false,
-        StreamSurface::VisibleAnswer,
-        true,
-    )
-    .await
-}
-
-/// Send a streaming request with an explicit surface for lifecycle-safe UI routing.
-pub async fn send_streaming_request_with_surface(
-    app_handle: &AppHandle,
-    _client: &Client,
-    request_id: &str,
-    request: GatewayRequest,
-    surface: StreamSurface,
-    emit_error_event: bool,
-) -> AppResult<GatewayResponse> {
-    let mut observer = LegacyTauriStreamObserver::new(app_handle);
-    send_streaming_request_to_observer(
-        _client,
-        request_id,
-        request,
-        &mut observer,
-        false,
-        surface,
-        emit_error_event,
-    )
-    .await
-}
-
-/// Send a streaming request and attach domain metadata to emitted events.
-pub async fn send_streaming_request_with_meta(
-    app_handle: &AppHandle,
-    _client: &Client,
-    request_id: &str,
-    request: GatewayRequest,
-    classified: bool,
-    surface: StreamSurface,
-) -> AppResult<GatewayResponse> {
-    let mut observer = LegacyTauriStreamObserver::new(app_handle);
-    send_streaming_request_to_observer(
-        _client,
-        request_id,
-        request,
-        &mut observer,
-        classified,
-        surface,
-        true,
-    )
-    .await
 }
 
 /// Send a streaming request and deliver each lifecycle event to an observer.
@@ -809,15 +744,17 @@ pub async fn send_streaming_request_to_observer(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(finish_stream_with_error(
+        let message = format_llm_http_error(status, &text);
+        let _ = finish_stream_with_error(
             observer,
             request_id,
-            format_llm_http_error(status, &text),
+            message.clone(),
             classified,
             surface,
             0,
             emit_error_event,
-        ));
+        );
+        return Err(AppError::from_llm_http_status(status, message));
     }
 
     let http_version = format!("{:?}", response.version());
@@ -1302,103 +1239,6 @@ async fn wait_for_abort_signal(request_id: &str) {
         if is_abort_requested(request_id) {
             return;
         }
-    }
-}
-
-impl StreamEventObserver for LegacyTauriStreamObserver<'_> {
-    fn observe(&mut self, event: &StreamEvent, token_index: u32) -> AppResult<()> {
-        let emit_err = |e: tauri::Error| AppError::msg(format!("Failed to emit stream event: {e}"));
-        match event.event_type {
-            StreamEventType::Token => {
-                if let StreamEventData::Token { token } = &event.data {
-                    tracing::debug!(
-                        request_id = %event.request_id,
-                        event = "stream_token_emitted",
-                        token_index,
-                        content_len = token.len(),
-                        content_hash = %lifecycle_content_hash(token),
-                        surface = event.surface.wire(),
-                        candidate_kind = event.surface.candidate_kind(),
-                        classified = event.classified,
-                        "AI lifecycle stream token emitted"
-                    );
-                    if !event.surface.is_visible() {
-                        return Ok(());
-                    }
-                    let mut payload = serde_json::json!({
-                        "request_id": event.request_id,
-                        "token": token,
-                        "index": token_index,
-                        "surface": event.surface.wire(),
-                        "candidate_kind": event.surface.candidate_kind(),
-                    });
-                    if event.classified {
-                        payload["classified"] = serde_json::json!(true);
-                    }
-                    self.app_handle
-                        .emit("llm:token", payload)
-                        .map_err(emit_err)?;
-                }
-            }
-            StreamEventType::Done => {
-                tracing::debug!(
-                    request_id = %event.request_id,
-                    event = "stream_done_emitted",
-                    token_index,
-                    surface = event.surface.wire(),
-                    candidate_kind = event.surface.candidate_kind(),
-                    classified = event.classified,
-                    "AI lifecycle stream done emitted"
-                );
-                if !event.surface.is_visible() {
-                    return Ok(());
-                }
-                let mut payload = serde_json::json!({
-                    "request_id": event.request_id,
-                    "surface": event.surface.wire(),
-                    "candidate_kind": event.surface.candidate_kind(),
-                });
-                if event.classified {
-                    payload["classified"] = serde_json::json!(true);
-                }
-                self.app_handle
-                    .emit("llm:done", payload)
-                    .map_err(emit_err)?;
-            }
-            StreamEventType::Error => {
-                let (message, final_error) = if let StreamEventData::Error {
-                    message,
-                    final_error,
-                } = &event.data
-                {
-                    (message.clone(), *final_error)
-                } else {
-                    ("stream error".to_string(), true)
-                };
-                if !event.surface.is_visible() {
-                    return Ok(());
-                }
-                let mut payload = serde_json::json!({
-                    "request_id": event.request_id,
-                    "error": message,
-                    "final": final_error,
-                    "surface": event.surface.wire(),
-                    "candidate_kind": event.surface.candidate_kind(),
-                });
-                if event.classified {
-                    payload["classified"] = serde_json::json!(true);
-                }
-                self.app_handle
-                    .emit("llm:error", payload)
-                    .map_err(emit_err)?;
-            }
-            StreamEventType::ToolCall => {
-                self.app_handle
-                    .emit("ai:tool_call", event)
-                    .map_err(emit_err)?;
-            }
-        }
-        Ok(())
     }
 }
 

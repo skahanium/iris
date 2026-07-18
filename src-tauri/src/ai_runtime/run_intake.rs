@@ -216,6 +216,10 @@ impl RunIntake {
     }
 
     /// Accept a classified Run in CEF only; classified execution remains direct and offline.
+    ///
+    /// Production classified assistant runs use [`crate::ai_runtime::classified_ephemeral`]
+    /// instead of this intake path. Retained for contract tests and CEF migration coverage.
+    #[cfg(test)]
     pub(crate) fn start_classified(
         vault: &std::path::Path,
         request: AssistantRunStartRequest,
@@ -345,6 +349,7 @@ impl RunIntake {
     }
 
     /// Apply an explicit lifecycle control without legacy task state.
+    #[cfg(test)]
     pub(crate) fn control(db: &Database, request: AssistantRunControlRequest) -> AppResult<()> {
         let _ = Self::control_event(db, request)?;
         Ok(())

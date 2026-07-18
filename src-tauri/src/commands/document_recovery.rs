@@ -9,6 +9,7 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::parse_note;
 use crate::indexer::scan::content_hash;
+use crate::storage::note_title::{is_placeholder_title, title_from_path};
 use crate::storage::note_write::{FileWriteResult, NoteWriteService};
 use crate::storage::paths::{is_user_note_path, read_file_lossy, resolve_vault_path};
 
@@ -67,23 +68,6 @@ pub struct DocumentRecoveryAudit {
     pub unavailable_documents: Vec<UnavailableDocumentRecoveryItem>,
 }
 
-fn path_stem(path: &str) -> String {
-    Path::new(path)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or(path)
-        .to_string()
-}
-
-fn is_placeholder_title(title: &str) -> bool {
-    let title = title.trim();
-    title.is_empty()
-        || title.starts_with("未命名文档")
-        || title.starts_with("新建文档")
-        || title.starts_with("无标题")
-        || title.starts_with("untitled-")
-}
-
 fn safe_vault_join(vault: &Path, relative: &str) -> AppResult<PathBuf> {
     if !is_user_note_path(relative) {
         return Err(AppError::msg("document recovery path is not a user note"));
@@ -132,7 +116,7 @@ fn candidate_title(content: &str, stored_title: &str, path: &str) -> Option<Stri
     title_from_content(content)
         .or_else(|| (!is_placeholder_title(stored_title)).then(|| stored_title.trim().to_string()))
         .or_else(|| {
-            let filename = path_stem(path);
+            let filename = title_from_path(path);
             (!is_placeholder_title(&filename)).then_some(filename)
         })
 }
@@ -194,7 +178,7 @@ fn audit_titles(state: &AppState) -> AppResult<Vec<DocumentTitleAuditItem>> {
         } else if !is_placeholder_title(&stored_title) {
             (Some(stored_title.clone()), Some("index".to_string()))
         } else {
-            let filename = path_stem(&path);
+            let filename = title_from_path(&path);
             if is_placeholder_title(&filename) {
                 (None, None)
             } else {

@@ -8,6 +8,7 @@ use crate::commands::file::is_vault_asset_path;
 use crate::error::{AppError, AppResult};
 use crate::indexer::scan::index_file;
 use crate::storage::atomic_write::{move_file_no_replace_locked, with_vault_move_lock};
+use crate::storage::note_title::title_from_path;
 use crate::storage::note_write::NoteWriteService;
 use crate::storage::paths::{
     is_user_note_path, read_file_lossy, resolve_vault_path, validate_user_note_relative_path,
@@ -358,12 +359,4 @@ fn rewrite_wikilinks(
         updated = updated.replace(&format!("[[{old_no_ext}]]"), &format!("[[{new_no_ext}]]"));
     }
     updated
-}
-
-fn title_from_path(path: &str) -> String {
-    path.trim_end_matches(".md")
-        .split('/')
-        .next_back()
-        .unwrap_or(path)
-        .to_string()
 }

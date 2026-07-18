@@ -298,7 +298,7 @@ fn provider_credential_binding_optional(value: &serde_json::Value, service: &str
         .as_object()
         .and_then(|object| object.get("optional"))
         .and_then(|item| item.as_bool())
-        .unwrap_or(matches!(service, "iris.mcp.anysearch" | "iris.mcp.jina"))
+        .unwrap_or_else(|| crate::config_manifest::is_mcp_optional_credential_service(service))
 }
 
 fn provider_credential_bindings(

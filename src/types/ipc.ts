@@ -91,20 +91,6 @@ export interface FileWriteResult {
   indexStatus: FileWriteIndexStatus;
 }
 
-export interface ChatMessage {
-  role: string;
-  content: string;
-}
-
-export interface LlmGenerateParams {
-  provider: string;
-  model?: string;
-  messages: ChatMessage[];
-  system?: string;
-  stream?: boolean;
-  custom_base_url?: string;
-}
-
 export interface LlmProviderInfo {
   id: string;
   name: string;

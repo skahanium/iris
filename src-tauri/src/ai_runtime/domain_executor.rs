@@ -13,15 +13,12 @@ use crate::ai_runtime::run_contract::{CapabilityId, ContextMode, ExecutionEnvelo
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DomainMaterialRole {
     /// A normative source that constrains substantive content and procedure.
-    #[allow(dead_code)]
     Authority,
     /// A sample that may influence only form, structure and style.
-    #[allow(dead_code)]
     Exemplar,
     /// Explicit user material that may provide supporting background or facts.
     Reference,
     /// Read-only lookup material that cannot independently establish a conclusion.
-    #[allow(dead_code)]
     Lookup,
 }
 
