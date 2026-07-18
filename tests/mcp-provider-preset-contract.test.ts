@@ -2,8 +2,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { MCP_PROVIDER_PRESETS } from "@/components/ai/skills/mcpProviderPresets";
+import { presetDeclaredResultLimitTargets } from "@/components/ai/skills/mcpSearchMappingHeal";
 import builtinLlmProviders from "../config/llm-builtin-providers.json";
 import mcpOptionalCredentials from "../config/mcp-optional-credential-services.json";
+import mcpSearchResultLimitManifest from "../config/mcp-search-result-limit-manifest.json";
 
 const EXPECTED_PRESET_IDS = [
   "anysearch",
@@ -30,6 +32,18 @@ describe("provider manifest contract", () => {
     expect([...mcpOptionalCredentials].sort()).toEqual(fromPresets);
   });
 
+  it("keeps search result limit manifest aligned with preset maxResultsArg", () => {
+    const fromPresets = presetDeclaredResultLimitTargets().map((target) => ({
+      presetId: target.presetId,
+      maxResultsArg: target.maxResultsArg,
+    }));
+    const fromManifest = mcpSearchResultLimitManifest.map((target) => ({
+      presetId: target.presetId,
+      maxResultsArg: target.maxResultsArg,
+    }));
+    expect(fromManifest).toEqual(fromPresets);
+  });
+
   it("uses one LLM builtin manifest for Rust and frontend fallback", () => {
     const ids = builtinLlmProviders.map((provider) => provider.id);
     expect(ids).toContain("deepseek");
@@ -39,6 +53,7 @@ describe("provider manifest contract", () => {
     const rustLoader = readFileSync("src-tauri/src/config_manifest.rs", "utf8");
     expect(rustLoader).toContain("llm-builtin-providers.json");
     expect(rustLoader).toContain("mcp-optional-credential-services.json");
+    expect(rustLoader).toContain("mcp-search-result-limit-manifest.json");
 
     const frontend = readFileSync(
       "src/components/settings/LlmRoutingSection.tsx",

@@ -327,51 +327,30 @@ pub(crate) fn validate_mcp_runtime_transport_security(
     Ok(())
 }
 
-fn transport_url_host(transport_config_json: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(transport_config_json)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("url")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-        })
-        .and_then(|url| reqwest::Url::parse(&url).ok())
-        .and_then(|url| url.host_str().map(str::to_owned))
-}
-
-fn is_anysearch_transport_config(transport_config_json: &str) -> bool {
-    transport_url_host(transport_config_json)
-        .is_some_and(|host| host.eq_ignore_ascii_case("api.anysearch.com"))
-}
-
-/// Persist AnySearch search mappings with `maxResultsArg: "max_results"`.
-/// Returns `None` when the mapping already contains the field or cannot be patched.
-fn ensure_anysearch_max_results_mapping(mapping_json: &str) -> Option<String> {
+fn ensure_search_mapping_result_limit(mapping_json: &str, max_results_arg: &str) -> Option<String> {
     let mut mapping = serde_json::from_str::<serde_json::Value>(mapping_json).ok()?;
     let object = mapping.as_object_mut()?;
-    let is_search = object
+    let has_tool = object
         .get("tool")
         .or_else(|| object.get("tool_name"))
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|tool| tool.trim().eq_ignore_ascii_case("search"));
-    if !is_search || object.contains_key("maxResultsArg") {
+        .is_some_and(|tool| !tool.trim().is_empty());
+    if !has_tool || object.contains_key("maxResultsArg") {
         return None;
     }
     object.insert(
         "maxResultsArg".into(),
-        serde_json::Value::String("max_results".into()),
+        serde_json::Value::String(max_results_arg.to_string()),
     );
     serde_json::to_string(&mapping).ok()
 }
 
-fn heal_legacy_anysearch_search_mappings(conn: &rusqlite::Connection) -> AppResult<()> {
+fn heal_legacy_search_result_limit_mappings(conn: &rusqlite::Connection) -> AppResult<()> {
     let mut stmt = conn.prepare(
         "SELECT id, name, kind, enabled, transport_kind, transport_config_json,
                 credential_refs_json, web_search_mapping_json, web_fetch_mapping_json
          FROM web_evidence_providers
-         WHERE kind = 'mcp' AND transport_kind = 'https'
-           AND web_search_mapping_json IS NOT NULL",
+         WHERE kind = 'mcp' AND web_search_mapping_json IS NOT NULL",
     )?;
     let candidates = stmt
         .query_map([], |row| {
@@ -391,13 +370,16 @@ fn heal_legacy_anysearch_search_mappings(conn: &rusqlite::Connection) -> AppResu
     drop(stmt);
 
     for mut input in candidates {
-        if !is_anysearch_transport_config(&input.transport_config_json) {
+        let Some(max_results_arg) = crate::config_manifest::resolve_mcp_search_result_limit_arg(
+            &input.transport_config_json,
+            &input.name,
+        ) else {
             continue;
-        }
+        };
         let Some(current) = input.web_search_mapping_json.as_deref() else {
             continue;
         };
-        let Some(healed) = ensure_anysearch_max_results_mapping(current) else {
+        let Some(healed) = ensure_search_mapping_result_limit(current, &max_results_arg) else {
             continue;
         };
         input.web_search_mapping_json = Some(healed.clone());
@@ -474,10 +456,15 @@ fn normalize_provider_input(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string);
-            if is_anysearch_transport_config(input.transport_config_json.trim()) {
-                mapping.map(|value| ensure_anysearch_max_results_mapping(&value).unwrap_or(value))
-            } else {
-                mapping
+            let max_results_arg = crate::config_manifest::resolve_mcp_search_result_limit_arg(
+                input.transport_config_json.trim(),
+                name,
+            );
+            match (mapping, max_results_arg) {
+                (Some(value), Some(max_results_arg)) => Some(
+                    ensure_search_mapping_result_limit(&value, &max_results_arg).unwrap_or(value),
+                ),
+                (mapping, _) => mapping,
             }
         },
         web_fetch_mapping_json: input
@@ -654,7 +641,7 @@ pub fn web_evidence_provider_health(
 
 pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidenceProviderSummary>> {
     db.with_conn(|conn| {
-        heal_legacy_anysearch_search_mappings(conn)?;
+        heal_legacy_search_result_limit_mappings(conn)?;
         let mut stmt = conn.prepare(
             "SELECT id, name, kind, enabled, transport_kind,
                     transport_config_json, credential_refs_json,
@@ -917,6 +904,71 @@ mod tests {
             .expect("search mapping");
         assert!(
             mapping.contains("maxResultsArg"),
+            "expected healed mapping, got {mapping}"
+        );
+    }
+
+    #[test]
+    fn upsert_persists_firecrawl_limit_arg_without_runtime_patch() {
+        let db = Database::open_in_memory().unwrap();
+        let input = WebEvidenceProviderInput {
+            id: "firecrawl".into(),
+            name: "Firecrawl".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "https".into(),
+            transport_config_json:
+                r#"{"preset_id":"firecrawl","url":"https://mcp.firecrawl.dev/v2/mcp"}"#.into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(
+                r#"{"tool":"firecrawl_search","queryArg":"query"}"#.into(),
+            ),
+            web_fetch_mapping_json: Some(r#"{"tool":"firecrawl_scrape"}"#.into()),
+        };
+
+        upsert_web_evidence_provider(&db, &input).unwrap();
+
+        let stored = list_web_evidence_providers(&db).unwrap();
+        let mapping = stored[0]
+            .web_search_mapping_json
+            .as_deref()
+            .expect("search mapping");
+        let parsed: serde_json::Value = serde_json::from_str(mapping).unwrap();
+        assert_eq!(
+            parsed.get("maxResultsArg").and_then(|v| v.as_str()),
+            Some("limit")
+        );
+    }
+
+    #[test]
+    fn list_silently_heals_legacy_firecrawl_mappings() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO web_evidence_providers
+                 (id, name, kind, enabled, transport_kind, transport_config_json,
+                  credential_refs_json, web_search_mapping_json, web_fetch_mapping_json,
+                  provider_config_hash, updated_at)
+                 VALUES (?1, ?2, 'mcp', 1, 'https', ?3, '{}', ?4, NULL, 'legacy', datetime('now'))",
+                params![
+                    "firecrawl-legacy",
+                    "Firecrawl",
+                    r#"{"preset_id":"firecrawl","url":"https://mcp.firecrawl.dev/v2/mcp"}"#,
+                    r#"{"tool":"firecrawl_search","queryArg":"query"}"#,
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let stored = list_web_evidence_providers(&db).unwrap();
+        let mapping = stored[0]
+            .web_search_mapping_json
+            .as_deref()
+            .expect("search mapping");
+        assert!(
+            mapping.contains(r#""maxResultsArg":"limit""#)
+                || mapping.contains(r#""maxResultsArg": "limit""#),
             "expected healed mapping, got {mapping}"
         );
     }

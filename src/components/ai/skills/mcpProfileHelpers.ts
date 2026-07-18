@@ -1,8 +1,9 @@
 import {
-  ensureAnySearchSearchMapping,
-  isAnySearchTransportUrl,
+  ensureProviderSearchMappingResultLimit,
   mappingHasMaxResultsArgument,
-} from "./mcpAnySearchMapping";
+  needsSearchResultLimitUpdate,
+  resolveSearchResultLimitHealTarget,
+} from "./mcpSearchMappingHeal";
 
 export interface McpCredentialStateRow {
   ref: string;
@@ -10,36 +11,7 @@ export interface McpCredentialStateRow {
   secretValue: string;
 }
 
-export function isAnySearchProvider(provider: {
-  name: string;
-  transportConfigJson: string;
-}): boolean {
-  if (provider.name.trim().toLowerCase() === "anysearch") return true;
-  try {
-    const parsed: unknown = JSON.parse(provider.transportConfigJson);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return false;
-    }
-    const url = (parsed as Record<string, unknown>).url;
-    return typeof url === "string" && isAnySearchTransportUrl(url);
-  } catch {
-    return false;
-  }
-}
-
-/** True when persisted AnySearch mapping still lacks maxResultsArg. */
-export function needsAnySearchResultLimitUpdate(provider: {
-  name: string;
-  transportConfigJson: string;
-  hasSearchMapping: boolean;
-  searchMapping?: string | null;
-}): boolean {
-  return (
-    isAnySearchProvider(provider) &&
-    provider.hasSearchMapping &&
-    !mappingHasMaxResultsArgument(provider.searchMapping)
-  );
-}
+export { needsSearchResultLimitUpdate, resolveSearchResultLimitHealTarget };
 
 function credentialRowIsConfigured(
   row: McpCredentialStateRow,
@@ -84,7 +56,11 @@ export function credentialStateText(
 export function mappingForSave(
   raw: string,
   toolName: string,
-  options?: { ensureAnySearchMaxResults?: boolean },
+  provider?: {
+    name: string;
+    transportConfigJson: string;
+    presetId?: string | null;
+  },
 ): string | null {
   const tool = toolName.trim();
   if (!tool) return null;
@@ -99,8 +75,19 @@ export function mappingForSave(
   } catch {
     serialized = JSON.stringify({ tool });
   }
-  if (options?.ensureAnySearchMaxResults) {
-    return ensureAnySearchSearchMapping(serialized) ?? serialized;
-  }
-  return serialized;
+  if (!provider) return serialized;
+  return (
+    ensureProviderSearchMappingResultLimit(provider, serialized) ?? serialized
+  );
+}
+
+export function mappingNeedsResultLimitHeal(provider: {
+  name: string;
+  transportConfigJson: string;
+  presetId?: string | null;
+  searchMapping?: string | null;
+}): boolean {
+  const target = resolveSearchResultLimitHealTarget(provider);
+  if (!target) return false;
+  return !mappingHasMaxResultsArgument(provider.searchMapping);
 }

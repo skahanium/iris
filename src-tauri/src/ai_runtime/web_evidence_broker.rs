@@ -781,53 +781,43 @@ fn mapping_json_value(mapping_json: &str) -> serde_json::Value {
     serde_json::from_str(mapping_json).unwrap_or_else(|_| serde_json::json!({}))
 }
 
-/// Keep saved custom mappings immutable while making legacy AnySearch mappings safe at runtime.
-/// Earlier Iris builds saved only `queryArg`, which lets AnySearch choose an unbounded default and
-/// can exceed the MCP response cap before evidence normalization begins.
+/// Keep saved custom mappings immutable while making legacy preset mappings safe at runtime.
 fn effective_mcp_search_mapping(db: &Database, provider_id: &str, mapping_json: &str) -> String {
-    if !is_anysearch_provider(db, provider_id) {
+    let max_results_arg = provider_search_result_limit_arg(db, provider_id);
+    let Some(max_results_arg) = max_results_arg else {
         return mapping_json.to_string();
-    }
+    };
     let mut mapping = mapping_json_value(mapping_json);
     let Some(object) = mapping.as_object_mut() else {
         return mapping_json.to_string();
     };
-    let is_search = object
+    let has_tool = object
         .get("tool")
         .or_else(|| object.get("tool_name"))
         .and_then(serde_json::Value::as_str)
-        .is_some_and(|tool| tool.trim().eq_ignore_ascii_case("search"));
-    if !is_search || object.contains_key("maxResultsArg") {
+        .is_some_and(|tool| !tool.trim().is_empty());
+    if !has_tool || object.contains_key("maxResultsArg") {
         return mapping_json.to_string();
     }
     object.insert(
         "maxResultsArg".into(),
-        serde_json::Value::String("max_results".into()),
+        serde_json::Value::String(max_results_arg),
     );
     serde_json::to_string(&mapping).unwrap_or_else(|_| mapping_json.to_string())
 }
 
-fn is_anysearch_provider(db: &Database, provider_id: &str) -> bool {
-    let transport = db.with_read_conn(|conn| {
-        conn.query_row(
-            "SELECT transport_config_json FROM web_evidence_providers WHERE id = ?1 AND kind = 'mcp'",
-            [provider_id],
-            |row| row.get::<_, String>(0),
-        )
-        .map_err(Into::into)
-    });
-    transport
-        .ok()
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|value| {
-            value
-                .get("url")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
+fn provider_search_result_limit_arg(db: &Database, provider_id: &str) -> Option<String> {
+    let (transport_config_json, name): (String, String) = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT transport_config_json, name FROM web_evidence_providers WHERE id = ?1 AND kind = 'mcp'",
+                [provider_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(Into::into)
         })
-        .and_then(|url| reqwest::Url::parse(&url).ok())
-        .and_then(|url| url.host_str().map(str::to_owned))
-        .is_some_and(|host| host.eq_ignore_ascii_case("api.anysearch.com"))
+        .ok()?;
+    crate::config_manifest::resolve_mcp_search_result_limit_arg(&transport_config_json, &name)
 }
 
 fn mapping_string(value: &serde_json::Value, key: &str) -> Option<String> {

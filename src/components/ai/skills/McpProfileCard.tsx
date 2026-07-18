@@ -17,10 +17,11 @@ import type {
 } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 
-import { ensureAnySearchSearchMapping } from "./mcpAnySearchMapping";
+import {
+  ensureProviderSearchMappingResultLimit,
+} from "./mcpSearchMappingHeal";
 import {
   credentialStateText,
-  isAnySearchProvider,
   mappingForSave,
 } from "./mcpProfileHelpers";
 import {
@@ -446,11 +447,16 @@ export function McpProfileCard({
     setStdioConfig(parseStdioConfig(provider.transportConfigJson));
     setCredentialRows(parseCredentialRows(provider.credentialRefsJson));
     setCredentialError(null);
-    const healedSearch =
-      isAnySearchProvider(provider) && provider.searchMapping
-        ? (ensureAnySearchSearchMapping(provider.searchMapping) ??
-          provider.searchMapping)
-        : (provider.searchMapping ?? "");
+    const healedSearch = provider.searchMapping
+      ? (ensureProviderSearchMappingResultLimit(
+          {
+            name: provider.name,
+            transportConfigJson: provider.transportConfigJson,
+            presetId: presetIdFromProvider(provider),
+          },
+          provider.searchMapping,
+        ) ?? provider.searchMapping)
+      : "";
     setSearchMappingRaw(healedSearch);
     setFetchMappingRaw(provider.fetchMapping ?? "");
     setSearchTool(mappingToolName(healedSearch || provider.searchMapping));
@@ -599,14 +605,9 @@ export function McpProfileCard({
         transportConfigJson,
         credentialRefsJson: credentialRowsToJson(credentialRows),
         searchMapping: mappingForSave(searchMappingRaw, searchTool, {
-          ensureAnySearchMaxResults:
-            isAnySearchProvider({
-              name,
-              transportConfigJson:
-                transportKind === "https"
-                  ? JSON.stringify({ url: httpsConfig.url.trim() })
-                  : provider.transportConfigJson,
-            }) || presetId === "anysearch",
+          name: name.trim() || "MCP 联网证据提供方",
+          transportConfigJson,
+          presetId,
         }),
         fetchMapping: mappingForSave(fetchMappingRaw, fetchTool),
       },

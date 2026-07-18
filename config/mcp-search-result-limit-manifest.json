@@ -1,0 +1,14 @@
+[
+  {
+    "presetId": "anysearch",
+    "hosts": ["api.anysearch.com"],
+    "providerName": "AnySearch",
+    "maxResultsArg": "max_results"
+  },
+  {
+    "presetId": "firecrawl",
+    "hosts": ["mcp.firecrawl.dev"],
+    "providerName": "Firecrawl",
+    "maxResultsArg": "limit"
+  }
+]
