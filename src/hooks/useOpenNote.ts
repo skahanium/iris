@@ -81,6 +81,7 @@ export function useOpenNote({
 }: UseOpenNoteOptions) {
   const [noteTitle, setNoteTitle] = useState("");
   const [bodyMarkdown, setBodyMarkdown] = useState("");
+  const noteTitleRef = useRef("");
 
   /** Parsed body for TipTap on disk/tab load only; layer-1 save must not remount editor. */
   const editorBodyMarkdown = useMemo(() => {
@@ -102,6 +103,7 @@ export function useOpenNote({
         titleFallback?.trim() || pathStem(_path),
       );
       frontmatterYamlRef.current = parsed.yaml;
+      noteTitleRef.current = parsed.title;
       setNoteTitle(parsed.title);
       setBodyMarkdown(parsed.bodyMd);
     },
@@ -110,6 +112,7 @@ export function useOpenNote({
 
   useLayoutEffect(() => {
     if (!activePath) {
+      noteTitleRef.current = "";
       setNoteTitle("");
       setBodyMarkdown("");
       return;
@@ -159,6 +162,7 @@ export function useOpenNote({
           md,
           titleFallback?.trim() || pathStem(path),
         );
+        noteTitleRef.current = parsed.title;
         setNoteTitle(parsed.title);
       }
     },
@@ -174,6 +178,7 @@ export function useOpenNote({
         0,
         NOTE_TITLE_HARD_LIMIT,
       );
+      noteTitleRef.current = next;
       setNoteTitle(next);
       updateTabTitle(path, next);
     },
@@ -264,8 +269,8 @@ export function useOpenNote({
   const onTitleBlur = useCallback(() => {
     const path = activePathRef.current;
     if (!path) return;
-    schedulePathSync(path, noteTitle);
-  }, [activePathRef, noteTitle, schedulePathSync]);
+    schedulePathSync(path, noteTitleRef.current);
+  }, [activePathRef, schedulePathSync]);
 
   const loadBodyIntoEditor = useCallback(
     (content: string) => {

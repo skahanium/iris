@@ -20,6 +20,15 @@ type ReplaceOpenTabPath = (
   markdownOverride?: string,
 ) => void;
 
+type OpenNoteHarnessOut = {
+  editorBodyMarkdown: string;
+  bodyMarkdown: string;
+  getLiveMarkdown: () => string;
+  schedulePathSync: (path: string, title: string) => void;
+  onTitleChange?: (value: string) => void;
+  onTitleBlur?: () => void;
+};
+
 vi.mock("@/lib/ipc", () => ({
   pathSyncSuggest: (...args: unknown[]) => pathSyncSuggest(...args),
   fileRename: (...args: unknown[]) => fileRename(...args),
@@ -66,12 +75,7 @@ function Harness({
   ) => Promise<string>;
   replaceOpenTabPath?: ReplaceOpenTabPath;
   outRef: {
-    current: {
-      editorBodyMarkdown: string;
-      bodyMarkdown: string;
-      getLiveMarkdown: () => string;
-      schedulePathSync: (path: string, title: string) => void;
-    } | null;
+    current: OpenNoteHarnessOut | null;
   };
 }) {
   const editorReadyRef = { current: editorReady ?? true };
@@ -94,6 +98,8 @@ function Harness({
     bodyMarkdown: api.bodyMarkdown,
     getLiveMarkdown: api.getLiveMarkdown,
     schedulePathSync: api.schedulePathSync,
+    onTitleChange: api.onTitleChange,
+    onTitleBlur: api.onTitleBlur,
   };
   return null;
 }
@@ -361,5 +367,56 @@ describe("useOpenNote editorBodyMarkdown", () => {
     expect(renamePersistedPath.mock.invocationCallOrder[0]).toBeLessThan(
       fileRename.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it("syncs path from the latest typed title on blur before React re-renders", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    pathSyncSuggest.mockResolvedValue({
+      needs_sync: true,
+      suggested_path: "Iris E2E Persistence.md",
+      conflict_resolved: false,
+    });
+    fileRename.mockResolvedValue({
+      entry: {
+        id: 1,
+        path: "Iris E2E Persistence.md",
+        title: "Iris E2E Persistence",
+        updated_at: "",
+        word_count: 0,
+      },
+      contentHash: "iris-e2e",
+      indexStatus: "synced",
+    });
+
+    const outRef: { current: OpenNoteHarnessOut | null } = { current: null };
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          activePath: "未命名文档.md",
+          markdown: '---\ntitle: "未命名文档"\n---\n\n',
+          editorContentTick: 1,
+          outRef,
+        }),
+      );
+    });
+
+    act(() => {
+      outRef.current!.onTitleChange!("Iris E2E Persistence");
+      outRef.current!.onTitleBlur!();
+      vi.advanceTimersByTime(800);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(pathSyncSuggest).toHaveBeenCalledWith(
+      "未命名文档.md",
+      "Iris E2E Persistence",
+    );
+    expect(window.confirm).toHaveBeenCalled();
   });
 });
