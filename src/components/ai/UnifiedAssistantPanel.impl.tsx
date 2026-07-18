@@ -74,8 +74,8 @@ export function UnifiedAssistantPanel({
   const clearTaskSurfaces = useCallback(() => undefined, []);
 
   const {
-    appendUserMessage,
-    ensureAssistantStreamSlot,
+    appendAcceptedRetry,
+    commitAcceptedTurn,
     handleCopySelected,
     handleExportSelected,
     handleInsertToEditor,
@@ -152,6 +152,7 @@ export function UnifiedAssistantPanel({
 
   useAssistantRunTranscript({
     run: assistantRun.eventState,
+    messages,
     setMessages,
     setStreaming,
     setActivityHint,
@@ -181,8 +182,7 @@ export function UnifiedAssistantPanel({
     webSearch,
     modelOverride,
     start: assistantRun.start,
-    appendUserMessage,
-    ensureAssistantStreamSlot,
+    commitAcceptedTurn,
     clearContextReferences: bubbleSelection.clearContextReferences,
     setInput,
     setImages,
@@ -243,7 +243,11 @@ export function UnifiedAssistantPanel({
     void assistantRun
       .retryWebVerification()
       .then((accepted) => {
-        if (!accepted) setLastError("当前联网失败不可重试，请检查联网配置。");
+        if (!accepted) {
+          setLastError("当前联网失败不可重试，请检查联网配置。");
+          return;
+        }
+        appendAcceptedRetry(accepted);
       })
       .catch(() => {
         setStreaming(false);
@@ -251,7 +255,7 @@ export function UnifiedAssistantPanel({
         setLastError("联网重试未能提交，请稍后再试。");
       })
       .finally(() => setRetryingWebVerification(false));
-  }, [assistantRun]);
+  }, [appendAcceptedRetry, assistantRun]);
 
   return (
     <div

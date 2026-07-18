@@ -283,6 +283,20 @@ fn safe_run_errors_serialize_as_stable_agent_run_codes() {
 }
 
 #[test]
+fn finalization_failures_deserialize_to_distinct_stable_safe_codes() {
+    for stable_code in [
+        "agent_run_empty_output",
+        "agent_run_output_too_long",
+        "agent_run_evidence_invalid",
+        "agent_run_event_delivery_failed",
+    ] {
+        let code: SafeRunErrorCode = serde_json::from_value(serde_json::json!(stable_code))
+            .expect("finalization failure code must remain wire-compatible");
+        assert_eq!(code.as_str(), stable_code);
+    }
+}
+
+#[test]
 fn evidence_refs_omit_an_absent_optional_title() {
     let reference = EvidenceRef {
         evidence_id: "evidence-2".into(),
@@ -471,6 +485,7 @@ fn run_ipc_dtos_keep_session_and_document_context_explicit() {
     assert!(start.explicit_action.is_none());
 
     let accepted = AssistantRunAccepted {
+        client_request_id: "client-request-1".into(),
         run_id: "run-1".into(),
         turn_id: "turn-1".into(),
         session: AssistantSessionRef {
@@ -480,9 +495,11 @@ fn run_ipc_dtos_keep_session_and_document_context_explicit() {
         state: RunState::Accepted,
         state_version: 1,
     };
+    let accepted = serde_json::to_value(accepted).unwrap();
+    assert_eq!(accepted["state"], serde_json::json!("accepted"));
     assert_eq!(
-        serde_json::to_value(accepted).unwrap()["state"],
-        serde_json::json!("accepted")
+        accepted["clientRequestId"],
+        serde_json::json!("client-request-1")
     );
 }
 

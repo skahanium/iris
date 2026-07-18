@@ -239,6 +239,7 @@ impl AgentRunRepository {
                 )?;
 
                 Ok(AssistantRunAccepted {
+                    client_request_id: input.client_request_id,
                     run_id: input.run_id,
                     turn_id: input.turn_id,
                     session: AssistantSessionRef {
@@ -306,6 +307,7 @@ impl AgentRunRepository {
                 insert_event(conn, &event)?;
                 conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;
                 Ok(AssistantRunAccepted {
+                    client_request_id: input.client_request_id,
                     run_id: input.run_id,
                     turn_id,
                     session: AssistantSessionRef { domain: SecurityDomain::Normal, session_key: input.session_key },
@@ -538,6 +540,24 @@ impl AgentRunRepository {
                 conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;
                 Ok(message_id)
             })
+        })
+    }
+
+    /// Validate final evidence ownership without writing any model output.
+    pub(crate) fn validate_final_evidence(
+        db: &Database,
+        run_id: &str,
+        evidence_ids: &[i64],
+    ) -> AppResult<()> {
+        db.with_read_conn(|conn| {
+            let session_id = conn
+                .query_row(
+                    "SELECT session_id FROM agent_runs WHERE run_id = ?1",
+                    [run_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(not_found_or_db)?;
+            ensure_evidence_ids_belong_to_session(conn, session_id, evidence_ids)
         })
     }
 
@@ -1299,7 +1319,7 @@ fn accepted_for_client_request(
     client_request_id: &str,
 ) -> AppResult<Option<AssistantRunAccepted>> {
     let result = conn.query_row(
-        "SELECT r.run_id, r.turn_id, s.session_key, r.status, r.state_version
+        "SELECT r.client_request_id, r.run_id, r.turn_id, s.session_key, r.status, r.state_version
          FROM agent_runs r JOIN sessions s ON s.id = r.session_id
          WHERE r.client_request_id = ?1",
         [client_request_id],
@@ -1309,13 +1329,15 @@ fn accepted_for_client_request(
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, u64>(4)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, u64>(5)?,
             ))
         },
     );
     match result {
-        Ok((run_id, turn_id, session_key, status, state_version)) => {
+        Ok((client_request_id, run_id, turn_id, session_key, status, state_version)) => {
             Ok(Some(AssistantRunAccepted {
+                client_request_id,
                 run_id,
                 turn_id,
                 session: AssistantSessionRef {

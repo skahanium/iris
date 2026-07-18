@@ -17,7 +17,11 @@ import {
   restoreChatLinesForPersistence,
 } from "@/lib/ai-payload-store";
 import { assistantSessionRetract } from "@/lib/ipc";
-import type { AssistantSessionRef, DisplayMention } from "@/types/ai";
+import type {
+  AssistantRunAccepted,
+  AssistantSessionRef,
+  DisplayMention,
+} from "@/types/ai";
 
 import type { ChatLine, ImageAttachment } from "../AiMessageList";
 
@@ -133,30 +137,65 @@ export function useAssistantConversation({
     [bubbleSelection, runSession, setMessages, toast],
   );
 
-  const appendUserMessage = useCallback(
+  const commitAcceptedTurn = useCallback(
     (
       rawMessage: string,
+      accepted: AssistantRunAccepted,
       images?: ImageAttachment[],
       displayMentions?: DisplayMention[],
     ) => {
-      const next: ChatLine = {
+      const user: ChatLine = {
         role: "user",
         content: rawMessage,
+        clientRequestId: accepted.clientRequestId,
+        runId: accepted.runId,
+        turnId: accepted.turnId,
       };
-      if (displayMentions?.length) next.displayMentions = displayMentions;
-      if (images?.length) next.images = images;
-      setMessages((previous) => [...previous, next]);
+      if (displayMentions?.length) user.displayMentions = displayMentions;
+      if (images?.length) user.images = images;
+      const assistant: ChatLine = {
+        role: "assistant",
+        content: "",
+        clientRequestId: accepted.clientRequestId,
+        runId: accepted.runId,
+        turnId: accepted.turnId,
+      };
+      setMessages((previous) => {
+        if (
+          previous.some(
+            (message) =>
+              message.clientRequestId === accepted.clientRequestId ||
+              message.runId === accepted.runId,
+          )
+        ) {
+          return previous;
+        }
+        return [...previous, user, assistant];
+      });
     },
     [setMessages],
   );
 
-  const ensureAssistantStreamSlot = useCallback(() => {
-    setMessages((previous) => {
-      const last = previous.at(-1);
-      if (last?.role === "assistant") return previous;
-      return [...previous, { role: "assistant", content: "" }];
-    });
-  }, [setMessages]);
+  const appendAcceptedRetry = useCallback(
+    (accepted: AssistantRunAccepted) => {
+      setMessages((previous) => {
+        if (previous.some((message) => message.runId === accepted.runId)) {
+          return previous;
+        }
+        return [
+          ...previous,
+          {
+            role: "assistant",
+            content: "",
+            clientRequestId: accepted.clientRequestId,
+            runId: accepted.runId,
+            turnId: accepted.turnId,
+          },
+        ];
+      });
+    },
+    [setMessages],
+  );
 
   const handleQuoteToInput = useCallback(
     (text: string) => {
@@ -241,8 +280,8 @@ export function useAssistantConversation({
   }, [bubbleSelection, onInsertToEditor]);
 
   return {
-    appendUserMessage,
-    ensureAssistantStreamSlot,
+    appendAcceptedRetry,
+    commitAcceptedTurn,
     handleCopySelected,
     handleExportSelected,
     handleInsertToEditor,

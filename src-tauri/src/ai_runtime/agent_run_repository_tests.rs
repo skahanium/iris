@@ -386,7 +386,7 @@ fn accept_persists_explicit_action_with_its_run() {
                 .selection_snapshot
                 .as_ref()
                 .map(|snapshot| snapshot.text.as_str()),
-            Some("只允许本次 Run 使用的明确选区")
+            Some("")
         );
         Ok(())
     })

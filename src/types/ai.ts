@@ -271,10 +271,11 @@ export interface AssistantRunStartRequest {
 }
 
 export interface AssistantRunAccepted {
+  clientRequestId: string;
   runId: string;
   turnId: string;
   session: AssistantSessionRef;
-  state: "accepted";
+  state: RunState;
   stateVersion: number;
 }
 
@@ -309,6 +310,14 @@ export type RunEventType =
 
 export type AssistantRunErrorCode =
   | "agent_run_invalid_request"
+  | "agent_run_empty_output"
+  | "agent_run_output_too_long"
+  | "agent_run_evidence_invalid"
+  | "agent_run_event_delivery_failed"
+  | "agent_run_invalid_explicit_reference"
+  | "agent_run_explicit_reference_changed"
+  | "agent_run_invalid_retrieval_scope"
+  | "agent_run_local_reference_index_unavailable"
   | "agent_run_session_not_found"
   | "agent_run_illegal_transition"
   | "agent_run_state_version_conflict"

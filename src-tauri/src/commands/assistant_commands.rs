@@ -526,6 +526,7 @@ fn spawn_confirmed_change_execution(
         let policy = match evaluate_normal_run_policy(
             &db,
             &AssistantRunAccepted {
+                client_request_id: String::new(),
                 run_id: run_id.clone(),
                 turn_id: String::new(),
                 session: session.clone(),
@@ -558,6 +559,7 @@ fn spawn_confirmed_change_execution(
             }
         };
         let accepted = AssistantRunAccepted {
+            client_request_id: String::new(),
             run_id: run_id.clone(),
             turn_id: String::new(),
             session: session.clone(),
@@ -757,13 +759,33 @@ fn spawn_normal_direct_run(
             )
             .await
         };
-        if execution.is_err() {
+        if let Err(error) = execution {
+            let safe_code = serde_json::from_value::<
+                crate::ai_runtime::run_contract::SafeRunErrorCode,
+            >(serde_json::Value::String(error.to_string()))
+            .unwrap_or(crate::ai_runtime::run_contract::SafeRunErrorCode::PersistenceFailed);
             tracing::warn!(
                 run_id = %accepted.run_id,
+                stage = "execution_exit",
+                safe_code = safe_code.as_str(),
                 "normal Agent Run exited without a successful result"
             );
-            let _ =
-                RunEngine::fail_active_with_sink(&db, &accepted.session, &accepted.run_id, &sink);
+            let still_active = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+                .ok()
+                .flatten()
+                .is_some_and(|response| !response.run.state.is_terminal());
+            if still_active
+                && safe_code == crate::ai_runtime::run_contract::SafeRunErrorCode::PersistenceFailed
+                && error.to_string()
+                    != crate::ai_runtime::run_contract::SafeRunErrorCode::PersistenceFailed.as_str()
+            {
+                let _ = RunEngine::fail_active_with_sink(
+                    &db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    &sink,
+                );
+            }
         }
 
         if crate::ai_runtime::model_gateway::is_abort_requested(&accepted.run_id) {

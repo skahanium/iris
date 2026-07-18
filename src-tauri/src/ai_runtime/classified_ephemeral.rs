@@ -160,6 +160,7 @@ impl ClassifiedEphemeralStore {
             },
         );
         Ok(AssistantRunAccepted {
+            client_request_id: client_request_id.to_string(),
             run_id,
             turn_id,
             session,

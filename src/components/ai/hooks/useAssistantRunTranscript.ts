@@ -6,6 +6,7 @@ import type { ClassifiedRunResultRequest } from "@/types/ai";
 
 export interface AssistantRunTranscriptOptions {
   run: AssistantRunEventState | null;
+  messages: readonly ChatLine[];
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setStreaming: (streaming: boolean) => void;
   setActivityHint: (hint: string | null) => void;
@@ -19,6 +20,7 @@ export interface AssistantRunTranscriptOptions {
 /** Projects persisted Run events into the local, presentation-only transcript. */
 export function useAssistantRunTranscript({
   run,
+  messages,
   setMessages,
   setStreaming,
   setActivityHint,
@@ -30,17 +32,30 @@ export function useAssistantRunTranscript({
 
   useEffect(() => {
     if (!run || run.lastSeq === 0) return;
+    if (
+      !messages.some(
+        (message) =>
+          message.role === "assistant" && message.runId === run.runId,
+      )
+    ) {
+      return;
+    }
     const event = run.events.at(-1);
     if (!event) return;
-    const key = `${run.runId}:${run.lastSeq}`;
+    const key = `${run.runId}:${run.lastSeq}:${run.transientRevision}`;
     if (appliedEventRef.current === key) return;
     appliedEventRef.current = key;
 
     setMessages((previous) => {
-      const last = previous.at(-1);
-      if (!last || last.role !== "assistant") return previous;
-      if (last.content === run.content) return previous;
-      return [...previous.slice(0, -1), { ...last, content: run.content }];
+      const index = previous.findIndex(
+        (message) =>
+          message.role === "assistant" && message.runId === run.runId,
+      );
+      if (index < 0 || previous[index]?.content === run.content)
+        return previous;
+      return previous.map((message, messageIndex) =>
+        messageIndex === index ? { ...message, content: run.content } : message,
+      );
     });
 
     setActivityHint(run.stage);
@@ -69,9 +84,11 @@ export function useAssistantRunTranscript({
           })
             .then((content) => {
               setMessages((previous) => {
-                const last = previous.at(-1);
-                if (!last || last.role !== "assistant") return previous;
-                return [...previous.slice(0, -1), { ...last, content }];
+                return previous.map((message) =>
+                  message.role === "assistant" && message.runId === run.runId
+                    ? { ...message, content }
+                    : message,
+                );
               });
             })
             .catch(() => {
@@ -82,6 +99,16 @@ export function useAssistantRunTranscript({
       case "failed":
         setStreaming(false);
         setActivityHint(null);
+        setMessages((previous) =>
+          previous.filter(
+            (message) =>
+              !(
+                message.role === "assistant" &&
+                message.runId === run.runId &&
+                !message.content.trim()
+              ),
+          ),
+        );
         setError(
           event.payload.kind === "failed"
             ? event.payload.message
@@ -92,17 +119,22 @@ export function useAssistantRunTranscript({
         setStreaming(false);
         setActivityHint(null);
         setMessages((previous) => {
-          const last = previous.at(-1);
-          if (!last || last.role !== "assistant" || last.content.trim()) {
+          const index = previous.findIndex(
+            (message) =>
+              message.role === "assistant" && message.runId === run.runId,
+          );
+          const target = previous[index];
+          if (!target || target.content.trim()) {
             return [
               ...previous,
               { role: "system", content: "本次回答已取消。" },
             ];
           }
-          return [
-            ...previous.slice(0, -1),
-            { role: "system", content: "本次回答已取消。" },
-          ];
+          return previous.map((message, messageIndex) =>
+            messageIndex === index
+              ? { role: "system", content: "本次回答已取消。" }
+              : message,
+          );
         });
         return;
       default:
@@ -110,6 +142,7 @@ export function useAssistantRunTranscript({
     }
   }, [
     classifiedContextRef,
+    messages,
     run,
     setActivityHint,
     setError,

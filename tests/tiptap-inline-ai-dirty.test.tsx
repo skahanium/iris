@@ -42,6 +42,7 @@ async function signatureFor(content: string) {
 
 function acceptedRun() {
   return {
+    clientRequestId: "client-inline-real",
     runId: "real-inline-run",
     turnId: "real-inline-turn",
     session: { domain: "normal" as const, sessionKey: "real-inline-session" },

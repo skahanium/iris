@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
@@ -39,12 +39,12 @@ export interface UnifiedAssistantSendOptions {
   modelOverride?: AgentModelOverride | null;
   start: (request: AssistantRunStartRequest) => Promise<AssistantRunAccepted>;
   getFileSignature?: (path: string) => Promise<FileSignatureResult>;
-  appendUserMessage: (
+  commitAcceptedTurn: (
     message: string,
+    accepted: AssistantRunAccepted,
     images?: ImageAttachment[],
     displayMentions?: DisplayMention[],
   ) => void;
-  ensureAssistantStreamSlot: () => void;
   clearContextReferences: () => void;
   setInput: (value: string) => void;
   setImages: (images: ImageAttachment[]) => void;
@@ -140,8 +140,7 @@ export function useUnifiedAssistantSend({
   modelOverride,
   start,
   getFileSignature = fileSignature,
-  appendUserMessage,
-  ensureAssistantStreamSlot,
+  commitAcceptedTurn,
   clearContextReferences,
   setInput,
   setImages,
@@ -151,11 +150,16 @@ export function useUnifiedAssistantSend({
   setError,
 }: UnifiedAssistantSendOptions) {
   const [isStarting, setIsStarting] = useState(false);
+  const startingRef = useRef(false);
 
   const send = useCallback(async () => {
     const draft = trimMentionDraft(input, displayMentions);
     const message = draft.message;
-    if ((!message && images.length === 0) || composerDisabled || isStarting) {
+    if (
+      (!message && images.length === 0) ||
+      composerDisabled ||
+      startingRef.current
+    ) {
       return;
     }
     if (!message) {
@@ -198,9 +202,10 @@ export function useUnifiedAssistantSend({
       explicitReferences.push(oneShotReference);
     }
     const currentImages = images;
+    const clientRequestId = crypto.randomUUID();
+    startingRef.current = true;
     setIsStarting(true);
     setError(null);
-    if (oneShotReference) consumeOneShotContextReference?.();
 
     try {
       const mentionReferences =
@@ -214,12 +219,9 @@ export function useUnifiedAssistantSend({
         aiDomain === "classified"
           ? { paths: [], pathPrefixes: [], requiredTags: [] }
           : mentionsToContextScope(draft.displayMentions);
-      setStreaming(true);
       setActivityHint("正在提交请求…");
-      appendUserMessage(message, currentImages, draft.displayMentions);
-      ensureAssistantStreamSlot();
       const accepted = await start({
-        clientRequestId: crypto.randomUUID(),
+        clientRequestId,
         ...(session ? { session } : {}),
         turn: {
           message,
@@ -241,6 +243,15 @@ export function useUnifiedAssistantSend({
           : {}),
         ...(modelOverride ? { modelOverride } : {}),
       });
+      const boundAcceptance = { ...accepted, clientRequestId };
+      if (oneShotReference) consumeOneShotContextReference?.();
+      commitAcceptedTurn(
+        message,
+        boundAcceptance,
+        currentImages,
+        draft.displayMentions,
+      );
+      setStreaming(true);
       setSession(aiDomain === "classified" ? null : accepted.session);
       setInput("");
       setImages([]);
@@ -256,25 +267,24 @@ export function useUnifiedAssistantSend({
       }
       setError("请求未能提交，请稍后重试。");
     } finally {
+      startingRef.current = false;
       setIsStarting(false);
     }
   }, [
     aiDomain,
     classifiedContextRef,
-    appendUserMessage,
+    commitAcceptedTurn,
     clearContextReferences,
     composerDisabled,
     contextReferences,
     oneShotContextReference,
     consumeOneShotContextReference,
     displayMentions,
-    ensureAssistantStreamSlot,
     images,
     input,
     includeCurrentClassifiedDocument,
     getFileSignature,
     clearClassifiedDocumentConsent,
-    isStarting,
     session,
     setActivityHint,
     setError,

@@ -78,6 +78,7 @@ function createEditor(text = "selected source text"): Editor {
 
 function acceptedRun() {
   return {
+    clientRequestId: "client-inline-1",
     runId: "run-inline-1",
     turnId: "turn-inline-1",
     session: { domain: "normal" as const, sessionKey: "session-inline-1" },

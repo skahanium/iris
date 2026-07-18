@@ -547,7 +547,7 @@ pub(crate) fn classified_run_accept(
     thread.runs.push(ClassifiedAiRun {
         run_id: input.run_id.clone(),
         turn_id: input.turn_id.clone(),
-        client_request_id: input.client_request_id,
+        client_request_id: input.client_request_id.clone(),
         status: "accepted".into(),
         state_version: 0,
         effect: input.effect,
@@ -573,6 +573,7 @@ pub(crate) fn classified_run_accept(
     classified_ai_thread_save(vault, thread)?;
 
     Ok(AssistantRunAccepted {
+        client_request_id: input.client_request_id,
         run_id: input.run_id,
         turn_id: input.turn_id,
         session: AssistantSessionRef {
@@ -615,6 +616,7 @@ fn find_classified_run_by_client_request(
             let state = serde_json::from_value(serde_json::Value::String(run.status.clone()))
                 .map_err(|_| AppError::msg("invalid classified run state"))?;
             return Ok(Some(AssistantRunAccepted {
+                client_request_id: run.client_request_id.clone(),
                 run_id: run.run_id.clone(),
                 turn_id: run.turn_id.clone(),
                 session: AssistantSessionRef {

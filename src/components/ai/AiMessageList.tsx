@@ -24,6 +24,10 @@ export interface ImageAttachment {
 export interface ChatLine {
   role: "user" | "assistant" | "system";
   content: string;
+  /** Runtime identity for idempotent Run-to-transcript projection. */
+  clientRequestId?: string;
+  runId?: string;
+  turnId?: string;
   /** Reference to full content when React state only keeps a bounded projection. */
   contentRef?: AiPayloadRef;
   /** 多模态原始数据（传给后端）；纯文本时为 undefined */

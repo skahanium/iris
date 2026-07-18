@@ -360,6 +360,8 @@ pub struct AssistantRunStartRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssistantRunAccepted {
+    /// Idempotency key whose acceptance produced this identity.
+    pub(crate) client_request_id: String,
     /// Stable Run identifier.
     pub(crate) run_id: String,
     /// Stable logical turn identifier.
@@ -857,6 +859,18 @@ pub(crate) enum SafeRunErrorCode {
     /// Input did not satisfy the Run contract.
     #[serde(rename = "agent_run_invalid_request")]
     InvalidRequest,
+    /// Provider output contained no user-visible final answer.
+    #[serde(rename = "agent_run_empty_output")]
+    EmptyOutput,
+    /// Provider output exceeded the bounded final-answer size.
+    #[serde(rename = "agent_run_output_too_long")]
+    OutputTooLong,
+    /// Final evidence ownership or citation association was invalid.
+    #[serde(rename = "agent_run_evidence_invalid")]
+    EvidenceInvalid,
+    /// A committed Run event could not be delivered to the active renderer.
+    #[serde(rename = "agent_run_event_delivery_failed")]
+    EventDeliveryFailed,
     /// An explicit local reference is missing required immutable metadata or has an invalid range.
     #[serde(rename = "agent_run_invalid_explicit_reference")]
     InvalidExplicitReference,
@@ -930,6 +944,10 @@ impl SafeRunErrorCode {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidRequest => "agent_run_invalid_request",
+            Self::EmptyOutput => "agent_run_empty_output",
+            Self::OutputTooLong => "agent_run_output_too_long",
+            Self::EvidenceInvalid => "agent_run_evidence_invalid",
+            Self::EventDeliveryFailed => "agent_run_event_delivery_failed",
             Self::InvalidExplicitReference => "agent_run_invalid_explicit_reference",
             Self::ExplicitReferenceChanged => "agent_run_explicit_reference_changed",
             Self::InvalidRetrievalScope => "agent_run_invalid_retrieval_scope",

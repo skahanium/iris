@@ -47,8 +47,7 @@ function normalOptions(
     webSearch: false,
     start,
     getFileSignature,
-    appendUserMessage: vi.fn(),
-    ensureAssistantStreamSlot: vi.fn(),
+    commitAcceptedTurn: vi.fn(),
     clearContextReferences: vi.fn(),
     setInput: vi.fn(),
     setImages: vi.fn(),
@@ -248,18 +247,53 @@ describe("useUnifiedAssistantSend", () => {
   });
 
   it("does not create transcript slots when a mentioned file cannot be signed", async () => {
-    const appendUserMessage = vi.fn();
-    const ensureAssistantStreamSlot = vi.fn();
+    const commitAcceptedTurn = vi.fn();
     getFileSignature.mockRejectedValue(new Error("file disappeared"));
-    renderProbe(
-      normalOptions({ appendUserMessage, ensureAssistantStreamSlot }),
-    );
+    renderProbe(normalOptions({ commitAcceptedTurn }));
 
     await act(async () => api?.send());
 
     expect(start).not.toHaveBeenCalled();
-    expect(appendUserMessage).not.toHaveBeenCalled();
-    expect(ensureAssistantStreamSlot).not.toHaveBeenCalled();
+    expect(commitAcceptedTurn).not.toHaveBeenCalled();
+  });
+
+  it("does not create transcript slots when Run acceptance fails", async () => {
+    const commitAcceptedTurn = vi.fn();
+    const consumeOneShotContextReference = vi.fn();
+    const oneShotContextReference = normalOptions().contextReferences[0]!;
+    start.mockRejectedValue(new Error("agent_run_persistence_failed"));
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        oneShotContextReference,
+        consumeOneShotContextReference,
+        commitAcceptedTurn,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(commitAcceptedTurn).not.toHaveBeenCalled();
+    expect(consumeOneShotContextReference).not.toHaveBeenCalled();
+  });
+
+  it("accepts at most one Run when send is invoked twice in the same tick", async () => {
+    start.mockResolvedValue({
+      runId: "run-double-click",
+      turnId: "turn-double-click",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 0,
+    });
+    renderProbe(normalOptions({ contextReferences: [], displayMentions: [] }));
+
+    await act(async () => {
+      await Promise.all([api?.send(), api?.send()]);
+    });
+
+    expect(start).toHaveBeenCalledTimes(1);
   });
 
   it("requires a one-request classified attachment before dispatch", async () => {

@@ -354,6 +354,22 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
 pub(crate) trait RunEventSink: Send + Sync {
     /// Emit only an event that has already been committed to the Repository.
     fn emit(&self, event: &crate::ai_runtime::run_contract::AssistantRunEvent) -> AppResult<()>;
+
+    /// Emit a non-replayable UI-only stream snapshot. Callers must never store it.
+    fn emit_transient_content(
+        &self,
+        _event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+    ) -> AppResult<()> {
+        Ok(())
+    }
+
+    /// Emit a safe terminal event when SQLite itself cannot record that event.
+    fn emit_ephemeral_failure(
+        &self,
+        event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+    ) -> AppResult<()> {
+        self.emit(event)
+    }
 }
 
 struct NoopRunEventSink;
@@ -381,10 +397,63 @@ impl RunEventSink for TauriRunEventSink<'_> {
             .emit("assistant:run_event", event)
             .map_err(|_| AppError::msg("agent_run_event_emit_failed"))
     }
+
+    fn emit_transient_content(
+        &self,
+        event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+    ) -> AppResult<()> {
+        self.app_handle
+            .emit("assistant:run_event", event)
+            .map_err(|_| AppError::msg("agent_run_event_delivery_failed"))
+    }
 }
 
-/// Buffers normalized provider stream tokens into bounded durable Agent Run events.
+/// Separates live UI stream snapshots from the one validated durable Run delta.
 const STREAM_EVENT_FLUSH_BYTES: usize = 512;
+const MAX_FINAL_OUTPUT_CHARS: usize = 32_000;
+
+#[derive(Debug, Clone, Copy)]
+enum RunFinalizationStage {
+    StreamFlush,
+    WebDegradation,
+    EvidenceValidation,
+    FinalOutputValidation,
+    SqliteFinalize,
+    EventDelivery,
+}
+
+impl RunFinalizationStage {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::StreamFlush => "stream_flush",
+            Self::WebDegradation => "web_degradation",
+            Self::EvidenceValidation => "evidence_validation",
+            Self::FinalOutputValidation => "final_output_validation",
+            Self::SqliteFinalize => "sqlite_finalize",
+            Self::EventDelivery => "event_delivery",
+        }
+    }
+}
+
+struct RunFinalizationFailure {
+    stage: RunFinalizationStage,
+    code: SafeRunErrorCode,
+    internal_reason: String,
+}
+
+impl RunFinalizationFailure {
+    fn new(
+        stage: RunFinalizationStage,
+        code: SafeRunErrorCode,
+        internal_reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            stage,
+            code,
+            internal_reason: internal_reason.into(),
+        }
+    }
+}
 
 pub(crate) struct AgentRunStreamObserver<'a> {
     db: &'a Database,
@@ -392,6 +461,8 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     running_state_version: u64,
     sink: &'a dyn RunEventSink,
     pending_delta: String,
+    transient_content: String,
+    last_transient_bytes: usize,
     defer_visible_deltas: bool,
 }
 
@@ -420,12 +491,46 @@ impl<'a> AgentRunStreamObserver<'a> {
             running_state_version,
             sink,
             pending_delta: String::new(),
+            transient_content: String::new(),
+            last_transient_bytes: 0,
             defer_visible_deltas,
         }
     }
 }
 
 impl AgentRunStreamObserver<'_> {
+    /// Replace provisional provider tokens with the fully validated final body.
+    pub(crate) fn bind_validated_content(&mut self, content: &str) {
+        self.pending_delta.clear();
+        self.pending_delta.push_str(content);
+        self.transient_content.clear();
+        self.last_transient_bytes = 0;
+    }
+
+    /// Deliver the complete provisional snapshot to the live UI without persistence.
+    pub(crate) fn flush_transient(&mut self) -> AppResult<()> {
+        if self.defer_visible_deltas
+            || self.transient_content.is_empty()
+            || self.transient_content.len() == self.last_transient_bytes
+        {
+            return Ok(());
+        }
+        let event = crate::ai_runtime::run_contract::AssistantRunEvent::new(
+            self.run_id,
+            0,
+            self.running_state_version,
+            RunEventType::ContentDelta,
+            chrono::Utc::now().to_rfc3339(),
+            RunEventPayload::ContentDelta {
+                delta: self.transient_content.clone(),
+            },
+        )
+        .map_err(AppError::msg)?;
+        self.sink.emit_transient_content(&event)?;
+        self.last_transient_bytes = self.transient_content.len();
+        Ok(())
+    }
+
     /// Persist and emit at most one bounded, already-observed visible fragment.
     pub(crate) fn flush(&mut self) -> AppResult<()> {
         if self.pending_delta.is_empty() {
@@ -455,9 +560,15 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
         let crate::ai_runtime::model_gateway::StreamEventData::Token { token } = &event.data else {
             return Ok(());
         };
-        self.pending_delta.push_str(token);
-        if !self.defer_visible_deltas && self.pending_delta.len() >= STREAM_EVENT_FLUSH_BYTES {
-            self.flush()?;
+        self.transient_content.push_str(token);
+        if !self.defer_visible_deltas
+            && self
+                .transient_content
+                .len()
+                .saturating_sub(self.last_transient_bytes)
+                >= STREAM_EVENT_FLUSH_BYTES
+        {
+            self.flush_transient()?;
         }
         Ok(())
     }
@@ -833,32 +944,27 @@ impl RunEngine {
                 return Err(AppError::msg("agent_run_provider_unavailable"));
             }
         };
-        let answer = match normalized_final_model_answer(&answer) {
-            Some(answer) => answer,
-            None => {
-                return fail_empty_visible_answer_with_sink(
+        let answer = match validated_final_model_answer(&answer) {
+            Ok(answer) => answer,
+            Err(failure) => {
+                return fail_finalization_with_sink(
                     db,
                     run_id,
                     running.state_version(),
                     sink,
+                    failure,
                 );
             }
         };
-        AgentRunRepository::finalize(
+        finalize_and_emit_with_sink(
             db,
-            FinalizeRunInput {
-                run_id: run_id.to_string(),
-                state_version: running.state_version(),
-                content: answer,
-                evidence_ids: vec![],
-                citation_map: serde_json::json!({}),
-            },
-        )?;
-        let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .and_then(|response| response.events.last().cloned())
-            .ok_or_else(|| AppError::msg("agent_run_completed_event_missing"))?;
-        sink.emit(&completed)?;
-        Ok(())
+            session,
+            run_id,
+            running.state_version(),
+            answer,
+            Vec::new(),
+            sink,
+        )
     }
 
     /// Drive a streaming direct answer using the persisted user message only.
@@ -1120,64 +1226,81 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
-        let mut content = match normalized_final_model_answer(&outcome.content) {
-            Some(content) => content,
-            None => {
-                return fail_empty_visible_answer_with_sink(
+        let mut content = match validated_final_model_answer(&outcome.content) {
+            Ok(content) => content,
+            Err(failure) => {
+                return fail_finalization_with_sink(
                     db,
                     run_id,
                     running_state_version,
                     sink,
+                    failure,
                 );
             }
         };
         if let Some(plan) = domain_plan {
-            if plan.verify_output(&content).is_err() {
-                let failed = AgentRunRepository::append_event(
+            if let Err(error) = plan.verify_output(&content) {
+                return fail_finalization_with_sink(
                     db,
-                    AppendRunEventInput {
-                        run_id: run_id.to_string(),
-                        state_version: running_state_version,
-                        event_type: RunEventType::Failed,
-                        payload: RunEventPayload::Failed {
-                            code: SafeRunErrorCode::InvalidRequest,
-                            message: "生成内容未通过材料边界验证，请补充用户事实或明确资料范围"
-                                .to_string(),
-                        },
-                    },
-                )?;
-                sink.emit(&failed)?;
-                return Err(AppError::msg("agent_run_domain_verification_failed"));
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::EvidenceInvalid,
+                        format!("{error:?}"),
+                    ),
+                );
             }
         }
-        observer.flush()?;
-        append_required_web_degradation_notice(
-            db,
-            session,
-            run_id,
-            running_state_version,
-            sink,
-            &mut content,
-        )?;
+        if let Err(error) = apply_required_web_degradation_notice(db, session, run_id, &mut content)
+        {
+            return fail_finalization_with_sink(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::WebDegradation,
+                    SafeRunErrorCode::PersistenceFailed,
+                    error.to_string(),
+                ),
+            );
+        }
         let mut final_evidence_ids = evidence_ids.to_vec();
         final_evidence_ids.extend(executor.evidence_ids());
         final_evidence_ids.sort_unstable();
         final_evidence_ids.dedup();
-        AgentRunRepository::finalize(
+        validate_final_evidence_or_fail(
             db,
-            FinalizeRunInput {
-                run_id: run_id.to_string(),
-                state_version: running_state_version,
-                content,
-                evidence_ids: final_evidence_ids,
-                citation_map: serde_json::json!({}),
-            },
+            run_id,
+            running_state_version,
+            &final_evidence_ids,
+            sink,
         )?;
-        let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .and_then(|response| response.events.last().cloned())
-            .ok_or_else(|| AppError::msg("agent_run_completed_event_missing"))?;
-        sink.emit(&completed)?;
-        Ok(())
+        content = match validated_final_model_answer(&content) {
+            Ok(content) => content,
+            Err(failure) => {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    failure,
+                );
+            }
+        };
+        observer.bind_validated_content(&content);
+        flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
+        finalize_and_emit_with_sink(
+            db,
+            session,
+            run_id,
+            running_state_version,
+            content,
+            final_evidence_ids,
+            sink,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1262,8 +1385,20 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
-        if !response.tool_calls.is_empty() || response.content.as_deref().is_none_or(str::is_empty)
-        {
+        if let Err(error) = observer.flush_transient() {
+            return fail_finalization_with_sink(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::EventDelivery,
+                    SafeRunErrorCode::EventDeliveryFailed,
+                    error.to_string(),
+                ),
+            );
+        }
+        if !response.tool_calls.is_empty() {
             let failed = AgentRunRepository::append_event(
                 db,
                 AppendRunEventInput {
@@ -1272,72 +1407,86 @@ impl RunEngine {
                     event_type: RunEventType::Failed,
                     payload: RunEventPayload::Failed {
                         code: SafeRunErrorCode::InvalidRequest,
-                        message: "当前直答运行不支持工具调用或空响应".to_string(),
+                        message: "当前直答运行不支持工具调用".to_string(),
                     },
                 },
             )?;
             sink.emit(&failed)?;
             return Err(AppError::msg("agent_run_direct_response_invalid"));
         }
-        let content = response
-            .content
-            .as_deref()
-            .and_then(normalized_final_model_answer);
-        let Some(mut content) = content else {
-            return fail_empty_visible_answer_with_sink(db, run_id, running_state_version, sink);
-        };
+        let mut content =
+            match validated_final_model_answer(response.content.as_deref().unwrap_or_default()) {
+                Ok(content) => content,
+                Err(failure) => {
+                    return fail_finalization_with_sink(
+                        db,
+                        run_id,
+                        running_state_version,
+                        sink,
+                        failure,
+                    );
+                }
+            };
         if let Some(plan) = domain_plan {
-            if plan.verify_output(&content).is_err() {
-                let failed = AgentRunRepository::append_event(
+            if let Err(error) = plan.verify_output(&content) {
+                return fail_finalization_with_sink(
                     db,
-                    AppendRunEventInput {
-                        run_id: run_id.to_string(),
-                        state_version: running_state_version,
-                        event_type: RunEventType::Failed,
-                        payload: RunEventPayload::Failed {
-                            code: SafeRunErrorCode::InvalidRequest,
-                            message: "生成内容未通过材料边界验证，请补充用户事实或明确资料"
-                                .to_string(),
-                        },
-                    },
-                )?;
-                sink.emit(&failed)?;
-                return Err(AppError::msg("agent_run_domain_verification_failed"));
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::EvidenceInvalid,
+                        format!("{error:?}"),
+                    ),
+                );
             }
         }
-        observer.flush()?;
-        append_required_web_degradation_notice(
+        if let Err(error) = apply_required_web_degradation_notice(db, session, run_id, &mut content)
+        {
+            return fail_finalization_with_sink(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::WebDegradation,
+                    SafeRunErrorCode::PersistenceFailed,
+                    error.to_string(),
+                ),
+            );
+        }
+        validate_final_evidence_or_fail(db, run_id, running_state_version, evidence_ids, sink)?;
+        content = match validated_final_model_answer(&content) {
+            Ok(content) => content,
+            Err(failure) => {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    failure,
+                );
+            }
+        };
+        observer.bind_validated_content(&content);
+        flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
+        finalize_and_emit_with_sink(
             db,
             session,
             run_id,
             running_state_version,
+            content,
+            evidence_ids.to_vec(),
             sink,
-            &mut content,
-        )?;
-        AgentRunRepository::finalize(
-            db,
-            FinalizeRunInput {
-                run_id: run_id.to_string(),
-                state_version: running_state_version,
-                content,
-                evidence_ids: evidence_ids.to_vec(),
-                citation_map: serde_json::json!({}),
-            },
-        )?;
-        let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .and_then(|response| response.events.last().cloned())
-            .ok_or_else(|| AppError::msg("agent_run_completed_event_missing"))?;
-        sink.emit(&completed)?;
-        Ok(())
+        )
     }
 }
 
-fn append_required_web_degradation_notice(
+fn apply_required_web_degradation_notice(
     db: &Database,
     session: &AssistantSessionRef,
     run_id: &str,
-    state_version: u64,
-    sink: &impl RunEventSink,
     content: &mut String,
 ) -> AppResult<()> {
     const NOTICE: &str =
@@ -1358,18 +1507,7 @@ fn append_required_web_degradation_notice(
         return Ok(());
     }
     content.push_str(NOTICE);
-    let event = AgentRunRepository::append_event(
-        db,
-        AppendRunEventInput {
-            run_id: run_id.to_string(),
-            state_version,
-            event_type: RunEventType::ContentDelta,
-            payload: RunEventPayload::ContentDelta {
-                delta: NOTICE.to_string(),
-            },
-        },
-    )?;
-    sink.emit(&event)
+    Ok(())
 }
 
 fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessage {
@@ -1382,32 +1520,187 @@ fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessage {
     }
 }
 
-fn normalized_final_model_answer(content: &str) -> Option<String> {
+fn validated_final_model_answer(content: &str) -> Result<String, RunFinalizationFailure> {
     let normalized = crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(content);
-    (!normalized.is_empty()).then_some(normalized)
+    if normalized.trim().is_empty() {
+        return Err(RunFinalizationFailure::new(
+            RunFinalizationStage::FinalOutputValidation,
+            SafeRunErrorCode::EmptyOutput,
+            "empty visible model output",
+        ));
+    }
+    if normalized.chars().count() > MAX_FINAL_OUTPUT_CHARS {
+        return Err(RunFinalizationFailure::new(
+            RunFinalizationStage::FinalOutputValidation,
+            SafeRunErrorCode::OutputTooLong,
+            "final model output exceeded bounded character limit",
+        ));
+    }
+    Ok(normalized)
 }
 
-fn fail_empty_visible_answer_with_sink(
+fn log_finalization_failure(run_id: &str, stage: RunFinalizationStage, code: SafeRunErrorCode) {
+    tracing::warn!(
+        run_id = %run_id,
+        stage = stage.as_str(),
+        safe_code = code.as_str(),
+        "Agent Run finalization stage failed"
+    );
+}
+
+fn fail_finalization_with_sink(
     db: &Database,
     run_id: &str,
     running_state_version: u64,
     sink: &impl RunEventSink,
+    failure: RunFinalizationFailure,
 ) -> AppResult<()> {
-    let code = SafeRunErrorCode::InvalidRequest;
-    let failed = AgentRunRepository::append_event(
+    log_finalization_failure(run_id, failure.stage, failure.code);
+    let _internal_reason = &failure.internal_reason;
+    let append = AgentRunRepository::append_event(
         db,
         AppendRunEventInput {
             run_id: run_id.to_string(),
             state_version: running_state_version,
             event_type: RunEventType::Failed,
             payload: RunEventPayload::Failed {
-                code,
-                message: safe_failure_message(code).to_string(),
+                code: failure.code,
+                message: safe_failure_message(failure.code).to_string(),
             },
         },
-    )?;
-    sink.emit(&failed)?;
-    Err(AppError::msg("agent_run_empty_visible_answer"))
+    );
+    match append {
+        Ok(failed) => {
+            if sink.emit(&failed).is_err() {
+                log_finalization_failure(
+                    run_id,
+                    RunFinalizationStage::EventDelivery,
+                    SafeRunErrorCode::EventDeliveryFailed,
+                );
+                return Err(AppError::msg(
+                    SafeRunErrorCode::EventDeliveryFailed.as_str(),
+                ));
+            }
+            Err(AppError::msg(failure.code.as_str()))
+        }
+        Err(_) => {
+            let code = SafeRunErrorCode::PersistenceFailed;
+            log_finalization_failure(run_id, RunFinalizationStage::SqliteFinalize, code);
+            let seq = AgentRunRepository::get(db, run_id)
+                .ok()
+                .flatten()
+                .map_or(1, |response| response.events.len() as u64 + 1);
+            if let Ok(event) = crate::ai_runtime::run_contract::AssistantRunEvent::new(
+                run_id,
+                seq,
+                running_state_version.saturating_add(1),
+                RunEventType::Failed,
+                chrono::Utc::now().to_rfc3339(),
+                RunEventPayload::Failed {
+                    code,
+                    message: safe_failure_message(code).to_string(),
+                },
+            ) {
+                let _ = sink.emit_ephemeral_failure(&event);
+            }
+            Err(AppError::msg(code.as_str()))
+        }
+    }
+}
+
+fn validate_final_evidence_or_fail(
+    db: &Database,
+    run_id: &str,
+    state_version: u64,
+    evidence_ids: &[i64],
+    sink: &impl RunEventSink,
+) -> AppResult<()> {
+    AgentRunRepository::validate_final_evidence(db, run_id, evidence_ids).map_err(|error| {
+        fail_finalization_with_sink(
+            db,
+            run_id,
+            state_version,
+            sink,
+            RunFinalizationFailure::new(
+                RunFinalizationStage::EvidenceValidation,
+                SafeRunErrorCode::EvidenceInvalid,
+                error.to_string(),
+            ),
+        )
+        .expect_err("finalization failure helper always returns an error")
+    })
+}
+
+fn flush_validated_stream_or_fail(
+    db: &Database,
+    run_id: &str,
+    state_version: u64,
+    observer: &mut AgentRunStreamObserver<'_>,
+    sink: &impl RunEventSink,
+) -> AppResult<()> {
+    observer.flush().map_err(|error| {
+        let code = if error.to_string().contains("delivery") || error.to_string().contains("emit") {
+            SafeRunErrorCode::EventDeliveryFailed
+        } else {
+            SafeRunErrorCode::PersistenceFailed
+        };
+        fail_finalization_with_sink(
+            db,
+            run_id,
+            state_version,
+            sink,
+            RunFinalizationFailure::new(RunFinalizationStage::StreamFlush, code, error.to_string()),
+        )
+        .expect_err("finalization failure helper always returns an error")
+    })
+}
+
+fn finalize_and_emit_with_sink(
+    db: &Database,
+    session: &AssistantSessionRef,
+    run_id: &str,
+    state_version: u64,
+    content: String,
+    evidence_ids: Vec<i64>,
+    sink: &impl RunEventSink,
+) -> AppResult<()> {
+    if let Err(error) = AgentRunRepository::finalize(
+        db,
+        FinalizeRunInput {
+            run_id: run_id.to_string(),
+            state_version,
+            content,
+            evidence_ids,
+            citation_map: serde_json::json!({}),
+        },
+    ) {
+        return fail_finalization_with_sink(
+            db,
+            run_id,
+            state_version,
+            sink,
+            RunFinalizationFailure::new(
+                RunFinalizationStage::SqliteFinalize,
+                SafeRunErrorCode::PersistenceFailed,
+                error.to_string(),
+            ),
+        );
+    }
+    let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)
+        .map_err(|_| AppError::msg(SafeRunErrorCode::PersistenceFailed.as_str()))?
+        .and_then(|response| response.events.last().cloned())
+        .ok_or_else(|| AppError::msg(SafeRunErrorCode::PersistenceFailed.as_str()))?;
+    if sink.emit(&completed).is_err() {
+        log_finalization_failure(
+            run_id,
+            RunFinalizationStage::EventDelivery,
+            SafeRunErrorCode::EventDeliveryFailed,
+        );
+        return Err(AppError::msg(
+            SafeRunErrorCode::EventDeliveryFailed.as_str(),
+        ));
+    }
+    Ok(())
 }
 
 fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
@@ -1424,6 +1717,10 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::WebProviderFailed => "联网证据服务暂时不可用，请稍后重试",
         SafeRunErrorCode::WebEvidenceInvalid => "联网证据服务未返回可用结果，请稍后重试",
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
+        SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
+        SafeRunErrorCode::OutputTooLong => "模型回答超过本次运行上限，请缩小问题范围后重试",
+        SafeRunErrorCode::EvidenceInvalid => "回答与所附证据无法安全关联，请重新附带资料后重试",
+        SafeRunErrorCode::EventDeliveryFailed => "回答状态未能送达界面，请重新打开会话查看结果",
         SafeRunErrorCode::InvalidExplicitReference => "引用材料无效，请重新附带后重试",
         SafeRunErrorCode::ExplicitReferenceChanged => "引用材料已发生变化，请重新附带后重试",
         SafeRunErrorCode::InvalidRetrievalScope => "资料范围无效，请重新选择后重试",
@@ -1458,7 +1755,9 @@ fn classify_web_evidence_stage_failure(error: &AppError) -> SafeRunErrorCode {
 /// error is deliberately neither persisted into the Run event nor shown to the user.
 fn classify_provider_failure(error: &AppError) -> SafeRunErrorCode {
     let message = error.to_string().to_ascii_lowercase();
-    if message.contains("first_response_timeout")
+    if message.contains("agent_run_event_delivery_failed") {
+        SafeRunErrorCode::EventDeliveryFailed
+    } else if message.contains("first_response_timeout")
         || message.contains("stream_idle_timeout")
         || message.contains("timed out")
         || message.contains("timeout")

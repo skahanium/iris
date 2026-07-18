@@ -263,6 +263,7 @@ describe("Assistant Run 前端合同", () => {
 
   it("以安全会话引用、接受响应和幂等 control DTO 表达执行合同", () => {
     const accepted = {
+      clientRequestId: "client-request-001",
       runId,
       turnId: "turn-001",
       session,
@@ -303,6 +304,96 @@ describe("Assistant Run 前端合同", () => {
 });
 
 describe("Assistant Run 事件归约", () => {
+  it("实时临时 delta 不进入可重放序列，并由验证后的 durable delta 替换", () => {
+    const running = reduce([
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(2, "stage_changed", {
+        kind: "stage_changed",
+        state: "preparing",
+        stage: "正在准备",
+      }),
+      event(3, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "正在生成",
+      }),
+    ]);
+    const transient = reduceAssistantRunEvent(
+      running,
+      event(
+        0,
+        "content_delta",
+        { kind: "content_delta", delta: "模型临时片段" },
+        3,
+      ),
+    );
+
+    expect(transient.content).toBe("模型临时片段");
+    expect(transient.lastSeq).toBe(3);
+    expect(transient.events).toHaveLength(3);
+    expect(transient.transientRevision).toBe(1);
+
+    const durable = reduceAssistantRunEvent(
+      transient,
+      event(
+        4,
+        "content_delta",
+        { kind: "content_delta", delta: "验证后的最终正文" },
+        3,
+      ),
+    );
+    expect(durable.content).toBe("验证后的最终正文");
+    expect(durable.lastSeq).toBe(4);
+    expect(durable.events).toHaveLength(4);
+  });
+
+  it("运行失败时清除仅投递到 UI 的未验证临时正文", () => {
+    const withTransient = [
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(2, "stage_changed", {
+        kind: "stage_changed",
+        state: "preparing",
+        stage: "正在准备",
+      }),
+      event(3, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "正在生成",
+      }),
+      event(
+        0,
+        "content_delta",
+        { kind: "content_delta", delta: "不得留在失败转录中的正文" },
+        3,
+      ),
+    ].reduce(reduceAssistantRunEvent, createAssistantRunEventState(runId));
+    const failed = reduceAssistantRunEvent(
+      withTransient,
+      event(
+        4,
+        "failed",
+        {
+          kind: "failed",
+          code: "agent_run_empty_output",
+          message: "模型未返回可展示内容。",
+        },
+        4,
+      ),
+    );
+
+    expect(failed.state).toBe("failed");
+    expect(failed.content).toBe("");
+    expect(failed.transientRevision).toBe(2);
+  });
+
   it("将能力降级保留为运行中的轻量状态而不是终态错误", () => {
     const state = reduce([
       event(1, "accepted", {

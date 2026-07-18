@@ -29,6 +29,10 @@ export interface AssistantRunEventState {
     reasonCode: ProviderSwitchReasonCode | null;
   } | null;
   content: string;
+  /** Monotonic local-only revision for transient, non-replayable UI content. */
+  transientRevision: number;
+  /** Whether `content` currently came from an uncommitted provider stream. */
+  hasTransientContent: boolean;
   events: readonly AssistantRunEvent[];
   pendingEvents: readonly AssistantRunEvent[];
   /** The first missing sequence to request through `assistant_run_get`. */
@@ -53,6 +57,8 @@ export function createAssistantRunEventState(
     pendingConfirmation: null,
     provider: null,
     content: "",
+    transientRevision: 0,
+    hasTransientContent: false,
     events: [],
     pendingEvents: [],
     resyncFromSeq: null,
@@ -64,6 +70,24 @@ export function reduceAssistantRunEvent(
   state: AssistantRunEventState,
   event: AssistantRunEvent,
 ): AssistantRunEventState {
+  if (
+    event.runId === state.runId &&
+    event.seq === 0 &&
+    event.type === "content_delta" &&
+    event.payload.kind === "content_delta" &&
+    !isTerminal(state.state)
+  ) {
+    if (state.hasTransientContent && state.content === event.payload.delta) {
+      return state;
+    }
+    return {
+      ...state,
+      content: event.payload.delta,
+      transientRevision: state.transientRevision + 1,
+      hasTransientContent: true,
+    };
+  }
+
   if (
     event.runId !== state.runId ||
     event.type !== event.payload.kind ||
@@ -138,6 +162,11 @@ function applyEvent(
 ): AssistantRunEventState {
   const nextState = stateForEvent(event, state.state);
   const payload = event.payload;
+  const clearsTransientContent =
+    state.hasTransientContent &&
+    (payload.kind === "failed" || payload.kind === "cancelled");
+  const commitsTransientContent =
+    state.hasTransientContent && payload.kind === "content_delta";
 
   return {
     ...state,
@@ -173,8 +202,20 @@ function applyEvent(
         : state.provider,
     content:
       payload.kind === "content_delta"
-        ? `${state.content}${payload.delta}`
-        : state.content,
+        ? commitsTransientContent
+          ? payload.delta
+          : `${state.content}${payload.delta}`
+        : clearsTransientContent
+          ? ""
+          : state.content,
+    transientRevision:
+      clearsTransientContent || commitsTransientContent
+        ? state.transientRevision + 1
+        : state.transientRevision,
+    hasTransientContent:
+      payload.kind === "content_delta" || clearsTransientContent
+        ? false
+        : state.hasTransientContent,
     events: [...state.events, event],
   };
 }

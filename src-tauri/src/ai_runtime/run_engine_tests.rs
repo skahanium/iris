@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -39,6 +40,22 @@ struct MockStreamingProvider {
     failure: Option<&'static str>,
 }
 
+struct MakeSqliteReadonlyProvider<'a> {
+    db: &'a Database,
+}
+
+impl DirectAnswerProvider for MakeSqliteReadonlyProvider<'_> {
+    fn answer(&self, _run_id: &str, _message: &str) -> AppResult<String> {
+        for _ in 0..2 {
+            self.db.with_conn(|conn| {
+                conn.execute_batch("PRAGMA query_only=ON")
+                    .map_err(Into::into)
+            })?;
+        }
+        Ok("已经验证但无法持久化的回答".to_string())
+    }
+}
+
 struct CapturingStreamingProvider {
     calls: AtomicU32,
     messages: std::sync::Mutex<Vec<crate::ai_runtime::LlmMessage>>,
@@ -47,6 +64,7 @@ struct CapturingStreamingProvider {
 #[derive(Default)]
 struct RecordingSink {
     events: std::sync::Mutex<Vec<serde_json::Value>>,
+    transient_events: std::sync::Mutex<Vec<serde_json::Value>>,
 }
 
 impl RunEventSink for RecordingSink {
@@ -55,6 +73,44 @@ impl RunEventSink for RecordingSink {
             .lock()
             .expect("recording sink lock")
             .push(serde_json::to_value(event)?);
+        Ok(())
+    }
+
+    fn emit_transient_content(
+        &self,
+        event: &super::run_contract::AssistantRunEvent,
+    ) -> AppResult<()> {
+        self.transient_events
+            .lock()
+            .expect("transient recording sink lock")
+            .push(serde_json::to_value(event)?);
+        Ok(())
+    }
+}
+
+struct SelectiveFailingSink {
+    fail_type: &'static str,
+    events: std::sync::Mutex<Vec<serde_json::Value>>,
+}
+
+impl RunEventSink for SelectiveFailingSink {
+    fn emit(&self, event: &super::run_contract::AssistantRunEvent) -> AppResult<()> {
+        let event = serde_json::to_value(event)?;
+        if event["type"] == self.fail_type {
+            return Err(AppError::msg("test_event_delivery_failed"));
+        }
+        self.events.lock().expect("failing sink lock").push(event);
+        Ok(())
+    }
+
+    fn emit_transient_content(
+        &self,
+        event: &super::run_contract::AssistantRunEvent,
+    ) -> AppResult<()> {
+        let event = serde_json::to_value(event)?;
+        if event["type"] == self.fail_type {
+            return Err(AppError::msg("test_event_delivery_failed"));
+        }
         Ok(())
     }
 }
@@ -174,6 +230,15 @@ struct NormalAnswerStreamingProvider;
 
 struct MetaAnalysisToolLoopProvider;
 
+struct ScriptedToolLoopProvider {
+    responses: std::sync::Mutex<VecDeque<crate::ai_runtime::model_gateway::GatewayResponse>>,
+}
+
+struct SuccessfulToolLoopExecutor {
+    calls: AtomicU32,
+    evidence_ids: Vec<i64>,
+}
+
 struct UnusedToolLoopExecutor;
 
 impl StreamingDirectAnswerProvider for MetaAnalysisStreamingProvider {
@@ -273,6 +338,30 @@ impl ToolLoopProvider for MetaAnalysisToolLoopProvider {
     }
 }
 
+impl ToolLoopProvider for ScriptedToolLoopProvider {
+    fn answer_turn<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _messages: &'a [crate::ai_runtime::LlmMessage],
+        _tools: &'a [ToolSpec],
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            self.responses
+                .lock()
+                .expect("scripted tool responses lock")
+                .pop_front()
+                .ok_or_else(|| AppError::msg("missing_scripted_tool_response"))
+        })
+    }
+}
+
 impl ToolLoopExecutor for UnusedToolLoopExecutor {
     fn execute<'a>(
         &'a self,
@@ -281,6 +370,72 @@ impl ToolLoopExecutor for UnusedToolLoopExecutor {
         _step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         Box::pin(async { Err(AppError::msg("unused_tool_loop_executor")) })
+    }
+}
+
+impl ToolLoopExecutor for SuccessfulToolLoopExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "result": "ok" }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+
+    fn evidence_ids(&self) -> Vec<i64> {
+        self.evidence_ids.clone()
+    }
+}
+
+fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvider {
+    ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "tool-call-1".to_string(),
+                    call_type: "function".to_string(),
+                    function: crate::ai_types::FunctionCall {
+                        name: "test_tool".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                }],
+                usage: Default::default(),
+                finish_reason: "tool_calls".to_string(),
+                reasoning_content: None,
+            },
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some(final_content),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+            },
+        ])),
+    }
+}
+
+fn test_tool_spec() -> ToolSpec {
+    ToolSpec {
+        name: "test_tool".to_string(),
+        description: "Return a bounded test result".to_string(),
+        input_schema: serde_json::json!({ "type": "object" }),
+        access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+        requires_confirmation: false,
+        max_results: None,
+        capability_affinity: Vec::new(),
     }
 }
 
@@ -596,7 +751,8 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
     assert_eq!(before_flush.events.len(), 3);
     assert!(sink.events.lock().expect("sink lock").is_empty());
 
-    observer.flush().expect("flush stable stream fragment");
+    observer.bind_validated_content("稳定片段");
+    observer.flush().expect("flush validated stream fragment");
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run exists");
@@ -638,9 +794,13 @@ async fn streaming_direct_engine_persists_deltas_and_one_terminal_message() {
     assert_eq!(replay.run.state, RunState::Completed);
     assert!(replay.run.final_message_id.is_some());
     assert_eq!(replay.events.len(), 5);
+    let transient_events = sink.transient_events.lock().expect("transient sink lock");
+    assert_eq!(transient_events.len(), 1);
+    assert_eq!(transient_events[0]["seq"], 0);
+    assert_eq!(transient_events[0]["payload"]["delta"], "流式片段");
     assert_eq!(
         serde_json::to_value(&replay.events[3]).expect("serialize delta")["payload"]["delta"],
-        "流式片段"
+        "流式最终答复"
     );
     assert_eq!(
         serde_json::to_value(replay.events.last().expect("completed"))
@@ -754,6 +914,248 @@ fn direct_engine_never_persists_a_meta_analysis_prefix() {
     assert_eq!(persisted, "你好！有什么我可以帮你的吗？");
 }
 
+#[test]
+fn direct_empty_output_has_a_distinct_terminal_code_and_no_assistant_body() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some("   \n".to_string()),
+    };
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_direct_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+    )
+    .expect_err("empty output must fail safely");
+
+    assert_eq!(error.to_string(), SafeRunErrorCode::EmptyOutput.as_str());
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert_eq!(
+        serde_json::to_value(replay.events.last().expect("failed")).expect("event")["payload"]
+            ["code"],
+        SafeRunErrorCode::EmptyOutput.as_str()
+    );
+    assert!(replay
+        .events
+        .iter()
+        .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
+    assert!(replay.run.final_message_id.is_none());
+}
+
+#[test]
+fn direct_oversized_output_terminalizes_without_persisting_model_body() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some("x".repeat(32_001)),
+    };
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_direct_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+    )
+    .expect_err("oversized output must fail safely");
+
+    assert_eq!(error.to_string(), SafeRunErrorCode::OutputTooLong.as_str());
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert!(replay.run.final_message_id.is_none());
+    assert!(replay
+        .events
+        .iter()
+        .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
+}
+
+#[test]
+fn sqlite_finalize_failure_emits_an_ephemeral_safe_failure_without_model_body() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_direct_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &MakeSqliteReadonlyProvider { db: &db },
+        &sink,
+    )
+    .expect_err("read-only SQLite must be surfaced safely");
+
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::PersistenceFailed.as_str()
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Running);
+    assert!(replay.run.final_message_id.is_none());
+    assert!(replay
+        .events
+        .iter()
+        .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
+    let emitted = sink.events.lock().expect("sink lock");
+    let failure = emitted.last().expect("ephemeral safe failure");
+    assert_eq!(failure["type"], "failed");
+    assert_eq!(
+        failure["payload"]["code"],
+        SafeRunErrorCode::PersistenceFailed.as_str()
+    );
+}
+
+#[tokio::test]
+async fn invalid_evidence_never_leaves_stream_delta_or_assistant_body_in_sqlite() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockStreamingProvider {
+        calls: AtomicU32::new(0),
+        failure: None,
+    };
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_direct_streaming_with_prompt_and_evidence_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        "authorized material",
+        &[i64::MAX],
+        &provider,
+        &sink,
+    )
+    .await
+    .expect_err("foreign evidence must fail before body persistence");
+
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::EvidenceInvalid.as_str()
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert!(replay.run.final_message_id.is_none());
+    assert!(replay
+        .events
+        .iter()
+        .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
+}
+
+#[tokio::test]
+async fn transient_delivery_failure_terminalizes_once_without_persisting_model_body() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockStreamingProvider {
+        calls: AtomicU32::new(0),
+        failure: None,
+    };
+    let sink = SelectiveFailingSink {
+        fail_type: "content_delta",
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+
+    let error = RunEngine::execute_direct_streaming_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+    )
+    .await
+    .expect_err("flush delivery failure must be classified");
+
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::EventDeliveryFailed.as_str()
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert_eq!(
+        replay
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    serde_json::to_value(event).expect("event")["type"].as_str(),
+                    Some("failed" | "completed" | "cancelled")
+                )
+            })
+            .count(),
+        1
+    );
+    let persisted_deltas = replay
+        .events
+        .iter()
+        .filter_map(|event| {
+            let event = serde_json::to_value(event).expect("event");
+            (event["type"] == "content_delta").then(|| event["payload"]["delta"].clone())
+        })
+        .collect::<Vec<_>>();
+    assert!(persisted_deltas.is_empty());
+}
+
+#[tokio::test]
+async fn completed_emit_failure_never_appends_a_second_terminal_event() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockStreamingProvider {
+        calls: AtomicU32::new(0),
+        failure: None,
+    };
+    let sink = SelectiveFailingSink {
+        fail_type: "completed",
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+
+    let error = RunEngine::execute_direct_streaming_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+    )
+    .await
+    .expect_err("completed emit failure is surfaced safely");
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::EventDeliveryFailed.as_str()
+    );
+
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Completed);
+    assert_eq!(
+        replay
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    serde_json::to_value(event).expect("event")["type"].as_str(),
+                    Some("failed" | "completed" | "cancelled")
+                )
+            })
+            .count(),
+        1
+    );
+}
+
 #[tokio::test]
 async fn tool_loop_engine_never_persists_a_meta_analysis_prefix() {
     let db = Database::open_in_memory().expect("database");
@@ -797,6 +1199,105 @@ async fn tool_loop_engine_never_persists_a_meta_analysis_prefix() {
         })
         .expect("persisted assistant message");
     assert_eq!(persisted, "最终的工具循环答复。");
+}
+
+#[tokio::test]
+async fn tool_success_followed_by_oversized_output_has_one_precise_safe_terminal() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = scripted_tool_loop_provider("过长".repeat(16_001));
+    let executor = SuccessfulToolLoopExecutor {
+        calls: AtomicU32::new(0),
+        evidence_ids: vec![],
+    };
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "请调用工具后回答".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![test_tool_spec()],
+        &[],
+        false,
+        0,
+        None,
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect_err("oversized tool-loop output must fail");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(error.to_string(), SafeRunErrorCode::OutputTooLong.as_str());
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert!(replay.run.final_message_id.is_none());
+    assert_eq!(terminal_event_count(&replay.events), 1);
+    assert!(replay
+        .events
+        .iter()
+        .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
+}
+
+#[tokio::test]
+async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = scripted_tool_loop_provider("工具后的回答".to_string());
+    let executor = SuccessfulToolLoopExecutor {
+        calls: AtomicU32::new(0),
+        evidence_ids: vec![i64::MAX],
+    };
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "请调用工具后回答".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![test_tool_spec()],
+        &[],
+        false,
+        0,
+        None,
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect_err("foreign evidence must fail");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::EvidenceInvalid.as_str()
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert!(replay.run.final_message_id.is_none());
+    assert_eq!(terminal_event_count(&replay.events), 1);
+    assert!(replay
+        .events
+        .iter()
+        .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
 }
 
 #[tokio::test]
@@ -1061,6 +1562,18 @@ fn event_state_version(event: &super::run_contract::AssistantRunEvent) -> u64 {
         .expect("state version")
 }
 
+fn terminal_event_count(events: &[super::run_contract::AssistantRunEvent]) -> usize {
+    events
+        .iter()
+        .filter(|event| {
+            matches!(
+                serde_json::to_value(event).expect("terminal event")["type"].as_str(),
+                Some("failed" | "completed" | "cancelled")
+            )
+        })
+        .count()
+}
+
 struct LeakingStreamingProvider;
 
 impl StreamingDirectAnswerProvider for LeakingStreamingProvider {
@@ -1142,7 +1655,10 @@ async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final
     .await
     .expect_err("exemplar-only facts must be rejected before persistence");
 
-    assert_eq!(error.to_string(), "agent_run_domain_verification_failed");
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::EvidenceInvalid.as_str()
+    );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run exists");
@@ -1632,6 +2148,7 @@ async fn web_required_pre_answer_stage_uses_search_snippets_without_page_fetches
             serde_json::json!("tool_completed"),
             serde_json::json!("stage_changed"),
             serde_json::json!("stage_changed"),
+            serde_json::json!("content_delta"),
             serde_json::json!("completed"),
         ]
     );
