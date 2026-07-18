@@ -1274,6 +1274,7 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
+        executor.emit_deferred_web_degradation_if_needed(db, sink)?;
         let mut content = match validated_final_model_answer(&outcome.content) {
             Ok(content) => content,
             Err(failure) => {

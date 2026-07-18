@@ -9,8 +9,10 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
+use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec};
 use crate::error::{AppError, AppResult};
+use crate::storage::db::Database;
 
 const MAX_MODEL_TURNS: u32 = 8;
 const MAX_TOOL_CALLS: u32 = 24;
@@ -73,6 +75,16 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     /// terminal, Run-wide diagnostic payload.
     fn web_evidence_attempt_count(&self) -> u32 {
         0
+    }
+
+    /// Emit a deferred Web degradation notice after the tool loop succeeds.
+    /// Default executors have nothing to report.
+    fn emit_deferred_web_degradation_if_needed(
+        &self,
+        _db: &Database,
+        _sink: &dyn RunEventSink,
+    ) -> AppResult<()> {
+        Ok(())
     }
 }
 

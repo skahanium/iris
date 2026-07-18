@@ -590,22 +590,6 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 &call.id,
                 summary,
             )?;
-            if call.function.name == WEB_TOOL_NAME
-                && !result.success
-                && self.context.envelope.freshness != Freshness::WebRequired
-            {
-                if let Some(failure) = self.web_failure() {
-                    if self.mark_web_degradation_emitted()? {
-                        append_capability_degraded(
-                            &self.state.db,
-                            self.accepted,
-                            self.sink,
-                            failure,
-                            self.web_attempt_count(),
-                        )?;
-                    }
-                }
-            }
             if call.function.name == WEB_TOOL_NAME {
                 let failure = self.web_failure();
                 tracing::info!(
@@ -645,9 +629,37 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     fn web_evidence_attempt_count(&self) -> u32 {
         self.web_attempt_count()
     }
+
+    fn emit_deferred_web_degradation_if_needed(
+        &self,
+        db: &Database,
+        sink: &dyn RunEventSink,
+    ) -> AppResult<()> {
+        NormalRunToolExecutor::emit_deferred_web_degradation_if_needed(self, db, sink)
+    }
 }
 
 impl NormalRunToolExecutor<'_> {
+    /// Emit `capability_degraded` once after a successful tool loop when Web attempts
+    /// failed and no usable Web evidence was registered for this Run.
+    pub(crate) fn emit_deferred_web_degradation_if_needed(
+        &self,
+        db: &Database,
+        sink: &dyn RunEventSink,
+    ) -> AppResult<()> {
+        emit_deferred_web_degradation(
+            DeferredWebDegradationInput {
+                db,
+                accepted: self.accepted,
+                sink,
+                freshness: self.context.envelope.freshness,
+                web_failure: self.web_failure(),
+                has_web_evidence: self.has_web_evidence(),
+                attempt_count: self.web_attempt_count(),
+            },
+            &mut || self.mark_web_degradation_emitted(),
+        )
+    }
     fn set_web_failure(&self, failure: Option<WebFailure>) -> AppResult<()> {
         *self
             .web_failure
@@ -1313,6 +1325,41 @@ fn web_duration_bucket(duration: Duration) -> &'static str {
     }
 }
 
+struct DeferredWebDegradationInput<'a> {
+    db: &'a Database,
+    accepted: &'a AssistantRunAccepted,
+    sink: &'a dyn RunEventSink,
+    freshness: Freshness,
+    web_failure: Option<WebFailure>,
+    has_web_evidence: bool,
+    attempt_count: u32,
+}
+
+fn emit_deferred_web_degradation(
+    input: DeferredWebDegradationInput<'_>,
+    mark_emitted: &mut dyn FnMut() -> AppResult<bool>,
+) -> AppResult<()> {
+    if input.freshness == Freshness::WebRequired {
+        return Ok(());
+    }
+    let Some(failure) = input.web_failure else {
+        return Ok(());
+    };
+    if input.has_web_evidence {
+        return Ok(());
+    }
+    if mark_emitted()? {
+        append_capability_degraded(
+            input.db,
+            input.accepted,
+            input.sink,
+            failure,
+            input.attempt_count,
+        )?;
+    }
+    Ok(())
+}
+
 fn append_capability_degraded(
     db: &Database,
     accepted: &AssistantRunAccepted,
@@ -1590,7 +1637,62 @@ pub(crate) fn append_web_evidence_to_messages(
 
 #[cfg(test)]
 mod tests {
-    use super::RunWebBudget;
+    use std::sync::Mutex;
+
+    use super::{emit_deferred_web_degradation, DeferredWebDegradationInput, RunWebBudget};
+    use crate::ai_runtime::run_contract::{
+        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, Freshness,
+        SafeRunErrorCode, SecurityDomain,
+    };
+    use crate::ai_runtime::run_engine::RunEventSink;
+    use crate::ai_runtime::run_intake::RunIntake;
+    use crate::error::AppResult;
+    use crate::storage::db::Database;
+
+    #[derive(Default)]
+    struct RecordingSink {
+        events: Mutex<Vec<serde_json::Value>>,
+    }
+
+    impl RunEventSink for RecordingSink {
+        fn emit(&self, event: &AssistantRunEvent) -> AppResult<()> {
+            self.events
+                .lock()
+                .expect("recording sink lock")
+                .push(serde_json::to_value(event)?);
+            Ok(())
+        }
+    }
+
+    fn request() -> AssistantRunStartRequest {
+        AssistantRunStartRequest {
+            client_request_id: "deferred-web-client".to_string(),
+            session: None,
+            turn: AssistantTurnDraft {
+                message: "请联网核实".to_string(),
+                content_parts: None,
+                explicit_references: vec![],
+                retrieval_scope: Default::default(),
+                display_mentions: vec![],
+            },
+            explicit_action: None,
+            web_enabled: true,
+            model_override: None,
+            security_domain: SecurityDomain::Normal,
+            classified_context_ref: None,
+        }
+    }
+
+    fn web_failure() -> super::WebFailure {
+        super::WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
+    }
+
+    fn capability_degraded_count(events: &[serde_json::Value]) -> usize {
+        events
+            .iter()
+            .filter(|event| event["type"] == "capability_degraded")
+            .count()
+    }
 
     #[test]
     fn model_web_calls_share_one_run_budget_start() {
@@ -1600,5 +1702,128 @@ mod tests {
         let second = budget.started().expect("second budget start");
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn deferred_web_degradation_emits_once_when_failed_without_evidence() {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(&db, request()).expect("accepted");
+        let sink = RecordingSink::default();
+        let mut emitted = false;
+
+        emit_deferred_web_degradation(
+            DeferredWebDegradationInput {
+                db: &db,
+                accepted: &accepted,
+                sink: &sink,
+                freshness: Freshness::WebPreferred,
+                web_failure: Some(web_failure()),
+                has_web_evidence: false,
+                attempt_count: 2,
+            },
+            &mut || {
+                if emitted {
+                    return Ok(false);
+                }
+                emitted = true;
+                Ok(true)
+            },
+        )
+        .expect("emit deferred degradation");
+
+        let events = sink.events.lock().expect("events");
+        assert_eq!(capability_degraded_count(&events), 1);
+        assert_eq!(events[0]["type"], "capability_degraded");
+        assert_eq!(
+            events[0]["payload"]["code"],
+            SafeRunErrorCode::WebProviderTimeout.as_str()
+        );
+
+        emit_deferred_web_degradation(
+            DeferredWebDegradationInput {
+                db: &db,
+                accepted: &accepted,
+                sink: &sink,
+                freshness: Freshness::WebPreferred,
+                web_failure: Some(web_failure()),
+                has_web_evidence: false,
+                attempt_count: 2,
+            },
+            &mut || Ok(false),
+        )
+        .expect("second emit is idempotent");
+        assert_eq!(capability_degraded_count(&events), 1);
+    }
+
+    #[test]
+    fn deferred_web_degradation_skips_after_successful_web_evidence() {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(&db, request()).expect("accepted");
+        let sink = RecordingSink::default();
+
+        emit_deferred_web_degradation(
+            DeferredWebDegradationInput {
+                db: &db,
+                accepted: &accepted,
+                sink: &sink,
+                freshness: Freshness::WebPreferred,
+                web_failure: None,
+                has_web_evidence: true,
+                attempt_count: 2,
+            },
+            &mut || Ok(true),
+        )
+        .expect("success path should not emit");
+
+        let events = sink.events.lock().expect("events");
+        assert_eq!(capability_degraded_count(&events), 0);
+    }
+
+    #[test]
+    fn deferred_web_degradation_skips_when_failure_cleared_after_retry_success() {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(&db, request()).expect("accepted");
+        let sink = RecordingSink::default();
+
+        emit_deferred_web_degradation(
+            DeferredWebDegradationInput {
+                db: &db,
+                accepted: &accepted,
+                sink: &sink,
+                freshness: Freshness::WebPreferred,
+                web_failure: None,
+                has_web_evidence: true,
+                attempt_count: 2,
+            },
+            &mut || Ok(true),
+        )
+        .expect("cleared failure with evidence should not emit");
+
+        let events = sink.events.lock().expect("events");
+        assert_eq!(capability_degraded_count(&events), 0);
+    }
+
+    #[test]
+    fn deferred_web_degradation_skips_for_web_required() {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(&db, request()).expect("accepted");
+        let sink = RecordingSink::default();
+
+        emit_deferred_web_degradation(
+            DeferredWebDegradationInput {
+                db: &db,
+                accepted: &accepted,
+                sink: &sink,
+                freshness: Freshness::WebRequired,
+                web_failure: Some(web_failure()),
+                has_web_evidence: false,
+                attempt_count: 1,
+            },
+            &mut || Ok(true),
+        )
+        .expect("web required should not emit capability degraded");
+
+        let events = sink.events.lock().expect("events");
+        assert_eq!(capability_degraded_count(&events), 0);
     }
 }
