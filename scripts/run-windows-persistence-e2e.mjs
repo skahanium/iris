@@ -209,14 +209,6 @@ async function click(sessionId, element) {
   );
 }
 
-async function clear(sessionId, element) {
-  await webdriverRequest(
-    "POST",
-    `/session/${sessionId}/element/${element}/clear`,
-    {},
-  );
-}
-
 async function sendKeys(sessionId, element, text) {
   await webdriverRequest(
     "POST",
@@ -281,6 +273,33 @@ async function reloadWebview(sessionId) {
     script: "window.location.reload(); return true;",
     args: [],
   });
+}
+
+async function commitDocumentTitle(sessionId, title) {
+  const committed = await executeSync(
+    sessionId,
+    `
+      const nextTitle = arguments[0];
+      const el = document.querySelector('[data-testid="document-title"]');
+      if (!(el instanceof HTMLTextAreaElement)) {
+        return false;
+      }
+      const descriptor = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      );
+      if (!descriptor?.set) {
+        return false;
+      }
+      descriptor.set.call(el, nextTitle);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.blur();
+      return true;
+    `,
+    [title],
+  );
+  if (committed !== true) fail("document_title_commit_failed");
 }
 
 async function acceptRenameConfirmation(sessionId) {
@@ -399,14 +418,10 @@ async function runScenario(sessionId) {
   await sendKeys(sessionId, editor, FIRST_BODY_LINE);
   await sendKeys(sessionId, editor, KEY.ENTER);
 
-  const title = await waitForElement(
-    sessionId,
-    '[data-testid="document-title"]',
-  );
-  await clear(sessionId, title);
-  await sendKeys(sessionId, title, EXPECTED_TITLE);
-  await click(sessionId, editor);
+  await waitForElement(sessionId, '[data-testid="document-title"]');
+  await commitDocumentTitle(sessionId, EXPECTED_TITLE);
   await acceptRenameConfirmation(sessionId);
+  await click(sessionId, editor);
   const remountEditor = await waitForRemountVisible(sessionId);
   // WebDriver cannot reliably observe React's transient staging frame on every
   // platform. The component contract covers writes during that frame; the

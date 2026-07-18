@@ -81,6 +81,21 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("assertOpenedNote");
   });
 
+  it("通过 React 兼容方式提交标题并显式 blur，而非依赖 WebDriver clear/sendKeys", () => {
+    const runner = read(runnerPath);
+
+    expect(runner).toContain("commitDocumentTitle");
+    expect(runner).toContain("HTMLTextAreaElement.prototype");
+    expect(runner).toContain('new Event("input", { bubbles: true })');
+    expect(runner).toContain("el.blur()");
+    expect(runner).toMatch(
+      /commitDocumentTitle\(sessionId, EXPECTED_TITLE\)[\s\S]*acceptRenameConfirmation\(sessionId\)[\s\S]*click\(sessionId, editor\)/,
+    );
+    expect(runner).not.toMatch(
+      /document-title[\s\S]*clear\(sessionId, title\)[\s\S]*sendKeys\(sessionId, title, EXPECTED_TITLE\)/,
+    );
+  });
+
   it("将真实 Windows E2E 设为发布包构建后的硬门禁", () => {
     const workflow = read(".github/workflows/package-desktop.yml");
 
