@@ -36,7 +36,7 @@ describe("IPC boundary", () => {
     expect(ipc).toContain('invoke("settings_reset"');
     expect(ipc).toContain("export async function versionCleanup");
     expect(ipc).toContain('invoke<number>("version_cleanup_cmd"');
-    expect(llmCommands).toContain("Deprecated compatibility alias");
+    expect(llmCommands).toContain("list_providers()");
   });
 
   it("exposes the Run-only execution contract with typed wrappers", () => {

@@ -32,12 +32,15 @@ const removedVendorCredential = ["MINI", "MAX", "_CREDENTIAL_SERVICE"].join("");
 describe("AI harness architecture contracts", () => {
   it("keeps MCP tools/list diagnostic and out of the model tool surface", () => {
     const host = read("src-tauri/src/ai_runtime/mcp_host_runtime.rs");
+    const diagnostics = read("src-tauri/src/commands/ai_commands.rs");
     const policy = read("src-tauri/src/ai_runtime/tool_policy.rs");
     const resolver = read("src-tauri/src/ai_runtime/capability_resolver.rs");
     const executor = read("src-tauri/src/ai_runtime/tool_executor.rs");
 
-    expect(host).toContain("tools/list");
+    expect(host).toContain("discover_provider_tools");
+    expect(host).toContain("discover_provider_tools_without_recording");
     expect(host).toContain("call_provider_tool");
+    expect(diagnostics).toContain("MCP 服务已响应 tools/list");
 
     for (const rawTool of [
       "mcp.raw_tool_call",
