@@ -26,7 +26,7 @@ type OpenNoteHarnessOut = {
   getLiveMarkdown: () => string;
   schedulePathSync: (path: string, title: string) => void;
   onTitleChange?: (value: string) => void;
-  onTitleBlur?: () => void;
+  onTitleBlur?: (committedTitle?: string) => void;
 };
 
 vi.mock("@/lib/ipc", () => ({
@@ -404,7 +404,46 @@ describe("useOpenNote editorBodyMarkdown", () => {
 
     act(() => {
       outRef.current!.onTitleChange!("Iris E2E Persistence");
-      outRef.current!.onTitleBlur!();
+      outRef.current!.onTitleBlur!("Iris E2E Persistence");
+      vi.advanceTimersByTime(800);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(pathSyncSuggest).toHaveBeenCalledWith(
+      "未命名文档.md",
+      "Iris E2E Persistence",
+    );
+    expect(window.confirm).toHaveBeenCalled();
+  });
+
+  it("syncs path from blur title override when React state lags behind the DOM", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    pathSyncSuggest.mockResolvedValue({
+      needs_sync: true,
+      suggested_path: "Iris E2E Persistence.md",
+      conflict_resolved: false,
+    });
+
+    const outRef: { current: OpenNoteHarnessOut | null } = { current: null };
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          activePath: "未命名文档.md",
+          markdown: '---\ntitle: "未命名文档"\n---\n\n',
+          editorContentTick: 1,
+          outRef,
+        }),
+      );
+    });
+
+    act(() => {
+      outRef.current!.onTitleBlur!("Iris E2E Persistence");
       vi.advanceTimersByTime(800);
     });
 

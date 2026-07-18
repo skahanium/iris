@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 interface DocumentTitleFieldProps {
   value: string;
   onChange: (value: string) => void;
-  onBlur?: () => void;
+  onBlur?: (committedTitle: string) => void;
   editorRef: RefObject<Editor | null>;
   disabled?: boolean;
   readOnly?: boolean;
@@ -96,9 +96,16 @@ export function DocumentTitleField({
             setFocused(true);
             requestAnimationFrame(resizeTitle);
           }}
-          onBlur={() => {
+          onBlur={(event) => {
             setFocused(false);
-            onBlur?.();
+            const next = sanitizeDocumentTitleInput(event.target.value).slice(
+              0,
+              NOTE_TITLE_HARD_LIMIT,
+            );
+            if (next !== value) {
+              onChange(next);
+            }
+            onBlur?.(next);
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {

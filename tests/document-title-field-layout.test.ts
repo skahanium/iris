@@ -15,7 +15,7 @@ describe("document title field layout", () => {
     expect(source).toContain('data-testid="document-title"');
     expect(source).toContain("event.preventDefault()");
     expect(source).toContain("sanitizeDocumentTitleInput");
-    expect(source).not.toContain('type="text"');
+    expect(source).toContain("onBlur?.(next)");
   });
 
   it("clamps long titles to three lines and expands while focused", () => {

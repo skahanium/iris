@@ -266,11 +266,19 @@ export function useOpenNote({
     ],
   );
 
-  const onTitleBlur = useCallback(() => {
-    const path = activePathRef.current;
-    if (!path) return;
-    schedulePathSync(path, noteTitleRef.current);
-  }, [activePathRef, schedulePathSync]);
+  const onTitleBlur = useCallback(
+    (titleOverride?: string) => {
+      const path = activePathRef.current;
+      if (!path) return;
+      const title =
+        titleOverride !== undefined ? titleOverride : noteTitleRef.current;
+      if (titleOverride !== undefined) {
+        noteTitleRef.current = titleOverride;
+      }
+      schedulePathSync(path, title);
+    },
+    [activePathRef, schedulePathSync],
+  );
 
   const loadBodyIntoEditor = useCallback(
     (content: string) => {
