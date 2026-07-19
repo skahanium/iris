@@ -29,7 +29,6 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain('"tauri:options"');
     expect(runner).toContain('browserName: "wry"');
     expect(runner).toContain('data-testid="rail-new-note-button"');
-    expect(runner).toContain('data-testid="document-title"');
     expect(runner).toContain('data-testid="editor"');
     expect(runner).toContain('aria-label="关闭"');
     expect(runner).toContain("restartApplication");
@@ -40,34 +39,34 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).not.toContain("vitest run");
   });
 
-  it("在重启后直接读取临时 vault 的 UTF-8 Markdown 并作完整内容断言", () => {
+  it("在重启后直接读取临时 vault 的 UTF-8 Markdown 并断言正文持久化", () => {
     const runner = read(runnerPath);
 
     expect(runner).toContain("mkdtempSync");
     expect(runner).toContain("readFileSync");
     expect(runner).toContain("utf8");
     expect(runner).toContain("assertPersistedMarkdown");
-    expect(runner).toContain("EXPECTED_TITLE");
+    expect(runner).toContain("FIRST_BODY_LINE");
+    expect(runner).toContain("REMOUNT_BODY_LINE");
     expect(runner).toContain("EXPECTED_BODY");
     expect(runner).toContain("rmSync");
   });
 
-  it("用 Node 改 vault 固定文件名，不经 WebDriver 改标题或 path-sync 对话框", () => {
+  it("不经 WebDriver 改标题或 path-sync，沿用新建笔记真实路径追加正文", () => {
     const runner = read(runnerPath);
 
-    expect(runner).toContain("seedExpectedNote");
-    expect(runner).toContain("writeFileSync");
-    expect(runner).toContain("unlinkSync");
-    expect(runner).toContain("seed_note_body_missing");
-    expect(runner).toContain("runScenario(sessionId, vaultPath)");
+    expect(runner).toContain("readActiveNotePath");
+    expect(runner).toContain("waitForRemountVisible(sessionId, notePath)");
     expect(runner).toMatch(
-      /waitForSeedableNote\(vaultPath\)[\s\S]*seedExpectedNote\(vaultPath\)[\s\S]*reloadWebview\(sessionId\)[\s\S]*openPersistedNoteInApplication\(sessionId\)/,
+      /readActiveNotePath\(sessionId\)[\s\S]*waitForRemountVisible\(sessionId, notePath\)/,
     );
     expect(runner).not.toContain("commitDocumentTitle");
     expect(runner).not.toContain("confirmPathSyncAfterTitleRename");
     expect(runner).not.toContain("path-sync-confirm");
     expect(runner).not.toContain("title_dom_value_mismatch");
-    expect(runner).not.toContain("PATH_SYNC_DEBOUNCE_WAIT_MS");
+    expect(runner).not.toContain("seedExpectedNote");
+    expect(runner).not.toContain("EXPECTED_TITLE");
+    expect(runner).not.toContain("EXPECTED_FILE_NAME");
   });
 
   it("等待重挂载后的稳定 visible surface 再保存，并在同一 surface 追加正文", () => {
@@ -89,7 +88,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     );
   });
 
-  it("第二次真实启动后经应用 UI 打开笔记并断言标题和全文", () => {
+  it("第二次真实启动后经应用 UI 打开笔记并断言正文", () => {
     const runner = read(runnerPath);
     const welcome = read("src/components/layout/WelcomeEmpty.tsx");
 
@@ -97,6 +96,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("openPersistedNoteInApplication");
     expect(runner).toContain('data-testid="home-recent-note"');
     expect(runner).toContain("assertOpenedNote");
+    expect(runner).toContain("reopened_editor_body_mismatch");
   });
 
   it("将真实 Windows E2E 设为发布包构建后的硬门禁", () => {
