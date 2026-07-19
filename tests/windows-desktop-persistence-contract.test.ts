@@ -105,15 +105,19 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     );
   });
 
-  it("通过 WebDriver clear+sendKeys 与 React value tracker 提交标题", () => {
+  it("通过 React value tracker 重置后派发 input 提交标题", () => {
     const runner = read(runnerPath);
 
     expect(runner).toContain("commitDocumentTitle");
-    expect(runner).toContain("clearElement");
-    expect(runner).toContain("sendKeys(sessionId, titleEl, title)");
     expect(runner).toContain("_valueTracker");
+    expect(runner).toContain(
+      'tracker.setValue(current === nextTitle ? "" : current)',
+    );
+    expect(runner).toContain('new Event("input", { bubbles: true })');
     expect(runner).toContain("el.blur()");
     expect(runner).toContain("probeTitleDomValue");
+    expect(runner).not.toContain("clearElement");
+    expect(runner).not.toContain("sendKeys(sessionId, titleEl, title)");
   });
 
   it("将真实 Windows E2E 设为发布包构建后的硬门禁", () => {

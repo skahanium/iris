@@ -319,24 +319,17 @@ async function reloadWebview(sessionId) {
   });
 }
 
-async function clearElement(sessionId, element) {
-  await webdriverRequest(
-    "POST",
-    `/session/${sessionId}/element/${element}/clear`,
-    {},
-  );
-}
-
 async function commitDocumentTitle(sessionId, title) {
   const titleEl = await waitForElement(
     sessionId,
     '[data-testid="document-title"]',
   );
   await click(sessionId, titleEl);
-  await clearElement(sessionId, titleEl);
-  await sendKeys(sessionId, titleEl, title);
-  // React controlled inputs may ignore WebDriver-only value mutations unless
-  // the value tracker sees a change; reinforce with the classic tracker reset.
+  // WebDriver clear/sendKeys is unreliable on React controlled textareas in
+  // WebView2. Drive React via the classic _valueTracker reset: remember a value
+  // different from nextTitle, set the DOM through the prototype setter, then
+  // dispatch input so onChange runs. Do not assert el.value in this same tick —
+  // React may still be committing; probeTitleDomValue polls after.
   const committed = await executeSync(
     sessionId,
     `
@@ -344,21 +337,20 @@ async function commitDocumentTitle(sessionId, title) {
       const el = document.querySelector('[data-testid="document-title"]');
       if (!(el instanceof HTMLTextAreaElement)) return false;
       el.focus();
-      const previous = el.value;
+      const current = el.value;
       const proto = Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
         "value",
       );
       if (!proto?.set) return false;
-      proto.set.call(el, nextTitle);
       const tracker = el._valueTracker;
       if (tracker && typeof tracker.setValue === "function") {
-        tracker.setValue(previous);
+        tracker.setValue(current === nextTitle ? "" : current);
       }
+      proto.set.call(el, nextTitle);
       el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
       el.blur();
-      return el.value === nextTitle;
+      return true;
     `,
     [title],
   );
