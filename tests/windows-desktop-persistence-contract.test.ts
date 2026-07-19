@@ -105,16 +105,14 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     );
   });
 
-  it("通过 React 兼容方式提交标题并显式 blur，而非依赖 WebDriver clear/sendKeys", () => {
+  it("通过 WebDriver 选中并键入标题后 blur，因 Windows WebView 不认脚本 setter", () => {
     const runner = read(runnerPath);
 
     expect(runner).toContain("commitDocumentTitle");
-    expect(runner).toContain("HTMLTextAreaElement.prototype");
-    expect(runner).toContain('new InputEvent("input"');
+    expect(runner).toContain("sendKeys(sessionId, titleEl");
+    expect(runner).toMatch(/sendKeys\(sessionId, titleEl, `\$\{KEY\.CONTROL\}a`\)/);
     expect(runner).toContain("el.blur()");
-    expect(runner).not.toMatch(
-      /document-title[\s\S]*clear\(sessionId, title\)[\s\S]*sendKeys\(sessionId, title, EXPECTED_TITLE\)/,
-    );
+    expect(runner).toContain("probeTitleDomValue");
   });
 
   it("将真实 Windows E2E 设为发布包构建后的硬门禁", () => {

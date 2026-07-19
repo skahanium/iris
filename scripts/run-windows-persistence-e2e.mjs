@@ -320,43 +320,24 @@ async function reloadWebview(sessionId) {
 }
 
 async function commitDocumentTitle(sessionId, title) {
-  const committed = await executeAsync(
+  const titleEl = await waitForElement(
+    sessionId,
+    '[data-testid="document-title"]',
+  );
+  await click(sessionId, titleEl);
+  await sendKeys(sessionId, titleEl, `${KEY.CONTROL}a`);
+  await sendKeys(sessionId, titleEl, title);
+  const blurred = await executeSync(
     sessionId,
     `
-      const done = arguments[arguments.length - 1];
-      const nextTitle = arguments[0];
       const el = document.querySelector('[data-testid="document-title"]');
-      if (!(el instanceof HTMLTextAreaElement)) {
-        done(false);
-        return;
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      );
-      if (!descriptor?.set) {
-        done(false);
-        return;
-      }
-      el.focus();
-      descriptor.set.call(el, nextTitle);
-      el.dispatchEvent(
-        new InputEvent("input", {
-          bubbles: true,
-          cancelable: true,
-          inputType: "insertFromPaste",
-          data: nextTitle,
-        }),
-      );
-      el.dispatchEvent(new Event("change", { bubbles: true }));
+      if (!(el instanceof HTMLTextAreaElement)) return false;
       el.blur();
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => done(true));
-      });
+      return true;
     `,
-    [title],
   );
-  if (committed !== true) fail("document_title_commit_failed");
+  if (blurred !== true) fail("document_title_commit_failed");
+  await probeTitleDomValue(sessionId, title);
 }
 
 async function readDocumentTitleDomValue(sessionId) {
