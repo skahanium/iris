@@ -683,7 +683,14 @@ function App() {
         readOnly={isEditorPersistenceBlocked}
       />
     ),
-    [activePath, noteTitle, handleTitleChange, onTitleBlur, editorRef, isEditorPersistenceBlocked],
+    [
+      activePath,
+      noteTitle,
+      handleTitleChange,
+      onTitleBlur,
+      editorRef,
+      isEditorPersistenceBlocked,
+    ],
   );
 
   const { handleInsertToEditor, handleRedo, handleUndo, runEditorActionById } =

@@ -11,8 +11,8 @@ function lineCount(path: string): number {
 
 describe("App shell refactor contract", () => {
   it("keeps App.impl.tsx below the current shell split checkpoint", () => {
-    // 992: checkpoint after extracting path-sync confirm dialog to usePathSyncConfirm.
-    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(992);
+    // 994: checkpoint after wiring DocumentTitleField resetKey={activePath}.
+    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(994);
   });
 
   it("moves AI sidecar bridge state behind a dedicated hook", () => {
