@@ -56,6 +56,8 @@ interface UseOpenNoteOptions {
     markdown: string,
     move: () => Promise<DocumentPersistenceMoveResult>,
   ) => Promise<string>;
+  /** When provided, replaces `window.confirm` for path sync prompts (WebDriver E2E). */
+  confirmPathSync?: (message: string) => Promise<boolean>;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
     oldPath: string,
@@ -76,6 +78,7 @@ export function useOpenNote({
   editorReadyRef,
   dirtyRef,
   renamePersistedPath,
+  confirmPathSync,
   updateTabTitle,
   replaceOpenTabPath,
 }: UseOpenNoteOptions) {
@@ -207,7 +210,10 @@ export function useOpenNote({
             const msg = suggest.conflict_resolved
               ? `路径「${suggest.suggested_path}」已避开同名冲突。是否同步？`
               : `是否将文件路径同步为「${suggest.suggested_path}」？`;
-            if (!window.confirm(msg)) return;
+            const confirm =
+              confirmPathSync ??
+              ((message: string) => Promise.resolve(window.confirm(message)));
+            if (!(await confirm(msg))) return;
             const serializeLatest = () => {
               const editor = editorRef.current;
               return serializeOpenNote({
@@ -262,6 +268,7 @@ export function useOpenNote({
       frontmatterYamlRef,
       markdownRef,
       renamePersistedPath,
+      confirmPathSync,
       replaceOpenTabPath,
     ],
   );

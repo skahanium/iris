@@ -347,6 +347,19 @@ function App() {
       _move: () => Promise<DocumentPersistenceMoveResult>,
     ) => "",
   });
+  const pathSyncConfirmRef = useRef<{
+    message: string;
+    resolve: (accepted: boolean) => void;
+  } | null>(null);
+  const [pathSyncConfirmOpen, setPathSyncConfirmOpen] = useState(false);
+  const [pathSyncConfirmMessage, setPathSyncConfirmMessage] = useState("");
+  const confirmPathSync = useCallback((message: string) => {
+    return new Promise<boolean>((resolve) => {
+      pathSyncConfirmRef.current = { message, resolve };
+      setPathSyncConfirmMessage(message);
+      setPathSyncConfirmOpen(true);
+    });
+  }, []);
   const inlineAiDomain =
     activeNoteIsClassified &&
     classifiedUnlocked &&
@@ -379,6 +392,7 @@ function App() {
         markdownSnapshot,
         move,
       ),
+    confirmPathSync,
     updateTabTitle,
     replaceOpenTabPath,
   });
@@ -963,6 +977,25 @@ function App() {
             appUpdateController={appUpdateController}
           />
         }
+      />
+      <ConfirmDialog
+        open={pathSyncConfirmOpen}
+        title="同步文件路径"
+        message={pathSyncConfirmMessage}
+        confirmLabel="同步"
+        cancelLabel="保留当前路径"
+        confirmTestId="path-sync-confirm"
+        cancelTestId="path-sync-cancel"
+        onConfirm={() => {
+          pathSyncConfirmRef.current?.resolve(true);
+          pathSyncConfirmRef.current = null;
+          setPathSyncConfirmOpen(false);
+        }}
+        onCancel={() => {
+          pathSyncConfirmRef.current?.resolve(false);
+          pathSyncConfirmRef.current = null;
+          setPathSyncConfirmOpen(false);
+        }}
       />
       <ConfirmDialog
         open={persistenceBlocker !== null}

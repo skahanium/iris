@@ -31,6 +31,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEBDRIVER_URL = "http://127.0.0.1:4444";
 const SESSION_TIMEOUT_MS = 45_000;
 const POLL_INTERVAL_MS = 125;
+/** Matches PATH_SYNC_DEBOUNCE_MS (800) in useOpenNote plus scheduling slack. */
+const PATH_SYNC_DEBOUNCE_WAIT_MS = 900;
 const KEY = {
   CONTROL: "\uE009",
   END: "\uE010",
@@ -126,6 +128,27 @@ async function webdriverRequest(method, pathname, body) {
     fail(`webdriver_${method.toLowerCase()}_failed`);
   }
   return payload.value;
+}
+
+async function tryWebdriverRequest(method, pathname, body) {
+  try {
+    const response = await fetch(`${WEBDRIVER_URL}${pathname}`, {
+      method,
+      headers: body ? { "content-type": "application/json" } : undefined,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.value?.error) {
+      return { ok: false };
+    }
+    return { ok: true, value: payload.value };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitUntil(predicate, code, pollIntervalMs = POLL_INTERVAL_MS) {
@@ -268,6 +291,27 @@ async function invokeTauri(sessionId, command, payload) {
   if (result?.ok !== true) fail("tauri_fixture_command_failed");
 }
 
+async function invokeTauriWithValue(sessionId, command, payload) {
+  const result = await executeAsync(
+    sessionId,
+    `
+      const done = arguments[arguments.length - 1];
+      const [command, payload] = arguments;
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (typeof invoke !== "function") {
+        done({ ok: false });
+        return;
+      }
+      Promise.resolve(invoke(command, payload))
+        .then((value) => done({ ok: true, value }))
+        .catch(() => done({ ok: false }));
+    `,
+    [command, payload],
+  );
+  if (result?.ok !== true) fail("path_sync_invoke_failed");
+  return result.value;
+}
+
 async function reloadWebview(sessionId) {
   await webdriverRequest("POST", `/session/${sessionId}/execute/sync`, {
     script: "window.location.reload(); return true;",
@@ -300,6 +344,85 @@ async function commitDocumentTitle(sessionId, title) {
     [title],
   );
   if (committed !== true) fail("document_title_commit_failed");
+}
+
+async function readDocumentTitleDomValue(sessionId) {
+  const value = await executeSync(
+    sessionId,
+    `
+      const el = document.querySelector('[data-testid="document-title"]');
+      return el instanceof HTMLTextAreaElement ? el.value : "";
+    `,
+  );
+  return typeof value === "string" ? value : "";
+}
+
+async function probeTitleDomValue(sessionId, expectedTitle) {
+  const value = await readDocumentTitleDomValue(sessionId);
+  if (value !== expectedTitle) {
+    fail("title_dom_value_mismatch");
+  }
+}
+
+async function readActiveNotePath(sessionId) {
+  const notePath = await executeSync(
+    sessionId,
+    `
+      const surface = document.querySelector(
+        '[data-editor-visibility="visible"][data-path]',
+      );
+      return surface?.getAttribute("data-path") ?? "";
+    `,
+  );
+  if (typeof notePath !== "string" || !notePath.trim()) {
+    fail("active_note_path_missing");
+  }
+  return notePath;
+}
+
+async function probePathSyncNeedsSync(sessionId, currentPath, title) {
+  const suggest = await invokeTauriWithValue(sessionId, "path_sync_suggest", {
+    currentPath,
+    title,
+  });
+  if (!suggest || typeof suggest.needs_sync !== "boolean") {
+    fail("path_sync_invoke_failed");
+  }
+  if (!suggest.needs_sync) {
+    fail("path_sync_skipped");
+  }
+  return suggest;
+}
+
+async function probeWebDriverAlertAvailable(sessionId) {
+  const result = await tryWebdriverRequest(
+    "GET",
+    `/session/${sessionId}/alert/text`,
+  );
+  return result.ok;
+}
+
+/** Diagnostic error when path sync needs native confirm but WebDriver has no alert. */
+async function failIfWebDriverAlertMissing(sessionId) {
+  if (!(await probeWebDriverAlertAvailable(sessionId))) {
+    fail("alert_endpoint_no_dialog");
+  }
+}
+
+async function acceptPathSyncConfirmation(sessionId) {
+  const confirmButton = await waitForElement(
+    sessionId,
+    '[data-testid="path-sync-confirm"]',
+  );
+  await click(sessionId, confirmButton);
+}
+
+async function confirmPathSyncAfterTitleRename(sessionId) {
+  await probeTitleDomValue(sessionId, EXPECTED_TITLE);
+  await sleep(PATH_SYNC_DEBOUNCE_WAIT_MS);
+  const currentPath = await readActiveNotePath(sessionId);
+  await probePathSyncNeedsSync(sessionId, currentPath, EXPECTED_TITLE);
+  await acceptPathSyncConfirmation(sessionId);
 }
 
 async function acceptRenameConfirmation(sessionId) {
@@ -420,7 +543,7 @@ async function runScenario(sessionId) {
 
   await waitForElement(sessionId, '[data-testid="document-title"]');
   await commitDocumentTitle(sessionId, EXPECTED_TITLE);
-  await acceptRenameConfirmation(sessionId);
+  await confirmPathSyncAfterTitleRename(sessionId);
   await click(sessionId, editor);
   const remountEditor = await waitForRemountVisible(sessionId);
   // WebDriver cannot reliably observe React's transient staging frame on every

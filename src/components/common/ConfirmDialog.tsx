@@ -20,6 +20,8 @@ interface ConfirmDialogProps {
   description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  confirmTestId?: string;
+  cancelTestId?: string;
   variant?: "default" | "destructive";
   onConfirm: () => void;
   onCancel: () => void;
@@ -32,6 +34,8 @@ export const ConfirmDialog = memo(function ConfirmDialog({
   description,
   confirmLabel = "确认",
   cancelLabel = "取消",
+  confirmTestId,
+  cancelTestId,
   variant = "default",
   onConfirm,
   onCancel,
@@ -78,6 +82,7 @@ export const ConfirmDialog = memo(function ConfirmDialog({
             variant="ghost"
             className="h-8 px-3 text-xs"
             onClick={onCancel}
+            data-testid={cancelTestId}
           >
             {cancelLabel}
           </Button>
@@ -86,6 +91,7 @@ export const ConfirmDialog = memo(function ConfirmDialog({
             variant={isDestructive ? "destructive" : "default"}
             className="h-8 px-3 text-xs"
             onClick={onConfirm}
+            data-testid={confirmTestId}
           >
             {confirmLabel}
           </Button>

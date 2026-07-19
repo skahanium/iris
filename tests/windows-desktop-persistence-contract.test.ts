@@ -81,6 +81,30 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("assertOpenedNote");
   });
 
+  it("在标题提交后分阶段探测 DOM、路径同步与确认对话框，再点击 path-sync-confirm", () => {
+    const runner = read(runnerPath);
+    const openNote = read("src/hooks/useOpenNote.ts");
+    const app = read("src/App.impl.tsx");
+
+    expect(runner).toContain("probeTitleDomValue");
+    expect(runner).toContain("title_dom_value_mismatch");
+    expect(runner).toContain("PATH_SYNC_DEBOUNCE_WAIT_MS");
+    expect(runner).toContain("probePathSyncNeedsSync");
+    expect(runner).toContain("path_sync_invoke_failed");
+    expect(runner).toContain("path_sync_skipped");
+    expect(runner).toContain("probeWebDriverAlertAvailable");
+    expect(runner).toContain("failIfWebDriverAlertMissing");
+    expect(runner).toContain("alert_endpoint_no_dialog");
+    expect(runner).toContain("confirmPathSyncAfterTitleRename");
+    expect(runner).toContain('data-testid="path-sync-confirm"');
+    expect(runner).toContain("acceptPathSyncConfirmation");
+    expect(openNote).toContain("confirmPathSync");
+    expect(app).toContain('confirmTestId="path-sync-confirm"');
+    expect(runner).toMatch(
+      /commitDocumentTitle\(sessionId, EXPECTED_TITLE\)[\s\S]*confirmPathSyncAfterTitleRename\(sessionId\)[\s\S]*click\(sessionId, editor\)/,
+    );
+  });
+
   it("通过 React 兼容方式提交标题并显式 blur，而非依赖 WebDriver clear/sendKeys", () => {
     const runner = read(runnerPath);
 
@@ -88,9 +112,6 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("HTMLTextAreaElement.prototype");
     expect(runner).toContain('new Event("input", { bubbles: true })');
     expect(runner).toContain("el.blur()");
-    expect(runner).toMatch(
-      /commitDocumentTitle\(sessionId, EXPECTED_TITLE\)[\s\S]*acceptRenameConfirmation\(sessionId\)[\s\S]*click\(sessionId, editor\)/,
-    );
     expect(runner).not.toMatch(
       /document-title[\s\S]*clear\(sessionId, title\)[\s\S]*sendKeys\(sessionId, title, EXPECTED_TITLE\)/,
     );
