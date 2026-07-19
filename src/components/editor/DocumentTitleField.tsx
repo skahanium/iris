@@ -27,6 +27,16 @@ interface DocumentTitleFieldProps {
   className?: string;
 }
 
+function normalizeTitle(raw: string): string {
+  return sanitizeDocumentTitleInput(raw).slice(0, NOTE_TITLE_HARD_LIMIT);
+}
+
+/**
+ * Document title uses an uncontrolled textarea seeded from props.
+ * While focused, the DOM is the source of truth so platform WebDriver /
+ * IME / paste can mutate the field without fighting a React `value` prop.
+ * Parent state and path-sync commit on blur (and context-menu edits).
+ */
 export function DocumentTitleField({
   value,
   onChange,
@@ -39,7 +49,10 @@ export function DocumentTitleField({
 }: DocumentTitleFieldProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [focused, setFocused] = useState(false);
-  const len = value.length;
+  const [seed, setSeed] = useState(value);
+  const [liveLen, setLiveLen] = useState(value.length);
+  const seedRef = useRef(value);
+  const len = focused ? liveLen : value.length;
   const showCount = len > NOTE_TITLE_SOFT_LIMIT;
 
   const resizeTitle = useCallback(() => {
@@ -50,23 +63,36 @@ export function DocumentTitleField({
   }, []);
 
   useLayoutEffect(() => {
+    if (focused) return;
+    if (value === seedRef.current) return;
+    seedRef.current = value;
+    setSeed(value);
+    setLiveLen(value.length);
+  }, [focused, value]);
+
+  useLayoutEffect(() => {
     resizeTitle();
-  }, [focused, resizeTitle, value]);
+  }, [focused, resizeTitle, seed]);
 
   const commit = (raw: string) => {
-    const next = sanitizeDocumentTitleInput(raw).slice(
-      0,
-      NOTE_TITLE_HARD_LIMIT,
-    );
+    const next = normalizeTitle(raw);
+    seedRef.current = next;
+    setSeed(next);
+    setLiveLen(next.length);
     if (next !== value) {
       onChange(next);
     }
+    const el = inputRef.current;
+    if (el && el.value !== next) {
+      el.value = next;
+    }
+    return next;
   };
 
   return (
     <DocumentTitleContextMenu
       inputRef={inputRef}
-      value={value}
+      value={seed}
       onValueChange={commit}
       readOnly={readOnly || disabled}
     >
@@ -78,18 +104,19 @@ export function DocumentTitleField({
         data-testid="document-title-field"
       >
         <textarea
+          key={seed}
           ref={inputRef}
           rows={1}
           data-testid="document-title"
           className="iris-doc-title"
-          value={value}
+          defaultValue={seed}
           disabled={disabled}
           readOnly={readOnly}
           placeholder={placeholder}
           aria-label="文档标题"
-          title={value || undefined}
-          onChange={(event) => {
-            commit(event.target.value);
+          title={seed || undefined}
+          onInput={(event) => {
+            setLiveLen(event.currentTarget.value.length);
             resizeTitle();
           }}
           onFocus={() => {
@@ -98,13 +125,7 @@ export function DocumentTitleField({
           }}
           onBlur={(event) => {
             setFocused(false);
-            const next = sanitizeDocumentTitleInput(event.target.value).slice(
-              0,
-              NOTE_TITLE_HARD_LIMIT,
-            );
-            if (next !== value) {
-              onChange(next);
-            }
+            const next = commit(event.target.value);
             onBlur?.(next);
           }}
           onKeyDown={(event) => {
@@ -124,8 +145,14 @@ export function DocumentTitleField({
           }}
           onPaste={(event) => {
             event.preventDefault();
+            const el = event.currentTarget;
             const pasted = event.clipboardData.getData("text/plain");
-            const merged = sanitizeDocumentTitleInput(value + pasted);
+            const start = el.selectionStart ?? el.value.length;
+            const end = el.selectionEnd ?? start;
+            const merged = normalizeTitle(
+              `${el.value.slice(0, start)}${pasted}${el.value.slice(end)}`,
+            );
+            el.value = merged;
             commit(merged);
             requestAnimationFrame(resizeTitle);
           }}

@@ -325,11 +325,9 @@ async function commitDocumentTitle(sessionId, title) {
     '[data-testid="document-title"]',
   );
   await click(sessionId, titleEl);
-  // WebDriver clear/sendKeys is unreliable on React controlled textareas in
-  // WebView2. Drive React via the classic _valueTracker reset: remember a value
-  // different from nextTitle, set the DOM through the prototype setter, then
-  // dispatch input so onChange runs. Do not assert el.value in this same tick —
-  // React may still be committing; probeTitleDomValue polls after.
+  // Title field is uncontrolled while focused (defaultValue seed). Assigning
+  // el.value no longer fights a React value prop; blur commits into app state
+  // and triggers path sync.
   const committed = await executeSync(
     sessionId,
     `
@@ -337,20 +335,10 @@ async function commitDocumentTitle(sessionId, title) {
       const el = document.querySelector('[data-testid="document-title"]');
       if (!(el instanceof HTMLTextAreaElement)) return false;
       el.focus();
-      const current = el.value;
-      const proto = Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      );
-      if (!proto?.set) return false;
-      const tracker = el._valueTracker;
-      if (tracker && typeof tracker.setValue === "function") {
-        tracker.setValue(current === nextTitle ? "" : current);
-      }
-      proto.set.call(el, nextTitle);
+      el.value = nextTitle;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.blur();
-      return true;
+      return el.value === nextTitle;
     `,
     [title],
   );

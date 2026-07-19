@@ -105,17 +105,16 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     );
   });
 
-  it("通过 React value tracker 重置后派发 input 提交标题", () => {
+  it("在非受控标题框上直接写 DOM 值并 blur 提交", () => {
     const runner = read(runnerPath);
+    const titleField = read("src/components/editor/DocumentTitleField.tsx");
 
+    expect(titleField).toContain("defaultValue={seed}");
     expect(runner).toContain("commitDocumentTitle");
-    expect(runner).toContain("_valueTracker");
-    expect(runner).toContain(
-      'tracker.setValue(current === nextTitle ? "" : current)',
-    );
-    expect(runner).toContain('new Event("input", { bubbles: true })');
+    expect(runner).toContain("el.value = nextTitle");
     expect(runner).toContain("el.blur()");
     expect(runner).toContain("probeTitleDomValue");
+    expect(runner).not.toContain("_valueTracker");
     expect(runner).not.toContain("clearElement");
     expect(runner).not.toContain("sendKeys(sessionId, titleEl, title)");
   });

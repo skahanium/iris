@@ -7,15 +7,17 @@ function read(path: string): string {
 }
 
 describe("document title field layout", () => {
-  it("uses a multiline title control without allowing newline titles", () => {
+  it("uses an uncontrolled title textarea seeded from props", () => {
     const source = read("src/components/editor/DocumentTitleField.tsx");
 
     expect(source).toContain("<textarea");
     expect(source).toContain("rows={1}");
     expect(source).toContain('data-testid="document-title"');
+    expect(source).toContain("defaultValue={seed}");
     expect(source).toContain("event.preventDefault()");
     expect(source).toContain("sanitizeDocumentTitleInput");
     expect(source).toContain("onBlur?.(next)");
+    expect(source).not.toMatch(/value=\{value\}/);
   });
 
   it("clamps long titles to three lines and expands while focused", () => {
