@@ -7,17 +7,23 @@ function read(path: string): string {
 }
 
 describe("document title field layout", () => {
-  it("uses an uncontrolled title textarea seeded from props", () => {
+  it("uses an uncontrolled title textarea reset by note path", () => {
     const source = read("src/components/editor/DocumentTitleField.tsx");
+    const app = read("src/App.impl.tsx");
 
     expect(source).toContain("<textarea");
     expect(source).toContain("rows={1}");
     expect(source).toContain('data-testid="document-title"');
-    expect(source).toContain("defaultValue={seed}");
+    expect(source).toContain("defaultValue={value}");
+    expect(source).toContain("key={resetKey}");
+    expect(source).toContain("resetKey: string");
+    expect(source).toContain("focusedRef");
+    expect(source).toContain("if (el.value !== value)");
     expect(source).toContain("event.preventDefault()");
     expect(source).toContain("sanitizeDocumentTitleInput");
     expect(source).toContain("onBlur?.(next)");
     expect(source).not.toMatch(/value=\{value\}/);
+    expect(app).toContain('resetKey={activePath ?? ""}');
   });
 
   it("clamps long titles to three lines and expands while focused", () => {

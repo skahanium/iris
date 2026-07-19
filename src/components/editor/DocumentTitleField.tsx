@@ -18,6 +18,8 @@ import { cn } from "@/lib/utils";
 
 interface DocumentTitleFieldProps {
   value: string;
+  /** Remount the textarea when the open note changes (typically activePath). */
+  resetKey: string;
   onChange: (value: string) => void;
   onBlur?: (committedTitle: string) => void;
   editorRef: RefObject<Editor | null>;
@@ -36,9 +38,11 @@ function normalizeTitle(raw: string): string {
  * While focused, the DOM is the source of truth so platform WebDriver /
  * IME / paste can mutate the field without fighting a React `value` prop.
  * Parent state and path-sync commit on blur (and context-menu edits).
+ * When blurred, external `value` updates are mirrored into the DOM.
  */
 export function DocumentTitleField({
   value,
+  resetKey,
   onChange,
   onBlur,
   editorRef,
@@ -48,10 +52,9 @@ export function DocumentTitleField({
   className,
 }: DocumentTitleFieldProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const focusedRef = useRef(false);
   const [focused, setFocused] = useState(false);
-  const [seed, setSeed] = useState(value);
   const [liveLen, setLiveLen] = useState(value.length);
-  const seedRef = useRef(value);
   const len = focused ? liveLen : value.length;
   const showCount = len > NOTE_TITLE_SOFT_LIMIT;
 
@@ -63,37 +66,48 @@ export function DocumentTitleField({
   }, []);
 
   useLayoutEffect(() => {
-    if (focused) return;
-    if (value === seedRef.current) return;
-    seedRef.current = value;
-    setSeed(value);
+    if (focusedRef.current) return;
+    const el = inputRef.current;
+    if (!el) return;
+    if (el.value !== value) {
+      el.value = value;
+    }
     setLiveLen(value.length);
-  }, [focused, value]);
+  }, [value, resetKey]);
 
   useLayoutEffect(() => {
     resizeTitle();
-  }, [focused, resizeTitle, seed]);
+  }, [focused, resizeTitle, value, resetKey]);
 
-  const commit = (raw: string) => {
+  const commitFromDom = (raw: string) => {
     const next = normalizeTitle(raw);
-    seedRef.current = next;
-    setSeed(next);
-    setLiveLen(next.length);
-    if (next !== value) {
-      onChange(next);
-    }
     const el = inputRef.current;
     if (el && el.value !== next) {
       el.value = next;
     }
+    setLiveLen(next.length);
+    if (next !== value) {
+      onChange(next);
+    }
     return next;
+  };
+
+  const applyMenuValue = (raw: string) => {
+    const next = normalizeTitle(raw);
+    const el = inputRef.current;
+    if (el) {
+      el.value = next;
+    }
+    setLiveLen(next.length);
+    if (next !== value) {
+      onChange(next);
+    }
   };
 
   return (
     <DocumentTitleContextMenu
       inputRef={inputRef}
-      value={seed}
-      onValueChange={commit}
+      onValueChange={applyMenuValue}
       readOnly={readOnly || disabled}
     >
       <div
@@ -104,28 +118,34 @@ export function DocumentTitleField({
         data-testid="document-title-field"
       >
         <textarea
-          key={seed}
+          key={resetKey}
           ref={inputRef}
           rows={1}
           data-testid="document-title"
           className="iris-doc-title"
-          defaultValue={seed}
+          defaultValue={value}
           disabled={disabled}
           readOnly={readOnly}
           placeholder={placeholder}
           aria-label="文档标题"
-          title={seed || undefined}
+          title={value || undefined}
           onInput={(event) => {
-            setLiveLen(event.currentTarget.value.length);
+            const next = normalizeTitle(event.currentTarget.value);
+            setLiveLen(next.length);
             resizeTitle();
+            if (next !== value) {
+              onChange(next);
+            }
           }}
           onFocus={() => {
+            focusedRef.current = true;
             setFocused(true);
             requestAnimationFrame(resizeTitle);
           }}
           onBlur={(event) => {
+            focusedRef.current = false;
             setFocused(false);
-            const next = commit(event.target.value);
+            const next = commitFromDom(event.target.value);
             onBlur?.(next);
           }}
           onKeyDown={(event) => {
@@ -153,7 +173,10 @@ export function DocumentTitleField({
               `${el.value.slice(0, start)}${pasted}${el.value.slice(end)}`,
             );
             el.value = merged;
-            commit(merged);
+            setLiveLen(merged.length);
+            if (merged !== value) {
+              onChange(merged);
+            }
             requestAnimationFrame(resizeTitle);
           }}
         />

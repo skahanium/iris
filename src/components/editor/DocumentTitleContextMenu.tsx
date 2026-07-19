@@ -11,7 +11,6 @@ import {
 
 interface DocumentTitleContextMenuProps {
   inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
-  value: string;
   onValueChange: (value: string) => void;
   readOnly?: boolean;
   children: React.ReactNode;
@@ -20,7 +19,6 @@ interface DocumentTitleContextMenuProps {
 /** 文档标题输入框自定义右键（剪贴板，`iris_only`） */
 export function DocumentTitleContextMenu({
   inputRef,
-  value,
   onValueChange,
   readOnly = false,
   children,
@@ -48,6 +46,11 @@ export function DocumentTitleContextMenu({
     setMenu({ open: true, x: event.clientX, y: event.clientY });
   }, []);
 
+  const readDomValue = useCallback(
+    () => inputRef.current?.value ?? "",
+    [inputRef],
+  );
+
   const runAction = useCallback(
     async (id: string) => {
       if (readOnly && (id === "cut" || id === "paste")) return;
@@ -57,21 +60,22 @@ export function DocumentTitleContextMenu({
       const start = el.selectionStart ?? 0;
       const end = el.selectionEnd ?? start;
       const selection = { start, end };
+      const currentValue = readDomValue();
 
       try {
         switch (id) {
           case "cut": {
-            const cut = await cutTextFieldSelection(value, selection);
+            const cut = await cutTextFieldSelection(currentValue, selection);
             if (!cut) return;
             onValueChange(cut.value);
             applyTextFieldCaret(el, cut.caret);
             break;
           }
           case "copy":
-            await copyTextFieldSelection(value, selection);
+            await copyTextFieldSelection(currentValue, selection);
             break;
           case "paste": {
-            const pasted = await pasteIntoTextField(value, selection);
+            const pasted = await pasteIntoTextField(currentValue, selection);
             if (!pasted) return;
             onValueChange(pasted.value);
             applyTextFieldCaret(el, pasted.caret);
@@ -89,7 +93,7 @@ export function DocumentTitleContextMenu({
         }
       }
     },
-    [inputRef, onValueChange, readOnly, value],
+    [inputRef, onValueChange, readDomValue, readOnly],
   );
 
   return (

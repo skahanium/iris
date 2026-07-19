@@ -108,8 +108,12 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
   it("在非受控标题框上直接写 DOM 值并 blur 提交", () => {
     const runner = read(runnerPath);
     const titleField = read("src/components/editor/DocumentTitleField.tsx");
+    const app = read("src/App.impl.tsx");
 
-    expect(titleField).toContain("defaultValue={seed}");
+    expect(titleField).toContain("defaultValue={value}");
+    expect(titleField).toContain("key={resetKey}");
+    expect(titleField).toContain("if (el.value !== value)");
+    expect(app).toContain('resetKey={activePath ?? ""}');
     expect(runner).toContain("commitDocumentTitle");
     expect(runner).toContain("el.value = nextTitle");
     expect(runner).toContain("el.blur()");

@@ -676,6 +676,7 @@ function App() {
     () => (
       <DocumentTitleField
         value={noteTitle}
+        resetKey={activePath ?? ""}
         onChange={handleTitleChange}
         onBlur={onTitleBlur}
         editorRef={editorRef}
@@ -683,6 +684,7 @@ function App() {
       />
     ),
     [
+      activePath,
       noteTitle,
       handleTitleChange,
       onTitleBlur,
