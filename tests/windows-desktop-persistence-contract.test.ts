@@ -110,7 +110,9 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
 
     expect(runner).toContain("commitDocumentTitle");
     expect(runner).toContain("sendKeys(sessionId, titleEl");
-    expect(runner).toMatch(/sendKeys\(sessionId, titleEl, `\$\{KEY\.CONTROL\}a`\)/);
+    expect(runner).toMatch(
+      /sendKeys\(sessionId, titleEl, `\$\{KEY\.CONTROL\}a`\)/,
+    );
     expect(runner).toContain("el.blur()");
     expect(runner).toContain("probeTitleDomValue");
   });
