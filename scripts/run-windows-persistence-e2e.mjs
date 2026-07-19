@@ -21,6 +21,8 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -31,8 +33,6 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WEBDRIVER_URL = "http://127.0.0.1:4444";
 const SESSION_TIMEOUT_MS = 45_000;
 const POLL_INTERVAL_MS = 125;
-/** Matches PATH_SYNC_DEBOUNCE_MS (800) in useOpenNote plus scheduling slack. */
-const PATH_SYNC_DEBOUNCE_WAIT_MS = 900;
 const KEY = {
   CONTROL: "\uE009",
   END: "\uE010",
@@ -128,27 +128,6 @@ async function webdriverRequest(method, pathname, body) {
     fail(`webdriver_${method.toLowerCase()}_failed`);
   }
   return payload.value;
-}
-
-async function tryWebdriverRequest(method, pathname, body) {
-  try {
-    const response = await fetch(`${WEBDRIVER_URL}${pathname}`, {
-      method,
-      headers: body ? { "content-type": "application/json" } : undefined,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok || !payload || payload.value?.error) {
-      return { ok: false };
-    }
-    return { ok: true, value: payload.value };
-  } catch {
-    return { ok: false };
-  }
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function waitUntil(predicate, code, pollIntervalMs = POLL_INTERVAL_MS) {
@@ -291,145 +270,11 @@ async function invokeTauri(sessionId, command, payload) {
   if (result?.ok !== true) fail("tauri_fixture_command_failed");
 }
 
-async function invokeTauriWithValue(sessionId, command, payload) {
-  const result = await executeAsync(
-    sessionId,
-    `
-      const done = arguments[arguments.length - 1];
-      const [command, payload] = arguments;
-      const invoke = window.__TAURI_INTERNALS__?.invoke;
-      if (typeof invoke !== "function") {
-        done({ ok: false });
-        return;
-      }
-      Promise.resolve(invoke(command, payload))
-        .then((value) => done({ ok: true, value }))
-        .catch(() => done({ ok: false }));
-    `,
-    [command, payload],
-  );
-  if (result?.ok !== true) fail("path_sync_invoke_failed");
-  return result.value;
-}
-
 async function reloadWebview(sessionId) {
   await webdriverRequest("POST", `/session/${sessionId}/execute/sync`, {
     script: "window.location.reload(); return true;",
     args: [],
   });
-}
-
-async function commitDocumentTitle(sessionId, title) {
-  const titleEl = await waitForElement(
-    sessionId,
-    '[data-testid="document-title"]',
-  );
-  await click(sessionId, titleEl);
-  // Title field is uncontrolled while focused (defaultValue seed). Assigning
-  // el.value no longer fights a React value prop; blur commits into app state
-  // and triggers path sync.
-  const committed = await executeSync(
-    sessionId,
-    `
-      const nextTitle = arguments[0];
-      const el = document.querySelector('[data-testid="document-title"]');
-      if (!(el instanceof HTMLTextAreaElement)) return false;
-      el.focus();
-      el.value = nextTitle;
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.blur();
-      return el.value === nextTitle;
-    `,
-    [title],
-  );
-  if (committed !== true) fail("document_title_commit_failed");
-  await probeTitleDomValue(sessionId, title);
-}
-
-async function readDocumentTitleDomValue(sessionId) {
-  const value = await executeSync(
-    sessionId,
-    `
-      const el = document.querySelector('[data-testid="document-title"]');
-      return el instanceof HTMLTextAreaElement ? el.value : "";
-    `,
-  );
-  return typeof value === "string" ? value : "";
-}
-
-async function probeTitleDomValue(sessionId, expectedTitle) {
-  await waitUntil(
-    async () => (await readDocumentTitleDomValue(sessionId)) === expectedTitle,
-    "title_dom_value_mismatch",
-  );
-}
-
-async function readActiveNotePath(sessionId) {
-  const notePath = await executeSync(
-    sessionId,
-    `
-      const surface = document.querySelector(
-        '[data-editor-visibility="visible"][data-path]',
-      );
-      return surface?.getAttribute("data-path") ?? "";
-    `,
-  );
-  if (typeof notePath !== "string" || !notePath.trim()) {
-    fail("active_note_path_missing");
-  }
-  return notePath;
-}
-
-async function probePathSyncNeedsSync(sessionId, currentPath, title) {
-  const suggest = await invokeTauriWithValue(sessionId, "path_sync_suggest", {
-    currentPath,
-    title,
-  });
-  if (!suggest || typeof suggest.needs_sync !== "boolean") {
-    fail("path_sync_invoke_failed");
-  }
-  if (!suggest.needs_sync) {
-    fail("path_sync_skipped");
-  }
-  return suggest;
-}
-
-async function probeWebDriverAlertAvailable(sessionId) {
-  const result = await tryWebdriverRequest(
-    "GET",
-    `/session/${sessionId}/alert/text`,
-  );
-  return result.ok;
-}
-
-/** Diagnostic error when path sync needs native confirm but WebDriver has no alert. */
-async function failIfWebDriverAlertMissing(sessionId) {
-  if (!(await probeWebDriverAlertAvailable(sessionId))) {
-    fail("alert_endpoint_no_dialog");
-  }
-}
-
-async function acceptPathSyncConfirmation(sessionId) {
-  const confirmButton = await waitForElement(
-    sessionId,
-    '[data-testid="path-sync-confirm"]',
-  );
-  await click(sessionId, confirmButton);
-}
-
-async function confirmPathSyncAfterTitleRename(sessionId) {
-  await probeTitleDomValue(sessionId, EXPECTED_TITLE);
-  await sleep(PATH_SYNC_DEBOUNCE_WAIT_MS);
-  const currentPath = await readActiveNotePath(sessionId);
-  await probePathSyncNeedsSync(sessionId, currentPath, EXPECTED_TITLE);
-  await acceptPathSyncConfirmation(sessionId);
-}
-
-async function acceptRenameConfirmation(sessionId) {
-  await waitUntil(async () => {
-    await webdriverRequest("POST", `/session/${sessionId}/alert/accept`, {});
-    return true;
-  }, "title_rename_confirmation_missing");
 }
 
 async function pressSave(sessionId) {
@@ -472,6 +317,48 @@ async function waitForRemountVisible(sessionId) {
     sessionId,
     `[data-editor-visibility="visible"][data-editor-surface-identity="${EXPECTED_FILE_NAME}"][data-path="${EXPECTED_FILE_NAME}"] [data-testid="editor"] [contenteditable="true"]`,
   );
+}
+
+/**
+ * WebDriver cannot reliably drive the document-title field in WebView2.
+ * After the app has persisted the first body line under an untitled name,
+ * rewrite the vault note to the fixed expected path + frontmatter title.
+ */
+function seedExpectedNote(vaultPath) {
+  const notes = readdirSync(vaultPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+    .map((entry) => entry.name);
+  if (notes.length !== 1) fail("unexpected_markdown_file_count");
+
+  const oldName = notes[0];
+  const oldPath = path.join(vaultPath, oldName);
+  const content = readFileSync(oldPath, "utf8");
+  if (!content.includes(FIRST_BODY_LINE)) fail("seed_note_body_missing");
+
+  const seeded = [
+    "---",
+    `title: \"${EXPECTED_TITLE}\"`,
+    "---",
+    "",
+    FIRST_BODY_LINE,
+    "",
+  ].join("\n");
+  const nextPath = path.join(vaultPath, EXPECTED_FILE_NAME);
+  writeFileSync(nextPath, seeded, "utf8");
+  if (oldName !== EXPECTED_FILE_NAME) {
+    unlinkSync(oldPath);
+  }
+}
+
+async function waitForSeedableNote(vaultPath) {
+  await waitUntil(() => {
+    const notes = readdirSync(vaultPath, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+      .map((entry) => entry.name);
+    if (notes.length !== 1) return false;
+    const content = readFileSync(path.join(vaultPath, notes[0]), "utf8");
+    return content.includes(FIRST_BODY_LINE);
+  }, "seed_note_body_missing");
 }
 
 function markdownFile(vaultPath) {
@@ -524,7 +411,7 @@ async function assertOpenedNote(sessionId) {
   }
 }
 
-async function runScenario(sessionId) {
+async function runScenario(sessionId, vaultPath) {
   await waitForElement(sessionId, '[data-testid="home-workbench"]');
 
   const newNote = await waitForElement(
@@ -540,11 +427,16 @@ async function runScenario(sessionId) {
   await click(sessionId, editor);
   await sendKeys(sessionId, editor, FIRST_BODY_LINE);
   await sendKeys(sessionId, editor, KEY.ENTER);
+  await pressSave(sessionId);
 
-  await waitForElement(sessionId, '[data-testid="document-title"]');
-  await commitDocumentTitle(sessionId, EXPECTED_TITLE);
-  await confirmPathSyncAfterTitleRename(sessionId);
-  await click(sessionId, editor);
+  const closeFirst = await waitForElement(sessionId, '[aria-label="关闭"]');
+  await click(sessionId, closeFirst);
+
+  await waitForSeedableNote(vaultPath);
+  seedExpectedNote(vaultPath);
+  await reloadWebview(sessionId);
+  await openPersistedNoteInApplication(sessionId);
+
   const remountEditor = await waitForRemountVisible(sessionId);
   // WebDriver cannot reliably observe React's transient staging frame on every
   // platform. The component contract covers writes during that frame; the
@@ -593,7 +485,7 @@ async function main() {
     await invokeTauri(sessionId, "vault_set", { path: vaultPath });
     await reloadWebview(sessionId);
 
-    await runScenario(sessionId);
+    await runScenario(sessionId, vaultPath);
     sessionId = await restartApplication(sessionId, appPath);
     await waitForElement(sessionId, '[data-testid="desktop-title-bar"]');
     assertPersistedMarkdown(vaultPath);

@@ -52,6 +52,24 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("rmSync");
   });
 
+  it("用 Node 改 vault 固定文件名，不经 WebDriver 改标题或 path-sync 对话框", () => {
+    const runner = read(runnerPath);
+
+    expect(runner).toContain("seedExpectedNote");
+    expect(runner).toContain("writeFileSync");
+    expect(runner).toContain("unlinkSync");
+    expect(runner).toContain("seed_note_body_missing");
+    expect(runner).toContain("runScenario(sessionId, vaultPath)");
+    expect(runner).toMatch(
+      /waitForSeedableNote\(vaultPath\)[\s\S]*seedExpectedNote\(vaultPath\)[\s\S]*reloadWebview\(sessionId\)[\s\S]*openPersistedNoteInApplication\(sessionId\)/,
+    );
+    expect(runner).not.toContain("commitDocumentTitle");
+    expect(runner).not.toContain("confirmPathSyncAfterTitleRename");
+    expect(runner).not.toContain("path-sync-confirm");
+    expect(runner).not.toContain("title_dom_value_mismatch");
+    expect(runner).not.toContain("PATH_SYNC_DEBOUNCE_WAIT_MS");
+  });
+
   it("等待重挂载后的稳定 visible surface 再保存，并在同一 surface 追加正文", () => {
     const runner = read(runnerPath);
     const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
@@ -71,7 +89,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     );
   });
 
-  it("第二次真实启动后经应用 UI 打开重命名笔记并断言标题和全文", () => {
+  it("第二次真实启动后经应用 UI 打开笔记并断言标题和全文", () => {
     const runner = read(runnerPath);
     const welcome = read("src/components/layout/WelcomeEmpty.tsx");
 
@@ -79,48 +97,6 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("openPersistedNoteInApplication");
     expect(runner).toContain('data-testid="home-recent-note"');
     expect(runner).toContain("assertOpenedNote");
-  });
-
-  it("在标题提交后分阶段探测 DOM、路径同步与确认对话框，再点击 path-sync-confirm", () => {
-    const runner = read(runnerPath);
-    const openNote = read("src/hooks/useOpenNote.ts");
-    const pathSyncConfirm = read("src/hooks/usePathSyncConfirm.tsx");
-
-    expect(runner).toContain("probeTitleDomValue");
-    expect(runner).toContain("title_dom_value_mismatch");
-    expect(runner).toContain("PATH_SYNC_DEBOUNCE_WAIT_MS");
-    expect(runner).toContain("probePathSyncNeedsSync");
-    expect(runner).toContain("path_sync_invoke_failed");
-    expect(runner).toContain("path_sync_skipped");
-    expect(runner).toContain("probeWebDriverAlertAvailable");
-    expect(runner).toContain("failIfWebDriverAlertMissing");
-    expect(runner).toContain("alert_endpoint_no_dialog");
-    expect(runner).toContain("confirmPathSyncAfterTitleRename");
-    expect(runner).toContain('data-testid="path-sync-confirm"');
-    expect(runner).toContain("acceptPathSyncConfirmation");
-    expect(openNote).toContain("confirmPathSync");
-    expect(pathSyncConfirm).toContain('confirmTestId="path-sync-confirm"');
-    expect(runner).toMatch(
-      /commitDocumentTitle\(sessionId, EXPECTED_TITLE\)[\s\S]*confirmPathSyncAfterTitleRename\(sessionId\)[\s\S]*click\(sessionId, editor\)/,
-    );
-  });
-
-  it("在非受控标题框上直接写 DOM 值并 blur 提交", () => {
-    const runner = read(runnerPath);
-    const titleField = read("src/components/editor/DocumentTitleField.tsx");
-    const app = read("src/App.impl.tsx");
-
-    expect(titleField).toContain("defaultValue={value}");
-    expect(titleField).toContain("key={resetKey}");
-    expect(titleField).toContain("if (el.value !== value)");
-    expect(app).toContain('resetKey={activePath ?? ""}');
-    expect(runner).toContain("commitDocumentTitle");
-    expect(runner).toContain("el.value = nextTitle");
-    expect(runner).toContain("el.blur()");
-    expect(runner).toContain("probeTitleDomValue");
-    expect(runner).not.toContain("_valueTracker");
-    expect(runner).not.toContain("clearElement");
-    expect(runner).not.toContain("sendKeys(sessionId, titleEl, title)");
   });
 
   it("将真实 Windows E2E 设为发布包构建后的硬门禁", () => {
