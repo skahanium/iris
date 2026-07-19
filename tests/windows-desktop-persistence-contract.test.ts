@@ -84,7 +84,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
   it("在标题提交后分阶段探测 DOM、路径同步与确认对话框，再点击 path-sync-confirm", () => {
     const runner = read(runnerPath);
     const openNote = read("src/hooks/useOpenNote.ts");
-    const app = read("src/App.impl.tsx");
+    const pathSyncConfirm = read("src/hooks/usePathSyncConfirm.tsx");
 
     expect(runner).toContain("probeTitleDomValue");
     expect(runner).toContain("title_dom_value_mismatch");
@@ -99,7 +99,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain('data-testid="path-sync-confirm"');
     expect(runner).toContain("acceptPathSyncConfirmation");
     expect(openNote).toContain("confirmPathSync");
-    expect(app).toContain('confirmTestId="path-sync-confirm"');
+    expect(pathSyncConfirm).toContain('confirmTestId="path-sync-confirm"');
     expect(runner).toMatch(
       /commitDocumentTitle\(sessionId, EXPECTED_TITLE\)[\s\S]*confirmPathSyncAfterTitleRename\(sessionId\)[\s\S]*click\(sessionId, editor\)/,
     );

@@ -40,6 +40,7 @@ import { useClassifiedVaultSession } from "@/hooks/useClassifiedVaultSession";
 import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useOpenNote } from "@/hooks/useOpenNote";
+import { usePathSyncConfirm } from "@/hooks/usePathSyncConfirm";
 import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
 import { useNoteLifecycleIntentActions } from "@/hooks/useNoteLifecycleIntentActions";
 import { useFileConflictResolution } from "@/hooks/useFileConflictResolution";
@@ -347,19 +348,7 @@ function App() {
       _move: () => Promise<DocumentPersistenceMoveResult>,
     ) => "",
   });
-  const pathSyncConfirmRef = useRef<{
-    message: string;
-    resolve: (accepted: boolean) => void;
-  } | null>(null);
-  const [pathSyncConfirmOpen, setPathSyncConfirmOpen] = useState(false);
-  const [pathSyncConfirmMessage, setPathSyncConfirmMessage] = useState("");
-  const confirmPathSync = useCallback((message: string) => {
-    return new Promise<boolean>((resolve) => {
-      pathSyncConfirmRef.current = { message, resolve };
-      setPathSyncConfirmMessage(message);
-      setPathSyncConfirmOpen(true);
-    });
-  }, []);
+  const { confirmPathSync, pathSyncConfirmDialog } = usePathSyncConfirm();
   const inlineAiDomain =
     activeNoteIsClassified &&
     classifiedUnlocked &&
@@ -978,25 +967,7 @@ function App() {
           />
         }
       />
-      <ConfirmDialog
-        open={pathSyncConfirmOpen}
-        title="同步文件路径"
-        message={pathSyncConfirmMessage}
-        confirmLabel="同步"
-        cancelLabel="保留当前路径"
-        confirmTestId="path-sync-confirm"
-        cancelTestId="path-sync-cancel"
-        onConfirm={() => {
-          pathSyncConfirmRef.current?.resolve(true);
-          pathSyncConfirmRef.current = null;
-          setPathSyncConfirmOpen(false);
-        }}
-        onCancel={() => {
-          pathSyncConfirmRef.current?.resolve(false);
-          pathSyncConfirmRef.current = null;
-          setPathSyncConfirmOpen(false);
-        }}
-      />
+      {pathSyncConfirmDialog}
       <ConfirmDialog
         open={persistenceBlocker !== null}
         title="保存失败"
