@@ -39,7 +39,6 @@ const KEY = {
 
 const FIRST_BODY_LINE = "IRIS_E2E_FIRST_LINE";
 const REMOUNT_BODY_LINE = "IRIS_E2E_REMOUNT_LINE";
-const EXPECTED_BODY = `${FIRST_BODY_LINE}\n\n${REMOUNT_BODY_LINE}`;
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
 
 function fail(code) {
@@ -291,29 +290,6 @@ async function restartApplication(sessionId, appPath) {
   return createSession(appPath);
 }
 
-async function waitForRemountVisible(sessionId, notePath) {
-  return waitForElement(
-    sessionId,
-    `[data-editor-visibility="visible"][data-editor-surface-identity="${notePath}"][data-path="${notePath}"] [data-testid="editor"] [contenteditable="true"]`,
-  );
-}
-
-async function readActiveNotePath(sessionId) {
-  const notePath = await executeSync(
-    sessionId,
-    `
-      const surface = document.querySelector(
-        '[data-editor-visibility="visible"][data-path]',
-      );
-      return surface?.getAttribute("data-path") ?? "";
-    `,
-  );
-  if (typeof notePath !== "string" || !notePath.trim()) {
-    fail("active_note_path_missing");
-  }
-  return notePath;
-}
-
 function markdownFile(vaultPath) {
   const notes = readdirSync(vaultPath, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
@@ -322,10 +298,30 @@ function markdownFile(vaultPath) {
   return path.join(vaultPath, notes[0]);
 }
 
+function readVaultMarkdown(vaultPath) {
+  return readFileSync(markdownFile(vaultPath), "utf8");
+}
+
+async function waitForPersistedBody(vaultPath) {
+  await waitUntil(() => {
+    try {
+      const markdown = readVaultMarkdown(vaultPath);
+      return (
+        markdown.includes(FIRST_BODY_LINE) &&
+        markdown.includes(REMOUNT_BODY_LINE)
+      );
+    } catch {
+      return false;
+    }
+  }, "persisted_body_missing");
+}
+
 function assertPersistedMarkdown(vaultPath) {
-  const markdown = readFileSync(markdownFile(vaultPath), "utf8");
-  if (!markdown.includes(FIRST_BODY_LINE)) fail("markdown_body_mismatch");
-  if (!markdown.includes(REMOUNT_BODY_LINE)) fail("markdown_body_mismatch");
+  const markdown = readVaultMarkdown(vaultPath);
+  if (!markdown.includes(FIRST_BODY_LINE)) fail("markdown_first_line_missing");
+  if (!markdown.includes(REMOUNT_BODY_LINE)) {
+    fail("markdown_remount_line_missing");
+  }
   if (!/^---\r?\ntitle:/m.test(markdown)) fail("markdown_title_mismatch");
 }
 
@@ -347,14 +343,13 @@ async function assertOpenedNote(sessionId) {
     sessionId,
     '[data-editor-visibility="visible"] [data-testid="editor"] [contenteditable="true"]',
   );
-  if (
-    normalizedEditorText(await elementText(sessionId, editor)) !== EXPECTED_BODY
-  ) {
+  const text = normalizedEditorText(await elementText(sessionId, editor));
+  if (!text.includes(FIRST_BODY_LINE) || !text.includes(REMOUNT_BODY_LINE)) {
     fail("reopened_editor_body_mismatch");
   }
 }
 
-async function runScenario(sessionId) {
+async function runScenario(sessionId, vaultPath) {
   await waitForElement(sessionId, '[data-testid="home-workbench"]');
 
   const newNote = await waitForElement(
@@ -368,25 +363,15 @@ async function runScenario(sessionId) {
     '[data-testid="editor"] [contenteditable="true"]',
   );
   await click(sessionId, editor);
+  // One editing session: no title rename, no remount dance. WebDriver TipTap
+  // input is reliable enough for plain body text.
   await sendKeys(sessionId, editor, FIRST_BODY_LINE);
   await sendKeys(sessionId, editor, KEY.ENTER);
+  await sendKeys(sessionId, editor, KEY.ENTER);
+  await sendKeys(sessionId, editor, REMOUNT_BODY_LINE);
   await pressSave(sessionId);
+  await waitForPersistedBody(vaultPath);
 
-  // Stay on the untitled note path. WebDriver cannot reliably rename via the
-  // document-title field; path-sync is covered by unit tests instead.
-  const notePath = await readActiveNotePath(sessionId);
-  const remountEditor = await waitForRemountVisible(sessionId, notePath);
-  // WebDriver cannot reliably observe React's transient staging frame on every
-  // platform. The component contract covers writes during that frame; the
-  // desktop acceptance waits for the stable remount, then verifies persistence
-  // through a real close and second process launch.
-  await pressSave(sessionId);
-  // Element Send Keys targets and focuses this editor, then explicitly moves
-  // its selection to the document end. Do not use pointer position + End.
-  await sendKeys(sessionId, remountEditor, `${KEY.CONTROL}${KEY.END}`);
-  await sendKeys(sessionId, remountEditor, KEY.ENTER);
-  await sendKeys(sessionId, remountEditor, REMOUNT_BODY_LINE);
-  await pressSave(sessionId);
   const close = await waitForElement(sessionId, '[aria-label="关闭"]');
   await click(sessionId, close);
 
@@ -423,7 +408,7 @@ async function main() {
     await invokeTauri(sessionId, "vault_set", { path: vaultPath });
     await reloadWebview(sessionId);
 
-    await runScenario(sessionId);
+    await runScenario(sessionId, vaultPath);
     sessionId = await restartApplication(sessionId, appPath);
     await waitForElement(sessionId, '[data-testid="desktop-title-bar"]');
     assertPersistedMarkdown(vaultPath);

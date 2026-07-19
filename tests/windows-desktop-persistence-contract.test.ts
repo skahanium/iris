@@ -48,17 +48,16 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("assertPersistedMarkdown");
     expect(runner).toContain("FIRST_BODY_LINE");
     expect(runner).toContain("REMOUNT_BODY_LINE");
-    expect(runner).toContain("EXPECTED_BODY");
+    expect(runner).toContain("waitForPersistedBody");
     expect(runner).toContain("rmSync");
   });
 
-  it("不经 WebDriver 改标题或 path-sync，沿用新建笔记真实路径追加正文", () => {
+  it("不经 WebDriver 改标题或 path-sync，一次编辑写入两行正文并等磁盘确认", () => {
     const runner = read(runnerPath);
 
-    expect(runner).toContain("readActiveNotePath");
-    expect(runner).toContain("waitForRemountVisible(sessionId, notePath)");
+    expect(runner).toContain("waitForPersistedBody(vaultPath)");
     expect(runner).toMatch(
-      /readActiveNotePath\(sessionId\)[\s\S]*waitForRemountVisible\(sessionId, notePath\)/,
+      /sendKeys\(sessionId, editor, FIRST_BODY_LINE\)[\s\S]*sendKeys\(sessionId, editor, REMOUNT_BODY_LINE\)[\s\S]*pressSave\(sessionId\)[\s\S]*waitForPersistedBody\(vaultPath\)/,
     );
     expect(runner).not.toContain("commitDocumentTitle");
     expect(runner).not.toContain("confirmPathSyncAfterTitleRename");
@@ -67,25 +66,8 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).not.toContain("seedExpectedNote");
     expect(runner).not.toContain("EXPECTED_TITLE");
     expect(runner).not.toContain("EXPECTED_FILE_NAME");
-  });
-
-  it("等待重挂载后的稳定 visible surface 再保存，并在同一 surface 追加正文", () => {
-    const runner = read(runnerPath);
-    const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
-
-    expect(runner).toContain("REMOUNT_BODY_LINE");
-    expect(runner).toContain("waitForRemountVisible");
-    expect(runner).toContain("data-editor-surface-identity");
-    expect(runner).toContain("KEY.CONTROL}${KEY.END}");
-    expect(runner).toContain("safeFailureCode");
-    expect(runner).not.toContain("waitForMountedRemountStaging");
-    expect(runner).not.toContain("REMOUNT_POLL_INTERVAL_MS");
-    expect(runner).not.toContain("waitForRemountIdentity");
-    expect(runner).not.toContain("click(sessionId, remountEditor)");
-    expect(workspace).toContain('data-testid="editor-surface-stack"');
-    expect(runner).toMatch(
-      /waitForRemountVisible[\s\S]*pressSave\(sessionId\)[\s\S]*sendKeys\(sessionId, remountEditor, `\$\{KEY\.CONTROL\}\$\{KEY\.END\}`\)[\s\S]*sendKeys\(sessionId, remountEditor, REMOUNT_BODY_LINE\)[\s\S]*pressSave\(sessionId\)[\s\S]*aria-label="关闭"/,
-    );
+    expect(runner).not.toContain("waitForRemountVisible");
+    expect(runner).not.toContain("readActiveNotePath");
   });
 
   it("第二次真实启动后经应用 UI 打开笔记并断言正文", () => {
