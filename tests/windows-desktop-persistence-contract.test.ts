@@ -105,14 +105,13 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     );
   });
 
-  it("通过 WebDriver 选中并键入标题后 blur，因 Windows WebView 不认脚本 setter", () => {
+  it("通过 WebDriver clear+sendKeys 与 React value tracker 提交标题", () => {
     const runner = read(runnerPath);
 
     expect(runner).toContain("commitDocumentTitle");
-    expect(runner).toContain("sendKeys(sessionId, titleEl");
-    expect(runner).toMatch(
-      /sendKeys\(sessionId, titleEl, `\$\{KEY\.CONTROL\}a`\)/,
-    );
+    expect(runner).toContain("clearElement");
+    expect(runner).toContain("sendKeys(sessionId, titleEl, title)");
+    expect(runner).toContain("_valueTracker");
     expect(runner).toContain("el.blur()");
     expect(runner).toContain("probeTitleDomValue");
   });

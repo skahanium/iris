@@ -319,24 +319,50 @@ async function reloadWebview(sessionId) {
   });
 }
 
+async function clearElement(sessionId, element) {
+  await webdriverRequest(
+    "POST",
+    `/session/${sessionId}/element/${element}/clear`,
+    {},
+  );
+}
+
 async function commitDocumentTitle(sessionId, title) {
   const titleEl = await waitForElement(
     sessionId,
     '[data-testid="document-title"]',
   );
   await click(sessionId, titleEl);
-  await sendKeys(sessionId, titleEl, `${KEY.CONTROL}a`);
+  await clearElement(sessionId, titleEl);
   await sendKeys(sessionId, titleEl, title);
-  const blurred = await executeSync(
+  // React controlled inputs may ignore WebDriver-only value mutations unless
+  // the value tracker sees a change; reinforce with the classic tracker reset.
+  const committed = await executeSync(
     sessionId,
     `
+      const nextTitle = arguments[0];
       const el = document.querySelector('[data-testid="document-title"]');
       if (!(el instanceof HTMLTextAreaElement)) return false;
+      el.focus();
+      const previous = el.value;
+      const proto = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      );
+      if (!proto?.set) return false;
+      proto.set.call(el, nextTitle);
+      const tracker = el._valueTracker;
+      if (tracker && typeof tracker.setValue === "function") {
+        tracker.setValue(previous);
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
       el.blur();
-      return true;
+      return el.value === nextTitle;
     `,
+    [title],
   );
-  if (blurred !== true) fail("document_title_commit_failed");
+  if (committed !== true) fail("document_title_commit_failed");
   await probeTitleDomValue(sessionId, title);
 }
 
