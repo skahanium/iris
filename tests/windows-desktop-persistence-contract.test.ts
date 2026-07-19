@@ -110,7 +110,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
 
     expect(runner).toContain("commitDocumentTitle");
     expect(runner).toContain("HTMLTextAreaElement.prototype");
-    expect(runner).toContain('new Event("input", { bubbles: true })');
+    expect(runner).toContain('new InputEvent("input"');
     expect(runner).toContain("el.blur()");
     expect(runner).not.toMatch(
       /document-title[\s\S]*clear\(sessionId, title\)[\s\S]*sendKeys\(sessionId, title, EXPECTED_TITLE\)/,

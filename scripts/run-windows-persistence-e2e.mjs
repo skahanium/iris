@@ -320,26 +320,39 @@ async function reloadWebview(sessionId) {
 }
 
 async function commitDocumentTitle(sessionId, title) {
-  const committed = await executeSync(
+  const committed = await executeAsync(
     sessionId,
     `
+      const done = arguments[arguments.length - 1];
       const nextTitle = arguments[0];
       const el = document.querySelector('[data-testid="document-title"]');
       if (!(el instanceof HTMLTextAreaElement)) {
-        return false;
+        done(false);
+        return;
       }
       const descriptor = Object.getOwnPropertyDescriptor(
         HTMLTextAreaElement.prototype,
         "value",
       );
       if (!descriptor?.set) {
-        return false;
+        done(false);
+        return;
       }
+      el.focus();
       descriptor.set.call(el, nextTitle);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(
+        new InputEvent("input", {
+          bubbles: true,
+          cancelable: true,
+          inputType: "insertFromPaste",
+          data: nextTitle,
+        }),
+      );
       el.dispatchEvent(new Event("change", { bubbles: true }));
       el.blur();
-      return true;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => done(true));
+      });
     `,
     [title],
   );
@@ -358,10 +371,10 @@ async function readDocumentTitleDomValue(sessionId) {
 }
 
 async function probeTitleDomValue(sessionId, expectedTitle) {
-  const value = await readDocumentTitleDomValue(sessionId);
-  if (value !== expectedTitle) {
-    fail("title_dom_value_mismatch");
-  }
+  await waitUntil(
+    async () => (await readDocumentTitleDomValue(sessionId)) === expectedTitle,
+    "title_dom_value_mismatch",
+  );
 }
 
 async function readActiveNotePath(sessionId) {
