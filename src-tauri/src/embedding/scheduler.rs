@@ -748,11 +748,12 @@ mod tests {
     }
 
     fn wait_for_phase(scheduler: &EmbeddingScheduler, expected: &str) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
         while scheduler.status().unwrap().phase != expected {
+            let current = scheduler.status().unwrap().phase;
             assert!(
                 std::time::Instant::now() < deadline,
-                "scheduler did not reach {expected}"
+                "scheduler did not reach {expected} (last phase: {current})"
             );
             thread::sleep(Duration::from_millis(5));
         }

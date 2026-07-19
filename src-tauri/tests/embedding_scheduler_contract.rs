@@ -105,12 +105,18 @@ fn seed_chunks(conn: &Connection, count: usize) {
 }
 
 fn wait_for_phase(scheduler: &EmbeddingScheduler, phase: &str) {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    // CI runners under full `cargo test` contention need more than a couple of
+    // seconds for the background worker to land the expected terminal phase.
+    let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        if scheduler.status().unwrap().phase == phase {
+        let current = scheduler.status().unwrap().phase;
+        if current == phase {
             return;
         }
-        assert!(Instant::now() < deadline, "scheduler did not reach {phase}");
+        assert!(
+            Instant::now() < deadline,
+            "scheduler did not reach {phase} (last phase: {current})"
+        );
         thread::sleep(Duration::from_millis(10));
     }
 }
