@@ -2,7 +2,7 @@
 
 本项目的重要变更记录于此，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [1.2.10] — Current
+## [1.2.11] — Current
 
 开发中，尚未发布。计划范围见 [ROADMAP.md](./ROADMAP.md) 与 [RAG 优化设计](./docs/specs/v1.2.6-rag-optimization.md)。本节只在功能完成并经验证后记录用户可见变更。
 
