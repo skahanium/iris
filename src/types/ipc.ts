@@ -121,10 +121,10 @@ export type AppUpdateStatus =
 export interface AppUpdateInfo {
   currentVersion: string;
   version: string;
-  pubDate?: string | null;
   notes?: string | null;
   downloaded: boolean;
   preflightPassed: boolean;
+  cachedBytes?: number | null;
 }
 
 export interface AppUpdateStateEvent {

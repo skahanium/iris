@@ -51,11 +51,11 @@ describe("app update contract", () => {
     expect(updater).toContain("pub async fn app_update_download_cmd");
     expect(updater).toContain("pub fn app_update_preflight_cmd");
     expect(updater).toContain("pub fn app_update_install_cmd");
-    expect(updater).toContain(".download(");
+    expect(updater).toContain("RANGE");
     expect(updater).toContain(".install(");
     expect(updater).not.toContain("download_and_install");
     expect(updater).toContain("PendingAppUpdate");
-    expect(updater).toContain("downloaded_bytes");
+    expect(updater).toContain("verified_package");
     expect(updater).toContain("preflight_passed");
   });
 
@@ -95,6 +95,7 @@ describe("app update contract", () => {
     const app = read("src/App.impl.tsx");
     const hook = read("src/hooks/useAppUpdate.ts");
     const overlays = read("src/components/layout/AppOverlays.tsx");
+    const types = read("src/types/ipc.ts");
 
     expect(statusBar).toContain('data-testid="status-bar-update-available"');
     expect(slot).toContain("appUpdate");
@@ -112,6 +113,9 @@ describe("app update contract", () => {
     expect(about).toContain("当前平台暂不支持应用内更新");
     expect(about).toContain("isWindowsDesktopChrome");
     expect(about).toContain("会关闭 Iris");
+    expect(about).not.toContain("发布时间");
+    expect(about).toContain("从已缓存内容继续下载");
+    expect(types).not.toContain("pubDate");
   });
 
   it("keeps update failures retryable and hides low-level transport errors", () => {

@@ -94,7 +94,22 @@ impl VaultKey {
     }
 
     pub fn is_initialized(vault_path: &Path) -> bool {
-        Self::config_path(vault_path).exists()
+        Self::config_path(vault_path).is_file()
+    }
+
+    /// Verify that the persisted classified-vault configuration is readable and well formed.
+    pub(crate) fn config_accessible(vault_path: &Path) -> AppResult<()> {
+        let json = fs::read_to_string(Self::config_path(vault_path))
+            .map_err(|_| AppError::msg("保险库配置文件不可访问"))?;
+        let config: VaultConfig = serde_json::from_str(&json)
+            .map_err(|_| AppError::msg("保险库配置文件已损坏"))?;
+        if config.version != 1
+            || hex::decode(config.salt).is_err()
+            || hex::decode(config.verification).is_err()
+        {
+            return Err(AppError::msg("保险库配置文件已损坏"));
+        }
+        Ok(())
     }
 
     pub fn setup(password: &str, vault_path: &Path) -> AppResult<()> {
@@ -257,5 +272,19 @@ mod tests {
         assert!(!VaultKey::is_initialized(&vault));
         VaultKey::setup("test", &vault).unwrap();
         assert!(VaultKey::is_initialized(&vault));
+    }
+
+    #[test]
+    fn config_accessible_accepts_valid_config_and_rejects_corruption() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+
+        assert!(VaultKey::config_accessible(&vault).is_err());
+        VaultKey::setup("test", &vault).unwrap();
+
+        assert!(VaultKey::config_accessible(&vault).is_ok());
+        fs::write(vault.join(".iris").join(VAULT_CONFIG_FILENAME), "not json").unwrap();
+        assert!(VaultKey::config_accessible(&vault).is_err());
     }
 }

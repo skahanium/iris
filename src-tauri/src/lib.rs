@@ -97,7 +97,9 @@ pub fn run() {
                 .embedding_scheduler()
                 .attach_app_handle(app.handle().clone());
             app.manage(state.clone());
-            app.manage(commands::app_update::PendingAppUpdate::default());
+            app.manage(commands::app_update::PendingAppUpdate::new(
+                iris_paths.cache_dir.join("updates"),
+            ));
 
             // Start the scheduler for periodic tasks (GC at 3:00 AM daily)
             // `_scheduler_handle` is intentionally held alive for the app lifetime;

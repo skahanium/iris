@@ -141,6 +141,9 @@ impl EmbeddingScheduler {
     /// idle policy without a second queue or worker.
     pub fn notify_index_committed(self: &Arc<Self>) {
         let transitioned = self.db.with_conn(|conn| {
+            if generation_coverage_complete(conn)? {
+                return Ok(false);
+            }
             Ok(conn.execute(
                 "UPDATE embedding_generation_state SET phase = 'paused', updated_at = datetime('now') WHERE singleton = 1 AND phase = 'ready'",
                 [],
@@ -492,10 +495,48 @@ struct PendingRecord {
 }
 
 pub fn recover_interrupted_generation(conn: &Connection) -> AppResult<()> {
-    conn.execute(
-        "UPDATE embedding_generation_state SET phase = 'failed', failure_code = 'interrupted_restart', last_error = ?1, updated_at = datetime('now') WHERE singleton = 1 AND phase IN ('running', 'paused', 'rebuilding')",
-        [INTERRUPTED_SUMMARY],
-    )?;
+    let phase = conn
+        .query_row(
+            "SELECT phase FROM embedding_generation_state WHERE singleton = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(phase) = phase else {
+        return Ok(());
+    };
+    if !matches!(phase.as_str(), "running" | "paused" | "rebuilding") {
+        return Ok(());
+    }
+
+    let total = total_sources(conn)?;
+    let indexed = valid_sources(conn)?;
+    if indexed == total {
+        conn.execute(
+            "UPDATE embedding_generation_state
+             SET active_model_id = ?1, target_model_id = ?1, target_dimension = ?2,
+                 phase = 'ready', indexed_items = ?3, total_items = ?3,
+                 last_error = NULL, failure_code = NULL, updated_at = datetime('now')
+             WHERE singleton = 1 AND phase IN ('running', 'paused', 'rebuilding')",
+            rusqlite::params![EMBEDDING_MODEL_ID, EMBEDDING_DIMENSION as i64, total],
+        )?;
+    } else {
+        conn.execute(
+            "UPDATE embedding_generation_state
+             SET target_model_id = ?1, target_dimension = ?2,
+                 phase = 'failed', indexed_items = ?3, total_items = ?4,
+                 failure_code = 'interrupted_restart', last_error = ?5,
+                 updated_at = datetime('now')
+             WHERE singleton = 1 AND phase IN ('running', 'paused', 'rebuilding')",
+            rusqlite::params![
+                EMBEDDING_MODEL_ID,
+                EMBEDDING_DIMENSION as i64,
+                indexed,
+                total,
+                INTERRUPTED_SUMMARY,
+            ],
+        )?;
+    }
     Ok(())
 }
 
@@ -692,30 +733,15 @@ mod tests {
     use crate::storage::db::Database;
     use crate::storage::migrate::migrate_up;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::mpsc;
 
-    struct BlockingThenReadyBatcher {
-        entered: mpsc::Sender<()>,
-        release: Mutex<mpsc::Receiver<()>>,
-        calls: AtomicUsize,
-    }
+    struct ReadyBatcher;
 
-    impl EmbeddingBatcher for BlockingThenReadyBatcher {
+    impl EmbeddingBatcher for ReadyBatcher {
         fn ensure_available(&self) -> AppResult<()> {
             Ok(())
         }
 
         fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
-            if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
-                self.entered
-                    .send(())
-                    .expect("report first model batch entry");
-                self.release
-                    .lock()
-                    .expect("lock model release receiver")
-                    .recv()
-                    .expect("release first model batch");
-            }
             Ok(vec![vec![0.5; EMBEDDING_DIMENSION]; texts.len()])
         }
     }
@@ -732,6 +758,23 @@ mod tests {
         }
     }
 
+    struct CountingBatcher {
+        ensure_calls: AtomicUsize,
+        batch_calls: AtomicUsize,
+    }
+
+    impl EmbeddingBatcher for CountingBatcher {
+        fn ensure_available(&self) -> AppResult<()> {
+            self.ensure_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn embed_batch(&self, _texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+            self.batch_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Vec::new())
+        }
+    }
+
     fn seed_chunk(conn: &Connection) {
         conn.execute(
             "INSERT INTO files(path,title,content_hash,word_count,created_at,updated_at)
@@ -743,6 +786,55 @@ mod tests {
             "INSERT INTO chunks(file_id,chunk_index,content,content_hash)
              VALUES (1,0,'body','chunk')",
             [],
+        )
+        .unwrap();
+    }
+
+    fn seed_covered_chunks(conn: &Connection, count: usize) -> Vec<i64> {
+        conn.execute(
+            "INSERT INTO files(path,title,content_hash,word_count,created_at,updated_at)
+             VALUES ('note.md','Note','file',1,'now','now')",
+            [],
+        )
+        .unwrap();
+        let file_id = conn.last_insert_rowid();
+        (0..count)
+            .map(|index| {
+                let fingerprint = format!("chunk-{index}");
+                conn.execute(
+                    "INSERT INTO chunks(file_id,chunk_index,content,content_hash)
+                     VALUES (?1,?2,'body',?3)",
+                    rusqlite::params![file_id, index as i64, fingerprint],
+                )
+                .unwrap();
+                conn.last_insert_rowid()
+            })
+            .collect()
+    }
+
+    fn seed_valid_vector(conn: &Connection, chunk_id: i64, fingerprint: &str) {
+        conn.execute(
+            "INSERT INTO chunk_embeddings_v2(chunk_id,embedding,source_fingerprint,model_id,dimension)
+             VALUES (?1,?2,?3,?4,?5)",
+            rusqlite::params![
+                chunk_id,
+                f32_to_bytes(&vec![0.5; EMBEDDING_DIMENSION]),
+                fingerprint,
+                EMBEDDING_MODEL_ID,
+                EMBEDDING_DIMENSION as i64,
+            ],
+        )
+        .unwrap();
+    }
+
+    fn set_generation_phase(conn: &Connection, phase: &str) {
+        conn.execute(
+            "UPDATE embedding_generation_state
+             SET active_model_id = ?1, target_model_id = ?1, target_dimension = ?2,
+                 phase = ?3, indexed_items = 0, total_items = 0,
+                 last_error = 'stale', failure_code = 'stale'
+             WHERE singleton = 1",
+            rusqlite::params![EMBEDDING_MODEL_ID, EMBEDDING_DIMENSION as i64, phase],
         )
         .unwrap();
     }
@@ -781,26 +873,13 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        let (entered_tx, entered_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let scheduler = EmbeddingScheduler::with_batcher(
-            Arc::clone(&db),
-            Arc::new(BlockingThenReadyBatcher {
-                entered: entered_tx,
-                release: Mutex::new(release_rx),
-                calls: AtomicUsize::new(0),
-            }),
-        );
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(ReadyBatcher));
         scheduler.set_foreground_busy(false);
+        scheduler.set_manual_paused(true).unwrap();
         scheduler.mark_initial_index_complete();
         scheduler
             .start_generation(EmbeddingStartSource::Manual)
             .unwrap();
-        entered_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("worker entered model batch");
-        scheduler.set_manual_paused(true).unwrap();
-        release_tx.send(()).unwrap();
         wait_for_phase(&scheduler, "paused");
         scheduler.set_manual_paused(false).unwrap();
         wait_for_phase(&scheduler, "ready");
@@ -868,6 +947,157 @@ mod tests {
                 .map(|status| status.phase.as_str()),
             Some("paused")
         );
+    }
+
+    #[test]
+    fn unchanged_index_notification_keeps_complete_generation_ready_without_loading_model() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            let chunk_id = seed_covered_chunks(conn, 1)[0];
+            seed_valid_vector(conn, chunk_id, "chunk-0");
+            set_generation_phase(conn, "ready");
+            refresh_progress(conn)
+        })
+        .unwrap();
+        let batcher = Arc::new(CountingBatcher {
+            ensure_calls: AtomicUsize::new(0),
+            batch_calls: AtomicUsize::new(0),
+        });
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), batcher.clone());
+
+        scheduler.notify_index_committed();
+
+        assert_eq!(scheduler.status().unwrap().phase, "ready");
+        assert!(scheduler.emitted_statuses().is_empty());
+        assert_eq!(batcher.ensure_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(batcher.batch_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn complete_interrupted_generation_recovers_to_ready_for_running_and_paused_phases() {
+        for phase in ["running", "paused"] {
+            let conn = Connection::open_in_memory().unwrap();
+            migrate_up(&conn).unwrap();
+            let chunk_id = seed_covered_chunks(&conn, 1)[0];
+            seed_valid_vector(&conn, chunk_id, "chunk-0");
+            set_generation_phase(&conn, phase);
+
+            recover_interrupted_generation(&conn).unwrap();
+
+            let status = embedding_index_status(&conn).unwrap();
+            assert_eq!(status.phase, "ready", "phase {phase}");
+            assert_eq!((status.indexed_items, status.total_items), (1, 1));
+            assert_eq!(status.last_error, None);
+            assert_eq!(status.failure_code, None);
+            assert!(super::super::engine::embedding_generation_ready(&conn).unwrap());
+        }
+    }
+
+    #[test]
+    fn reopening_complete_generation_preserves_semantic_readiness_without_new_model_work() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("iris.db");
+        let db = Arc::new(Database::open(&db_path).unwrap());
+        db.with_conn(|conn| {
+            let chunk_id = seed_covered_chunks(conn, 1)[0];
+            seed_valid_vector(conn, chunk_id, "chunk-0");
+            set_generation_phase(conn, "running");
+            Ok(())
+        })
+        .unwrap();
+        drop(db);
+
+        let reopened = Arc::new(Database::open(&db_path).unwrap());
+        reopened.with_conn(recover_interrupted_generation).unwrap();
+        let batcher = Arc::new(CountingBatcher {
+            ensure_calls: AtomicUsize::new(0),
+            batch_calls: AtomicUsize::new(0),
+        });
+        let scheduler = EmbeddingScheduler::with_batcher_and_idle_delay(
+            Arc::clone(&reopened),
+            batcher.clone(),
+            Duration::from_millis(5),
+        );
+
+        scheduler.set_foreground_busy(false);
+        scheduler.notify_index_committed();
+        scheduler.mark_initial_index_complete();
+        thread::sleep(Duration::from_millis(25));
+
+        reopened
+            .with_read_conn(|conn| {
+                assert!(super::super::engine::embedding_generation_ready(conn)?);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(scheduler.status().unwrap().phase, "ready");
+        assert_eq!(batcher.ensure_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(batcher.batch_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn incomplete_interrupted_generation_fails_without_deleting_valid_batches() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        let chunk_ids = seed_covered_chunks(&conn, 2);
+        seed_valid_vector(&conn, chunk_ids[0], "chunk-0");
+        set_generation_phase(&conn, "paused");
+
+        recover_interrupted_generation(&conn).unwrap();
+
+        let status = embedding_index_status(&conn).unwrap();
+        assert_eq!(status.phase, "failed");
+        assert_eq!(status.failure_code.as_deref(), Some("interrupted_restart"));
+        assert_eq!((status.indexed_items, status.total_items), (1, 2));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM chunk_embeddings_v2 WHERE chunk_id = ?1",
+                [chunk_ids[0]],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        assert!(!generation_coverage_complete(&conn).unwrap());
+    }
+
+    #[test]
+    fn interrupted_recovery_rejects_mismatched_vector_metadata() {
+        for (label, mutation) in [
+            (
+                "model",
+                "UPDATE chunk_embeddings_v2 SET model_id = 'other-model'",
+            ),
+            (
+                "dimension",
+                "UPDATE chunk_embeddings_v2 SET dimension = 384",
+            ),
+            (
+                "fingerprint",
+                "UPDATE chunk_embeddings_v2 SET source_fingerprint = 'stale'",
+            ),
+            (
+                "vector length",
+                "UPDATE chunk_embeddings_v2 SET embedding = zeroblob(4)",
+            ),
+        ] {
+            let conn = Connection::open_in_memory().unwrap();
+            migrate_up(&conn).unwrap();
+            let chunk_id = seed_covered_chunks(&conn, 1)[0];
+            seed_valid_vector(&conn, chunk_id, "chunk-0");
+            conn.execute(mutation, []).unwrap();
+            set_generation_phase(&conn, "running");
+
+            recover_interrupted_generation(&conn).unwrap();
+
+            let status = embedding_index_status(&conn).unwrap();
+            assert_eq!(status.phase, "failed", "mismatched {label}");
+            assert_eq!(
+                status.failure_code.as_deref(),
+                Some("interrupted_restart"),
+                "mismatched {label}"
+            );
+        }
     }
 
     #[test]

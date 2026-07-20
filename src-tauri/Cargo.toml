@@ -29,6 +29,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
+minisign-verify = "0.2.5"
 aes-gcm = "0.10"
 rand = "0.8"
 argon2 = "0.5"

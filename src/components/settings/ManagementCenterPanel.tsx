@@ -578,8 +578,12 @@ export function ManagementCenterPanel({
                   </>
                 ) : null}
               </p>
-              {appUpdate.info?.pubDate ? (
-                <p>发布时间：{appUpdate.info.pubDate}</p>
+              {appUpdate.status === "available" &&
+              appUpdate.info?.cachedBytes ? (
+                <p>
+                  已缓存 {(appUpdate.info.cachedBytes / 1024 / 1024).toFixed(1)}{" "}
+                  MB， 从已缓存内容继续下载。
+                </p>
               ) : null}
               {appUpdate.info?.notes ? (
                 <p className="line-clamp-3 whitespace-pre-line">

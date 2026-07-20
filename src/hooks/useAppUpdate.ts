@@ -118,6 +118,32 @@ export function useAppUpdate({
   const [snapshot, setSnapshot] = useState<AppUpdateSnapshot>(INITIAL_UPDATE);
   const installTaskRef = useRef<Promise<void> | null>(null);
 
+  const preflight = useCallback(async () => {
+    try {
+      const result = await appUpdatePreflight();
+      setSnapshot((current) => ({
+        ...current,
+        preflight: result,
+        status: result.ok ? "ready_to_install" : current.status,
+        info: current.info
+          ? { ...current.info, preflightPassed: result.ok }
+          : current.info,
+        busy: false,
+        installBlockedMessage: null,
+      }));
+      return result;
+    } catch {
+      const result = failedPreflightResult(APP_UPDATE_PREFLIGHT_ERROR_MESSAGE);
+      setSnapshot((current) => ({
+        ...current,
+        preflight: result,
+        busy: false,
+        installBlockedMessage: null,
+      }));
+      return result;
+    }
+  }, []);
+
   useEffect(() => {
     if (!enabled || !isTauriRuntime()) return undefined;
 
@@ -147,9 +173,10 @@ export function useAppUpdate({
     });
 
     void appUpdateCheck()
-      .then((event) => {
+      .then(async (event) => {
         if (disposed) return;
         setSnapshot((current) => mergeStateEvent(current, event));
+        if (event.status === "downloaded") await preflight();
       })
       .catch(() => {
         if (disposed) return;
@@ -161,7 +188,7 @@ export function useAppUpdate({
       unlistenStatus?.();
       unlistenProgress?.();
     };
-  }, [enabled]);
+  }, [enabled, preflight]);
 
   const check = useCallback(async () => {
     setSnapshot((current) => ({
@@ -174,10 +201,11 @@ export function useAppUpdate({
     try {
       const event = await appUpdateCheck();
       setSnapshot((current) => mergeStateEvent(current, event));
+      if (event.status === "downloaded") await preflight();
     } catch {
       handleActionError(setSnapshot);
     }
-  }, []);
+  }, [preflight]);
 
   const download = useCallback(async () => {
     setSnapshot((current) => ({
@@ -196,32 +224,6 @@ export function useAppUpdate({
     } catch {
       handleActionError(setSnapshot, APP_UPDATE_DOWNLOAD_ERROR_MESSAGE);
       return false;
-    }
-  }, []);
-
-  const preflight = useCallback(async () => {
-    try {
-      const result = await appUpdatePreflight();
-      setSnapshot((current) => ({
-        ...current,
-        preflight: result,
-        status: result.ok ? "ready_to_install" : current.status,
-        info: current.info
-          ? { ...current.info, preflightPassed: result.ok }
-          : current.info,
-        busy: false,
-        installBlockedMessage: null,
-      }));
-      return result;
-    } catch {
-      const result = failedPreflightResult(APP_UPDATE_PREFLIGHT_ERROR_MESSAGE);
-      setSnapshot((current) => ({
-        ...current,
-        preflight: result,
-        busy: false,
-        installBlockedMessage: null,
-      }));
-      return result;
     }
   }, []);
 

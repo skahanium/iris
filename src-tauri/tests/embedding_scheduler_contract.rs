@@ -122,12 +122,13 @@ fn wait_for_phase(scheduler: &EmbeddingScheduler, phase: &str) {
 }
 
 #[test]
-fn startup_marks_running_generation_interrupted_without_retrying_it() {
+fn startup_marks_incomplete_running_generation_interrupted_without_retrying_it() {
     let conn = Connection::open_in_memory().expect("open database");
     migrate_up(&conn).expect("migrate database");
+    seed_chunk(&conn, "pending-fingerprint");
     conn.execute(
         "UPDATE embedding_generation_state
-         SET phase = 'running', indexed_items = 2, total_items = 8",
+         SET phase = 'running', indexed_items = 0, total_items = 1",
         [],
     )
     .expect("seed abandoned job");

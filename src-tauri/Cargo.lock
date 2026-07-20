@@ -2271,6 +2271,7 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
+ "minisign-verify",
  "notify",
  "notify-debouncer-full",
  "rand 0.8.7",
