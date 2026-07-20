@@ -33,6 +33,11 @@ vi.mock("@/lib/ipc", () => ({
     versionFinalizeCurrent(...args),
   versionSaveIdle: vi.fn(),
   versionSaveManual: (...args: unknown[]) => versionSaveManual(...args),
+  versionSavePreClose: vi.fn().mockResolvedValue({
+    created: false,
+    versionId: null,
+    skipReason: null,
+  }),
 }));
 
 vi.mock("@/lib/editor-html-cache", () => ({
@@ -420,7 +425,8 @@ describe("useAppPersistenceLifecycle", () => {
     const applySavedMarkdown = vi.fn();
     let api!: ReturnType<typeof useAppPersistenceLifecycle>;
     const opened = '---\ntitle: "Note"\n---\n\nOpened body.';
-    const edited = '---\ntitle: "Note"\n---\n\nEdited body that is already live.';
+    const edited =
+      '---\ntitle: "Note"\n---\n\nEdited body that is already live.';
 
     await act(async () => {
       root.render(

@@ -163,6 +163,46 @@ describe("DocumentTitleField uncontrolled behavior", () => {
     expect(field.selectionStart).toBe(field.value.length);
   });
 
+  it("keeps caret when an ancestor force-renders while focused", async () => {
+    const onChange = vi.fn();
+    await act(async () => {
+      root.render(
+        createElement(TitleHarness, {
+          value: "原始标题",
+          resetKey: "session-stable",
+          onChange,
+        }),
+      );
+    });
+
+    const field = textarea();
+    await act(async () => {
+      field.focus();
+      field.value = "原始标题追加文字";
+      const caret = 4;
+      field.setSelectionRange(caret, caret);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(field.selectionStart).toBe(4);
+
+    // Same identity props — parent re-render only (simulates autosave / tab dirty).
+    await act(async () => {
+      root.render(
+        createElement(TitleHarness, {
+          value: "原始标题",
+          resetKey: "session-stable",
+          onChange,
+        }),
+      );
+    });
+
+    expect(textarea()).toBe(field);
+    expect(field.value).toBe("原始标题追加文字");
+    expect(field.selectionStart).toBe(4);
+    expect(field.selectionEnd).toBe(4);
+  });
+
   it("commits DOM value on blur", async () => {
     const onBlur = vi.fn();
     await act(async () => {

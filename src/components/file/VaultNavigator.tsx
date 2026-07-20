@@ -180,6 +180,8 @@ interface VaultNavigatorProps {
   onFilePathChangeFailed?: (oldPath: string) => void;
   onBeforeFileDelete?: (path: string) => Promise<void>;
   onFileDeleted?: (path: string) => void;
+  onBeforeFileLock?: (path: string) => Promise<void>;
+  onFileLockChanged?: (path: string, locked: boolean) => void;
   onIndexDegraded?: () => void;
   onIndexChange?: () => void;
 }
@@ -364,6 +366,8 @@ export function VaultNavigatorBody({
   onFilePathChangeFailed,
   onBeforeFileDelete,
   onFileDeleted,
+  onBeforeFileLock,
+  onFileLockChanged,
   onIndexDegraded,
   onIndexChange,
 }: VaultNavigatorProps) {
@@ -768,15 +772,23 @@ export function VaultNavigatorBody({
     async (locked: boolean) => {
       if (selectedFiles.length === 0) return;
       try {
+        if (locked) {
+          for (const file of selectedFiles) {
+            await onBeforeFileLock?.(file.path);
+          }
+        }
         await Promise.all(
           selectedFiles.map((file) => fileSetLock(file.path, locked)),
         );
+        for (const file of selectedFiles) {
+          onFileLockChanged?.(file.path, locked);
+        }
         refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "批量更新锁定状态失败");
       }
     },
-    [refresh, selectedFiles],
+    [onBeforeFileLock, onFileLockChanged, refresh, selectedFiles],
   );
 
   const handleBatchDelete = useCallback(async () => {
@@ -1305,7 +1317,9 @@ export function VaultNavigatorBody({
                           title={f.isLocked ? "解锁编辑" : "锁定编辑"}
                           onClick={async () => {
                             const next = !f.isLocked;
+                            if (next) await onBeforeFileLock?.(f.path);
                             await fileSetLock(f.path, next);
+                            onFileLockChanged?.(f.path, next);
                             refresh();
                           }}
                         >

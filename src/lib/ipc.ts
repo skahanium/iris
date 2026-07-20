@@ -299,8 +299,8 @@ export async function vaultAssetWrite(params: {
 export async function fileCreate(
   path: string,
   content: string,
-): Promise<FileEntry> {
-  return invoke<FileEntry>("file_create", { path, content });
+): Promise<FileWriteResult> {
+  return invoke<FileWriteResult>("file_create", { path, content });
 }
 
 export async function fileDelete(path: string): Promise<void> {
@@ -430,6 +430,17 @@ export async function versionSaveIdle(
   content: string,
 ): Promise<VersionSaveOutcome> {
   return invoke<VersionSaveOutcome>("version_save_idle_cmd", {
+    path,
+    content,
+  });
+}
+
+/** Creates a pre-close snapshot (bypasses idle cooldown / hash dedup). */
+export async function versionSavePreClose(
+  path: string,
+  content: string,
+): Promise<VersionSaveOutcome> {
+  return invoke<VersionSaveOutcome>("version_save_pre_close_cmd", {
     path,
     content,
   });

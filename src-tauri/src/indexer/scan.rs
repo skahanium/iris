@@ -904,10 +904,7 @@ mod tests {
             let e2 = index_file(conn, &vault, &vault.join("note.md"))?;
 
             assert_eq!(e1.id, e2.id, "same path should UPDATE not INSERT");
-            assert_eq!(
-                e2.title, "第二版",
-                "title syncs from frontmatter on reindex"
-            );
+            assert_eq!(e2.title, "note", "单标题模型：title = path stem");
 
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM files WHERE path = 'note.md'",

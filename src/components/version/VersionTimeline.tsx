@@ -146,7 +146,10 @@ export function VersionTimeline({
       const liveContent = onBeforeFinalizeCurrent
         ? await onBeforeFinalizeCurrent()
         : (getCurrentContent?.() ?? currentContent ?? "");
-      if (!liveContent) return;
+      if (liveContent === null || liveContent === "") {
+        setFinalizeError("无法获取当前正文（编辑器未就绪或笔记已锁定）");
+        return;
+      }
       await onFinalizeCurrent(
         notePath,
         liveContent,

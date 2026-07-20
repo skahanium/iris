@@ -179,7 +179,13 @@ pub(super) fn fs_import_to_vault_tool(
     let vault = state.vault_path()?;
     let _ = resolve_new_vault_note(&vault, target_path)?;
     let receipt = if overwrite {
-        NoteWriteService::write(state, target_path, &content)?
+        match NoteWriteService::write(state, target_path, &content) {
+            Ok(receipt) => receipt,
+            Err(error) if error.to_string().contains("note_locked") => {
+                return Err(AppError::msg("笔记已锁定，无法写入"));
+            }
+            Err(error) => return Err(error),
+        }
     } else {
         NoteWriteService::create(state, target_path, &content)?
     };

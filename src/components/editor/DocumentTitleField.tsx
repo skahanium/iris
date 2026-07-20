@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import {
+  memo,
   useCallback,
   useLayoutEffect,
   useRef,
@@ -23,6 +24,8 @@ interface DocumentTitleFieldProps {
   onChange: (value: string) => void;
   onBlur?: (committedTitle: string) => void;
   onCancel?: () => void;
+  /** Notify parent when focus enters/leaves so sync effects can pause. */
+  onFocusChange?: (focused: boolean) => void;
   editorRef: RefObject<Editor | null>;
   disabled?: boolean;
   readOnly?: boolean;
@@ -43,13 +46,16 @@ function normalizeTitle(raw: string): string {
  *
  * Do not call setState in onFocus / during the click caret gesture: a React
  * re-render mid-mouseup resets WKWebView selection to 0 (caret jumps to start).
+ * While focused, every render saves and restores selection so ancestor
+ * re-renders (autosave status, tab dirty, surface staging) cannot jump the caret.
  */
-export function DocumentTitleField({
+function DocumentTitleFieldInner({
   value,
   resetKey,
   onChange,
   onBlur,
   onCancel,
+  onFocusChange,
   editorRef,
   disabled = false,
   readOnly = false,
@@ -124,11 +130,12 @@ export function DocumentTitleField({
     resizeTitle();
   }, [resizeTitle, value, resetKey]);
 
-  // Restore caret after any focused setState (e.g. liveLen) that would otherwise
-  // leave WKWebView selection at 0.
+  // Restore caret after ANY focused re-render (ancestor state or liveLen).
+  // WKWebView resets selection to 0 on React commit while the textarea is focused.
   useLayoutEffect(() => {
+    if (!focusedRef.current) return;
     restorePendingSelection();
-  }, [liveLen, restorePendingSelection]);
+  });
 
   useLayoutEffect(() => {
     if (!readOnly) return;
@@ -162,6 +169,11 @@ export function DocumentTitleField({
       onChange(next);
     }
   };
+
+  // Capture selection before React commits this render's DOM updates.
+  if (focusedRef.current) {
+    rememberSelection();
+  }
 
   return (
     <DocumentTitleContextMenu
@@ -199,10 +211,12 @@ export function DocumentTitleField({
           }}
           onFocus={() => {
             focusedRef.current = true;
+            onFocusChange?.(true);
           }}
           onBlur={(event) => {
             focusedRef.current = false;
             pendingSelectionRef.current = null;
+            onFocusChange?.(false);
             if (cancelledRef.current) {
               cancelledRef.current = false;
               return;
@@ -276,3 +290,6 @@ export function DocumentTitleField({
     </DocumentTitleContextMenu>
   );
 }
+
+export const DocumentTitleField = memo(DocumentTitleFieldInner);
+DocumentTitleField.displayName = "DocumentTitleField";

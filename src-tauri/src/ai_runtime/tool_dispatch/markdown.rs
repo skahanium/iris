@@ -150,7 +150,17 @@ pub(super) fn markdown_write_patch_apply(
         &current,
         crate::version::SnapshotParams::manual(),
     )?;
-    let receipt = NoteWriteService::write(state, &target_path, &applied)?;
+    let receipt = match NoteWriteService::write(state, &target_path, &applied) {
+        Ok(receipt) => receipt,
+        Err(error) if error.to_string().contains("note_locked") => {
+            return Ok(markdown_write_not_applied(
+                tool_name,
+                "笔记已锁定，无法写入",
+                args,
+            ));
+        }
+        Err(error) => return Err(error),
+    };
     let hash = receipt.content_hash;
     let mut warnings = Vec::new();
     if receipt.index_status == FileWriteIndexStatus::Degraded {

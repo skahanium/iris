@@ -155,6 +155,7 @@ function App() {
   const discardPristineNoteRef = useRef<
     (path: string, markdown: string) => Promise<void>
   >(async () => undefined);
+  const clearSuppressShellUiRef = useRef<() => void>(() => undefined);
   const {
     tabs,
     activePath,
@@ -183,6 +184,7 @@ function App() {
     setFileLocked,
     pendingNoteOpen,
     commitPendingNoteOpen,
+    isPathClosing,
   } = useTabManager({
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
@@ -191,6 +193,7 @@ function App() {
     discardPristineNote: (path, content) =>
       discardPristineNoteRef.current(path, content),
     getLiveMarkdown: () => getLiveMarkdownForTabsRef.current(),
+    clearSuppressShellUi: () => clearSuppressShellUiRef.current(),
   });
   const rejectDepartureInteraction = useCallback(() => {
     if (!departureInteractionLockedRef.current) return false;
@@ -370,6 +373,7 @@ function App() {
     onTitleChange,
     onTitleBlur,
     onTitleCancel,
+    setTitleFocused,
     loadBodyIntoEditor,
   } = useOpenNote({
     activePath,
@@ -419,6 +423,7 @@ function App() {
     hasDirtyDocuments,
     isPersistenceBarrierActive,
     releasePersistenceBarrier,
+    clearSuppressShellUi,
   } = useAppPersistenceLifecycle({
     activeFileLocked,
     activePath,
@@ -452,6 +457,7 @@ function App() {
     tabsRef,
   });
   discardPristineNoteRef.current = discardPristineNote;
+  clearSuppressShellUiRef.current = clearSuppressShellUi;
   updateInstallBarrierRef.current = flushAllOpenTabs;
   const isEditorPersistenceBlocked =
     activeFileLocked || isPersistenceBarrierActive;
@@ -491,6 +497,7 @@ function App() {
     handleFilePathChanged,
     handleFilePathChangeFailed,
     handleBeforeFileDelete,
+    handleBeforeFileLock,
     handleFileDeleted,
   } = useNavigatorFileLifecycle({
     abortPathMigration,
@@ -608,6 +615,7 @@ function App() {
     (sourcePath: string) => {
       if (sourcePath !== activePathRef.current) return;
       if (isEditorPersistenceBlocked) return;
+      if (isPathClosing(sourcePath)) return;
       const captured = notifyDirty(sourcePath);
       if (!captured) return;
       if (!dirtyRef.current) {
@@ -621,6 +629,7 @@ function App() {
     [
       activePathRef,
       isEditorPersistenceBlocked,
+      isPathClosing,
       invalidateActivePreparedNote,
       markDirty,
       notifyDirty,
@@ -689,6 +698,7 @@ function App() {
         onChange={handleTitleChange}
         onBlur={handleTitleBlur}
         onCancel={onTitleCancel}
+        onFocusChange={setTitleFocused}
         editorRef={editorRef}
         readOnly={isEditorPersistenceBlocked}
       />
@@ -700,6 +710,7 @@ function App() {
       handleTitleChange,
       handleTitleBlur,
       onTitleCancel,
+      setTitleFocused,
       editorRef,
       isEditorPersistenceBlocked,
     ],
@@ -945,6 +956,8 @@ function App() {
             onFilePathChangeFailed={handleFilePathChangeFailed}
             onBeforeFileDelete={handleBeforeFileDelete}
             onFileDeleted={handlePreparedFileDeleted}
+            onBeforeFileLock={handleBeforeFileLock}
+            onFileLockChanged={setFileLocked}
             onClassifiedUnlocked={onClassifiedUnlocked}
             onIndexDegraded={() => setAiStatus("已保存但索引待修复")}
             onOpenDocumentRecovery={() =>

@@ -40,7 +40,7 @@ pub(crate) struct NoteWriteService;
 impl NoteWriteService {
     /// Atomically persist a note body, then best-effort refresh its derived index.
     pub(crate) fn write(state: &AppState, path: &str, content: &str) -> AppResult<FileWriteResult> {
-        with_vault_move_lock(|| Self::write_body(state, path, content, false))
+        with_vault_move_lock(|| Self::write_body(state, path, content, false, false))
     }
 
     /// Atomically create a note body without replacing an existing Markdown file.
@@ -49,19 +49,23 @@ impl NoteWriteService {
         path: &str,
         content: &str,
     ) -> AppResult<FileWriteResult> {
-        with_vault_move_lock(|| Self::write_body(state, path, content, true))
+        with_vault_move_lock(|| Self::write_body(state, path, content, true, false))
     }
 
     /// Persist a note body when the caller already holds [`with_vault_move_lock`].
     ///
     /// `VAULT_MOVE_LOCK` is not reentrant; rename/trash cascades must use this
     /// instead of [`Self::write`] to avoid deadlocking the coordinator.
+    ///
+    /// When `bypass_lock` is true (wikilink cascade / system rewrite), a locked
+    /// note may still be updated. User-facing writes must keep `bypass_lock = false`.
     pub(crate) fn write_under_move_lock(
         state: &AppState,
         path: &str,
         content: &str,
+        bypass_lock: bool,
     ) -> AppResult<FileWriteResult> {
-        Self::write_body(state, path, content, false)
+        Self::write_body(state, path, content, false, bypass_lock)
     }
 
     /// Move an existing plain Markdown file into the vault, then refresh its derived index.
@@ -112,7 +116,14 @@ impl NoteWriteService {
         path: &str,
         content: &str,
         reject_existing: bool,
+        bypass_lock: bool,
     ) -> AppResult<FileWriteResult> {
+        // Create never checks lock (the path does not exist yet). Updates reject
+        // locked notes unless the caller explicitly bypasses (cascade rewrite).
+        if !reject_existing && !bypass_lock && is_note_locked(&state.db, path)? {
+            return Err(AppError::msg("note_locked"));
+        }
+
         let vault = state.vault_path()?;
         let payload = encode_payload(path, content)?;
         // Callers must hold the vault move lock so a concurrent rename/trash
@@ -214,6 +225,18 @@ fn fallback_entry(path: &str, content: &str) -> FileEntry {
         updated_at: chrono::Utc::now().to_rfc3339(),
         word_count: content.split_whitespace().count() as i64,
     }
+}
+
+/// Returns true when `files.is_locked` is set for `path`. Missing rows are unlocked.
+fn is_note_locked(db: &crate::storage::db::Database, path: &str) -> AppResult<bool> {
+    db.with_read_conn(|conn| {
+        let mut stmt = conn.prepare("SELECT is_locked FROM files WHERE path = ?1")?;
+        match stmt.query_row([path], |row| row.get::<_, i64>(0)) {
+            Ok(v) => Ok(v != 0),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    })
 }
 
 pub(crate) fn noop_write_receipt(path: &str, content: &str) -> FileWriteResult {

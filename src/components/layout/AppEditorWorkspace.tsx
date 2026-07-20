@@ -469,7 +469,8 @@ export function AppEditorWorkspace({
       const titleChanged =
         existing.snapshot.title !== currentEditorSurface.title;
       const namespaceChanged =
-        existing.snapshot.cacheNamespace !== currentEditorSurface.cacheNamespace;
+        existing.snapshot.cacheNamespace !==
+        currentEditorSurface.cacheNamespace;
       if (
         !contentChanged &&
         !lockChanged &&

@@ -23,7 +23,7 @@ describe("document title field layout", () => {
     expect(source).toContain("onBlur?.(next)");
     expect(source).not.toMatch(/value=\{value\}/);
     expect(app).toContain(
-      "resetKey={activeDocumentSessionId ?? activePath ?? \"\"}",
+      'resetKey={activeDocumentSessionId ?? activePath ?? ""}',
     );
   });
 

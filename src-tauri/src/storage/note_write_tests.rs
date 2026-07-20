@@ -188,3 +188,63 @@ fn concurrent_trash_and_write_serialize_without_lost_body() {
         trash_result.expect("missing race.md implies trash succeeded");
     }
 }
+
+#[test]
+fn write_locked_file_returns_note_locked_error() {
+    let directory = tempdir().expect("temporary directory");
+    let vault = directory.path().join("vault");
+    fs::create_dir_all(&vault).expect("vault directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    state.set_vault(vault.clone()).expect("set vault");
+    NoteWriteService::write(&state, "locked.md", "seed").expect("seed note");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "UPDATE files SET is_locked = 1 WHERE path = 'locked.md'",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("lock note");
+
+    let err = NoteWriteService::write(&state, "locked.md", "should fail")
+        .expect_err("locked write must fail");
+    assert!(
+        err.to_string().contains("note_locked"),
+        "expected note_locked, got {err}"
+    );
+    assert_eq!(
+        fs::read_to_string(vault.join("locked.md")).expect("disk unchanged"),
+        "seed"
+    );
+}
+
+#[test]
+fn write_under_move_lock_bypass_allows_locked_note() {
+    let directory = tempdir().expect("temporary directory");
+    let vault = directory.path().join("vault");
+    fs::create_dir_all(&vault).expect("vault directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    state.set_vault(vault.clone()).expect("set vault");
+    NoteWriteService::write(&state, "locked.md", "seed").expect("seed note");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "UPDATE files SET is_locked = 1 WHERE path = 'locked.md'",
+                [],
+            )?;
+            Ok(())
+        })
+        .expect("lock note");
+
+    crate::storage::atomic_write::with_vault_move_lock(|| {
+        NoteWriteService::write_under_move_lock(&state, "locked.md", "cascade rewrite", true)
+    })
+    .expect("bypass must allow locked cascade rewrite");
+    assert_eq!(
+        fs::read_to_string(vault.join("locked.md")).expect("rewritten"),
+        "cascade rewrite"
+    );
+}

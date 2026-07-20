@@ -205,6 +205,7 @@ pub fn run() {
             commands::version::version_cleanup_cmd,
             commands::version::version_save_manual_cmd,
             commands::version::version_save_idle_cmd,
+            commands::version::version_save_pre_close_cmd,
             commands::document_recovery::document_title_audit_cmd,
             commands::document_recovery::document_recovery_audit_cmd,
             commands::document_recovery::document_recovery_restore_missing_cmd,

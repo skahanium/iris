@@ -39,8 +39,8 @@ export async function createDefaultNote(
     );
     const content = buildDefaultNoteContent(title);
     try {
-      const entry = await fileCreate(path, content);
-      return { content, path: entry.path, title };
+      const receipt = await fileCreate(path, content);
+      return { content, path: receipt.entry.path, title };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (

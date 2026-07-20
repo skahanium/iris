@@ -154,7 +154,7 @@ fn is_internal_untitled_stem(stem: &str) -> bool {
     !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// Resolve user-visible document title (frontmatter `title:` only; not body `#` headings).
+/// 单标题模型：返回路径 stem（`untitled-N` 映射为「未命名文档」）。
 pub fn resolve_display_title(
     _parsed_title: Option<&str>,
     _stored_title: &str,
@@ -242,10 +242,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_display_title_prefers_frontmatter_json() {
+    fn resolve_display_title_maps_untitled_stem_to_placeholder() {
         let fm = r#"{"title":"吃早饭","tags":[]}"#;
         let title = resolve_display_title(None, "untitled-1", Some(fm), "untitled-1");
-        assert_eq!(title, "吃早饭");
+        assert_eq!(title, "未命名文档");
     }
 
     #[test]

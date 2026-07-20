@@ -26,7 +26,7 @@ use crate::storage::atomic_write::{
 };
 use crate::storage::note_title::title_from_path;
 use crate::storage::note_write::{
-    FileWriteIndexStatus, FileWriteResult, NoteWriteService, noop_write_receipt,
+    noop_write_receipt, FileWriteIndexStatus, FileWriteResult, NoteWriteService,
 };
 use crate::storage::paths::{
     is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
@@ -732,10 +732,13 @@ pub fn set_file_lock(state: &AppState, path: &str, locked: bool) -> AppResult<()
         return Err(AppError::msg("只能操作用户笔记"));
     }
     state.db.with_conn(|conn| {
-        conn.execute(
+        let affected = conn.execute(
             "UPDATE files SET is_locked = ?1 WHERE path = ?2",
             rusqlite::params![locked as i64, path],
         )?;
+        if affected == 0 {
+            return Err(AppError::msg("文件尚未索引，无法设置锁定状态"));
+        }
         Ok(())
     })
 }
@@ -1087,7 +1090,7 @@ fn cascade_rewrite_wikilinks_on_disk(
 
         if changed {
             let updated = lines.join("\n");
-            NoteWriteService::write_under_move_lock(state, &src_path, &updated)?;
+            NoteWriteService::write_under_move_lock(state, &src_path, &updated, true)?;
             modified.push(src_path);
         }
     }
@@ -1113,7 +1116,7 @@ pub async fn file_create(
     state: State<'_, Arc<AppState>>,
     path: String,
     content: Option<String>,
-) -> AppResult<FileEntry> {
+) -> AppResult<FileWriteResult> {
     if !is_accessible_note_path(&path) {
         return Err(AppError::msg("只能创建用户笔记，不允许写入内部元数据路径"));
     }
@@ -1135,8 +1138,8 @@ pub async fn file_create(
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
-fn create_file_inner(state: &Arc<AppState>, path: &str, body: &str) -> AppResult<FileEntry> {
-    Ok(NoteWriteService::create(state, path, body)?.entry)
+fn create_file_inner(state: &Arc<AppState>, path: &str, body: &str) -> AppResult<FileWriteResult> {
+    NoteWriteService::create(state, path, body)
 }
 
 #[tauri::command]
@@ -1515,6 +1518,14 @@ Body",
 
         let err = set_file_lock(&state, ".classified/secret.md", true).unwrap_err();
         assert!(err.to_string().contains("只能操作用户笔记"));
+    }
+
+    #[test]
+    fn set_file_lock_rejects_unindexed_path() {
+        let dir = tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        let err = set_file_lock(&state, "missing.md", true).unwrap_err();
+        assert!(err.to_string().contains("文件尚未索引"));
     }
 
     #[test]

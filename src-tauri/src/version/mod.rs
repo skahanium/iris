@@ -79,6 +79,14 @@ impl SnapshotParams {
             is_finalized: true,
         }
     }
+
+    pub fn pre_close() -> Self {
+        Self {
+            kind: VersionKind::PreClose,
+            label: None,
+            is_finalized: false,
+        }
+    }
 }
 
 /// Explicit user checkpoint (`kind = manual`).
@@ -296,6 +304,15 @@ fn delete_version_row(
         if let Err(e) = state.ref_counter().decrement(hash) {
             tracing::warn!("CAS ref decrement failed for {hash}: {e}");
         }
+    } else if let Some(rest) = storage_path.strip_prefix(CAS_DIFF_PREFIX) {
+        if let Some((parent_hash, diff_hash)) = rest.split_once(':') {
+            if let Err(e) = state.ref_counter().decrement(parent_hash) {
+                tracing::warn!("CAS ref decrement failed for parent {parent_hash}: {e}");
+            }
+            if let Err(e) = state.ref_counter().decrement(diff_hash) {
+                tracing::warn!("CAS ref decrement failed for diff {diff_hash}: {e}");
+            }
+        }
     }
     state.db.with_conn(|conn| {
         conn.execute("DELETE FROM versions WHERE id = ?1", [id])?;
@@ -438,6 +455,15 @@ pub fn create_snapshot_outcome(
         if let Err(e) = state.ref_counter().increment(cas_hash) {
             tracing::warn!("CAS ref increment failed for {cas_hash}: {e}");
         }
+    } else if let Some(rest) = storage_path.strip_prefix(CAS_DIFF_PREFIX) {
+        if let Some((parent_hash, diff_hash)) = rest.split_once(':') {
+            if let Err(e) = state.ref_counter().increment(parent_hash) {
+                tracing::warn!("CAS ref increment failed for parent {parent_hash}: {e}");
+            }
+            if let Err(e) = state.ref_counter().increment(diff_hash) {
+                tracing::warn!("CAS ref increment failed for diff {diff_hash}: {e}");
+            }
+        }
     }
 
     let wc = character_count_excluding_whitespace(content);
@@ -570,6 +596,16 @@ pub fn version_finalize_current(
     label: Option<String>,
 ) -> AppResult<Option<VersionEntry>> {
     create_snapshot(state, path, content, SnapshotParams::finalize(label))
+}
+
+/// Snapshot taken immediately before closing a tab / leaving a note.
+/// Bypasses hash dedup and idle cooldown so close always leaves a recoverable marker.
+pub fn version_save_pre_close(
+    state: &AppState,
+    path: &str,
+    content: &str,
+) -> AppResult<Option<VersionEntry>> {
+    create_snapshot(state, path, content, SnapshotParams::pre_close())
 }
 
 pub fn version_cleanup(state: &AppState) -> AppResult<usize> {
@@ -850,6 +886,114 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn pre_close_creates_even_when_hash_matches_latest() {
+        let (_dir, state) = test_state();
+        seed_file_in_db(&state, "note.md", "Note");
+
+        let manual = version_save_manual(&state, "note.md", "same body")
+            .unwrap()
+            .expect("manual");
+        let pre_close = version_save_pre_close(&state, "note.md", "same body")
+            .unwrap()
+            .expect("pre_close must bypass hash dedup");
+
+        assert_eq!(pre_close.kind, VersionKind::PreClose);
+        assert!(!pre_close.is_finalized);
+        assert_ne!(pre_close.id, manual.id);
+    }
+
+    #[test]
+    fn diff_storage_increments_and_decrements_both_refs() {
+        let (_dir, state) = test_state();
+        seed_file_in_db(&state, "note.md", "Note");
+
+        // Large shared prefix makes a delta worth storing.
+        let base = format!("{}\nline-a\n", "shared-prefix-".repeat(80));
+        let next = format!("{}\nline-b\n", "shared-prefix-".repeat(80));
+
+        let first = version_save_manual(&state, "note.md", &base)
+            .unwrap()
+            .expect("base snapshot");
+        let second = version_save_manual(&state, "note.md", &next)
+            .unwrap()
+            .expect("delta snapshot");
+
+        let second_storage: String = state
+            .db
+            .with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [second.id],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+
+        if let Some(rest) = second_storage.strip_prefix("dif:") {
+            let (parent_hash, diff_hash) = rest.split_once(':').expect("dif path");
+            let parent_refs: i64 = state
+                .db
+                .with_conn(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT ref_count FROM cas_refs WHERE object_hash = ?1",
+                        [parent_hash],
+                        |r| r.get(0),
+                    )?)
+                })
+                .unwrap();
+            let diff_refs: i64 = state
+                .db
+                .with_conn(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT ref_count FROM cas_refs WHERE object_hash = ?1",
+                        [diff_hash],
+                        |r| r.get(0),
+                    )?)
+                })
+                .unwrap();
+            assert!(parent_refs >= 1, "parent blob must be refcounted");
+            assert_eq!(diff_refs, 1, "diff blob must be refcounted");
+
+            version_delete(&state, second.id).unwrap();
+
+            let parent_after: i64 = state
+                .db
+                .with_conn(|conn| {
+                    Ok(conn
+                        .query_row(
+                            "SELECT COALESCE((SELECT ref_count FROM cas_refs WHERE object_hash = ?1), 0)",
+                            [parent_hash],
+                            |r| r.get(0),
+                        )?)
+                })
+                .unwrap();
+            let diff_after: i64 = state
+                .db
+                .with_conn(|conn| {
+                    Ok(conn
+                        .query_row(
+                            "SELECT COALESCE((SELECT ref_count FROM cas_refs WHERE object_hash = ?1), 0)",
+                            [diff_hash],
+                            |r| r.get(0),
+                        )?)
+                })
+                .unwrap();
+            assert!(
+                parent_after < parent_refs,
+                "deleting dif: version must decrement parent"
+            );
+            assert_eq!(diff_after, 0, "deleting dif: version must decrement diff");
+            let _ = first;
+        } else {
+            // Diff was not chosen (threshold); still a valid outcome — assert cas: path works.
+            assert!(
+                second_storage.starts_with("cas:"),
+                "expected cas: or dif: storage, got {second_storage}"
+            );
+        }
     }
 
     #[test]

@@ -85,6 +85,8 @@ export function useOpenNote({
   const [noteTitle, setNoteTitle] = useState("");
   const [bodyMarkdown, setBodyMarkdown] = useState("");
   const noteTitleRef = useRef("");
+  /** True while DocumentTitleField is focused — blocks disk-sync from stomping live edits. */
+  const titleFocusedRef = useRef(false);
   const titleRenameGenerationRef = useRef(0);
   const titleRenameQueueRef = useRef<Promise<void>>(Promise.resolve());
   const editorIngestGenerationRef = useRef(0);
@@ -116,8 +118,14 @@ export function useOpenNote({
       setBodyMarkdown("");
       return;
     }
+    // Do not overwrite a title the user is actively editing.
+    if (titleFocusedRef.current) return;
     syncFromMarkdown(markdownRef.current, activePath);
   }, [activePath, editorContentTick, markdownRef, syncFromMarkdown]);
+
+  const setTitleFocused = useCallback((focused: boolean) => {
+    titleFocusedRef.current = focused;
+  }, []);
 
   const getLiveMarkdown = useCallback(() => {
     const editor = editorRef.current;
@@ -293,6 +301,7 @@ export function useOpenNote({
     onTitleChange,
     onTitleBlur,
     onTitleCancel,
+    setTitleFocused,
     commitTitleRename,
     syncFromMarkdown,
     loadBodyIntoEditor,

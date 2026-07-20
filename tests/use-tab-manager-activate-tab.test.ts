@@ -172,7 +172,10 @@ describe("useTabManager activateTab / openNote", () => {
       await Promise.resolve();
     });
 
-    expect(persistBeforeLeave).toHaveBeenCalledWith("a.md");
+    expect(persistBeforeLeave).toHaveBeenCalledWith(
+      "a.md",
+      expect.objectContaining({ reason: "tab_leave" }),
+    );
     expect(fileRead).toHaveBeenCalledWith("b.md", {
       allowClassified: false,
     });
@@ -275,7 +278,10 @@ describe("useTabManager activateTab / openNote", () => {
     const switchPromise = apiRef.current!.activateTab("b.md");
     await Promise.resolve();
 
-    expect(persistBeforeLeave).toHaveBeenCalledWith("a.md");
+    expect(persistBeforeLeave).toHaveBeenCalledWith(
+      "a.md",
+      expect.objectContaining({ reason: "tab_leave" }),
+    );
     expect(apiRef.current!.activePathRef.current).toBe("b.md");
     expect(apiRef.current!.markdownRef.current).toContain("body-b");
 

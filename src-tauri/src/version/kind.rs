@@ -35,6 +35,6 @@ impl VersionKind {
 
     /// Kinds that must record even when content matches the latest snapshot.
     pub fn bypasses_hash_dedup(self) -> bool {
-        matches!(self, Self::PreRestore | Self::Finalize)
+        matches!(self, Self::PreRestore | Self::Finalize | Self::PreClose)
     }
 }

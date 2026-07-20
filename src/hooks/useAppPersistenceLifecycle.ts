@@ -29,6 +29,7 @@ import {
   versionFinalizeCurrent,
   versionSaveIdle,
   versionSaveManual,
+  versionSavePreClose,
 } from "@/lib/ipc";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import type { AutoSnapshotLeaveReason } from "@/lib/version-auto-snapshot-policy";
@@ -45,6 +46,11 @@ export interface PersistBeforeLeaveOptions {
    * still-mounted editor; that re-render is the “flash then still open” feel.
    */
   suppressShellUi?: boolean;
+  /**
+   * Keep shell-UI suppression after persist returns so the caller can clear it
+   * only after the tab is removed from chrome (avoids a final flash).
+   */
+  retainSuppressShellUi?: boolean;
 }
 
 export type PersistBeforeLeave = (
@@ -144,11 +150,27 @@ export function useAppPersistenceLifecycle({
   const cancelledWriteRef = useRef<Promise<void>>(Promise.resolve());
   const persistenceBarrierActiveRef = useRef(false);
   const persistenceBarrierTaskRef = useRef<Promise<void> | null>(null);
-  const suppressShellUiForPathRef = useRef<string | null>(null);
+  /** Session id or path key while close-tab suppress is active. */
+  const suppressShellUiKeyRef = useRef<string | null>(null);
   const isPersistenceBarrierActiveNow = useCallback(
     () => persistenceBarrierActiveRef.current,
     [],
   );
+
+  const isShellUiSuppressedForPath = useCallback(
+    (path: string): boolean => {
+      const key = suppressShellUiKeyRef.current;
+      if (!key) return false;
+      if (key === path) return true;
+      const tab = tabsRef.current.find((item) => item.path === path);
+      return Boolean(tab?.documentSessionId && tab.documentSessionId === key);
+    },
+    [tabsRef],
+  );
+
+  const clearSuppressShellUi = useCallback(() => {
+    suppressShellUiKeyRef.current = null;
+  }, []);
   const getLastSavedSnapshot = useCallback((): LastSavedSnapshot | null => {
     const path = activePathRef.current;
     if (!path) return null;
@@ -173,8 +195,7 @@ export function useAppPersistenceLifecycle({
         return;
       }
       syncTabMarkdownCache(snapshot.path, snapshot.markdown);
-      const suppressShellUi =
-        suppressShellUiForPathRef.current === snapshot.path;
+      const suppressShellUi = isShellUiSuppressedForPath(snapshot.path);
       if (!suppressShellUi) {
         markClean(
           snapshot.path,
@@ -199,6 +220,7 @@ export function useAppPersistenceLifecycle({
       activePathRef,
       applySavedMarkdown,
       dirtyRef,
+      isShellUiSuppressedForPath,
       markClean,
       markdown,
       setMarkdown,
@@ -210,18 +232,19 @@ export function useAppPersistenceLifecycle({
     return coordinator.subscribe((snapshot) => {
       setHasDirtyDocuments(coordinator.hasDirtyDocuments());
       if (!snapshot) return;
-      const suppressShellUi =
-        suppressShellUiForPathRef.current === snapshot.path;
-      if (
-        snapshot.path === activePathRef.current &&
-        !suppressShellUi
-      ) {
+      const suppressShellUi = isShellUiSuppressedForPath(snapshot.path);
+      if (snapshot.path === activePathRef.current && !suppressShellUi) {
         setSaveStatus(snapshot.status);
         setSaveError(snapshot.error);
       }
       acknowledgeSnapshot(snapshot);
     });
-  }, [acknowledgeSnapshot, activePathRef, coordinator]);
+  }, [
+    acknowledgeSnapshot,
+    activePathRef,
+    coordinator,
+    isShellUiSuppressedForPath,
+  ]);
 
   useEffect(() => {
     const path = activePath;
@@ -237,6 +260,7 @@ export function useAppPersistenceLifecycle({
         versionSaveIdle,
         versionSaveManual,
         versionFinalizeCurrent,
+        versionSavePreClose,
         onError: (err) => {
           const msg = err instanceof Error ? err.message : String(err);
           setAiStatus(`自动版本备份提交失败：${msg}`);
@@ -388,14 +412,21 @@ export function useAppPersistenceLifecycle({
   ) => {
     const reason = options.reason ?? "tab_leave";
     const suppressShellUi = Boolean(options.suppressShellUi);
+    const retainSuppress = Boolean(options.retainSuppressShellUi);
     if (suppressShellUi) {
-      suppressShellUiForPathRef.current = path;
+      const tab = tabsRef.current.find((item) => item.path === path);
+      suppressShellUiKeyRef.current = tab?.documentSessionId ?? path;
     }
     try {
       return await runPersistBeforeLeave(path, reason);
     } finally {
-      if (suppressShellUi && suppressShellUiForPathRef.current === path) {
-        suppressShellUiForPathRef.current = null;
+      if (suppressShellUi && !retainSuppress) {
+        // Only clear when this call still owns the suppress key.
+        const tab = tabsRef.current.find((item) => item.path === path);
+        const key = tab?.documentSessionId ?? path;
+        if (suppressShellUiKeyRef.current === key) {
+          suppressShellUiKeyRef.current = null;
+        }
       }
     }
   };
@@ -421,8 +452,13 @@ export function useAppPersistenceLifecycle({
       const cacheDiverges =
         tabCached !== undefined && tabCached !== persisted.markdown;
       if (!liveDiverges && !cacheDiverges) {
-        if (tab?.dirty && suppressShellUiForPathRef.current !== path) {
+        if (tab?.dirty && !isShellUiSuppressedForPath(path)) {
           markClean(path, resolveNoteDisplayTitle({ path }));
+        }
+        if (reason !== "app_close") {
+          void versionSnapshotScheduler
+            .savePreClose(path, persisted.markdown)
+            .catch(() => undefined);
         }
         return persisted.markdown;
       }
@@ -442,6 +478,9 @@ export function useAppPersistenceLifecycle({
       if (!saved) return null;
       if (reason !== "app_close") {
         enqueueLeaveSnapshot(path, saved, reason);
+        void versionSnapshotScheduler.savePreClose(path, saved).catch(() => {
+          // Best-effort; close must not fail because version IPC failed.
+        });
       }
       return saved;
     }
@@ -473,6 +512,9 @@ export function useAppPersistenceLifecycle({
     }
     if (reason !== "app_close") {
       enqueueLeaveSnapshot(path, saved, reason);
+      void versionSnapshotScheduler.savePreClose(path, saved).catch(() => {
+        // Best-effort; close must not fail because version IPC failed.
+      });
     }
     return saved;
   }
@@ -528,6 +570,22 @@ export function useAppPersistenceLifecycle({
             ),
         );
         await coordinator.barrierAll();
+        // Await pre_close markers so exit does not race the version write.
+        await Promise.all(
+          tabsAtClose
+            .filter((tab) => tab.lifecycle !== "session_pristine")
+            .map(async (tab) => {
+              const markdown =
+                getTabMarkdownCached(tab.path) ??
+                coordinator.get(tab.path)?.markdown;
+              if (!markdown) return;
+              try {
+                await versionSnapshotScheduler.savePreClose(tab.path, markdown);
+              } catch {
+                // Best-effort on exit.
+              }
+            }),
+        );
       } catch (error) {
         releasePersistenceBarrier();
         throw error;
@@ -672,6 +730,7 @@ export function useAppPersistenceLifecycle({
     completePathMigration,
     abortPathMigration,
     flushAllOpenTabs,
+    clearSuppressShellUi,
     saveStatus,
     saveError,
     hasDirtyDocuments,

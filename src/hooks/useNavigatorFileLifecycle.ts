@@ -63,6 +63,15 @@ export function useNavigatorFileLifecycle({
     [discardOpenTab, persistBeforeLeaveRef, tabsRef],
   );
 
+  /** Flush open dirty notes before locking so the lock captures the latest body. */
+  const handleBeforeFileLock = useCallback(
+    async (path: string) => {
+      if (!tabsRef.current.some((tab) => tab.path === path)) return;
+      await persistBeforeLeaveRef.current(path);
+    },
+    [persistBeforeLeaveRef, tabsRef],
+  );
+
   const handleFileDeleted = useCallback(
     (_path?: string) => {
       bumpVaultIndex();
@@ -75,6 +84,7 @@ export function useNavigatorFileLifecycle({
     handleFilePathChanged,
     handleFilePathChangeFailed,
     handleBeforeFileDelete,
+    handleBeforeFileLock,
     handleFileDeleted,
   };
 }

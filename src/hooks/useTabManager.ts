@@ -27,6 +27,8 @@ interface UseTabManagerOptions {
   discardPristineNote?: (path: string, markdown: string) => Promise<void>;
   /** Live TipTap serialization for the active note (may be ahead of markdownRef). */
   getLiveMarkdown?: () => string;
+  /** Clear close-tab shell-UI suppress after the tab is removed (or close fails). */
+  clearSuppressShellUi?: () => void;
 }
 
 export interface CloseTabResult {
@@ -112,6 +114,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   discardPristineNoteRef.current = options.discardPristineNote;
   const getLiveMarkdownRef = useRef(options.getLiveMarkdown);
   getLiveMarkdownRef.current = options.getLiveMarkdown;
+  const clearSuppressShellUiRef = useRef(options.clearSuppressShellUi);
+  clearSuppressShellUiRef.current = options.clearSuppressShellUi;
 
   const [tabs, setTabs] = useState<TabItem[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -131,6 +135,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const tabMarkdownCacheRef = useRef(new Map<string, string>());
   const tabLockCacheRef = useRef(new Map<string, boolean>());
   const documentSessionSeqRef = useRef(0);
+  /** Paths / session ids currently inside closeTab persistence (blocks handleDirty). */
+  const closingPathsRef = useRef(new Set<string>());
+  const closingSessionIdsRef = useRef(new Set<string>());
   /** Serializes allocation + immediate registration for each + click. */
   const newNoteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [activeFileLocked, setActiveFileLocked] = useState(false);
@@ -173,6 +180,15 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const isPathOpening = useCallback((path: string) => {
     const pending = pendingNoteOpenCommitRef.current;
     return pending?.path === path;
+  }, []);
+
+  const isPathClosing = useCallback((path: string) => {
+    if (closingPathsRef.current.has(path)) return true;
+    const tab = tabsRef.current.find((item) => item.path === path);
+    return Boolean(
+      tab?.documentSessionId &&
+      closingSessionIdsRef.current.has(tab.documentSessionId),
+    );
   }, []);
 
   const getCommittedMarkdown = useCallback(
@@ -226,7 +242,10 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const persistAndCacheTab = useCallback(
     async (
       path: string,
-      options?: { suppressShellUi?: boolean },
+      options?: {
+        suppressShellUi?: boolean;
+        retainSuppressShellUi?: boolean;
+      },
     ): Promise<string | null> => {
       if (isPathOpening(path)) {
         return null;
@@ -235,6 +254,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         (await persistBeforeLeaveRef.current?.(path, {
           reason: "tab_leave",
           suppressShellUi: options?.suppressShellUi,
+          retainSuppressShellUi: options?.retainSuppressShellUi,
         })) ?? null;
       const md =
         saved ??
@@ -630,6 +650,10 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       // Title rename can change `path` while close persistence awaits. Track the
       // stable session id so we still remove the same tab afterwards.
       const sessionId = target.documentSessionId;
+      closingPathsRef.current.add(path);
+      if (sessionId) {
+        closingSessionIdsRef.current.add(sessionId);
+      }
       const wasActiveAtStart =
         activePathRef.current === path ||
         (sessionId !== undefined &&
@@ -639,10 +663,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       const mayDiscardPristine =
         target.lifecycle === "session_pristine" && !target.dirty;
       let discardedPristine = false;
-      try {
-        if (isPathOpening(path)) {
-          cancelPendingNoteOpen();
-        }
+
+      const persistClose = async () => {
         if (mayDiscardPristine) {
           // Empty markdown is a valid blank new-note snapshot
           // (`buildDefaultNoteContent` returns ""). Prefer live TipTap when
@@ -667,7 +689,10 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           }
           if (hasSubstance) {
             // Edits exist while still labeled pristine — save, do not discard.
-            await persistAndCacheTab(path, { suppressShellUi: true });
+            await persistAndCacheTab(path, {
+              suppressShellUi: true,
+              retainSuppressShellUi: true,
+            });
           } else {
             if (!discardPristineNoteRef.current) {
               throw new Error("临时笔记丢弃服务尚未就绪");
@@ -677,8 +702,93 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
             onVaultIndexBump?.();
           }
         } else {
-          await persistAndCacheTab(path, { suppressShellUi: true });
+          await persistAndCacheTab(path, {
+            suppressShellUi: true,
+            retainSuppressShellUi: true,
+          });
         }
+      };
+
+      try {
+        if (isPathOpening(path)) {
+          cancelPendingNoteOpen();
+        }
+        try {
+          await persistClose();
+        } catch (firstError) {
+          // One silent retry for persist races only. Discard failures must stay
+          // single-shot so callers can observe a definite closed:false.
+          if (mayDiscardPristine) {
+            throw firstError;
+          }
+          await persistClose();
+        }
+
+        const current =
+          (sessionId
+            ? tabsRef.current.find((tab) => tab.documentSessionId === sessionId)
+            : undefined) ?? tabsRef.current.find((tab) => tab.path === path);
+        if (!current) {
+          return {
+            closed: true,
+            discardedPristine,
+            nextActivePath: activePathRef.current,
+            remainingNoteCount: tabsRef.current.length,
+          };
+        }
+
+        const closePath = current.path;
+        tabMarkdownCacheRef.current.delete(path);
+        tabMarkdownCacheRef.current.delete(closePath);
+        tabLockCacheRef.current.delete(path);
+        tabLockCacheRef.current.delete(closePath);
+
+        const prevTabs = tabsRef.current;
+        const idx = prevTabs.findIndex((tab) =>
+          sessionId
+            ? tab.documentSessionId === sessionId
+            : tab.path === closePath,
+        );
+        const nextTabs = prevTabs.filter((tab) =>
+          sessionId
+            ? tab.documentSessionId !== sessionId
+            : tab.path !== closePath,
+        );
+        const isActive =
+          wasActiveAtStart ||
+          activePathRef.current === closePath ||
+          activePathRef.current === path;
+        const switchTo: string | null = isActive
+          ? nextTabs.length === 0
+            ? null
+            : nextTabs[Math.min(Math.max(0, idx), nextTabs.length - 1)]!.path
+          : null;
+        replaceTabs(() => nextTabs);
+
+        if (!isActive) {
+          return {
+            closed: true,
+            discardedPristine,
+            nextActivePath: activePathRef.current,
+            remainingNoteCount: nextTabs.length,
+          };
+        }
+        if (switchTo === null) {
+          clearEditorState();
+          return {
+            closed: true,
+            discardedPristine,
+            nextActivePath: null,
+            remainingNoteCount: 0,
+          };
+        }
+        await activateTab(switchTo);
+        return {
+          closed: true,
+          discardedPristine,
+          nextActivePath: switchTo,
+          remainingNoteCount: nextTabs.length,
+        };
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         onStatusChange?.(`关闭标签失败：${msg}`);
@@ -688,73 +798,13 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           nextActivePath: activePathRef.current,
           remainingNoteCount: tabsRef.current.length,
         };
+      } finally {
+        closingPathsRef.current.delete(path);
+        if (sessionId) {
+          closingSessionIdsRef.current.delete(sessionId);
+        }
+        clearSuppressShellUiRef.current?.();
       }
-
-      const current =
-        (sessionId
-          ? tabsRef.current.find((tab) => tab.documentSessionId === sessionId)
-          : undefined) ?? tabsRef.current.find((tab) => tab.path === path);
-      if (!current) {
-        return {
-          closed: true,
-          discardedPristine,
-          nextActivePath: activePathRef.current,
-          remainingNoteCount: tabsRef.current.length,
-        };
-      }
-
-      const closePath = current.path;
-      tabMarkdownCacheRef.current.delete(path);
-      tabMarkdownCacheRef.current.delete(closePath);
-      tabLockCacheRef.current.delete(path);
-      tabLockCacheRef.current.delete(closePath);
-
-      const prevTabs = tabsRef.current;
-      const idx = prevTabs.findIndex((tab) =>
-        sessionId
-          ? tab.documentSessionId === sessionId
-          : tab.path === closePath,
-      );
-      const nextTabs = prevTabs.filter((tab) =>
-        sessionId
-          ? tab.documentSessionId !== sessionId
-          : tab.path !== closePath,
-      );
-      const isActive =
-        wasActiveAtStart ||
-        activePathRef.current === closePath ||
-        activePathRef.current === path;
-      const switchTo: string | null = isActive
-        ? nextTabs.length === 0
-          ? null
-          : nextTabs[Math.min(Math.max(0, idx), nextTabs.length - 1)]!.path
-        : null;
-      replaceTabs(() => nextTabs);
-
-      if (!isActive) {
-        return {
-          closed: true,
-          discardedPristine,
-          nextActivePath: activePathRef.current,
-          remainingNoteCount: nextTabs.length,
-        };
-      }
-      if (switchTo === null) {
-        clearEditorState();
-        return {
-          closed: true,
-          discardedPristine,
-          nextActivePath: null,
-          remainingNoteCount: 0,
-        };
-      }
-      await activateTab(switchTo);
-      return {
-        closed: true,
-        discardedPristine,
-        nextActivePath: switchTo,
-        remainingNoteCount: nextTabs.length,
-      };
     },
     [
       activateTab,
@@ -1052,6 +1102,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     cancelOpenTransaction,
     hasUncommittedOpen,
     isPathOpening,
+    isPathClosing,
     activePathRef,
     markdownRef,
     frontmatterYamlRef,

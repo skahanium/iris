@@ -142,6 +142,8 @@ interface AppOverlaysProps {
   onFilePathChangeFailed: (oldPath: string) => void;
   onBeforeFileDelete: (path: string) => Promise<void>;
   onFileDeleted: (path: string) => void;
+  onBeforeFileLock?: (path: string) => Promise<void>;
+  onFileLockChanged: (path: string, locked: boolean) => void;
   openClassifiedPaths: string[];
   openNoteLeavingHome: (
     path: string,
@@ -218,6 +220,8 @@ export function AppOverlays({
   onFilePathChangeFailed,
   onBeforeFileDelete,
   onFileDeleted,
+  onBeforeFileLock,
+  onFileLockChanged,
   openClassifiedPaths,
   openNoteLeavingHome,
   onPrepareNote,
@@ -274,6 +278,8 @@ export function AppOverlays({
         onFilePathChangeFailed={onFilePathChangeFailed}
         onBeforeFileDelete={onBeforeFileDelete}
         onFileDeleted={onFileDeleted}
+        onBeforeFileLock={onBeforeFileLock}
+        onFileLockChanged={onFileLockChanged}
         onIndexDegraded={onIndexDegraded}
       />
       <RecycleBinSheet

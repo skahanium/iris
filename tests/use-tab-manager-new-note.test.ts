@@ -403,6 +403,7 @@ describe("useTabManager handleNewNote", () => {
     expect(persistBeforeLeave).toHaveBeenCalledWith("未命名文档.md", {
       reason: "tab_leave",
       suppressShellUi: true,
+      retainSuppressShellUi: true,
     });
     expect(fileDiscard).not.toHaveBeenCalled();
     expect(closeResult!).toEqual({
@@ -482,6 +483,7 @@ describe("useTabManager handleNewNote", () => {
     expect(persistBeforeLeave).toHaveBeenCalledWith("未命名文档.md", {
       reason: "tab_leave",
       suppressShellUi: true,
+      retainSuppressShellUi: true,
     });
     expect(fileDiscard).not.toHaveBeenCalled();
   });

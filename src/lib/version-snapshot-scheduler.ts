@@ -36,6 +36,8 @@ export interface VersionSnapshotScheduler {
     content: string,
     label: string | null,
   ): Promise<VersionEntry | null>;
+  /** Pre-close snapshot; runs even while the app is closing. */
+  savePreClose(path: string, content: string): Promise<VersionSaveOutcome>;
   setAppClosing(closing: boolean): void;
   getStats(): VersionSnapshotSchedulerStats;
 }
@@ -54,6 +56,10 @@ interface VersionSnapshotSchedulerDeps {
     content: string,
     label: string | null,
   ) => Promise<VersionEntry | null>;
+  versionSavePreClose?: (
+    path: string,
+    content: string,
+  ) => Promise<VersionSaveOutcome>;
   now?: () => number;
   onError?: (error: unknown) => void;
 }
@@ -81,6 +87,7 @@ export function createVersionSnapshotScheduler({
   versionSaveIdle,
   versionSaveManual,
   versionFinalizeCurrent,
+  versionSavePreClose,
   onError,
 }: VersionSnapshotSchedulerDeps): VersionSnapshotScheduler {
   const inFlightPaths = new Set<string>();
@@ -206,6 +213,25 @@ export function createVersionSnapshotScheduler({
       }
       return enqueueHighPriority(path, () =>
         versionFinalizeCurrent(path, content, label),
+      );
+    },
+
+    savePreClose(path, content) {
+      if (!versionSavePreClose) {
+        return Promise.reject(
+          new Error("pre-close version writer is not configured"),
+        );
+      }
+      if (isNoteSubstantivelyEmpty(content)) {
+        return Promise.resolve({
+          created: false,
+          versionId: null,
+          skipReason: null,
+        });
+      }
+      // Pre-close must run during app exit; do not honor appClosing skip.
+      return enqueueHighPriority(path, () =>
+        versionSavePreClose(path, content),
       );
     },
 

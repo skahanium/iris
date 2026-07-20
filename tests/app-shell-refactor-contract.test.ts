@@ -11,8 +11,9 @@ function lineCount(path: string): number {
 
 describe("App shell refactor contract", () => {
   it("keeps App.impl.tsx below the current shell split checkpoint", () => {
-    // 994: checkpoint after wiring DocumentTitleField resetKey={activePath}.
-    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(994);
+    // 1040: checkpoint after document lifecycle hardening (title caret,
+    // close-tab suppress/session lock sync, pre_close, file lock wiring).
+    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(1040);
   });
 
   it("moves AI sidecar bridge state behind a dedicated hook", () => {

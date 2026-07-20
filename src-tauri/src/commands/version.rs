@@ -126,3 +126,18 @@ pub async fn version_save_idle_cmd(
 ) -> AppResult<VersionSaveResult> {
     run_version_save(state.inner().clone(), path, content, VersionSaveKind::Idle).await
 }
+
+/// Creates a pre-close snapshot (bypasses idle cooldown / hash dedup).
+#[tauri::command]
+pub fn version_save_pre_close_cmd(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    content: String,
+) -> AppResult<VersionSaveResult> {
+    let entry = version::version_save_pre_close(state.inner(), &path, &content)?;
+    Ok(VersionSaveResult {
+        created: entry.is_some(),
+        version_id: entry.map(|e| e.id),
+        skip_reason: None,
+    })
+}
