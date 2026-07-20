@@ -476,6 +476,32 @@ function TipTapEditorInner({
     const cacheNamespace = contentCacheNamespaceRef.current;
     let cancelled = false;
     contentReadyRef.current = false;
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "6556f7",
+      },
+      body: JSON.stringify({
+        sessionId: "6556f7",
+        runId: "pre-fix",
+        hypothesisId: "E",
+        location: "TipTapEditor.tsx:ingest-effect",
+        message: "editor ingest effect fired",
+        data: {
+          reingestKey,
+          reingestChanged,
+          hasInitialHtml: Boolean(initialEditorHtml),
+          initialHtmlLen: initialEditorHtml?.length ?? null,
+          bodyLen: bodyMd.length,
+          cacheKey,
+          requestKey,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
 
     const setContent = (
       html: string,
@@ -636,6 +662,29 @@ function TipTapEditorInner({
     const cancelFrame =
       window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
     const generation = ++firstFrameGenerationRef.current;
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "6556f7",
+      },
+      body: JSON.stringify({
+        sessionId: "6556f7",
+        runId: "pre-fix",
+        hypothesisId: "E",
+        location: "TipTapEditor.tsx:baseline-reset",
+        message: "resetEditorContentBaseline",
+        data: {
+          parsedContentRevision,
+          hadBaseline: baselineAppliedRef.current,
+          contentLen: content.length,
+          selection: baselineAppliedRef.current ? "preserve" : "start",
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
 
     resetEditorContentBaseline(editor, content, {
       parseOptions: EDITOR_PARSE_OPTIONS,

@@ -48,7 +48,6 @@ interface EditorSurfaceSnapshot {
   editorBodyMarkdown: string;
   editorContentTick: number;
   editorPreparedHtml: string | null;
-  editorTitleSlot: ReactNode;
   documentSessionId: string;
   path: string;
   title: string;
@@ -298,7 +297,6 @@ export function AppEditorWorkspace({
       editorBodyMarkdown: effectiveBodyMarkdown,
       editorContentTick,
       editorPreparedHtml: prepared,
-      editorTitleSlot: pendingNoteOpen ? null : editorTitleSlot,
       documentSessionId:
         pendingNoteOpen?.documentSessionId ??
         activeDocumentSessionId ??
@@ -310,7 +308,6 @@ export function AppEditorWorkspace({
     activeMediaTab,
     activeDocumentSessionId,
     editorContentTick,
-    editorTitleSlot,
     effectiveBodyMarkdown,
     effectiveCommittedSourceMarkdown,
     effectiveLocked,
@@ -455,24 +452,88 @@ export function AppEditorWorkspace({
           },
         ]);
       }
-      return retainCurrentSurfaceRecords(
-        previous.map((record) => {
-          if (record.identityKey !== identityKey) return record;
-          const contentChanged =
-            record.snapshot.editorContentTick !==
-              currentEditorSurface.editorContentTick ||
-            record.snapshot.editorBodyMarkdown !==
-              currentEditorSurface.editorBodyMarkdown ||
-            record.snapshot.editorPreparedHtml !==
-              currentEditorSurface.editorPreparedHtml;
-          return {
-            ...record,
-            contentReady: contentChanged ? false : record.contentReady,
-            ready: contentChanged ? false : record.ready,
-            lastActivatedAt,
-            snapshot: currentEditorSurface,
+      const tickChanged =
+        existing.snapshot.editorContentTick !==
+        currentEditorSurface.editorContentTick;
+      const bodyChanged =
+        existing.snapshot.editorBodyMarkdown !==
+        currentEditorSurface.editorBodyMarkdown;
+      const preparedChanged =
+        existing.snapshot.editorPreparedHtml !==
+        currentEditorSurface.editorPreparedHtml;
+      const contentChanged = tickChanged || bodyChanged;
+      const lockChanged =
+        existing.snapshot.activeFileLocked !==
+        currentEditorSurface.activeFileLocked;
+      const pathChanged = existing.snapshot.path !== currentEditorSurface.path;
+      const committedChanged =
+        existing.snapshot.committedSourceMarkdown !==
+        currentEditorSurface.committedSourceMarkdown;
+      const titleChanged =
+        existing.snapshot.title !== currentEditorSurface.title;
+      const namespaceChanged =
+        existing.snapshot.cacheNamespace !== currentEditorSurface.cacheNamespace;
+      if (
+        !contentChanged &&
+        !lockChanged &&
+        !pathChanged &&
+        !committedChanged &&
+        !titleChanged &&
+        !namespaceChanged
+      ) {
+        return previous;
+      }
+      // #region agent log
+      if (contentChanged || preparedChanged || lockChanged) {
+        void fetch("/__iris_debug_ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId: "6556f7",
+            runId: "post-fix",
+            hypothesisId: "D",
+            location: "AppEditorWorkspace.tsx:surface-update",
+            message: "editor surface snapshot update",
+            data: {
+              identityKey,
+              contentChanged,
+              preparedChanged,
+              preparedFrozen: !contentChanged && preparedChanged,
+              willResetReady: contentChanged,
+              prevReady: existing.ready,
+              tickChanged,
+              bodyChanged,
+              lockChanged,
+              pathChanged,
+              titleChanged,
+              committedChanged,
+              namespaceChanged,
+              nextLocked: currentEditorSurface.activeFileLocked,
+              path: currentEditorSurface.path,
+            },
+            timestamp: Date.now(),
+          }),
+        }).catch(() => {});
+      }
+      // #endregion
+      const nextSnapshot = contentChanged
+        ? currentEditorSurface
+        : {
+            ...currentEditorSurface,
+            editorPreparedHtml: existing.snapshot.editorPreparedHtml,
           };
-        }),
+      return retainCurrentSurfaceRecords(
+        previous.map((record) =>
+          record.identityKey !== identityKey
+            ? record
+            : {
+                ...record,
+                contentReady: contentChanged ? false : record.contentReady,
+                ready: contentChanged ? false : record.ready,
+                lastActivatedAt,
+                snapshot: nextSnapshot,
+              },
+        ),
       );
     });
   }, [currentEditorSurface, retainCurrentSurfaceRecords]);
@@ -798,7 +859,12 @@ export function AppEditorWorkspace({
               zen={zen}
               zoom={editorZoom}
               mediaLoading="visible"
-              titleSlot={snapshot.editorTitleSlot}
+              titleSlot={
+                record.identityKey === currentSurfaceIdentity &&
+                !pendingNoteOpen
+                  ? editorTitleSlot
+                  : null
+              }
               locked={snapshot.activeFileLocked}
               mutationBlocked={isMutationBlocked}
               lockToggleDisabled={persistenceBarrierActive}
@@ -842,6 +908,8 @@ export function AppEditorWorkspace({
       );
     },
     [
+      currentSurfaceIdentity,
+      editorTitleSlot,
       effectiveNotePath,
       editorContextMenu.handleContextMenu,
       editorZoom,
@@ -854,6 +922,7 @@ export function AppEditorWorkspace({
       isMutationBlocked,
       onPrepareNotePath,
       openNoteLeavingHome,
+      pendingNoteOpen,
       persistenceBarrierActive,
       runEditorActionById,
       updateEditorStats,

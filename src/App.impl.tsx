@@ -209,6 +209,30 @@ function App() {
   );
   const guardedCloseTab = useCallback(
     (path: string) => {
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "6556f7",
+          },
+          body: JSON.stringify({
+            sessionId: "6556f7",
+            runId: "pre-fix",
+            hypothesisId: "F",
+            location: "App.impl.tsx:guardedCloseTab",
+            message: "close tab attempted",
+            data: {
+              path,
+              departureLocked: departureInteractionLockedRef.current,
+            },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
       if (rejectDepartureInteraction()) {
         return Promise.resolve({
           closed: false,
@@ -601,6 +625,34 @@ function App() {
 
   const handleDirty = useCallback(
     (sourcePath: string) => {
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "6556f7",
+          },
+          body: JSON.stringify({
+            sessionId: "6556f7",
+            runId: "pre-fix",
+            hypothesisId: "G",
+            location: "App.impl.tsx:handleDirty",
+            message: "editor dirty signal",
+            data: {
+              sourcePath,
+              activePath: activePathRef.current,
+              blocked: isEditorPersistenceBlocked,
+              editorReady: editorReadyForPersistenceRef.current,
+              alreadyDirty: dirtyRef.current,
+              pathMismatch: sourcePath !== activePathRef.current,
+            },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
       if (sourcePath !== activePathRef.current) return;
       if (isEditorPersistenceBlocked) return;
       if (!dirtyRef.current) {
@@ -627,9 +679,8 @@ function App() {
     (raw: string) => {
       if (isEditorPersistenceBlocked) return;
       onTitleChange(raw);
-      void reportForegroundActivity();
     },
-    [isEditorPersistenceBlocked, reportForegroundActivity, onTitleChange],
+    [isEditorPersistenceBlocked, onTitleChange],
   );
 
   const { rescanVaultManually } = useAutoVaultIndex(vaultPath, loading, {
@@ -652,6 +703,31 @@ function App() {
 
   const handleEditorReady = useCallback(
     (editor: Editor | null) => {
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "6556f7",
+          },
+          body: JSON.stringify({
+            sessionId: "6556f7",
+            runId: "pre-fix",
+            hypothesisId: "G",
+            location: "App.impl.tsx:handleEditorReady",
+            message: "persistence editorReady changed",
+            data: {
+              ready: editor != null,
+              activePath: activePathRef.current,
+              prev: editorReadyForPersistenceRef.current,
+            },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
       editorReadyForPersistenceRef.current = editor != null;
       handleUndoRedoEditorReady(editor);
     },
@@ -659,6 +735,27 @@ function App() {
   );
 
   useLayoutEffect(() => {
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "6556f7",
+      },
+      body: JSON.stringify({
+        sessionId: "6556f7",
+        runId: "pre-fix",
+        hypothesisId: "G",
+        location: "App.impl.tsx:reset-editorReady",
+        message: "editorReady force false on path/tick",
+        data: {
+          activePath,
+          editorContentTick,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     editorReadyForPersistenceRef.current = false;
   }, [activePath, editorContentTick]);
 
@@ -668,23 +765,32 @@ function App() {
     }
   }, [activePath, resetEditorStats]);
 
+  const handleTitleBlur = useCallback(
+    (committedTitle: string) => {
+      onTitleBlur(committedTitle);
+      void reportForegroundActivity();
+    },
+    [onTitleBlur, reportForegroundActivity],
+  );
+
   const editorTitleSlot = useMemo(
     () => (
       <DocumentTitleField
         value={noteTitle}
-        resetKey={activePath ?? ""}
+        resetKey={activeDocumentSessionId ?? activePath ?? ""}
         onChange={handleTitleChange}
-        onBlur={onTitleBlur}
+        onBlur={handleTitleBlur}
         onCancel={onTitleCancel}
         editorRef={editorRef}
         readOnly={isEditorPersistenceBlocked}
       />
     ),
     [
+      activeDocumentSessionId,
       activePath,
       noteTitle,
       handleTitleChange,
-      onTitleBlur,
+      handleTitleBlur,
       onTitleCancel,
       editorRef,
       isEditorPersistenceBlocked,
@@ -800,7 +906,7 @@ function App() {
         }
         editor={
           <AppEditorWorkspace
-            activeFileLocked={isEditorPersistenceBlocked}
+            activeFileLocked={activeFileLocked}
             activeMediaTab={activeMediaTab}
             activeNoteIsClassified={activeNoteIsClassified}
             activeDocumentSessionId={activeDocumentSessionId}

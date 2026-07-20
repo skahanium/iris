@@ -249,6 +249,29 @@ export function useAppPersistenceLifecycle({
         (path === activePathRef.current
           ? getLiveMarkdownRef.current()
           : getTabMarkdownCached(path));
+      // #region agent log
+      fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "6556f7",
+        },
+        body: JSON.stringify({
+          sessionId: "6556f7",
+          runId: "pre-fix",
+          hypothesisId: "B",
+          location: "useAppPersistenceLifecycle.ts:flushSaveForPath",
+          message: "save flush (body only; no title rename)",
+          data: {
+            path,
+            source,
+            mdLen: markdownSnapshot?.length ?? null,
+            hasOverride: Boolean(getMarkdownOverride),
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+      // #endregion
       if (markdownSnapshot === undefined) {
         throw new Error(`no recoverable snapshot for ${path}`);
       }
@@ -402,6 +425,24 @@ export function useAppPersistenceLifecycle({
 
   const releasePersistenceBarrier = useCallback(() => {
     if (!persistenceBarrierActiveRef.current) return;
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "6556f7",
+      },
+      body: JSON.stringify({
+        sessionId: "6556f7",
+        runId: "pre-fix",
+        hypothesisId: "F",
+        location: "useAppPersistenceLifecycle.ts:releasePersistenceBarrier",
+        message: "persistence barrier released",
+        data: {},
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     persistenceBarrierActiveRef.current = false;
     persistenceBarrierTaskRef.current = null;
     versionSnapshotScheduler.setAppClosing(false);
@@ -413,6 +454,24 @@ export function useAppPersistenceLifecycle({
     if (persistenceBarrierTaskRef.current) {
       return persistenceBarrierTaskRef.current;
     }
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "6556f7",
+      },
+      body: JSON.stringify({
+        sessionId: "6556f7",
+        runId: "pre-fix",
+        hypothesisId: "F",
+        location: "useAppPersistenceLifecycle.ts:flushAllOpenTabs",
+        message: "persistence barrier STARTED",
+        data: { tabCount: tabsRef.current.length },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     persistenceBarrierActiveRef.current = true;
     onPersistenceBarrierStart?.();
     setIsPersistenceBarrierActive(true);
@@ -520,6 +579,33 @@ export function useAppPersistenceLifecycle({
   const handleLockToggle = useCallback(
     async (locked: boolean) => {
       const path = activePathRef.current;
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "6556f7",
+          },
+          body: JSON.stringify({
+            sessionId: "6556f7",
+            runId: "pre-fix",
+            hypothesisId: "F",
+            location: "useAppPersistenceLifecycle.ts:handleLockToggle",
+            message: "lock toggle invoked",
+            data: {
+              path,
+              locked,
+              barrier: persistenceBarrierActiveRef.current,
+              activeFileLocked,
+              editorReady: editorReadyRef.current,
+            },
+            timestamp: Date.now(),
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
       if (!path || isClassifiedVaultPath(path)) return;
       try {
         if (locked && !(await flushWhenEditorReady("锁定保存")).ok) return;
@@ -531,7 +617,7 @@ export function useAppPersistenceLifecycle({
         setAiStatus(`锁定状态保存失败：${msg}`);
       }
     },
-    [activePathRef, flushWhenEditorReady, setAiStatus, setFileLocked],
+    [activePathRef, activeFileLocked, editorReadyRef, flushWhenEditorReady, setAiStatus, setFileLocked],
   );
 
   const renamePath = useCallback(

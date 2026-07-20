@@ -25,7 +25,9 @@ use crate::storage::atomic_write::{
     with_vault_move_lock,
 };
 use crate::storage::note_title::title_from_path;
-use crate::storage::note_write::{FileWriteIndexStatus, FileWriteResult, NoteWriteService};
+use crate::storage::note_write::{
+    FileWriteIndexStatus, FileWriteResult, NoteWriteService, noop_write_receipt,
+};
 use crate::storage::paths::{
     is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
     resolve_vault_path,
@@ -789,10 +791,12 @@ pub(crate) fn document_rename_by_title_inner(
         let vault = state.vault_path()?;
         let new_path = allocate_document_title_path(&state, &vault, parent, &basename, &path)?;
         if new_path == path {
-            // This is a no-op rename; return a real write/index receipt rather
-            // than pretending that the path change itself saved Markdown.
+            // No-op rename: the persistence barrier already flushed Markdown.
+            // Do not rewrite + reindex the whole note (multi-second stalls on
+            // large documents) just to mint a receipt.
             let source = resolve_vault_path(&vault, &path)?;
-            return NoteWriteService::write(&state, &path, &read_file_lossy(&source)?);
+            let content = read_file_lossy(&source)?;
+            return Ok(noop_write_receipt(&path, &content));
         }
         file_rename_inner_locked(&state, path, new_path)
     })
@@ -1563,6 +1567,35 @@ Body",
         assert_eq!(receipt.entry.id, old_id);
         assert_eq!(receipt.entry.path, "new.md");
         assert!(vault.join("new.md").is_file());
+    }
+
+    #[test]
+    fn document_rename_by_title_noop_does_not_rewrite_markdown() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let note = vault.join("Same.md");
+        fs::write(&note, "Body that must not be rewritten").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| index_file(conn, &vault, &note))
+            .unwrap();
+        let before = fs::metadata(&note).unwrap().modified().unwrap();
+
+        let receipt =
+            document_rename_by_title_inner(state, "Same.md".to_string(), "Same".to_string())
+                .unwrap();
+
+        assert_eq!(receipt.entry.path, "Same.md");
+        assert_eq!(receipt.index_status, FileWriteIndexStatus::Synced);
+        assert_eq!(
+            fs::read_to_string(&note).unwrap(),
+            "Body that must not be rewritten"
+        );
+        let after = fs::metadata(&note).unwrap().modified().unwrap();
+        assert_eq!(before, after);
     }
 
     #[test]

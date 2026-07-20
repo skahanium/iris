@@ -129,6 +129,40 @@ describe("DocumentTitleField uncontrolled behavior", () => {
     expect(textarea().value).toBe("笔记 B");
   });
 
+  it("keeps the same textarea node and caret when resetKey changes while focused", async () => {
+    await act(async () => {
+      root.render(
+        createElement(TitleHarness, {
+          value: "原始标题",
+          resetKey: "session-1",
+          onChange: () => undefined,
+        }),
+      );
+    });
+
+    const field = textarea();
+    await act(async () => {
+      field.focus();
+      field.value = "原始标题追加";
+      field.setSelectionRange(field.value.length, field.value.length);
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(TitleHarness, {
+          value: "磁盘上的新文件名",
+          resetKey: "session-1-renamed-path",
+          onChange: () => undefined,
+        }),
+      );
+    });
+
+    expect(textarea()).toBe(field);
+    expect(field.value).toBe("原始标题追加");
+    expect(field.selectionStart).toBe(field.value.length);
+  });
+
   it("commits DOM value on blur", async () => {
     const onBlur = vi.fn();
     await act(async () => {

@@ -69,6 +69,32 @@ export function DocumentTitleField({
   }, []);
 
   useLayoutEffect(() => {
+    // #region agent log
+    void fetch("/__iris_debug_ingest", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "6556f7",
+        runId: "post-fix",
+        hypothesisId: "A",
+        location: "DocumentTitleField.tsx:sync-layout",
+        message: "title external value sync effect",
+        data: {
+          focused: focusedRef.current,
+          resetKey,
+          propLen: value.length,
+          domLen: inputRef.current?.value.length ?? null,
+          selectionStart: inputRef.current?.selectionStart ?? null,
+          willSkip: focusedRef.current,
+          willWriteDom:
+            !focusedRef.current &&
+            Boolean(inputRef.current) &&
+            inputRef.current!.value !== value,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     if (focusedRef.current) return;
     const el = inputRef.current;
     if (!el) return;
@@ -121,7 +147,6 @@ export function DocumentTitleField({
         data-testid="document-title-field"
       >
         <textarea
-          key={resetKey}
           ref={inputRef}
           rows={1}
           data-testid="document-title"
@@ -134,6 +159,29 @@ export function DocumentTitleField({
           title={value || undefined}
           onInput={(event) => {
             const next = normalizeTitle(event.currentTarget.value);
+            // #region agent log
+            void fetch("/__iris_debug_ingest", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionId: "6556f7",
+                runId: "post-fix",
+                hypothesisId: "A",
+                location: "DocumentTitleField.tsx:onInput",
+                message: "title input",
+                data: {
+                  focused: focusedRef.current,
+                  resetKey,
+                  rawLen: event.currentTarget.value.length,
+                  nextLen: next.length,
+                  propLen: value.length,
+                  selectionStart: event.currentTarget.selectionStart,
+                  willCallOnChange: next !== value,
+                },
+                timestamp: Date.now(),
+              }),
+            }).catch(() => {});
+            // #endregion
             setLiveLen(next.length);
             resizeTitle();
             if (next !== value) {
@@ -143,11 +191,51 @@ export function DocumentTitleField({
           onFocus={() => {
             focusedRef.current = true;
             setFocused(true);
+            // #region agent log
+            void fetch("/__iris_debug_ingest", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionId: "6556f7",
+                runId: "post-fix",
+                hypothesisId: "A",
+                location: "DocumentTitleField.tsx:onFocus",
+                message: "title focus",
+                data: {
+                  resetKey,
+                  propLen: value.length,
+                  domLen: inputRef.current?.value.length ?? null,
+                  selectionStart: inputRef.current?.selectionStart ?? null,
+                },
+                timestamp: Date.now(),
+              }),
+            }).catch(() => {});
+            // #endregion
             requestAnimationFrame(resizeTitle);
           }}
           onBlur={(event) => {
             focusedRef.current = false;
             setFocused(false);
+            // #region agent log
+            void fetch("/__iris_debug_ingest", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sessionId: "6556f7",
+                runId: "post-fix",
+                hypothesisId: "B",
+                location: "DocumentTitleField.tsx:onBlur",
+                message: "title blur commit",
+                data: {
+                  resetKey,
+                  cancelled: cancelledRef.current,
+                  rawLen: event.target.value.length,
+                  propLen: value.length,
+                },
+                timestamp: Date.now(),
+              }),
+            }).catch(() => {});
+            // #endregion
             if (cancelledRef.current) {
               cancelledRef.current = false;
               return;

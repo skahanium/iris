@@ -164,4 +164,23 @@ describe("useOpenNote single filename title", () => {
     await vi.waitFor(() => expect(outRef.current?.noteTitle).toBe("untitled"));
     expect(documentRenameByTitle).not.toHaveBeenCalled();
   });
+
+  it("skips rename IPC when the blurred title already matches the path stem", async () => {
+    const renamePersistedPath = vi.fn();
+    const outRef: { current: HarnessResult | null } = { current: null };
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          markdown: "Body",
+          outRef,
+          renamePersistedPath,
+        }),
+      );
+    });
+
+    act(() => outRef.current?.onTitleBlur("untitled"));
+    expect(outRef.current?.noteTitle).toBe("untitled");
+    expect(documentRenameByTitle).not.toHaveBeenCalled();
+    expect(renamePersistedPath).not.toHaveBeenCalled();
+  });
 });

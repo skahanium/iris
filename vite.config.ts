@@ -1,6 +1,37 @@
+import fs from "node:fs";
 import path from "node:path";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+
+function irisDebugIngestPlugin(): Plugin {
+  const logPath = path.resolve(__dirname, "debug-6556f7.log");
+  return {
+    name: "iris-debug-ingest",
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url !== "/__iris_debug_ingest" || req.method !== "POST") {
+          next();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk: Buffer) => {
+          chunks.push(chunk);
+        });
+        req.on("end", () => {
+          try {
+            const raw = Buffer.concat(chunks).toString("utf8");
+            fs.appendFileSync(logPath, `${raw}\n`, "utf8");
+            res.statusCode = 204;
+            res.end();
+          } catch {
+            res.statusCode = 500;
+            res.end();
+          }
+        });
+      });
+    },
+  };
+}
 
 function manualVendorChunk(id: string): string | undefined {
   const normalized = id.replace(/\\/g, "/");
@@ -61,7 +92,7 @@ function manualVendorChunk(id: string): string | undefined {
 }
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), irisDebugIngestPlugin()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

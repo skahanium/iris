@@ -216,6 +216,15 @@ fn fallback_entry(path: &str, content: &str) -> FileEntry {
     }
 }
 
+pub(crate) fn noop_write_receipt(path: &str, content: &str) -> FileWriteResult {
+    let hash = content_hash(content);
+    FileWriteResult {
+        entry: fallback_entry(path, content),
+        content_hash: hash,
+        index_status: FileWriteIndexStatus::Synced,
+    }
+}
+
 fn schedule_index_repair_task(
     db: Arc<crate::storage::db::Database>,
     vault: std::path::PathBuf,

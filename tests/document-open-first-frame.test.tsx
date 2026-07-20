@@ -577,6 +577,92 @@ describe("document open first frame surface", () => {
 
     expect(handleDirty).toHaveBeenCalledWith("old.md");
   });
+
+  it("keeps a ready surface visible when prepared html warm cache clears after first edit", async () => {
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          editorPreparedHtml="<p>prepared old body</p>"
+          warmPreparedNotes={[
+            {
+              bodyMarkdown: "old body",
+              content: "old body",
+              frontmatterYaml: null,
+              isLocked: false,
+              namespace: "normal",
+              path: "old.md",
+              preparedEditorHtml: "<p>prepared old body</p>",
+              signature: "sig-old",
+              title: "old",
+              traceKey: "trace-old",
+            },
+          ]}
+        />,
+      );
+    });
+    act(() => {
+      firstFrameCallbacks.get("old.md")?.({ path: "old.md" });
+    });
+    await flushFrame();
+
+    expect(
+      document
+        .querySelector('[data-path="old.md"]')
+        ?.getAttribute("data-editor-visibility"),
+    ).toBe("visible");
+
+    // First dirty invalidates warm prepared HTML — must not restage the live surface.
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          editorPreparedHtml={null}
+          warmPreparedNotes={[]}
+        />,
+      );
+    });
+    await flushFrame();
+
+    expect(
+      document
+        .querySelector('[data-path="old.md"]')
+        ?.getAttribute("data-editor-visibility"),
+    ).toBe("visible");
+  });
+
+  it("does not restage when only the live title slot element changes", async () => {
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          editorTitleSlot={<div data-testid="title-slot">A</div>}
+        />,
+      );
+    });
+    act(() => {
+      firstFrameCallbacks.get("old.md")?.({ path: "old.md" });
+    });
+    await flushFrame();
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          editorTitleSlot={<div data-testid="title-slot">B</div>}
+        />,
+      );
+    });
+    await flushFrame();
+
+    expect(
+      document
+        .querySelector('[data-path="old.md"]')
+        ?.getAttribute("data-editor-visibility"),
+    ).toBe("visible");
+    expect(editorMountsByPath.get("old.md")).toBe(1);
+  });
+
   it("caps retained clean ready editor surfaces while keeping the active surface", async () => {
     const openNotePaths = Array.from(
       { length: 10 },
