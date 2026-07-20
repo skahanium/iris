@@ -25,6 +25,7 @@ import { TabBar } from "@/components/layout/TabBar";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
 import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
+import { useFollowSystemProxy } from "@/hooks/useFollowSystemProxy";
 import { useAppUpdateController } from "@/hooks/useAppUpdate";
 import { useEmbeddingScheduler } from "@/hooks/useEmbeddingScheduler";
 import type { ConflictState } from "@/hooks/useCurrentFileChangeListener";
@@ -396,6 +397,7 @@ function App() {
   getLiveMarkdownRef.current = getLiveMarkdown;
   getLiveMarkdownForTabsRef.current = getLiveMarkdown;
   const autoVersionSettings = useAutoVersionSettings();
+  const followSystemProxySettings = useFollowSystemProxy();
 
   const {
     notifyDirty,
@@ -972,6 +974,7 @@ function App() {
             openVersion={() => overlays.openOverlay("version")}
             rescanVault={rescanVaultManually}
             autoVersionSettings={autoVersionSettings}
+            followSystemProxySettings={followSystemProxySettings}
             tabs={tabs}
             touchClassifiedActivity={touchClassifiedActivity}
             versionSnapshotScheduler={versionSnapshotScheduler}

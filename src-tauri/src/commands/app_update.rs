@@ -162,12 +162,11 @@ pub async fn app_update_check_cmd(
     let checking = status_result(AppUpdateStatus::Checking, None, None);
     emit_status(&app, &checking);
 
-    let updater = match app
-        .updater_builder()
-        .timeout(APP_UPDATE_CHECK_TIMEOUT)
-        .build()
-        .map_err(updater_error)
-    {
+    let mut updater_builder = app.updater_builder().timeout(APP_UPDATE_CHECK_TIMEOUT);
+    if !crate::network::follow_system_proxy() {
+        updater_builder = updater_builder.no_proxy();
+    }
+    let updater = match updater_builder.build().map_err(updater_error) {
         Ok(updater) => updater,
         Err(err) => return emit_check_error(&app, err),
     };
@@ -346,13 +345,15 @@ async fn download_update_to_cache(
         if let Some(timeout) = update.timeout {
             client = client.timeout(timeout);
         }
-        if update.no_proxy {
-            client = client.no_proxy();
-        } else if let Some(proxy) = &update.proxy {
-            client = client.proxy(
-                reqwest::Proxy::all(proxy.as_str())
-                    .map_err(|_| AppError::msg("无法连接更新服务器，请检查网络后重试"))?,
-            );
+        // Prefer the live Iris preference over the Update snapshot from check time.
+        client = crate::network::apply_proxy_policy(client);
+        if crate::network::follow_system_proxy() {
+            if let Some(proxy) = &update.proxy {
+                client = client.proxy(
+                    reqwest::Proxy::all(proxy.as_str())
+                        .map_err(|_| AppError::msg("无法连接更新服务器，请检查网络后重试"))?,
+                );
+            }
         }
         let response = client
             .build()

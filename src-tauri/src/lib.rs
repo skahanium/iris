@@ -130,6 +130,7 @@ pub fn run() {
             commands::settings::settings_get,
             commands::settings::settings_set,
             commands::settings::settings_reset,
+            commands::settings::network_proxy_status,
             commands::settings::credential_set,
             commands::settings::credential_has,
             commands::settings::credential_status,

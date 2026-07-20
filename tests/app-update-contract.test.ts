@@ -168,4 +168,46 @@ describe("app update contract", () => {
     expect(existsSync("scripts/verify-updater-release.mjs")).toBe(true);
     expect(existsSync("scripts/verify-desktop-package.mjs")).toBe(true);
   });
+
+  it("enables reqwest system-proxy so Clash/V2Ray system proxy accelerates updates", () => {
+    const cargoToml = read("src-tauri/Cargo.toml");
+    const proxyPolicy = read("src-tauri/src/network/proxy_policy.rs");
+    const httpsClient = read("src-tauri/src/network/cert_pinning.rs");
+    const reqwestLine = cargoToml
+      .split("\n")
+      .find((line) => line.trimStart().startsWith("reqwest "));
+
+    expect(reqwestLine).toBeDefined();
+    expect(reqwestLine).toContain("system-proxy");
+    expect(reqwestLine).toContain("socks");
+    expect(reqwestLine).toContain("default-features = false");
+    expect(proxyPolicy).toContain("apply_proxy_policy");
+    expect(proxyPolicy).toContain(".no_proxy()");
+    // Base builders must not hard-disable proxy; only the policy helper may.
+    expect(httpsClient).not.toMatch(
+      /base_https_client_builder[\s\S]*?\.no_proxy\(\)/,
+    );
+  });
+
+  it("exposes a follow_system_proxy setting with management-center toggle", () => {
+    const cargoPolicy = read("src-tauri/src/security/ipc_policy.rs");
+    const ipc = read("src/lib/ipc.ts");
+    const hook = read("src/hooks/useFollowSystemProxy.ts");
+    const panel = read("src/components/settings/ManagementCenterPanel.tsx");
+    const appUpdate = read("src-tauri/src/commands/app_update.rs");
+
+    expect(cargoPolicy).toContain('"follow_system_proxy"');
+    expect(ipc).toContain("follow_system_proxy: boolean");
+    expect(hook).toContain("DEFAULT_FOLLOW_SYSTEM_PROXY = true");
+    expect(hook).toContain('settingsSet("follow_system_proxy"');
+    expect(panel).toContain('data-testid="follow-system-proxy-switch"');
+    expect(panel).toContain('data-testid="follow-system-proxy-status"');
+    expect(panel).toContain("使用系统代理");
+    expect(panel).toContain("proxyStatusLabel");
+    expect(panel).not.toContain("Clash、V2Ray");
+    expect(ipc).toContain("network_proxy_status");
+    expect(hook).toContain("proxyStatusLabel");
+    expect(appUpdate).toContain("apply_proxy_policy");
+    expect(appUpdate).toContain("follow_system_proxy");
+  });
 });

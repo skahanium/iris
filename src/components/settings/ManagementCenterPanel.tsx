@@ -10,6 +10,7 @@ import {
   DownloadCloud,
   FileClock,
   FolderTree,
+  Globe,
   Globe2,
   HardDrive,
   Info,
@@ -87,6 +88,9 @@ interface ManagementCenterPanelProps {
   autoVersionIdleMinutes: number;
   onAutoVersionEnabledChange: (enabled: boolean) => void;
   onAutoVersionIdleMinutesChange: (minutes: number) => void;
+  followSystemProxy: boolean;
+  proxyStatusLabel: string;
+  onFollowSystemProxyChange: (enabled: boolean) => void;
   embeddingStatus: EmbeddingIndexStatus | null;
   embeddingStatusLoading: boolean;
   onSetEmbeddingPaused: (paused: boolean) => Promise<void>;
@@ -299,11 +303,13 @@ function SwitchControl({
   onCheckedChange,
   label,
   disabled = false,
+  "data-testid": dataTestId,
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   label: string;
   disabled?: boolean;
+  "data-testid"?: string;
 }) {
   return (
     <button
@@ -312,6 +318,7 @@ function SwitchControl({
       aria-checked={checked}
       aria-label={label}
       disabled={disabled}
+      data-testid={dataTestId}
       className={cn(
         "relative inline-flex h-7 w-12 shrink-0 overflow-hidden rounded-full border p-0 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         checked
@@ -399,6 +406,9 @@ export function ManagementCenterPanel({
   autoVersionIdleMinutes,
   onAutoVersionEnabledChange,
   onAutoVersionIdleMinutesChange,
+  followSystemProxy,
+  proxyStatusLabel,
+  onFollowSystemProxyChange,
   embeddingStatus,
   embeddingStatusLoading,
   onSetEmbeddingPaused,
@@ -563,6 +573,25 @@ export function ManagementCenterPanel({
             </>
           }
         />
+        <SettingRow
+          icon={Globe}
+          title="使用系统代理"
+          detail={
+            <span
+              className="font-mono tabular-nums"
+              data-testid="follow-system-proxy-status"
+            >
+              {proxyStatusLabel}
+            </span>
+          }
+        >
+          <SwitchControl
+            checked={followSystemProxy}
+            label="使用系统代理"
+            data-testid="follow-system-proxy-switch"
+            onCheckedChange={onFollowSystemProxyChange}
+          />
+        </SettingRow>
         <SettingRow
           icon={DownloadCloud}
           title="应用更新"

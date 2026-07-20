@@ -100,6 +100,8 @@ export interface SettingsMap {
   auto_version_enabled: boolean;
   /** Idle-minute threshold before an automatic version snapshot. */
   auto_version_idle_minutes: number;
+  /** Follow OS system proxy / HTTP(S)_PROXY for HTTPS exits (updates, LLM, fetch). */
+  follow_system_proxy: boolean;
 }
 
 export async function settingsGet<K extends keyof SettingsMap>(
@@ -125,6 +127,15 @@ export async function settingsReset<K extends keyof SettingsMap>(
 export async function settingsReset(key: string): Promise<void>;
 export async function settingsReset(key: string): Promise<void> {
   return invoke("settings_reset", { key });
+}
+
+export interface NetworkProxyStatus {
+  follow: boolean;
+  label: string;
+}
+
+export async function networkProxyStatus(): Promise<NetworkProxyStatus> {
+  return invoke<NetworkProxyStatus>("network_proxy_status");
 }
 
 export async function vaultSet(path: string): Promise<void> {

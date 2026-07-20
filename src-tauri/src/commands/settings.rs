@@ -32,19 +32,43 @@ pub fn settings_set(state: State<'_, Arc<AppState>>, key: String, value: Value) 
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            rusqlite::params![key, json],
+            rusqlite::params![&key, json],
         )?;
         Ok(())
-    })
+    })?;
+    if key == "follow_system_proxy" {
+        let follow = crate::network::parse_follow_system_proxy_setting(Some(&value));
+        crate::network::set_follow_system_proxy(follow);
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub fn settings_reset(state: State<'_, Arc<AppState>>, key: String) -> AppResult<()> {
     validate_settings_key(&key)?;
     state.db.with_conn(|conn| {
-        conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+        conn.execute("DELETE FROM settings WHERE key = ?1", [&key])?;
         Ok(())
-    })
+    })?;
+    if key == "follow_system_proxy" {
+        crate::network::set_follow_system_proxy(true);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkProxyStatus {
+    pub follow: bool,
+    pub label: String,
+}
+
+#[tauri::command]
+pub fn network_proxy_status() -> NetworkProxyStatus {
+    NetworkProxyStatus {
+        follow: crate::network::follow_system_proxy(),
+        label: crate::network::proxy_status_label(),
+    }
 }
 
 #[tauri::command]

@@ -114,6 +114,11 @@ interface AppOverlaysProps {
     setAutoVersionEnabled: (enabled: boolean) => void;
     setAutoVersionIdleMinutes: (minutes: number) => void;
   };
+  followSystemProxySettings: {
+    followSystemProxy: boolean;
+    proxyStatusLabel: string;
+    setFollowSystemProxy: (enabled: boolean) => void;
+  };
   bumpVaultIndex: () => void;
   classifiedIdleDeadline: number | null;
   classifiedOpen: boolean;
@@ -189,6 +194,7 @@ export function AppOverlays({
   activePath,
   restoreVersion,
   autoVersionSettings,
+  followSystemProxySettings,
   bumpVaultIndex,
   classifiedIdleDeadline,
   classifiedOpen,
@@ -350,6 +356,11 @@ export function AppOverlays({
             }
             onAutoVersionIdleMinutesChange={
               autoVersionSettings.setAutoVersionIdleMinutes
+            }
+            followSystemProxy={followSystemProxySettings.followSystemProxy}
+            proxyStatusLabel={followSystemProxySettings.proxyStatusLabel}
+            onFollowSystemProxyChange={
+              followSystemProxySettings.setFollowSystemProxy
             }
             embeddingStatus={embeddingStatus}
             embeddingStatusLoading={embeddingStatusLoading}

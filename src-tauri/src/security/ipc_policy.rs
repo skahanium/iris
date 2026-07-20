@@ -11,6 +11,7 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "llm_custom_base_url",
     "llm_base_url",
     "llm_usage_last",
+    "follow_system_proxy",
 ];
 
 /// Validate credential service id before local encrypted credential access.
@@ -131,6 +132,7 @@ mod tests {
     fn settings_key_allows_theme_and_web_search_toggle() {
         validate_settings_key("theme").unwrap();
         validate_settings_key("web_search_enabled").unwrap();
+        validate_settings_key("follow_system_proxy").unwrap();
     }
 
     #[test]

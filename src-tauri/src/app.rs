@@ -299,6 +299,7 @@ impl AppState {
                 state.clear_vault_setting()?;
             }
         }
+        state.load_follow_system_proxy_setting();
         Ok(state)
     }
 
@@ -374,6 +375,30 @@ impl AppState {
                 Err(e) => Err(e.into()),
             }
         })
+    }
+
+    fn load_follow_system_proxy_setting(&self) {
+        let follow = self
+            .db
+            .with_conn(|conn| {
+                let result: Result<String, _> = conn.query_row(
+                    "SELECT value FROM settings WHERE key = 'follow_system_proxy'",
+                    [],
+                    |r| r.get(0),
+                );
+                match result {
+                    Ok(json) => {
+                        let value: Value = serde_json::from_str(&json)?;
+                        Ok(crate::network::parse_follow_system_proxy_setting(Some(
+                            &value,
+                        )))
+                    }
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(true),
+                    Err(e) => Err(e.into()),
+                }
+            })
+            .unwrap_or(true);
+        crate::network::set_follow_system_proxy(follow);
     }
 
     pub fn set_vault(&self, path: PathBuf) -> AppResult<()> {
