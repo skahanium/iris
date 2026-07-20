@@ -476,32 +476,6 @@ function TipTapEditorInner({
     const cacheNamespace = contentCacheNamespaceRef.current;
     let cancelled = false;
     contentReadyRef.current = false;
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "6556f7",
-      },
-      body: JSON.stringify({
-        sessionId: "6556f7",
-        runId: "pre-fix",
-        hypothesisId: "E",
-        location: "TipTapEditor.tsx:ingest-effect",
-        message: "editor ingest effect fired",
-        data: {
-          reingestKey,
-          reingestChanged,
-          hasInitialHtml: Boolean(initialEditorHtml),
-          initialHtmlLen: initialEditorHtml?.length ?? null,
-          bodyLen: bodyMd.length,
-          cacheKey,
-          requestKey,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
 
     const setContent = (
       html: string,
@@ -607,6 +581,8 @@ function TipTapEditorInner({
 
       onUpdate: ({ editor: updatedEditor, transaction }) => {
         if (transaction.getMeta(AI_STREAM_TRANSIENT_TRANSACTION_META)) return;
+        if (transaction.getMeta("preventUpdate")) return;
+        if (!transaction.docChanged) return;
         onDirtyRef.current?.();
 
         scheduleBodyStats(updatedEditor);
@@ -662,29 +638,6 @@ function TipTapEditorInner({
     const cancelFrame =
       window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
     const generation = ++firstFrameGenerationRef.current;
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "6556f7",
-      },
-      body: JSON.stringify({
-        sessionId: "6556f7",
-        runId: "pre-fix",
-        hypothesisId: "E",
-        location: "TipTapEditor.tsx:baseline-reset",
-        message: "resetEditorContentBaseline",
-        data: {
-          parsedContentRevision,
-          hadBaseline: baselineAppliedRef.current,
-          contentLen: content.length,
-          selection: baselineAppliedRef.current ? "preserve" : "start",
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
 
     resetEditorContentBaseline(editor, content, {
       parseOptions: EDITOR_PARSE_OPTIONS,
@@ -856,7 +809,22 @@ function TipTapEditorInner({
           type="button"
           data-testid="editor-lock-toggle"
           className="iris-focus-soft editor-edge-control editor-lock-btn absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-surface-elevated/90 text-muted-foreground shadow-sm backdrop-blur-sm duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none"
-          onClick={() => setLocked(!locked)}
+          onMouseDown={(event) => {
+            // Don't focus the lock button. If the title holds focus, blur it
+            // before readOnly flips — WKWebView resets title caret to 0 when
+            // readonly toggles on a focused textarea.
+            event.preventDefault();
+            const active = document.activeElement;
+            if (
+              active instanceof HTMLElement &&
+              active.getAttribute("data-testid") === "document-title"
+            ) {
+              active.blur();
+            }
+          }}
+          onClick={() => {
+            setLocked(!locked);
+          }}
           disabled={lockToggleDisabled}
           title={locked ? "解锁编辑" : "锁定编辑"}
           aria-label={locked ? "解锁编辑" : "锁定编辑"}

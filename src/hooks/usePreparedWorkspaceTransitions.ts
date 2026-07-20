@@ -10,10 +10,6 @@ import type {
 } from "@/lib/document-open-runtime";
 import type { ClassifiedStatus } from "@/types/ipc";
 
-interface CurrentRef<T> {
-  current: T;
-}
-
 type MaybePromise<T> = T | Promise<T>;
 
 interface OpenPreparedNoteOptions {
@@ -31,7 +27,6 @@ interface OpenTabLike {
 interface UsePreparedWorkspaceTransitionsOptions<
   OpenOptions extends OpenPreparedNoteOptions,
 > {
-  activePathRef: CurrentRef<string | null>;
   activateTab: (path: string) => MaybePromise<void>;
   cancelPendingDocumentOpen?: () => void;
   classifiedVaultStatus: ClassifiedStatus;
@@ -49,7 +44,6 @@ interface UsePreparedWorkspaceTransitionsOptions<
 export function usePreparedWorkspaceTransitions<
   OpenOptions extends OpenPreparedNoteOptions,
 >({
-  activePathRef,
   activateTab,
   cancelPendingDocumentOpen,
   classifiedVaultStatus,
@@ -93,7 +87,6 @@ export function usePreparedWorkspaceTransitions<
   }, [vaultPath, warmNotePath]);
 
   const transitions = useHomeWorkspaceTransitions<OpenOptions>({
-    activePathRef,
     activateTab,
     cancelPendingDocumentOpen,
     handleNewNote,

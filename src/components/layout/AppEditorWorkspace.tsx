@@ -458,9 +458,6 @@ export function AppEditorWorkspace({
       const bodyChanged =
         existing.snapshot.editorBodyMarkdown !==
         currentEditorSurface.editorBodyMarkdown;
-      const preparedChanged =
-        existing.snapshot.editorPreparedHtml !==
-        currentEditorSurface.editorPreparedHtml;
       const contentChanged = tickChanged || bodyChanged;
       const lockChanged =
         existing.snapshot.activeFileLocked !==
@@ -483,39 +480,6 @@ export function AppEditorWorkspace({
       ) {
         return previous;
       }
-      // #region agent log
-      if (contentChanged || preparedChanged || lockChanged) {
-        void fetch("/__iris_debug_ingest", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId: "6556f7",
-            runId: "post-fix",
-            hypothesisId: "D",
-            location: "AppEditorWorkspace.tsx:surface-update",
-            message: "editor surface snapshot update",
-            data: {
-              identityKey,
-              contentChanged,
-              preparedChanged,
-              preparedFrozen: !contentChanged && preparedChanged,
-              willResetReady: contentChanged,
-              prevReady: existing.ready,
-              tickChanged,
-              bodyChanged,
-              lockChanged,
-              pathChanged,
-              titleChanged,
-              committedChanged,
-              namespaceChanged,
-              nextLocked: currentEditorSurface.activeFileLocked,
-              path: currentEditorSurface.path,
-            },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-      }
-      // #endregion
       const nextSnapshot = contentChanged
         ? currentEditorSurface
         : {
@@ -859,12 +823,12 @@ export function AppEditorWorkspace({
               zen={zen}
               zoom={editorZoom}
               mediaLoading="visible"
-              titleSlot={
-                record.identityKey === currentSurfaceIdentity &&
-                !pendingNoteOpen
-                  ? editorTitleSlot
-                  : null
-              }
+              titleSlot={(() => {
+                const showTitle =
+                  record.identityKey === currentSurfaceIdentity &&
+                  !pendingNoteOpen;
+                return showTitle ? editorTitleSlot : null;
+              })()}
               locked={snapshot.activeFileLocked}
               mutationBlocked={isMutationBlocked}
               lockToggleDisabled={persistenceBarrierActive}

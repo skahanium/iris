@@ -22,9 +22,11 @@ export function usePreparedNoteInvalidationCallbacks({
   const invalidateActivePreparedNote = useCallback(() => {
     const path = activePathRef.current;
     if (!path) return;
+    // Only drop speculative open-ahead HTML. Do NOT clear tabMarkdownCache —
+    // leave/close/Home remount persistence needs that remount-safe dirty body
+    // (or the coordinator snapshot) when TipTap is unmounted.
     invalidatePreparedNote(path);
-    invalidateDocumentRuntimeState(path);
-  }, [activePathRef, invalidateDocumentRuntimeState, invalidatePreparedNote]);
+  }, [activePathRef, invalidatePreparedNote]);
 
   const handlePreparedFilePathChanged = useCallback(
     (oldPath: string, newPath: string, title?: string) => {

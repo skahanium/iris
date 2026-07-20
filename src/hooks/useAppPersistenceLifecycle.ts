@@ -40,6 +40,11 @@ import {
 
 export interface PersistBeforeLeaveOptions {
   reason?: AutoSnapshotLeaveReason;
+  /**
+   * Close-tab leave must not paint intermediate dirty/saving/clean chrome on the
+   * still-mounted editor; that re-render is the “flash then still open” feel.
+   */
+  suppressShellUi?: boolean;
 }
 
 export type PersistBeforeLeave = (
@@ -81,6 +86,17 @@ interface UseAppPersistenceLifecycleParams {
 
 function isSavedStatus(status: DocumentPersistenceStatus): boolean {
   return status === "saved" || status === "saved_index_degraded";
+}
+
+/**
+ * Saves that originated from the live editor must not project Markdown back into
+ * React shell state. That churns `committedSourceMarkdown`, reinstalls TipTap
+ * source projection, and is the shared flash on Cmd+S / lock / close-leave.
+ */
+function shouldProjectSavedMarkdownIntoShell(
+  source: DocumentPersistenceSnapshot["source"],
+): boolean {
+  return source === "restore" || source === "recovery";
 }
 
 export function useAppPersistenceLifecycle({
@@ -128,6 +144,7 @@ export function useAppPersistenceLifecycle({
   const cancelledWriteRef = useRef<Promise<void>>(Promise.resolve());
   const persistenceBarrierActiveRef = useRef(false);
   const persistenceBarrierTaskRef = useRef<Promise<void> | null>(null);
+  const suppressShellUiForPathRef = useRef<string | null>(null);
   const isPersistenceBarrierActiveNow = useCallback(
     () => persistenceBarrierActiveRef.current,
     [],
@@ -156,20 +173,34 @@ export function useAppPersistenceLifecycle({
         return;
       }
       syncTabMarkdownCache(snapshot.path, snapshot.markdown);
-      markClean(
-        snapshot.path,
-        resolveNoteDisplayTitle({ path: snapshot.path }),
-      );
+      const suppressShellUi =
+        suppressShellUiForPathRef.current === snapshot.path;
+      if (!suppressShellUi) {
+        markClean(
+          snapshot.path,
+          resolveNoteDisplayTitle({ path: snapshot.path }),
+        );
+      }
       if (snapshot.path !== activePathRef.current) return;
       applySavedMarkdown(snapshot.markdown);
       dirtyRef.current = false;
-      setMarkdown(snapshot.markdown);
+      // Live-origin saves already match the editor; projecting them back flashes
+      // the shell (save, lock flush, and leave-before-close all hit this path).
+      const projectIntoShell = shouldProjectSavedMarkdownIntoShell(
+        snapshot.source,
+      );
+      const willSetMarkdown =
+        projectIntoShell && markdown !== snapshot.markdown;
+      if (willSetMarkdown) {
+        setMarkdown(snapshot.markdown);
+      }
     },
     [
       activePathRef,
       applySavedMarkdown,
       dirtyRef,
       markClean,
+      markdown,
       setMarkdown,
       syncTabMarkdownCache,
     ],
@@ -179,7 +210,12 @@ export function useAppPersistenceLifecycle({
     return coordinator.subscribe((snapshot) => {
       setHasDirtyDocuments(coordinator.hasDirtyDocuments());
       if (!snapshot) return;
-      if (snapshot.path === activePathRef.current) {
+      const suppressShellUi =
+        suppressShellUiForPathRef.current === snapshot.path;
+      if (
+        snapshot.path === activePathRef.current &&
+        !suppressShellUi
+      ) {
         setSaveStatus(snapshot.status);
         setSaveError(snapshot.error);
       }
@@ -249,29 +285,6 @@ export function useAppPersistenceLifecycle({
         (path === activePathRef.current
           ? getLiveMarkdownRef.current()
           : getTabMarkdownCached(path));
-      // #region agent log
-      fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "6556f7",
-        },
-        body: JSON.stringify({
-          sessionId: "6556f7",
-          runId: "pre-fix",
-          hypothesisId: "B",
-          location: "useAppPersistenceLifecycle.ts:flushSaveForPath",
-          message: "save flush (body only; no title rename)",
-          data: {
-            path,
-            source,
-            mdLen: markdownSnapshot?.length ?? null,
-            hasOverride: Boolean(getMarkdownOverride),
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       if (markdownSnapshot === undefined) {
         throw new Error(`no recoverable snapshot for ${path}`);
       }
@@ -305,13 +318,35 @@ export function useAppPersistenceLifecycle({
   );
 
   const notifyDirty = useCallback(
-    (sourcePath: string) => {
-      if (persistenceBarrierActiveRef.current) return;
+    (sourcePath: string): boolean => {
+      if (persistenceBarrierActiveRef.current) return false;
       const path = activePathRef.current;
-      if (!path || path !== sourcePath || !editorReadyRef.current) return;
-      coordinator.capture(path, getLiveMarkdownRef.current(), "user_edit");
+      if (!path || path !== sourcePath || !editorReadyRef.current) return false;
+      const markdown = getLiveMarkdownRef.current();
+      const existing = coordinator.get(path);
+      // TipTap can emit onUpdate after Cmd+S / projection refresh even when the
+      // serialized markdown still matches the clean baseline. Treat that as a
+      // no-op so tab.dirty does not flip back on and force a leave flush flash.
+      if (
+        existing &&
+        existing.baselineRevision === existing.revision &&
+        existing.baselineMarkdown === markdown
+      ) {
+        return false;
+      }
+      coordinator.capture(path, markdown, "user_edit");
+      // Keep remount/leave backup in sync with the live dirty body. Clearing
+      // this cache on first dirty made Home/close throw when TipTap was gone.
+      syncTabMarkdownCache(path, markdown);
+      return true;
     },
-    [activePathRef, coordinator, editorReadyRef, getLiveMarkdownRef],
+    [
+      activePathRef,
+      coordinator,
+      editorReadyRef,
+      getLiveMarkdownRef,
+      syncTabMarkdownCache,
+    ],
   );
 
   const cancelPendingSave = useCallback(() => {
@@ -352,19 +387,49 @@ export function useAppPersistenceLifecycle({
     options: PersistBeforeLeaveOptions = {},
   ) => {
     const reason = options.reason ?? "tab_leave";
+    const suppressShellUi = Boolean(options.suppressShellUi);
+    if (suppressShellUi) {
+      suppressShellUiForPathRef.current = path;
+    }
+    try {
+      return await runPersistBeforeLeave(path, reason);
+    } finally {
+      if (suppressShellUi && suppressShellUiForPathRef.current === path) {
+        suppressShellUiForPathRef.current = null;
+      }
+    }
+  };
+
+  // Hoisted implementation so close-tab can suppress shell paints during leave.
+  async function runPersistBeforeLeave(
+    path: string,
+    reason: AutoSnapshotLeaveReason,
+  ): Promise<string | null> {
     const persisted = coordinator.get(path);
     const tab = tabsRef.current.find((item) => item.path === path);
+    const tabCached = getTabMarkdownCached(path);
     if (persisted && persisted.baselineRevision === persisted.revision) {
-      if (!tab?.dirty) {
-        return (
-          getTabMarkdownCached(path) ?? coordinator.get(path)?.markdown ?? null
-        );
+      // Coordinator baseline is clean, but leave must still flush when the live
+      // editor or remount cache diverges (e.g. edit landed in TipTap before
+      // notifyDirty, or tab cache holds a remount snapshot).
+      const liveMarkdown =
+        path === activePathRef.current && editorReadyRef.current
+          ? getLiveMarkdownRef.current()
+          : null;
+      const liveDiverges =
+        liveMarkdown !== null && liveMarkdown !== persisted.markdown;
+      const cacheDiverges =
+        tabCached !== undefined && tabCached !== persisted.markdown;
+      if (!liveDiverges && !cacheDiverges) {
+        if (tab?.dirty && suppressShellUiForPathRef.current !== path) {
+          markClean(path, resolveNoteDisplayTitle({ path }));
+        }
+        return persisted.markdown;
       }
     }
     if (!persisted) {
-      const cached = getTabMarkdownCached(path);
-      if (!tab?.dirty) return cached ?? null;
-      if (cached === undefined) {
+      if (!tab?.dirty) return tabCached ?? null;
+      if (tabCached === undefined) {
         throw new Error(
           "dirty document is remounting with no recoverable snapshot",
         );
@@ -373,7 +438,7 @@ export function useAppPersistenceLifecycle({
         path === activePathRef.current && !editorReadyRef.current
           ? "recovery"
           : "leave";
-      const saved = await flushSaveForPath(path, source, () => cached);
+      const saved = await flushSaveForPath(path, source, () => tabCached);
       if (!saved) return null;
       if (reason !== "app_close") {
         enqueueLeaveSnapshot(path, saved, reason);
@@ -383,12 +448,11 @@ export function useAppPersistenceLifecycle({
     const cached =
       path === activePathRef.current && editorReadyRef.current
         ? getLiveMarkdownRef.current()
-        : getTabMarkdownCached(path);
-    if (cached === undefined) {
-      throw new Error(
-        "dirty document is remounting with no recoverable snapshot",
-      );
-    }
+        : (tabCached ?? persisted.markdown);
+    const source: DocumentPersistenceCaptureSource =
+      path === activePathRef.current && !editorReadyRef.current
+        ? "recovery"
+        : "leave";
     const editor = editorRef.current;
     const editorHtmlSnapshot =
       path === activePathRef.current &&
@@ -397,10 +461,6 @@ export function useAppPersistenceLifecycle({
       !editor.isDestroyed
         ? editor.getHTML()
         : null;
-    const source: DocumentPersistenceCaptureSource =
-      path === activePathRef.current && !editorReadyRef.current
-        ? "recovery"
-        : "leave";
     const saved = await flushSaveForPath(path, source, () => cached);
     if (!saved) return null;
     if (editorHtmlSnapshot) {
@@ -415,7 +475,7 @@ export function useAppPersistenceLifecycle({
       enqueueLeaveSnapshot(path, saved, reason);
     }
     return saved;
-  };
+  }
 
   const { onActivity: resetVersionIdle, clearTimer: clearVersionIdleTimer } =
     useVersionIdle(activePath, getLastSavedSnapshot, enqueueIdleSnapshot, {
@@ -425,24 +485,6 @@ export function useAppPersistenceLifecycle({
 
   const releasePersistenceBarrier = useCallback(() => {
     if (!persistenceBarrierActiveRef.current) return;
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "6556f7",
-      },
-      body: JSON.stringify({
-        sessionId: "6556f7",
-        runId: "pre-fix",
-        hypothesisId: "F",
-        location: "useAppPersistenceLifecycle.ts:releasePersistenceBarrier",
-        message: "persistence barrier released",
-        data: {},
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     persistenceBarrierActiveRef.current = false;
     persistenceBarrierTaskRef.current = null;
     versionSnapshotScheduler.setAppClosing(false);
@@ -454,24 +496,6 @@ export function useAppPersistenceLifecycle({
     if (persistenceBarrierTaskRef.current) {
       return persistenceBarrierTaskRef.current;
     }
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "6556f7",
-      },
-      body: JSON.stringify({
-        sessionId: "6556f7",
-        runId: "pre-fix",
-        hypothesisId: "F",
-        location: "useAppPersistenceLifecycle.ts:flushAllOpenTabs",
-        message: "persistence barrier STARTED",
-        data: { tabCount: tabsRef.current.length },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     persistenceBarrierActiveRef.current = true;
     onPersistenceBarrierStart?.();
     setIsPersistenceBarrierActive(true);
@@ -579,33 +603,6 @@ export function useAppPersistenceLifecycle({
   const handleLockToggle = useCallback(
     async (locked: boolean) => {
       const path = activePathRef.current;
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "6556f7",
-          },
-          body: JSON.stringify({
-            sessionId: "6556f7",
-            runId: "pre-fix",
-            hypothesisId: "F",
-            location: "useAppPersistenceLifecycle.ts:handleLockToggle",
-            message: "lock toggle invoked",
-            data: {
-              path,
-              locked,
-              barrier: persistenceBarrierActiveRef.current,
-              activeFileLocked,
-              editorReady: editorReadyRef.current,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       if (!path || isClassifiedVaultPath(path)) return;
       try {
         if (locked && !(await flushWhenEditorReady("锁定保存")).ok) return;
@@ -617,7 +614,7 @@ export function useAppPersistenceLifecycle({
         setAiStatus(`锁定状态保存失败：${msg}`);
       }
     },
-    [activePathRef, activeFileLocked, editorReadyRef, flushWhenEditorReady, setAiStatus, setFileLocked],
+    [activePathRef, flushWhenEditorReady, setAiStatus, setFileLocked],
   );
 
   const renamePath = useCallback(

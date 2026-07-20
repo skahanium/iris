@@ -102,29 +102,6 @@ export function useOpenNote({
       frontmatterYamlRef.current = parsed.yaml;
       // The path is the title authority, including when legacy frontmatter has one.
       const stem = pathStem(path);
-      // #region agent log
-      fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "6556f7",
-        },
-        body: JSON.stringify({
-          sessionId: "6556f7",
-          runId: "pre-fix",
-          hypothesisId: "C",
-          location: "useOpenNote.ts:syncFromMarkdown",
-          message: "title reset from path stem",
-          data: {
-            path,
-            stem,
-            prevTitle: noteTitleRef.current,
-            mdLen: markdown.length,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       noteTitleRef.current = stem;
       setNoteTitle(stem);
       setBodyMarkdown(parsed.bodyMd);
@@ -181,28 +158,6 @@ export function useOpenNote({
   const commitTitleRename = useCallback(
     (title: string) => {
       const generation = ++titleRenameGenerationRef.current;
-      // #region agent log
-      fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "6556f7",
-        },
-        body: JSON.stringify({
-          sessionId: "6556f7",
-          runId: "pre-fix",
-          hypothesisId: "B",
-          location: "useOpenNote.ts:commitTitleRename",
-          message: "title rename queued",
-          data: {
-            title,
-            generation,
-            activePath: activePathRef.current,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       const run = async () => {
         if (generation !== titleRenameGenerationRef.current) return;
         const oldPath = activePathRef.current;
@@ -237,32 +192,6 @@ export function useOpenNote({
               )
             : (await move(), markdownSnapshot);
           const committedTitle = pathStem(renamedPath);
-          // #region agent log
-          fetch(
-            "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Debug-Session-Id": "6556f7",
-              },
-              body: JSON.stringify({
-                sessionId: "6556f7",
-                runId: "pre-fix",
-                hypothesisId: "B",
-                location: "useOpenNote.ts:commitTitleRename:done",
-                message: "title rename completed",
-                data: {
-                  oldPath,
-                  renamedPath,
-                  committedTitle,
-                  mdLen: persistedMarkdown.length,
-                },
-                timestamp: Date.now(),
-              }),
-            },
-          ).catch(() => {});
-          // #endregion
           noteTitleRef.current = committedTitle;
           setNoteTitle(committedTitle);
           if (renamedPath === oldPath) {
@@ -276,32 +205,7 @@ export function useOpenNote({
             );
             onPathRenamed?.(oldPath, renamedPath);
           }
-        } catch (err) {
-          // #region agent log
-          fetch(
-            "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-            {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "X-Debug-Session-Id": "6556f7",
-              },
-              body: JSON.stringify({
-                sessionId: "6556f7",
-                runId: "pre-fix",
-                hypothesisId: "B",
-                location: "useOpenNote.ts:commitTitleRename:error",
-                message: "title rename failed",
-                data: {
-                  oldPath,
-                  title,
-                  error: err instanceof Error ? err.message : String(err),
-                },
-                timestamp: Date.now(),
-              }),
-            },
-          ).catch(() => {});
-          // #endregion
+        } catch {
           if (generation !== titleRenameGenerationRef.current) return;
           const restored = pathStem(oldPath);
           noteTitleRef.current = restored;
@@ -331,21 +235,6 @@ export function useOpenNote({
       setNoteTitle(title);
       const path = activePathRef.current;
       if (path && pathStem(path) === title.trim()) {
-        // #region agent log
-        void fetch("/__iris_debug_ingest", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId: "6556f7",
-            runId: "post-fix",
-            hypothesisId: "H",
-            location: "useOpenNote.ts:onTitleBlur",
-            message: "title blur skipped noop rename",
-            data: { path, title },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-        // #endregion
         return;
       }
       commitTitleRename(title);

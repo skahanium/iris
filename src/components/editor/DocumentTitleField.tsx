@@ -40,6 +40,9 @@ function normalizeTitle(raw: string): string {
  * IME / paste can mutate the field without fighting a React `value` prop.
  * Parent state and filename commit on blur (and context-menu edits).
  * When blurred, external `value` updates are mirrored into the DOM.
+ *
+ * Do not call setState in onFocus / during the click caret gesture: a React
+ * re-render mid-mouseup resets WKWebView selection to 0 (caret jumps to start).
  */
 export function DocumentTitleField({
   value,
@@ -56,45 +59,58 @@ export function DocumentTitleField({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const focusedRef = useRef(false);
   const cancelledRef = useRef(false);
-  const [focused, setFocused] = useState(false);
+  const pendingSelectionRef = useRef<{ start: number; end: number } | null>(
+    null,
+  );
   const [liveLen, setLiveLen] = useState(value.length);
-  const len = focused ? liveLen : value.length;
-  const showCount = len > NOTE_TITLE_SOFT_LIMIT;
+  const showCount = liveLen > NOTE_TITLE_SOFT_LIMIT;
+
+  const rememberSelection = useCallback(() => {
+    const el = inputRef.current;
+    if (!el || document.activeElement !== el) return;
+    pendingSelectionRef.current = {
+      start: el.selectionStart,
+      end: el.selectionEnd,
+    };
+  }, []);
+
+  const restorePendingSelection = useCallback(() => {
+    const pending = pendingSelectionRef.current;
+    if (!pending || !focusedRef.current) return;
+    const el = inputRef.current;
+    if (!el || document.activeElement !== el) return;
+    pendingSelectionRef.current = null;
+    try {
+      el.setSelectionRange(pending.start, pending.end);
+    } catch {
+      // Ignore if the element is no longer selection-capable.
+    }
+  }, []);
 
   const resizeTitle = useCallback(() => {
     const el = inputRef.current;
     if (!el) return;
+    const selStart = el.selectionStart;
+    const selEnd = el.selectionEnd;
+    const active = document.activeElement === el;
+    const prevHeight = el.style.height;
+    const nextHeight = `${el.scrollHeight}px`;
+    if (prevHeight === nextHeight) {
+      return;
+    }
+
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
+    if (active) {
+      try {
+        el.setSelectionRange(selStart, selEnd);
+      } catch {
+        // Ignore if the element is no longer selection-capable.
+      }
+    }
   }, []);
 
   useLayoutEffect(() => {
-    // #region agent log
-    void fetch("/__iris_debug_ingest", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "6556f7",
-        runId: "post-fix",
-        hypothesisId: "A",
-        location: "DocumentTitleField.tsx:sync-layout",
-        message: "title external value sync effect",
-        data: {
-          focused: focusedRef.current,
-          resetKey,
-          propLen: value.length,
-          domLen: inputRef.current?.value.length ?? null,
-          selectionStart: inputRef.current?.selectionStart ?? null,
-          willSkip: focusedRef.current,
-          willWriteDom:
-            !focusedRef.current &&
-            Boolean(inputRef.current) &&
-            inputRef.current!.value !== value,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     if (focusedRef.current) return;
     const el = inputRef.current;
     if (!el) return;
@@ -106,7 +122,20 @@ export function DocumentTitleField({
 
   useLayoutEffect(() => {
     resizeTitle();
-  }, [focused, resizeTitle, value, resetKey]);
+  }, [resizeTitle, value, resetKey]);
+
+  // Restore caret after any focused setState (e.g. liveLen) that would otherwise
+  // leave WKWebView selection at 0.
+  useLayoutEffect(() => {
+    restorePendingSelection();
+  }, [liveLen, restorePendingSelection]);
+
+  useLayoutEffect(() => {
+    if (!readOnly) return;
+    const el = inputRef.current;
+    if (!el || document.activeElement !== el) return;
+    el.blur();
+  }, [readOnly]);
 
   const commitFromDom = (raw: string) => {
     const next = normalizeTitle(raw);
@@ -127,6 +156,7 @@ export function DocumentTitleField({
     if (el) {
       el.value = next;
     }
+    rememberSelection();
     setLiveLen(next.length);
     if (next !== value) {
       onChange(next);
@@ -158,30 +188,9 @@ export function DocumentTitleField({
           aria-label="文档标题"
           title={value || undefined}
           onInput={(event) => {
-            const next = normalizeTitle(event.currentTarget.value);
-            // #region agent log
-            void fetch("/__iris_debug_ingest", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                sessionId: "6556f7",
-                runId: "post-fix",
-                hypothesisId: "A",
-                location: "DocumentTitleField.tsx:onInput",
-                message: "title input",
-                data: {
-                  focused: focusedRef.current,
-                  resetKey,
-                  rawLen: event.currentTarget.value.length,
-                  nextLen: next.length,
-                  propLen: value.length,
-                  selectionStart: event.currentTarget.selectionStart,
-                  willCallOnChange: next !== value,
-                },
-                timestamp: Date.now(),
-              }),
-            }).catch(() => {});
-            // #endregion
+            const el = event.currentTarget;
+            const next = normalizeTitle(el.value);
+            rememberSelection();
             setLiveLen(next.length);
             resizeTitle();
             if (next !== value) {
@@ -190,58 +199,17 @@ export function DocumentTitleField({
           }}
           onFocus={() => {
             focusedRef.current = true;
-            setFocused(true);
-            // #region agent log
-            void fetch("/__iris_debug_ingest", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                sessionId: "6556f7",
-                runId: "post-fix",
-                hypothesisId: "A",
-                location: "DocumentTitleField.tsx:onFocus",
-                message: "title focus",
-                data: {
-                  resetKey,
-                  propLen: value.length,
-                  domLen: inputRef.current?.value.length ?? null,
-                  selectionStart: inputRef.current?.selectionStart ?? null,
-                },
-                timestamp: Date.now(),
-              }),
-            }).catch(() => {});
-            // #endregion
-            requestAnimationFrame(resizeTitle);
           }}
           onBlur={(event) => {
             focusedRef.current = false;
-            setFocused(false);
-            // #region agent log
-            void fetch("/__iris_debug_ingest", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                sessionId: "6556f7",
-                runId: "post-fix",
-                hypothesisId: "B",
-                location: "DocumentTitleField.tsx:onBlur",
-                message: "title blur commit",
-                data: {
-                  resetKey,
-                  cancelled: cancelledRef.current,
-                  rawLen: event.target.value.length,
-                  propLen: value.length,
-                },
-                timestamp: Date.now(),
-              }),
-            }).catch(() => {});
-            // #endregion
+            pendingSelectionRef.current = null;
             if (cancelledRef.current) {
               cancelledRef.current = false;
               return;
             }
             const next = commitFromDom(event.target.value);
             onBlur?.(next);
+            requestAnimationFrame(() => resizeTitle());
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -274,27 +242,34 @@ export function DocumentTitleField({
               `${el.value.slice(0, start)}${pasted}${el.value.slice(end)}`,
             );
             el.value = merged;
+            const caret = Math.min(start + pasted.length, merged.length);
+            try {
+              el.setSelectionRange(caret, caret);
+            } catch {
+              // Ignore selection errors on detached nodes.
+            }
+            rememberSelection();
             setLiveLen(merged.length);
             if (merged !== value) {
               onChange(merged);
             }
-            requestAnimationFrame(resizeTitle);
+            requestAnimationFrame(() => resizeTitle());
           }}
         />
         {showCount ? (
           <span
             className={cn(
               "iris-doc-title-count",
-              len > NOTE_TITLE_HARD_LIMIT && "is-warning",
+              liveLen > NOTE_TITLE_HARD_LIMIT && "is-warning",
             )}
             aria-hidden
             title={
-              len > NOTE_TITLE_HARD_LIMIT
+              liveLen > NOTE_TITLE_HARD_LIMIT
                 ? "标题已达上限"
                 : "标题较长可能影响 tab 显示"
             }
           >
-            {len}/{NOTE_TITLE_HARD_LIMIT}
+            {liveLen}/{NOTE_TITLE_HARD_LIMIT}
           </span>
         ) : null}
       </div>

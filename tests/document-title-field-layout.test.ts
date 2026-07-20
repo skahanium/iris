@@ -7,7 +7,7 @@ function read(path: string): string {
 }
 
 describe("document title field layout", () => {
-  it("uses an uncontrolled title textarea reset by note path", () => {
+  it("uses an uncontrolled title textarea reset by note session", () => {
     const source = read("src/components/editor/DocumentTitleField.tsx");
     const app = read("src/App.impl.tsx");
 
@@ -15,7 +15,6 @@ describe("document title field layout", () => {
     expect(source).toContain("rows={1}");
     expect(source).toContain('data-testid="document-title"');
     expect(source).toContain("defaultValue={value}");
-    expect(source).toContain("key={resetKey}");
     expect(source).toContain("resetKey: string");
     expect(source).toContain("focusedRef");
     expect(source).toContain("if (el.value !== value)");
@@ -23,10 +22,12 @@ describe("document title field layout", () => {
     expect(source).toContain("sanitizeDocumentTitleInput");
     expect(source).toContain("onBlur?.(next)");
     expect(source).not.toMatch(/value=\{value\}/);
-    expect(app).toContain('resetKey={activePath ?? ""}');
+    expect(app).toContain(
+      "resetKey={activeDocumentSessionId ?? activePath ?? \"\"}",
+    );
   });
 
-  it("clamps long titles to three lines and expands while focused", () => {
+  it("clamps long titles and keeps focus geometry stable", () => {
     const css = read("src/styles/globals.css");
 
     expect(css).toContain("--doc-title-line-height: 1.2");
@@ -34,7 +35,8 @@ describe("document title field layout", () => {
     expect(css).toContain("--doc-title-focus-max-lines: 6");
     expect(css).toContain("overflow-wrap: anywhere");
     expect(css).toContain("max-height: calc(");
-    expect(css).toContain(
+    expect(css).toContain("text-center font-bold text-editor-ink");
+    expect(css).not.toContain(
       ".iris-document-title-field:focus-within .iris-doc-title",
     );
   });

@@ -55,14 +55,17 @@ function fileReadResult(content: string, isLocked = false) {
 function Harness({
   apiRef,
   persistBeforeLeave,
+  getLiveMarkdown,
 }: {
   apiRef: { current: ReturnType<typeof useTabManager> | null };
   persistBeforeLeave?: (path: string) => Promise<string | null>;
+  getLiveMarkdown?: () => string;
 }) {
   const api = useTabManager({
     discardPristineNote: async (path) => {
       await fileDiscard(path);
     },
+    getLiveMarkdown,
     persistBeforeLeave,
   });
   apiRef.current = api;
@@ -358,6 +361,101 @@ describe("useTabManager handleNewNote", () => {
     expect(apiRef.current!.activePath).toBeNull();
   });
 
+  it("persists a pristine tab that already has substantive live content", async () => {
+    createDefaultNote.mockResolvedValueOnce({
+      content: "",
+      path: "未命名文档.md",
+      title: "未命名文档",
+    });
+    const persistBeforeLeave = vi.fn(async () => "typed body");
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+    const getLiveMarkdown = vi.fn(() => "typed body");
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          apiRef,
+          persistBeforeLeave,
+          getLiveMarkdown,
+        }),
+      );
+    });
+    await act(async () => {
+      await apiRef.current!.handleNewNote();
+    });
+    const pending = apiRef.current!.pendingNoteOpen!;
+    await act(async () => {
+      apiRef.current!.commitPendingNoteOpen(pending.path, pending.sequence);
+    });
+
+    let closeResult: {
+      closed: boolean;
+      discardedPristine: boolean;
+      nextActivePath: string | null;
+      remainingNoteCount: number;
+    };
+    await act(async () => {
+      closeResult = await apiRef.current!.closeTab("未命名文档.md");
+    });
+
+    expect(persistBeforeLeave).toHaveBeenCalledWith("未命名文档.md", {
+      reason: "tab_leave",
+      suppressShellUi: true,
+    });
+    expect(fileDiscard).not.toHaveBeenCalled();
+    expect(closeResult!).toEqual({
+      closed: true,
+      discardedPristine: false,
+      nextActivePath: null,
+      remainingNoteCount: 0,
+    });
+  });
+
+  it("closes a blank pristine new note whose markdown is empty string", async () => {
+    createDefaultNote.mockResolvedValueOnce({
+      content: "",
+      path: "未命名文档.md",
+      title: "未命名文档",
+    });
+    const persistBeforeLeave = vi.fn(async () => "should-not-save");
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef, persistBeforeLeave }));
+    });
+    await act(async () => {
+      await apiRef.current!.handleNewNote();
+    });
+    const pending = apiRef.current!.pendingNoteOpen!;
+    await act(async () => {
+      apiRef.current!.commitPendingNoteOpen(pending.path, pending.sequence);
+    });
+
+    let closeResult: {
+      closed: boolean;
+      discardedPristine: boolean;
+      nextActivePath: string | null;
+      remainingNoteCount: number;
+    };
+    await act(async () => {
+      closeResult = await apiRef.current!.closeTab("未命名文档.md");
+    });
+
+    expect(persistBeforeLeave).not.toHaveBeenCalled();
+    expect(fileDiscard).toHaveBeenCalledWith("未命名文档.md");
+    expect(closeResult!).toEqual({
+      closed: true,
+      discardedPristine: true,
+      nextActivePath: null,
+      remainingNoteCount: 0,
+    });
+    expect(apiRef.current!.tabs).toEqual([]);
+  });
+
   it("never reclassifies a temporary note as disposable after user edits are deleted", async () => {
     const persistBeforeLeave = vi.fn(async () => EMPTY_MD);
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
@@ -381,7 +479,10 @@ describe("useTabManager handleNewNote", () => {
       await apiRef.current!.closeTab("未命名文档.md");
     });
 
-    expect(persistBeforeLeave).toHaveBeenCalledWith("未命名文档.md");
+    expect(persistBeforeLeave).toHaveBeenCalledWith("未命名文档.md", {
+      reason: "tab_leave",
+      suppressShellUi: true,
+    });
     expect(fileDiscard).not.toHaveBeenCalled();
   });
 
@@ -461,5 +562,66 @@ describe("useTabManager handleNewNote", () => {
     expect(apiRef.current!.getTabMarkdownCached("调度优化.md")).toBe(
       liveMarkdown,
     );
+  });
+
+  it("still closes the tab when its path is renamed during close persistence", async () => {
+    let releasePersist!: (value: string) => void;
+    const persistBeforeLeave = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          releasePersist = resolve;
+        }),
+    );
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    fileRead.mockImplementation(async (path: string) => {
+      if (path === "note.md") {
+        return fileReadResult("# Note\n");
+      }
+      throw new Error(`unexpected read: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef, persistBeforeLeave }));
+    });
+    await openAndCommit(apiRef, "note.md", "note");
+
+    let closePromise!: Promise<{
+      closed: boolean;
+      remainingNoteCount: number;
+      nextActivePath: string | null;
+    }>;
+    await act(async () => {
+      closePromise = apiRef.current!.closeTab("note.md");
+      await Promise.resolve();
+    });
+    expect(persistBeforeLeave).toHaveBeenCalled();
+
+    await act(async () => {
+      apiRef.current!.replaceOpenTabPath(
+        "note.md",
+        "note-renamed.md",
+        "note-renamed",
+        "# Note\n",
+      );
+    });
+    expect(apiRef.current!.tabs.map((tab) => tab.path)).toEqual([
+      "note-renamed.md",
+    ]);
+
+    await act(async () => {
+      releasePersist("# Note\n");
+      await closePromise;
+    });
+
+    expect(apiRef.current!.tabs).toEqual([]);
+    expect(apiRef.current!.activePath).toBeNull();
+    await expect(closePromise).resolves.toMatchObject({
+      closed: true,
+      remainingNoteCount: 0,
+      nextActivePath: null,
+    });
   });
 });

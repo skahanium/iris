@@ -26,7 +26,7 @@ interface UseWorkspaceTabRoutingOptions<OpenOptions> {
     options?: OpenOptions,
   ) => MaybePromise<void>;
   setHomeActive: (active: boolean) => void;
-  showHome: () => void;
+  showHome: (closedPath?: string | null) => void;
   tabs: readonly NoteTabLike[];
 }
 
@@ -103,7 +103,7 @@ export function useWorkspaceTabRouting<OpenOptions>({
             activateMedia(nextMedia.id);
             return;
           }
-          showHome();
+          showHome(path);
         })
         .catch(() => undefined);
     },

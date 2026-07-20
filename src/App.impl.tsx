@@ -150,6 +150,7 @@ function App() {
   const autoSnapshotGenerationRef = useRef(0);
   const departureInteractionLockedRef = useRef(false);
   const persistBeforeLeaveRef = useRef<PersistBeforeLeave>(async () => null);
+  const getLiveMarkdownForTabsRef = useRef<() => string>(() => "");
   const discardPristineNoteRef = useRef<
     (path: string, markdown: string) => Promise<void>
   >(async () => undefined);
@@ -184,9 +185,11 @@ function App() {
   } = useTabManager({
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
-    persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
+    persistBeforeLeave: (path, options) =>
+      persistBeforeLeaveRef.current(path, options),
     discardPristineNote: (path, content) =>
       discardPristineNoteRef.current(path, content),
+    getLiveMarkdown: () => getLiveMarkdownForTabsRef.current(),
   });
   const rejectDepartureInteraction = useCallback(() => {
     if (!departureInteractionLockedRef.current) return false;
@@ -209,30 +212,6 @@ function App() {
   );
   const guardedCloseTab = useCallback(
     (path: string) => {
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "6556f7",
-          },
-          body: JSON.stringify({
-            sessionId: "6556f7",
-            runId: "pre-fix",
-            hypothesisId: "F",
-            location: "App.impl.tsx:guardedCloseTab",
-            message: "close tab attempted",
-            data: {
-              path,
-              departureLocked: departureInteractionLockedRef.current,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       if (rejectDepartureInteraction()) {
         return Promise.resolve({
           closed: false,
@@ -243,7 +222,7 @@ function App() {
       }
       return closeTab(path);
     },
-    [activePathRef, closeTab, rejectDepartureInteraction, tabs.length],
+    [activePathRef, closeTab, rejectDepartureInteraction, tabs],
   );
   const guardedOpenNote = useCallback(
     async (...args: Parameters<typeof openNote>): Promise<void> => {
@@ -322,7 +301,6 @@ function App() {
   } = usePreparedWorkspaceTransitions<
     NonNullable<Parameters<typeof openNote>[2]>
   >({
-    activePathRef,
     activateTab: guardedActivateTab,
     cancelPendingDocumentOpen: cancelOpenTransaction,
     classifiedVaultStatus,
@@ -416,6 +394,7 @@ function App() {
       setAiStatus("标题未改名：文件名同步失败，仍保留原文件名"),
   });
   getLiveMarkdownRef.current = getLiveMarkdown;
+  getLiveMarkdownForTabsRef.current = getLiveMarkdown;
   const autoVersionSettings = useAutoVersionSettings();
 
   const {
@@ -625,42 +604,15 @@ function App() {
 
   const handleDirty = useCallback(
     (sourcePath: string) => {
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "6556f7",
-          },
-          body: JSON.stringify({
-            sessionId: "6556f7",
-            runId: "pre-fix",
-            hypothesisId: "G",
-            location: "App.impl.tsx:handleDirty",
-            message: "editor dirty signal",
-            data: {
-              sourcePath,
-              activePath: activePathRef.current,
-              blocked: isEditorPersistenceBlocked,
-              editorReady: editorReadyForPersistenceRef.current,
-              alreadyDirty: dirtyRef.current,
-              pathMismatch: sourcePath !== activePathRef.current,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       if (sourcePath !== activePathRef.current) return;
       if (isEditorPersistenceBlocked) return;
+      const captured = notifyDirty(sourcePath);
+      if (!captured) return;
       if (!dirtyRef.current) {
         dirtyRef.current = true;
         markDirty();
         invalidateActivePreparedNote();
       }
-      notifyDirty(sourcePath);
       void reportForegroundActivity();
       resetVersionIdle();
     },
@@ -703,31 +655,6 @@ function App() {
 
   const handleEditorReady = useCallback(
     (editor: Editor | null) => {
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "6556f7",
-          },
-          body: JSON.stringify({
-            sessionId: "6556f7",
-            runId: "pre-fix",
-            hypothesisId: "G",
-            location: "App.impl.tsx:handleEditorReady",
-            message: "persistence editorReady changed",
-            data: {
-              ready: editor != null,
-              activePath: activePathRef.current,
-              prev: editorReadyForPersistenceRef.current,
-            },
-            timestamp: Date.now(),
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       editorReadyForPersistenceRef.current = editor != null;
       handleUndoRedoEditorReady(editor);
     },
@@ -735,27 +662,6 @@ function App() {
   );
 
   useLayoutEffect(() => {
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "6556f7",
-      },
-      body: JSON.stringify({
-        sessionId: "6556f7",
-        runId: "pre-fix",
-        hypothesisId: "G",
-        location: "App.impl.tsx:reset-editorReady",
-        message: "editorReady force false on path/tick",
-        data: {
-          activePath,
-          editorContentTick,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     editorReadyForPersistenceRef.current = false;
   }, [activePath, editorContentTick]);
 

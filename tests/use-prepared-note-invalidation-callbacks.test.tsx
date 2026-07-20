@@ -78,8 +78,10 @@ describe("usePreparedNoteInvalidationCallbacks", () => {
       api.handlePreparedFilePathChanged("old.md", "new.md", "New");
     });
 
+    // First dirty must not clear remount-safe tabMarkdownCache — only the
+    // speculative prepared-note HTML for the active path.
     expect(callbacks.invalidatePreparedNote).toHaveBeenCalledWith("active.md");
-    expect(callbacks.invalidateDocumentRuntimeState).toHaveBeenCalledWith(
+    expect(callbacks.invalidateDocumentRuntimeState).not.toHaveBeenCalledWith(
       "active.md",
     );
     expect(callbacks.invalidatePreparedNote).toHaveBeenCalledWith("deleted.md");

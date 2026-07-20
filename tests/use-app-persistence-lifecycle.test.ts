@@ -55,6 +55,8 @@ function Harness({
   onPersistenceBarrierStart,
   persistBeforeLeaveRef,
   applySavedMarkdown = vi.fn(),
+  markClean = vi.fn(),
+  setMarkdown = vi.fn(),
   setFileLocked,
 }: {
   editorContentTick?: number;
@@ -67,6 +69,8 @@ function Harness({
   onPersistenceBarrierStart?: () => void;
   persistBeforeLeaveRef: React.MutableRefObject<PersistBeforeLeave>;
   applySavedMarkdown?: (markdown: string) => void;
+  markClean?: (path: string, title: string) => void;
+  setMarkdown?: (markdown: string) => void;
   setFileLocked?: (path: string, locked: boolean) => void;
 }) {
   const path = "note.md";
@@ -106,13 +110,13 @@ function Harness({
     editorRef,
     getLiveMarkdownRef,
     getTabMarkdownCached,
-    markClean: vi.fn(),
+    markClean,
     markdown,
     onPersistenceBarrierStart,
     persistBeforeLeaveRef,
     setAiStatus: vi.fn(),
     setFileLocked: setFileLocked ?? vi.fn(),
-    setMarkdown: vi.fn(),
+    setMarkdown,
     syncTabMarkdownCache: vi.fn(),
     tabsRef,
   });
@@ -177,6 +181,76 @@ describe("useAppPersistenceLifecycle", () => {
       '---\ntitle: "Renamed"\n---\n\nBody captured before remount.',
     );
     expect(setCachedEditorHtml).not.toHaveBeenCalled();
+  });
+
+  it("persists coordinator dirty markdown when tab cache was cleared during remount", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+    const opened = '---\ntitle: "Note"\n---\n\nOpened revision.';
+    const dirty =
+      '---\ntitle: "Note"\n---\n\nCoordinator owns dirty body after Home.';
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: opened,
+          getTabMarkdownCached: () => undefined,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: dirty,
+          getTabMarkdownCached: () => undefined,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      api.notifyDirty("note.md");
+    });
+    expect(api.hasDirtyDocuments).toBe(true);
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: false,
+          markdown: dirty,
+          getTabMarkdownCached: () => undefined,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+    expect(api.hasDirtyDocuments).toBe(true);
+
+    let saved: string | null = null;
+    await act(async () => {
+      saved = await persistBeforeLeaveRef.current("note.md");
+    });
+
+    expect(saved).toBe(dirty);
+    expect(fileWrite).toHaveBeenCalledWith("note.md", dirty);
   });
 
   it("projects whether any coordinator-owned document still needs persistence", async () => {
@@ -272,6 +346,128 @@ describe("useAppPersistenceLifecycle", () => {
     );
   });
 
+  it("does not rewrite on leave when coordinator is clean despite stale tab.dirty", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const markClean = vi.fn();
+    const markdown = '---\ntitle: "Note"\n---\n\nAlready saved baseline.';
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown,
+          markClean,
+          persistBeforeLeaveRef,
+          tabDirty: true,
+        }),
+      );
+    });
+
+    fileWrite.mockClear();
+    markClean.mockClear();
+
+    await act(async () => {
+      await persistBeforeLeaveRef.current("note.md");
+    });
+
+    expect(fileWrite).not.toHaveBeenCalled();
+    expect(markClean).toHaveBeenCalledWith("note.md", expect.any(String));
+  });
+
+  it("ignores notifyDirty when live markdown still matches a clean baseline", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+    const markdown = '---\ntitle: "Note"\n---\n\nSaved body.';
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await act(async () => {
+      await api.flushSave();
+    });
+    expect(api.hasDirtyDocuments).toBe(false);
+
+    let captured = true;
+    await act(async () => {
+      captured = api.notifyDirty("note.md");
+    });
+
+    expect(captured).toBe(false);
+    expect(api.hasDirtyDocuments).toBe(false);
+  });
+
+  it("does not project live-origin saves back into shell markdown state", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const setMarkdown = vi.fn();
+    const applySavedMarkdown = vi.fn();
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+    const opened = '---\ntitle: "Note"\n---\n\nOpened body.';
+    const edited = '---\ntitle: "Note"\n---\n\nEdited body that is already live.';
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          applySavedMarkdown,
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: opened,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          setMarkdown,
+        }),
+      );
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          applySavedMarkdown,
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: edited,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          setMarkdown,
+        }),
+      );
+    });
+    await act(async () => {
+      api.notifyDirty("note.md");
+    });
+    setMarkdown.mockClear();
+    applySavedMarkdown.mockClear();
+
+    await act(async () => {
+      await api.flushSave();
+    });
+
+    expect(fileWrite).toHaveBeenCalledWith("note.md", edited);
+    expect(applySavedMarkdown).toHaveBeenCalledWith(edited);
+    expect(setMarkdown).not.toHaveBeenCalled();
+  });
+
   it("freezes new captures until the close barrier reaches a durable fixed point", async () => {
     const persistBeforeLeaveRef = {
       current: async () => null,
@@ -312,7 +508,8 @@ describe("useAppPersistenceLifecycle", () => {
           persistBeforeLeaveRef,
         }),
       );
-      await Promise.resolve();
+    });
+    await act(async () => {
       api.notifyDirty("note.md");
     });
     let closing!: Promise<void>;
@@ -466,6 +663,8 @@ describe("useAppPersistenceLifecycle", () => {
           persistBeforeLeaveRef,
         }),
       );
+    });
+    await act(async () => {
       api.notifyDirty("note.md");
     });
     fileWrite.mockRejectedValueOnce(new Error("disk unavailable"));
@@ -491,6 +690,8 @@ describe("useAppPersistenceLifecycle", () => {
     });
     await act(async () => {
       api.notifyDirty("note.md");
+    });
+    await act(async () => {
       await api.flushAllOpenTabs();
     });
 
@@ -508,12 +709,23 @@ describe("useAppPersistenceLifecycle", () => {
           editorReady: false,
           getTabMarkdownCached: () => undefined,
           persistBeforeLeaveRef,
+          tabs: [
+            {
+              dirty: true,
+              locked: false,
+              path: "orphan-dirty.md",
+              title: "Orphan",
+            },
+          ],
         }),
       );
     });
 
+    // Path was never loaded into the coordinator and has no tab cache.
     await expect(
-      persistBeforeLeaveRef.current("note.md", { reason: "app_close" }),
+      persistBeforeLeaveRef.current("orphan-dirty.md", {
+        reason: "app_close",
+      }),
     ).rejects.toThrow("no recoverable snapshot");
     expect(fileWrite).not.toHaveBeenCalled();
   });

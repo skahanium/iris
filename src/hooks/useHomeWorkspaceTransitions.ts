@@ -8,10 +8,6 @@ import {
 } from "@/lib/home-open-transition";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
 
-interface CurrentRef<T> {
-  current: T;
-}
-
 type MaybePromise<T> = T | Promise<T>;
 
 interface HomeNewNoteOpenOptions {
@@ -25,7 +21,6 @@ function openTransitionNow(): number {
 const HOME_OPEN_WATCHDOG_MS = 15_000;
 
 interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
-  activePathRef: CurrentRef<string | null>;
   activateTab: (path: string, options?: OpenNoteOptions) => MaybePromise<void>;
   cancelPendingDocumentOpen?: () => void;
   handleNewNote: (options?: HomeNewNoteOpenOptions) => Promise<void>;
@@ -91,17 +86,20 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     [clearOpenWatchdog, setHomeActive, setPendingOpen],
   );
 
-  const showHome = useCallback(() => {
-    clearOpenWatchdog();
-    cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
-    cancelPendingDocumentOpen?.();
-    setHomeActive(true);
-  }, [
-    cancelPendingDocumentOpen,
-    clearOpenWatchdog,
-    setHomeActive,
-    setPendingOpen,
-  ]);
+  const showHome = useCallback(
+    (_closedPath?: string | null) => {
+      clearOpenWatchdog();
+      cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
+      cancelPendingDocumentOpen?.();
+      setHomeActive(true);
+    },
+    [
+      cancelPendingDocumentOpen,
+      clearOpenWatchdog,
+      setHomeActive,
+      setPendingOpen,
+    ],
+  );
 
   useEffect(() => clearOpenWatchdog, [clearOpenWatchdog]);
 

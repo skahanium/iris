@@ -1435,24 +1435,18 @@
     font-variant-numeric: lining-nums proportional-nums;
     line-height: var(--doc-title-line-height);
     letter-spacing: 0.02em;
-    max-height: calc(
-      var(--doc-title-max-lines) * var(--doc-title-line-height) * 2.25rem *
-        var(--editor-zoom)
-    );
-    overflow-x: hidden;
-    overflow-y: hidden;
-    overflow-wrap: anywhere;
-    padding: 0;
-    resize: none;
-    box-shadow: none;
-  }
-
-  .iris-document-title-field:focus-within .iris-doc-title {
+    /* Keep max-height stable on focus so click→caret mapping is not invalidated
+       mid-mousedown by a geometry change (:focus-within used to expand it). */
     max-height: calc(
       var(--doc-title-focus-max-lines) * var(--doc-title-line-height) *
         2.25rem * var(--editor-zoom)
     );
+    overflow-x: hidden;
     overflow-y: auto;
+    overflow-wrap: anywhere;
+    padding: 0;
+    resize: none;
+    box-shadow: none;
   }
 
   .iris-document-title-field .iris-doc-title::placeholder {

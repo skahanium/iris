@@ -202,7 +202,9 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
           onMouseDown={(event) => {
             event.stopPropagation();
           }}
-          onClick={() => onSelect(tab.path)}
+          onClick={() => {
+            onSelect(tab.path);
+          }}
         >
           {tab.locked ? (
             <Lock className="mr-1 h-3 w-3 shrink-0 text-muted-foreground/70" />
