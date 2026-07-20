@@ -21,7 +21,7 @@ export function mergeTabsAfterPathRename(
   }
 
   const merged: TabItem = {
-    ...(newTab ?? oldTab),
+    ...(oldTab ?? newTab),
     path: newPath,
     title: title ?? newTab?.title ?? oldTab.title,
     dirty: Boolean(oldTab.dirty || newTab?.dirty),

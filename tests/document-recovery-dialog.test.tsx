@@ -8,7 +8,7 @@ import type { DocumentRecoveryAudit } from "@/types/ipc";
 const documentRecoveryAudit = vi.fn();
 const documentRecoveryRestoreMissing = vi.fn();
 const documentRecoveryRestoreOrphan = vi.fn();
-const documentTitleRepair = vi.fn();
+const documentRenameByTitle = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
   documentRecoveryAudit: (...args: unknown[]) => documentRecoveryAudit(...args),
@@ -16,7 +16,7 @@ vi.mock("@/lib/ipc", () => ({
     documentRecoveryRestoreMissing(...args),
   documentRecoveryRestoreOrphan: (...args: unknown[]) =>
     documentRecoveryRestoreOrphan(...args),
-  documentTitleRepair: (...args: unknown[]) => documentTitleRepair(...args),
+  documentRenameByTitle: (...args: unknown[]) => documentRenameByTitle(...args),
 }));
 
 const audit: DocumentRecoveryAudit = {
@@ -57,7 +57,7 @@ describe("DocumentRecoveryDialog", () => {
     documentRecoveryAudit.mockReset();
     documentRecoveryRestoreMissing.mockReset();
     documentRecoveryRestoreOrphan.mockReset();
-    documentTitleRepair.mockReset();
+    documentRenameByTitle.mockReset();
     documentRecoveryAudit.mockResolvedValue(audit);
     documentRecoveryRestoreMissing.mockResolvedValue({});
     documentRecoveryRestoreOrphan.mockResolvedValue({});

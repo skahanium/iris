@@ -101,4 +101,20 @@ describe("usePreparedNoteInvalidationCallbacks", () => {
       "New",
     );
   });
+
+  it("retires only the old-path cache after an application-owned rename", () => {
+    const { api, callbacks } = renderHarness("new.md");
+
+    act(() => {
+      api.handleApplicationPathRenamed("old.md");
+    });
+
+    expect(callbacks.invalidatePreparedNote).toHaveBeenCalledTimes(1);
+    expect(callbacks.invalidatePreparedNote).toHaveBeenCalledWith("old.md");
+    expect(callbacks.invalidateDocumentRuntimeState).toHaveBeenCalledTimes(1);
+    expect(callbacks.invalidateDocumentRuntimeState).toHaveBeenCalledWith(
+      "old.md",
+    );
+    expect(callbacks.handleFilePathChanged).not.toHaveBeenCalled();
+  });
 });

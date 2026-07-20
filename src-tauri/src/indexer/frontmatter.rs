@@ -156,28 +156,11 @@ fn is_internal_untitled_stem(stem: &str) -> bool {
 
 /// Resolve user-visible document title (frontmatter `title:` only; not body `#` headings).
 pub fn resolve_display_title(
-    parsed_title: Option<&str>,
-    stored_title: &str,
-    frontmatter_json: Option<&str>,
+    _parsed_title: Option<&str>,
+    _stored_title: &str,
+    _frontmatter_json: Option<&str>,
     path_stem: &str,
 ) -> String {
-    if let Some(t) = parsed_title.map(str::trim).filter(|t| !t.is_empty()) {
-        return t.to_string();
-    }
-    if let Some(fm) = frontmatter_json {
-        if let Ok(v) = serde_json::from_str::<Value>(fm) {
-            if let Some(t) = v.get("title").and_then(|x| x.as_str()) {
-                let t = t.trim();
-                if !t.is_empty() {
-                    return t.to_string();
-                }
-            }
-        }
-    }
-    let stored = stored_title.trim();
-    if !stored.is_empty() && stored != path_stem && !is_internal_untitled_stem(stored) {
-        return stored.to_string();
-    }
     if is_internal_untitled_stem(path_stem) {
         return "未命名文档".to_string();
     }
@@ -246,6 +229,17 @@ pub fn parse_note(content: &str) -> AppResult<ParsedNote> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_frontmatter_title_does_not_override_filename() {
+        let title = resolve_display_title(
+            Some("Legacy title"),
+            "Stored title",
+            Some(r#"{"title":"Other title"}"#),
+            "file-name",
+        );
+        assert_eq!(title, "file-name");
+    }
 
     #[test]
     fn resolve_display_title_prefers_frontmatter_json() {

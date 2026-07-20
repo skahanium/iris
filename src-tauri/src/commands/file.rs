@@ -24,7 +24,7 @@ use crate::storage::atomic_write::{
     atomic_write, move_directory_no_replace_locked, move_file_no_replace_locked,
     with_vault_move_lock,
 };
-use crate::storage::note_title::{is_placeholder_title, title_from_path};
+use crate::storage::note_title::title_from_path;
 use crate::storage::note_write::{FileWriteIndexStatus, FileWriteResult, NoteWriteService};
 use crate::storage::paths::{
     is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
@@ -724,125 +724,6 @@ pub fn folder_delete(state: State<'_, Arc<AppState>>, path: String) -> AppResult
     Ok(())
 }
 
-/// 标题→路径同步建议（spec §7.1）。
-#[derive(Debug, Clone, Serialize)]
-pub struct PathSyncSuggest {
-    pub current_path: String,
-    pub suggested_path: String,
-    pub needs_sync: bool,
-    pub conflict_resolved: bool,
-}
-
-const UNNAMED_DOCUMENT_TITLE: &str = "未命名文档";
-
-fn sanitize_title_for_path(title: &str) -> String {
-    const INVALID: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
-    let mut s = title.trim().to_string();
-    for c in INVALID {
-        s = s.replace(*c, "_");
-    }
-    if s.is_empty() {
-        UNNAMED_DOCUMENT_TITLE.to_string()
-    } else {
-        s
-    }
-}
-
-fn allocate_path_for_title(
-    parent: &str,
-    title: &str,
-    exclude_path: &str,
-    conn: &rusqlite::Connection,
-) -> AppResult<(String, bool)> {
-    let base = sanitize_title_for_path(title);
-    let mut candidate = if parent.is_empty() {
-        format!("{base}.md")
-    } else {
-        format!("{parent}/{base}.md")
-    };
-    let mut conflict_resolved = false;
-
-    let exists = |p: &str| -> AppResult<bool> {
-        if p == exclude_path {
-            return Ok(false);
-        }
-        let n: i64 = conn.query_row("SELECT COUNT(*) FROM files WHERE path = ?1", [p], |r| {
-            r.get(0)
-        })?;
-        Ok(n > 0)
-    };
-
-    if !exists(&candidate)? {
-        return Ok((candidate, conflict_resolved));
-    }
-
-    conflict_resolved = true;
-    let mut n = 1u32;
-    loop {
-        let titled = format!("{base}（{n}）");
-        candidate = if parent.is_empty() {
-            format!("{titled}.md")
-        } else {
-            format!("{parent}/{titled}.md")
-        };
-        if !exists(&candidate)? {
-            return Ok((candidate, conflict_resolved));
-        }
-        n += 1;
-        if n > 500 {
-            return Err(AppError::msg("无法分配不冲突的路径"));
-        }
-    }
-}
-
-/// 根据显示标题建议人类可读路径（处理冲突）。
-pub fn path_sync_suggest_inner(
-    state: &AppState,
-    current_path: String,
-    title: String,
-) -> AppResult<PathSyncSuggest> {
-    let parent = current_path
-        .rsplit_once('/')
-        .map(|(p, _)| p)
-        .unwrap_or("")
-        .to_string();
-
-    let sync_title = if title.trim().is_empty() {
-        UNNAMED_DOCUMENT_TITLE.to_string()
-    } else if is_placeholder_title(&title) {
-        return Ok(PathSyncSuggest {
-            current_path: current_path.clone(),
-            suggested_path: current_path,
-            needs_sync: false,
-            conflict_resolved: false,
-        });
-    } else {
-        title
-    };
-
-    let (suggested_path, conflict_resolved) = state
-        .db
-        .with_conn(|conn| allocate_path_for_title(&parent, &sync_title, &current_path, conn))?;
-
-    let needs_sync = suggested_path != current_path;
-
-    Ok(PathSyncSuggest {
-        current_path,
-        suggested_path,
-        needs_sync,
-        conflict_resolved,
-    })
-}
-
-#[tauri::command]
-pub fn path_sync_suggest(
-    state: State<'_, Arc<AppState>>,
-    current_path: String,
-    title: String,
-) -> AppResult<PathSyncSuggest> {
-    path_sync_suggest_inner(&state, current_path, title)
-}
-
 /// 更新笔记锁定状态（仅用户笔记路径）。
 pub fn set_file_lock(state: &AppState, path: &str, locked: bool) -> AppResult<()> {
     if !is_user_note_path(path) {
@@ -872,6 +753,126 @@ pub async fn file_rename(
     tokio::task::spawn_blocking(move || file_rename_inner(state, path, new_path))
         .await
         .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+/// Move a note to the filename represented by its sole inline title.
+///
+/// Candidate selection checks both the authoritative vault and the derived
+/// SQLite index while holding the vault move lock; `file_rename_inner_locked`
+/// remains the final no-overwrite filesystem gate.
+#[tauri::command]
+pub async fn document_rename_by_title(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    title: String,
+) -> AppResult<FileWriteResult> {
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || document_rename_by_title_inner(state, path, title))
+        .await
+        .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+pub(crate) fn document_rename_by_title_inner(
+    state: Arc<AppState>,
+    path: String,
+    title: String,
+) -> AppResult<FileWriteResult> {
+    with_vault_move_lock(|| {
+        if !is_user_note_path(&path) {
+            return Err(AppError::msg("Only user note paths can be renamed"));
+        }
+        let basename = validate_document_title_basename(&title)?;
+        let parent = path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("");
+        let vault = state.vault_path()?;
+        let new_path = allocate_document_title_path(&state, &vault, parent, &basename, &path)?;
+        if new_path == path {
+            // This is a no-op rename; return a real write/index receipt rather
+            // than pretending that the path change itself saved Markdown.
+            let source = resolve_vault_path(&vault, &path)?;
+            return NoteWriteService::write(&state, &path, &read_file_lossy(&source)?);
+        }
+        file_rename_inner_locked(&state, path, new_path)
+    })
+}
+
+fn validate_document_title_basename(title: &str) -> AppResult<String> {
+    const INVALID: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+    let title = title.trim();
+    if title.is_empty() || title == "." || title == ".." {
+        return Err(AppError::msg("Document title cannot be empty"));
+    }
+    if title.ends_with('.') || title.ends_with(char::is_whitespace) {
+        return Err(AppError::msg(
+            "Document title cannot end with a dot or space",
+        ));
+    }
+    if title
+        .chars()
+        .any(|ch| ch.is_control() || INVALID.contains(&ch))
+    {
+        return Err(AppError::msg(
+            "Document title contains an invalid filename character",
+        ));
+    }
+    let reserved = title.to_ascii_uppercase();
+    let reserved = reserved.as_str();
+    if matches!(reserved, "CON" | "PRN" | "AUX" | "NUL")
+        || (reserved.starts_with("COM")
+            && reserved[3..]
+                .parse::<u8>()
+                .is_ok_and(|n| (1..=9).contains(&n)))
+        || (reserved.starts_with("LPT")
+            && reserved[3..]
+                .parse::<u8>()
+                .is_ok_and(|n| (1..=9).contains(&n)))
+    {
+        return Err(AppError::msg(
+            "Document title is a reserved Windows filename",
+        ));
+    }
+    Ok(title.to_string())
+}
+
+fn allocate_document_title_path(
+    state: &AppState,
+    vault: &std::path::Path,
+    parent: &str,
+    title: &str,
+    exclude_path: &str,
+) -> AppResult<String> {
+    for suffix in 0..=500_u32 {
+        let stem = if suffix == 0 {
+            title.to_string()
+        } else {
+            format!("{title}（{suffix}）")
+        };
+        let candidate = if parent.is_empty() {
+            format!("{stem}.md")
+        } else {
+            format!("{parent}/{stem}.md")
+        };
+        if candidate == exclude_path {
+            return Ok(candidate);
+        }
+        let disk_exists = resolve_vault_path(vault, &candidate)?.exists();
+        let index_exists = state.db.with_read_conn(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM files WHERE path = ?1",
+                [&candidate],
+                |row| row.get(0),
+            )?;
+            Ok(count > 0)
+        })?;
+        if !disk_exists && !index_exists {
+            return Ok(candidate);
+        }
+    }
+    Err(AppError::msg(
+        "Unable to allocate a non-conflicting document path",
+    ))
 }
 
 fn fallback_file_entry(path: &str, content: &str) -> FileEntry {
@@ -915,6 +916,7 @@ fn file_rename_inner_locked(
     // work. `move_file_no_replace_locked` makes a competing destination
     // creator win without replacing it or touching source documents.
     move_file_no_replace_locked(&abs, &new_abs)?;
+    state.storage.write_guard.mark_removed(&path);
     state.storage.write_guard.mark(&new_path, &hash);
 
     let modified_sources = match cascade_rewrite_wikilinks_on_disk(
@@ -1564,6 +1566,33 @@ Body",
     }
 
     #[test]
+    fn document_rename_by_title_allocates_disk_conflict_suffix_and_keeps_markdown() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("old.md"), "Body that must survive").unwrap();
+        // Deliberately leave this collision out of SQLite: disk is authoritative.
+        fs::write(vault.join("Renamed.md"), "Existing").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| index_file(conn, &vault, &vault.join("old.md")))
+            .unwrap();
+
+        let receipt =
+            document_rename_by_title_inner(state, "old.md".to_string(), "Renamed".to_string())
+                .unwrap();
+
+        assert_eq!(receipt.entry.path, "Renamed（1）.md");
+        assert!(!vault.join("old.md").exists());
+        assert_eq!(
+            fs::read_to_string(vault.join("Renamed（1）.md")).unwrap(),
+            "Body that must survive"
+        );
+    }
+
+    #[test]
     fn decode_file_content_decrypts_csef_when_unlocked() {
         let _guard = VAULT_KEY_TEST_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
@@ -1949,20 +1978,8 @@ Body",
 }
 
 #[cfg(test)]
-mod path_sync_tests {
+mod path_tests {
     use super::*;
-
-    #[test]
-    fn placeholder_skips_sync() {
-        assert!(is_placeholder_title("新建文档"));
-        assert!(is_placeholder_title(""));
-        assert!(!is_placeholder_title("民法总则笔记"));
-    }
-
-    #[test]
-    fn sanitize_strips_invalid_chars() {
-        assert_eq!(sanitize_title_for_path("a/b"), "a_b");
-    }
 
     #[test]
     fn default_create_content_is_frontmatter_free_blank() {

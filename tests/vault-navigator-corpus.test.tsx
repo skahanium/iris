@@ -422,7 +422,7 @@ describe("VaultNavigator corpus assignment", () => {
     expect(document.body.textContent).not.toContain("移动失败");
   });
 
-  it("moves placeholder-named documents with their real display title", async () => {
+  it("moves documents using their filename rather than a stale index title", async () => {
     fileList.mockResolvedValue([
       {
         path: "policy/未命名文档.md",
@@ -440,14 +440,14 @@ describe("VaultNavigator corpus assignment", () => {
     await act(async () => {
       findButton("archive/").click();
     });
-    expect(document.body.textContent).toContain("archive/案件总结.md");
+    expect(document.body.textContent).toContain("archive/未命名文档.md");
     await act(async () => {
       findButton("移动到此处").click();
     });
 
     expect(fileRename).toHaveBeenCalledWith(
       "policy/未命名文档.md",
-      "archive/案件总结.md",
+      "archive/未命名文档.md",
     );
   });
 
@@ -479,7 +479,7 @@ describe("VaultNavigator corpus assignment", () => {
     );
   });
 
-  it("allocates a suffix when a title-based move target already exists", async () => {
+  it("allocates a suffix when a filename-based move target already exists", async () => {
     fileList.mockResolvedValue([
       {
         path: "policy/未命名文档.md",
@@ -488,7 +488,7 @@ describe("VaultNavigator corpus assignment", () => {
         isLocked: false,
       },
       {
-        path: "archive/案件总结.md",
+        path: "archive/未命名文档.md",
         title: "案件总结",
         updatedAt: "",
         isLocked: false,
@@ -509,7 +509,7 @@ describe("VaultNavigator corpus assignment", () => {
 
     expect(fileRename).toHaveBeenCalledWith(
       "policy/未命名文档.md",
-      "archive/案件总结（1）.md",
+      "archive/未命名文档（1）.md",
     );
   });
 
@@ -626,7 +626,7 @@ describe("VaultNavigator corpus assignment", () => {
       );
     });
     await vi.waitFor(() => {
-      expect(document.body.textContent).toContain("A");
+      expect(document.body.textContent).toContain("a");
     });
     expect(onPrepare).toHaveBeenCalledWith(
       {
@@ -639,7 +639,7 @@ describe("VaultNavigator corpus assignment", () => {
     );
 
     const fileButton = Array.from(document.querySelectorAll("button")).find(
-      (button) => button.textContent?.trim() === "A",
+      (button) => button.textContent?.trim() === "a",
     );
     expect(fileButton).toBeTruthy();
     await act(async () => {

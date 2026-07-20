@@ -27,7 +27,6 @@ import {
 } from "@/lib/classified-path";
 import { invokeErrorMessage } from "@/lib/credentials";
 import { normalizeOpenDialogPath } from "@/lib/dialog-path";
-import { quoteYamlString } from "@/lib/frontmatter";
 import {
   classifiedDelete,
   classifiedExport,
@@ -355,9 +354,7 @@ export function ClassifiedFileList({
   const handleCreateNote = () => {
     void runAction(async () => {
       const path = nextUntitledPath(files, currentFolder);
-      const title = classifiedDisplayName(path).replace(/\.md$/i, "");
-      const content = `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
-      await fileCreate(path, content);
+      await fileCreate(path, "");
       setSelected(path);
     });
   };

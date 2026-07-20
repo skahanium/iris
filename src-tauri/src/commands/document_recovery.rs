@@ -402,55 +402,6 @@ fn restore_orphaned_document(
     NoteWriteService::create(state, target_path, &content)
 }
 
-fn yaml_title(title: &str) -> String {
-    let escaped = title.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("title: \"{escaped}\"")
-}
-
-/// Changes only frontmatter title bytes; body bytes are carried through unchanged.
-fn replace_frontmatter_title(content: &str, title: &str) -> String {
-    let bom = content
-        .strip_prefix('\u{feff}')
-        .map(|_| "\u{feff}")
-        .unwrap_or("");
-    let source = content.strip_prefix('\u{feff}').unwrap_or(content);
-    let (line_ending, marker) = if source.starts_with("---\r\n") {
-        ("\r\n", "---\r\n")
-    } else if source.starts_with("---\n") {
-        ("\n", "---\n")
-    } else {
-        return format!(
-            "{bom}---\ntitle: \"{}\"\n---\n\n{source}",
-            title.replace('"', "\\\"")
-        );
-    };
-    let after_start = &source[marker.len()..];
-    let closing = format!("{line_ending}---");
-    let Some(end) = after_start.find(&closing) else {
-        return format!(
-            "{bom}---\ntitle: \"{}\"\n---\n\n{source}",
-            title.replace('"', "\\\"")
-        );
-    };
-    let yaml = &after_start[..end];
-    let body = &after_start[end + closing.len()..];
-    let mut lines: Vec<String> = yaml.split(line_ending).map(str::to_string).collect();
-    let replacement = yaml_title(title);
-    if let Some(index) = lines
-        .iter()
-        .position(|line| line.trim_start().starts_with("title:"))
-    {
-        lines[index] = replacement;
-    } else {
-        lines.insert(0, replacement);
-    }
-    format!(
-        "{bom}{marker}{}{}---{body}",
-        lines.join(line_ending),
-        line_ending
-    )
-}
-
 /// Read-only audit for title corruption; no Markdown is changed by this command.
 #[tauri::command]
 pub async fn document_title_audit_cmd(
@@ -516,44 +467,9 @@ pub async fn document_recovery_restore_orphan_cmd(
     .map_err(|error| AppError::msg(format!("orphan-document recovery task failed: {error}")))?
 }
 
-/// Apply one previewed title repair after the UI has obtained explicit confirmation.
-#[tauri::command]
-pub async fn document_title_repair_cmd(
-    state: State<'_, Arc<AppState>>,
-    path: String,
-    expected_content_hash: String,
-    title: String,
-    confirmed: bool,
-) -> AppResult<FileWriteResult> {
-    if !confirmed {
-        return Err(AppError::msg("title repair requires explicit confirmation"));
-    }
-    if !is_user_note_path(&path) || is_placeholder_title(&title) {
-        return Err(AppError::msg("invalid title repair request"));
-    }
-    let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let vault = state.vault_path()?;
-        let absolute = resolve_vault_path(&vault, &path)?;
-        let current = read_file_lossy(&absolute)?;
-        if content_hash(&current) != expected_content_hash {
-            return Err(AppError::msg(
-                "document changed after audit; run the audit again",
-            ));
-        }
-        let repaired = replace_frontmatter_title(&current, title.trim());
-        NoteWriteService::write(&state, &path, &repaired)
-    })
-    .await
-    .map_err(|error| AppError::msg(format!("title repair task failed: {error}")))?
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        audit_document_recovery, replace_frontmatter_title, restore_missing_document,
-        restore_orphaned_document,
-    };
+    use super::{audit_document_recovery, restore_missing_document, restore_orphaned_document};
     use crate::app::AppState;
     use crate::indexer::scan::scan_vault;
     use crate::version::version_save_manual;
@@ -568,17 +484,6 @@ mod tests {
         let state = AppState::new(dir.path().join("data")).unwrap();
         state.set_vault(vault).unwrap();
         (dir, state)
-    }
-
-    #[test]
-    fn title_repair_preserves_body_verbatim() {
-        let body = "\n\n# Section\n\nOriginal body\n";
-        let repaired = replace_frontmatter_title(
-            "---\ntags: [a]\n---\n\n# Section\n\nOriginal body\n",
-            "Recovered",
-        );
-        assert!(repaired.contains("title: \"Recovered\""));
-        assert!(repaired.ends_with(body));
     }
 
     #[test]

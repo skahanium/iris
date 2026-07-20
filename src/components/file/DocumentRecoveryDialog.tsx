@@ -7,7 +7,7 @@ import {
   documentRecoveryAudit,
   documentRecoveryRestoreMissing,
   documentRecoveryRestoreOrphan,
-  documentTitleRepair,
+  documentRenameByTitle,
 } from "@/lib/ipc";
 import type {
   DocumentRecoveryAudit,
@@ -82,7 +82,7 @@ export function DocumentRecoveryDialog({
     if (!item.candidateTitle || !item.contentHash) return;
     if (
       !window.confirm(
-        `将“${item.path}”的文档标题修复为“${item.candidateTitle}”？\n\n仅修改 YAML frontmatter 标题，正文不会改动。`,
+        `将“${item.path}”重命名为“${item.candidateTitle}”？\n\n文件名是文档的唯一标题；正文不会改动。`,
       )
     ) {
       return;
@@ -90,11 +90,7 @@ export function DocumentRecoveryDialog({
     setRepairingId(`title:${item.path}`);
     setError(null);
     try {
-      await documentTitleRepair(
-        item.path,
-        item.contentHash,
-        item.candidateTitle,
-      );
+      await documentRenameByTitle(item.path, item.candidateTitle);
       onRecovered();
       await refresh();
     } catch (nextError) {

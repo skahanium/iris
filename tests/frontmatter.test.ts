@@ -4,7 +4,6 @@ import {
   quoteYamlString,
   serializeNoteMarkdown,
   splitFrontmatter,
-  titleFromFields,
 } from "@/lib/frontmatter";
 
 describe("frontmatter", () => {
@@ -12,7 +11,7 @@ describe("frontmatter", () => {
     const md = '---\ntitle: "Hello"\ntags: [a, b]\n---\n\nBody text.';
     const { yaml, fields, body } = splitFrontmatter(md);
     expect(yaml).toContain("title:");
-    expect(titleFromFields(fields)).toBe("Hello");
+    expect(fields.title).toBe("Hello");
     expect(fields.tags).toEqual(["a", "b"]);
     expect(body.trim()).toBe("Body text.");
   });
@@ -21,10 +20,10 @@ describe("frontmatter", () => {
     expect(quoteYamlString('Say "hi"')).toBe('"Say \\"hi\\""');
   });
 
-  it("serializes title and preserves other fields", () => {
+  it("removes the legacy system title and preserves other fields", () => {
     const existing = 'title: "Old"\ntags: [work]';
-    const out = serializeNoteMarkdown(existing, "New Title", "Paragraph.");
-    expect(out).toContain('title: "New Title"');
+    const out = serializeNoteMarkdown(existing, "Paragraph.");
+    expect(out).not.toContain("title:");
     expect(out).toContain("tags: [work]");
     expect(out).toContain("Paragraph.");
   });
@@ -40,10 +39,30 @@ describe("frontmatter", () => {
       "    name: Iris",
     ].join("\n");
 
-    const out = serializeNoteMarkdown(existing, "New Title", "Paragraph.");
+    const out = serializeNoteMarkdown(existing, "Paragraph.");
 
-    expect(out).toContain('title: "New Title"');
+    expect(out).not.toContain("title:");
     expect(out).toContain("aliases:\n  - Alpha\n  - Beta");
     expect(out).toContain("nested:\n  owner:\n    name: Iris");
+  });
+
+  it("does not create frontmatter for a new blank note", () => {
+    expect(serializeNoteMarkdown(null, "")).toBe("");
+  });
+
+  it("removes a multiline legacy title without touching neighbouring YAML", () => {
+    const existing = [
+      "# user comment",
+      "title: |-",
+      "  historical title",
+      "  second line",
+      "tags: [work]",
+    ].join("\n");
+
+    const out = serializeNoteMarkdown(existing, "Body.");
+
+    expect(out).not.toContain("historical title");
+    expect(out).toContain("# user comment");
+    expect(out).toContain("tags: [work]");
   });
 });

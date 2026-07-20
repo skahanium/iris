@@ -40,7 +40,6 @@ import { useClassifiedVaultSession } from "@/hooks/useClassifiedVaultSession";
 import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useOpenNote } from "@/hooks/useOpenNote";
-import { usePathSyncConfirm } from "@/hooks/usePathSyncConfirm";
 import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
 import { useNoteLifecycleIntentActions } from "@/hooks/useNoteLifecycleIntentActions";
 import { useFileConflictResolution } from "@/hooks/useFileConflictResolution";
@@ -114,7 +113,9 @@ function App() {
     null,
   );
   const { editorStats, updateEditorStats, resetEditorStats } = useEditorStats();
-  const [homeActive, setHomeActive] = useState(false);
+  // With no restored tab the workspace is Home, not an editor fallback.
+  // Keeping this true also lets Home immediately read the recovered catalog.
+  const [homeActive, setHomeActive] = useState(true);
   const [zen, setZen] = useState(false);
   useZenExitKeyboard({ zen, setZen });
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
@@ -230,8 +231,8 @@ function App() {
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
-  const activeTabTitle = useMemo(
-    () => tabs.find((tab) => tab.path === activePath)?.title,
+  const activeDocumentSessionId = useMemo(
+    () => tabs.find((tab) => tab.path === activePath)?.documentSessionId,
     [activePath, tabs],
   );
   const updateInstallBarrierRef = useRef<() => Promise<void>>(
@@ -348,7 +349,9 @@ function App() {
       _move: () => Promise<DocumentPersistenceMoveResult>,
     ) => "",
   });
-  const { confirmPathSync, pathSyncConfirmDialog } = usePathSyncConfirm();
+  const committedPathRenameRef = useRef<
+    (oldPath: string, newPath: string) => void
+  >((_oldPath, _newPath) => undefined);
   const inlineAiDomain =
     activeNoteIsClassified &&
     classifiedUnlocked &&
@@ -363,10 +366,10 @@ function App() {
     applySavedMarkdown,
     onTitleChange,
     onTitleBlur,
+    onTitleCancel,
     loadBodyIntoEditor,
   } = useOpenNote({
     activePath,
-    titleFallback: activeTabTitle,
     editorContentTick,
     activePathRef,
     markdownRef,
@@ -381,9 +384,12 @@ function App() {
         markdownSnapshot,
         move,
       ),
-    confirmPathSync,
     updateTabTitle,
     replaceOpenTabPath,
+    onPathRenamed: (oldPath, newPath) =>
+      committedPathRenameRef.current(oldPath, newPath),
+    onPathRenameError: () =>
+      setAiStatus("标题未改名：文件名同步失败，仍保留原文件名"),
   });
   getLiveMarkdownRef.current = getLiveMarkdown;
   const autoVersionSettings = useAutoVersionSettings();
@@ -493,6 +499,7 @@ function App() {
   });
 
   const {
+    handleApplicationPathRenamed,
     handlePreparedFileDeleted,
     handlePreparedFilePathChanged,
     invalidateActivePreparedNote,
@@ -503,6 +510,13 @@ function App() {
     invalidatePreparedNote,
     invalidateDocumentRuntimeState,
   });
+  committedPathRenameRef.current = (oldPath, _newPath) => {
+    // The application's own watcher events are deliberately suppressed during
+    // an atomic move. Retire only the old-path warm/runtime caches here; the
+    // active tab and its session-keyed editor have already been rebound.
+    handleApplicationPathRenamed(oldPath);
+    bumpVaultIndex();
+  };
 
   useExternalDocumentLifecycle({
     activePathRef,
@@ -613,27 +627,9 @@ function App() {
     (raw: string) => {
       if (isEditorPersistenceBlocked) return;
       onTitleChange(raw);
-      if (!dirtyRef.current) {
-        dirtyRef.current = true;
-        markDirty();
-        invalidateActivePreparedNote();
-      }
-      if (activePathRef.current) {
-        notifyDirty(activePathRef.current);
-      }
       void reportForegroundActivity();
-      resetVersionIdle();
     },
-    [
-      activePathRef,
-      isEditorPersistenceBlocked,
-      invalidateActivePreparedNote,
-      markDirty,
-      notifyDirty,
-      reportForegroundActivity,
-      onTitleChange,
-      resetVersionIdle,
-    ],
+    [isEditorPersistenceBlocked, reportForegroundActivity, onTitleChange],
   );
 
   const { rescanVaultManually } = useAutoVaultIndex(vaultPath, loading, {
@@ -679,6 +675,7 @@ function App() {
         resetKey={activePath ?? ""}
         onChange={handleTitleChange}
         onBlur={onTitleBlur}
+        onCancel={onTitleCancel}
         editorRef={editorRef}
         readOnly={isEditorPersistenceBlocked}
       />
@@ -688,6 +685,7 @@ function App() {
       noteTitle,
       handleTitleChange,
       onTitleBlur,
+      onTitleCancel,
       editorRef,
       isEditorPersistenceBlocked,
     ],
@@ -805,6 +803,7 @@ function App() {
             activeFileLocked={isEditorPersistenceBlocked}
             activeMediaTab={activeMediaTab}
             activeNoteIsClassified={activeNoteIsClassified}
+            activeDocumentSessionId={activeDocumentSessionId}
             activePath={activePath}
             committedSourceMarkdown={markdown}
             editorBodyMarkdown={editorBodyMarkdown}
@@ -969,7 +968,6 @@ function App() {
           />
         }
       />
-      {pathSyncConfirmDialog}
       <ConfirmDialog
         open={persistenceBlocker !== null}
         title="保存失败"

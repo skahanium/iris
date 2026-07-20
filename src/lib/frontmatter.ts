@@ -75,31 +75,42 @@ export function quoteYamlString(value: string): string {
   return `"${escaped}"`;
 }
 
-/**
- * Build full note markdown: frontmatter (preserving all non-title raw lines) + body.
- */
+/** Remove one top-level YAML field while preserving all unrelated raw lines. */
+export function removeTopLevelYamlField(yaml: string, key: string): string {
+  const lines = yaml.split("\n");
+  const field = new RegExp(`^${key}\\s*:`);
+  const out: string[] = [];
+  let skippingIndentedValue = false;
+
+  for (const line of lines) {
+    if (field.test(line)) {
+      skippingIndentedValue = true;
+      continue;
+    }
+
+    if (skippingIndentedValue) {
+      if (/^[ \t]+/.test(line) || line.trim() === "") {
+        continue;
+      }
+      skippingIndentedValue = false;
+    }
+
+    out.push(line);
+  }
+
+  return out.join("\n").replace(/^\n+|\n+$/g, "");
+}
+
+/** Build full note markdown without an Iris-owned title field. */
 export function serializeNoteMarkdown(
   existingYaml: string | null,
-  title: string,
   bodyMarkdown: string,
 ): string {
-  const lines = existingYaml ? existingYaml.split("\n") : [];
-  const titleLine = `title: ${quoteYamlString(title)}`;
-  let foundTitle = false;
-  const out: string[] = [];
-  for (const line of lines) {
-    if (/^title\s*:/.test(line.trim())) {
-      foundTitle = true;
-      out.push(titleLine);
-    } else {
-      out.push(line);
-    }
-  }
-  if (!foundTitle) {
-    out.unshift(titleLine);
-  }
-  const yamlBlock = out.join("\n").trim();
+  const yamlBlock = existingYaml
+    ? removeTopLevelYamlField(existingYaml, "title")
+    : "";
   const body = bodyMarkdown.trimEnd();
+  if (!yamlBlock) return body ? `${body}\n` : "";
   return `---\n${yamlBlock}\n---\n\n${body ? `${body}\n` : ""}`;
 }
 

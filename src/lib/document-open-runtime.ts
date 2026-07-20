@@ -4,7 +4,6 @@ import {
   type DocumentOpenPriority,
   type NoteOpenSource,
 } from "@/lib/document-open-scheduler";
-import { displayTitleFromMarkdown } from "@/lib/document-title";
 import {
   editorHtmlDigest,
   getCachedEditorHtml,
@@ -426,12 +425,7 @@ async function buildPreparedNoteOpen(
   startedAt: number,
 ): Promise<PreparedNoteOpen> {
   const parsed = parseNoteForEditor(content, pathStem(normalized.path));
-  const fromMarkdown = displayTitleFromMarkdown(content, "");
-  const title = resolveNoteDisplayTitle({
-    path: normalized.path,
-    title: fromMarkdown || normalized.titleHint?.trim() || parsed.title,
-    markdown: content,
-  });
+  const title = resolveNoteDisplayTitle({ path: normalized.path });
   const preparedHtml = await prepareEditorHtml(
     normalized.path,
     namespace,

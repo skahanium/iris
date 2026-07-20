@@ -1,24 +1,6 @@
-import { splitFrontmatter, titleFromFields } from "@/lib/frontmatter";
-import { stripLeadingBodyTitleHeading } from "@/lib/markdown";
-
-/** Placeholder titles that do not count as user-authored content. */
-const PLACEHOLDER_TITLES = new Set(["", "无标题", "新建文档", "未命名文档"]);
-
-function isPlaceholderTitle(title: string): boolean {
-  if (PLACEHOLDER_TITLES.has(title)) {
-    return true;
-  }
-  if (/^无标题\d+$/.test(title)) {
-    return true;
-  }
-  if (/^(?:新建文档|未命名文档)（\d+）$/.test(title)) {
-    return true;
-  }
-  return false;
-}
+import { splitFrontmatter } from "@/lib/frontmatter";
 
 function bodyHasSubstance(body: string): boolean {
-  // Preserve code blocks as substance (a note with only code is real content)
   const withoutCodeBlocks = body.replace(/```[\s\S]*?```/g, "CODE_BLOCK");
   const stripped = withoutCodeBlocks
     .replace(/<!--[\s\S]*?-->/g, "")
@@ -33,23 +15,10 @@ function bodyHasSubstance(body: string): boolean {
 }
 
 /**
- * True when the note has no user-authored title or body (blank slate).
- * Used to skip persistence and remove the file on tab close / switch.
+ * A blank note is defined solely by its Markdown body. The filename is the
+ * document title, so a legacy `frontmatter.title` cannot make an otherwise
+ * blank scratch note substantive.
  */
-export function isNoteSubstantivelyEmpty(md: string): boolean {
-  const { fields, body: rawBody } = splitFrontmatter(md);
-  const title = titleFromFields(fields).trim();
-  if (!isPlaceholderTitle(title)) {
-    return false;
-  }
-  if (!title) {
-    const legacy = /^#\s+(.+?)\s*(?:\n|$)/.exec(rawBody.trimStart());
-    if (legacy && isPlaceholderTitle(legacy[1]!.trim())) {
-      return !bodyHasSubstance(
-        rawBody.trimStart().slice(legacy[0].length).trimStart(),
-      );
-    }
-  }
-  const body = stripLeadingBodyTitleHeading(rawBody, title).trim();
-  return !bodyHasSubstance(body);
+export function isNoteSubstantivelyEmpty(markdown: string): boolean {
+  return !bodyHasSubstance(splitFrontmatter(markdown).body);
 }

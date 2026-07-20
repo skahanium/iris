@@ -22,6 +22,7 @@ interface DocumentTitleFieldProps {
   resetKey: string;
   onChange: (value: string) => void;
   onBlur?: (committedTitle: string) => void;
+  onCancel?: () => void;
   editorRef: RefObject<Editor | null>;
   disabled?: boolean;
   readOnly?: boolean;
@@ -37,7 +38,7 @@ function normalizeTitle(raw: string): string {
  * Document title uses an uncontrolled textarea seeded from props.
  * While focused, the DOM is the source of truth so platform WebDriver /
  * IME / paste can mutate the field without fighting a React `value` prop.
- * Parent state and path-sync commit on blur (and context-menu edits).
+ * Parent state and filename commit on blur (and context-menu edits).
  * When blurred, external `value` updates are mirrored into the DOM.
  */
 export function DocumentTitleField({
@@ -45,6 +46,7 @@ export function DocumentTitleField({
   resetKey,
   onChange,
   onBlur,
+  onCancel,
   editorRef,
   disabled = false,
   readOnly = false,
@@ -53,6 +55,7 @@ export function DocumentTitleField({
 }: DocumentTitleFieldProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const focusedRef = useRef(false);
+  const cancelledRef = useRef(false);
   const [focused, setFocused] = useState(false);
   const [liveLen, setLiveLen] = useState(value.length);
   const len = focused ? liveLen : value.length;
@@ -145,15 +148,19 @@ export function DocumentTitleField({
           onBlur={(event) => {
             focusedRef.current = false;
             setFocused(false);
+            if (cancelledRef.current) {
+              cancelledRef.current = false;
+              return;
+            }
             const next = commitFromDom(event.target.value);
             onBlur?.(next);
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
+              event.currentTarget.blur();
               const ed = editorRef.current;
               if (!ed) {
-                (event.target as HTMLTextAreaElement).blur();
                 return;
               }
               requestAnimationFrame(() => {
@@ -161,6 +168,12 @@ export function DocumentTitleField({
                 if (!editor || editor.isDestroyed) return;
                 editor.chain().focus("start").scrollIntoView().run();
               });
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              cancelledRef.current = true;
+              onCancel?.();
+              event.currentTarget.blur();
             }
           }}
           onPaste={(event) => {

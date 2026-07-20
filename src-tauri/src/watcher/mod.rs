@@ -122,6 +122,10 @@ fn handle_file_event(
     let vault = state.vault_path()?;
     if !path.exists() {
         if let Ok(rel) = event_relative_path(&vault, path) {
+            if state.storage.write_guard.should_skip_removed_watcher(&rel) {
+                tracing::debug!(path = %rel, "watcher skipped: recent app rename removal");
+                return Ok(());
+            }
             state.db.with_conn(|conn| remove_file_index(conn, &rel))?;
             let _ = app.emit(
                 "file:changed",

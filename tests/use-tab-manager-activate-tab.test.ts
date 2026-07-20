@@ -30,7 +30,6 @@ vi.mock("@/lib/markdown", async () => {
     ...actual,
     extractFrontmatterYaml: actual.extractFrontmatterYaml,
     parseNoteForEditor: actual.parseNoteForEditor,
-    stripLeadingBodyTitleHeading: (body: string) => body,
   };
 });
 

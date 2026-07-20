@@ -50,7 +50,21 @@ export function usePreparedNoteInvalidationCallbacks({
     [handleFileDeleted, invalidateDocumentRuntimeState, invalidatePreparedNote],
   );
 
+  /**
+   * An Iris-owned atomic rename suppresses its watcher events. The active tab
+   * has already moved its live cache to the new path, so retire only old-path
+   * speculative/runtime entries and never reload or reset the editor.
+   */
+  const handleApplicationPathRenamed = useCallback(
+    (oldPath: string) => {
+      invalidatePreparedNote(oldPath);
+      invalidateDocumentRuntimeState(oldPath);
+    },
+    [invalidateDocumentRuntimeState, invalidatePreparedNote],
+  );
+
   return {
+    handleApplicationPathRenamed,
     handlePreparedFileDeleted,
     handlePreparedFilePathChanged,
     invalidateActivePreparedNote,

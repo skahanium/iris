@@ -1,4 +1,3 @@
-import { displayTitleFromMarkdown } from "@/lib/note-title";
 import type { FileListItem } from "@/types/ipc";
 
 /** Default display name for notes without a user title. */
@@ -60,31 +59,6 @@ export function resolveNoteDisplayTitle(options: {
   fallback?: string;
 }): string {
   const fallback = options.fallback ?? UNNAMED_DOCUMENT_PREFIX;
-  const explicit = options.title?.trim() ?? "";
-
-  if (explicit) {
-    if (!isInternalUntitledLabel(explicit)) {
-      const mappedTitle = mapLegacyPlaceholderStemToDisplay(explicit);
-      if (mappedTitle) {
-        return mappedTitle;
-      }
-      return explicit;
-    }
-  } else if (options.title !== undefined && options.title !== null) {
-    const mapped = mapLegacyPlaceholderStemToDisplay(pathStem(options.path));
-    if (mapped) {
-      return mapped;
-    }
-    return UNNAMED_DOCUMENT_PREFIX;
-  }
-
-  const fromMarkdown = options.markdown
-    ? displayTitleFromMarkdown(options.markdown, "")
-    : "";
-  if (fromMarkdown && !isInternalUntitledLabel(fromMarkdown)) {
-    return fromMarkdown;
-  }
-
   const mappedStem = mapLegacyPlaceholderStemToDisplay(pathStem(options.path));
   if (mappedStem) {
     return mappedStem;
@@ -101,10 +75,7 @@ export function resolveNoteDisplayTitle(options: {
 }
 
 export function displayTitleForFileListItem(item: FileListItem): string {
-  return resolveNoteDisplayTitle({
-    path: item.path,
-    title: item.title,
-  });
+  return resolveNoteDisplayTitle({ path: item.path });
 }
 
 /** Status bar / tab label while editing (empty field → placeholder semantics). */
@@ -118,7 +89,7 @@ export function displayTitleForChrome(
   if (editingTitle.trim() === "") {
     return UNNAMED_DOCUMENT_PREFIX;
   }
-  return resolveNoteDisplayTitle({ path, title: editingTitle });
+  return editingTitle.trim();
 }
 
 /** Subtitle for lists: hide internal machine paths. */

@@ -4,9 +4,9 @@ import { displayTitleFromMarkdown } from "@/lib/note-title";
 import { markdownBodyToEditorHtml, parseNoteForEditor } from "@/lib/markdown";
 
 describe("displayTitleFromMarkdown", () => {
-  it("reads title from frontmatter only", () => {
+  it("does not treat legacy frontmatter title as a document title", () => {
     const md = "---\ntitle: 吃早饭\n---\n\n# 一级标题\n\n正文";
-    expect(displayTitleFromMarkdown(md)).toBe("吃早饭");
+    expect(displayTitleFromMarkdown(md)).toBe("无标题");
   });
 
   it("does not treat body h1 as document title", () => {

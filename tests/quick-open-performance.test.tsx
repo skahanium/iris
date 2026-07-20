@@ -62,7 +62,7 @@ describe("QuickOpen note preparation", () => {
     });
 
     await vi.waitFor(() => {
-      expect(document.body.textContent).toContain("Note A");
+      expect(document.body.textContent).toContain("a");
     });
     expect(onPrepare).toHaveBeenCalledWith(
       {
@@ -75,7 +75,7 @@ describe("QuickOpen note preparation", () => {
     );
 
     const option = Array.from(document.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Note A"),
+      b.textContent?.includes("a"),
     );
     expect(option).toBeTruthy();
     await act(async () => {
@@ -121,7 +121,7 @@ describe("QuickOpen note preparation", () => {
     });
 
     await vi.waitFor(() => {
-      expect(document.body.textContent).toContain("Note 0");
+      expect(document.body.textContent).toContain("0");
     });
 
     expect(onPrepare).toHaveBeenCalledTimes(3);

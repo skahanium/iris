@@ -39,10 +39,18 @@ const KEY = {
 
 const FIRST_BODY_LINE = "IRIS_E2E_FIRST_LINE";
 const REMOUNT_BODY_LINE = "IRIS_E2E_REMOUNT_LINE";
+const EXPECTED_TITLE = "IRIS_E2E_RENAMED_TITLE";
+const EXPECTED_FILE_NAME = `${EXPECTED_TITLE}.md`;
 const ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
 
 function fail(code) {
   throw new Error(code);
+}
+
+function debugStep(step) {
+  if (process.env.IRIS_DESKTOP_E2E_DEBUG === "1") {
+    process.stderr.write(`[desktop-e2e-debug] step=${step}\n`);
+  }
 }
 
 function safeFailureCode(error) {
@@ -110,6 +118,11 @@ async function webdriverRequest(method, pathname, body) {
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok || !payload || payload.value?.error) {
+    if (process.env.IRIS_DESKTOP_E2E_DEBUG === "1") {
+      process.stderr.write(
+        `[desktop-e2e-debug] ${method} ${pathname} status=${response.status}\n`,
+      );
+    }
     fail(`webdriver_${method.toLowerCase()}_failed`);
   }
   return payload.value;
@@ -248,6 +261,42 @@ async function invokeTauri(sessionId, command, payload) {
   if (result?.ok !== true) fail("tauri_fixture_command_failed");
 }
 
+async function debugTauriCatalogState(sessionId) {
+  if (process.env.IRIS_DESKTOP_E2E_DEBUG !== "1") return;
+  const result = await executeAsync(
+    sessionId,
+    `
+      const done = arguments[arguments.length - 1];
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (typeof invoke !== 'function') {
+        done({ catalogCount: null, vaultReady: false });
+        return;
+      }
+      Promise.allSettled([invoke('vault_get'), invoke('file_list', { limit: 5, offset: 0 })])
+        .then(async ([vault, files]) => {
+          const firstPath = files.status === 'fulfilled' && Array.isArray(files.value)
+            ? files.value[0]?.path
+            : null;
+          const read = typeof firstPath === 'string'
+            ? await Promise.resolve(invoke('file_read', { path: firstPath, allowClassified: false }))
+                .then(() => true)
+                .catch(() => false)
+            : false;
+          done({
+            catalogCount: files.status === 'fulfilled' && Array.isArray(files.value)
+              ? files.value.length
+              : null,
+            fileReadReady: read,
+            vaultReady: vault.status === 'fulfilled' && typeof vault.value === 'string' && vault.value.length > 0,
+          });
+        });
+    `,
+  );
+  process.stderr.write(
+    `[desktop-e2e-debug] restart-catalog=${JSON.stringify(result)}\n`,
+  );
+}
+
 async function reloadWebview(sessionId) {
   await webdriverRequest("POST", `/session/${sessionId}/execute/sync`, {
     script: "window.location.reload(); return true;",
@@ -267,6 +316,35 @@ async function pressSave(sessionId) {
           { type: "keyUp", value: "s" },
           { type: "keyUp", value: KEY.CONTROL },
         ],
+      },
+    ],
+  });
+}
+
+async function focusDocumentTitle(sessionId) {
+  const focused = await executeSync(
+    sessionId,
+    `
+      const input = document.querySelector('[data-testid="document-title"]');
+      if (!(input instanceof HTMLTextAreaElement)) return false;
+      input.focus();
+      return document.activeElement === input;
+    `,
+    [],
+  );
+  if (focused !== true) fail("title_input_not_focused");
+}
+
+async function typeFocusedText(sessionId, text) {
+  await webdriverRequest("POST", `/session/${sessionId}/actions`, {
+    actions: [
+      {
+        type: "key",
+        id: "iris-persistence-e2e-typing",
+        actions: Array.from(text).flatMap((value) => [
+          { type: "keyDown", value },
+          { type: "keyUp", value },
+        ]),
       },
     ],
   });
@@ -298,6 +376,12 @@ function markdownFile(vaultPath) {
   return path.join(vaultPath, notes[0]);
 }
 
+function expectedMarkdownFile(vaultPath) {
+  const file = path.join(vaultPath, EXPECTED_FILE_NAME);
+  if (!existsSync(file)) fail("renamed_markdown_file_missing");
+  return file;
+}
+
 function readVaultMarkdown(vaultPath) {
   return readFileSync(markdownFile(vaultPath), "utf8");
 }
@@ -317,12 +401,12 @@ async function waitForPersistedBody(vaultPath) {
 }
 
 function assertPersistedMarkdown(vaultPath) {
-  const markdown = readVaultMarkdown(vaultPath);
+  const markdown = readFileSync(expectedMarkdownFile(vaultPath), "utf8");
   if (!markdown.includes(FIRST_BODY_LINE)) fail("markdown_first_line_missing");
   if (!markdown.includes(REMOUNT_BODY_LINE)) {
     fail("markdown_remount_line_missing");
   }
-  if (!/^---\r?\ntitle:/m.test(markdown)) fail("markdown_title_mismatch");
+  if (/^---\r?\ntitle:/m.test(markdown)) fail("legacy_markdown_title_present");
 }
 
 function normalizedEditorText(value) {
@@ -339,9 +423,21 @@ async function openPersistedNoteInApplication(sessionId) {
 }
 
 async function assertOpenedNote(sessionId) {
+  debugStep("reopened-title");
+  const title = await waitForElement(
+    sessionId,
+    '[data-testid="document-title"]',
+  );
+  const titleValue = await executeSync(
+    sessionId,
+    "return arguments[0].value;",
+    [{ [ELEMENT_KEY]: title }],
+  );
+  if (titleValue !== EXPECTED_TITLE) fail("reopened_title_mismatch");
+  debugStep("reopened-editor");
   const editor = await waitForElement(
     sessionId,
-    '[data-editor-visibility="visible"] [data-testid="editor"] [contenteditable="true"]',
+    '[data-editor-visibility="visible"] [contenteditable="true"]',
   );
   const text = normalizedEditorText(await elementText(sessionId, editor));
   if (!text.includes(FIRST_BODY_LINE) || !text.includes(REMOUNT_BODY_LINE)) {
@@ -350,28 +446,75 @@ async function assertOpenedNote(sessionId) {
 }
 
 async function runScenario(sessionId, vaultPath) {
+  debugStep("wait-home");
   await waitForElement(sessionId, '[data-testid="home-workbench"]');
 
+  debugStep("new-note");
   const newNote = await waitForElement(
     sessionId,
     '[data-testid="rail-new-note-button"]',
   );
   await click(sessionId, newNote);
 
+  debugStep("find-title");
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await waitForElement(sessionId, '[data-testid="document-title"]');
+  debugStep("title-type");
+  // Tauri WebDriver intermittently invalidates textarea `/value` element
+  // references. Its global key actions remain stable, so focus the real field
+  // and use the same native keyboard path as a user.
+  await focusDocumentTitle(sessionId);
+  await webdriverRequest("POST", `/session/${sessionId}/actions`, {
+    actions: [
+      {
+        type: "key",
+        id: "iris-persistence-e2e-title-select",
+        actions: [
+          { type: "keyDown", value: KEY.CONTROL },
+          { type: "keyDown", value: "a" },
+          { type: "keyUp", value: "a" },
+          { type: "keyUp", value: KEY.CONTROL },
+        ],
+      },
+    ],
+  });
+  await typeFocusedText(sessionId, EXPECTED_TITLE);
+  await typeFocusedText(sessionId, KEY.ENTER);
+  debugStep("wait-rename");
+  await waitUntil(
+    () => existsSync(path.join(vaultPath, EXPECTED_FILE_NAME)),
+    "title_rename_not_persisted",
+  );
+  await waitUntil(
+    () =>
+      executeSync(
+        sessionId,
+        `
+          return document
+            .querySelector('[data-testid="editor-surface-stack"]')
+            ?.getAttribute('data-editor-active-surface-path') === arguments[0];
+        `,
+        [EXPECTED_FILE_NAME],
+      ),
+    "renamed_surface_path_missing",
+  );
+
   const editor = await waitForElement(
     sessionId,
-    '[data-testid="editor"] [contenteditable="true"]',
+    '[data-editor-visibility="visible"] [contenteditable="true"]',
   );
   await click(sessionId, editor);
-  // One editing session: no title rename, no remount dance. WebDriver TipTap
-  // input is reliable enough for plain body text.
+  // Continue typing immediately after the rename commit. This catches a stale
+  // old-path autosave and a remounted editor surface.
   await sendKeys(sessionId, editor, FIRST_BODY_LINE);
   await sendKeys(sessionId, editor, KEY.ENTER);
   await sendKeys(sessionId, editor, KEY.ENTER);
   await sendKeys(sessionId, editor, REMOUNT_BODY_LINE);
   await pressSave(sessionId);
+  debugStep("wait-body-save");
   await waitForPersistedBody(vaultPath);
 
+  debugStep("close-first-window");
   const close = await waitForElement(sessionId, '[aria-label="关闭"]');
   await click(sessionId, close);
 
@@ -409,10 +552,14 @@ async function main() {
     await reloadWebview(sessionId);
 
     await runScenario(sessionId, vaultPath);
+    debugStep("restart");
     sessionId = await restartApplication(sessionId, appPath);
     await waitForElement(sessionId, '[data-testid="desktop-title-bar"]');
     assertPersistedMarkdown(vaultPath);
+    await debugTauriCatalogState(sessionId);
+    debugStep("open-recent");
     await openPersistedNoteInApplication(sessionId);
+    debugStep("assert-reopened");
     await assertOpenedNote(sessionId);
     passed = true;
     process.stdout.write("[desktop-e2e] Windows Markdown persistence passed\n");

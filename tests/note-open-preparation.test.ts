@@ -53,7 +53,7 @@ describe("note open preparation", () => {
     );
 
     expect(fileRead).not.toHaveBeenCalled();
-    expect(prepared.title).toBe("Single IPC");
+    expect(prepared.title).toBe("single-ipc");
     expect(prepared.bodyMarkdown.trim()).toBe("Body from merged IPC");
     expect(prepared.frontmatterYaml).toContain('title: "Single IPC"');
     expect(prepared.isLocked).toBe(true);
@@ -76,7 +76,7 @@ describe("note open preparation", () => {
 
     expect(fileRead).toHaveBeenCalledTimes(1);
     expect(preparedAgain).toBe(prepared);
-    expect(prepared.title).toBe("Prepared");
+    expect(prepared.title).toBe("a");
     expect(prepared.bodyMarkdown.trim()).toBe("Body");
     expect(prepared.preparedEditorHtml).toContain("Body");
     expect(

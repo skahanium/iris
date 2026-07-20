@@ -1,41 +1,24 @@
-import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { act } from "react";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type Editor } from "@tiptap/react";
+import { Editor as TipTapEditor } from "@tiptap/core";
 
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
 import { useOpenNote } from "@/hooks/useOpenNote";
 import type { DocumentPersistenceMoveResult } from "@/lib/document-persistence-coordinator";
 import { markdownBodyToEditorHtml } from "@/lib/markdown";
 
-const pathSyncSuggest = vi.fn();
-const fileRename = vi.fn();
-
-type ReplaceOpenTabPath = (
-  oldPath: string,
-  newPath: string,
-  title?: string,
-  markdownOverride?: string,
-) => void;
-
-type OpenNoteHarnessOut = {
-  editorBodyMarkdown: string;
-  bodyMarkdown: string;
-  getLiveMarkdown: () => string;
-  schedulePathSync: (path: string, title: string) => void;
-  onTitleChange?: (value: string) => void;
-  onTitleBlur?: (committedTitle?: string) => void;
-};
+const documentRenameByTitle = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
-  pathSyncSuggest: (...args: unknown[]) => pathSyncSuggest(...args),
-  fileRename: (...args: unknown[]) => fileRename(...args),
+  documentRenameByTitle: (...args: unknown[]) => documentRenameByTitle(...args),
 }));
 
 function bodyEditor(markdown: string): Editor {
-  return new Editor({
+  return new TipTapEditor({
     extensions: [
       IrisDocument,
       StarterKit.configure({
@@ -48,414 +31,137 @@ function bodyEditor(markdown: string): Editor {
   });
 }
 
+interface HarnessResult {
+  getLiveMarkdown: () => string;
+  noteTitle: string;
+  onTitleBlur: (title?: string) => void;
+}
+
 function Harness({
-  activePath,
   markdown,
-  editorContentTick,
-  outRef,
   editor,
-  editorReady,
-  dirty,
-  titleFallback,
   renamePersistedPath,
+  outRef,
   replaceOpenTabPath,
 }: {
-  activePath: string | null;
   markdown: string;
-  editorContentTick: number;
   editor?: Editor | null;
-  editorReady?: boolean;
-  dirty?: boolean;
-  titleFallback?: string;
   renamePersistedPath?: (
-    path: string,
-    newPath: string,
-    markdown: string,
+    oldPath: string,
+    migrationPath: string,
+    snapshot: string,
     move: () => Promise<DocumentPersistenceMoveResult>,
   ) => Promise<string>;
-  replaceOpenTabPath?: ReplaceOpenTabPath;
-  outRef: {
-    current: OpenNoteHarnessOut | null;
-  };
+  outRef: { current: HarnessResult | null };
+  replaceOpenTabPath?: ReturnType<typeof vi.fn>;
 }) {
-  const editorReadyRef = { current: editorReady ?? true };
   const api = useOpenNote({
-    activePath,
-    editorContentTick,
-    activePathRef: { current: activePath },
+    activePath: "untitled.md",
+    editorContentTick: 1,
+    activePathRef: { current: "untitled.md" },
     markdownRef: { current: markdown },
     frontmatterYamlRef: { current: null },
     editorRef: { current: editor ?? null },
-    editorReadyRef,
-    dirtyRef: { current: dirty ?? false },
     renamePersistedPath,
     updateTabTitle: vi.fn(),
-    replaceOpenTabPath: replaceOpenTabPath ?? vi.fn<ReplaceOpenTabPath>(),
-    titleFallback,
+    replaceOpenTabPath: replaceOpenTabPath ?? vi.fn(),
   });
   outRef.current = {
-    editorBodyMarkdown: api.editorBodyMarkdown,
-    bodyMarkdown: api.bodyMarkdown,
     getLiveMarkdown: api.getLiveMarkdown,
-    schedulePathSync: api.schedulePathSync,
-    onTitleChange: api.onTitleChange,
+    noteTitle: api.noteTitle,
     onTitleBlur: api.onTitleBlur,
   };
   return null;
 }
 
-describe("useOpenNote editorBodyMarkdown", () => {
+describe("useOpenNote single filename title", () => {
   let container: HTMLDivElement;
   let root: Root;
   let editor: Editor | undefined;
 
   beforeEach(() => {
+    documentRenameByTitle.mockReset();
     container = document.createElement("div");
-    document.body.appendChild(container);
+    document.body.append(container);
     root = createRoot(container);
-    pathSyncSuggest.mockReset();
-    fileRename.mockReset();
   });
 
   afterEach(() => {
     editor?.destroy();
-    editor = undefined;
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-    act(() => {
-      root.unmount();
-    });
+    act(() => root.unmount());
     container.remove();
   });
 
-  it("derives editor body on first render when markdown is already loaded", async () => {
-    const md = '---\ntitle: "Note"\n---\n\nHello body';
-    const outRef: {
-      current: {
-        editorBodyMarkdown: string;
-        bodyMarkdown: string;
-        getLiveMarkdown: () => string;
-        schedulePathSync: (path: string, title: string) => void;
-      } | null;
-    } = { current: null };
-
+  it("removes legacy title from the snapshot while preserving the latest editor body", async () => {
+    editor = bodyEditor("Latest body");
+    const outRef: { current: HarnessResult | null } = { current: null };
     await act(async () => {
       root.render(
         createElement(Harness, {
-          activePath: "note.md",
-          markdown: md,
-          editorContentTick: 1,
-          outRef,
-        }),
-      );
-    });
-
-    expect(outRef.current?.editorBodyMarkdown.trim()).toBe("Hello body");
-    expect(outRef.current?.bodyMarkdown.trim()).toBe("Hello body");
-  });
-
-  it("keeps the committed tab title when legacy markdown has no frontmatter title", async () => {
-    const outRef = { current: null } as {
-      current: ReturnType<typeof useOpenNote> | null;
-    };
-
-    await act(async () => {
-      root.render(
-        createElement(Harness, {
-          activePath: "untitled-9.md",
-          markdown: "Existing body without a frontmatter title.",
-          editorContentTick: 1,
-          outRef,
-          titleFallback: "Already indexed title",
-        }),
-      );
-    });
-
-    expect(outRef.current?.getLiveMarkdown()).toContain(
-      'title: "Already indexed title"',
-    );
-  });
-
-  it("uses markdownRef body while the editor exists but is not ready and not dirty", async () => {
-    const md = '---\ntitle: "Note"\n---\n\nOriginal loaded body';
-    editor = bodyEditor("");
-    const outRef: {
-      current: {
-        editorBodyMarkdown: string;
-        bodyMarkdown: string;
-        getLiveMarkdown: () => string;
-        schedulePathSync: (path: string, title: string) => void;
-      } | null;
-    } = { current: null };
-
-    await act(async () => {
-      root.render(
-        createElement(Harness, {
-          activePath: "note.md",
-          markdown: md,
           editor,
-          editorReady: false,
-          dirty: false,
-          editorContentTick: 1,
+          markdown: "---\ntitle: Legacy\ntags: [work]\n---\nOld body",
           outRef,
         }),
       );
     });
 
-    expect(outRef.current?.getLiveMarkdown()).toContain("Original loaded body");
+    expect(outRef.current?.getLiveMarkdown()).toBe("Latest body\n");
   });
 
-  it("serializes dirty editor body even before the editor is marked persistence-ready", async () => {
-    const md = '---\ntitle: "Doc A"\n---\n\n';
-    editor = bodyEditor("Body that only exists in TipTap.");
-    const outRef: {
-      current: {
-        editorBodyMarkdown: string;
-        bodyMarkdown: string;
-        getLiveMarkdown: () => string;
-        schedulePathSync: (path: string, title: string) => void;
-      } | null;
-    } = { current: null };
-
-    await act(async () => {
-      root.render(
-        createElement(Harness, {
-          activePath: "untitled.md",
-          markdown: md,
-          editor,
-          editorReady: false,
-          dirty: true,
-          editorContentTick: 1,
-          outRef,
-        }),
-      );
+  it("uses the save barrier before atomically moving the filename", async () => {
+    const order: string[] = [];
+    const replaceOpenTabPath = vi.fn();
+    documentRenameByTitle.mockImplementation(async () => {
+      order.push("move");
+      return {
+        entry: { path: "Renamed.md" },
+        indexStatus: "synced",
+      };
     });
-
-    const live = outRef.current?.getLiveMarkdown() ?? "";
-    expect(live).toContain('title: "Doc A"');
-    expect(live).toContain("Body that only exists in TipTap.");
-  });
-
-  it("keeps dirty editor body in markdownOverride when title sync renames the path before ready", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    pathSyncSuggest.mockResolvedValue({
-      needs_sync: true,
-      suggested_path: "doc-a.md",
-      conflict_resolved: false,
-    });
-    fileRename.mockResolvedValue({
-      entry: {
-        id: 1,
-        path: "doc-a.md",
-        title: "Doc A",
-        updated_at: "",
-        word_count: 7,
-      },
-      contentHash: "doc-a",
-      indexStatus: "synced",
-    });
-
-    const replaceOpenTabPath = vi.fn<ReplaceOpenTabPath>();
-    const md = '---\ntitle: "Doc A"\n---\n\n';
-    editor = bodyEditor("Rename must not drop this body.");
-    const outRef: {
-      current: {
-        editorBodyMarkdown: string;
-        bodyMarkdown: string;
-        getLiveMarkdown: () => string;
-        schedulePathSync: (path: string, title: string) => void;
-      } | null;
-    } = { current: null };
-
-    await act(async () => {
-      root.render(
-        createElement(Harness, {
-          activePath: "untitled.md",
-          markdown: md,
-          editor,
-          editorReady: false,
-          dirty: true,
-          editorContentTick: 1,
-          replaceOpenTabPath,
-          outRef,
-        }),
-      );
-    });
-
-    act(() => {
-      outRef.current?.schedulePathSync("untitled.md", "Doc A");
-      vi.advanceTimersByTime(800);
-    });
-
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(replaceOpenTabPath).toHaveBeenCalledTimes(1);
-    const markdownOverride = replaceOpenTabPath.mock.calls[0]?.[3] as string;
-    expect(markdownOverride).toContain('title: "Doc A"');
-    expect(markdownOverride).toContain("Rename must not drop this body.");
-  });
-
-  it("persists the complete live markdown before title sync renames the file", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    pathSyncSuggest.mockResolvedValue({
-      needs_sync: true,
-      suggested_path: "renamed.md",
-      conflict_resolved: false,
-    });
-    fileRename.mockResolvedValue({
-      entry: {
-        id: 1,
-        path: "renamed.md",
-        title: "Renamed",
-        updated_at: "",
-        word_count: 3,
-      },
-      contentHash: "renamed",
-      indexStatus: "synced",
-    });
-    const renamePersistedPath = vi.fn<
-      (
-        path: string,
-        newPath: string,
-        markdown: string,
+    const renamePersistedPath = vi.fn(
+      async (
+        oldPath: string,
+        migrationPath: string,
+        snapshot: string,
         move: () => Promise<DocumentPersistenceMoveResult>,
-      ) => Promise<string>
-    >(async (_path, _newPath, markdown, move) => {
-      await move();
-      return markdown;
-    });
-    editor = bodyEditor("Body must reach disk before rename.");
-    const outRef = { current: null } as {
-      current: ReturnType<typeof useOpenNote> | null;
-    };
-
-    await act(async () => {
-      root.render(
-        createElement(Harness, {
-          activePath: "untitled.md",
-          markdown: '---\ntitle: "Untitled"\n---\n\n',
-          editor,
-          editorReady: true,
-          dirty: true,
-          editorContentTick: 1,
-          renamePersistedPath,
-          outRef,
-        }),
-      );
-    });
-
-    act(() => {
-      outRef.current?.schedulePathSync("untitled.md", "Renamed");
-      vi.advanceTimersByTime(800);
-    });
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(renamePersistedPath).toHaveBeenCalledTimes(1);
-    expect(renamePersistedPath.mock.calls[0]?.[0]).toBe("untitled.md");
-    expect(renamePersistedPath.mock.calls[0]?.[2]).toContain(
-      "Body must reach disk before rename.",
-    );
-    expect(renamePersistedPath.mock.invocationCallOrder[0]).toBeLessThan(
-      fileRename.mock.invocationCallOrder[0]!,
-    );
-  });
-
-  it("syncs path from the latest typed title on blur before React re-renders", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    pathSyncSuggest.mockResolvedValue({
-      needs_sync: true,
-      suggested_path: "Iris E2E Persistence.md",
-      conflict_resolved: false,
-    });
-    fileRename.mockResolvedValue({
-      entry: {
-        id: 1,
-        path: "Iris E2E Persistence.md",
-        title: "Iris E2E Persistence",
-        updated_at: "",
-        word_count: 0,
+      ) => {
+        expect(oldPath).toBe("untitled.md");
+        expect(migrationPath).toBe("untitled.md");
+        expect(snapshot).not.toContain("title:");
+        order.push("barrier");
+        await move();
+        return snapshot;
       },
-      contentHash: "iris-e2e",
-      indexStatus: "synced",
-    });
-
-    const outRef: { current: OpenNoteHarnessOut | null } = { current: null };
-
+    );
+    const outRef: { current: HarnessResult | null } = { current: null };
     await act(async () => {
       root.render(
         createElement(Harness, {
-          activePath: "未命名文档.md",
-          markdown: '---\ntitle: "未命名文档"\n---\n\n',
-          editorContentTick: 1,
+          markdown: "Body",
           outRef,
+          renamePersistedPath,
+          replaceOpenTabPath,
         }),
       );
     });
 
-    act(() => {
-      outRef.current!.onTitleChange!("Iris E2E Persistence");
-      outRef.current!.onTitleBlur!("Iris E2E Persistence");
-      vi.advanceTimersByTime(800);
-    });
-
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(pathSyncSuggest).toHaveBeenCalledWith(
-      "未命名文档.md",
-      "Iris E2E Persistence",
+    act(() => outRef.current?.onTitleBlur("Renamed"));
+    await vi.waitFor(() => expect(replaceOpenTabPath).toHaveBeenCalledTimes(1));
+    expect(order).toEqual(["barrier", "move"]);
+    expect(documentRenameByTitle).toHaveBeenCalledWith(
+      "untitled.md",
+      "Renamed",
     );
-    expect(window.confirm).toHaveBeenCalled();
   });
 
-  it("syncs path from blur title override when React state lags behind the DOM", async () => {
-    vi.useFakeTimers();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    pathSyncSuggest.mockResolvedValue({
-      needs_sync: true,
-      suggested_path: "Iris E2E Persistence.md",
-      conflict_resolved: false,
-    });
-
-    const outRef: { current: OpenNoteHarnessOut | null } = { current: null };
-
+  it("restores the existing filename for an empty title without moving", async () => {
+    const outRef: { current: HarnessResult | null } = { current: null };
     await act(async () => {
-      root.render(
-        createElement(Harness, {
-          activePath: "未命名文档.md",
-          markdown: '---\ntitle: "未命名文档"\n---\n\n',
-          editorContentTick: 1,
-          outRef,
-        }),
-      );
+      root.render(createElement(Harness, { markdown: "Body", outRef }));
     });
 
-    act(() => {
-      outRef.current!.onTitleBlur!("Iris E2E Persistence");
-      vi.advanceTimersByTime(800);
-    });
-
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(pathSyncSuggest).toHaveBeenCalledWith(
-      "未命名文档.md",
-      "Iris E2E Persistence",
-    );
-    expect(window.confirm).toHaveBeenCalled();
+    act(() => outRef.current?.onTitleBlur(""));
+    await vi.waitFor(() => expect(outRef.current?.noteTitle).toBe("untitled"));
+    expect(documentRenameByTitle).not.toHaveBeenCalled();
   });
 });

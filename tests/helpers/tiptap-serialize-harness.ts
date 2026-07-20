@@ -120,10 +120,10 @@ export function pmSerializeBody(editor: Editor): string {
 }
 
 export function fullNoteRoundTrip(md: string): string {
-  const { yaml, title, bodyMd } = parseNoteForEditor(md, "Fallback");
+  const { yaml, bodyMd } = parseNoteForEditor(md, "Fallback");
   const editor = createProductionEditorFromNote(md);
   try {
-    return serializeOpenNote({ yaml, title, editor, bodyFallbackMd: bodyMd });
+    return serializeOpenNote({ yaml, editor, bodyFallbackMd: bodyMd });
   } finally {
     editor.destroy();
   }

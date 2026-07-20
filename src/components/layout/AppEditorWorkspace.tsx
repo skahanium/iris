@@ -49,6 +49,7 @@ interface EditorSurfaceSnapshot {
   editorContentTick: number;
   editorPreparedHtml: string | null;
   editorTitleSlot: ReactNode;
+  documentSessionId: string;
   path: string;
   title: string;
 }
@@ -75,6 +76,7 @@ interface AppEditorWorkspaceProps {
   activeFileLocked: boolean;
   activeMediaTab: MediaTab | null;
   activeNoteIsClassified: boolean;
+  activeDocumentSessionId?: string | null;
   activePath: string | null;
   committedSourceMarkdown?: string;
   editorBodyMarkdown: string;
@@ -161,7 +163,7 @@ function homePendingMatchesPath(
 }
 
 function surfaceIdentity(snapshot: EditorSurfaceSnapshot): string {
-  return snapshot.path;
+  return snapshot.documentSessionId;
 }
 
 function pendingOpenIdentity(pending: HomePendingOpen): string {
@@ -201,6 +203,7 @@ export function AppEditorWorkspace({
   activeFileLocked,
   activeMediaTab,
   activeNoteIsClassified,
+  activeDocumentSessionId,
   activePath,
   committedSourceMarkdown = "",
   editorBodyMarkdown,
@@ -244,6 +247,7 @@ export function AppEditorWorkspace({
   zen,
 }: AppEditorWorkspaceProps) {
   const { recentNotes, refreshRecent } = useHomeRecentNotes({
+    enabled: homeActive,
     onPrepare: onPrepareNote,
     vaultIndexEpoch,
     vaultPath,
@@ -295,11 +299,16 @@ export function AppEditorWorkspace({
       editorContentTick,
       editorPreparedHtml: prepared,
       editorTitleSlot: pendingNoteOpen ? null : editorTitleSlot,
+      documentSessionId:
+        pendingNoteOpen?.documentSessionId ??
+        activeDocumentSessionId ??
+        `legacy:${effectiveNotePath}`,
       path: effectiveNotePath,
       title: effectiveTitle ?? displayTitleFromPath(effectiveNotePath),
     };
   }, [
     activeMediaTab,
+    activeDocumentSessionId,
     editorContentTick,
     editorTitleSlot,
     effectiveBodyMarkdown,
@@ -431,7 +440,7 @@ export function AppEditorWorkspace({
     const lastActivatedAt = ++surfaceActivationSeqRef.current;
     setSurfaceRecords((previous) => {
       const existing = previous.find(
-        (record) => record.snapshot.path === currentEditorSurface.path,
+        (record) => record.identityKey === identityKey,
       );
       if (!existing) {
         return retainCurrentSurfaceRecords([
@@ -448,7 +457,7 @@ export function AppEditorWorkspace({
       }
       return retainCurrentSurfaceRecords(
         previous.map((record) => {
-          if (record.snapshot.path !== currentEditorSurface.path) return record;
+          if (record.identityKey !== identityKey) return record;
           const contentChanged =
             record.snapshot.editorContentTick !==
               currentEditorSurface.editorContentTick ||
@@ -485,7 +494,7 @@ export function AppEditorWorkspace({
   }, [openNotePaths, retainCurrentSurfaceRecords]);
 
   const activeSurfaceRecord = surfaceRecords.find(
-    (record) => record.snapshot.path === effectiveNotePath,
+    (record) => record.identityKey === currentEditorSurface?.documentSessionId,
   );
   const activeEditorReady = Boolean(activeSurfaceRecord?.ready);
   const activeSurfacePhase = !activeSurfaceRecord
@@ -538,40 +547,58 @@ export function AppEditorWorkspace({
       return;
     }
     const record = surfaceRecords.find(
-      (item) => item.snapshot.path === effectiveNotePath,
+      (item) => item.identityKey === currentEditorSurface?.documentSessionId,
     );
     if (record?.ready && record.editor) {
       handleEditorReady(record.editor);
     }
-  }, [activePath, effectiveNotePath, handleEditorReady, surfaceRecords]);
+  }, [
+    activePath,
+    currentEditorSurface?.documentSessionId,
+    handleEditorReady,
+    surfaceRecords,
+  ]);
 
   const handleSurfaceEditorReady = useCallback(
-    (path: string, editor: Editor | null) => {
-      setSurfaceRecords((previous) =>
-        retainCurrentSurfaceRecords(
-          previous.map((record) =>
-            record.snapshot.path === path ? { ...record, editor } : record,
-          ),
-        ),
-      );
-      if (!editor && path === activePathRef.current) {
+    (identityKey: string, editor: Editor | null) => {
+      setSurfaceRecords((previous) => {
+        let changed = false;
+        const next = previous.map((record) => {
+          if (record.identityKey !== identityKey || record.editor === editor) {
+            return record;
+          }
+          changed = true;
+          return { ...record, editor };
+        });
+        return changed ? retainCurrentSurfaceRecords(next) : previous;
+      });
+      if (!editor && identityKey === currentEditorSurface?.documentSessionId) {
         handleEditorReady(null);
       }
     },
-    [handleEditorReady, retainCurrentSurfaceRecords],
+    [
+      currentEditorSurface?.documentSessionId,
+      handleEditorReady,
+      retainCurrentSurfaceRecords,
+    ],
   );
 
   const handleSurfaceContentReady = useCallback(
-    (path: string, editor: Editor) => {
-      setSurfaceRecords((previous) =>
-        retainCurrentSurfaceRecords(
-          previous.map((record) =>
-            record.snapshot.path === path
-              ? { ...record, contentReady: true, editor }
-              : record,
-          ),
-        ),
-      );
+    (identityKey: string, editor: Editor) => {
+      setSurfaceRecords((previous) => {
+        let changed = false;
+        const next = previous.map((record) => {
+          if (
+            record.identityKey !== identityKey ||
+            (record.contentReady && record.editor === editor)
+          ) {
+            return record;
+          }
+          changed = true;
+          return { ...record, contentReady: true, editor };
+        });
+        return changed ? retainCurrentSurfaceRecords(next) : previous;
+      });
     },
     [retainCurrentSurfaceRecords],
   );
@@ -721,7 +748,8 @@ export function AppEditorWorkspace({
       setSurfaceRecords((previous) =>
         retainCurrentSurfaceRecords(
           previous.map((record) =>
-            record.snapshot.path === path
+            record.identityKey === identityKey &&
+            (!record.contentReady || !record.ready || record.editor !== editor)
               ? { ...record, contentReady: true, editor, ready: true }
               : record,
           ),
@@ -783,10 +811,10 @@ export function AppEditorWorkspace({
               onSlashCommand={runEditorActionById}
               onBodyContextMenu={editorContextMenu.handleContextMenu}
               onEditorReady={(editor) => {
-                handleSurfaceEditorReady(snapshot.path, editor);
+                handleSurfaceEditorReady(record.identityKey, editor);
               }}
               onContentReady={(editor) => {
-                handleSurfaceContentReady(snapshot.path, editor);
+                handleSurfaceContentReady(record.identityKey, editor);
               }}
               onFirstFrameReady={(editor) => {
                 handleSurfaceFirstFrameReady(

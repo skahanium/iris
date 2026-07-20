@@ -454,7 +454,7 @@ describe("full note processing pipeline", () => {
 
     // Parse for editor
     const { yaml, title, bodyMd } = parseNoteForEditor(md, "Fallback");
-    expect(title).toBe("Test Note");
+    expect(title).toBe("Fallback");
     expect(bodyMd).not.toContain('title: "Test Note"');
 
     // Ingest body to editor
@@ -467,8 +467,8 @@ describe("full note processing pipeline", () => {
     expect(exportedBody).toContain("code");
 
     // Rebuild full note
-    const rebuilt = buildNoteMarkdown(yaml, title, exportedBody);
-    expect(rebuilt).toContain('title: "Test Note"');
+    const rebuilt = buildNoteMarkdown(yaml, exportedBody);
+    expect(rebuilt).not.toContain("title:");
     expect(rebuilt).toContain("tags:");
     expect(rebuilt).toContain("Bold");
   });

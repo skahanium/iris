@@ -98,7 +98,7 @@ describe("useHomeWorkspaceTransitions", () => {
       path: "new.md",
       sequence: 1,
       startedAt: expect.any(Number),
-      title: "New",
+      title: "new",
     });
 
     await act(async () => {

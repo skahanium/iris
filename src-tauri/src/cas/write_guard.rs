@@ -11,6 +11,8 @@ use crate::error::AppResult;
 pub struct WriteGuard {
     /// 最近写入的文件哈希缓存（path -> (hash, timestamp)）
     entries: Mutex<HashMap<String, (String, Instant)>>,
+    /// Old paths intentionally removed by an application-owned rename.
+    removed_entries: Mutex<HashMap<String, Instant>>,
 }
 
 impl WriteGuard {
@@ -21,6 +23,7 @@ impl WriteGuard {
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
+            removed_entries: Mutex::new(HashMap::new()),
         }
     }
 
@@ -28,6 +31,23 @@ impl WriteGuard {
     pub fn mark(&self, path: &str, hash: &str) {
         let mut guard = self.entries.lock().expect("write guard lock");
         guard.insert(path.to_string(), (hash.to_string(), Instant::now()));
+    }
+
+    /// Mark a deletion caused by an application-owned rename. The watcher sees
+    /// rename as separate create/remove events on Windows, so hash matching is
+    /// impossible for the old path.
+    pub fn mark_removed(&self, path: &str) {
+        let mut guard = self.removed_entries.lock().expect("write guard lock");
+        guard.insert(path.to_string(), Instant::now());
+    }
+
+    /// Returns true while a remove event belongs to a recent internal rename.
+    pub fn should_skip_removed_watcher(&self, path: &str) -> bool {
+        let mut guard = self.removed_entries.lock().expect("write guard lock");
+        guard.retain(|_, timestamp| timestamp.elapsed() < Self::TTL);
+        guard
+            .get(path)
+            .is_some_and(|timestamp| timestamp.elapsed() < Self::TTL)
     }
 
     /// 检查是否应该跳过 watcher 事件（TTL 内哈希匹配则跳过）
@@ -78,6 +98,14 @@ mod tests {
         assert!(guard.should_skip_watcher("/test/file.md", "abc123"));
         assert!(!guard.should_skip_watcher("/test/file.md", "def456"));
         assert!(!guard.should_skip_watcher("/other/file.md", "abc123"));
+    }
+
+    #[test]
+    fn expected_rename_removal_is_skipped_without_removing_the_index() {
+        let guard = WriteGuard::new();
+        guard.mark_removed("notes/old.md");
+        assert!(guard.should_skip_removed_watcher("notes/old.md"));
+        assert!(!guard.should_skip_removed_watcher("notes/other.md"));
     }
 
     #[test]

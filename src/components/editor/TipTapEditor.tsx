@@ -297,6 +297,10 @@ function TipTapEditorInner({
 
   onContentReadyRef.current = onContentReady;
 
+  const onEditorReadyRef = useRef(onEditorReady);
+
+  onEditorReadyRef.current = onEditorReady;
+
   const contentCacheKeyRef = useRef(contentCacheKey);
   contentCacheKeyRef.current = contentCacheKey;
   const contentCacheNamespaceRef = useRef(contentCacheNamespace);
@@ -449,8 +453,7 @@ function TipTapEditorInner({
   } | null>(null);
 
   const prevReingestKeyRef = useRef(reingestKey);
-  const skipHtmlCache = prevReingestKeyRef.current !== reingestKey;
-  prevReingestKeyRef.current = reingestKey;
+  const lastAppliedIngestRequestRef = useRef<string | null>(null);
 
   const parsedContentRef = useRef<string | null>(null);
   const parsedContentRevisionRef = useRef(0);
@@ -462,6 +465,15 @@ function TipTapEditorInner({
   useEffect(() => {
     const bodyMd = initialBodyMarkdown.trim();
     const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
+    const requestKey = `${reingestKey}:${htmlDigest}:${editorHtmlDigest(
+      initialEditorHtml ?? "",
+    )}`;
+    if (lastAppliedIngestRequestRef.current === requestKey) return;
+
+    const reingestChanged = prevReingestKeyRef.current !== reingestKey;
+    prevReingestKeyRef.current = reingestKey;
+    const cacheKey = contentCacheKeyRef.current;
+    const cacheNamespace = contentCacheNamespaceRef.current;
     let cancelled = false;
     contentReadyRef.current = false;
 
@@ -471,6 +483,7 @@ function TipTapEditorInner({
       bodyMdParam?: string,
     ) => {
       if (cancelled) return;
+      lastAppliedIngestRequestRef.current = requestKey;
       parsedContentRef.current = html;
       parsedContentRevisionRef.current += 1;
       setParsedContentRevision(parsedContentRevisionRef.current);
@@ -483,12 +496,12 @@ function TipTapEditorInner({
     };
 
     if (initialEditorHtml) {
-      if (contentCacheKey) {
+      if (cacheKey) {
         setCachedEditorHtml(
-          contentCacheKey,
+          cacheKey,
           initialEditorHtml,
           htmlDigest,
-          contentCacheNamespace,
+          cacheNamespace,
         );
       }
       setContent(initialEditorHtml);
@@ -503,30 +516,21 @@ function TipTapEditorInner({
     const rememberIngestResult = (result: EditorIngestResult) => {
       const html = result.tipTapHtml || "<p></p>";
       setContent(html, result.preserveFragments, bodyMd);
-      if (contentCacheKey) {
-        setCachedEditorHtml(
-          contentCacheKey,
-          html,
-          htmlDigest,
-          contentCacheNamespace,
-        );
+      if (cacheKey) {
+        setCachedEditorHtml(cacheKey, html, htmlDigest, cacheNamespace);
       }
     };
 
-    if (contentCacheKey && bodyMd && !skipHtmlCache) {
-      const cached = getCachedEditorHtml(
-        contentCacheKey,
-        htmlDigest,
-        contentCacheNamespace,
-      );
+    if (cacheKey && bodyMd && !reingestChanged) {
+      const cached = getCachedEditorHtml(cacheKey, htmlDigest, cacheNamespace);
       if (cached) {
         setContent(cached);
         return;
       }
     }
 
-    if (contentCacheKey && bodyMd && skipHtmlCache) {
-      clearCachedEditorHtml(contentCacheKey, contentCacheNamespace);
+    if (cacheKey && bodyMd && reingestChanged) {
+      clearCachedEditorHtml(cacheKey, cacheNamespace);
     }
 
     if (bodyMd.length <= EDITOR_INGEST_WORKER_THRESHOLD_BYTES) {
@@ -550,14 +554,7 @@ function TipTapEditorInner({
     return () => {
       cancelled = true;
     };
-  }, [
-    initialBodyMarkdown,
-    initialEditorHtml,
-    contentCacheKey,
-    contentCacheNamespace,
-    reingestKey,
-    skipHtmlCache,
-  ]);
+  }, [initialBodyMarkdown, initialEditorHtml, reingestKey]);
 
   // Fire onIngestComplete after render (not inside async callback)
   useEffect(() => {
@@ -766,7 +763,7 @@ function TipTapEditorInner({
 
     editorRef.current = editor;
 
-    onEditorReady?.(editor);
+    onEditorReadyRef.current?.(editor);
 
     flushBodyStats(editor);
 
@@ -775,9 +772,9 @@ function TipTapEditorInner({
 
       editorRef.current = null;
 
-      onEditorReady?.(null);
+      onEditorReadyRef.current?.(null);
     };
-  }, [editor, onEditorReady, flushBodyStats]);
+  }, [editor, flushBodyStats]);
 
   useEffect(() => {
     return () => {

@@ -122,11 +122,11 @@ describe("editor-html-cache", () => {
     expect(source).toContain("setCachedEditorHtml(");
   });
 
-  it("AppEditorWorkspace uses path-stable surface identity for open tabs", () => {
+  it("AppEditorWorkspace uses stable document session identity for open tabs", () => {
     const source = readSource("src/components/layout/AppEditorWorkspace.tsx");
 
     expect(source).toContain("function surfaceIdentity");
-    expect(source).toContain("return snapshot.path;");
+    expect(source).toContain("return snapshot.documentSessionId;");
     expect(source).toContain("key={record.identityKey}");
   });
 

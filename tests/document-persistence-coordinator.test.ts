@@ -253,6 +253,28 @@ describe("DocumentPersistenceCoordinator", () => {
     expect(coordinator.get("suggested.md")).toBeNull();
   });
 
+  it("allows a backend-allocated filename when the migration initially keeps the old path", async () => {
+    const write = vi.fn(async () => written);
+    const coordinator = new DocumentPersistenceCoordinator({ write });
+
+    coordinator.load("old.md", "opened", 1);
+    coordinator.capture("old.md", "before rename", "user_edit");
+    await coordinator.rename("old.md", "old.md", async () => {
+      coordinator.capture("old.md", "edited during rename", "user_edit");
+      return { path: "allocated.md", indexDegraded: false };
+    });
+    await coordinator.barrier("allocated.md");
+
+    expect(write.mock.calls).toEqual([
+      ["old.md", "before rename"],
+      ["allocated.md", "edited during rename"],
+    ]);
+    expect(coordinator.get("old.md")).toBeNull();
+    expect(coordinator.get("allocated.md")?.markdown).toBe(
+      "edited during rename",
+    );
+  });
+
   it("queues timer-triggered edits on the new path while a move is still pending", async () => {
     vi.useFakeTimers();
     try {

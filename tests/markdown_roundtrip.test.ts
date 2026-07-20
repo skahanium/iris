@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  editorHtmlToMarkdown,
+  editorBodyHtmlToMarkdown,
   htmlToMarkdown,
+  markdownBodyToEditorHtml,
   markdownRoundTrip,
-  markdownToEditorHtml,
   markdownToHtml,
   markdownToHtmlPage,
   noteMarkdownRoundTrip,
+  parseNoteForEditor,
 } from "@/lib/markdown";
 
 /** 规范化空白便于断言（不用于生产序列化） */
@@ -161,53 +162,45 @@ describe("wiki-link round-trip (v0.2)", () => {
   });
 });
 
-describe("iris note title round-trip (frontmatter)", () => {
-  it("preserves frontmatter title through editor html", () => {
+describe("legacy frontmatter title migration", () => {
+  it("removes frontmatter title while preserving editor body", () => {
     const md = '---\ntitle: "我的笔记"\n---\n\n正文第一段。';
     const out = noteMarkdownRoundTrip(md);
-    expect(out).toContain('title: "我的笔记"');
+    expect(out).not.toContain("title:");
     expect(out).toContain("正文第一段");
-    expect(out).not.toMatch(/^#\s+我的笔记/m);
   });
 
   it("keeps no-frontmatter leading h1 as a body heading on save", () => {
     const md = "# Legacy Title\n\nBody here.";
-    const html = markdownToEditorHtml(md, "fallback");
-    expect(html).toContain('class="iris-doc-title"');
+    const html = markdownBodyToEditorHtml(parseNoteForEditor(md).bodyMd);
+    expect(html).not.toContain('class="iris-doc-title"');
     expect(html).toContain("Legacy Title");
-    const out = editorHtmlToMarkdown(html, null);
-    expect(out).toContain('title: "fallback"');
+    const out = editorBodyHtmlToMarkdown(html);
+    expect(out).not.toContain("title:");
     expect(out).toContain("# Legacy Title");
     expect(out).toContain("Body here");
   });
 
-  it("keeps other frontmatter fields when title changes", () => {
+  it("keeps other frontmatter fields while discarding the title field", () => {
     const md = '---\ntitle: "A"\ntags: [iris]\n---\n\nText.';
-    const html = markdownToEditorHtml(md);
-    const edited = html.replace(
-      '<h1 class="iris-doc-title">A</h1>',
-      '<h1 class="iris-doc-title">B</h1>',
-    );
-    const out = editorHtmlToMarkdown(edited, 'title: "A"\ntags: [iris]');
-    expect(out).toContain('title: "B"');
+    const out = noteMarkdownRoundTrip(md);
+    expect(out).not.toContain("title:");
     expect(out).toContain("tags: [iris]");
   });
 
-  it("allows empty title in frontmatter", () => {
+  it("removes an empty legacy title field", () => {
     const md = '---\ntitle: ""\n---\n\n';
     const out = noteMarkdownRoundTrip(md);
-    expect(out).toContain('title: ""');
+    expect(out).not.toContain("title:");
   });
 
-  it("does not duplicate title when body still has matching h1", () => {
+  it("keeps a body h1 because document title is no longer in Markdown", () => {
     const md = '---\ntitle: "新标题"\n---\n\n# 新标题\n\n正文';
-    const html = markdownToEditorHtml(md);
+    const html = markdownBodyToEditorHtml(parseNoteForEditor(md).bodyMd);
     expect((html.match(/<h1/gi) ?? []).length).toBe(1);
-    expect(html).toContain('class="iris-doc-title"');
     expect(html).toContain("正文");
     const out = noteMarkdownRoundTrip(md);
-    expect(out).toContain('title: "新标题"');
-    expect(out).not.toMatch(/^#\s+新标题/m);
+    expect(out).not.toContain("title:");
     expect(out).toContain("正文");
   });
 });

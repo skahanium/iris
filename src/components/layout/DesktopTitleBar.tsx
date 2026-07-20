@@ -34,6 +34,8 @@ import { AppBrandZone } from "./AppBrandZone";
 import { WindowControls } from "./WindowControls";
 
 export interface TabItem {
+  /** Stable for the lifetime of an open document, even when its path changes. */
+  documentSessionId?: string;
   path: string;
   title: string;
   dirty?: boolean;

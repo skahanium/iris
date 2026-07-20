@@ -2,7 +2,6 @@
 
 import type { TabItem } from "@/components/layout/TabBar";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
-import { displayTitleFromMarkdown } from "@/lib/document-title";
 import { parseNoteForEditor } from "@/lib/markdown";
 import { documentOpenEnd, fileRead } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
@@ -10,7 +9,6 @@ import { pathStem, resolveNoteDisplayTitle } from "@/lib/note-display";
 import { mergeTabsAfterPathRename } from "@/lib/note-tab-rename";
 import {
   emitNoteOpenVisibleCommitTrace,
-  prepareNoteOpenFromContent,
   type DocumentOpenPriority,
   type NoteOpenBudgetKind,
   type NoteOpenSource,
@@ -52,6 +50,8 @@ interface OpenNoteOptions {
 export interface PendingNoteOpen {
   bodyMarkdown: string;
   content: string;
+  /** Runtime identity. All production opens provide it; legacy fixtures fall back to path. */
+  documentSessionId?: string;
   editorHtmlDigest?: string;
   documentOpenToken?: string;
   editorHtmlStatus?: PreparedNoteOpen["editorHtmlStatus"];
@@ -124,9 +124,15 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const pendingNoteOpenCommitRef = useRef<PendingNoteOpenCommit | null>(null);
   const tabMarkdownCacheRef = useRef(new Map<string, string>());
   const tabLockCacheRef = useRef(new Map<string, boolean>());
+  const documentSessionSeqRef = useRef(0);
   /** Serializes allocation + immediate registration for each + click. */
   const newNoteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [activeFileLocked, setActiveFileLocked] = useState(false);
+
+  const createDocumentSessionId = useCallback(() => {
+    documentSessionSeqRef.current += 1;
+    return `document-session-${documentSessionSeqRef.current}`;
+  }, []);
 
   activePathRef.current = activePath;
   tabsRef.current = tabs;
@@ -274,19 +280,16 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         : parseNoteForEditor(content, pathStem(path));
       const bodyMarkdown = preparedNote?.bodyMarkdown ?? parsed!.bodyMd;
       const frontmatterYaml = preparedNote?.frontmatterYaml ?? parsed!.yaml;
-      const fromMarkdown = displayTitleFromMarkdown(content, "");
-      const title = resolveNoteDisplayTitle({
-        path,
-        title:
-          preparedNote?.title ||
-          fromMarkdown ||
-          titleHint?.trim() ||
-          parsed?.title,
-        markdown: content,
-      });
+      void preparedNote;
+      void titleHint;
+      const title = resolveNoteDisplayTitle({ path });
+      const existingSessionId = tabsRef.current.find(
+        (tab) => tab.path === path,
+      )?.documentSessionId;
       return {
         bodyMarkdown,
         content,
+        documentSessionId: existingSessionId ?? createDocumentSessionId(),
         documentOpenToken,
         editorHtmlDigest: preparedNote?.editorHtmlDigest,
         editorHtmlStatus: preparedNote?.editorHtmlStatus,
@@ -304,7 +307,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         title,
       };
     },
-    [],
+    [createDocumentSessionId],
   );
 
   const applyCommittedNoteOpen = useCallback(
@@ -337,6 +340,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
                   dirty: false,
                   locked: pending.isLocked,
                   title: pending.title,
+                  documentSessionId:
+                    tab.documentSessionId ?? pending.documentSessionId,
                 }
               : tab,
           );
@@ -345,6 +350,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           ...withoutDiscarded,
           {
             dirty: false,
+            documentSessionId: pending.documentSessionId,
             lifecycle: "persisted",
             locked: pending.isLocked,
             path: pending.path,
@@ -771,6 +777,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
               dirty: false,
               lifecycle: "session_pristine",
               locked: false,
+              documentSessionId: createDocumentSessionId(),
               path: created.path,
               title: created.title,
             },
@@ -795,19 +802,22 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
             source: "new-note",
             titleHint: created.title,
           };
-          const preparedNote = await prepareNoteOpenFromContent(
-            openTraceRequest,
-            { content: created.content, isLocked: false },
-          );
-          await openFile(created.path, created.title, {
+          // The file has just been written, so its exact Markdown is already
+          // authoritative. Stage it directly: editor-cache preparation is a
+          // performance concern and must never delay the first visible frame.
+          const pending = buildPendingNoteOpen({
+            content: created.content,
             homeOpenSequence: options.homeOpenSequence,
+            isLocked: false,
             openBudgetKind: "hot",
             openStartedAt,
             openTraceRequest,
-            preparedNote,
-            stageEvenIfRegistered: true,
-            skipDiscardPrevious: true,
+            path: created.path,
+            preparedNote: null,
+            sequence: ++openFileSeqRef.current,
+            titleHint: created.title,
           });
+          await stagePendingNoteOpen(pending, null);
         } catch (e) {
           if (isSupersededError(e)) return;
           if (
@@ -838,12 +848,14 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     },
     [
       cancelOpenTransaction,
+      buildPendingNoteOpen,
       discardOpenTab,
       onStatusChange,
       onVaultIndexBump,
-      openFile,
       persistAndCacheTab,
       replaceTabs,
+      createDocumentSessionId,
+      stagePendingNoteOpen,
     ],
   );
 
@@ -859,17 +871,15 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     );
   }, [replaceTabs]);
 
-  /** 更新标签标题并标记为未保存（用于文档标题字段编辑） */
+  /** Reflect the authoritative filename in a tab without inventing a dirty revision. */
   const updateTabTitle = useCallback(
-    (path: string, title: string) => {
-      const displayTitle = resolveNoteDisplayTitle({ path, title });
+    (path: string, _title: string) => {
+      const displayTitle = resolveNoteDisplayTitle({ path });
       replaceTabs((prev) =>
         prev.map((tab) =>
           tab.path === path
             ? {
                 ...tab,
-                dirty: true,
-                lifecycle: "persisted",
                 title: displayTitle,
               }
             : tab,
@@ -884,13 +894,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     (
       oldPath: string,
       newPath: string,
-      title?: string,
+      _title?: string,
       markdownOverride?: string,
     ) => {
       if (oldPath === newPath) return;
-      const displayTitle = title
-        ? resolveNoteDisplayTitle({ path: newPath, title })
-        : undefined;
+      const displayTitle = resolveNoteDisplayTitle({ path: newPath });
       const cachedMarkdown =
         markdownOverride ?? tabMarkdownCacheRef.current.get(oldPath);
       if (cachedMarkdown) {
@@ -909,7 +917,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         ),
       );
       if (activePathRef.current === oldPath) {
-        // Path change remounts the editor (key=path); sync markdown first to avoid restoring stale state.
+        // The editor surface is session-keyed; only its mutable path changes.
         activePathRef.current = newPath;
         setActivePath(newPath);
         setMarkdown(markdownOverride ?? markdownRef.current);
@@ -939,17 +947,15 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   );
 
   const markClean = useCallback(
-    (path: string, title?: string) => {
-      const displayTitle = title
-        ? resolveNoteDisplayTitle({ path, title })
-        : undefined;
+    (path: string, _title?: string) => {
+      const displayTitle = resolveNoteDisplayTitle({ path });
       replaceTabs((prev) => {
         let changed = false;
         const next = prev.map((tab) => {
           if (tab.path !== path) {
             return tab;
           }
-          const nextTitle = displayTitle || tab.title;
+          const nextTitle = displayTitle;
           if (!tab.dirty && nextTitle === tab.title) {
             return tab;
           }

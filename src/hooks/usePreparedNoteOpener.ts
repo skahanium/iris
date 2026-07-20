@@ -159,6 +159,22 @@ export function usePreparedNoteOpener<
         ? await enrichRequestSignature(baseRequest)
         : baseRequest;
       const openTraceRequest = options?.openTraceRequest ?? lookupRequest;
+      if (source === "welcome") {
+        // A recent-note click is the user-facing recovery path after startup.
+        // Warm HTML is strictly speculative: it must never decide whether that
+        // path opens. Re-read Markdown through the normal open pipeline so a
+        // stale/prepared editor surface cannot strand the user on Home.
+        const { preparedNote: _preparedNote, ...authoritativeOptions } =
+          options ?? {};
+        void _preparedNote;
+        await openNote(path, titleHint, {
+          ...authoritativeOptions,
+          openBudgetKind: options?.openBudgetKind ?? "none",
+          openStartedAt,
+          openTraceRequest,
+        } as OpenOptions);
+        return;
+      }
       const shouldScopeOpen = priority === "foreground" || priority === "hot";
       let documentOpenToken: string | null = null;
       let documentOpenTokenRetained = false;
@@ -208,14 +224,28 @@ export function usePreparedNoteOpener<
           return;
         }
 
-        const preparedNote =
-          cachedPreparedNote ??
-          (documentOpenResult
-            ? await prepareNoteOpenFromContent(lookupRequest, {
-                content: documentOpenResult.content,
-                isLocked: documentOpenResult.isLocked,
-              })
-            : await prepareNoteOpen(lookupRequest));
+        let preparedNote: PreparedNoteOpen | undefined;
+        try {
+          preparedNote =
+            cachedPreparedNote ??
+            (documentOpenResult
+              ? await prepareNoteOpenFromContent(lookupRequest, {
+                  content: documentOpenResult.content,
+                  isLocked: documentOpenResult.isLocked,
+                })
+              : await prepareNoteOpen(lookupRequest));
+        } catch {
+          // Markdown remains authoritative and `openNote` can reread it. A
+          // cache/parser failure must never turn a valid user click into an
+          // invisible return to Home.
+          await openNote(path, titleHint, {
+            ...openOptionsWithScope,
+            openBudgetKind: options?.openBudgetKind ?? "none",
+            openStartedAt,
+            openTraceRequest,
+          } as OpenOptions);
+          return;
+        }
 
         await openNote(path, titleHint, {
           ...openOptionsWithScope,

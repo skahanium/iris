@@ -45,6 +45,7 @@ describe("useHomeRecentNotes", () => {
     vaultPath: string | null;
   }) {
     const state = useHomeRecentNotes({
+      enabled: true,
       onPrepare,
       vaultIndexEpoch,
       vaultPath,

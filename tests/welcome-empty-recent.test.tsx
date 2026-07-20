@@ -58,9 +58,7 @@ describe("WelcomeEmpty recent notes", () => {
       },
     ]);
 
-    expect(document.body.textContent).toContain(
-      "中国共产党组织处理规定（试行）",
-    );
+    expect(document.body.textContent).toContain("未命名文档");
     expect(document.body.textContent).not.toContain("06/16 08:30");
     expect(document.body.textContent).not.toContain("未命名文档.md");
     expect(document.body.textContent).not.toContain("最近更新");
@@ -108,7 +106,7 @@ describe("WelcomeEmpty recent notes", () => {
     );
   });
 
-  it("passes the recent note display title as an open hint", async () => {
+  it("passes the filename-derived recent note title as an open hint", async () => {
     const onOpen = vi.fn();
     await renderWelcome(
       [
@@ -124,11 +122,7 @@ describe("WelcomeEmpty recent notes", () => {
 
     document.querySelector<HTMLButtonElement>("li button")?.click();
 
-    expect(onOpen).toHaveBeenCalledWith(
-      "MiMo.md",
-      "MiMo-V2.5-Pro-UltraSpeed",
-      "welcome",
-    );
+    expect(onOpen).toHaveBeenCalledWith("MiMo.md", "MiMo", "welcome");
   });
 
   it("refreshes recent notes after creating or deleting a note", async () => {
@@ -153,7 +147,7 @@ describe("WelcomeEmpty recent notes", () => {
 
     await act(async () => {
       document
-        .querySelector<HTMLButtonElement>('button[aria-label="删除 Delete Me"]')
+        .querySelector<HTMLButtonElement>('button[aria-label="删除 delete-me"]')
         ?.click();
     });
     await vi.waitFor(() => {
@@ -183,14 +177,14 @@ describe("WelcomeEmpty recent notes", () => {
     ];
 
     await renderWelcome(recentNotes);
-    expect(document.body.textContent).toContain("Delete Me");
+    expect(document.body.textContent).toContain("delete-me");
 
     await act(async () => {
       root.render(<div data-testid="editor-placeholder" />);
     });
 
     await renderWelcome(recentNotes);
-    expect(document.body.textContent).toContain("Delete Me");
+    expect(document.body.textContent).toContain("delete-me");
     expect(document.body.textContent).not.toContain("暂无最近笔记");
   });
 
@@ -224,7 +218,7 @@ describe("WelcomeEmpty recent notes", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("Pending");
+    expect(document.body.textContent).toContain("pending");
     expect(document.body.textContent).not.toContain("Opening");
     expect(document.body.textContent).not.toContain("正在打开");
   });

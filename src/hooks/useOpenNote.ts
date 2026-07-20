@@ -1,7 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import {
   useCallback,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -9,14 +8,13 @@ import {
   type RefObject,
 } from "react";
 
-import { pathStem } from "@/lib/note-display";
 import type { DocumentPersistenceMoveResult } from "@/lib/document-persistence-coordinator";
 import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
 import { resetEditorContentBaseline } from "@/lib/editor-baseline";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
+import { documentRenameByTitle } from "@/lib/ipc";
 import { extractFrontmatterYaml, parseNoteForEditor } from "@/lib/markdown";
-import { isPlaceholderTitle } from "@/lib/path-sync";
-import { fileRename, pathSyncSuggest } from "@/lib/ipc";
+import { pathStem } from "@/lib/note-display";
 import {
   sanitizeDocumentTitleInput,
   NOTE_TITLE_HARD_LIMIT,
@@ -25,8 +23,6 @@ import {
   bodyMarkdownFromNoteRef,
   serializeOpenNote,
 } from "@/lib/serialize-open-note";
-
-const PATH_SYNC_DEBOUNCE_MS = 800;
 
 function shouldSerializeEditorBody(
   editor: Editor | null,
@@ -39,8 +35,6 @@ function shouldSerializeEditorBody(
 
 interface UseOpenNoteOptions {
   activePath: string | null;
-  /** Resolved during open from frontmatter/index metadata; never infer a legacy title from the path again. */
-  titleFallback?: string;
   /** Bumped when a note is read from disk into tab state (openFile); not bumped on save. */
   editorContentTick: number;
   activePathRef: RefObject<string | null>;
@@ -49,15 +43,13 @@ interface UseOpenNoteOptions {
   editorRef: RefObject<Editor | null>;
   editorReadyRef?: RefObject<boolean>;
   dirtyRef?: RefObject<boolean>;
-  /** Atomically flushes and rebinds a title-driven path rename. */
+  /** Flush layer-1 Markdown, then execute an atomic filesystem move. */
   renamePersistedPath?: (
     path: string,
-    newPath: string,
+    migrationPath: string,
     markdown: string,
     move: () => Promise<DocumentPersistenceMoveResult>,
   ) => Promise<string>;
-  /** When provided, replaces `window.confirm` for path sync prompts (WebDriver E2E). */
-  confirmPathSync?: (message: string) => Promise<boolean>;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
     oldPath: string,
@@ -65,11 +57,18 @@ interface UseOpenNoteOptions {
     title?: string,
     markdownOverride?: string,
   ) => void;
+  onPathRenamed?: (oldPath: string, newPath: string) => void;
+  onPathRenameError?: () => void;
 }
 
+/**
+ * Owns the one editable title: the current Markdown filename. The title never
+ * participates in Markdown serialization; blur/Enter serializes the latest
+ * body, crosses the persistence barrier, and only then asks Rust to allocate
+ * and move the filename.
+ */
 export function useOpenNote({
   activePath,
-  titleFallback,
   editorContentTick,
   activePathRef,
   markdownRef,
@@ -78,39 +77,35 @@ export function useOpenNote({
   editorReadyRef,
   dirtyRef,
   renamePersistedPath,
-  confirmPathSync,
   updateTabTitle,
   replaceOpenTabPath,
+  onPathRenamed,
+  onPathRenameError,
 }: UseOpenNoteOptions) {
   const [noteTitle, setNoteTitle] = useState("");
   const [bodyMarkdown, setBodyMarkdown] = useState("");
   const noteTitleRef = useRef("");
+  const titleRenameGenerationRef = useRef(0);
+  const titleRenameQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const editorIngestGenerationRef = useRef(0);
 
-  /** Parsed body for TipTap on disk/tab load only; layer-1 save must not remount editor. */
+  /** Parsed body for TipTap on disk/tab load only; a save must not remount it. */
   const editorBodyMarkdown = useMemo(() => {
     if (!activePath) return "";
-    return parseNoteForEditor(
-      markdownRef.current,
-      titleFallback?.trim() || pathStem(activePath),
-    ).bodyMd;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- editorContentTick = disk load; omit `markdown` so save does not call setContent
-  }, [activePath, editorContentTick, markdownRef, titleFallback]);
+    return parseNoteForEditor(markdownRef.current, pathStem(activePath)).bodyMd;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- disk load tick is authoritative
+  }, [activePath, editorContentTick, markdownRef]);
 
-  const pathSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pathSyncGenRef = useRef(0);
-  const editorIngestGenerationRef = useRef(0);
   const syncFromMarkdown = useCallback(
-    (md: string, _path: string) => {
-      const parsed = parseNoteForEditor(
-        md,
-        titleFallback?.trim() || pathStem(_path),
-      );
+    (markdown: string, path: string) => {
+      const parsed = parseNoteForEditor(markdown, pathStem(path));
       frontmatterYamlRef.current = parsed.yaml;
-      noteTitleRef.current = parsed.title;
-      setNoteTitle(parsed.title);
+      // The path is the title authority, including when legacy frontmatter has one.
+      noteTitleRef.current = pathStem(path);
+      setNoteTitle(pathStem(path));
       setBodyMarkdown(parsed.bodyMd);
     },
-    [frontmatterYamlRef, titleFallback],
+    [frontmatterYamlRef],
   );
 
   useLayoutEffect(() => {
@@ -121,211 +116,166 @@ export function useOpenNote({
       return;
     }
     syncFromMarkdown(markdownRef.current, activePath);
-    // `markdown` state intentionally omitted: layer-1 save only updates `markdownRef`.
-  }, [activePath, editorContentTick, syncFromMarkdown, markdownRef]);
-
-  useEffect(() => {
-    return () => {
-      if (pathSyncTimerRef.current) {
-        clearTimeout(pathSyncTimerRef.current);
-      }
-    };
-  }, []);
+  }, [activePath, editorContentTick, markdownRef, syncFromMarkdown]);
 
   const getLiveMarkdown = useCallback(() => {
     const editor = editorRef.current;
-    const editorReady = shouldSerializeEditorBody(
-      editor,
-      editorReadyRef?.current ?? true,
-      dirtyRef?.current ?? false,
-    );
     return serializeOpenNote({
       yaml: frontmatterYamlRef.current,
-      title: noteTitle,
       editor,
-      editorReady,
+      editorReady: shouldSerializeEditorBody(
+        editor,
+        editorReadyRef?.current ?? true,
+        dirtyRef?.current ?? false,
+      ),
       bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
     });
-  }, [
-    noteTitle,
-    frontmatterYamlRef,
-    editorRef,
-    editorReadyRef,
-    dirtyRef,
-    markdownRef,
-  ]);
+  }, [dirtyRef, editorReadyRef, editorRef, frontmatterYamlRef, markdownRef]);
 
   const applySavedMarkdown = useCallback(
-    (md: string) => {
-      markdownRef.current = md;
-      frontmatterYamlRef.current = extractFrontmatterYaml(md);
-      const path = activePathRef.current;
-      if (path) {
-        const parsed = parseNoteForEditor(
-          md,
-          titleFallback?.trim() || pathStem(path),
-        );
-        noteTitleRef.current = parsed.title;
-        setNoteTitle(parsed.title);
-      }
+    (markdown: string) => {
+      markdownRef.current = markdown;
+      frontmatterYamlRef.current = extractFrontmatterYaml(markdown);
     },
-    [activePathRef, frontmatterYamlRef, markdownRef, titleFallback],
+    [frontmatterYamlRef, markdownRef],
   );
 
   const onTitleChange = useCallback(
     (raw: string) => {
-      const path = activePathRef.current;
-      if (!path) return;
-
+      if (!activePathRef.current) return;
       const next = sanitizeDocumentTitleInput(raw).slice(
         0,
         NOTE_TITLE_HARD_LIMIT,
       );
       noteTitleRef.current = next;
       setNoteTitle(next);
-      updateTabTitle(path, next);
     },
-    [activePathRef, updateTabTitle],
+    [activePathRef],
   );
 
-  const schedulePathSync = useCallback(
-    (path: string, title: string) => {
-      if (pathSyncTimerRef.current) {
-        clearTimeout(pathSyncTimerRef.current);
-      }
-      if (isPlaceholderTitle(title)) {
-        return;
-      }
+  const commitTitleRename = useCallback(
+    (title: string) => {
+      const generation = ++titleRenameGenerationRef.current;
+      const run = async () => {
+        if (generation !== titleRenameGenerationRef.current) return;
+        const oldPath = activePathRef.current;
+        if (!oldPath) return;
+        if (!title.trim()) {
+          const restored = pathStem(oldPath);
+          noteTitleRef.current = restored;
+          setNoteTitle(restored);
+          return;
+        }
 
-      const generation = ++pathSyncGenRef.current;
-      pathSyncTimerRef.current = setTimeout(() => {
-        pathSyncTimerRef.current = null;
-        void pathSyncSuggest(path, title)
-          .then(async (suggest) => {
-            if (generation !== pathSyncGenRef.current) return;
-            if (activePathRef.current !== path) return;
-            if (!suggest.needs_sync || suggest.suggested_path === path) {
-              return;
-            }
-            const msg = suggest.conflict_resolved
-              ? `路径「${suggest.suggested_path}」已避开同名冲突。是否同步？`
-              : `是否将文件路径同步为「${suggest.suggested_path}」？`;
-            const confirm =
-              confirmPathSync ??
-              ((message: string) => Promise.resolve(window.confirm(message)));
-            if (!(await confirm(msg))) return;
-            const serializeLatest = () => {
-              const editor = editorRef.current;
-              return serializeOpenNote({
-                yaml: frontmatterYamlRef.current,
-                title: title.trim(),
-                editor,
-                editorReady: shouldSerializeEditorBody(
-                  editor,
-                  editorReadyRef?.current ?? true,
-                  dirtyRef?.current ?? false,
-                ),
-                bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
-              });
-            };
-            const markdownSnapshot = serializeLatest();
-            let renamedPath: string | null = null;
-            const move = async () => {
-              const receipt = await fileRename(path, suggest.suggested_path);
-              renamedPath = receipt.entry.path;
-              return {
-                path: receipt.entry.path,
-                indexDegraded: receipt.indexStatus === "degraded",
-              };
-            };
-            const persistedMarkdown = renamePersistedPath
-              ? await renamePersistedPath(
-                  path,
-                  suggest.suggested_path,
-                  markdownSnapshot,
-                  move,
-                )
-              : (await move(), markdownSnapshot);
-            if (!renamedPath) return;
-            const allocatedTitle = pathStem(renamedPath);
-            const nextTitle =
-              title.trim() === "" ? allocatedTitle : title.trim();
-            replaceOpenTabPath(path, renamedPath, nextTitle, persistedMarkdown);
-            if (title.trim() === "") {
-              setNoteTitle(allocatedTitle);
-            }
-          })
-          .catch(() => {
-            /* Path sync is optional so tests can isolate editor content flow. */
-          });
-      }, PATH_SYNC_DEBOUNCE_MS);
+        const markdownSnapshot = getLiveMarkdown();
+        let renamedPath = oldPath;
+        const move = async (): Promise<DocumentPersistenceMoveResult> => {
+          const receipt = await documentRenameByTitle(oldPath, title);
+          renamedPath = receipt.entry.path;
+          return {
+            path: receipt.entry.path,
+            indexDegraded: receipt.indexStatus === "degraded",
+          };
+        };
+
+        try {
+          // Keep the old path as the temporary migration identity. The Rust
+          // command chooses the collision suffix only after the save barrier.
+          const persistedMarkdown = renamePersistedPath
+            ? await renamePersistedPath(
+                oldPath,
+                oldPath,
+                markdownSnapshot,
+                move,
+              )
+            : (await move(), markdownSnapshot);
+          const committedTitle = pathStem(renamedPath);
+          noteTitleRef.current = committedTitle;
+          setNoteTitle(committedTitle);
+          if (renamedPath === oldPath) {
+            updateTabTitle(oldPath, committedTitle);
+          } else {
+            replaceOpenTabPath(
+              oldPath,
+              renamedPath,
+              committedTitle,
+              persistedMarkdown,
+            );
+            onPathRenamed?.(oldPath, renamedPath);
+          }
+        } catch {
+          if (generation !== titleRenameGenerationRef.current) return;
+          const restored = pathStem(oldPath);
+          noteTitleRef.current = restored;
+          setNoteTitle(restored);
+          onPathRenameError?.();
+        }
+      };
+      titleRenameQueueRef.current = titleRenameQueueRef.current.then(run, run);
     },
     [
       activePathRef,
-      editorRef,
-      dirtyRef,
-      editorReadyRef,
-      frontmatterYamlRef,
-      markdownRef,
+      getLiveMarkdown,
+      onPathRenamed,
+      onPathRenameError,
       renamePersistedPath,
-      confirmPathSync,
       replaceOpenTabPath,
+      updateTabTitle,
     ],
   );
 
   const onTitleBlur = useCallback(
     (titleOverride?: string) => {
-      const path = activePathRef.current;
-      if (!path) return;
-      const title =
-        titleOverride !== undefined ? titleOverride : noteTitleRef.current;
+      const title = titleOverride ?? noteTitleRef.current;
       if (titleOverride !== undefined) {
         noteTitleRef.current = titleOverride;
+        setNoteTitle(titleOverride);
       }
-      schedulePathSync(path, title);
+      commitTitleRename(title);
     },
-    [activePathRef, schedulePathSync],
+    [commitTitleRename],
   );
+
+  const onTitleCancel = useCallback(() => {
+    const path = activePathRef.current;
+    if (!path) return;
+    const restored = pathStem(path);
+    noteTitleRef.current = restored;
+    setNoteTitle(restored);
+  }, [activePathRef]);
 
   const loadBodyIntoEditor = useCallback(
     (content: string) => {
       const path = activePathRef.current;
       if (!path) return;
       syncFromMarkdown(content, path);
-      const parsed = parseNoteForEditor(
-        content,
-        titleFallback?.trim() || pathStem(path),
-      );
-      if (editorRef.current) {
-        const generation = ++editorIngestGenerationRef.current;
-        void ingestMarkdownForEditorAsync({ bodyMarkdown: parsed.bodyMd })
-          .then(({ tipTapHtml }) => {
-            if (generation !== editorIngestGenerationRef.current) return;
-            if (activePathRef.current !== path) return;
-            if (dirtyRef?.current) return;
-            const editor = editorRef.current;
-            if (editor) {
-              resetEditorContentBaseline(editor, tipTapHtml, {
-                parseOptions: EDITOR_PARSE_OPTIONS,
-                selection: "preserve",
-              });
-            }
-          })
-          .catch(() => {
-            if (generation !== editorIngestGenerationRef.current) return;
-            if (activePathRef.current !== path) return;
-            if (dirtyRef?.current) return;
-            const editor = editorRef.current;
-            if (editor) {
-              resetEditorContentBaseline(editor, "<p></p>", {
-                parseOptions: EDITOR_PARSE_OPTIONS,
-                selection: "preserve",
-              });
-            }
+      const parsed = parseNoteForEditor(content, pathStem(path));
+      const editor = editorRef.current;
+      if (!editor) return;
+      const generation = ++editorIngestGenerationRef.current;
+      void ingestMarkdownForEditorAsync({ bodyMarkdown: parsed.bodyMd })
+        .then(({ tipTapHtml }) => {
+          if (generation !== editorIngestGenerationRef.current) return;
+          if (activePathRef.current !== path || dirtyRef?.current) return;
+          const current = editorRef.current;
+          if (!current) return;
+          resetEditorContentBaseline(current, tipTapHtml, {
+            parseOptions: EDITOR_PARSE_OPTIONS,
+            selection: "preserve",
           });
-      }
+        })
+        .catch(() => {
+          if (generation !== editorIngestGenerationRef.current) return;
+          if (activePathRef.current !== path || dirtyRef?.current) return;
+          const current = editorRef.current;
+          if (!current) return;
+          resetEditorContentBaseline(current, "<p></p>", {
+            parseOptions: EDITOR_PARSE_OPTIONS,
+            selection: "preserve",
+          });
+        });
     },
-    [activePathRef, dirtyRef, editorRef, syncFromMarkdown, titleFallback],
+    [activePathRef, dirtyRef, editorRef, syncFromMarkdown],
   );
 
   return {
@@ -336,7 +286,8 @@ export function useOpenNote({
     applySavedMarkdown,
     onTitleChange,
     onTitleBlur,
-    schedulePathSync,
+    onTitleCancel,
+    commitTitleRename,
     syncFromMarkdown,
     loadBodyIntoEditor,
   };

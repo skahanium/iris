@@ -30,7 +30,6 @@ import {
   versionSaveIdle,
   versionSaveManual,
 } from "@/lib/ipc";
-import { displayTitleFromMarkdown } from "@/lib/document-title";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import type { AutoSnapshotLeaveReason } from "@/lib/version-auto-snapshot-policy";
 import { createLeaveSnapshotEnqueuer } from "@/lib/version-leave-snapshot";
@@ -156,13 +155,10 @@ export function useAppPersistenceLifecycle({
       if (!isSavedStatus(snapshot.status)) {
         return;
       }
-      const tab = tabsRef.current.find((item) => item.path === snapshot.path);
-      const persistedTitle = displayTitleFromMarkdown(snapshot.markdown, "");
-      const title = persistedTitle || tab?.title || snapshot.path;
       syncTabMarkdownCache(snapshot.path, snapshot.markdown);
       markClean(
         snapshot.path,
-        resolveNoteDisplayTitle({ path: snapshot.path, title }),
+        resolveNoteDisplayTitle({ path: snapshot.path }),
       );
       if (snapshot.path !== activePathRef.current) return;
       applySavedMarkdown(snapshot.markdown);
@@ -176,7 +172,6 @@ export function useAppPersistenceLifecycle({
       markClean,
       setMarkdown,
       syncTabMarkdownCache,
-      tabsRef,
     ],
   );
 

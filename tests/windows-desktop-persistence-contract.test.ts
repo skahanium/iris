@@ -29,7 +29,9 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain('"tauri:options"');
     expect(runner).toContain('browserName: "wry"');
     expect(runner).toContain('data-testid="rail-new-note-button"');
-    expect(runner).toContain('data-testid="editor"');
+    expect(runner).toContain(
+      '[data-editor-visibility="visible"] [contenteditable="true"]',
+    );
     expect(runner).toContain('aria-label="关闭"');
     expect(runner).toContain("restartApplication");
     expect(runner).toMatch(
@@ -55,19 +57,18 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
   it("不经 WebDriver 改标题或 path-sync，一次编辑写入两行正文并等磁盘确认", () => {
     const runner = read(runnerPath);
 
+    expect(runner).toContain("EXPECTED_TITLE");
+    expect(runner).toContain("EXPECTED_FILE_NAME");
+    expect(runner).toContain('data-testid="document-title"');
+    expect(runner).toContain("title_rename_not_persisted");
+    expect(runner).toContain("renamed_markdown_file_missing");
+    expect(runner).toContain("legacy_markdown_title_present");
+    expect(runner).toContain("reopened_title_mismatch");
     expect(runner).toContain("waitForPersistedBody(vaultPath)");
     expect(runner).toMatch(
       /sendKeys\(sessionId, editor, FIRST_BODY_LINE\)[\s\S]*sendKeys\(sessionId, editor, REMOUNT_BODY_LINE\)[\s\S]*pressSave\(sessionId\)[\s\S]*waitForPersistedBody\(vaultPath\)/,
     );
-    expect(runner).not.toContain("commitDocumentTitle");
-    expect(runner).not.toContain("confirmPathSyncAfterTitleRename");
     expect(runner).not.toContain("path-sync-confirm");
-    expect(runner).not.toContain("title_dom_value_mismatch");
-    expect(runner).not.toContain("seedExpectedNote");
-    expect(runner).not.toContain("EXPECTED_TITLE");
-    expect(runner).not.toContain("EXPECTED_FILE_NAME");
-    expect(runner).not.toContain("waitForRemountVisible");
-    expect(runner).not.toContain("readActiveNotePath");
   });
 
   it("第二次真实启动后经应用 UI 打开笔记并断言正文", () => {

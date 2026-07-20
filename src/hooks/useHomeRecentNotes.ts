@@ -5,6 +5,7 @@ import type { NoteOpenSource } from "@/lib/document-open-runtime";
 import type { FileListItem } from "@/types/ipc";
 
 interface UseHomeRecentNotesOptions {
+  enabled: boolean;
   onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
   vaultIndexEpoch: number;
   vaultPath: string | null;
@@ -26,6 +27,7 @@ function dedupeByPath(files: FileListItem[]): FileListItem[] {
 }
 
 export function useHomeRecentNotes({
+  enabled,
   onPrepare,
   vaultIndexEpoch,
   vaultPath,
@@ -68,12 +70,16 @@ export function useHomeRecentNotes({
       setRecentNotes([]);
       previousVaultPathRef.current = vaultPath;
     }
-    void refreshRecent();
-  }, [refreshRecent, vaultIndexEpoch, vaultPath]);
+    if (enabled) {
+      void refreshRecent();
+    }
+  }, [enabled, refreshRecent, vaultIndexEpoch, vaultPath]);
 
   useEffect(() => {
-    recentNotes.forEach((file) => onPrepare?.(file, "welcome"));
-  }, [onPrepare, recentNotes]);
+    if (enabled) {
+      recentNotes.forEach((file) => onPrepare?.(file, "welcome"));
+    }
+  }, [enabled, onPrepare, recentNotes]);
 
   return {
     recentNotes,

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { usePreparedNoteOpener } from "@/hooks/usePreparedNoteOpener";
 import { clearNoteOpenPreparationCache } from "@/lib/note-open-preparation";
 import type { PreparedNoteOpen } from "@/lib/note-open-preparation";
+import * as documentOpenRuntime from "@/lib/document-open-runtime";
 import type {
   DocumentOpenPriority,
   NoteOpenSource,
@@ -120,6 +121,7 @@ describe("usePreparedNoteOpener", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     act(() => root.unmount());
     host.remove();
   });
@@ -188,10 +190,49 @@ describe("usePreparedNoteOpener", () => {
           bodyMarkdown: expect.stringContaining("Merged body"),
           frontmatterYaml: expect.stringContaining('title: "Merged"'),
           isLocked: true,
-          title: "Merged",
+          title: "merged",
         }),
       }),
     );
+  });
+
+  it("falls back to an authoritative reread when foreground preparation fails", async () => {
+    let receivedOptions: OpenOptions | undefined;
+    const openNote = vi.fn(
+      async (
+        _path: string,
+        _title: string | undefined,
+        options: OpenOptions | undefined,
+      ) => {
+        receivedOptions = options;
+      },
+    );
+    let api!: HookApi;
+    vi.spyOn(
+      documentOpenRuntime,
+      "prepareNoteOpenFromContent",
+    ).mockRejectedValueOnce(new Error("preparation unavailable"));
+
+    await act(async () => {
+      root.render(
+        <Harness openNote={openNote} onReady={(next) => (api = next)} />,
+      );
+    });
+
+    await act(async () => {
+      await api.openPreparedNote("notes/fallback.md", "Fallback", {
+        source: "quick-open",
+      });
+    });
+
+    expect(openNote).toHaveBeenCalledWith(
+      "notes/fallback.md",
+      "Fallback",
+      expect.objectContaining({
+        documentOpenToken: "open-token",
+      }),
+    );
+    expect(receivedOptions).not.toHaveProperty("preparedNote");
   });
   it("wraps foreground opens in a backend document-open token", async () => {
     const openNote = vi.fn(async () => undefined);
@@ -500,6 +541,44 @@ describe("usePreparedNoteOpener", () => {
         }),
       }),
     );
+  });
+
+  it("uses an authoritative reread for a Home recent-note click", async () => {
+    const openNote = vi.fn(async () => undefined);
+    let api!: HookApi;
+    fileRead.mockResolvedValue({
+      content: "# Warmed\n\nPrepared body",
+      isLocked: false,
+    });
+
+    await act(async () => {
+      root.render(
+        <Harness openNote={openNote} onReady={(next) => (api = next)} />,
+      );
+    });
+
+    await act(async () => {
+      api.prepareVisibleNote({
+        path: "notes/recent.md",
+        title: "Recent",
+        updatedAt: "2026-07-20T00:00:00Z",
+        isLocked: false,
+      });
+    });
+    await vi.waitFor(() => expect(fileRead).toHaveBeenCalledTimes(1));
+
+    await act(async () => {
+      await api.openPreparedNote("notes/recent.md", "Recent", {
+        source: "welcome",
+      });
+    });
+
+    expect(openNote).toHaveBeenCalledWith(
+      "notes/recent.md",
+      "Recent",
+      expect.not.objectContaining({ preparedNote: expect.anything() }),
+    );
+    expect(documentOpen).not.toHaveBeenCalled();
   });
 
   it("keeps the latest eight warm prepared notes with newest entries first", async () => {

@@ -64,12 +64,12 @@ describe("note-display", () => {
     ).toBe("早餐");
   });
 
-  it("treats explicit empty title as unnamed", () => {
+  it("uses the filename when a legacy explicit title is empty", () => {
     expect(
       resolveNoteDisplayTitle({
         path: "早餐.md",
         title: "",
       }),
-    ).toBe(UNNAMED_DOCUMENT_PREFIX);
+    ).toBe("早餐");
   });
 });

@@ -1,4 +1,3 @@
-import { quoteYamlString } from "@/lib/frontmatter";
 import { fileCreate, fileList } from "@/lib/ipc";
 import { allocateNewDocumentName } from "@/lib/note-names";
 
@@ -18,10 +17,11 @@ export interface CreateDefaultNoteOptions {
 }
 
 export function buildDefaultNoteContent(title: string): string {
-  return `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
+  void title;
+  return "";
 }
 
-/** Create a note with display title in frontmatter; path aligns with title. */
+/** Create a note whose single user-visible title is its file basename. */
 export async function createDefaultNote(
   options: CreateDefaultNoteOptions = {},
 ): Promise<CreatedNote> {

@@ -308,16 +308,12 @@ export async function fileRename(
   return invoke<FileWriteResult>("file_rename", { path, newPath });
 }
 
-export async function pathSyncSuggest(
-  currentPath: string,
+/** Atomically allocate and move a note to the basename entered inline. */
+export async function documentRenameByTitle(
+  path: string,
   title: string,
-): Promise<{
-  current_path: string;
-  suggested_path: string;
-  needs_sync: boolean;
-  conflict_resolved: boolean;
-}> {
-  return invoke("path_sync_suggest", { currentPath, title });
+): Promise<FileWriteResult> {
+  return invoke<FileWriteResult>("document_rename_by_title", { path, title });
 }
 
 export async function fileBacklinks(path: string): Promise<BacklinkEntry[]> {
@@ -460,20 +456,6 @@ export async function documentRecoveryRestoreOrphan(
   return invoke<FileWriteResult>("document_recovery_restore_orphan_cmd", {
     objectHash,
     targetPath,
-    confirmed: true,
-  });
-}
-
-/** Repair one audit-previewed title after explicit user confirmation. */
-export async function documentTitleRepair(
-  path: string,
-  expectedContentHash: string,
-  title: string,
-): Promise<FileWriteResult> {
-  return invoke<FileWriteResult>("document_title_repair_cmd", {
-    path,
-    expectedContentHash,
-    title,
     confirmed: true,
   });
 }

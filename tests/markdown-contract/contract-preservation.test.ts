@@ -256,18 +256,18 @@ describe("preservation: advanced syntax does not corrupt native GFM", () => {
 // ── Frontmatter 保留测试 ────────────────────────────────────
 
 describe("preservation: frontmatter integrity", () => {
-  it("frontmatter title survives round-trip", () => {
+  it("legacy frontmatter title is removed during round-trip", () => {
     const md = '---\ntitle: "My Note"\ntags: [tag1, tag2]\n---\n\nBody here.';
     const out = noteMarkdownRoundTrip(md);
-    expect(out).toContain('title: "My Note"');
+    expect(out).not.toContain("title:");
     expect(out).toContain("tags:");
     expect(out).toContain("Body here");
   });
 
-  it("frontmatter fields not overwritten by body content", () => {
+  it("non-title frontmatter fields survive title migration", () => {
     const md = '---\ntitle: "Original"\ncustom: value\n---\n\nContent.';
     const out = noteMarkdownRoundTrip(md);
-    expect(out).toContain('title: "Original"');
+    expect(out).not.toContain("title:");
     expect(out).toContain("custom: value");
   });
 

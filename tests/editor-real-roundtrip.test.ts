@@ -125,7 +125,7 @@ describe("real TipTap editor markdown round-trip", () => {
 
     const out = normalize(realEditorRoundTrip(md));
 
-    expect(out).toContain('title: "Fallback"');
+    expect(out).not.toContain("title:");
     expect(out).toContain("# Classified Section");
     expect(out).toContain("Body.");
   });
@@ -141,7 +141,6 @@ describe("real TipTap editor markdown round-trip", () => {
     const out = normalize(
       serializeOpenNote({
         yaml: 'title: "AI"',
-        title: "AI",
         editor,
         bodyFallbackMd: "",
       }),
@@ -167,7 +166,6 @@ describe("real TipTap editor markdown round-trip", () => {
     const out = normalize(
       serializeOpenNote({
         yaml: 'title: "AI"',
-        title: "AI",
         editor,
         bodyFallbackMd: "",
       }),
