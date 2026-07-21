@@ -50,11 +50,14 @@ vi.mock("@/lib/tauri-runtime", () => ({
 }));
 
 function Harness({
+  activeFileLocked = false,
   editorContentTick = 0,
   editorReady,
   markdown = '---\ntitle: "Note"\n---\n\nOriginal body that must remain authoritative.',
+  liveMarkdown,
   getTabMarkdownCached = () => undefined,
   tabDirty = true,
+  tabLocked = false,
   tabs,
   onReady,
   onPersistenceBarrierStart,
@@ -64,11 +67,15 @@ function Harness({
   setMarkdown = vi.fn(),
   setFileLocked,
 }: {
+  activeFileLocked?: boolean;
   editorContentTick?: number;
   editorReady: boolean;
   markdown?: string;
+  /** When set, TipTap leave snapshot differs from the loaded shell markdown. */
+  liveMarkdown?: string;
   getTabMarkdownCached?: (path: string) => string | undefined;
   tabDirty?: boolean;
+  tabLocked?: boolean;
   tabs?: TabItem[];
   onReady?: (api: ReturnType<typeof useAppPersistenceLifecycle>) => void;
   onPersistenceBarrierStart?: () => void;
@@ -88,12 +95,13 @@ function Harness({
     getHTML: () => "<p></p>",
     isDestroyed: false,
   } as Editor);
-  const getLiveMarkdownRef = useRef(() => markdown);
-  getLiveMarkdownRef.current = () => markdown;
+  const effectiveLive = liveMarkdown ?? markdown;
+  const getLiveMarkdownRef = useRef(() => effectiveLive);
+  getLiveMarkdownRef.current = () => effectiveLive;
   const tabItems = tabs ?? [
     {
       dirty: tabDirty,
-      locked: false,
+      locked: tabLocked,
       path,
       title: "Note",
     },
@@ -102,7 +110,7 @@ function Harness({
   tabsRef.current = tabItems;
 
   const api = useAppPersistenceLifecycle({
-    activeFileLocked: false,
+    activeFileLocked,
     activePath: path,
     activePathRef,
     applySavedMarkdown,
@@ -159,6 +167,44 @@ describe("useAppPersistenceLifecycle", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+  });
+
+  it("skips fileWrite on leave for locked notes even when live serialize drifts", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const baseline =
+      '---\ntitle: "Note"\n---\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n';
+    const drifted =
+      '---\ntitle: "Note"\n---\n\n| **a** | **b** |\n| --- | --- |\n| 1 | 2 |\n';
+    const markClean = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          activeFileLocked: true,
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: baseline,
+          liveMarkdown: drifted,
+          markClean,
+          persistBeforeLeaveRef,
+          tabDirty: false,
+          tabLocked: true,
+        }),
+      );
+    });
+
+    let saved: string | null = null;
+    await act(async () => {
+      saved = await persistBeforeLeaveRef.current("note.md", {
+        reason: "tab_leave",
+        suppressShellUi: true,
+      });
+    });
+
+    expect(fileWrite).not.toHaveBeenCalled();
+    expect(saved).toBe(baseline);
   });
 
   it("persists a dirty cached snapshot while the editor is remounting", async () => {

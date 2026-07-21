@@ -71,6 +71,9 @@ export function invokeErrorMessage(err: unknown): string {
 
   const friendly = friendlyLlmError(raw, code);
   if (friendly) return friendly;
+  if (raw === "note_locked" || raw.includes("note_locked")) {
+    return "笔记已锁定，无法保存";
+  }
   if (raw.length > 280) {
     return `${raw.slice(0, 280)}…`;
   }

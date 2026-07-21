@@ -11,6 +11,7 @@ import {
   selectMarkdownCacheAfterPathRename,
 } from "@/lib/note-tab-rename";
 import type { PersistBeforeLeave } from "@/hooks/useAppPersistenceLifecycle";
+import { invokeErrorMessage } from "@/lib/credentials";
 import {
   emitNoteOpenVisibleCommitTrace,
   type DocumentOpenPriority,
@@ -669,6 +670,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         (sessionId !== undefined &&
           tabsRef.current.find((tab) => tab.path === activePathRef.current)
             ?.documentSessionId === sessionId);
+
       // Dirty always means user edits — never discard, even if lifecycle lagged.
       const mayDiscardPristine =
         target.lifecycle === "session_pristine" && !target.dirty;
@@ -819,7 +821,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           remainingNoteCount: nextTabs.length,
         };
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = invokeErrorMessage(e);
         onStatusChange?.(`关闭标签失败：${msg}`);
         return {
           closed: false,

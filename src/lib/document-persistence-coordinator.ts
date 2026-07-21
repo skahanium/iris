@@ -1,3 +1,5 @@
+import { invokeErrorMessage } from "@/lib/credentials";
+
 export type DocumentPersistenceStatus =
   | "clean"
   | "dirty"
@@ -89,7 +91,11 @@ type DocumentPersistenceListener = (
 ) => void;
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = invokeErrorMessage(error);
+  if (message === "note_locked" || message.includes("note_locked")) {
+    return "笔记已锁定，无法保存";
+  }
+  return message;
 }
 
 function deferred<T>(): Deferred<T> {

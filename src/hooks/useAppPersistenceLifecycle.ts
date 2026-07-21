@@ -456,6 +456,21 @@ export function useAppPersistenceLifecycle({
     const persisted = coordinator.get(path);
     const tab = tabsRef.current.find((item) => item.path === path);
     const tabCached = getTabMarkdownCached(path);
+    // Locked notes reject `file_write` (`note_locked`). TipTap leave serialize
+    // can still drift from the disk baseline while `tab.dirty` stays false
+    // (tables/marks). That must not block close or app-exit barriers.
+    if (tab?.locked) {
+      const lockedMarkdown = persisted?.markdown ?? tabCached ?? null;
+      if (tab.dirty && !isShellUiSuppressedForPath(path)) {
+        markClean(path, resolveNoteDisplayTitle({ path }));
+      }
+      if (reason !== "app_close" && lockedMarkdown) {
+        void versionSnapshotScheduler
+          .savePreClose(path, lockedMarkdown)
+          .catch(() => undefined);
+      }
+      return lockedMarkdown;
+    }
     if (persisted && persisted.baselineRevision === persisted.revision) {
       // Coordinator baseline is clean, but leave must still flush when the live
       // editor or remount cache diverges (e.g. edit landed in TipTap before
