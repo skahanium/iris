@@ -27,7 +27,6 @@ import { saveWorkspaceSessionSnapshot } from "@/lib/workspace-session-snapshot";
 
 function Harness({ vaultPath }: { vaultPath: string | null }) {
   usePreparedWorkspaceTransitions({
-    activePathRef: { current: null },
     activateTab: vi.fn(),
     classifiedVaultStatus: "locked",
     handleNewNote: vi.fn(async () => undefined),

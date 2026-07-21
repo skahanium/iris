@@ -37,6 +37,13 @@ interface HarnessResult {
   onTitleBlur: (title?: string) => void;
 }
 
+type ReplaceOpenTabPath = (
+  oldPath: string,
+  newPath: string,
+  title?: string,
+  markdownOverride?: string,
+) => void;
+
 function Harness({
   markdown,
   editor,
@@ -53,7 +60,7 @@ function Harness({
     move: () => Promise<DocumentPersistenceMoveResult>,
   ) => Promise<string>;
   outRef: { current: HarnessResult | null };
-  replaceOpenTabPath?: ReturnType<typeof vi.fn>;
+  replaceOpenTabPath?: ReplaceOpenTabPath;
 }) {
   const api = useOpenNote({
     activePath: "untitled.md",
@@ -64,7 +71,7 @@ function Harness({
     editorRef: { current: editor ?? null },
     renamePersistedPath,
     updateTabTitle: vi.fn(),
-    replaceOpenTabPath: replaceOpenTabPath ?? vi.fn(),
+    replaceOpenTabPath: replaceOpenTabPath ?? (() => undefined),
   });
   outRef.current = {
     getLiveMarkdown: api.getLiveMarkdown,
@@ -110,7 +117,7 @@ describe("useOpenNote single filename title", () => {
 
   it("uses the save barrier before atomically moving the filename", async () => {
     const order: string[] = [];
-    const replaceOpenTabPath = vi.fn();
+    const replaceOpenTabPath = vi.fn<ReplaceOpenTabPath>();
     documentRenameByTitle.mockImplementation(async () => {
       order.push("move");
       return {

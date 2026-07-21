@@ -43,8 +43,8 @@ function Harness({
   openNote: OpenNoteFn;
   setHomeActive: SetHomeActiveFn;
 }) {
+  void activePath;
   apiRef.current = useHomeWorkspaceTransitions({
-    activePathRef: { current: activePath },
     activateTab,
     cancelPendingDocumentOpen,
     handleNewNote,
