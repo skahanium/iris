@@ -4,7 +4,7 @@
 
 Iris 是基于 Tauri 2、Rust 和 React 的桌面 Markdown 笔记应用。用户笔记始终是标准 UTF-8 `.md` 文件；SQLite 只保存可从笔记重建的索引，以及会话、缓存等运行时状态。
 
-**当前开发版本**：v1.2.12。 版本排期的唯一来源是 [ROADMAP.md](./ROADMAP.md)。
+**当前开发版本**：v1.2.13。 版本排期的唯一来源是 [ROADMAP.md](./ROADMAP.md)。
 
 ## 核心能力
 

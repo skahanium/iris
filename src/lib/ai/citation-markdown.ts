@@ -1,18 +1,37 @@
-/** Markdown 閸愬懓浠堝鏇犳暏 閳?閸欘垰鐣ㄩ崗銊﹁閺屾挾娈?hash 闁剧偓甯撮敍鍦朞MPurify 閻ц棄鎮曢崡鏇炲几婵傛枻绱?*/
+/** Markdown citation helpers → hash links that survive DOMPurify. */
 const IRIS_CITE_PREFIX = "#iris-cite-";
 
 const BAD_CITATION_LINK =
   /\[(citation:\d+)\]\((?:citation:\d+|iris-cite:[^)]*)\)/gi;
 
-/** 鐏忔碍婀幋鎰版懠閹恒儳娈戦弬瑙勫閸欏嘲绱╅悽顭掔礄閸?citation:N閵嗕箷C1]閵嗕胶鍑介弫鏉跨摟缁涘绱?*/
-const BARE_CITATION = /(?<!\\)\[(citation:\d+|[CTFAWL]\d+|\d+)\](?!\()/gi;
+/** Bare markers: `[citation:N]`, `[C1]`, `[W1]`, `[1]`, and Unicode superscript forms `[¹]`. */
+const BARE_CITATION =
+  /(?<!\\)\[(citation:\d+|[CTFAWL]\d+|\d+|[\u2070\u00B9\u00B2\u00B3\u2074-\u2079]+)\](?!\()/gi;
 
-/** 濡€崇€锋径宥堫嚢閻ㄥ嫯绻冩惔锕佹祮娑斿绱╅悽銊╂懠閹恒儻绱濇俊?`[\\[citation:4\\]](#iris-cite-...)` */
+/** Over-escaped citation links like `[\\[citation:4\\]](#iris-cite-...)`. */
 const OVER_ESCAPED_CITE_LINK =
   /\[(?:\\+)+\[(citation:\d+)\](?:\\+)+\]\((#iris-cite-[^)]+)\)/gi;
 
+const SUPERSCRIPT_DIGIT: Record<string, string> = {
+  "\u2070": "0",
+  "\u00B9": "1",
+  "\u00B2": "2",
+  "\u00B3": "3",
+  "\u2074": "4",
+  "\u2075": "5",
+  "\u2076": "6",
+  "\u2077": "7",
+  "\u2078": "8",
+  "\u2079": "9",
+};
+
+/** Normalize Unicode superscript digits in a citation label to ASCII. */
+export function normalizeCitationLabel(label: string): string {
+  return Array.from(label, (ch) => SUPERSCRIPT_DIGIT[ch] ?? ch).join("");
+}
+
 export function encodeCitationRef(label: string): string {
-  return encodeURIComponent(label);
+  return encodeURIComponent(normalizeCitationLabel(label));
 }
 
 export function decodeCitationHref(href: string): string | null {
@@ -28,12 +47,13 @@ export function citationHrefForLabel(label: string): string {
   return `${IRIS_CITE_PREFIX}${encodeCitationRef(label)}`;
 }
 
-/** 闁剧偓甯撮弬鍥攳娣囨繄鏆€閺傝瀚崣鍑ょ礉濞撳弶鐓嬫稉鍝勫讲閻愮懓鍤惃?`[citation:3]` */
+/** Markdown link with a clean `[label]` visible text (no double-escaped brackets). */
 export function citationMarkdownLink(label: string): string {
-  return `[\\[${label}\\]](${citationHrefForLabel(label)})`;
+  const normalized = normalizeCitationLabel(label);
+  return `[${normalized}](${citationHrefForLabel(normalized)})`;
 }
 
-/** 鐏忓棜绻冩惔锕佹祮娑斿娈戝鏇犳暏闁剧偓甯撮幁銏狀槻娑?marked 閸欘垵袙閺嬫劗娈戦弽鍥у櫙瑜般垹绱?*/
+/** Repair over-escaped citation links before markdown rendering. */
 export function repairOverEscapedCitationLinks(markdown: string): string {
   return markdown.replace(OVER_ESCAPED_CITE_LINK, (_, label: string) => {
     return citationMarkdownLink(label);
@@ -41,7 +61,9 @@ export function repairOverEscapedCitationLinks(markdown: string): string {
 }
 
 /**
- * 鐏?`[citation:3]`閵嗕梗[3]`閵嗕梗[C1]` 缁涘娴嗘稉?Markdown 闁剧偓甯撮敍宀勪缉閸?`citation:` 閸楀繗顔呯悮顐ｇ濞叉ぜ鈧? */
+ * Turn bare `[citation:3]` / `[3]` / `[¹]` into Markdown links.
+ * Does not re-linkify already-linked citations.
+ */
 export function linkifyAiCitations(markdown: string): string {
   let text = repairOverEscapedCitationLinks(markdown);
   text = text.replace(BAD_CITATION_LINK, (_, label: string) => {
@@ -53,7 +75,7 @@ export function linkifyAiCitations(markdown: string): string {
   return text;
 }
 
-/** 娑?marked 鏉堟挸鍤惃鍕穿閻劑鎽奸幒銉ㄋ夋稉?class閿涘奔绌舵禍搴㈢壉瀵繋绗岄悙鐟板毊鐠囧棗鍩?*/
+/** Tag iris-cite anchors with class after marked. */
 export function tagCitationLinksInHtml(html: string): string {
   return html.replace(
     /href="(#iris-cite-[^"]+)"/g,
@@ -63,15 +85,18 @@ export function tagCitationLinksInHtml(html: string): string {
 }
 
 const BAD_CITATION_LINK_HTML =
-  /\[((?:citation:\d+|[CTFAWL]\d+|\d+))\]\((?:citation:\d+|iris-cite:[^)]*)\)/gi;
+  /\[((?:citation:\d+|[CTFAWL]\d+|\d+|[\u2070\u00B9\u00B2\u00B3\u2074-\u2079]+))\]\((?:citation:\d+|iris-cite:[^)]*)\)/gi;
 
 const BARE_CITATION_IN_TEXT =
-  /(?<!\\)\[(citation:\d+|[CTFAWL]\d+|\d+)\](?!\()/gi;
+  /(?<!\\)\[(citation:\d+|[CTFAWL]\d+|\d+|[\u2070\u00B9\u00B2\u00B3\u2074-\u2079]+)\](?!\()/gi;
 
 function citationHtmlAnchor(label: string): string {
-  const href = citationHrefForLabel(label);
-  const display = label.startsWith("citation:") ? `[${label}]` : `[${label}]`;
-  return `<a href="${href}" class="ai-citation" data-cite-ref="${encodeCitationRef(label)}">${display}</a>`;
+  const normalized = normalizeCitationLabel(label);
+  const href = citationHrefForLabel(normalized);
+  const display = normalized.startsWith("citation:")
+    ? `[${normalized}]`
+    : `[${normalized}]`;
+  return `<a href="${href}" class="ai-citation" data-cite-ref="${encodeCitationRef(normalized)}">${display}</a>`;
 }
 
 function linkifyCitationsInTextSegment(text: string): string {
@@ -94,4 +119,15 @@ export function postProcessCitations(html: string): string {
     return linkifyCitationsInTextSegment(part);
   });
   return tagCitationLinksInHtml(linked.join(""));
+}
+
+/** True when an href should open in the system browser. */
+export function isExternalHttpsHref(href: string | null | undefined): boolean {
+  if (!href) return false;
+  try {
+    const parsed = new URL(href);
+    return parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }

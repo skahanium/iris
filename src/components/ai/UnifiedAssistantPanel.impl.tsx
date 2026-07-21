@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import {
@@ -12,12 +12,13 @@ import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
-import { formatWebDecisionStatus } from "@/lib/web-decision-status";
 import {
   assistantClassifiedContextClear,
   assistantClassifiedContextOpen,
   assistantClassifiedRunTakeResult,
+  openExternalHttpsUrl,
 } from "@/lib/ipc";
+import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AssistantComposerDock } from "./AssistantComposerDock";
@@ -71,20 +72,6 @@ export function UnifiedAssistantPanel({
   ] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
-
-  const webDecisionStatus = useMemo(
-    () =>
-      formatWebDecisionStatus({
-        freshness: assistantRun.eventState?.freshness,
-        webReason: assistantRun.eventState?.webReason,
-        searched: assistantRun.eventState?.webSearched,
-      }),
-    [
-      assistantRun.eventState?.freshness,
-      assistantRun.eventState?.webReason,
-      assistantRun.eventState?.webSearched,
-    ],
-  );
 
   const clearTaskSurfaces = useCallback(() => undefined, []);
 
@@ -294,25 +281,9 @@ export function UnifiedAssistantPanel({
         webSearch={webSearch}
         webSearchProviderName={webSearchProviderName}
       />
-      <p
-        className="border-b border-border/60 px-3 py-1 text-[11px] text-muted-foreground"
-        data-testid="assistant-security-domain"
-      >
-        {aiDomain === "classified"
-          ? "涉密文档：仅可显式附带当前打开文档，本次对话不会保存。"
-          : "普通文档：可通过 @ 显式引用文档。"}
-      </p>
       {lastError ? (
         <p className="border-b border-destructive/30 px-3 py-2 text-xs text-destructive">
           {lastError}
-        </p>
-      ) : null}
-      {webDecisionStatus ? (
-        <p
-          className="border-b border-border/60 px-3 py-1 text-[11px] text-muted-foreground"
-          data-testid="assistant-run-web-decision"
-        >
-          联网决策：{webDecisionStatus}
         </p>
       ) : null}
       {assistantRun.eventState?.capabilityDegradation ? (
@@ -352,7 +323,13 @@ export function UnifiedAssistantPanel({
           messages={messages}
           streaming={streaming}
           messageListRef={messageListRef}
-          onCitationClick={() => undefined}
+          onCitationClick={(ref) => {
+            if (isExternalHttpsHref(ref)) {
+              void openExternalHttpsUrl(ref).catch(() => {
+                setLastError("无法打开引用链接，请检查系统默认浏览器设置。");
+              });
+            }
+          }}
           onRetract={handleRetract}
           onSelect={bubbleSelection.handleClick}
           onQuoteToInput={handleQuoteToInput}

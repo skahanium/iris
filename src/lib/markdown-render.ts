@@ -266,7 +266,10 @@ export const proseMarked = new Marked({
       const text = tokens.map((t) => t.text ?? t.raw ?? "").join("");
       const titleAttr = title ? ` title="${title}"` : "";
       if (href.startsWith("#iris-cite-")) {
-        return `<a href="${href}"${titleAttr}>${text}</a>`;
+        return `<a href="${href}"${titleAttr} class="ai-citation">${text}</a>`;
+      }
+      if (href.startsWith("https://")) {
+        return `<a href="${href}"${titleAttr} class="ai-citation" target="_blank" rel="noopener noreferrer">${text}</a>`;
       }
       return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
     },

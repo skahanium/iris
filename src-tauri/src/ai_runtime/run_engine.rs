@@ -6,10 +6,12 @@ use std::pin::Pin;
 
 use tauri::{AppHandle, Emitter};
 
+use crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository;
 use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunEventInput, FinalizeRunInput,
 };
 use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
+use crate::ai_runtime::citation_linkify::linkify_web_citations;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
@@ -1129,14 +1131,7 @@ impl RunEngine {
             true,
         );
         let outcome = AgentToolLoop::default()
-            .execute(
-                provider,
-                executor,
-                run_id,
-                messages,
-                tools,
-                &mut observer,
-            )
+            .execute(provider, executor, run_id, messages, tools, &mut observer)
             .await;
         let outcome = match outcome {
             Ok(outcome) => outcome,
@@ -1236,6 +1231,7 @@ impl RunEngine {
                 );
             }
         };
+        content = linkify_final_web_citations(db, &final_evidence_ids, content);
         observer.bind_validated_content(&content);
         flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
         finalize_and_emit_with_sink(
@@ -1415,6 +1411,7 @@ impl RunEngine {
                 );
             }
         };
+        content = linkify_final_web_citations(db, evidence_ids, content);
         observer.bind_validated_content(&content);
         flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
         finalize_and_emit_with_sink(
@@ -1438,6 +1435,20 @@ fn apply_required_web_degradation_notice(
     // Historical WebRequired runs appended a forced notice into model output.
     // Online emits CapabilityDegraded and continues without rewriting the answer here.
     Ok(())
+}
+
+fn linkify_final_web_citations(db: &Database, evidence_ids: &[i64], content: String) -> String {
+    match AgentEvidenceRepository::list_web_citation_links(db, evidence_ids) {
+        Ok(cites) if !cites.is_empty() => linkify_web_citations(&content, &cites),
+        Ok(_) => content,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "web citation linkify skipped after evidence lookup failure"
+            );
+            content
+        }
+    }
 }
 
 #[cfg(test)]

@@ -474,10 +474,6 @@ export function AiComposer({
           )}
         </div>
       </div>
-      <p className="mt-1.5 text-[10px] text-muted-foreground">
-        Enter 发送 · Shift+Enter 换行
-        {onImagesChange && " · 粘贴/拖拽图片"}
-      </p>
     </div>
   );
 }

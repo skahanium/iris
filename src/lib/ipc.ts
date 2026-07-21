@@ -1168,6 +1168,11 @@ export async function reapplyWindowChrome(): Promise<void> {
   return invoke("reapply_window_chrome");
 }
 
+/** Open an HTTPS URL in the system default browser (AI citations / source links). */
+export async function openExternalHttpsUrl(url: string): Promise<void> {
+  return invoke("open_external_https_url", { url });
+}
+
 // Classified AI cache IPC.
 export async function classifiedAiCacheClear(): Promise<void> {
   return invoke("classified_ai_cache_clear");

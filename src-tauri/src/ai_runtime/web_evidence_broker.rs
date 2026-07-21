@@ -204,7 +204,7 @@ pub fn web_evidence_items_to_packets(query: &str, items: &[WebEvidenceItem]) -> 
             retrieval_reason: "web_evidence_broker".into(),
             score: 0.7,
             trust_level: TrustLevel::ExternalWeb,
-            citation_label: format!("[W{index}]"),
+            citation_label: format!("[W{}]", index + 1),
             stale: false,
             web: Some(WebEvidenceMeta {
                 url: Some(item.url.clone()),

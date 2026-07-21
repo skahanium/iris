@@ -56,7 +56,6 @@ impl DirectAnswerProvider for MakeSqliteReadonlyProvider<'_> {
     }
 }
 
-
 #[derive(Default)]
 struct RecordingSink {
     events: std::sync::Mutex<Vec<serde_json::Value>>,
@@ -1752,4 +1751,3 @@ fn tool_loop_web_failures_keep_their_web_safe_codes() {
         SafeRunErrorCode::WebEvidenceInvalid,
     );
 }
-

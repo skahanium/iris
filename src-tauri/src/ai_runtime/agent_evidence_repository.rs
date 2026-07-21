@@ -222,6 +222,49 @@ impl AgentEvidenceRepository {
             })
         })
     }
+
+    /// Load HTTPS web citation metadata for final-answer footnote linkification.
+    pub(crate) fn list_web_citation_links(
+        db: &Database,
+        evidence_ids: &[i64],
+    ) -> AppResult<Vec<crate::ai_runtime::citation_linkify::WebCitationLink>> {
+        if evidence_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut unique = evidence_ids.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        db.with_conn(|conn| {
+            let mut out = Vec::new();
+            for evidence_id in unique {
+                let row = conn
+                    .query_row(
+                        "SELECT citation_index, citation_label, title, url
+                         FROM session_evidence
+                         WHERE id = ?1
+                           AND source_type = 'web'
+                           AND retired_at IS NULL
+                           AND url IS NOT NULL
+                           AND url LIKE 'https://%'",
+                        [evidence_id],
+                        |row| {
+                            Ok(crate::ai_runtime::citation_linkify::WebCitationLink {
+                                index: row.get(0)?,
+                                label: row.get(1)?,
+                                title: row.get(2)?,
+                                url: row.get(3)?,
+                            })
+                        },
+                    )
+                    .optional()?;
+                if let Some(cite) = row {
+                    out.push(cite);
+                }
+            }
+            out.sort_by_key(|cite| cite.index);
+            Ok(out)
+        })
+    }
 }
 
 #[derive(Debug)]

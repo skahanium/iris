@@ -481,6 +481,14 @@ const AssistantBody = memo(function AssistantBody({
 
       if (!onCitationClick) return;
 
+      const external = target.closest("a[href^='https://']");
+      if (external instanceof HTMLAnchorElement) {
+        e.preventDefault();
+        e.stopPropagation();
+        onCitationClick(external.href);
+        return;
+      }
+
       const anchor = target.closest("a.ai-citation, a[href^='#iris-cite-']");
 
       if (!anchor || !(anchor instanceof HTMLAnchorElement)) return;
@@ -495,11 +503,10 @@ const AssistantBody = memo(function AssistantBody({
 
       try {
         onCitationClick(decodeURIComponent(ref));
-      } catch (e) {
+      } catch (decodeError) {
         console.warn(
           "[ai-message] decodeURIComponent failed, using raw ref:",
-
-          e,
+          decodeError,
         );
 
         onCitationClick(ref);

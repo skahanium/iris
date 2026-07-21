@@ -36,6 +36,24 @@ fn web_search_tool_response(
         "results": packets,
         "count": packets.len(),
         "rawEvidenceCount": evidence.len(),
+        "citations": packets.iter().filter_map(|packet| {
+            let url = packet.web.as_ref()?.url.as_ref()?;
+            if !url.starts_with("https://") {
+                return None;
+            }
+            let title = if packet.title.trim().is_empty() {
+                url.clone()
+            } else {
+                packet.title.clone()
+            };
+            Some(serde_json::json!({
+                "label": packet.citation_label,
+                "title": title,
+                "url": url,
+                "citeMarkdown": format!("[{title}]({url})"),
+            }))
+        }).collect::<Vec<_>>(),
+        "citationHint": "在答复中用 Markdown 超链接引用这些来源。优先直接复制 citations[].citeMarkdown，或写成 [标题](https://...)。行内可用 citation_label（如 [W1]）。不要使用无链接的上标脚注（如 [¹]）。",
         "resultBudget": {
             "format": "context_packets_only",
             "rawEvidenceOmitted": true,

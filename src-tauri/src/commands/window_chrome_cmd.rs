@@ -67,3 +67,61 @@ pub fn reapply_window_chrome(window: WebviewWindow) {
 pub fn app_exit(app: AppHandle) {
     app.exit(0);
 }
+
+/// Open an HTTPS URL in the system default browser.
+///
+/// Only `https://` is accepted. This is used by AI citation / source links so the
+/// WebView never navigates away from the app.
+#[tauri::command]
+pub fn open_external_https_url(url: String) -> AppResult<()> {
+    open_https_url_in_system_browser(&url)
+}
+
+fn open_https_url_in_system_browser(url: &str) -> AppResult<()> {
+    let trimmed = url.trim();
+    if !trimmed.to_ascii_lowercase().starts_with("https://") {
+        return Err(AppError::msg("open_external_url_rejected: https_only"));
+    }
+    if trimmed.contains(['\n', '\r', '\0', '"']) {
+        return Err(AppError::msg("open_external_url_rejected: invalid_url"));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", trimmed])
+            .spawn()
+            .map_err(|error| AppError::msg(format!("open_external_url_failed: {error}")))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|error| AppError::msg(format!("open_external_url_failed: {error}")))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|error| AppError::msg(format!("open_external_url_failed: {error}")))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::open_https_url_in_system_browser;
+
+    #[test]
+    fn rejects_non_https_urls() {
+        let err = open_https_url_in_system_browser("http://example.com").unwrap_err();
+        assert!(err.to_string().contains("https_only"));
+        let err = open_https_url_in_system_browser("javascript:alert(1)").unwrap_err();
+        assert!(err.to_string().contains("https_only"));
+    }
+}

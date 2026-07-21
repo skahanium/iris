@@ -259,6 +259,7 @@ pub fn run() {
             commands::window_chrome_cmd::get_desktop_chrome_metrics,
             commands::window_chrome_cmd::show_main_window_when_ready,
             commands::window_chrome_cmd::reapply_window_chrome,
+            commands::window_chrome_cmd::open_external_https_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

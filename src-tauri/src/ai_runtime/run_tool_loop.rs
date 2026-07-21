@@ -17,8 +17,7 @@ use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEvent
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, RunEventPayload, RunEventType, SafeRunErrorCode,
-    WebEvidenceFailureReason,
+    AssistantRunAccepted, RunEventPayload, RunEventType, SafeRunErrorCode, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::tool_catalog::catalog_find;

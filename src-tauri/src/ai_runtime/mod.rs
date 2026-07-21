@@ -17,6 +17,7 @@ pub(crate) mod agent_tool_loop;
 mod agent_tool_loop_tests;
 pub mod capability_resolver;
 pub mod circuit_breaker;
+pub(crate) mod citation_linkify;
 pub(crate) mod classified_document_policy_repository;
 pub(crate) mod classified_ephemeral;
 pub mod classified_retrieval;
