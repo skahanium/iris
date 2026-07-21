@@ -441,9 +441,7 @@ async fn run_mcp_search_smoke_test(
         &provider.id,
         "Iris note app",
         crate::ai_runtime::run_tool_loop::INITIAL_WEB_SEARCH_RESULTS,
-        // A WebRequired Run gives its first MCP search attempt this same
-        // bounded budget. Diagnostics must not advertise readiness using a
-        // looser timeout than the actual preflight path.
+        // Diagnostics share the same bounded search budget as production MCP search.
         Duration::from_secs(15),
     )
     .await

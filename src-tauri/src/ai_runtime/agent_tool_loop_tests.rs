@@ -70,12 +70,6 @@ impl ToolLoopExecutor for FailingWebExecutor {
             })
         })
     }
-
-    fn web_evidence_failure_code(
-        &self,
-    ) -> Option<crate::ai_runtime::run_contract::SafeRunErrorCode> {
-        Some(crate::ai_runtime::run_contract::SafeRunErrorCode::WebProviderTimeout)
-    }
 }
 
 impl ToolLoopExecutor for RecordingExecutor {
@@ -189,7 +183,6 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
             "run-1",
             initial_messages,
             tools,
-            false,
             &mut observer,
         )
         .await
@@ -218,44 +211,28 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
 }
 
 #[tokio::test]
-async fn required_web_evidence_sends_one_correction_before_final_answer() {
+async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
     let provider = ScriptedProvider {
-        responses: Mutex::new(VecDeque::from([
-            super::model_gateway::GatewayResponse {
-                content: Some("unsupported current claim".into()),
-                tool_calls: Vec::new(),
-                usage: Default::default(),
-                finish_reason: "stop".into(),
-                reasoning_content: None,
-            },
-            super::model_gateway::GatewayResponse {
-                content: None,
-                tool_calls: vec![tool_call()],
-                usage: Default::default(),
-                finish_reason: "tool_calls".into(),
-                reasoning_content: None,
-            },
-            super::model_gateway::GatewayResponse {
-                content: Some("evidence-backed answer".into()),
-                tool_calls: Vec::new(),
-                usage: Default::default(),
-                finish_reason: "stop".into(),
-                reasoning_content: None,
-            },
-        ])),
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: Some("stable knowledge answer".into()),
+            tool_calls: Vec::new(),
+            usage: Default::default(),
+            finish_reason: "stop".into(),
+            reasoning_content: None,
+        }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
     };
     let executor = RecordingExecutor {
         calls: AtomicU32::new(0),
-        web_evidence: true,
+        web_evidence: false,
     };
     let mut observer = NoopObserver;
     let tools = vec![ToolSpec {
-        name: "system_time_now".into(),
-        description: "Get time".into(),
+        name: "web_search".into(),
+        description: "Search Web".into(),
         input_schema: serde_json::json!({ "type": "object" }),
-        access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+        access_level: crate::ai_runtime::ToolAccessLevel::Network,
         requires_confirmation: false,
         max_results: None,
         capability_affinity: Vec::new(),
@@ -268,24 +245,24 @@ async fn required_web_evidence_sends_one_correction_before_final_answer() {
             "run-1",
             vec![LlmMessage {
                 role: MessageRole::User,
-                content: "latest status".into(),
+                content: "explain recursion".into(),
                 tool_call_id: None,
                 tool_calls: None,
                 reasoning_content: None,
             }],
             tools,
-            true,
             &mut observer,
         )
         .await
-        .expect("corrected tool loop result");
+        .expect("online mode may answer without searching");
 
-    assert_eq!(outcome.content, "evidence-backed answer");
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(outcome.content, "stable knowledge answer");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
-async fn failed_follow_up_web_tool_rejects_an_unverified_final_answer() {
+async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
             super::model_gateway::GatewayResponse {
@@ -333,13 +310,12 @@ async fn failed_follow_up_web_tool_rejects_an_unverified_final_answer() {
                 reasoning_content: None,
             }],
             tools,
-            true,
             &mut observer,
         )
         .await
-        .expect_err("WebRequired must not complete with an unverified answer");
+        .expect("online mode continues after web tool failure");
 
-    assert_eq!(outcome.to_string(), "agent_run_web_provider_timeout");
+    assert!(outcome.content.contains("could not verify"));
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
     let messages = provider
         .second_turn_messages

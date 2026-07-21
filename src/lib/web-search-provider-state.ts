@@ -9,8 +9,7 @@ export interface WebSearchProviderOption {
 export type WebSearchAvailabilityReason =
   | "ready"
   | "missing_provider"
-  | "provider_unavailable"
-  | "provider_unselected";
+  | "provider_unavailable";
 
 export interface WebSearchAvailability {
   canEnable: boolean;
@@ -60,17 +59,8 @@ export function getWebSearchAvailability(
   }
 
   if (selectedId && !selectedProvider) {
-    return {
-      canEnable: false,
-      reason: "provider_unavailable",
-      detail: "已选择的搜索提供方不可用",
-      selectedProviderId: selectedId,
-      effectiveProvider: null,
-      options,
-    };
-  }
-
-  if (selectedProvider) {
+    // Stale selection: fall through to auto-pick among enabled options.
+  } else if (selectedProvider) {
     return {
       canEnable: true,
       reason: "ready",
@@ -81,23 +71,13 @@ export function getWebSearchAvailability(
     };
   }
 
-  if (options.length === 1) {
-    return {
-      canEnable: true,
-      reason: "ready",
-      detail: options[0]!.name,
-      selectedProviderId: null,
-      effectiveProvider: options[0]!,
-      options,
-    };
-  }
-
+  // No explicit usable selection: auto-pick the first enabled MCP search provider.
   return {
-    canEnable: false,
-    reason: "provider_unselected",
-    detail: "请选择搜索提供方",
-    selectedProviderId: null,
-    effectiveProvider: null,
+    canEnable: true,
+    reason: "ready",
+    detail: options[0]!.name,
+    selectedProviderId: selectedId,
+    effectiveProvider: options[0]!,
     options,
   };
 }

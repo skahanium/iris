@@ -1564,7 +1564,7 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
     assert!(messages[0]
         .content
         .text_content()
-        .contains("Web access is permission, not a requirement"));
+        .contains("When the mode is online, prefer calling web_search"));
     assert!(messages[0].content.text_content().contains("Local date"));
 }
 

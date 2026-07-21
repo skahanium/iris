@@ -234,6 +234,8 @@ impl AgentRunRepository {
                     RunEventPayload::Accepted {
                         turn_id: input.turn_id.clone(),
                         session_key: input.session_key.clone(),
+                        freshness: Some(input.envelope.freshness),
+                        web_reason: Some(input.envelope.web_reason),
                     },
                 )
                 .map_err(AppError::msg)?;
@@ -305,9 +307,16 @@ impl AgentRunRepository {
                         effect, effort, security_domain, risk, envelope_json, explicit_action_json,
                         goal_summary, now],
                 )?;
+                let envelope: crate::ai_runtime::run_contract::ExecutionEnvelope =
+                    serde_json::from_str(&envelope_json)?;
                 let event = AssistantRunEvent::new(
                     &input.run_id, 1, 0, RunEventType::Accepted, &now,
-                    RunEventPayload::Accepted { turn_id: turn_id.clone(), session_key: input.session_key.clone() },
+                    RunEventPayload::Accepted {
+                        turn_id: turn_id.clone(),
+                        session_key: input.session_key.clone(),
+                        freshness: Some(envelope.freshness),
+                        web_reason: Some(envelope.web_reason),
+                    },
                 ).map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
                 conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;

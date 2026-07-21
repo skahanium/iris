@@ -48,7 +48,7 @@ function webFailureReasonMessage(
   }
 }
 
-/** Terminal WebRequired failure: no unverified answer was generated. */
+/** Historical terminal web-verification failure: no unverified answer was generated. */
 export function AssistantRunWebVerificationFailed({
   failure,
   retrying,

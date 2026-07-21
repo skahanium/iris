@@ -23,15 +23,27 @@ describe("web search provider state", () => {
     expect(state.detail).toContain("未配置");
   });
 
-  it("requires an explicit choice when multiple MCP search providers are available", () => {
+  it("auto-picks the first MCP search provider when none is explicitly selected", () => {
     const state = getWebSearchAvailability(
       [provider("anysearch", "AnySearch"), provider("brave", "Brave Search")],
       null,
     );
 
-    expect(state.canEnable).toBe(false);
-    expect(state.reason).toBe("provider_unselected");
-    expect(state.detail).toContain("选择");
+    expect(state.canEnable).toBe(true);
+    expect(state.reason).toBe("ready");
+    expect(state.effectiveProvider?.id).toBe("anysearch");
+    expect(webSearchStatusDetail(true, state)).toBe("已开启 · AnySearch");
+  });
+
+  it("falls back to auto-pick when the selected provider is unavailable", () => {
+    const state = getWebSearchAvailability(
+      [provider("anysearch", "AnySearch"), provider("brave", "Brave Search")],
+      "missing",
+    );
+
+    expect(state.canEnable).toBe(true);
+    expect(state.reason).toBe("ready");
+    expect(state.effectiveProvider?.id).toBe("anysearch");
   });
 
   it("uses the selected provider as the Agent status detail without request counts", () => {

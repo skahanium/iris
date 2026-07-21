@@ -243,7 +243,7 @@ fn accept_is_idempotent_for_client_request_id_without_duplicate_message_or_event
 fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
     let (db, session_id, session_key) = setup();
     let mut input = accept_input(session_id, session_key.clone());
-    input.envelope.freshness = Freshness::WebRequired;
+    input.envelope.freshness = Freshness::Online;
     input.envelope.effort = Effort::ToolLoop;
     AgentRunRepository::accept(&db, input).expect("accepted source run");
     let preparing = AgentRunRepository::append_event(

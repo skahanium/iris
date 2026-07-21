@@ -200,6 +200,8 @@ fn run_events_serialize_the_shared_wire_envelope_without_internal_details() {
         RunEventPayload::Accepted {
             turn_id: "turn-1".into(),
             session_key: "session-1".into(),
+            freshness: None,
+            web_reason: None,
         },
     )
     .unwrap();
@@ -255,18 +257,33 @@ fn historical_envelope_without_web_reason_deserializes_safely() {
     }))
     .expect("legacy envelope remains readable");
 
+    assert_eq!(envelope.freshness, Freshness::Online);
     assert_eq!(envelope.web_reason, WebDecisionReason::LegacyUnknown);
 }
 
 #[test]
-fn web_preferred_and_reason_use_stable_wire_values() {
+fn online_and_reason_use_stable_wire_values() {
     let mut envelope = direct_answer_envelope();
-    envelope.freshness = Freshness::WebPreferred;
-    envelope.web_reason = WebDecisionReason::GeneralQuestion;
+    envelope.freshness = Freshness::Online;
+    envelope.web_reason = WebDecisionReason::DefaultOnline;
 
     let json = serde_json::to_value(envelope).expect("serialize envelope");
-    assert_eq!(json["freshness"], "web_preferred");
-    assert_eq!(json["webReason"], "general_question");
+    assert_eq!(json["freshness"], "online");
+    assert_eq!(json["webReason"], "default_online");
+}
+
+#[test]
+fn legacy_freshness_and_reason_aliases_deserialize() {
+    let preferred: Freshness =
+        serde_json::from_value(serde_json::json!("web_preferred")).expect("alias");
+    let required: Freshness =
+        serde_json::from_value(serde_json::json!("web_required")).expect("alias");
+    let reason: WebDecisionReason =
+        serde_json::from_value(serde_json::json!("general_question")).expect("alias");
+
+    assert_eq!(preferred, Freshness::Online);
+    assert_eq!(required, Freshness::Online);
+    assert_eq!(reason, WebDecisionReason::DefaultOnline);
 }
 
 #[test]

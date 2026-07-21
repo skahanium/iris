@@ -1,9 +1,11 @@
 import type {
   AssistantRunEvent,
   AssistantRunEventPayload,
+  Freshness,
   PendingConfirmation,
   ProviderSwitchReasonCode,
   RunState,
+  WebDecisionReason,
 } from "@/types/ai";
 
 /** Reducer state reconstructed exclusively from persisted or streamed Run events. */
@@ -14,6 +16,11 @@ export interface AssistantRunEventState {
   state: RunState | null;
   stage: string | null;
   summary: string | null;
+  /** Exclusion-classifier Web mode from the Accepted event, when present. */
+  freshness: Freshness | null;
+  webReason: WebDecisionReason | null;
+  /** True after this Run completed a web.search / web_search tool call. */
+  webSearched: boolean;
   capabilityDegradation: Extract<
     AssistantRunEventPayload,
     { kind: "capability_degraded" }
@@ -52,6 +59,9 @@ export function createAssistantRunEventState(
     state: null,
     stage: null,
     summary: null,
+    freshness: null,
+    webReason: null,
+    webSearched: false,
     capabilityDegradation: null,
     webVerificationFailure: null,
     pendingConfirmation: null,
@@ -175,6 +185,18 @@ function applyEvent(
     state: nextState,
     stage: payload.kind === "stage_changed" ? payload.stage : state.stage,
     summary: summaryForPayload(payload) ?? state.summary,
+    freshness:
+      payload.kind === "accepted" && payload.freshness
+        ? payload.freshness
+        : state.freshness,
+    webReason:
+      payload.kind === "accepted" && payload.webReason
+        ? payload.webReason
+        : state.webReason,
+    webSearched:
+      state.webSearched ||
+      ((payload.kind === "tool_started" || payload.kind === "tool_completed") &&
+        isWebSearchCapability(payload.capability)),
     capabilityDegradation:
       payload.kind === "capability_degraded"
         ? payload
@@ -218,6 +240,10 @@ function applyEvent(
         : state.hasTransientContent,
     events: [...state.events, event],
   };
+}
+
+function isWebSearchCapability(capability: string): boolean {
+  return capability === "web.search" || capability === "web_search";
 }
 
 function confirmationForPayload(

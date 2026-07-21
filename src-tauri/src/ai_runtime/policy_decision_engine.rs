@@ -564,7 +564,7 @@ mod tests {
             requested_capabilities: vec![CapabilityId::new("web.search")],
         });
         let classified = engine.evaluate_run(RunPolicyRequest {
-            envelope: run_envelope(SecurityDomain::Classified, Freshness::WebRequired),
+            envelope: run_envelope(SecurityDomain::Classified, Freshness::Online),
             explicit_reference_paths: Vec::new(),
             requested_capabilities: vec![CapabilityId::new("web.search")],
         });

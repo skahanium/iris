@@ -568,6 +568,10 @@ pub(crate) fn classified_run_accept(
         payload: serde_json::to_value(RunEventPayload::Accepted {
             turn_id: input.turn_id.clone(),
             session_key: thread.thread_id.clone(),
+            freshness: Some(crate::ai_runtime::run_contract::Freshness::Offline),
+            web_reason: Some(
+                crate::ai_runtime::run_contract::WebDecisionReason::SecurityDomainOffline,
+            ),
         })?,
         created_at: now.clone(),
     });

@@ -57,24 +57,9 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         Vec::new()
     }
 
-    /// Whether a Web-evidence requirement has obtained usable evidence.
+    /// Whether this Run has registered usable Web evidence (for deferred degradation).
     fn has_web_evidence(&self) -> bool {
         false
-    }
-
-    /// Return a typed Web failure produced by the most recent follow-up `web_search` call.
-    /// This keeps Broker/MCP failures out of the model-provider error namespace.
-    fn web_evidence_failure_code(
-        &self,
-    ) -> Option<crate::ai_runtime::run_contract::SafeRunErrorCode> {
-        None
-    }
-
-    /// Number of concrete Web requests attempted by this executor.
-    /// The engine combines this with deterministic-prefetch attempts for the
-    /// terminal, Run-wide diagnostic payload.
-    fn web_evidence_attempt_count(&self) -> u32 {
-        0
     }
 
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
@@ -106,7 +91,6 @@ impl Default for AgentToolLoop {
 
 impl AgentToolLoop {
     /// Run model turns until a non-empty final answer is received or a bound is reached.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute(
         &self,
         provider: &impl ToolLoopProvider,
@@ -114,7 +98,6 @@ impl AgentToolLoop {
         run_id: &str,
         mut messages: Vec<LlmMessage>,
         tools: Vec<ToolSpec>,
-        require_web_evidence: bool,
         observer: &mut dyn StreamEventObserver,
     ) -> AppResult<AgentToolLoopOutcome> {
         let allowed_tools = tools
@@ -124,7 +107,6 @@ impl AgentToolLoop {
         let mut model_turns = 0;
         let mut tool_calls = 0;
         let mut fingerprints = HashMap::<String, u32>::new();
-        let mut required_evidence_correction_sent = false;
 
         while model_turns < self.max_model_turns {
             model_turns += 1;
@@ -136,26 +118,6 @@ impl AgentToolLoop {
                 let content = response.content.unwrap_or_default();
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
-                }
-                if require_web_evidence && !executor.has_web_evidence() {
-                    if let Some(code) = executor.web_evidence_failure_code() {
-                        // WebRequired runs must never turn a failed retrieval into a
-                        // model-authored "best effort" answer. The engine records the
-                        // safe terminal failure before any provisional delta is flushed.
-                        return Err(AppError::msg(code.as_str()));
-                    }
-                    if required_evidence_correction_sent {
-                        return Err(AppError::msg("agent_run_web_evidence_required"));
-                    }
-                    required_evidence_correction_sent = true;
-                    messages.push(LlmMessage {
-                        role: MessageRole::User,
-                        content: "This request requires current external evidence. Call web_search now, use only its returned evidence for current claims, then provide the final answer.".into(),
-                        tool_call_id: None,
-                        tool_calls: None,
-                        reasoning_content: None,
-                    });
-                    continue;
                 }
                 return Ok(AgentToolLoopOutcome {
                     content,

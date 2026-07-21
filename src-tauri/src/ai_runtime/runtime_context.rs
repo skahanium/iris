@@ -164,7 +164,7 @@ pub fn build_runtime_context_prompt(
         vault_name,
         vault.display(),
         if input.web_search_enabled {
-            "已启用"
+            "已启用（优先用于获取最新外部信息）"
         } else {
             "未启用"
         },

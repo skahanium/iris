@@ -1067,30 +1067,31 @@ fn web_enabled_pure_rewrite_remains_direct_without_tool_loop() {
 }
 
 #[test]
-fn web_enabled_external_question_requires_engine_owned_web_evidence() {
+fn web_enabled_external_question_is_online_without_forced_web_capability() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "最近世界杯战况如何？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
-    assert!(envelope
+    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
+    assert!(!envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
 }
 
 #[test]
-fn web_enabled_general_question_requires_engine_owned_web_evidence_without_keywords() {
+fn web_enabled_general_question_is_online_by_default_without_keywords() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "量子力学的核心概念是什么？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebPreferred);
-    assert_eq!(envelope.web_reason, WebDecisionReason::GeneralQuestion);
+    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
     assert!(!envelope
         .required_capabilities
         .iter()
@@ -1219,7 +1220,7 @@ fn transformation_word_does_not_hide_an_unbound_current_facts_request() {
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(envelope.freshness, Freshness::Online);
     assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
 }
 
@@ -1260,7 +1261,7 @@ fn explicit_web_instruction_overrides_the_local_transformation_shortcut() {
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(envelope.freshness, Freshness::Online);
 }
 
 #[test]

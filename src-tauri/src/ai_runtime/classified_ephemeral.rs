@@ -141,6 +141,10 @@ impl ClassifiedEphemeralStore {
             RunEventPayload::Accepted {
                 turn_id: turn_id.clone(),
                 session_key: session.session_key.clone(),
+                freshness: Some(crate::ai_runtime::run_contract::Freshness::Offline),
+                web_reason: Some(
+                    crate::ai_runtime::run_contract::WebDecisionReason::SecurityDomainOffline,
+                ),
             },
         )
         .map_err(AppError::msg)?;

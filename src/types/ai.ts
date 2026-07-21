@@ -105,7 +105,9 @@ export type ContextMode =
   | "conversation"
   | "explicit_references"
   | "explicit_scope";
-export type Freshness = "offline" | "web_preferred" | "web_required";
+export type Freshness = "offline" | "online";
+/** Legacy wire values still accepted when reading historical envelopes. */
+export type LegacyFreshness = Freshness | "web_preferred" | "web_required";
 export type WebDecisionReason =
   | "legacy_unknown"
   | "user_disabled"
@@ -119,7 +121,26 @@ export type WebDecisionReason =
   | "explicit_url"
   | "volatile_external_fact"
   | "high_stakes_current_fact"
+  | "default_online"
+  /** Historical alias for default_online. */
   | "general_question";
+
+/** Map current and legacy freshness wire values onto the binary Online/Offline model. */
+export function normalizeFreshness(
+  value: string | null | undefined,
+): Freshness {
+  if (value === "offline") {
+    return "offline";
+  }
+  if (
+    value === "online" ||
+    value === "web_preferred" ||
+    value === "web_required"
+  ) {
+    return "online";
+  }
+  return "offline";
+}
 export type Effort = "direct" | "tool_loop" | "durable";
 /** An explicit, one-Run model choice. The backend must reject an incapable override. */
 export interface AgentModelOverride {
@@ -380,7 +401,13 @@ export interface PendingConfirmation {
 }
 
 export type AssistantRunEventPayload =
-  | { kind: "accepted"; turnId: string; sessionKey: string }
+  | {
+      kind: "accepted";
+      turnId: string;
+      sessionKey: string;
+      freshness?: Freshness;
+      webReason?: WebDecisionReason;
+    }
   | { kind: "stage_changed"; state: RunState; stage: string }
   | { kind: "content_delta"; delta: string }
   | { kind: "tool_started"; capability: string; toolCallId: string }

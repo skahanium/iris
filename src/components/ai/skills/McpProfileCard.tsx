@@ -1016,11 +1016,15 @@ export function McpProfileCard({
               {check.message}
             </p>
           ))}
-          <p>
-            {diagnostics?.isRuntimeSelected
-              ? "这是当前运行使用的提供方。"
-              : "这是非当前运行提供方；其诊断不代表当前 Run 已就绪。"}
-          </p>
+          {diagnostics?.isRuntimeSelected ? (
+            <p>这是当前运行使用的提供方。</p>
+          ) : null}
+          {diagnostics && diagnostics.isRuntimeSelected === false ? (
+            <p className="text-amber-700 dark:text-amber-400" role="status">
+              警告：此提供方诊断通过，但当前运行时未选中它作为搜索提供方；AI
+              对话将使用已选中的提供方。请在管理中心确认运行时选择。
+            </p>
+          ) : null}
           <p>诊断仅代表本次探针结果；实际 Run 仍会逐条执行安全证据归一化。</p>
           <p>
             实时可用性：搜索

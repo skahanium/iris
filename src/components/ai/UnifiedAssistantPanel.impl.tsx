@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import {
@@ -12,6 +12,7 @@ import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
+import { formatWebDecisionStatus } from "@/lib/web-decision-status";
 import {
   assistantClassifiedContextClear,
   assistantClassifiedContextOpen,
@@ -70,6 +71,20 @@ export function UnifiedAssistantPanel({
   ] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
+
+  const webDecisionStatus = useMemo(
+    () =>
+      formatWebDecisionStatus({
+        freshness: assistantRun.eventState?.freshness,
+        webReason: assistantRun.eventState?.webReason,
+        searched: assistantRun.eventState?.webSearched,
+      }),
+    [
+      assistantRun.eventState?.freshness,
+      assistantRun.eventState?.webReason,
+      assistantRun.eventState?.webSearched,
+    ],
+  );
 
   const clearTaskSurfaces = useCallback(() => undefined, []);
 
@@ -290,6 +305,14 @@ export function UnifiedAssistantPanel({
       {lastError ? (
         <p className="border-b border-destructive/30 px-3 py-2 text-xs text-destructive">
           {lastError}
+        </p>
+      ) : null}
+      {webDecisionStatus ? (
+        <p
+          className="border-b border-border/60 px-3 py-1 text-[11px] text-muted-foreground"
+          data-testid="assistant-run-web-decision"
+        >
+          联网决策：{webDecisionStatus}
         </p>
       ) : null}
       {assistantRun.eventState?.capabilityDegradation ? (

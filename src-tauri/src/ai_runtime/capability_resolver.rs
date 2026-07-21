@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn web_search_capability_requires_selection_when_multiple_are_enabled() {
+    fn web_search_capability_auto_picks_when_multiple_are_enabled() {
         let db = Database::open_in_memory().unwrap();
         upsert_web_evidence_provider(&db, &provider()).unwrap();
         let mut second = provider();
@@ -308,10 +308,9 @@ mod tests {
         second.web_search_mapping_json = Some(r#"{"tool":"brave_web_search"}"#.into());
         upsert_web_evidence_provider(&db, &second).unwrap();
 
-        let err = resolve_required_capability(&db, "web.search").unwrap_err();
+        let resolved = resolve_required_capability(&db, "web.search").unwrap();
 
-        assert_eq!(err.reason, CapabilityBlockReason::MissingMcpProfile);
-        assert!(err.message.contains("web_search_provider_unselected"));
+        assert_eq!(resolved.profile_id, "anysearch");
     }
 
     #[test]

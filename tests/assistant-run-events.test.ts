@@ -119,7 +119,7 @@ describe("Assistant Run 前端合同", () => {
     const envelope = {
       effect: "draft",
       context: "explicit_references",
-      freshness: "web_required",
+      freshness: "online",
       webReason: "explicit_web_request",
       effort: "tool_loop",
       securityDomain: "normal",
@@ -160,7 +160,13 @@ describe("Assistant Run 前端合同", () => {
 
   it("以判别联合表达全部安全事件载荷", () => {
     const payloads = [
-      { kind: "accepted", turnId: "turn-001", sessionKey: "session-key-001" },
+      {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+        freshness: "online",
+        webReason: "default_online",
+      },
       { kind: "stage_changed", state: "preparing", stage: "正在准备" },
       { kind: "content_delta", delta: "可展示内容" },
       {
@@ -211,6 +217,33 @@ describe("Assistant Run 前端合同", () => {
     ] satisfies AssistantRunEvent["payload"][];
 
     expect(payloads).toHaveLength(15);
+  });
+
+  it("从 Accepted 与 web 工具事件还原联网决策状态", () => {
+    const state = reduce([
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+        freshness: "online",
+        webReason: "default_online",
+      }),
+      event(2, "tool_started", {
+        kind: "tool_started",
+        capability: "web.search",
+        toolCallId: "tool-web-001",
+      }),
+      event(3, "tool_completed", {
+        kind: "tool_completed",
+        capability: "web.search",
+        toolCallId: "tool-web-001",
+        summary: "已返回 3 条结果",
+      }),
+    ]);
+
+    expect(state.freshness).toBe("online");
+    expect(state.webReason).toBe("default_online");
+    expect(state.webSearched).toBe(true);
   });
 
   it("不允许 event type 与判别载荷 kind 脱节", () => {

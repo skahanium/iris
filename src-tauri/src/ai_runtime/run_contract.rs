@@ -48,15 +48,18 @@ pub(crate) enum ContextMode {
 }
 
 /// Whether a Run may use Web capabilities.
+///
+/// Binary model (exclusion-based): Offline forbids `web_search`; Online registers it
+/// and lets the answering model decide whether to call it. Historical wire values
+/// `web_preferred` and `web_required` deserialize as [`Freshness::Online`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Freshness {
-    /// Web access is forbidden.
+    /// Web access is forbidden; `web_search` is not registered.
     Offline,
-    /// Web access is permitted, while the answering model decides whether it is useful.
-    WebPreferred,
-    /// Web evidence is required to substantiate the result.
-    WebRequired,
+    /// Web access is permitted; `web_search` is registered for model-driven use.
+    #[serde(alias = "web_preferred", alias = "web_required")]
+    Online,
 }
 
 /// Stable explanation for the deterministic Web decision attached to a Run.
@@ -79,17 +82,19 @@ pub(crate) enum WebDecisionReason {
     /// The request transforms only supplied or authorized text.
     LocalTransformation,
     /// The request is creative and has no explicit external-fact requirement.
+    /// Retained for historical envelopes; ExclusionClassifier no longer emits this.
     CreativeGeneration,
     /// The user explicitly instructed the assistant to search or verify online.
     ExplicitWebRequest,
-    /// The user supplied a URL that must be fetched through the Web boundary.
+    /// The user supplied a URL that should be fetched through the Web boundary.
     ExplicitUrl,
     /// The answer depends on volatile external facts.
     VolatileExternalFact,
     /// A current medical, legal, financial, or compliance fact has elevated stakes.
     HighStakesCurrentFact,
-    /// Web is available for a general or ambiguous question but is not mandatory.
-    GeneralQuestion,
+    /// Web is available by default after exclusion checks; the model decides whether to search.
+    #[serde(alias = "general_question")]
+    DefaultOnline,
 }
 
 /// Amount of coordinated work the Run may perform.
@@ -597,6 +602,12 @@ pub(crate) enum RunEventPayload {
         turn_id: String,
         /// Opaque session key.
         session_key: String,
+        /// Exclusion-classifier Web mode for this Run. Absent on historical events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        freshness: Option<Freshness>,
+        /// Deterministic explanation for the Web mode. Absent on historical events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        web_reason: Option<WebDecisionReason>,
     },
     /// A short display stage.
     StageChanged {
@@ -875,26 +886,6 @@ pub(crate) enum WebEvidenceFailureReason {
     EvidenceContentEmpty,
     #[default]
     Unknown,
-}
-
-impl WebEvidenceFailureReason {
-    /// Stable wire value persisted in safe Run diagnostics and tool audit summaries.
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::ProviderUnavailable => "provider_unavailable",
-            Self::ProviderTransport => "provider_transport",
-            Self::ProviderTimeout => "provider_timeout",
-            Self::ProviderAuthentication => "provider_authentication",
-            Self::ProviderOutputTooLarge => "provider_output_too_large",
-            Self::ProviderRateLimited => "provider_rate_limited",
-            Self::ProviderQuotaExhausted => "provider_quota_exhausted",
-            Self::ProviderInvalidArguments => "provider_invalid_arguments",
-            Self::SearchResultUnparseable => "search_result_unparseable",
-            Self::SearchResultNoUsableHttps => "search_result_no_usable_https",
-            Self::EvidenceContentEmpty => "evidence_content_empty",
-            Self::Unknown => "unknown",
-        }
-    }
 }
 
 /// Stable, safe error codes exposed across the Rust/TypeScript boundary.

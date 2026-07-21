@@ -13,7 +13,6 @@ use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLo
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
-    WebEvidenceFailureReason,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -783,72 +782,6 @@ impl RunEngine {
         sink.emit(&failed)
     }
 
-    /// Execute required Web evidence before any model route, credential hydration, or provider
-    /// dispatch. A WebRequired Run may enter the model loop only after usable evidence has been
-    /// registered; a degraded preflight is terminal and preserves its original safe cause.
-    pub(crate) async fn execute_web_required_evidence_then_dispatch_with_sink<
-        Output,
-        Collector,
-        CollectorFuture,
-        Dispatch,
-        DispatchFuture,
-    >(
-        db: &Database,
-        session: &AssistantSessionRef,
-        run_id: &str,
-        sink: &impl RunEventSink,
-        collector: Collector,
-        dispatch: Dispatch,
-    ) -> AppResult<Output>
-    where
-        Collector: FnOnce() -> CollectorFuture,
-        CollectorFuture:
-            Future<Output = AppResult<crate::ai_runtime::run_tool_loop::RunWebEvidence>>,
-        Dispatch: FnOnce(crate::ai_runtime::run_tool_loop::RunWebEvidence) -> DispatchFuture,
-        DispatchFuture: Future<Output = AppResult<Output>>,
-    {
-        let evidence = match collector().await {
-            Ok(evidence) => evidence,
-            Err(error) => {
-                let code = classify_web_evidence_stage_failure(&error);
-                Self::fail_before_dispatch_with_sink(db, session, run_id, code, sink)?;
-                return Err(AppError::msg(code.as_str()));
-            }
-        };
-        if evidence.status != crate::ai_runtime::run_tool_loop::RunWebStatus::Succeeded {
-            let code = evidence
-                .failure_code
-                .unwrap_or(SafeRunErrorCode::WebEvidenceInvalid);
-            let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-                .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
-            if snapshot.run.state != RunState::Accepted {
-                return Err(AppError::msg("agent_run_illegal_transition"));
-            }
-            let verification_failed = AgentRunRepository::append_event(
-                db,
-                AppendRunEventInput {
-                    run_id: run_id.to_string(),
-                    state_version: snapshot.run.state_version,
-                    event_type: RunEventType::WebVerificationFailed,
-                    payload: RunEventPayload::WebVerificationFailed {
-                        code,
-                        failure_reason: evidence
-                            .failure_reason
-                            .unwrap_or(WebEvidenceFailureReason::Unknown),
-                        retryable: evidence.retryable,
-                        attempt_count: evidence.attempt_count,
-                        duration_bucket: evidence.duration_bucket.to_string(),
-                        diagnostic_id: run_id.to_string(),
-                    },
-                },
-            )?;
-            sink.emit(&verification_failed)?;
-            Self::fail_before_dispatch_with_sink(db, session, run_id, code, sink)?;
-            return Err(AppError::msg(code.as_str()));
-        }
-        dispatch(evidence).await
-    }
-
     /// Ensure a background execution error cannot leave a non-terminal Run behind.
     ///
     /// Provider and policy errors normally terminalize themselves. This guard is
@@ -1143,8 +1076,6 @@ impl RunEngine {
         messages: Vec<crate::ai_runtime::LlmMessage>,
         tools: Vec<crate::ai_runtime::ToolSpec>,
         evidence_ids: &[i64],
-        require_web_evidence: bool,
-        initial_web_attempt_count: u32,
         domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
         provider: &impl ToolLoopProvider,
         executor: &impl ToolLoopExecutor,
@@ -1204,7 +1135,6 @@ impl RunEngine {
                 run_id,
                 messages,
                 tools,
-                require_web_evidence,
                 &mut observer,
             )
             .await;
@@ -1225,39 +1155,6 @@ impl RunEngine {
                     }
                 }
                 let code = classify_tool_loop_failure(&error);
-                if require_web_evidence
-                    && matches!(
-                        code,
-                        SafeRunErrorCode::WebProviderUnavailable
-                            | SafeRunErrorCode::WebProviderTimeout
-                            | SafeRunErrorCode::WebProviderAuthFailed
-                            | SafeRunErrorCode::WebProviderFailed
-                            | SafeRunErrorCode::WebEvidenceInvalid
-                    )
-                {
-                    let verification_failed = AgentRunRepository::append_event(
-                        db,
-                        AppendRunEventInput {
-                            run_id: run_id.to_string(),
-                            state_version: running_state_version,
-                            event_type: RunEventType::WebVerificationFailed,
-                            payload: RunEventPayload::WebVerificationFailed {
-                                code,
-                                failure_reason: WebEvidenceFailureReason::Unknown,
-                                retryable: matches!(
-                                    code,
-                                    SafeRunErrorCode::WebProviderTimeout
-                                        | SafeRunErrorCode::WebProviderFailed
-                                ),
-                                attempt_count: initial_web_attempt_count
-                                    .saturating_add(executor.web_evidence_attempt_count()),
-                                duration_bucket: "recovery_exhausted".to_string(),
-                                diagnostic_id: run_id.to_string(),
-                            },
-                        },
-                    )?;
-                    sink.emit(&verification_failed)?;
-                }
                 let failed = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {
@@ -1533,29 +1430,13 @@ impl RunEngine {
 }
 
 fn apply_required_web_degradation_notice(
-    db: &Database,
-    session: &AssistantSessionRef,
-    run_id: &str,
-    content: &mut String,
+    _db: &Database,
+    _session: &AssistantSessionRef,
+    _run_id: &str,
+    _content: &mut String,
 ) -> AppResult<()> {
-    const NOTICE: &str =
-        "\n\n> 联网核实暂不可用；本答复仅保留不依赖最新事实的内容，请稍后重试或提供可信来源。";
-    let policy = AgentRunRepository::policy_request_for_session(db, &session.session_key, run_id)?
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
-    if policy.envelope.freshness != crate::ai_runtime::run_contract::Freshness::WebRequired {
-        return Ok(());
-    }
-    let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
-    let degraded = snapshot.events.iter().any(|event| {
-        serde_json::to_value(event)
-            .ok()
-            .is_some_and(|value| value["type"] == "capability_degraded")
-    });
-    if !degraded || content.contains(NOTICE.trim()) {
-        return Ok(());
-    }
-    content.push_str(NOTICE);
+    // Historical WebRequired runs appended a forced notice into model output.
+    // Online emits CapabilityDegraded and continues without rewriting the answer here.
     Ok(())
 }
 
@@ -1791,17 +1672,6 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::StateVersionConflict
         | SafeRunErrorCode::ConfirmationExpired
         | SafeRunErrorCode::PersistenceFailed => "运行暂时无法完成，请稍后重试",
-    }
-}
-
-fn classify_web_evidence_stage_failure(error: &AppError) -> SafeRunErrorCode {
-    match error.to_string().as_str() {
-        "agent_run_mcp_unavailable" => SafeRunErrorCode::WebProviderUnavailable,
-        "agent_run_web_provider_timeout" => SafeRunErrorCode::WebProviderTimeout,
-        "agent_run_web_provider_auth_failed" => SafeRunErrorCode::WebProviderAuthFailed,
-        "agent_run_web_provider_failed" => SafeRunErrorCode::WebProviderFailed,
-        "agent_run_web_evidence_invalid" => SafeRunErrorCode::WebEvidenceInvalid,
-        _ => SafeRunErrorCode::WebProviderFailed,
     }
 }
 

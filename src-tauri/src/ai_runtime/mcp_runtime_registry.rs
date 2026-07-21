@@ -767,26 +767,30 @@ pub fn resolve_selected_web_search_provider(
     }
 
     if let Some(selected_id) = read_selected_web_search_provider_id(db)? {
-        return providers
-            .into_iter()
+        if let Some(provider) = providers
+            .iter()
             .find(|provider| provider.id == selected_id)
-            .ok_or_else(|| {
-                AppError::msg(
-                    "web_search_provider_unavailable: selected MCP web.search provider is disabled, missing, or lacks a search mapping",
-                )
-            });
+            .cloned()
+        {
+            return Ok(provider);
+        }
+        // Selected id is stale or disabled — fall through to auto-pick rather than fail closed.
     }
 
-    if providers.len() == 1 {
-        return Ok(providers
-            .into_iter()
-            .next()
-            .expect("checked provider count"));
-    }
+    // No usable explicit selection: prefer the first circuit-healthy provider, else the first listed.
+    let preferred_id = providers
+        .iter()
+        .find(|provider| {
+            crate::ai_runtime::circuit_breaker::inspect_readiness(&provider.id).request_allowed
+        })
+        .or_else(|| providers.first())
+        .map(|provider| provider.id.clone())
+        .expect("providers non-empty after earlier check");
 
-    Err(AppError::msg(
-        "web_search_provider_unselected: choose one MCP web.search provider before enabling web search",
-    ))
+    Ok(providers
+        .into_iter()
+        .find(|provider| provider.id == preferred_id)
+        .expect("preferred id came from providers"))
 }
 
 pub fn toggle_web_evidence_provider(
@@ -1104,7 +1108,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_web_search_provider_requires_choice_when_multiple_are_available() {
+    fn selected_web_search_provider_auto_picks_when_multiple_are_available() {
         let db = Database::open_in_memory().unwrap();
         upsert_web_evidence_provider(&db, &provider()).unwrap();
         let mut second = provider();
@@ -1113,9 +1117,9 @@ mod tests {
         second.web_search_mapping_json = Some(r#"{"tool":"brave_web_search"}"#.into());
         upsert_web_evidence_provider(&db, &second).unwrap();
 
-        let err = resolve_selected_web_search_provider(&db).unwrap_err();
+        let selected = resolve_selected_web_search_provider(&db).unwrap();
 
-        assert!(err.to_string().contains("web_search_provider_unselected"));
+        assert_eq!(selected.id, "anysearch");
     }
 
     #[test]
@@ -1150,14 +1154,14 @@ mod tests {
     }
 
     #[test]
-    fn selected_web_search_provider_rejects_stale_saved_choice() {
+    fn selected_web_search_provider_falls_back_when_saved_choice_is_stale() {
         let db = Database::open_in_memory().unwrap();
         upsert_web_evidence_provider(&db, &provider()).unwrap();
         save_selected_web_search_provider_id(&db, Some("missing-provider")).unwrap();
 
-        let err = resolve_selected_web_search_provider(&db).unwrap_err();
+        let selected = resolve_selected_web_search_provider(&db).unwrap();
 
-        assert!(err.to_string().contains("web_search_provider_unavailable"));
+        assert_eq!(selected.id, "anysearch");
     }
 
     #[test]

@@ -70,7 +70,7 @@ impl RunIntake {
             ],
         );
         let web_decision =
-            WebIntentResolver::resolve(request, &message, &directive_text, local_only);
+            ExclusionClassifier::resolve(request, &message, &directive_text, local_only);
         let effect = if do_not_modify {
             Effect::Answer
         } else {
@@ -130,9 +130,6 @@ impl RunIntake {
         let mut required_capabilities = vec![CapabilityId::new("model.text")];
         if has_images {
             required_capabilities.push(CapabilityId::new("model.vision"));
-        }
-        if freshness == Freshness::WebRequired {
-            required_capabilities.push(CapabilityId::new("web.search"));
         }
         match effect {
             Effect::Draft => required_capabilities.push(CapabilityId::new("note.propose_patch")),
@@ -570,15 +567,20 @@ struct WebIntentDecision {
     reason: WebDecisionReason,
 }
 
-struct WebIntentResolver;
+/// Exclusion-based Web classifier: default Online; only explicit exclusions force Offline.
+///
+/// Unlike the former three-way intent resolver, this never invents a "maybe search"
+/// grey zone. Online always registers `web_search` for model-driven use.
+struct ExclusionClassifier;
 
-impl WebIntentResolver {
+impl ExclusionClassifier {
     fn resolve(
         request: &AssistantRunStartRequest,
         message: &str,
         directive_text: &str,
         local_only: bool,
     ) -> WebIntentDecision {
+        // Hard exclusions — never overridden by an explicit web instruction.
         if request.security_domain == SecurityDomain::Classified {
             return offline(WebDecisionReason::SecurityDomainOffline);
         }
@@ -590,71 +592,88 @@ impl WebIntentResolver {
         }
 
         let explicit_web = has_explicit_web_instruction(directive_text);
-        if is_trusted_runtime_request(directive_text) {
-            return offline(WebDecisionReason::TrustedRuntimeFact);
+
+        // Soft exclusions. Conversation-meta must be evaluated even when the
+        // message mentions past browsing ("browse the web", "联网查"), otherwise
+        // those keywords false-positive as ExplicitWebRequest.
+        if is_short_greeting(directive_text) {
+            return offline(WebDecisionReason::ConversationMeta);
         }
         if is_conversation_meta_request(directive_text) {
             return offline(WebDecisionReason::ConversationMeta);
         }
+        if !explicit_web {
+            if is_trusted_runtime_request(directive_text) {
+                return offline(WebDecisionReason::TrustedRuntimeFact);
+            }
+            if is_local_transformation_request(message)
+                && is_material_bound_transformation(request, message, directive_text)
+            {
+                return offline(WebDecisionReason::LocalTransformation);
+            }
+        }
+
+        // Online with a more specific reason when detectable (transparency only;
+        // behavior is identical for every Online reason).
         if contains_any(directive_text, &["http://", "https://"]) {
-            return required(WebDecisionReason::ExplicitUrl);
-        }
-        let local_transformation = is_local_transformation_request(message);
-        if local_transformation
-            && is_material_bound_transformation(request, directive_text)
-            && !explicit_web
-        {
-            return offline(WebDecisionReason::LocalTransformation);
-        }
-        if (is_novel_writing_request(message) || is_creative_request(message)) && !explicit_web {
-            return offline(WebDecisionReason::CreativeGeneration);
+            return online(WebDecisionReason::ExplicitUrl);
         }
         if explicit_web {
-            return required(WebDecisionReason::ExplicitWebRequest);
+            return online(WebDecisionReason::ExplicitWebRequest);
         }
         if is_high_stakes_current_request(directive_text) {
-            return required(WebDecisionReason::HighStakesCurrentFact);
+            return online(WebDecisionReason::HighStakesCurrentFact);
         }
         if is_volatile_external_request(directive_text) {
-            return required(WebDecisionReason::VolatileExternalFact);
+            return online(WebDecisionReason::VolatileExternalFact);
         }
-        if local_transformation {
-            return offline(WebDecisionReason::LocalTransformation);
-        }
-        if is_short_greeting(directive_text) {
-            return offline(WebDecisionReason::ConversationMeta);
-        }
-        WebIntentDecision {
-            freshness: Freshness::WebPreferred,
-            reason: WebDecisionReason::GeneralQuestion,
-        }
+        online(WebDecisionReason::DefaultOnline)
     }
 }
 
 fn is_material_bound_transformation(
     request: &AssistantRunStartRequest,
+    message: &str,
     directive_text: &str,
 ) -> bool {
     request.explicit_action.is_some()
         || !request.turn.explicit_references.is_empty()
+        || has_quoted_material(message)
         || contains_any(
             directive_text,
             &[
                 "provided material",
                 "provided text",
+                "supplied",
                 "attached material",
                 "attachment",
                 "the text above",
+                "text above",
                 "this text",
                 "this sentence",
                 "this paragraph",
+                "my draft",
+                "my text",
                 "我提供的材料",
                 "上面的材料",
+                "上面的段落",
+                "上面的",
                 "附件",
                 "这段",
                 "这句话",
+                "这段话",
+                "这段文字",
             ],
         )
+}
+
+fn has_quoted_material(message: &str) -> bool {
+    message.chars().any(|character| {
+        matches!(
+            character,
+            '"' | '\'' | '“' | '”' | '‘' | '’' | '「' | '」' | '『' | '』' | '`'
+        )
+    })
 }
 
 fn offline(reason: WebDecisionReason) -> WebIntentDecision {
@@ -664,9 +683,9 @@ fn offline(reason: WebDecisionReason) -> WebIntentDecision {
     }
 }
 
-fn required(reason: WebDecisionReason) -> WebIntentDecision {
+fn online(reason: WebDecisionReason) -> WebIntentDecision {
     WebIntentDecision {
-        freshness: Freshness::WebRequired,
+        freshness: Freshness::Online,
         reason,
     }
 }
@@ -812,25 +831,6 @@ fn is_conversation_meta_request(message: &str) -> bool {
                 message,
                 &["为什么", "为何", "怎么", "还联网", "why", "how come"],
             ))
-}
-
-fn is_creative_request(message: &str) -> bool {
-    contains_any(
-        message,
-        &[
-            "创作",
-            "写故事",
-            "写诗",
-            "写一",
-            "虚构",
-            "brainstorm",
-            "write a story",
-            "poem",
-            "draft a fantasy",
-            "invent",
-            "fictional",
-        ],
-    )
 }
 
 fn is_volatile_external_request(message: &str) -> bool {
