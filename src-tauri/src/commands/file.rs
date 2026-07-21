@@ -727,6 +727,10 @@ pub fn folder_delete(state: State<'_, Arc<AppState>>, path: String) -> AppResult
 }
 
 /// 更新笔记锁定状态（仅用户笔记路径）。
+///
+/// 锁定是应用状态层元数据（SQLite `files.is_locked`），不是 `.md` 正文权威源的一部分。
+/// 按 AGENTS.md 数据原则：索引层可从 `.md` 重建，但锁定属于用户运行时意图，重建索引后
+/// 会丢失——这是有意的取舍。禁止在未获用户明确同意时把锁定写入 frontmatter。
 pub fn set_file_lock(state: &AppState, path: &str, locked: bool) -> AppResult<()> {
     if !is_user_note_path(path) {
         return Err(AppError::msg("只能操作用户笔记"));

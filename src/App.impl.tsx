@@ -156,6 +156,9 @@ function App() {
     (path: string, markdown: string) => Promise<void>
   >(async () => undefined);
   const clearSuppressShellUiRef = useRef<() => void>(() => undefined);
+  const beginSuppressShellUiRef = useRef<(path: string) => void>(
+    () => undefined,
+  );
   const {
     tabs,
     activePath,
@@ -193,6 +196,7 @@ function App() {
     discardPristineNote: (path, content) =>
       discardPristineNoteRef.current(path, content),
     getLiveMarkdown: () => getLiveMarkdownForTabsRef.current(),
+    beginSuppressShellUi: (path) => beginSuppressShellUiRef.current(path),
     clearSuppressShellUi: () => clearSuppressShellUiRef.current(),
   });
   const rejectDepartureInteraction = useCallback(() => {
@@ -424,6 +428,7 @@ function App() {
     isPersistenceBarrierActive,
     releasePersistenceBarrier,
     clearSuppressShellUi,
+    beginSuppressShellUi,
   } = useAppPersistenceLifecycle({
     activeFileLocked,
     activePath,
@@ -458,6 +463,7 @@ function App() {
   });
   discardPristineNoteRef.current = discardPristineNote;
   clearSuppressShellUiRef.current = clearSuppressShellUi;
+  beginSuppressShellUiRef.current = beginSuppressShellUi;
   updateInstallBarrierRef.current = flushAllOpenTabs;
   const isEditorPersistenceBlocked =
     activeFileLocked || isPersistenceBarrierActive;

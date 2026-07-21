@@ -46,8 +46,9 @@ function normalizeTitle(raw: string): string {
  *
  * Do not call setState in onFocus / during the click caret gesture: a React
  * re-render mid-mouseup resets WKWebView selection to 0 (caret jumps to start).
- * While focused, every render saves and restores selection so ancestor
- * re-renders (autosave status, tab dirty, surface staging) cannot jump the caret.
+ * Selection is captured from DOM events (`onSelect` / `onInput`) — never from the
+ * render body (React 19 may interrupt/retry render) — and restored in
+ * useLayoutEffect after ancestor re-renders (autosave, tab dirty, staging).
  */
 function DocumentTitleFieldInner({
   value,
@@ -85,12 +86,12 @@ function DocumentTitleFieldInner({
     if (!pending || !focusedRef.current) return;
     const el = inputRef.current;
     if (!el || document.activeElement !== el) return;
-    pendingSelectionRef.current = null;
     try {
       el.setSelectionRange(pending.start, pending.end);
     } catch {
       // Ignore if the element is no longer selection-capable.
     }
+    // Keep `pending` so later ancestor re-renders can restore again until blur.
   }, []);
 
   const resizeTitle = useCallback(() => {
@@ -170,11 +171,6 @@ function DocumentTitleFieldInner({
     }
   };
 
-  // Capture selection before React commits this render's DOM updates.
-  if (focusedRef.current) {
-    rememberSelection();
-  }
-
   return (
     <DocumentTitleContextMenu
       inputRef={inputRef}
@@ -209,8 +205,12 @@ function DocumentTitleFieldInner({
               onChange(next);
             }
           }}
+          onSelect={() => {
+            rememberSelection();
+          }}
           onFocus={() => {
             focusedRef.current = true;
+            rememberSelection();
             onFocusChange?.(true);
           }}
           onBlur={(event) => {

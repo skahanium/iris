@@ -6,7 +6,10 @@ import { parseNoteForEditor } from "@/lib/markdown";
 import { documentOpenEnd, fileRead } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
 import { pathStem, resolveNoteDisplayTitle } from "@/lib/note-display";
-import { mergeTabsAfterPathRename } from "@/lib/note-tab-rename";
+import {
+  mergeTabsAfterPathRename,
+  selectMarkdownCacheAfterPathRename,
+} from "@/lib/note-tab-rename";
 import type { PersistBeforeLeave } from "@/hooks/useAppPersistenceLifecycle";
 import {
   emitNoteOpenVisibleCommitTrace,
@@ -27,6 +30,8 @@ interface UseTabManagerOptions {
   discardPristineNote?: (path: string, markdown: string) => Promise<void>;
   /** Live TipTap serialization for the active note (may be ahead of markdownRef). */
   getLiveMarkdown?: () => string;
+  /** Arm close-tab shell-UI suppress + cancel debounce before any await. */
+  beginSuppressShellUi?: (path: string) => void;
   /** Clear close-tab shell-UI suppress after the tab is removed (or close fails). */
   clearSuppressShellUi?: () => void;
 }
@@ -114,6 +119,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   discardPristineNoteRef.current = options.discardPristineNote;
   const getLiveMarkdownRef = useRef(options.getLiveMarkdown);
   getLiveMarkdownRef.current = options.getLiveMarkdown;
+  const beginSuppressShellUiRef = useRef(options.beginSuppressShellUi);
+  beginSuppressShellUiRef.current = options.beginSuppressShellUi;
   const clearSuppressShellUiRef = useRef(options.clearSuppressShellUi);
   clearSuppressShellUiRef.current = options.clearSuppressShellUi;
 
@@ -654,6 +661,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       if (sessionId) {
         closingSessionIdsRef.current.add(sessionId);
       }
+      // Suppress shell chrome and cancel debounce BEFORE any await so an
+      // in-flight autosave cannot paint dirty/saving UI during close.
+      beginSuppressShellUiRef.current?.(path);
       const wasActiveAtStart =
         activePathRef.current === path ||
         (sessionId !== undefined &&
@@ -782,11 +792,30 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
             remainingNoteCount: 0,
           };
         }
-        await activateTab(switchTo);
+        try {
+          await activateTab(switchTo);
+        } catch (activateError) {
+          // Tab chrome already dropped the closed note. Do not report the close
+          // itself as failed — recover the editor away from the removed path.
+          const msg =
+            activateError instanceof Error
+              ? activateError.message
+              : String(activateError);
+          onStatusChange?.(`关闭后切换到相邻标签失败：${msg}`);
+          if (
+            activePathRef.current === closePath ||
+            activePathRef.current === path ||
+            (sessionId !== undefined &&
+              tabsRef.current.find((tab) => tab.path === activePathRef.current)
+                ?.documentSessionId === sessionId)
+          ) {
+            clearEditorState();
+          }
+        }
         return {
           closed: true,
           discardedPristine,
-          nextActivePath: switchTo,
+          nextActivePath: activePathRef.current,
           remainingNoteCount: nextTabs.length,
         };
       } catch (e) {
@@ -1021,9 +1050,16 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     ) => {
       if (oldPath === newPath) return;
       const displayTitle = resolveNoteDisplayTitle({ path: newPath });
-      const cachedMarkdown =
-        markdownOverride ?? tabMarkdownCacheRef.current.get(oldPath);
-      if (cachedMarkdown) {
+      const oldTab = tabsRef.current.find((tab) => tab.path === oldPath);
+      const newTab = tabsRef.current.find((tab) => tab.path === newPath);
+      const cachedMarkdown = selectMarkdownCacheAfterPathRename({
+        destinationCached: tabMarkdownCacheRef.current.get(newPath),
+        destinationDirty: Boolean(newTab?.dirty),
+        sourceCached: tabMarkdownCacheRef.current.get(oldPath),
+        sourceDirty: Boolean(oldTab?.dirty),
+        sourceOverride: markdownOverride,
+      });
+      if (cachedMarkdown !== undefined) {
         tabMarkdownCacheRef.current.set(newPath, cachedMarkdown);
       }
       tabMarkdownCacheRef.current.delete(oldPath);
@@ -1042,7 +1078,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         // The editor surface is session-keyed; only its mutable path changes.
         activePathRef.current = newPath;
         setActivePath(newPath);
-        setMarkdown(markdownOverride ?? markdownRef.current);
+        setMarkdown(cachedMarkdown ?? markdownRef.current);
       }
     },
     [replaceTabs, setMarkdown],

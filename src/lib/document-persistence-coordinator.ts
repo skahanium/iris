@@ -439,6 +439,17 @@ export class DocumentPersistenceCoordinator {
     this.records.set(newPath, source);
   }
 
+  /**
+   * Cancels a pending debounce timer without discarding the dirty snapshot.
+   * Used when close-tab suppress starts so an in-flight timer cannot emit
+   * unsaved chrome before the leave barrier owns the write.
+   */
+  cancelScheduled(path: string): void {
+    const record = this.records.get(this.resolvePath(path));
+    if (!record) return;
+    this.cancelTimer(record);
+  }
+
   /** Stops pending work and forgets a document that was deleted or discarded. */
   discard(path: string): Promise<void> {
     const resolvedPath = this.resolvePath(path);

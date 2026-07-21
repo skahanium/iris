@@ -566,6 +566,109 @@ describe("useTabManager handleNewNote", () => {
     );
   });
 
+  it("preserves a dirty destination cache when merging onto an open clean source tab", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+    const destinationDirty =
+      '---\ntitle: "Target"\n---\n\nDestination unsaved body';
+
+    fileRead.mockImplementation(async (path: string) => {
+      if (path === "source.md") {
+        return fileReadResult("# Source\n");
+      }
+      if (path === "target.md") {
+        return fileReadResult("# Target\n");
+      }
+      throw new Error(`unexpected read: ${path}`);
+    });
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    await openAndCommit(apiRef, "source.md", "Source");
+    await openAndCommit(apiRef, "target.md", "Target");
+
+    await act(async () => {
+      apiRef.current!.syncTabMarkdownCache("target.md", destinationDirty);
+      apiRef.current!.markDirty();
+    });
+    expect(apiRef.current!.tabs.find((tab) => tab.path === "target.md")?.dirty).toBe(
+      true,
+    );
+
+    await act(async () => {
+      apiRef.current!.replaceOpenTabPath("source.md", "target.md", "Target");
+    });
+
+    expect(apiRef.current!.tabs.map((tab) => tab.path)).toEqual(["target.md"]);
+    expect(apiRef.current!.getTabMarkdownCached("target.md")).toBe(
+      destinationDirty,
+    );
+    expect(apiRef.current!.tabs[0]?.dirty).toBe(true);
+  });
+
+  it("keeps close successful when switching to the next tab fails after removal", async () => {
+    const persistBeforeLeave = vi.fn(async () => "# A\n");
+    const onStatusChange = vi.fn();
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    fileRead.mockImplementation(async (path: string) => {
+      if (path === "a.md") {
+        return fileReadResult("# A\n");
+      }
+      if (path === "b.md") {
+        return fileReadResult("# B\n");
+      }
+      throw new Error(`unexpected read: ${path}`);
+    });
+
+    function CloseHarness() {
+      const api = useTabManager({
+        discardPristineNote: async (path) => {
+          await fileDiscard(path);
+        },
+        onStatusChange,
+        persistBeforeLeave,
+      });
+      apiRef.current = api;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(CloseHarness));
+    });
+
+    await openAndCommit(apiRef, "a.md", "A");
+    await openAndCommit(apiRef, "b.md", "B");
+
+    await act(async () => {
+      apiRef.current!.invalidateDocumentRuntimeState("a.md");
+    });
+    expect(apiRef.current!.getTabMarkdownCached("a.md")).toBeUndefined();
+
+    fileRead.mockImplementation(async (path: string) => {
+      if (path === "a.md") {
+        throw new Error("disk read failed for next tab");
+      }
+      throw new Error(`unexpected read: ${path}`);
+    });
+
+    let closeResult!: { closed: boolean; remainingNoteCount: number };
+    await act(async () => {
+      closeResult = await apiRef.current!.closeTab("b.md");
+    });
+
+    expect(closeResult.closed).toBe(true);
+    expect(apiRef.current!.tabs.map((tab) => tab.path)).toEqual(["a.md"]);
+    expect(onStatusChange).toHaveBeenCalledWith(
+      expect.stringContaining("切换到相邻标签失败"),
+    );
+  });
+
   it("still closes the tab when its path is renamed during close persistence", async () => {
     let releasePersist!: (value: string) => void;
     const persistBeforeLeave = vi.fn(

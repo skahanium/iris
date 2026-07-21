@@ -417,6 +417,227 @@ describe("useAppPersistenceLifecycle", () => {
     expect(api.hasDirtyDocuments).toBe(false);
   });
 
+  it("suppresses markClean chrome during close-tab leave even if shell markdown prop churns", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const markClean = vi.fn();
+    const setMarkdown = vi.fn();
+    const firstWrite = deferred<{
+      id: number;
+      path: string;
+      title: string;
+      updated_at: string;
+      word_count: number;
+    }>();
+    fileWrite.mockReturnValueOnce(firstWrite.promise);
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+    const opened = '---\ntitle: "Note"\n---\n\nOpened body.';
+    const edited = '---\ntitle: "Note"\n---\n\nEdited before close.';
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: opened,
+          markClean,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          setMarkdown,
+          tabs: [
+            {
+              dirty: true,
+              documentSessionId: "session-close-1",
+              locked: false,
+              path: "note.md",
+              title: "Note",
+            },
+          ],
+        }),
+      );
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: edited,
+          markClean,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          setMarkdown,
+          tabs: [
+            {
+              dirty: true,
+              documentSessionId: "session-close-1",
+              locked: false,
+              path: "note.md",
+              title: "Note",
+            },
+          ],
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      api.notifyDirty("note.md");
+    });
+    markClean.mockClear();
+    setMarkdown.mockClear();
+
+    let leavePromise!: Promise<string | null>;
+    await act(async () => {
+      leavePromise = persistBeforeLeaveRef.current("note.md", {
+        reason: "tab_leave",
+        retainSuppressShellUi: true,
+        suppressShellUi: true,
+      });
+      await Promise.resolve();
+    });
+
+    // Churn shell markdown state while the close leave write is in flight.
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorContentTick: 1,
+          editorReady: true,
+          markdown: `${edited}\n\nShell prop churn.`,
+          markClean,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          setMarkdown,
+          tabs: [
+            {
+              dirty: true,
+              documentSessionId: "session-close-1",
+              locked: false,
+              path: "note.md",
+              title: "Note",
+            },
+          ],
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      firstWrite.resolve({
+        id: 1,
+        path: "note.md",
+        title: "Note",
+        updated_at: "",
+        word_count: 4,
+      });
+      await leavePromise;
+    });
+
+    expect(fileWrite).toHaveBeenCalledWith("note.md", edited);
+    expect(markClean).not.toHaveBeenCalled();
+    expect(setMarkdown).not.toHaveBeenCalled();
+    api.clearSuppressShellUi();
+  });
+
+  it("beginSuppressShellUi cancels debounce autosave before close leave barrier", async () => {
+    vi.useFakeTimers();
+    try {
+      const persistBeforeLeaveRef = {
+        current: async () => null,
+      } as React.MutableRefObject<PersistBeforeLeave>;
+      const markClean = vi.fn();
+      let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+      const opened = '---\ntitle: "Note"\n---\n\nOpened body.';
+      const edited = '---\ntitle: "Note"\n---\n\nEdited then closed.';
+
+      await act(async () => {
+        root.render(
+          createElement(Harness, {
+            editorContentTick: 1,
+            editorReady: true,
+            markdown: opened,
+            markClean,
+            onReady: (next) => {
+              api = next;
+            },
+            persistBeforeLeaveRef,
+            tabs: [
+              {
+                dirty: true,
+                documentSessionId: "session-close-2",
+                locked: false,
+                path: "note.md",
+                title: "Note",
+              },
+            ],
+          }),
+        );
+      });
+
+      await act(async () => {
+        root.render(
+          createElement(Harness, {
+            editorContentTick: 1,
+            editorReady: true,
+            markdown: edited,
+            markClean,
+            onReady: (next) => {
+              api = next;
+            },
+            persistBeforeLeaveRef,
+            tabs: [
+              {
+                dirty: true,
+                documentSessionId: "session-close-2",
+                locked: false,
+                path: "note.md",
+                title: "Note",
+              },
+            ],
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      await act(async () => {
+        api.notifyDirty("note.md");
+      });
+      expect(api.hasDirtyDocuments).toBe(true);
+      fileWrite.mockClear();
+      markClean.mockClear();
+
+      await act(async () => {
+        api.beginSuppressShellUi("note.md");
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(fileWrite).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await persistBeforeLeaveRef.current("note.md", {
+          reason: "tab_leave",
+          retainSuppressShellUi: true,
+          suppressShellUi: true,
+        });
+      });
+
+      expect(fileWrite).toHaveBeenCalledWith("note.md", edited);
+      expect(markClean).not.toHaveBeenCalled();
+      api.clearSuppressShellUi();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not project live-origin saves back into shell markdown state", async () => {
     const persistBeforeLeaveRef = {
       current: async () => null,

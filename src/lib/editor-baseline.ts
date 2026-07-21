@@ -15,7 +15,16 @@ interface ResetEditorBaselineOptions {
 
 function clampTextSelectionPosition(doc: ProseMirrorNode, position: number) {
   const max = Math.max(1, doc.content.size - 1);
-  return Math.min(Math.max(1, position), max);
+  const clamped = Math.min(Math.max(1, position), max);
+  try {
+    const $pos = doc.resolve(clamped);
+    if ($pos.parent.inlineContent) {
+      return clamped;
+    }
+    return TextSelection.near($pos, -1).from;
+  } catch {
+    return TextSelection.atStart(doc).from;
+  }
 }
 
 function resolveBaselineSelection(
@@ -40,7 +49,11 @@ function resolveBaselineSelection(
   try {
     return TextSelection.create(doc, from, to);
   } catch {
-    return TextSelection.near(doc.resolve(to), -1);
+    try {
+      return TextSelection.near(doc.resolve(to), -1);
+    } catch {
+      return TextSelection.atStart(doc);
+    }
   }
 }
 

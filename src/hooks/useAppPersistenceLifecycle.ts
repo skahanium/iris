@@ -152,6 +152,9 @@ export function useAppPersistenceLifecycle({
   const persistenceBarrierTaskRef = useRef<Promise<void> | null>(null);
   /** Session id or path key while close-tab suppress is active. */
   const suppressShellUiKeyRef = useRef<string | null>(null);
+  /** Latest shell markdown without putting it in acknowledgeSnapshot deps. */
+  const markdownShellRef = useRef(markdown);
+  markdownShellRef.current = markdown;
   const isPersistenceBarrierActiveNow = useCallback(
     () => persistenceBarrierActiveRef.current,
     [],
@@ -167,10 +170,25 @@ export function useAppPersistenceLifecycle({
     },
     [tabsRef],
   );
+  const isShellUiSuppressedForPathRef = useRef(isShellUiSuppressedForPath);
+  isShellUiSuppressedForPathRef.current = isShellUiSuppressedForPath;
 
   const clearSuppressShellUi = useCallback(() => {
     suppressShellUiKeyRef.current = null;
   }, []);
+
+  /**
+   * Arm close-tab shell-UI suppress before any await, and cancel a pending
+   * debounce timer so it cannot paint dirty/saving chrome mid-close.
+   */
+  const beginSuppressShellUi = useCallback(
+    (path: string) => {
+      const tab = tabsRef.current.find((item) => item.path === path);
+      suppressShellUiKeyRef.current = tab?.documentSessionId ?? path;
+      coordinator.cancelScheduled(path);
+    },
+    [coordinator, tabsRef],
+  );
   const getLastSavedSnapshot = useCallback((): LastSavedSnapshot | null => {
     const path = activePathRef.current;
     if (!path) return null;
@@ -195,7 +213,9 @@ export function useAppPersistenceLifecycle({
         return;
       }
       syncTabMarkdownCache(snapshot.path, snapshot.markdown);
-      const suppressShellUi = isShellUiSuppressedForPath(snapshot.path);
+      const suppressShellUi = isShellUiSuppressedForPathRef.current(
+        snapshot.path,
+      );
       if (!suppressShellUi) {
         markClean(
           snapshot.path,
@@ -211,7 +231,7 @@ export function useAppPersistenceLifecycle({
         snapshot.source,
       );
       const willSetMarkdown =
-        projectIntoShell && markdown !== snapshot.markdown;
+        projectIntoShell && markdownShellRef.current !== snapshot.markdown;
       if (willSetMarkdown) {
         setMarkdown(snapshot.markdown);
       }
@@ -220,31 +240,28 @@ export function useAppPersistenceLifecycle({
       activePathRef,
       applySavedMarkdown,
       dirtyRef,
-      isShellUiSuppressedForPath,
       markClean,
-      markdown,
       setMarkdown,
       syncTabMarkdownCache,
     ],
   );
+  const acknowledgeSnapshotRef = useRef(acknowledgeSnapshot);
+  acknowledgeSnapshotRef.current = acknowledgeSnapshot;
 
   useEffect(() => {
     return coordinator.subscribe((snapshot) => {
       setHasDirtyDocuments(coordinator.hasDirtyDocuments());
       if (!snapshot) return;
-      const suppressShellUi = isShellUiSuppressedForPath(snapshot.path);
+      const suppressShellUi = isShellUiSuppressedForPathRef.current(
+        snapshot.path,
+      );
       if (snapshot.path === activePathRef.current && !suppressShellUi) {
         setSaveStatus(snapshot.status);
         setSaveError(snapshot.error);
       }
-      acknowledgeSnapshot(snapshot);
+      acknowledgeSnapshotRef.current(snapshot);
     });
-  }, [
-    acknowledgeSnapshot,
-    activePathRef,
-    coordinator,
-    isShellUiSuppressedForPath,
-  ]);
+  }, [activePathRef, coordinator]);
 
   useEffect(() => {
     const path = activePath;
@@ -731,6 +748,7 @@ export function useAppPersistenceLifecycle({
     abortPathMigration,
     flushAllOpenTabs,
     clearSuppressShellUi,
+    beginSuppressShellUi,
     saveStatus,
     saveError,
     hasDirtyDocuments,

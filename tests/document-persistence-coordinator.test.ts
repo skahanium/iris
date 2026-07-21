@@ -353,4 +353,33 @@ describe("DocumentPersistenceCoordinator", () => {
       "no recoverable snapshot",
     );
   });
+
+  it("cancels a scheduled debounce commit without discarding the dirty snapshot", async () => {
+    vi.useFakeTimers();
+    try {
+      const write = vi.fn(async () => written);
+      const coordinator = new DocumentPersistenceCoordinator({
+        delayMs: 1200,
+        write,
+      });
+
+      coordinator.load("note.md", "opened", 1);
+      coordinator.capture("note.md", "edited", "user_edit");
+      expect(coordinator.get("note.md")?.status).toBe("dirty");
+
+      coordinator.cancelScheduled("note.md");
+      await vi.advanceTimersByTimeAsync(2000);
+
+      expect(write).not.toHaveBeenCalled();
+      expect(coordinator.get("note.md")).toMatchObject({
+        markdown: "edited",
+        status: "dirty",
+      });
+
+      await coordinator.barrier("note.md");
+      expect(write).toHaveBeenCalledWith("note.md", "edited");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

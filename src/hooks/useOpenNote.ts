@@ -214,11 +214,29 @@ export function useOpenNote({
             onPathRenamed?.(oldPath, renamedPath);
           }
         } catch {
-          if (generation !== titleRenameGenerationRef.current) return;
-          const restored = pathStem(oldPath);
-          noteTitleRef.current = restored;
-          setNoteTitle(restored);
-          onPathRenameError?.();
+          if (generation === titleRenameGenerationRef.current) {
+            const restored = pathStem(oldPath);
+            noteTitleRef.current = restored;
+            setNoteTitle(restored);
+            onPathRenameError?.();
+          }
+        } finally {
+          // When an older rename fails after a newer one was queued, the older
+          // catch skips restore. The latest generation must still align the
+          // visible title with the authoritative path stem once it settles.
+          if (
+            generation === titleRenameGenerationRef.current &&
+            !titleFocusedRef.current
+          ) {
+            const path = activePathRef.current;
+            if (path) {
+              const stem = pathStem(path);
+              if (noteTitleRef.current !== stem) {
+                noteTitleRef.current = stem;
+                setNoteTitle(stem);
+              }
+            }
+          }
         }
       };
       titleRenameQueueRef.current = titleRenameQueueRef.current.then(run, run);
