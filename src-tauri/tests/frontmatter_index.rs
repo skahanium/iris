@@ -26,6 +26,8 @@ fn indexes_frontmatter_and_tags() {
     let dir = tempdir().unwrap();
     let vault = dir.path().join("vault");
     fs::create_dir_all(&vault).unwrap();
+    // Filename stem is the single display-title authority; frontmatter `title`
+    // is legacy and must not override the indexed title.
     let note = vault.join("meet.md");
     fs::write(
         &note,
@@ -47,7 +49,7 @@ fn indexes_frontmatter_and_tags() {
 
     assert!(fm.is_some());
     assert!(fm.unwrap().contains("tags"));
-    assert_eq!(title, "会议记录");
+    assert_eq!(title, "meet");
     assert_eq!(tag_names(&conn, file_id), vec!["iris", "工作"]);
 }
 
