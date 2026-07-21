@@ -594,9 +594,9 @@ describe("useTabManager handleNewNote", () => {
       apiRef.current!.syncTabMarkdownCache("target.md", destinationDirty);
       apiRef.current!.markDirty();
     });
-    expect(apiRef.current!.tabs.find((tab) => tab.path === "target.md")?.dirty).toBe(
-      true,
-    );
+    expect(
+      apiRef.current!.tabs.find((tab) => tab.path === "target.md")?.dirty,
+    ).toBe(true);
 
     await act(async () => {
       apiRef.current!.replaceOpenTabPath("source.md", "target.md", "Target");
