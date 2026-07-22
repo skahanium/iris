@@ -1,8 +1,63 @@
 use std::fs;
 use std::time::{Duration, SystemTime};
 
+#[cfg(target_os = "macos")]
+use std::env;
+#[cfg(target_os = "macos")]
+use std::ffi::OsString;
+#[cfg(target_os = "macos")]
+use std::sync::{LazyLock, Mutex};
+
 use iris_lib::hygiene::{cleanup_once, CleanupConfig};
+#[cfg(target_os = "macos")]
+use iris_lib::paths::prepare_iris_paths;
 use iris_lib::paths::{resolve_iris_paths, IrisPathEnv};
+
+#[cfg(target_os = "macos")]
+const PREPARED_PATH_ENV_KEYS: &[&str] = &[
+    "IRIS_HOME",
+    "IRIS_DATA_DIR",
+    "IRIS_CACHE_DIR",
+    "IRIS_TEMP_DIR",
+    "IRIS_GLOBAL_SKILLS_DIR",
+    "ORT_CACHE_DIR",
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "XDG_CACHE_HOME",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+];
+
+#[cfg(target_os = "macos")]
+static PATH_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[cfg(target_os = "macos")]
+struct RestoredPathEnvironment(Vec<(&'static str, Option<OsString>)>);
+
+#[cfg(target_os = "macos")]
+impl RestoredPathEnvironment {
+    fn capture() -> Self {
+        Self(
+            PREPARED_PATH_ENV_KEYS
+                .iter()
+                .map(|key| (*key, env::var_os(key)))
+                .collect(),
+        )
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for RestoredPathEnvironment {
+    fn drop(&mut self) {
+        for (key, value) in &self.0 {
+            match value {
+                Some(value) => env::set_var(key, value),
+                None => env::remove_var(key),
+            }
+        }
+    }
+}
 
 #[test]
 fn resolve_iris_paths_prefers_explicit_iris_environment() {
@@ -60,6 +115,108 @@ fn resolve_iris_paths_uses_executable_portable_home_before_system_app_data() {
         paths.global_skills_dir,
         exe_dir.join(".iris").join("skills")
     );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn resolve_iris_paths_uses_application_support_for_macos_app_bundles() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable_dir = dir.path().join("Iris.app").join("Contents").join("MacOS");
+    fs::create_dir_all(&executable_dir).unwrap();
+    let executable = executable_dir.join("iris");
+    fs::write(&executable, "binary").unwrap();
+    let app_data_dir = dir
+        .path()
+        .join("Application Support")
+        .join("com.iris.notes");
+
+    let paths = resolve_iris_paths(IrisPathEnv {
+        iris_home: None,
+        iris_data_dir: None,
+        iris_cache_dir: None,
+        iris_temp_dir: None,
+        iris_global_skills_dir: None,
+        current_exe: Some(executable),
+        allow_system_data_dir: false,
+        tauri_app_data_dir: Some(app_data_dir.clone()),
+    })
+    .unwrap();
+
+    assert_eq!(paths.home_dir, app_data_dir);
+    assert_eq!(paths.data_dir, paths.home_dir.join("app-data"));
+    assert_eq!(paths.cache_dir, paths.home_dir.join("cache"));
+    assert_eq!(paths.temp_dir, paths.home_dir.join("tmp"));
+    assert_eq!(paths.global_skills_dir, paths.home_dir.join("skills"));
+    assert!(!paths.cache_dir.starts_with(&executable_dir));
+    assert!(!paths.cache_dir.join("updates").starts_with(&executable_dir));
+    assert!(!paths.temp_dir.starts_with(&executable_dir));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn prepare_iris_paths_sets_macos_bundle_temporary_directories_outside_the_app() {
+    let _lock = PATH_ENV_LOCK.lock().unwrap();
+    let _restore_environment = RestoredPathEnvironment::capture();
+    let dir = tempfile::tempdir().unwrap();
+    let executable_dir = dir.path().join("Iris.app").join("Contents").join("MacOS");
+    fs::create_dir_all(&executable_dir).unwrap();
+    let executable = executable_dir.join("iris");
+    fs::write(&executable, "binary").unwrap();
+    let app_data_dir = dir
+        .path()
+        .join("Application Support")
+        .join("com.iris.notes");
+
+    let paths = resolve_iris_paths(IrisPathEnv {
+        iris_home: None,
+        iris_data_dir: None,
+        iris_cache_dir: None,
+        iris_temp_dir: None,
+        iris_global_skills_dir: None,
+        current_exe: Some(executable),
+        allow_system_data_dir: false,
+        tauri_app_data_dir: Some(app_data_dir.clone()),
+    })
+    .unwrap();
+
+    prepare_iris_paths(&paths).unwrap();
+
+    assert_eq!(
+        env::var_os("IRIS_CACHE_DIR"),
+        Some(paths.cache_dir.clone().into())
+    );
+    for key in ["TMPDIR", "TEMP", "TMP"] {
+        let temp_dir = std::path::PathBuf::from(env::var_os(key).unwrap());
+        assert_eq!(temp_dir, paths.temp_dir);
+        assert!(!temp_dir.starts_with(&executable_dir));
+    }
+    assert!(paths.cache_dir.join("updates").starts_with(app_data_dir));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn resolve_iris_paths_rejects_macos_app_bundles_without_application_support() {
+    let dir = tempfile::tempdir().unwrap();
+    let executable_dir = dir.path().join("Iris.app").join("Contents").join("MacOS");
+    fs::create_dir_all(&executable_dir).unwrap();
+    let executable = executable_dir.join("iris");
+    fs::write(&executable, "binary").unwrap();
+
+    let error = resolve_iris_paths(IrisPathEnv {
+        iris_home: None,
+        iris_data_dir: None,
+        iris_cache_dir: None,
+        iris_temp_dir: None,
+        iris_global_skills_dir: None,
+        current_exe: Some(executable),
+        allow_system_data_dir: false,
+        tauri_app_data_dir: None,
+    })
+    .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("macOS application bundle requires an application data directory"));
 }
 
 #[test]

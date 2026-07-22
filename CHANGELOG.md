@@ -2,9 +2,14 @@
 
 本项目的重要变更记录于此，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [1.2.13] — Current
+## [1.2.14] — Current
 
 开发中，尚未发布。计划范围见 [ROADMAP.md](./ROADMAP.md) 与 [RAG 优化设计](./docs/specs/v1.2.6-rag-optimization.md)。本节只在功能完成并经验证后记录用户可见变更。
+
+### Fixed
+
+- macOS 已安装应用将运行时状态与更新缓存移出 `Iris.app`，避免更新安装临时目录阻止替换应用包；后续版本可使用应用内更新。
+- **首次从 1.2.12/1.2.13 升级时必须先完成安全手工迁移，再用 DMG 替换应用。** 迁移会保留 LLM/MCP 配置与凭据状态、人格、Vault 选择和 Agent 会话；详细步骤见 [macOS 首次升级手工清单](./docs/testing/app-close-manual-checklist.md#macos-首次升级安全手工迁移与验收)。Markdown vault 不会被迁移或修改。
 
 ### Added
 

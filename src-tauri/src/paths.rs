@@ -1,5 +1,5 @@
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::{AppError, AppResult};
 
@@ -27,17 +27,25 @@ pub struct IrisPathEnv {
 pub fn resolve_iris_paths(input: IrisPathEnv) -> AppResult<IrisPaths> {
     let home_dir = match clean_path(input.iris_home) {
         Some(path) => path,
-        None => portable_home(input.current_exe.clone()).or_else(|| {
-            input
-                .allow_system_data_dir
-                .then(|| input.tauri_app_data_dir.clone())
-                .flatten()
-        })
-        .ok_or_else(|| {
-            AppError::msg(
-                "IRIS_HOME is not set and the executable directory could not be resolved; refusing to use a system data directory implicitly",
-            )
-        })?,
+        None if is_macos_app_bundle_executable(input.current_exe.as_deref()) => input
+            .tauri_app_data_dir
+            .ok_or_else(|| {
+                AppError::msg(
+                    "macOS application bundle requires an application data directory",
+                )
+            })?,
+        None => portable_home(input.current_exe.clone())
+            .or_else(|| {
+                input
+                    .allow_system_data_dir
+                    .then(|| input.tauri_app_data_dir.clone())
+                    .flatten()
+            })
+            .ok_or_else(|| {
+                AppError::msg(
+                    "IRIS_HOME is not set and the executable directory could not be resolved; refusing to use a system data directory implicitly",
+                )
+            })?,
     };
 
     let paths = IrisPaths {
@@ -118,6 +126,29 @@ fn clean_path(path: Option<PathBuf>) -> Option<PathBuf> {
 
 fn portable_home(current_exe: Option<PathBuf>) -> Option<PathBuf> {
     current_exe.and_then(|exe| exe.parent().map(|parent| parent.join(".iris")))
+}
+
+fn is_macos_app_bundle_executable(current_exe: Option<&Path>) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        current_exe
+            .and_then(Path::parent)
+            .filter(|directory| directory.file_name().is_some_and(|name| name == "MacOS"))
+            .and_then(Path::parent)
+            .filter(|directory| directory.file_name().is_some_and(|name| name == "Contents"))
+            .and_then(Path::parent)
+            .is_some_and(|bundle| {
+                bundle
+                    .extension()
+                    .is_some_and(|extension| extension == "app")
+            })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = current_exe;
+        false
+    }
 }
 
 fn set_env_path(key: &str, value: &std::path::Path) {
