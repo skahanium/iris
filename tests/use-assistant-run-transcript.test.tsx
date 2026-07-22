@@ -353,10 +353,7 @@ describe("useAssistantRunTranscript", () => {
         content: "世界",
         runId: "run-1",
         turnId: "turn-1",
-        processItems: [
-          { id: "stage:2", label: "正在准备" },
-          { id: "stage:3", label: "正在生成答复" },
-        ],
+        processItems: [{ id: "stage:3", label: "正在生成答复" }],
       },
     ]);
   });
