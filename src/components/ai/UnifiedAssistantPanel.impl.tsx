@@ -27,6 +27,7 @@ import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
 import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
 import { useAssistantConversation } from "./hooks/useAssistantConversation";
 import { useAssistantRunTranscript } from "./hooks/useAssistantRunTranscript";
+import { useAssistantPresentationPlayback } from "./hooks/useAssistantPresentationPlayback";
 import { useUnifiedAssistantSend } from "./hooks/useUnifiedAssistantSend";
 import type { UnifiedAssistantPanelProps } from "./types";
 
@@ -154,6 +155,7 @@ export function UnifiedAssistantPanel({
 
   useAssistantRunTranscript({
     run: assistantRun.eventState,
+    presentation: assistantRun.presentationState,
     messages,
     setMessages,
     setStreaming,
@@ -161,6 +163,11 @@ export function UnifiedAssistantPanel({
     setError: setLastError,
     classifiedContextRef,
     takeClassifiedResult: assistantClassifiedRunTakeResult,
+  });
+  useAssistantPresentationPlayback({
+    presentation: assistantRun.presentationState,
+    run: assistantRun.eventState,
+    setMessages,
   });
 
   const { isStarting, send } = useUnifiedAssistantSend({

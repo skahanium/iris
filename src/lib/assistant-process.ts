@@ -62,10 +62,12 @@ export function projectAssistantProcessEvents(
         if (index !== undefined && current) {
           items[index] = {
             ...current,
-            status: "completed",
-            ...(createdAt >= current.createdAt
-              ? { durationMs: createdAt - current.createdAt }
-              : {}),
+            status: event.payload.success === false ? "failed" : "completed",
+            ...(typeof event.payload.durationMs === "number"
+              ? { durationMs: event.payload.durationMs }
+              : createdAt >= current.createdAt
+                ? { durationMs: createdAt - current.createdAt }
+                : {}),
           };
           break;
         }

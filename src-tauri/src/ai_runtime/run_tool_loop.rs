@@ -422,6 +422,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             } else {
                 "已确认的变更未执行"
             },
+            result.duration_ms,
+            result.success,
         )?;
         Ok(result)
     }
@@ -527,6 +529,8 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 &call.function.name,
                 &call.id,
                 summary,
+                result.duration_ms,
+                result.success,
             )?;
             if call.function.name == WEB_TOOL_NAME {
                 let failure = self.web_failure();
@@ -806,6 +810,8 @@ fn append_model_tool_completed(
     capability: &str,
     tool_call_id: &str,
     summary: &str,
+    duration_ms: u64,
+    success: bool,
 ) -> AppResult<()> {
     let event = AgentRunRepository::append_event(
         db,
@@ -817,6 +823,8 @@ fn append_model_tool_completed(
                 capability: capability.to_string(),
                 tool_call_id: tool_call_id.to_string(),
                 summary: summary.to_string(),
+                duration_ms: Some(duration_ms),
+                success: Some(success),
             },
         },
     )?;

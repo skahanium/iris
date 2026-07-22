@@ -9,6 +9,7 @@ import {
   assistantRunRetry,
   assistantRunStart,
   listenAssistantRunEvent,
+  listenAssistantRunPresentation,
 } from "@/lib/ipc";
 import type { AssistantRunStartRequest } from "@/types/ai";
 
@@ -18,6 +19,7 @@ vi.mock("@/lib/ipc", () => ({
   assistantRunRetry: vi.fn(),
   assistantRunStart: vi.fn(),
   listenAssistantRunEvent: vi.fn(),
+  listenAssistantRunPresentation: vi.fn(),
 }));
 
 const mockAssistantRunControl = vi.mocked(assistantRunControl);
@@ -25,6 +27,9 @@ const mockAssistantRunGet = vi.mocked(assistantRunGet);
 const mockAssistantRunRetry = vi.mocked(assistantRunRetry);
 const mockAssistantRunStart = vi.mocked(assistantRunStart);
 const mockListenAssistantRunEvent = vi.mocked(listenAssistantRunEvent);
+const mockListenAssistantRunPresentation = vi.mocked(
+  listenAssistantRunPresentation,
+);
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -65,6 +70,7 @@ afterEach(() => {
   mockAssistantRunRetry.mockReset();
   mockAssistantRunStart.mockReset();
   mockListenAssistantRunEvent.mockReset();
+  mockListenAssistantRunPresentation.mockReset();
 });
 
 describe("useAssistantRun", () => {
@@ -78,6 +84,7 @@ describe("useAssistantRun", () => {
     });
     mockAssistantRunGet.mockResolvedValue(null);
     mockListenAssistantRunEvent.mockResolvedValue(() => undefined);
+    mockListenAssistantRunPresentation.mockResolvedValue(() => undefined);
     mountProbe();
 
     await act(async () => {
@@ -119,6 +126,7 @@ describe("useAssistantRun", () => {
       emit = handler;
       return () => undefined;
     });
+    mockListenAssistantRunPresentation.mockResolvedValue(() => undefined);
     mountProbe();
     await act(async () => {
       await runApi?.start({ ...request(), webEnabled: true });
@@ -196,6 +204,7 @@ describe("useAssistantRun", () => {
     });
     mockAssistantRunGet.mockResolvedValue(null);
     mockListenAssistantRunEvent.mockResolvedValue(() => undefined);
+    mockListenAssistantRunPresentation.mockResolvedValue(() => undefined);
     mountProbe();
 
     await act(async () => {
@@ -203,6 +212,7 @@ describe("useAssistantRun", () => {
     });
 
     expect(mockListenAssistantRunEvent).toHaveBeenCalledTimes(1);
+    expect(mockListenAssistantRunPresentation).toHaveBeenCalledTimes(1);
   });
 
   it("submits the persisted confirmation identity and optimistic state version", async () => {
@@ -223,6 +233,7 @@ describe("useAssistantRun", () => {
       emit = handler;
       return () => undefined;
     });
+    mockListenAssistantRunPresentation.mockResolvedValue(() => undefined);
     mountProbe();
 
     await act(async () => {
@@ -304,6 +315,7 @@ describe("useAssistantRun", () => {
       emit = handler;
       return () => undefined;
     });
+    mockListenAssistantRunPresentation.mockResolvedValue(() => undefined);
     mountProbe();
 
     await act(async () => {

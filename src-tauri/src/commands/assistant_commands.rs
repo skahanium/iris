@@ -653,6 +653,11 @@ fn spawn_normal_direct_run(
     tauri::async_runtime::spawn(async move {
         let db = Arc::clone(&state.db);
         let sink = TauriRunEventSink::new(&app_handle);
+        if RunEngine::mark_preparing_with_sink(&db, &accepted.session, &accepted.run_id, &sink)
+            .is_err()
+        {
+            return;
+        }
         let policy = match evaluate_normal_run_policy(&db, &accepted) {
             Ok(policy) => policy,
             Err(_) => {

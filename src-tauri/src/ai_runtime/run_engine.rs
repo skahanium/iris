@@ -4,7 +4,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter};
 
@@ -16,7 +17,8 @@ use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLo
 use crate::ai_runtime::citation_linkify::linkify_web_citations;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::run_contract::{
-    AssistantSessionRef, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
+    AssistantSessionRef, PresentationProcessKind, PresentationProcessStatus, RunEventPayload,
+    RunEventType, RunPresentationEvent, RunPresentationPayload, RunState, SafeRunErrorCode,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -414,20 +416,10 @@ pub(crate) trait RunEventSink: Send + Sync {
     /// Emit only an event that has already been committed to the Repository.
     fn emit(&self, event: &crate::ai_runtime::run_contract::AssistantRunEvent) -> AppResult<()>;
 
-    /// Emit a non-replayable UI-only stream snapshot. Callers must never store it.
-    fn emit_transient_content(
-        &self,
-        _event: &crate::ai_runtime::run_contract::AssistantRunEvent,
-    ) -> AppResult<()> {
+    /// Emit one strictly ordered, non-persisted visual event. Delivery failure
+    /// must never invalidate the durable Run result.
+    fn emit_presentation(&self, _run_id: &str, _payload: RunPresentationPayload) -> AppResult<()> {
         Ok(())
-    }
-
-    /// Emit a non-replayable safe process snapshot such as a provider summary.
-    fn emit_transient_process(
-        &self,
-        event: &crate::ai_runtime::run_contract::AssistantRunEvent,
-    ) -> AppResult<()> {
-        self.emit_transient_content(event)
     }
 
     /// Emit a safe terminal event when SQLite itself cannot record that event.
@@ -454,6 +446,47 @@ pub(crate) struct TauriRunEventSink<'a> {
     app_handle: &'a AppHandle,
 }
 
+struct PresentationClock {
+    started_at: Instant,
+    next_seq: u64,
+}
+
+/// Presentation delivery can cross command boundaries (for example after a
+/// confirmation resume), so its sequence clock belongs to the desktop process
+/// rather than one short-lived IPC sink.
+fn presentation_clocks() -> &'static Mutex<HashMap<String, PresentationClock>> {
+    static CLOCKS: OnceLock<Mutex<HashMap<String, PresentationClock>>> = OnceLock::new();
+    CLOCKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn next_presentation_event(
+    run_id: &str,
+    payload: RunPresentationPayload,
+) -> AppResult<RunPresentationEvent> {
+    let mut clocks = presentation_clocks()
+        .lock()
+        .map_err(|_| AppError::msg("agent_run_presentation_lock_failed"))?;
+    let clock = clocks
+        .entry(run_id.to_string())
+        .or_insert_with(|| PresentationClock {
+            started_at: Instant::now(),
+            next_seq: 1,
+        });
+    let event = RunPresentationEvent::new(
+        run_id,
+        clock.next_seq,
+        clock
+            .started_at
+            .elapsed()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64,
+        payload,
+    )
+    .map_err(AppError::msg)?;
+    clock.next_seq = clock.next_seq.saturating_add(1);
+    Ok(event)
+}
+
 impl<'a> TauriRunEventSink<'a> {
     pub(crate) fn new(app_handle: &'a AppHandle) -> Self {
         Self { app_handle }
@@ -464,21 +497,104 @@ impl RunEventSink for TauriRunEventSink<'_> {
     fn emit(&self, event: &crate::ai_runtime::run_contract::AssistantRunEvent) -> AppResult<()> {
         self.app_handle
             .emit("assistant:run_event", event)
-            .map_err(|_| AppError::msg("agent_run_event_emit_failed"))
+            .map_err(|_| AppError::msg("agent_run_event_emit_failed"))?;
+        let payload = match event.payload() {
+            RunEventPayload::StageChanged { stage, .. } => {
+                Some(RunPresentationPayload::ProcessStarted {
+                    item_id: format!("stage:{}", event.seq()),
+                    item_kind: PresentationProcessKind::Stage,
+                    label: stage.clone(),
+                })
+            }
+            // Reasoning summaries are projected live by AgentRunStreamObserver.
+            // Re-projecting the durable event would double-count presentationSeq.
+            RunEventPayload::ReasoningSummary { .. } => None,
+            RunEventPayload::ToolStarted {
+                capability,
+                tool_call_id,
+            } => Some(RunPresentationPayload::ProcessStarted {
+                item_id: format!("tool:{tool_call_id}"),
+                item_kind: PresentationProcessKind::Tool,
+                label: capability.clone(),
+            }),
+            RunEventPayload::ToolCompleted {
+                tool_call_id,
+                duration_ms,
+                success,
+                ..
+            } => Some(RunPresentationPayload::ProcessFinished {
+                item_id: format!("tool:{tool_call_id}"),
+                status: if *success == Some(false) {
+                    PresentationProcessStatus::Failed
+                } else {
+                    PresentationProcessStatus::Completed
+                },
+                duration_ms: *duration_ms,
+            }),
+            RunEventPayload::Failed { .. } | RunEventPayload::Cancelled { .. } => {
+                Some(RunPresentationPayload::AnswerComplete)
+            }
+            _ => None,
+        };
+        if let Some(payload) = payload {
+            let _ = self.emit_presentation(event.run_id(), payload);
+        }
+        Ok(())
     }
 
-    fn emit_transient_content(
-        &self,
-        event: &crate::ai_runtime::run_contract::AssistantRunEvent,
-    ) -> AppResult<()> {
-        self.app_handle
-            .emit("assistant:run_event", event)
-            .map_err(|_| AppError::msg("agent_run_event_delivery_failed"))
+    fn emit_presentation(&self, run_id: &str, payload: RunPresentationPayload) -> AppResult<()> {
+        let is_terminal = matches!(&payload, RunPresentationPayload::AnswerComplete);
+        let event = next_presentation_event(run_id, payload)?;
+        let result = self
+            .app_handle
+            .emit("assistant:run_presentation", event)
+            .map_err(|_| AppError::msg("agent_run_presentation_delivery_failed"));
+        if is_terminal {
+            if let Ok(mut clocks) = presentation_clocks().lock() {
+                clocks.remove(run_id);
+            }
+        }
+        result
+    }
+}
+
+#[cfg(test)]
+mod presentation_clock_tests {
+    use super::{next_presentation_event, presentation_clocks};
+    use crate::ai_runtime::run_contract::{PresentationProcessKind, RunPresentationPayload};
+
+    #[test]
+    fn presentation_sequence_survives_a_new_sink_for_the_same_run() {
+        let run_id = "presentation-clock-cross-sink";
+        let first = next_presentation_event(
+            run_id,
+            RunPresentationPayload::ProcessStarted {
+                item_id: "stage:1".to_string(),
+                item_kind: PresentationProcessKind::Stage,
+                label: "正在准备".to_string(),
+            },
+        )
+        .expect("first presentation event");
+        let second = next_presentation_event(run_id, RunPresentationPayload::AnswerComplete)
+            .expect("second presentation event");
+
+        assert_eq!(
+            serde_json::to_value(first).expect("serialize")["presentationSeq"],
+            1
+        );
+        assert_eq!(
+            serde_json::to_value(second).expect("serialize")["presentationSeq"],
+            2
+        );
+        presentation_clocks()
+            .lock()
+            .expect("presentation clocks")
+            .remove(run_id);
     }
 }
 
 /// Separates live UI stream snapshots from the one validated durable Run delta.
-const STREAM_EVENT_FLUSH_BYTES: usize = 512;
+const STREAM_PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(33);
 const MAX_FINAL_OUTPUT_CHARS: usize = 32_000;
 
 #[derive(Debug, Clone, Copy)]
@@ -532,6 +648,8 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     pending_delta: String,
     transient_content: String,
     last_transient_bytes: usize,
+    last_presentation_emit_at: Instant,
+    presentation_content: String,
     defer_visible_deltas: bool,
     reasoning_summaries: BTreeMap<String, String>,
     persisted_reasoning_summaries: BTreeMap<String, String>,
@@ -565,6 +683,8 @@ impl<'a> AgentRunStreamObserver<'a> {
             pending_delta: String::new(),
             transient_content: String::new(),
             last_transient_bytes: 0,
+            last_presentation_emit_at: Instant::now(),
+            presentation_content: String::new(),
             defer_visible_deltas,
             reasoning_summaries: BTreeMap::new(),
             persisted_reasoning_summaries: BTreeMap::new(),
@@ -577,8 +697,29 @@ impl AgentRunStreamObserver<'_> {
     pub(crate) fn bind_validated_content(&mut self, content: &str) {
         self.pending_delta.clear();
         self.pending_delta.push_str(content);
+        if self.presentation_content != content {
+            if !self.presentation_content.is_empty() {
+                let _ = self
+                    .sink
+                    .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
+            }
+            self.presentation_content.clear();
+        }
         self.transient_content.clear();
         self.last_transient_bytes = 0;
+    }
+
+    /// Visible answer text captured before cancellation, already buffered for the UI.
+    pub(crate) fn interrupt_visible_content(&self) -> String {
+        if !self.presentation_content.is_empty() {
+            return self.presentation_content.clone();
+        }
+        self.transient_content.clone()
+    }
+
+    /// Allow a later final turn to emit AnswerDelta after tool rounds stayed private.
+    pub(crate) fn clear_deferred_visible_deltas(&mut self) {
+        self.defer_visible_deltas = false;
     }
 
     /// Deliver the complete provisional snapshot to the live UI without persistence.
@@ -589,19 +730,16 @@ impl AgentRunStreamObserver<'_> {
         {
             return Ok(());
         }
-        let event = crate::ai_runtime::run_contract::AssistantRunEvent::new(
+        let delta = self.transient_content[self.last_transient_bytes..].to_string();
+        let _ = self.sink.emit_presentation(
             self.run_id,
-            0,
-            self.running_state_version,
-            RunEventType::ContentDelta,
-            chrono::Utc::now().to_rfc3339(),
-            RunEventPayload::ContentDelta {
-                delta: self.transient_content.clone(),
+            RunPresentationPayload::AnswerDelta {
+                delta: delta.clone(),
             },
-        )
-        .map_err(AppError::msg)?;
-        self.sink.emit_transient_content(&event)?;
+        );
+        self.presentation_content.push_str(&delta);
         self.last_transient_bytes = self.transient_content.len();
+        self.last_presentation_emit_at = Instant::now();
         Ok(())
     }
 
@@ -612,6 +750,7 @@ impl AgentRunStreamObserver<'_> {
     /// web-grounded answer previously failed flush as `agent_run_persistence_failed`
     /// after evidence had already registered.
     pub(crate) fn flush(&mut self) -> AppResult<()> {
+        let emit_final_presentation = self.presentation_content != self.pending_delta;
         if self.pending_delta.is_empty() {
             return Ok(());
         }
@@ -627,11 +766,25 @@ impl AgentRunStreamObserver<'_> {
                     run_id: self.run_id.to_string(),
                     state_version: self.running_state_version,
                     event_type: RunEventType::ContentDelta,
-                    payload: RunEventPayload::ContentDelta { delta: chunk },
+                    payload: RunEventPayload::ContentDelta {
+                        delta: chunk.clone(),
+                    },
                 },
             )?;
             self.sink.emit(&persisted)?;
+            if emit_final_presentation {
+                let _ = self.sink.emit_presentation(
+                    self.run_id,
+                    RunPresentationPayload::AnswerDelta {
+                        delta: chunk.clone(),
+                    },
+                );
+                self.presentation_content.push_str(&chunk);
+            }
         }
+        let _ = self
+            .sink
+            .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete);
         Ok(())
     }
 
@@ -641,18 +794,23 @@ impl AgentRunStreamObserver<'_> {
         if summary_id.is_empty() || text.is_empty() {
             return Ok(());
         }
-        self.reasoning_summaries
+        let previous = self
+            .reasoning_summaries
             .insert(summary_id.clone(), text.clone());
-        let event = crate::ai_runtime::run_contract::AssistantRunEvent::new(
-            self.run_id,
-            0,
-            self.running_state_version,
-            RunEventType::ReasoningSummary,
-            chrono::Utc::now().to_rfc3339(),
-            RunEventPayload::ReasoningSummary { summary_id, text },
-        )
-        .map_err(AppError::msg)?;
-        self.sink.emit_transient_process(&event)
+        let payload = if previous.is_some() {
+            RunPresentationPayload::ProcessUpdated {
+                item_id: format!("reasoning:{summary_id}"),
+                label: text,
+            }
+        } else {
+            RunPresentationPayload::ProcessStarted {
+                item_id: format!("reasoning:{summary_id}"),
+                item_kind: PresentationProcessKind::ReasoningSummary,
+                label: text,
+            }
+        };
+        let _ = self.sink.emit_presentation(self.run_id, payload);
+        Ok(())
     }
 
     fn persist_reasoning_summaries(&mut self) -> AppResult<()> {
@@ -673,6 +831,14 @@ impl AgentRunStreamObserver<'_> {
                 },
             )?;
             self.sink.emit(&event)?;
+            let _ = self.sink.emit_presentation(
+                self.run_id,
+                RunPresentationPayload::ProcessFinished {
+                    item_id: format!("reasoning:{summary_id}"),
+                    status: PresentationProcessStatus::Completed,
+                    duration_ms: None,
+                },
+            );
             self.persisted_reasoning_summaries.insert(summary_id, text);
         }
         Ok(())
@@ -785,14 +951,30 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
         _token_index: u32,
     ) -> AppResult<()> {
         match &event.data {
-            crate::ai_runtime::model_gateway::StreamEventData::Token { token } => {
+            crate::ai_runtime::model_gateway::StreamEventData::Token {
+                token,
+                replace_visible,
+            } => {
+                if !event.surface.sanitizes_visible_output() {
+                    return Ok(());
+                }
+                if *replace_visible {
+                    self.transient_content.clear();
+                    self.last_transient_bytes = 0;
+                    if !self.presentation_content.is_empty() {
+                        let _ = self
+                            .sink
+                            .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
+                        self.presentation_content.clear();
+                    }
+                }
                 self.transient_content.push_str(token);
                 if !self.defer_visible_deltas
-                    && self
-                        .transient_content
-                        .len()
-                        .saturating_sub(self.last_transient_bytes)
-                        >= STREAM_EVENT_FLUSH_BYTES
+                    && (self.last_transient_bytes == 0
+                        || self.last_presentation_emit_at.elapsed()
+                            >= STREAM_PRESENTATION_FLUSH_INTERVAL
+                        || token.contains('\n')
+                        || *replace_visible)
                 {
                     self.flush_transient()?;
                 }
@@ -945,8 +1127,8 @@ impl RunEngine {
     ///
     /// Model routing and credential hydration occur after the accepted event so the
     /// UI can observe slow preparation. If either step cannot proceed, this keeps
-    /// the Run from being stranded in `Accepted` without exposing implementation
-    /// details or credential errors.
+    /// the Run from being stranded in `Accepted`/`Preparing` without exposing
+    /// implementation details or credential errors.
     pub(crate) fn fail_before_dispatch_with_sink(
         db: &Database,
         session: &AssistantSessionRef,
@@ -956,6 +1138,53 @@ impl RunEngine {
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        let preparing_version = match snapshot.run.state {
+            RunState::Preparing => snapshot.run.state_version,
+            RunState::Accepted => {
+                let preparing = AgentRunRepository::append_event(
+                    db,
+                    AppendRunEventInput {
+                        run_id: run_id.to_string(),
+                        state_version: snapshot.run.state_version,
+                        event_type: RunEventType::StageChanged,
+                        payload: RunEventPayload::StageChanged {
+                            state: RunState::Preparing,
+                            stage: "正在准备".to_string(),
+                        },
+                    },
+                )?;
+                sink.emit(&preparing)?;
+                preparing.state_version()
+            }
+            _ => return Err(AppError::msg("agent_run_illegal_transition")),
+        };
+        let failed = AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: run_id.to_string(),
+                state_version: preparing_version,
+                event_type: RunEventType::Failed,
+                payload: RunEventPayload::Failed {
+                    code,
+                    message: safe_failure_message(code).to_string(),
+                },
+            },
+        )?;
+        sink.emit(&failed)
+    }
+
+    /// Move an accepted Run into the visible Preparing stage before heavy context work.
+    pub(crate) fn mark_preparing_with_sink(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        sink: &impl RunEventSink,
+    ) -> AppResult<u64> {
+        let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
+            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        if snapshot.run.state == RunState::Preparing {
+            return Ok(snapshot.run.state_version);
+        }
         if snapshot.run.state != RunState::Accepted {
             return Err(AppError::msg("agent_run_illegal_transition"));
         }
@@ -972,19 +1201,7 @@ impl RunEngine {
             },
         )?;
         sink.emit(&preparing)?;
-        let failed = AgentRunRepository::append_event(
-            db,
-            AppendRunEventInput {
-                run_id: run_id.to_string(),
-                state_version: preparing.state_version(),
-                event_type: RunEventType::Failed,
-                payload: RunEventPayload::Failed {
-                    code,
-                    message: safe_failure_message(code).to_string(),
-                },
-            },
-        )?;
-        sink.emit(&failed)
+        Ok(preparing.state_version())
     }
 
     /// Ensure a background execution error cannot leave a non-terminal Run behind.
@@ -1294,27 +1511,31 @@ impl RunEngine {
             }
             return Err(AppError::msg("agent_run_terminal_state"));
         }
-        if snapshot.run.state != RunState::Accepted {
-            return Err(AppError::msg("agent_run_illegal_transition"));
-        }
-        let preparing = AgentRunRepository::append_event(
-            db,
-            AppendRunEventInput {
-                run_id: run_id.to_string(),
-                state_version: snapshot.run.state_version,
-                event_type: RunEventType::StageChanged,
-                payload: RunEventPayload::StageChanged {
-                    state: RunState::Preparing,
-                    stage: "正在准备工具执行".to_string(),
-                },
-            },
-        )?;
-        sink.emit(&preparing)?;
+        let preparing_version = match snapshot.run.state {
+            RunState::Preparing => snapshot.run.state_version,
+            RunState::Accepted => {
+                let preparing = AgentRunRepository::append_event(
+                    db,
+                    AppendRunEventInput {
+                        run_id: run_id.to_string(),
+                        state_version: snapshot.run.state_version,
+                        event_type: RunEventType::StageChanged,
+                        payload: RunEventPayload::StageChanged {
+                            state: RunState::Preparing,
+                            stage: "正在准备工具执行".to_string(),
+                        },
+                    },
+                )?;
+                sink.emit(&preparing)?;
+                preparing.state_version()
+            }
+            _ => return Err(AppError::msg("agent_run_illegal_transition")),
+        };
         let running = AgentRunRepository::append_event(
             db,
             AppendRunEventInput {
                 run_id: run_id.to_string(),
-                state_version: preparing.state_version(),
+                state_version: preparing_version,
                 event_type: RunEventType::StageChanged,
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
@@ -1339,6 +1560,16 @@ impl RunEngine {
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
+                if settle_cancelled_run_with_partial(
+                    db,
+                    session,
+                    run_id,
+                    &observer,
+                    sink,
+                    None,
+                )? {
+                    return Ok(());
+                }
                 if error.to_string() == crate::ai_runtime::run_tool_loop::CONFIRMATION_PENDING_ERROR
                 {
                     let current =
@@ -1369,7 +1600,46 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
+        if settle_cancelled_run_with_partial(
+            db,
+            session,
+            run_id,
+            &observer,
+            sink,
+            Some(outcome.content.as_str()),
+        )? {
+            return Ok(());
+        }
         executor.emit_deferred_web_degradation_if_needed(db, sink)?;
+        let generating = match AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: run_id.to_string(),
+                state_version: running_state_version,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "正在生成答复".to_string(),
+                },
+            },
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                if settle_cancelled_run_with_partial(
+                    db,
+                    session,
+                    run_id,
+                    &observer,
+                    sink,
+                    Some(outcome.content.as_str()),
+                )? {
+                    return Ok(());
+                }
+                return Err(error);
+            }
+        };
+        sink.emit(&generating)?;
+        observer.clear_deferred_visible_deltas();
         let mut content = match validated_final_model_answer(&outcome.content) {
             Ok(content) => content,
             Err(failure) => {
@@ -1435,6 +1705,16 @@ impl RunEngine {
             }
         };
         content = linkify_final_web_citations(db, &final_evidence_ids, content);
+        if settle_cancelled_run_with_partial(
+            db,
+            session,
+            run_id,
+            &observer,
+            sink,
+            Some(content.as_str()),
+        )? {
+            return Ok(());
+        }
         observer.bind_validated_content(&content);
         flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
         finalize_and_emit_with_sink(
@@ -1467,27 +1747,31 @@ impl RunEngine {
             }
             return Err(AppError::msg("agent_run_terminal_state"));
         }
-        if snapshot.run.state != RunState::Accepted {
-            return Err(AppError::msg("agent_run_illegal_transition"));
-        }
-        let preparing = AgentRunRepository::append_event(
-            db,
-            AppendRunEventInput {
-                run_id: run_id.to_string(),
-                state_version: snapshot.run.state_version,
-                event_type: RunEventType::StageChanged,
-                payload: RunEventPayload::StageChanged {
-                    state: RunState::Preparing,
-                    stage: "正在准备".to_string(),
-                },
-            },
-        )?;
-        sink.emit(&preparing)?;
+        let preparing_version = match snapshot.run.state {
+            RunState::Preparing => snapshot.run.state_version,
+            RunState::Accepted => {
+                let preparing = AgentRunRepository::append_event(
+                    db,
+                    AppendRunEventInput {
+                        run_id: run_id.to_string(),
+                        state_version: snapshot.run.state_version,
+                        event_type: RunEventType::StageChanged,
+                        payload: RunEventPayload::StageChanged {
+                            state: RunState::Preparing,
+                            stage: "正在准备".to_string(),
+                        },
+                    },
+                )?;
+                sink.emit(&preparing)?;
+                preparing.state_version()
+            }
+            _ => return Err(AppError::msg("agent_run_illegal_transition")),
+        };
         let running = AgentRunRepository::append_event(
             db,
             AppendRunEventInput {
                 run_id: run_id.to_string(),
-                state_version: preparing.state_version(),
+                state_version: preparing_version,
                 event_type: RunEventType::StageChanged,
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
@@ -1513,6 +1797,16 @@ impl RunEngine {
         let response = match response {
             Ok(response) => response,
             Err(error) => {
+                if settle_cancelled_run_with_partial(
+                    db,
+                    session,
+                    run_id,
+                    &observer,
+                    sink,
+                    None,
+                )? {
+                    return Ok(());
+                }
                 let code = classify_provider_failure(&error);
                 let failed = AgentRunRepository::append_event(
                     db,
@@ -1530,6 +1824,16 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
+        if settle_cancelled_run_with_partial(
+            db,
+            session,
+            run_id,
+            &observer,
+            sink,
+            response.content.as_deref(),
+        )? {
+            return Ok(());
+        }
         if let Err(error) = observer.flush_transient() {
             return fail_finalization_with_sink(
                 db,
@@ -1615,6 +1919,16 @@ impl RunEngine {
             }
         };
         content = linkify_final_web_citations(db, evidence_ids, content);
+        if settle_cancelled_run_with_partial(
+            db,
+            session,
+            run_id,
+            &observer,
+            sink,
+            Some(content.as_str()),
+        )? {
+            return Ok(());
+        }
         observer.bind_validated_content(&content);
         flush_validated_stream_or_fail(db, run_id, running_state_version, &mut observer, sink)?;
         finalize_and_emit_with_sink(
@@ -1905,6 +2219,33 @@ fn classify_provider_failure(error: &AppError) -> SafeRunErrorCode {
     } else {
         SafeRunErrorCode::ProviderUnavailable
     }
+}
+
+/// When the user cancelled the live stream, keep any safe visible partial for the
+/// next turn and exit without rewriting Cancelled as Failed.
+fn settle_cancelled_run_with_partial(
+    db: &Database,
+    session: &AssistantSessionRef,
+    run_id: &str,
+    observer: &AgentRunStreamObserver<'_>,
+    sink: &impl RunEventSink,
+    fallback_content: Option<&str>,
+) -> AppResult<bool> {
+    let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
+        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+    if snapshot.run.state != RunState::Cancelled {
+        return Ok(false);
+    }
+    let mut partial = observer.interrupt_visible_content();
+    if partial.trim().is_empty() {
+        if let Some(fallback) = fallback_content {
+            partial = fallback.to_string();
+        }
+    }
+    let _ = AgentRunRepository::persist_interrupted_assistant_message(db, run_id, &partial)?;
+    let _ = sink.emit_presentation(run_id, RunPresentationPayload::AnswerComplete);
+    crate::ai_runtime::model_gateway::clear_abort(run_id);
+    Ok(true)
 }
 
 pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {

@@ -42,6 +42,8 @@ export interface ChatLine {
   toolCalls?: ToolCallInfo[];
   /** Safe Run progress rendered separately from answer content. */
   processItems?: AssistantProcessItem[];
+  /** Local-only playback state; durable Run completion must not cancel it. */
+  presentationStreaming?: boolean;
 }
 
 interface AiMessageListProps {
@@ -397,7 +399,9 @@ export const AiMessageList = memo(function AiMessageList({
     const m = messages[i];
     if (!m) return null;
     const isLast = i === messages.length - 1;
-    const assistantStreaming = streaming && m.role === "assistant" && isLast;
+    const assistantStreaming =
+      m.presentationStreaming ??
+      (streaming && m.role === "assistant" && isLast);
     const isSelected = selectedIndices?.has(i) ?? false;
 
     if (m.role === "assistant") {

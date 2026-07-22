@@ -2,8 +2,9 @@ use super::run_contract::{
     transition_if_version, transition_to, AssistantRunAccepted, AssistantRunControlRequest,
     AssistantRunEvent, AssistantRunGetRequest, AssistantRunStartRequest, AssistantSessionRef,
     CapabilityId, ContextMode, Effect, Effort, EvidenceRef, EvidenceSourceKind, ExecutionEnvelope,
-    Freshness, MaterialNeed, RiskClass, RunControlAction, RunEventPayload, RunEventType, RunState,
-    RunStateTransitionError, SafeRunErrorCode, SecurityDomain, WebDecisionReason,
+    Freshness, MaterialNeed, RiskClass, RunControlAction, RunEventPayload, RunEventType,
+    RunPresentationEvent, RunPresentationPayload, RunState, RunStateTransitionError,
+    SafeRunErrorCode, SecurityDomain, WebDecisionReason,
 };
 
 fn direct_answer_envelope() -> ExecutionEnvelope {
@@ -215,6 +216,37 @@ fn run_events_serialize_the_shared_wire_envelope_without_internal_details() {
             "type": "accepted",
             "timestamp": "2026-07-13T00:00:00Z",
             "payload": { "kind": "accepted", "turnId": "turn-1", "sessionKey": "session-1" },
+        })
+    );
+}
+
+#[test]
+fn presentation_events_use_a_separate_ordered_ephemeral_wire_contract() {
+    let event = RunPresentationEvent::new(
+        "run-1",
+        3,
+        6700,
+        RunPresentationPayload::ProcessFinished {
+            item_id: "tool:web-1".into(),
+            status: super::run_contract::PresentationProcessStatus::Completed,
+            duration_ms: Some(6700),
+        },
+    )
+    .expect("safe presentation event");
+
+    assert_eq!(
+        serde_json::to_value(event).expect("serialize presentation event"),
+        serde_json::json!({
+            "runId": "run-1",
+            "presentationSeq": 3,
+            "elapsedMs": 6700,
+            "type": "process_finished",
+            "payload": {
+                "kind": "process_finished",
+                "itemId": "tool:web-1",
+                "status": "completed",
+                "durationMs": 6700
+            }
         })
     );
 }

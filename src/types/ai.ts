@@ -429,6 +429,10 @@ export type AssistantRunEventPayload =
       capability: string;
       toolCallId: string;
       summary: string;
+      /** Provider-independent wall-clock duration captured by the Run executor. */
+      durationMs?: number;
+      /** Absent on legacy events; false maps to a failed process item. */
+      success?: boolean;
     }
   | {
       kind: "capability_degraded";

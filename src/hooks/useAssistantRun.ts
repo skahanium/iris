@@ -6,7 +6,14 @@ import {
   assistantRunRetry,
   assistantRunStart,
   listenAssistantRunEvent,
+  listenAssistantRunPresentation,
 } from "@/lib/ipc";
+import {
+  createAssistantPresentationState,
+  reduceAssistantPresentationEvent,
+  type AssistantPresentationEvent,
+  type AssistantPresentationState,
+} from "@/lib/assistant-presentation";
 import {
   createAssistantRunEventState,
   reduceAssistantRunEvent,
@@ -72,9 +79,14 @@ export function useAssistantRun() {
   const [latestEvent, setLatestEvent] = useState<AssistantRunEvent | null>(
     null,
   );
+  const [presentationState, setPresentationState] =
+    useState<AssistantPresentationState | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const currentRunRef = useRef<ActiveAssistantRun | null>(null);
   const earlyEventsRef = useRef(new Map<string, AssistantRunEvent[]>());
+  const earlyPresentationRef = useRef(
+    new Map<string, AssistantPresentationEvent[]>(),
+  );
   const resyncingRef = useRef(new Set<string>());
 
   const currentRun = useMemo<ActiveAssistantRun | null>(() => {
@@ -160,6 +172,36 @@ export function useAssistantRun() {
     };
   }, [reduceLiveEvent]);
 
+  const reducePresentationEvent = useCallback(
+    (event: AssistantPresentationEvent) => {
+      if (activeRunIdRef.current !== event.runId) {
+        const buffered = earlyPresentationRef.current.get(event.runId) ?? [];
+        earlyPresentationRef.current.set(event.runId, [...buffered, event]);
+        return;
+      }
+      setPresentationState((previous) => {
+        if (!previous || previous.runId !== event.runId) return previous;
+        return reduceAssistantPresentationEvent(previous, event);
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    void listenAssistantRunPresentation((event) => {
+      if (!disposed) reducePresentationEvent(event);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [reducePresentationEvent]);
+
   const activateAccepted = useCallback(
     (accepted: AssistantRunAccepted) => {
       const run = activeRunFromAccepted(accepted);
@@ -183,6 +225,13 @@ export function useAssistantRun() {
       }
       earlyEventsRef.current.delete(accepted.runId);
       setEventState(replayState);
+      let presentation = createAssistantPresentationState(accepted.runId);
+      for (const event of earlyPresentationRef.current.get(accepted.runId) ??
+        []) {
+        presentation = reduceAssistantPresentationEvent(presentation, event);
+      }
+      earlyPresentationRef.current.delete(accepted.runId);
+      setPresentationState(presentation);
       setLatestEvent(replayState.events.at(-1) ?? null);
       void replay(run);
       return accepted;
@@ -264,6 +313,7 @@ export function useAssistantRun() {
     setRunIdentity(run);
     const replayed = replayAssistantRunEvents(run.runId, persisted.events);
     setEventState(replayed);
+    setPresentationState(createAssistantPresentationState(run.runId));
     setLatestEvent(replayed.events.at(-1) ?? null);
   }, []);
 
@@ -272,6 +322,7 @@ export function useAssistantRun() {
     setRunIdentity(null);
     setEventState(null);
     setLatestEvent(null);
+    setPresentationState(null);
   }, []);
 
   return {
@@ -282,6 +333,7 @@ export function useAssistantRun() {
     currentRun,
     latestEvent,
     eventState,
+    presentationState,
     pendingConfirmation,
     start,
     retryWebVerification,

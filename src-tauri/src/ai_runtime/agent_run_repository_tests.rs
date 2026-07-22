@@ -684,6 +684,91 @@ fn finalization_writes_assistant_message_run_terminal_state_and_event_atomically
 }
 
 #[test]
+fn cancelled_run_can_persist_sanitized_partial_assistant_for_continue() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted run");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".to_string(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在生成答复".to_string(),
+            },
+        },
+    )
+    .expect("running");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: running.state_version(),
+            event_type: RunEventType::Cancelled,
+            payload: RunEventPayload::Cancelled {
+                reason: "user_cancelled".into(),
+            },
+        },
+    )
+    .expect("cancelled");
+
+    let too_short =
+        AgentRunRepository::persist_interrupted_assistant_message(&db, "run-1", "太短了")
+            .expect("short partial");
+    assert!(too_short.is_none());
+
+    let persisted = AgentRunRepository::persist_interrupted_assistant_message(
+        &db,
+        "run-1",
+        "The user asks for a summary.\n\n这是一段足够长的半成品答复，用于后续继续生成。",
+    )
+    .expect("persist partial")
+    .expect("message id");
+    assert!(!persisted.is_empty());
+
+    let again = AgentRunRepository::persist_interrupted_assistant_message(
+        &db,
+        "run-1",
+        "另一段不应重复写入的半成品答复内容足够长。",
+    )
+    .expect("idempotent");
+    assert!(again.is_none());
+
+    db.with_read_conn(|conn| {
+        let content: String = conn.query_row(
+            "SELECT content FROM session_messages
+             WHERE session_id = ?1 AND role = 'assistant'",
+            [session_id],
+            |row| row.get(0),
+        )?;
+        assert!(content.contains("这是一段足够长的半成品答复"));
+        assert!(!content.contains("The user asks for a summary"));
+        Ok(())
+    })
+    .expect("partial content");
+
+    assert!(
+        AgentRunRepository::latest_assistant_before_was_interrupted(&db, session_id, 100)
+            .expect("interrupted check")
+    );
+}
+
+#[test]
 fn tool_call_identifiers_are_unique_and_must_start_before_completion() {
     let (db, session_id, session_key) = setup();
     AgentRunRepository::accept(&db, accept_input(session_id, session_key)).expect("accepted run");
@@ -728,6 +813,8 @@ fn tool_call_identifiers_are_unique_and_must_start_before_completion() {
                 capability: "vault.search".to_string(),
                 tool_call_id: "tool-call-unknown".to_string(),
                 summary: "不应完成未开始的调用".to_string(),
+                duration_ms: None,
+                success: None,
             },
         },
     );

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import { IPC_EVENTS } from "@/lib/ipc-events";
+import type { AssistantPresentationEvent } from "@/lib/assistant-presentation";
 
 import type {
   AssistantRunAccepted,
@@ -730,6 +731,16 @@ export async function listenAssistantRunEvent(
 ): Promise<() => void> {
   return listen<AssistantRunEvent>(IPC_EVENTS.ASSISTANT_RUN_EVENT, (event) =>
     handler(event.payload),
+  );
+}
+
+/** Listen to ordered, non-replayable live presentation events for one Run. */
+export async function listenAssistantRunPresentation(
+  handler: (event: AssistantPresentationEvent) => void,
+): Promise<() => void> {
+  return listen<AssistantPresentationEvent>(
+    IPC_EVENTS.ASSISTANT_RUN_PRESENTATION,
+    (event) => handler(event.payload),
   );
 }
 

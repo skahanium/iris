@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { useAssistantRunTranscript } from "@/components/ai/hooks/useAssistantRunTranscript";
 import type { ChatLine } from "@/components/ai/AiMessageList";
+import type { AssistantPresentationState } from "@/lib/assistant-presentation";
 import { replayAssistantRunEvents } from "@/lib/assistant-run-events";
 import type { AssistantRunEvent } from "@/types/ai";
 
@@ -11,9 +12,16 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let messages: ChatLine[] = [];
 
-function Probe({ run }: { run: ReturnType<typeof replayAssistantRunEvents> }) {
+function Probe({
+  run,
+  presentation,
+}: {
+  run: ReturnType<typeof replayAssistantRunEvents>;
+  presentation?: AssistantPresentationState;
+}) {
   useAssistantRunTranscript({
     run,
+    presentation,
     messages,
     setMessages: (updater) => {
       messages = typeof updater === "function" ? updater(messages) : updater;
@@ -34,6 +42,249 @@ afterEach(() => {
 });
 
 describe("useAssistantRunTranscript", () => {
+  it("终态遇到展示序号缺口时以可靠事实正文收敛，不遗留局部答案", () => {
+    messages = [
+      { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
+      {
+        role: "assistant",
+        content: "局部",
+        runId: "run-1",
+        turnId: "turn-1",
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root?.render(
+        <Probe
+          presentation={{
+            runId: "run-1",
+            lastSeq: 4,
+            resyncFromSeq: 5,
+            pendingEvents: [],
+            processItems: [],
+            answer: "局部",
+            answerComplete: false,
+          }}
+          run={replayAssistantRunEvents("run-1", [
+            {
+              runId: "run-1",
+              seq: 1,
+              stateVersion: 0,
+              timestamp: "2026-07-22T08:00:00.000Z",
+              type: "accepted",
+              payload: {
+                kind: "accepted",
+                turnId: "turn-1",
+                sessionKey: "session-1",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 2,
+              stateVersion: 1,
+              timestamp: "2026-07-22T08:00:01.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "preparing",
+                stage: "正在准备",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 3,
+              stateVersion: 2,
+              timestamp: "2026-07-22T08:00:02.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "running",
+                stage: "正在生成答复",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 4,
+              stateVersion: 2,
+              timestamp: "2026-07-22T08:00:03.000Z",
+              type: "content_delta",
+              payload: { kind: "content_delta", delta: "可靠最终正文" },
+            },
+            {
+              runId: "run-1",
+              seq: 5,
+              stateVersion: 3,
+              timestamp: "2026-07-22T08:00:04.000Z",
+              type: "completed",
+              payload: { kind: "completed", messageId: "message-1" },
+            },
+          ] satisfies AssistantRunEvent[])}
+        />,
+      ),
+    );
+
+    expect(messages[1]?.content).toBe("可靠最终正文");
+  });
+
+  it("取消时若直播正文尚未 complete，仍保留半成品气泡并提示可继续", () => {
+    messages = [
+      { role: "user", content: "写一篇长文", runId: "run-1", turnId: "turn-1" },
+      {
+        role: "assistant",
+        content: "这是已经流式露出的半成品正文",
+        runId: "run-1",
+        turnId: "turn-1",
+        processItems: [
+          {
+            id: "tool:web-1",
+            kind: "tool",
+            label: "联网搜索",
+            status: "running",
+            createdAt: 1,
+          },
+        ],
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root?.render(
+        <Probe
+          presentation={{
+            runId: "run-1",
+            lastSeq: 3,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [
+              {
+                id: "tool:web-1",
+                kind: "tool",
+                label: "联网搜索",
+                status: "running",
+                elapsedMs: 1,
+              },
+            ],
+            answer: "这是已经流式露出的半成品正文",
+            answerComplete: false,
+          }}
+          run={replayAssistantRunEvents("run-1", [
+            {
+              runId: "run-1",
+              seq: 1,
+              stateVersion: 0,
+              timestamp: "2026-07-22T08:00:00.000Z",
+              type: "accepted",
+              payload: {
+                kind: "accepted",
+                turnId: "turn-1",
+                sessionKey: "session-1",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 2,
+              stateVersion: 1,
+              timestamp: "2026-07-22T08:00:01.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "preparing",
+                stage: "正在准备",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 3,
+              stateVersion: 2,
+              timestamp: "2026-07-22T08:00:02.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "running",
+                stage: "正在生成答复",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 4,
+              stateVersion: 3,
+              timestamp: "2026-07-22T08:00:03.000Z",
+              type: "cancelled",
+              payload: { kind: "cancelled", reason: "user_cancelled" },
+            },
+          ] satisfies AssistantRunEvent[])}
+        />,
+      ),
+    );
+
+    expect(messages[1]?.role).toBe("assistant");
+    expect(messages[1]?.content).toBe("这是已经流式露出的半成品正文");
+    expect(
+      messages.some((message) => message.content.includes("发送继续")),
+    ).toBe(true);
+  });
+
+  it("直播中展示序号缺口时保留已露出正文，不用空耐久正文覆盖", () => {
+    messages = [
+      { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
+      {
+        role: "assistant",
+        content: "已经露出的局部",
+        runId: "run-1",
+        turnId: "turn-1",
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root?.render(
+        <Probe
+          presentation={{
+            runId: "run-1",
+            lastSeq: 1,
+            resyncFromSeq: 2,
+            pendingEvents: [],
+            processItems: [],
+            answer: "已经露出的局部",
+            answerComplete: false,
+          }}
+          run={replayAssistantRunEvents("run-1", [
+            {
+              runId: "run-1",
+              seq: 1,
+              stateVersion: 0,
+              timestamp: "2026-07-22T08:00:00.000Z",
+              type: "accepted",
+              payload: {
+                kind: "accepted",
+                turnId: "turn-1",
+                sessionKey: "session-1",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 2,
+              stateVersion: 1,
+              timestamp: "2026-07-22T08:00:01.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "running",
+                stage: "正在生成答复",
+              },
+            },
+          ] satisfies AssistantRunEvent[])}
+        />,
+      ),
+    );
+
+    expect(messages[1]?.content).toBe("已经露出的局部");
+  });
+
   it("adds a durable content delta only to the active assistant placeholder", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },

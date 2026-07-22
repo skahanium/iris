@@ -369,7 +369,8 @@ function canTransition(current: RunState | null, next: RunState): boolean {
   if (isTerminal(current)) return false;
 
   return (
-    (current === "accepted" && next === "preparing") ||
+    (current === "accepted" &&
+      (next === "preparing" || next === "cancelled" || next === "failed")) ||
     (current === "preparing" &&
       (next === "running" || next === "failed" || next === "cancelled")) ||
     (current === "running" &&

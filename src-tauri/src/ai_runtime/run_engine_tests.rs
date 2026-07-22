@@ -59,7 +59,7 @@ impl DirectAnswerProvider for MakeSqliteReadonlyProvider<'_> {
 #[derive(Default)]
 struct RecordingSink {
     events: std::sync::Mutex<Vec<serde_json::Value>>,
-    transient_events: std::sync::Mutex<Vec<serde_json::Value>>,
+    presentation_events: std::sync::Mutex<Vec<serde_json::Value>>,
 }
 
 impl RunEventSink for RecordingSink {
@@ -71,14 +71,15 @@ impl RunEventSink for RecordingSink {
         Ok(())
     }
 
-    fn emit_transient_content(
+    fn emit_presentation(
         &self,
-        event: &super::run_contract::AssistantRunEvent,
+        _run_id: &str,
+        payload: super::run_contract::RunPresentationPayload,
     ) -> AppResult<()> {
-        self.transient_events
+        self.presentation_events
             .lock()
-            .expect("transient recording sink lock")
-            .push(serde_json::to_value(event)?);
+            .expect("presentation recording sink lock")
+            .push(serde_json::to_value(payload)?);
         Ok(())
     }
 }
@@ -98,15 +99,12 @@ impl RunEventSink for SelectiveFailingSink {
         Ok(())
     }
 
-    fn emit_transient_content(
+    fn emit_presentation(
         &self,
-        event: &super::run_contract::AssistantRunEvent,
+        _run_id: &str,
+        _payload: super::run_contract::RunPresentationPayload,
     ) -> AppResult<()> {
-        let event = serde_json::to_value(event)?;
-        if event["type"] == self.fail_type {
-            return Err(AppError::msg("test_event_delivery_failed"));
-        }
-        Ok(())
+        Err(AppError::msg("test_presentation_delivery_failed"))
     }
 }
 
@@ -143,8 +141,9 @@ impl StreamingDirectAnswerProvider for MockStreamingProvider {
                     event_type: StreamEventType::Token,
                     data: StreamEventData::Token {
                         token: "流式片段".to_string(),
+                        replace_visible: false,
                     },
-                    surface: StreamSurface::VisibleAnswer,
+                    surface: StreamSurface::VisibleAnswerSanitized,
                     classified: false,
                 },
                 0,
@@ -231,6 +230,7 @@ impl StreamingDirectAnswerProvider for NormalAnswerStreamingProvider {
                     event_type: StreamEventType::Token,
                     data: StreamEventData::Token {
                         token: answer.clone(),
+                        replace_visible: false,
                     },
                     surface: StreamSurface::VisibleAnswerSanitized,
                     classified: false,
@@ -678,8 +678,9 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
                     event_type: StreamEventType::Token,
                     data: StreamEventData::Token {
                         token: token.to_string(),
+                        replace_visible: false,
                     },
-                    surface: StreamSurface::VisibleAnswer,
+                    surface: StreamSurface::VisibleAnswerSanitized,
                     classified: false,
                 },
                 token_index as u32,
@@ -759,9 +760,9 @@ fn run_stream_observer_replays_only_safe_reasoning_summaries_after_turn_done() {
         )
         .expect("transient summary");
     assert_eq!(
-        sink.transient_events
+        sink.presentation_events
             .lock()
-            .expect("transient sink lock")
+            .expect("presentation sink lock")
             .len(),
         1
     );
@@ -936,10 +937,17 @@ async fn streaming_direct_engine_persists_deltas_and_one_terminal_message() {
     assert_eq!(replay.run.state, RunState::Completed);
     assert!(replay.run.final_message_id.is_some());
     assert_eq!(replay.events.len(), 5);
-    let transient_events = sink.transient_events.lock().expect("transient sink lock");
-    assert_eq!(transient_events.len(), 1);
-    assert_eq!(transient_events[0]["seq"], 0);
-    assert_eq!(transient_events[0]["payload"]["delta"], "流式片段");
+    let presentation_events = sink
+        .presentation_events
+        .lock()
+        .expect("presentation sink lock");
+    assert_eq!(presentation_events.len(), 4);
+    assert_eq!(presentation_events[0]["kind"], "answer_delta");
+    assert_eq!(presentation_events[0]["delta"], "流式片段");
+    assert_eq!(presentation_events[1]["kind"], "answer_reset");
+    assert_eq!(presentation_events[2]["kind"], "answer_delta");
+    assert_eq!(presentation_events[2]["delta"], "流式最终答复");
+    assert_eq!(presentation_events[3]["kind"], "answer_complete");
     assert_eq!(
         serde_json::to_value(&replay.events[3]).expect("serialize delta")["payload"]["delta"],
         "流式最终答复"
@@ -1198,7 +1206,7 @@ async fn invalid_evidence_never_leaves_stream_delta_or_assistant_body_in_sqlite(
 }
 
 #[tokio::test]
-async fn transient_delivery_failure_terminalizes_once_without_persisting_model_body() {
+async fn presentation_delivery_failure_never_invalidates_the_durable_answer() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let provider = MockStreamingProvider {
@@ -1206,11 +1214,11 @@ async fn transient_delivery_failure_terminalizes_once_without_persisting_model_b
         failure: None,
     };
     let sink = SelectiveFailingSink {
-        fail_type: "content_delta",
+        fail_type: "never",
         events: std::sync::Mutex::new(Vec::new()),
     };
 
-    let error = RunEngine::execute_direct_streaming_with_sink(
+    RunEngine::execute_direct_streaming_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -1218,16 +1226,11 @@ async fn transient_delivery_failure_terminalizes_once_without_persisting_model_b
         &sink,
     )
     .await
-    .expect_err("flush delivery failure must be classified");
-
-    assert_eq!(
-        error.to_string(),
-        SafeRunErrorCode::EventDeliveryFailed.as_str()
-    );
+    .expect("presentation delivery failures are best effort");
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
-    assert_eq!(replay.run.state, RunState::Failed);
+    assert_eq!(replay.run.state, RunState::Completed);
     assert_eq!(
         replay
             .events
@@ -1249,7 +1252,10 @@ async fn transient_delivery_failure_terminalizes_once_without_persisting_model_b
             (event["type"] == "content_delta").then(|| event["payload"]["delta"].clone())
         })
         .collect::<Vec<_>>();
-    assert!(persisted_deltas.is_empty());
+    assert_eq!(
+        persisted_deltas,
+        [serde_json::Value::String("流式最终答复".into())]
+    );
 }
 
 #[tokio::test]
@@ -1734,6 +1740,7 @@ impl StreamingDirectAnswerProvider for LeakingStreamingProvider {
                     event_type: StreamEventType::Token,
                     data: StreamEventData::Token {
                         token: leaked.clone(),
+                        replace_visible: false,
                     },
                     surface: StreamSurface::VisibleAnswer,
                     classified: false,

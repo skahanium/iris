@@ -82,7 +82,7 @@ impl StreamSurface {
         )
     }
 
-    fn sanitizes_visible_output(self) -> bool {
+    pub(crate) fn sanitizes_visible_output(self) -> bool {
         matches!(self, StreamSurface::VisibleAnswerSanitized)
     }
 }
@@ -91,11 +91,26 @@ impl StreamSurface {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum StreamEventData {
-    Token { token: String },
-    ReasoningSummary { summary_id: String, text: String },
-    ToolCall { tool_call: ToolCall },
-    Done { usage: Option<TokenUsage> },
-    Error { message: String, final_error: bool },
+    Token {
+        token: String,
+        /// When true, the observer must discard any previously emitted visible text.
+        #[serde(default)]
+        replace_visible: bool,
+    },
+    ReasoningSummary {
+        summary_id: String,
+        text: String,
+    },
+    ToolCall {
+        tool_call: ToolCall,
+    },
+    Done {
+        usage: Option<TokenUsage>,
+    },
+    Error {
+        message: String,
+        final_error: bool,
+    },
 }
 
 /// Receives normalized streaming lifecycle events without depending on Tauri.
@@ -410,40 +425,53 @@ struct VisibleStreamSanitizer {
     emitted: String,
 }
 
+enum VisibleSanitizeOutcome {
+    None,
+    Append(String),
+    Replace(String),
+}
+
+impl VisibleSanitizeOutcome {
+    #[cfg(test)]
+    fn as_test_delta(&self) -> &str {
+        match self {
+            Self::None => "",
+            Self::Append(delta) | Self::Replace(delta) => delta.as_str(),
+        }
+    }
+}
+
 impl VisibleStreamSanitizer {
     fn new() -> Self {
         Self::default()
     }
 
-    fn sanitize_delta(&mut self, delta: &str, done: bool) -> String {
+    fn sanitize_delta(&mut self, delta: &str, done: bool) -> VisibleSanitizeOutcome {
         self.raw.push_str(delta);
         let next_visible = self.sanitize_visible_stream_prefix(&self.raw, done);
+        if next_visible == self.emitted {
+            return VisibleSanitizeOutcome::None;
+        }
         if !next_visible.starts_with(&self.emitted) {
             tracing::warn!(
                 emitted_len = self.emitted.len(),
                 next_len = next_visible.len(),
-                "visible stream sanitizer refused to retract emitted text"
+                "visible stream sanitizer replaced previously emitted text"
             );
-            return String::new();
+            self.emitted = next_visible.clone();
+            return VisibleSanitizeOutcome::Replace(next_visible);
         }
         let delta = next_visible[self.emitted.len()..].to_string();
         self.emitted = next_visible;
-        delta
+        if delta.is_empty() {
+            VisibleSanitizeOutcome::None
+        } else {
+            VisibleSanitizeOutcome::Append(delta)
+        }
     }
 
-    fn finish(&mut self) -> String {
-        let next_visible = self.sanitize_visible_stream_prefix(&self.raw, true);
-        if !next_visible.starts_with(&self.emitted) {
-            tracing::warn!(
-                emitted_len = self.emitted.len(),
-                next_len = next_visible.len(),
-                "visible stream sanitizer refused to retract emitted text on finish"
-            );
-            return String::new();
-        }
-        let delta = next_visible[self.emitted.len()..].to_string();
-        self.emitted = next_visible;
-        delta
+    fn finish(&mut self) -> VisibleSanitizeOutcome {
+        self.sanitize_delta("", true)
     }
 
     /// Normalize the visible stream with the same answer sanitizer used by terminal persistence.
@@ -607,22 +635,58 @@ fn classify_known_stream_failure(message: String) -> AppError {
 fn visible_token_delta(
     visible_sanitizer: &mut Option<VisibleStreamSanitizer>,
     delta: &str,
-) -> String {
+) -> VisibleSanitizeOutcome {
     if let Some(sanitizer) = visible_sanitizer.as_mut() {
         sanitizer.sanitize_delta(delta, false)
+    } else if delta.is_empty() {
+        VisibleSanitizeOutcome::None
     } else {
-        delta.to_string()
+        VisibleSanitizeOutcome::Append(delta.to_string())
     }
 }
 
-fn visible_token_finish(visible_sanitizer: &mut Option<VisibleStreamSanitizer>) -> String {
+fn visible_token_finish(
+    visible_sanitizer: &mut Option<VisibleStreamSanitizer>,
+) -> VisibleSanitizeOutcome {
     if let Some(sanitizer) = visible_sanitizer.as_mut() {
         sanitizer.finish()
     } else {
-        String::new()
+        VisibleSanitizeOutcome::None
     }
 }
 
+fn emit_visible_token_outcome(
+    observer: &mut dyn StreamEventObserver,
+    request_id: &str,
+    outcome: VisibleSanitizeOutcome,
+    surface: StreamSurface,
+    classified: bool,
+    token_index: &mut u32,
+) -> AppResult<()> {
+    let (token, replace_visible) = match outcome {
+        VisibleSanitizeOutcome::None => return Ok(()),
+        VisibleSanitizeOutcome::Append(token) => (token, false),
+        VisibleSanitizeOutcome::Replace(token) => (token, true),
+    };
+    if token.is_empty() && !replace_visible {
+        return Ok(());
+    }
+    let event = StreamEvent {
+        request_id: request_id.to_string(),
+        event_type: StreamEventType::Token,
+        data: StreamEventData::Token {
+            token,
+            replace_visible,
+        },
+        surface,
+        classified,
+    };
+    observer.observe(&event, *token_index)?;
+    *token_index += 1;
+    Ok(())
+}
+
+#[cfg(test)]
 fn emit_visible_token_delta(
     observer: &mut dyn StreamEventObserver,
     request_id: &str,
@@ -631,19 +695,18 @@ fn emit_visible_token_delta(
     classified: bool,
     token_index: &mut u32,
 ) -> AppResult<()> {
-    if token.is_empty() {
-        return Ok(());
-    }
-    let event = StreamEvent {
-        request_id: request_id.to_string(),
-        event_type: StreamEventType::Token,
-        data: StreamEventData::Token { token },
+    emit_visible_token_outcome(
+        observer,
+        request_id,
+        if token.is_empty() {
+            VisibleSanitizeOutcome::None
+        } else {
+            VisibleSanitizeOutcome::Append(token)
+        },
         surface,
         classified,
-    };
-    observer.observe(&event, *token_index)?;
-    *token_index += 1;
-    Ok(())
+        token_index,
+    )
 }
 
 /// Send a streaming request and deliver each lifecycle event to an observer.
@@ -928,11 +991,10 @@ pub async fn send_streaming_request_to_observer(
 
             let data = &line[6..];
             if data == "[DONE]" {
-                let token = visible_token_finish(&mut visible_sanitizer);
-                emit_visible_token_delta(
+                emit_visible_token_outcome(
                     observer,
                     request_id,
-                    token,
+                    visible_token_finish(&mut visible_sanitizer),
                     surface,
                     classified,
                     &mut token_index,
@@ -982,22 +1044,20 @@ pub async fn send_streaming_request_to_observer(
                         emit_error_event,
                     )
                 })? {
-                    let token = visible_token_delta(&mut visible_sanitizer, &delta);
-                    emit_visible_token_delta(
+                    emit_visible_token_outcome(
                         observer,
                         request_id,
-                        token,
+                        visible_token_delta(&mut visible_sanitizer, &delta),
                         surface,
                         classified,
                         &mut token_index,
                     )?;
                 }
                 if json["type"].as_str() == Some("message_stop") {
-                    let token = visible_token_finish(&mut visible_sanitizer);
-                    emit_visible_token_delta(
+                    emit_visible_token_outcome(
                         observer,
                         request_id,
-                        token,
+                        visible_token_finish(&mut visible_sanitizer),
                         surface,
                         classified,
                         &mut token_index,
@@ -1022,11 +1082,10 @@ pub async fn send_streaming_request_to_observer(
             // Process content delta
             if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
                 full_content.push_str(delta);
-                let token = visible_token_delta(&mut visible_sanitizer, delta);
-                emit_visible_token_delta(
+                emit_visible_token_outcome(
                     observer,
                     request_id,
-                    token,
+                    visible_token_delta(&mut visible_sanitizer, delta),
                     surface,
                     classified,
                     &mut token_index,
@@ -1112,22 +1171,20 @@ pub async fn send_streaming_request_to_observer(
                             })?
                         {
                             full_content.push_str(delta.as_str());
-                            let token = visible_token_delta(&mut visible_sanitizer, &delta);
-                            emit_visible_token_delta(
+                            emit_visible_token_outcome(
                                 observer,
                                 request_id,
-                                token,
+                                visible_token_delta(&mut visible_sanitizer, &delta),
                                 surface,
                                 classified,
                                 &mut token_index,
                             )?;
                         }
                         if json["type"].as_str() == Some("message_stop") {
-                            let token = visible_token_finish(&mut visible_sanitizer);
-                            emit_visible_token_delta(
+                            emit_visible_token_outcome(
                                 observer,
                                 request_id,
-                                token,
+                                visible_token_finish(&mut visible_sanitizer),
                                 surface,
                                 classified,
                                 &mut token_index,
@@ -1149,11 +1206,10 @@ pub async fn send_streaming_request_to_observer(
 
                     if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
                         full_content.push_str(delta);
-                        let token = visible_token_delta(&mut visible_sanitizer, delta);
-                        emit_visible_token_delta(
+                        emit_visible_token_outcome(
                             observer,
                             request_id,
-                            token,
+                            visible_token_delta(&mut visible_sanitizer, delta),
                             surface,
                             classified,
                             &mut token_index,
@@ -1440,11 +1496,10 @@ async fn send_openai_responses_stream(
             })? {
                 match delta {
                     ResponsesStreamDelta::Text(text) => {
-                        let token = visible_token_delta(&mut visible_sanitizer, &text);
-                        emit_visible_token_delta(
+                        emit_visible_token_outcome(
                             observer,
                             request_id,
-                            token,
+                            visible_token_delta(&mut visible_sanitizer, &text),
                             surface,
                             classified,
                             &mut token_index,
@@ -1483,11 +1538,10 @@ async fn send_openai_responses_stream(
         ));
     }
 
-    let token = visible_token_finish(&mut visible_sanitizer);
-    emit_visible_token_delta(
+    emit_visible_token_outcome(
         observer,
         request_id,
-        token,
+        visible_token_finish(&mut visible_sanitizer),
         surface,
         classified,
         &mut token_index,
@@ -1626,7 +1680,7 @@ mod tests {
         assert_eq!(observer.events.len(), 1);
         assert!(matches!(
             observer.events[0].data,
-            StreamEventData::Token { ref token } if token == "观察者令牌"
+            StreamEventData::Token { ref token, .. } if token == "观察者令牌"
         ));
     }
 
@@ -1834,13 +1888,21 @@ mod tests {
     fn visible_stream_sanitizer_holds_split_think_tag_until_safe_text() {
         let mut sanitizer = VisibleStreamSanitizer::new();
 
-        assert_eq!(sanitizer.sanitize_delta("答复<thi", false), "答复");
-        assert_eq!(sanitizer.sanitize_delta("nk>hidden", false), "");
         assert_eq!(
-            sanitizer.sanitize_delta("</think>正文开始", false),
+            sanitizer.sanitize_delta("答复<thi", false).as_test_delta(),
+            "答复"
+        );
+        assert_eq!(
+            sanitizer.sanitize_delta("nk>hidden", false).as_test_delta(),
+            ""
+        );
+        assert_eq!(
+            sanitizer
+                .sanitize_delta("</think>正文开始", false)
+                .as_test_delta(),
             "正文开始"
         );
-        assert_eq!(sanitizer.finish(), "");
+        assert_eq!(sanitizer.finish().as_test_delta(), "");
     }
 
     #[test]
@@ -1848,11 +1910,18 @@ mod tests {
         let mut sanitizer = VisibleStreamSanitizer::new();
 
         assert_eq!(
-            sanitizer.sanitize_delta("可以先看结论。", false),
+            sanitizer
+                .sanitize_delta("可以先看结论。", false)
+                .as_test_delta(),
             "可以先看结论。"
         );
-        assert_eq!(sanitizer.sanitize_delta("<reasoning>internal", false), "");
-        assert_eq!(sanitizer.finish(), "");
+        assert_eq!(
+            sanitizer
+                .sanitize_delta("<reasoning>internal", false)
+                .as_test_delta(),
+            ""
+        );
+        assert_eq!(sanitizer.finish().as_test_delta(), "");
     }
 
     #[test]
@@ -1864,19 +1933,28 @@ mod tests {
         );
         assert!(first_meta_paragraph.chars().count() > 500);
 
-        assert_eq!(sanitizer.sanitize_delta(&first_meta_paragraph, false), "");
         assert_eq!(
-            sanitizer.sanitize_delta(
-                "\n\nThe system prompt requires verified evidence before a final response.",
-                false,
-            ),
+            sanitizer
+                .sanitize_delta(&first_meta_paragraph, false)
+                .as_test_delta(),
             ""
         );
         assert_eq!(
-            sanitizer.sanitize_delta("\n\n这是基于联网证据的最终答复。", false),
+            sanitizer
+                .sanitize_delta(
+                    "\n\nThe system prompt requires verified evidence before a final response.",
+                    false,
+                )
+                .as_test_delta(),
+            ""
+        );
+        assert_eq!(
+            sanitizer
+                .sanitize_delta("\n\n这是基于联网证据的最终答复。", false)
+                .as_test_delta(),
             "这是基于联网证据的最终答复。"
         );
-        assert_eq!(sanitizer.finish(), "");
+        assert_eq!(sanitizer.finish().as_test_delta(), "");
     }
 
     #[test]
@@ -1884,13 +1962,15 @@ mod tests {
         let mut sanitizer = VisibleStreamSanitizer::new();
 
         assert_eq!(
-            sanitizer.sanitize_delta(
-                "Given sufficient context, the answer can be concise.",
-                false
-            ),
+            sanitizer
+                .sanitize_delta(
+                    "Given sufficient context, the answer can be concise.",
+                    false
+                )
+                .as_test_delta(),
             "Given sufficient context, the answer can be concise."
         );
-        assert_eq!(sanitizer.finish(), "");
+        assert_eq!(sanitizer.finish().as_test_delta(), "");
     }
 
     #[test]

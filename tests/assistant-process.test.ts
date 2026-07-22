@@ -112,6 +112,25 @@ describe("Assistant Run 处理过程投影", () => {
     ]);
   });
 
+  it("历史回放优先使用工具完成事件记录的真实耗时", () => {
+    const items = projectAssistantProcessEvents([
+      event(1, "tool_started", {
+        kind: "tool_started",
+        capability: "web_search",
+        toolCallId: "tool-precise-duration",
+      }),
+      event(2, "tool_completed", {
+        kind: "tool_completed",
+        capability: "web_search",
+        toolCallId: "tool-precise-duration",
+        summary: "工具调用完成",
+        durationMs: 6_700,
+      } as Extract<AssistantRunEvent["payload"], { kind: "tool_completed" }>),
+    ]);
+
+    expect(items[0]?.durationMs).toBe(6_700);
+  });
+
   it("保留阶段和 provider 显式摘要，但绝不把最终正文投影为过程内容", () => {
     const items = projectAssistantProcessEvents([
       event(1, "accepted", {

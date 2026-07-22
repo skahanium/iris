@@ -269,6 +269,27 @@ function formatProcessDuration(durationMs: number | null | undefined): string {
   return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
+function RunningProcessDots() {
+  const [count, setCount] = useState(1);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCount((current) => (current % 3) + 1);
+    }, 300);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  return (
+    <span
+      className="inline-block w-4 text-muted-foreground/75"
+      aria-label="正在进行"
+      data-testid="assistant-process-running-dots"
+    >
+      {"·".repeat(count)}
+    </span>
+  );
+}
+
 function AssistantProcessTimeline({
   events,
   streaming,
@@ -278,20 +299,28 @@ function AssistantProcessTimeline({
   streaming: boolean;
   hasContent: boolean;
 }) {
-  const [open, setOpen] = useState(() => streaming && !hasContent);
+  const hasRunning = events.some((event) => event.status === "running");
+  const [open, setOpen] = useState(
+    () => streaming && (!hasContent || hasRunning),
+  );
   const autoCollapsedRef = useRef(false);
 
   useEffect(() => {
     if (events.length === 0) return;
+    if (hasRunning) {
+      setOpen(true);
+      autoCollapsedRef.current = false;
+      return;
+    }
     if (streaming && !hasContent && !autoCollapsedRef.current) {
       setOpen(true);
       return;
     }
-    if (hasContent && !autoCollapsedRef.current) {
+    if (hasContent && !hasRunning && !autoCollapsedRef.current) {
       setOpen(false);
       autoCollapsedRef.current = true;
     }
-  }, [events.length, hasContent, streaming]);
+  }, [events, hasContent, hasRunning, streaming]);
 
   if (events.length === 0) return null;
 
@@ -330,6 +359,7 @@ function AssistantProcessTimeline({
             return (
               <li key={event.id} className="list-disc pl-0.5">
                 <span>{event.label}</span>
+                {event.status === "running" ? <RunningProcessDots /> : null}
                 {duration ? (
                   <span className="text-muted-foreground/70">
                     {" "}

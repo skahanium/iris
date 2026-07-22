@@ -647,6 +647,12 @@ pub(crate) enum RunEventPayload {
         tool_call_id: String,
         /// User-safe completion summary.
         summary: String,
+        /// Measured execution duration for faithful historical process playback.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+        /// Whether the capability completed successfully; absent on historical events.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        success: Option<bool>,
     },
     /// A recoverable capability failure that allows the Run to continue.
     CapabilityDegraded {
@@ -787,6 +793,21 @@ impl AssistantRunEvent {
     pub(crate) const fn state_version(&self) -> u64 {
         self.state_version
     }
+
+    /// Return the owning opaque Run identity for in-process event routing.
+    pub(crate) fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    /// Return this Run-local durable event sequence.
+    pub(crate) const fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// Return the safe payload for in-process presentation projection.
+    pub(crate) const fn payload(&self) -> &RunEventPayload {
+        &self.payload
+    }
 }
 
 impl Serialize for AssistantRunEvent {
@@ -851,6 +872,114 @@ struct AssistantRunEventWire {
     event_type: RunEventType,
     timestamp: String,
     payload: RunEventPayload,
+}
+
+/// Ephemeral event kinds used only by the live presentation channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RunPresentationEventType {
+    ProcessStarted,
+    ProcessUpdated,
+    ProcessFinished,
+    AnswerDelta,
+    AnswerReset,
+    AnswerComplete,
+}
+
+/// Safe process item category rendered by the presentation timeline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PresentationProcessKind {
+    Stage,
+    ReasoningSummary,
+    Tool,
+}
+
+/// Safe terminal visual state for one process item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PresentationProcessStatus {
+    Completed,
+    Failed,
+}
+
+/// Non-persisted, presentation-only payloads. They never include raw tool data,
+/// provider-private reasoning, source content, credentials, or URLs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub(crate) enum RunPresentationPayload {
+    ProcessStarted {
+        item_id: String,
+        item_kind: PresentationProcessKind,
+        label: String,
+    },
+    ProcessUpdated {
+        item_id: String,
+        label: String,
+    },
+    ProcessFinished {
+        item_id: String,
+        status: PresentationProcessStatus,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
+    AnswerDelta {
+        delta: String,
+    },
+    AnswerReset,
+    AnswerComplete,
+}
+
+impl RunPresentationPayload {
+    const fn event_type(&self) -> RunPresentationEventType {
+        match self {
+            Self::ProcessStarted { .. } => RunPresentationEventType::ProcessStarted,
+            Self::ProcessUpdated { .. } => RunPresentationEventType::ProcessUpdated,
+            Self::ProcessFinished { .. } => RunPresentationEventType::ProcessFinished,
+            Self::AnswerDelta { .. } => RunPresentationEventType::AnswerDelta,
+            Self::AnswerReset => RunPresentationEventType::AnswerReset,
+            Self::AnswerComplete => RunPresentationEventType::AnswerComplete,
+        }
+    }
+}
+
+/// Strictly ordered, non-replayable live event. The durable Run event log is
+/// still authoritative after reconnect or presentation delivery failure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunPresentationEvent {
+    run_id: String,
+    presentation_seq: u64,
+    elapsed_ms: u64,
+    #[serde(rename = "type")]
+    event_type: RunPresentationEventType,
+    payload: RunPresentationPayload,
+}
+
+impl RunPresentationEvent {
+    /// Construct one safe live presentation event with matching type and payload.
+    pub(crate) fn new(
+        run_id: impl Into<String>,
+        presentation_seq: u64,
+        elapsed_ms: u64,
+        payload: RunPresentationPayload,
+    ) -> Result<Self, &'static str> {
+        let run_id = run_id.into();
+        if run_id.trim().is_empty() || presentation_seq == 0 {
+            return Err("agent_run_invalid_presentation_event");
+        }
+        Ok(Self {
+            run_id,
+            presentation_seq,
+            elapsed_ms,
+            event_type: payload.event_type(),
+            payload,
+        })
+    }
 }
 
 /// A user control request that may advance an Agent Run.

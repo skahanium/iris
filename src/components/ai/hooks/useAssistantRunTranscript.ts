@@ -2,11 +2,13 @@ import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import type { ChatLine } from "../AiMessageList";
 import { projectAssistantProcessEvents } from "@/lib/assistant-process";
+import type { AssistantPresentationState } from "@/lib/assistant-presentation";
 import type { AssistantRunEventState } from "@/lib/assistant-run-events";
 import type { ClassifiedRunResultRequest } from "@/types/ai";
 
 export interface AssistantRunTranscriptOptions {
   run: AssistantRunEventState | null;
+  presentation?: AssistantPresentationState | null;
   messages: readonly ChatLine[];
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setStreaming: (streaming: boolean) => void;
@@ -21,6 +23,7 @@ export interface AssistantRunTranscriptOptions {
 /** Projects persisted Run events into the local, presentation-only transcript. */
 export function useAssistantRunTranscript({
   run,
+  presentation,
   messages,
   setMessages,
   setStreaming,
@@ -53,20 +56,47 @@ export function useAssistantRunTranscript({
           message.role === "assistant" && message.runId === run.runId,
       );
       if (index < 0) return previous;
-      const processItems = projectAssistantProcessEvents(
-        run.events,
-        run.reasoningSummaries,
-      );
       const current = previous[index];
+      const terminal = ["completed", "failed", "cancelled"].includes(
+        run.state ?? "",
+      );
+      const presentationReady =
+        presentation?.runId === run.runId &&
+        presentation.resyncFromSeq === null;
+      const cancelledWithVisiblePartial =
+        run.state === "cancelled" &&
+        ((presentationReady && presentation.answer.trim().length > 0) ||
+          (current?.content?.trim().length ?? 0) > 0);
+      const presentationOwnsMessage =
+        presentationReady &&
+        (!terminal ||
+          presentation.answerComplete ||
+          cancelledWithVisiblePartial);
+      const durableContent = run.content;
+      const processItems = presentationOwnsMessage
+        ? current?.processItems
+        : projectAssistantProcessEvents(run.events, run.reasoningSummaries);
+      const content = presentationOwnsMessage
+        ? current?.content?.trim()
+          ? current.content
+          : (presentation?.answer ?? "")
+        : durableContent.trim()
+          ? durableContent
+          : // Live gap / empty durable must not wipe already-visible partial text.
+            (current?.content ?? "");
+      const presentationStreaming = presentationOwnsMessage
+        ? (current?.presentationStreaming ?? !terminal)
+        : false;
       if (
-        current?.content === run.content &&
-        sameProcessItems(current.processItems, processItems)
+        current?.content === content &&
+        sameProcessItems(current.processItems, processItems) &&
+        current.presentationStreaming === presentationStreaming
       ) {
         return previous;
       }
       return previous.map((message, messageIndex) =>
         messageIndex === index
-          ? { ...message, content: run.content, processItems }
+          ? { ...message, content, processItems, presentationStreaming }
           : message,
       );
     });
@@ -137,10 +167,29 @@ export function useAssistantRunTranscript({
               message.role === "assistant" && message.runId === run.runId,
           );
           const target = previous[index];
-          if (!target || target.content.trim()) {
+          if (!target) {
             return [
               ...previous,
-              { role: "system", content: "本次回答已取消。" },
+              {
+                role: "system",
+                content: "本次回答已停止。发送继续可接着生成。",
+              },
+            ];
+          }
+          if (target.content.trim()) {
+            const alreadyNoted = previous.some(
+              (message, messageIndex) =>
+                messageIndex > index &&
+                message.role === "system" &&
+                message.content.includes("发送继续"),
+            );
+            if (alreadyNoted) return previous;
+            return [
+              ...previous,
+              {
+                role: "system",
+                content: "本次回答已停止。发送继续可接着生成。",
+              },
             ];
           }
           return previous.map((message, messageIndex) =>
@@ -156,6 +205,7 @@ export function useAssistantRunTranscript({
   }, [
     classifiedContextRef,
     messages,
+    presentation,
     run,
     setActivityHint,
     setError,

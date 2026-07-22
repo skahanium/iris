@@ -1296,6 +1296,8 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
                 capability: "get_context_packets".into(),
                 tool_call_id: "tool-transient-body".into(),
                 summary: "工具调用完成".into(),
+                duration_ms: None,
+                success: None,
             },
         },
     )
@@ -1435,6 +1437,7 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
         conversation_memory: None,
         prompt_profile: Default::default(),
         previous_run_summary: None,
+        interrupted_assistant_continue: false,
     };
 
     let prompt = context.prompt_with_domain_plan(&context.domain_plan());

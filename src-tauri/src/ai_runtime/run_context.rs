@@ -65,6 +65,8 @@ pub(crate) struct RunContext {
     pub(crate) prompt_profile: PromptProfile,
     /// Sanitized prior-Run state; never contains user text or raw provider output.
     pub(crate) previous_run_summary: Option<String>,
+    /// True when the latest prior assistant message came from a cancelled Run.
+    pub(crate) interrupted_assistant_continue: bool,
 }
 
 impl RunContext {
@@ -134,6 +136,14 @@ impl RunContext {
         if let Some(summary) = &self.previous_run_summary {
             system_prompt.push_str("\n\n");
             system_prompt.push_str(summary);
+        }
+        if self.interrupted_assistant_continue {
+            system_prompt.push_str(
+                "\n\n## InterruptedAssistantDraft\n\
+                 The previous assistant message may be incomplete because the user stopped generation. \
+                 Only when the user clearly asks to continue or finish that draft, continue from it \
+                 without repeating the already written text. For a new unrelated request, ignore the draft.",
+            );
         }
         let profile = self.prompt_profile.to_system_prompt_fragment();
         if !profile.is_empty() {
@@ -244,6 +254,12 @@ impl RunContextAssembler {
         let prompt_profile = PromptProfile::load(db)?;
         let previous_run_summary =
             load_previous_run_safety_summary(db, input.session_id, input.message_seq_first)?;
+        let interrupted_assistant_continue =
+            AgentRunRepository::latest_assistant_before_was_interrupted(
+                db,
+                input.session_id,
+                input.message_seq_first,
+            )?;
         let mut materials = Vec::with_capacity(input.explicit_references.len());
         let mut fallback_paths = Vec::new();
         let mut total_chars = 0usize;
@@ -344,6 +360,7 @@ impl RunContextAssembler {
             conversation_memory,
             prompt_profile,
             previous_run_summary,
+            interrupted_assistant_continue,
         })
     }
 

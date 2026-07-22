@@ -570,6 +570,114 @@ impl AgentRunRepository {
         })
     }
 
+    /// Persist a sanitized partial assistant reply after the user cancelled a live stream.
+    ///
+    /// This is intentionally separate from [`Self::finalize`]: the Run stays `cancelled`,
+    /// and the partial exists only so the next turn can continue from visible history.
+    /// Idempotent per turn — a second call for the same turn is a no-op.
+    pub(crate) fn persist_interrupted_assistant_message(
+        db: &Database,
+        run_id: &str,
+        content: &str,
+    ) -> AppResult<Option<String>> {
+        const MIN_INTERRUPTED_CHARS: usize = 20;
+        let sanitized = crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(content);
+        let trimmed = sanitized.trim();
+        if trimmed.chars().count() < MIN_INTERRUPTED_CHARS {
+            return Ok(None);
+        }
+        if trimmed.chars().count() > 32_000 {
+            return Err(AppError::msg("agent_run_invalid_final_output"));
+        }
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let (session_id, turn_id, status): (i64, String, String) = conn
+                    .query_row(
+                        "SELECT session_id, turn_id, status FROM agent_runs WHERE run_id = ?1",
+                        [run_id],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .map_err(not_found_or_db)?;
+                let state = parse_wire::<RunState>(&status)?;
+                if state != RunState::Cancelled {
+                    return Err(AppError::msg(
+                        "agent_run_interrupt_persist_requires_cancelled",
+                    ));
+                }
+                let existing: Option<i64> = conn
+                    .query_row(
+                        "SELECT id FROM session_messages
+                         WHERE session_id = ?1 AND turn_id = ?2 AND role = 'assistant'
+                         LIMIT 1",
+                        rusqlite::params![session_id, turn_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if existing.is_some() {
+                    return Ok(None);
+                }
+                let now = chrono::Utc::now().to_rfc3339();
+                let seq: i64 = conn.query_row(
+                    "SELECT COALESCE(MAX(seq), 0) + 1 FROM session_messages WHERE session_id = ?1",
+                    [session_id],
+                    |row| row.get(0),
+                )?;
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, content_hash, created_at, turn_id,
+                      evidence_refs_json, citation_map_json)
+                     VALUES (?1, ?2, 'assistant', ?3, ?4, ?5, ?6, '[]', '{}')",
+                    rusqlite::params![
+                        session_id,
+                        seq,
+                        trimmed,
+                        crate::cas::hash::content_hash_str(trimmed),
+                        now,
+                        turn_id,
+                    ],
+                )?;
+                let message_id = conn.last_insert_rowid().to_string();
+                conn.execute(
+                    "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+                    rusqlite::params![now, session_id],
+                )?;
+                Ok(Some(message_id))
+            })
+        })
+    }
+
+    /// Whether the latest assistant message before `before_seq` belongs to a cancelled Run.
+    pub(crate) fn latest_assistant_before_was_interrupted(
+        db: &Database,
+        session_id: i64,
+        before_seq: i64,
+    ) -> AppResult<bool> {
+        db.with_read_conn(|conn| {
+            let turn_id: Option<String> = conn
+                .query_row(
+                    "SELECT turn_id FROM session_messages
+                     WHERE session_id = ?1 AND seq < ?2 AND role = 'assistant'
+                     ORDER BY seq DESC LIMIT 1",
+                    rusqlite::params![session_id, before_seq],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(turn_id) = turn_id else {
+                return Ok(false);
+            };
+            let status: Option<String> = conn
+                .query_row(
+                    "SELECT status FROM agent_runs
+                     WHERE session_id = ?1 AND turn_id = ?2
+                     ORDER BY created_at DESC LIMIT 1",
+                    rusqlite::params![session_id, turn_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            Ok(status.as_deref() == Some("cancelled"))
+        })
+    }
+
     /// Validate final evidence ownership without writing any model output.
     pub(crate) fn validate_final_evidence(
         db: &Database,
