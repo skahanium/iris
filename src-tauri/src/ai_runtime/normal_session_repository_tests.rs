@@ -89,6 +89,8 @@ fn normal_session_history_uses_only_opaque_keys() {
         .expect("load messages");
     assert_eq!(loaded.len(), 2);
     assert_eq!(loaded[0].content, "first");
+    assert_eq!(loaded[0].turn_id.as_deref(), Some("history-turn-1"));
+    assert_eq!(loaded[1].turn_id.as_deref(), Some("history-turn-1"));
 
     NormalSessionRepository::rename(&db, &created.session_key, "renamed").expect("rename");
     let renamed = NormalSessionRepository::list(&db, 20, 0).expect("list renamed");

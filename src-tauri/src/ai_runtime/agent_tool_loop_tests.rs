@@ -142,6 +142,7 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
                 reasoning_content: None,
+                continuation: None,
             },
             super::model_gateway::GatewayResponse {
                 content: Some("final answer".into()),
@@ -149,6 +150,7 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
                 usage: Default::default(),
                 finish_reason: "stop".into(),
                 reasoning_content: None,
+                continuation: None,
             },
         ])),
         calls: AtomicU32::new(0),
@@ -219,6 +221,7 @@ async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
             usage: Default::default(),
             finish_reason: "stop".into(),
             reasoning_content: None,
+            continuation: None,
         }])),
         calls: AtomicU32::new(0),
         second_turn_messages: Mutex::new(Vec::new()),
@@ -271,6 +274,7 @@ async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
                 usage: Default::default(),
                 finish_reason: "tool_calls".into(),
                 reasoning_content: None,
+                continuation: None,
             },
             super::model_gateway::GatewayResponse {
                 content: Some(
@@ -281,6 +285,7 @@ async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
                 usage: Default::default(),
                 finish_reason: "stop".into(),
                 reasoning_content: None,
+                continuation: None,
             },
         ])),
         calls: AtomicU32::new(0),

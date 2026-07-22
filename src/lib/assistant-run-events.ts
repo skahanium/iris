@@ -35,8 +35,10 @@ export interface AssistantRunEventState {
     modelId: string | null;
     reasonCode: ProviderSwitchReasonCode | null;
   } | null;
+  /** Provider-explicit, safe reasoning summaries keyed by their model turn. */
+  reasoningSummaries: readonly { summaryId: string; text: string }[];
   content: string;
-  /** Monotonic local-only revision for transient, non-replayable UI content. */
+  /** Monotonic local-only revision for transient, non-replayable UI state. */
   transientRevision: number;
   /** Whether `content` currently came from an uncommitted provider stream. */
   hasTransientContent: boolean;
@@ -66,6 +68,7 @@ export function createAssistantRunEventState(
     webVerificationFailure: null,
     pendingConfirmation: null,
     provider: null,
+    reasoningSummaries: [],
     content: "",
     transientRevision: 0,
     hasTransientContent: false,
@@ -80,6 +83,26 @@ export function reduceAssistantRunEvent(
   state: AssistantRunEventState,
   event: AssistantRunEvent,
 ): AssistantRunEventState {
+  if (
+    event.runId === state.runId &&
+    event.seq === 0 &&
+    event.type === "reasoning_summary" &&
+    event.payload.kind === "reasoning_summary" &&
+    !isTerminal(state.state)
+  ) {
+    const reasoningSummaries = replaceReasoningSummary(
+      state.reasoningSummaries,
+      event.payload.summaryId,
+      event.payload.text,
+    );
+    if (reasoningSummaries === state.reasoningSummaries) return state;
+    return {
+      ...state,
+      reasoningSummaries,
+      transientRevision: state.transientRevision + 1,
+    };
+  }
+
   if (
     event.runId === state.runId &&
     event.seq === 0 &&
@@ -222,6 +245,14 @@ function applyEvent(
             reasonCode: payload.reasonCode ?? null,
           }
         : state.provider,
+    reasoningSummaries:
+      payload.kind === "reasoning_summary"
+        ? replaceReasoningSummary(
+            state.reasoningSummaries,
+            payload.summaryId,
+            payload.text,
+          )
+        : state.reasoningSummaries,
     content:
       payload.kind === "content_delta"
         ? commitsTransientContent
@@ -240,6 +271,21 @@ function applyEvent(
         : state.hasTransientContent,
     events: [...state.events, event],
   };
+}
+
+function replaceReasoningSummary(
+  summaries: readonly { summaryId: string; text: string }[],
+  summaryId: string,
+  text: string,
+): readonly { summaryId: string; text: string }[] {
+  const index = summaries.findIndex(
+    (summary) => summary.summaryId === summaryId,
+  );
+  if (index < 0) return [...summaries, { summaryId, text }];
+  if (summaries[index]?.text === text) return summaries;
+  return summaries.map((summary, summaryIndex) =>
+    summaryIndex === index ? { summaryId, text } : summary,
+  );
 }
 
 function isWebSearchCapability(capability: string): boolean {

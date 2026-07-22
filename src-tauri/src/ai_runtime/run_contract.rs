@@ -558,6 +558,8 @@ pub(crate) enum RunEventType {
     Accepted,
     /// A user-visible execution stage changed.
     StageChanged,
+    /// A provider explicitly supplied a safe, user-visible reasoning summary.
+    ReasoningSummary,
     /// A safe streamed content fragment arrived.
     ContentDelta,
     /// A capability call started.
@@ -615,6 +617,15 @@ pub(crate) enum RunEventPayload {
         state: RunState,
         /// User-visible status text without internal planning details.
         stage: String,
+    },
+    /// A bounded provider-generated summary that is safe to show and replay.
+    ///
+    /// This is never a raw reasoning channel or an inferred chain of thought.
+    ReasoningSummary {
+        /// Stable identifier for one provider model turn's summary stream.
+        summary_id: String,
+        /// Sanitized, user-visible summary text.
+        text: String,
     },
     /// A safely buffered visible content fragment.
     ContentDelta {
@@ -1019,6 +1030,7 @@ impl RunEventPayload {
         match self {
             Self::Accepted { .. } => RunEventType::Accepted,
             Self::StageChanged { .. } => RunEventType::StageChanged,
+            Self::ReasoningSummary { .. } => RunEventType::ReasoningSummary,
             Self::ContentDelta { .. } => RunEventType::ContentDelta,
             Self::ToolStarted { .. } => RunEventType::ToolStarted,
             Self::ToolCompleted { .. } => RunEventType::ToolCompleted,

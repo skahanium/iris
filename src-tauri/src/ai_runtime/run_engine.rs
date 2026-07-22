@@ -1,8 +1,10 @@
 //! Minimal scene-free direct-answer Run Engine.
 
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
+use std::sync::Mutex;
 
 use tauri::{AppHandle, Emitter};
 
@@ -50,6 +52,7 @@ pub(crate) struct ModelGatewayStreamingDirectAnswerProvider<'a> {
     max_tokens: u32,
     thinking: bool,
     reasoning: crate::ai_types::ResolvedReasoningRequest,
+    continuation: Option<crate::ai_runtime::model_gateway::ProviderContinuation>,
 }
 
 impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
@@ -68,6 +71,7 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
             max_tokens,
             thinking: false,
             reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
+            continuation: None,
         })
     }
 
@@ -85,7 +89,18 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
             max_tokens: dispatch.max_output_tokens,
             thinking: dispatch.thinking,
             reasoning: dispatch.reasoning,
+            continuation: None,
         })
+    }
+
+    fn from_dispatch_with_continuation(
+        gateway: &'a crate::ai_runtime::model_gateway::ModelGateway,
+        dispatch: crate::ai_runtime::direct_provider_route::DirectProviderDispatch,
+        continuation: Option<crate::ai_runtime::model_gateway::ProviderContinuation>,
+    ) -> AppResult<Self> {
+        let mut provider = Self::from_dispatch(gateway, dispatch)?;
+        provider.continuation = continuation;
+        Ok(provider)
     }
 }
 
@@ -102,7 +117,7 @@ impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider
                 + 'a,
         >,
     > {
-        let request = gateway_request_for_messages(
+        let mut request = gateway_request_for_messages(
             self.provider.clone(),
             messages.to_vec(),
             &[],
@@ -110,6 +125,7 @@ impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider
             self.thinking,
             self.reasoning,
         );
+        request.continuation = self.continuation.clone();
         Box::pin(async move {
             self.gateway
                 .send_streaming_request_to_observer(run_id, request, observer)
@@ -132,7 +148,7 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
                 + 'a,
         >,
     > {
-        let request = gateway_request_for_messages(
+        let mut request = gateway_request_for_messages(
             self.provider.clone(),
             messages.to_vec(),
             tools,
@@ -140,6 +156,7 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
             self.thinking,
             self.reasoning,
         );
+        request.continuation = self.continuation.clone();
         Box::pin(async move {
             self.gateway
                 .send_streaming_request_to_observer(run_id, request, observer)
@@ -254,6 +271,13 @@ pub(crate) struct FailoverStreamingToolLoopProvider<'a> {
     db: &'a Database,
     session: &'a AssistantSessionRef,
     sink: &'a dyn RunEventSink,
+    continuations: Mutex<HashMap<String, SelectedResponseContinuation>>,
+}
+
+#[derive(Clone)]
+struct SelectedResponseContinuation {
+    selected_index: usize,
+    continuation: crate::ai_runtime::model_gateway::ProviderContinuation,
 }
 
 impl<'a> FailoverStreamingToolLoopProvider<'a> {
@@ -270,6 +294,7 @@ impl<'a> FailoverStreamingToolLoopProvider<'a> {
             db,
             session,
             sink,
+            continuations: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -289,7 +314,17 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
         >,
     > {
         Box::pin(async move {
-            let mut selected_index = 0;
+            let stored_continuation = self
+                .continuations
+                .lock()
+                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                .get(run_id)
+                .cloned();
+            let mut selected_index = stored_continuation
+                .as_ref()
+                .map(|state| state.selected_index)
+                .unwrap_or(0);
+            let continuation = stored_continuation.map(|state| state.continuation);
             loop {
                 let dispatch = self
                     .route
@@ -299,13 +334,40 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                         .provider
                         .clone()])?;
                 let provider =
-                    ModelGatewayStreamingDirectAnswerProvider::from_dispatch(&gateway, dispatch)?;
+                    ModelGatewayStreamingDirectAnswerProvider::from_dispatch_with_continuation(
+                        &gateway,
+                        dispatch,
+                        continuation.clone(),
+                    )?;
                 match provider
                     .answer_turn(run_id, messages, tools, observer)
                     .await
                 {
-                    Ok(response) => return Ok(response),
+                    Ok(response) => {
+                        let mut continuations = self
+                            .continuations
+                            .lock()
+                            .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?;
+                        if let Some(next) = response.continuation.clone() {
+                            continuations.insert(
+                                run_id.to_string(),
+                                SelectedResponseContinuation {
+                                    selected_index,
+                                    continuation: next,
+                                },
+                            );
+                        } else {
+                            continuations.remove(run_id);
+                        }
+                        return Ok(response);
+                    }
                     Err(error) => {
+                        // A Responses continuation is cryptographically/provider-bound.
+                        // Retrying it against a different candidate would either fail or
+                        // lose tool context, so it is deliberately never failed over.
+                        if continuation.is_some() {
+                            return Err(error);
+                        }
                         let failure = classify_failover_failure(&error);
                         let Some(next_index) =
                             self.route.next_selected_index_after_for_requirements(
@@ -358,6 +420,14 @@ pub(crate) trait RunEventSink: Send + Sync {
         _event: &crate::ai_runtime::run_contract::AssistantRunEvent,
     ) -> AppResult<()> {
         Ok(())
+    }
+
+    /// Emit a non-replayable safe process snapshot such as a provider summary.
+    fn emit_transient_process(
+        &self,
+        event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+    ) -> AppResult<()> {
+        self.emit_transient_content(event)
     }
 
     /// Emit a safe terminal event when SQLite itself cannot record that event.
@@ -463,6 +533,8 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     transient_content: String,
     last_transient_bytes: usize,
     defer_visible_deltas: bool,
+    reasoning_summaries: BTreeMap<String, String>,
+    persisted_reasoning_summaries: BTreeMap<String, String>,
 }
 
 impl<'a> AgentRunStreamObserver<'a> {
@@ -494,6 +566,8 @@ impl<'a> AgentRunStreamObserver<'a> {
             transient_content: String::new(),
             last_transient_bytes: 0,
             defer_visible_deltas,
+            reasoning_summaries: BTreeMap::new(),
+            persisted_reasoning_summaries: BTreeMap::new(),
         }
     }
 }
@@ -560,6 +634,125 @@ impl AgentRunStreamObserver<'_> {
         }
         Ok(())
     }
+
+    fn observe_reasoning_summary(&mut self, summary_id: &str, text: &str) -> AppResult<()> {
+        let summary_id = safe_reasoning_summary_id(summary_id);
+        let text = safe_reasoning_summary(text);
+        if summary_id.is_empty() || text.is_empty() {
+            return Ok(());
+        }
+        self.reasoning_summaries
+            .insert(summary_id.clone(), text.clone());
+        let event = crate::ai_runtime::run_contract::AssistantRunEvent::new(
+            self.run_id,
+            0,
+            self.running_state_version,
+            RunEventType::ReasoningSummary,
+            chrono::Utc::now().to_rfc3339(),
+            RunEventPayload::ReasoningSummary { summary_id, text },
+        )
+        .map_err(AppError::msg)?;
+        self.sink.emit_transient_process(&event)
+    }
+
+    fn persist_reasoning_summaries(&mut self) -> AppResult<()> {
+        for (summary_id, text) in self.reasoning_summaries.clone() {
+            if self.persisted_reasoning_summaries.get(&summary_id) == Some(&text) {
+                continue;
+            }
+            let event = AgentRunRepository::append_event(
+                self.db,
+                AppendRunEventInput {
+                    run_id: self.run_id.to_string(),
+                    state_version: self.running_state_version,
+                    event_type: RunEventType::ReasoningSummary,
+                    payload: RunEventPayload::ReasoningSummary {
+                        summary_id: summary_id.clone(),
+                        text: text.clone(),
+                    },
+                },
+            )?;
+            self.sink.emit(&event)?;
+            self.persisted_reasoning_summaries.insert(summary_id, text);
+        }
+        Ok(())
+    }
+}
+
+fn safe_reasoning_summary(value: &str) -> String {
+    // JSON expands control characters to up to six visible characters. Normalize
+    // non-layout controls before the fixed 800-char bound so a transient summary
+    // can never render successfully and then fail the durable 2,000-char event
+    // budget at turn completion.
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_control() && !matches!(character, '\n' | '\r' | '\t') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let redacted = crate::ai_runtime::trace::redact_classified_leaks(&normalized);
+    let trimmed = redacted.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if looks_like_tool_argument_or_structured_data(trimmed) {
+        return "已完成必要的推理准备。".to_string();
+    }
+    // Keep comfortably below both the per-summary 1,500-char cap and the
+    // 2,000-char serialized Run-event budget even when JSON escaping expands
+    // every character. The ID has a separate conservative bound below.
+    truncate_reasoning_summary(trimmed, 800)
+}
+
+fn safe_reasoning_summary_id(value: &str) -> String {
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | ':') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    truncate_reasoning_summary(&normalized, 96)
+}
+
+fn truncate_reasoning_summary(value: &str, limit: usize) -> String {
+    if limit == 0 {
+        return String::new();
+    }
+    if value.chars().count() <= limit {
+        value.to_string()
+    } else {
+        let truncated = value
+            .chars()
+            .take(limit.saturating_sub(1))
+            .collect::<String>();
+        format!("{truncated}…")
+    }
+}
+
+fn looks_like_tool_argument_or_structured_data(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    value.starts_with('{')
+        || value.starts_with('[')
+        || [
+            "\"query\"",
+            "\"url\"",
+            "\"arguments\"",
+            "tool_call",
+            "call_",
+            "api_key",
+            "authorization",
+            "token=",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 /// Keep each ContentDelta JSON under the Run event safe-text budget (2_000 chars).
@@ -591,18 +784,28 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
         event: &crate::ai_runtime::model_gateway::StreamEvent,
         _token_index: u32,
     ) -> AppResult<()> {
-        let crate::ai_runtime::model_gateway::StreamEventData::Token { token } = &event.data else {
-            return Ok(());
-        };
-        self.transient_content.push_str(token);
-        if !self.defer_visible_deltas
-            && self
-                .transient_content
-                .len()
-                .saturating_sub(self.last_transient_bytes)
-                >= STREAM_EVENT_FLUSH_BYTES
-        {
-            self.flush_transient()?;
+        match &event.data {
+            crate::ai_runtime::model_gateway::StreamEventData::Token { token } => {
+                self.transient_content.push_str(token);
+                if !self.defer_visible_deltas
+                    && self
+                        .transient_content
+                        .len()
+                        .saturating_sub(self.last_transient_bytes)
+                        >= STREAM_EVENT_FLUSH_BYTES
+                {
+                    self.flush_transient()?;
+                }
+            }
+            crate::ai_runtime::model_gateway::StreamEventData::ReasoningSummary {
+                summary_id,
+                text,
+            } => self.observe_reasoning_summary(summary_id, text)?,
+            crate::ai_runtime::model_gateway::StreamEventData::Done { .. } => {
+                self.persist_reasoning_summaries()?
+            }
+            crate::ai_runtime::model_gateway::StreamEventData::ToolCall { .. }
+            | crate::ai_runtime::model_gateway::StreamEventData::Error { .. } => {}
         }
         Ok(())
     }
@@ -1816,6 +2019,7 @@ pub(crate) fn gateway_request_for_messages(
         stream: true,
         thinking,
         reasoning,
+        continuation: None,
         skip_stub_ids: vec![],
     }
 }

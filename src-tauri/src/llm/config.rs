@@ -170,6 +170,32 @@ mod model_pool_tests {
         .expect_err("model without tools must not be selected");
         assert_eq!(error.to_string(), "agent_run_no_capable_model");
     }
+
+    #[test]
+    fn openai_reasoning_model_preserves_its_responses_summary_request_for_dispatch() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "openai".into(),
+            ProviderOverride {
+                enabled_models: Some(vec!["gpt-5".into()]),
+                ..Default::default()
+            },
+        );
+        routing.default_model = Some(ModelReference {
+            provider_id: "openai".into(),
+            model_id: "gpt-5".into(),
+        });
+
+        let resolved = resolve_model_pool_from_config(&routing, requirements())
+            .expect("OpenAI reasoning route");
+
+        assert!(resolved.resolved.reasoning.requested);
+        assert_eq!(
+            resolved.resolved.reasoning.adapter,
+            ReasoningAdapter::OpenAiResponses
+        );
+        assert_eq!(resolved.resolved.reasoning.mode, ReasoningMode::Medium);
+    }
 }
 
 /// Stable reference to one configured model, stored without endpoint or credential data.
@@ -842,7 +868,7 @@ fn resolve_model_reference(
         model: reference.model_id.clone(),
         base_url,
         thinking: false,
-        reasoning: ResolvedReasoningRequest::disabled(),
+        reasoning: default_dispatch_reasoning(&reasoning_capability),
         input_budget,
         output_budget,
         endpoint_family: model_spec.endpoint_family,
@@ -881,6 +907,23 @@ impl ReasoningCapability {
                 self.adapter,
                 ReasoningAdapter::None | ReasoningAdapter::OpenAiCompatibleTagStream
             )
+    }
+}
+
+/// Enable only the provider-native summary surface required by the normal Run
+/// process stream. Other providers retain their existing answer-only behavior
+/// until they have an equally explicit, safe summary contract.
+fn default_dispatch_reasoning(capability: &ReasoningCapability) -> ResolvedReasoningRequest {
+    if capability.adapter != ReasoningAdapter::OpenAiResponses || !capability.can_request() {
+        return ResolvedReasoningRequest::disabled();
+    }
+    ResolvedReasoningRequest {
+        mode: capability.default_mode,
+        adapter: capability.adapter,
+        control: capability.control,
+        visibility: capability.visibility,
+        requested: true,
+        isolate_output: true,
     }
 }
 
@@ -1084,19 +1127,21 @@ pub fn resolve_for_provider_without_secret(
     let base_url = api_base(provider_id, custom_base);
     let model_spec = find_model(&model_id).unwrap_or_else(|| fallback_model(provider_id));
 
+    let reasoning_capability =
+        reasoning_capability_for_model(&routing, provider_id, &model_id, model_spec);
     let resolved = ResolvedLlmConfig {
         provider_id: provider_id.to_string(),
         model: model_id,
         base_url,
         thinking: false,
-        reasoning: ResolvedReasoningRequest::disabled(),
+        reasoning: default_dispatch_reasoning(&reasoning_capability),
         input_budget: (model_spec.context_window as f32 * 0.75) as usize,
         output_budget: model_spec.max_output,
         endpoint_family: model_spec.endpoint_family,
         supports_streaming: model_spec.supports_streaming,
         supports_tools: model_spec.supports_tools,
         supports_vision: model_spec.supports_vision,
-        supports_reasoning: model_spec.reasoning_capability().is_some(),
+        supports_reasoning: reasoning_capability.can_request(),
     };
     Ok(resolved)
 }

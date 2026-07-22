@@ -148,4 +148,103 @@ describe("SessionHistoryDropdown", () => {
       null,
     );
   });
+
+  it("restores persisted process events only onto their assistant message", async () => {
+    const summary: AssistantSessionSummary = {
+      session: { domain: "normal", sessionKey: "conversation-process" },
+      title: "Process history",
+      messageCount: 2,
+      createdAt: "2026-07-22T08:00:00.000Z",
+      updatedAt: "2026-07-22T08:01:00.000Z",
+    };
+    const messages: AssistantSessionMessage[] = [
+      {
+        seq: 1,
+        role: "user",
+        content: "核验资料",
+        turnId: "turn-process-1",
+        explicitReferences: [],
+        contextScope: [],
+        displayMentions: [],
+        createdAt: "2026-07-22T08:00:00.000Z",
+      },
+      {
+        seq: 2,
+        role: "assistant",
+        content: "最终答复",
+        runId: "run-process-1",
+        turnId: "turn-process-1",
+        processEvents: [
+          {
+            runId: "run-process-1",
+            seq: 2,
+            stateVersion: 1,
+            timestamp: "2026-07-22T08:00:01.000Z",
+            type: "stage_changed",
+            payload: {
+              kind: "stage_changed",
+              state: "running",
+              stage: "正在核验资料",
+            },
+          },
+        ],
+        explicitReferences: [],
+        contextScope: [],
+        displayMentions: [],
+        createdAt: "2026-07-22T08:01:00.000Z",
+      },
+    ];
+    mockAssistantSessionList.mockResolvedValue([summary]);
+    mockAssistantSessionLoad.mockResolvedValue(messages);
+    mockAssistantRunGet.mockResolvedValue(null);
+    const onSelectSession = renderHistory();
+
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="session-history-trigger"]',
+        )
+        ?.click();
+    });
+    await flushPromises();
+    const sessionRow = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="button"]'),
+    ).find((element) => element.textContent?.includes("Process history"));
+
+    await act(async () => {
+      sessionRow?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSelectSession).toHaveBeenCalledWith(
+      summary.session,
+      [
+        {
+          role: "user",
+          content: "核验资料",
+          turnId: "turn-process-1",
+          seq: 1,
+          created_at: "2026-07-22T08:00:00.000Z",
+        },
+        {
+          role: "assistant",
+          content: "最终答复",
+          runId: "run-process-1",
+          turnId: "turn-process-1",
+          processItems: [
+            {
+              id: "stage:2",
+              kind: "stage",
+              label: "正在核验资料",
+              status: "completed",
+              createdAt: Date.parse("2026-07-22T08:00:01.000Z"),
+            },
+          ],
+          seq: 2,
+          created_at: "2026-07-22T08:01:00.000Z",
+        },
+      ],
+      null,
+    );
+  });
 });

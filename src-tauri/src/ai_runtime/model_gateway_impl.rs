@@ -5,6 +5,7 @@ pub use crate::ai_types::{
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 #[path = "model_gateway/abort.rs"]
 mod abort_impl;
 #[path = "model_gateway/anthropic_response.rs"]
@@ -15,6 +16,8 @@ mod body_impl;
 mod http_backend_impl;
 #[path = "model_gateway/messages.rs"]
 mod messages_impl;
+#[path = "model_gateway/responses.rs"]
+mod responses_impl;
 #[path = "model_gateway/streaming.rs"]
 mod streaming_impl;
 #[path = "model_gateway/usage.rs"]
@@ -22,8 +25,8 @@ mod usage_impl;
 
 pub use abort_impl::{clear_abort, is_abort_requested, request_abort};
 use anthropic_response_impl::parse_anthropic_response;
-use body_impl::build_llm_api_body;
 pub use body_impl::{build_chat_completions_body, GatewayRequest, LlmFunctionDef, LlmToolDef};
+use body_impl::{build_llm_api_body, uses_openai_responses};
 use http_backend_impl::format_llm_http_error;
 pub use http_backend_impl::HttpLlmBackend;
 pub use messages_impl::{
@@ -36,6 +39,25 @@ pub use streaming_impl::{
 };
 use usage_impl::parse_usage;
 
+/// Opaque provider state needed to continue a multi-turn tool exchange.
+///
+/// It intentionally has no serializer and redacts its identifier in `Debug` so
+/// response-chain metadata cannot leak through ordinary diagnostics.
+#[derive(Clone, PartialEq, Eq)]
+pub enum ProviderContinuation {
+    OpenAiResponses { response_id: String },
+}
+
+impl fmt::Debug for ProviderContinuation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::OpenAiResponses { .. } => {
+                formatter.write_str("OpenAiResponses{response_id:[redacted]}")
+            }
+        }
+    }
+}
+
 /// Gateway response (non-streaming).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayResponse {
@@ -45,6 +67,8 @@ pub struct GatewayResponse {
     pub finish_reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
+    #[serde(skip)]
+    pub continuation: Option<ProviderContinuation>,
 }
 
 /// Model Gateway: handles LLM provider communication.
@@ -196,7 +220,7 @@ impl ModelGateway {
 
     /// Send a request to the LLM provider (non-streaming).
     pub async fn send_request(&self, request: GatewayRequest) -> AppResult<GatewayResponse> {
-        let url = llm_endpoint_url(&request.provider);
+        let url = llm_endpoint_url(&request);
 
         let body = build_llm_api_body(&request)?;
 
@@ -232,10 +256,7 @@ impl ModelGateway {
 
         let json = parse_gateway_json(&response_text)?;
 
-        Ok(parse_gateway_response(
-            request.provider.endpoint_family,
-            &json,
-        ))
+        Ok(parse_gateway_response(&request, &json))
     }
 
     /// Send a streaming request to a caller-owned observer without Tauri event emission.
@@ -269,11 +290,19 @@ fn parse_gateway_json(response_text: &str) -> AppResult<serde_json::Value> {
     serde_json::from_str(response_text).map_err(|_| AppError::msg("llm_response_invalid_json"))
 }
 
-fn llm_endpoint_url(provider: &ProviderConfig) -> String {
-    let base = provider.base_url.trim_end_matches('/');
-    match provider.endpoint_family {
+fn llm_endpoint_url(request: &GatewayRequest) -> String {
+    if uses_openai_responses(request) {
+        let base = request.provider.base_url.trim_end_matches('/');
+        return if base.ends_with("/v1") {
+            format!("{base}/responses")
+        } else {
+            format!("{base}/v1/responses")
+        };
+    }
+    let base = request.provider.base_url.trim_end_matches('/');
+    match request.provider.endpoint_family {
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
-            crate::llm::providers::chat_completions_url(&provider.base_url)
+            crate::llm::providers::chat_completions_url(&request.provider.base_url)
         }
         EndpointFamily::AnthropicMessages => {
             if base.ends_with("/v1") {
@@ -301,15 +330,66 @@ fn apply_auth_headers(
     }
 }
 
-fn parse_gateway_response(
-    endpoint_family: EndpointFamily,
-    json: &serde_json::Value,
-) -> GatewayResponse {
-    match endpoint_family {
+fn parse_gateway_response(request: &GatewayRequest, json: &serde_json::Value) -> GatewayResponse {
+    if uses_openai_responses(request) {
+        return parse_openai_responses_response(json);
+    }
+    match request.provider.endpoint_family {
         EndpointFamily::AnthropicMessages => parse_anthropic_response(json),
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
             parse_openai_compatible_response(json)
         }
+    }
+}
+
+fn parse_openai_responses_response(json: &serde_json::Value) -> GatewayResponse {
+    let mut content = String::new();
+    let mut tool_calls = Vec::new();
+    for item in json["output"].as_array().into_iter().flatten() {
+        match item["type"].as_str() {
+            Some("message") => {
+                for part in item["content"].as_array().into_iter().flatten() {
+                    if part["type"].as_str() == Some("output_text") {
+                        if let Some(text) = part["text"].as_str() {
+                            content.push_str(text);
+                        }
+                    }
+                }
+            }
+            Some("function_call") => {
+                if let (Some(call_id), Some(name)) =
+                    (item["call_id"].as_str(), item["name"].as_str())
+                {
+                    tool_calls.push(ToolCall {
+                        id: call_id.to_string(),
+                        call_type: "function".to_string(),
+                        function: FunctionCall {
+                            name: name.to_string(),
+                            arguments: item["arguments"].as_str().unwrap_or("{}").to_string(),
+                        },
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    let usage = TokenUsage {
+        prompt_tokens: json["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
+        completion_tokens: json["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
+        total_tokens: json["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
+        ..Default::default()
+    };
+    GatewayResponse {
+        content: (!content.is_empty()).then_some(content),
+        tool_calls,
+        usage,
+        finish_reason: json["status"].as_str().unwrap_or("completed").to_string(),
+        reasoning_content: None,
+        continuation: json["id"].as_str().map(|response_id| {
+            ProviderContinuation::OpenAiResponses {
+                response_id: response_id.to_string(),
+            }
+        }),
     }
 }
 
@@ -352,6 +432,7 @@ fn parse_openai_compatible_response(json: &serde_json::Value) -> GatewayResponse
             .unwrap_or("unknown")
             .to_string(),
         reasoning_content,
+        continuation: None,
     }
 }
 

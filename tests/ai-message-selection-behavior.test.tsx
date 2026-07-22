@@ -128,18 +128,22 @@ describe("AI message selection behavior", () => {
     await act(async () => {
       root.render(
         <AiMessageList
-          messages={[{ role: "assistant", content: "最终正文" }]}
-          streaming={true}
-          processEvents={[
+          messages={[
             {
-              id: "req-1:1",
-              requestId: "req-1",
-              kind: "trace",
-              label: "正在检索笔记",
-              round: 1,
-              createdAt: 1,
+              role: "assistant",
+              content: "最终正文",
+              processItems: [
+                {
+                  id: "stage:1",
+                  kind: "stage",
+                  label: "正在检索笔记",
+                  status: "completed",
+                  createdAt: 1,
+                },
+              ],
             },
           ]}
+          streaming={true}
           selectedIndices={new Set([0])}
           onSelect={vi.fn()}
         />,
@@ -169,26 +173,29 @@ describe("AI message selection behavior", () => {
     await act(async () => {
       root.render(
         <AiMessageList
-          messages={[{ role: "assistant", content: "" }]}
-          streaming={true}
-          processEvents={[
+          messages={[
             {
-              id: "req-1:1",
-              requestId: "req-1",
-              kind: "trace",
-              label: "联网检索中...",
-              round: 1,
-              createdAt: 1,
-            },
-            {
-              id: "req-1:2",
-              requestId: "req-1",
-              kind: "trace",
-              label: "chat完成。",
-              round: 1,
-              createdAt: 2,
+              role: "assistant",
+              content: "",
+              processItems: [
+                {
+                  id: "stage:1",
+                  kind: "stage",
+                  label: "联网检索中...",
+                  status: "completed",
+                  createdAt: 1,
+                },
+                {
+                  id: "stage:2",
+                  kind: "stage",
+                  label: "chat完成。",
+                  status: "completed",
+                  createdAt: 2,
+                },
+              ],
             },
           ]}
+          streaming={true}
           selectedIndices={new Set()}
           onSelect={vi.fn()}
         />,
@@ -216,22 +223,52 @@ describe("AI message selection behavior", () => {
     expect(timeline?.textContent).not.toContain("联网检索中...");
   });
 
+  it("keeps every bounded process item available while the timeline is expanded", async () => {
+    const processItems = Array.from({ length: 9 }, (_, index) => ({
+      id: `stage:${index + 1}`,
+      kind: "stage" as const,
+      label: `处理步骤 ${index + 1}`,
+      status: "completed" as const,
+      createdAt: index + 1,
+    }));
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "", processItems }]}
+          streaming
+        />,
+      );
+    });
+
+    const timeline = host.querySelector<HTMLElement>(
+      '[data-testid="assistant-process-timeline"]',
+    );
+    expect(timeline?.textContent).toContain("处理步骤 1");
+    expect(timeline?.textContent).toContain("处理步骤 9");
+  });
+
   it("hides the standalone thinking indicator when process events are visible", async () => {
     await act(async () => {
       root.render(
         <AiMessageList
-          messages={[{ role: "user", content: "MOE架构是什么意思？" }]}
-          streaming={true}
-          processEvents={[
+          messages={[
+            { role: "user", content: "MOE架构是什么意思？" },
             {
-              id: "req-1:1",
-              requestId: "req-1",
-              kind: "trace",
-              label: "正在流式输出最终回答...",
-              round: 1,
-              createdAt: 1,
+              role: "assistant",
+              content: "",
+              processItems: [
+                {
+                  id: "stage:1",
+                  kind: "stage",
+                  label: "正在流式输出最终回答...",
+                  status: "completed",
+                  createdAt: 1,
+                },
+              ],
             },
           ]}
+          streaming={true}
           selectedIndices={new Set()}
           onSelect={vi.fn()}
         />,
@@ -241,6 +278,54 @@ describe("AI message selection behavior", () => {
     expect(host.textContent).toContain("处理过程");
     expect(host.textContent).toContain("正在流式输出最终回答...");
     expect(host.textContent).not.toContain("正在思考");
+  });
+
+  it("collapses the live process exactly once when final output starts", async () => {
+    const processItems = [
+      {
+        id: "reasoning:1",
+        kind: "reasoning_summary" as const,
+        label: "先核验来源，再组织答案。",
+        status: "completed" as const,
+        createdAt: 1,
+      },
+    ];
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "", processItems }]}
+          streaming
+        />,
+      );
+    });
+    const toggle = host.querySelector<HTMLButtonElement>(
+      '[data-testid="assistant-process-timeline"] button',
+    );
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "最终正文", processItems }]}
+          streaming
+        />,
+      );
+    });
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      root.render(
+        <AiMessageList
+          messages={[
+            { role: "assistant", content: "最终正文继续", processItems },
+          ]}
+          streaming
+        />,
+      );
+    });
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("copies the context-menu selection snapshot even if the DOM selection is cleared", async () => {

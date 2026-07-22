@@ -14,12 +14,14 @@ use crate::ai_types::{
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{params_from_iter, types::Value as SqlValue, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 const MAX_SAFE_EVENT_TEXT_CHARS: usize = 2_000;
+const MAX_REASONING_SUMMARY_CHARS: usize = 1_500;
 
 #[cfg(test)]
 const MAX_CHECKPOINT_STRING_CHARS: usize = 512;
@@ -107,6 +109,15 @@ pub(crate) struct FinalizeRunInput {
     pub(crate) content: String,
     pub(crate) evidence_ids: Vec<i64>,
     pub(crate) citation_map: Value,
+}
+
+/// Safe process-event history for one latest Run belonging to a logical turn.
+#[derive(Debug, Clone)]
+pub(crate) struct HistoricalRunProcess {
+    /// Stable Run identity used to bind the process view to an assistant message.
+    pub(crate) run_id: String,
+    /// Only safe progress events; answer deltas are deliberately excluded.
+    pub(crate) events: Vec<AssistantRunEvent>,
 }
 
 /// Result of consuming a persisted confirmation through one idempotent control request.
@@ -986,6 +997,80 @@ impl AgentRunRepository {
         }
     }
 
+    /// Load persisted, presentation-safe process events for the latest Run of every requested
+    /// turn in one normal-domain session. This intentionally avoids `content_delta` so history
+    /// cannot duplicate or confuse the assistant's final message body.
+    pub(crate) fn process_events_for_session_turns(
+        db: &Database,
+        session_key: &str,
+        turn_ids: &[String],
+    ) -> AppResult<HashMap<String, HistoricalRunProcess>> {
+        if turn_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let placeholders = std::iter::repeat_n("?", turn_ids.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let query = format!(
+            "SELECT r.run_id, r.turn_id, e.event_seq, e.state_version, e.event_type,
+                    e.payload_json, e.created_at
+             FROM agent_runs r
+             JOIN sessions s ON s.id = r.session_id
+             JOIN agent_run_events e ON e.run_id = r.run_id
+             WHERE s.session_key = ?
+               AND r.turn_id IN ({placeholders})
+               AND r.rowid = (
+                   SELECT latest.rowid FROM agent_runs latest
+                   WHERE latest.session_id = r.session_id AND latest.turn_id = r.turn_id
+                   ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1
+               )
+               AND e.event_type IN (
+                   'stage_changed', 'reasoning_summary', 'tool_started', 'tool_completed'
+               )
+             ORDER BY r.turn_id ASC, e.event_seq ASC"
+        );
+        let mut params = Vec::with_capacity(turn_ids.len() + 1);
+        params.push(SqlValue::Text(session_key.to_owned()));
+        params.extend(turn_ids.iter().cloned().map(SqlValue::Text));
+
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(&query)?;
+            let rows = statement.query_map(params_from_iter(params), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u64>(2)?,
+                    row.get::<_, u64>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })?;
+            let mut by_turn = HashMap::new();
+            for row in rows {
+                let (run_id, turn_id, seq, state_version, event_type, payload_json, timestamp) =
+                    row?;
+                let event = AssistantRunEvent::new(
+                    run_id.clone(),
+                    seq,
+                    state_version,
+                    parse_wire::<RunEventType>(&event_type)?,
+                    timestamp,
+                    serde_json::from_str(&payload_json)?,
+                )
+                .map_err(AppError::msg)?;
+                let process = by_turn
+                    .entry(turn_id)
+                    .or_insert_with(|| HistoricalRunProcess {
+                        run_id,
+                        events: Vec::new(),
+                    });
+                process.events.push(event);
+            }
+            Ok(by_turn)
+        })
+    }
+
     fn get_scoped(
         db: &Database,
         run_id: &str,
@@ -1420,6 +1505,15 @@ fn safe_body_summary(body: &str) -> String {
 }
 
 fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
+    if let RunEventPayload::ReasoningSummary { summary_id, text } = payload {
+        if summary_id.trim().is_empty()
+            || summary_id.chars().count() > 160
+            || text.trim().is_empty()
+            || text.chars().count() > MAX_REASONING_SUMMARY_CHARS
+        {
+            return Err(AppError::msg("agent_run_invalid_reasoning_summary"));
+        }
+    }
     let payload_json = serde_json::to_string(payload)?;
     if payload_json.chars().count() > MAX_SAFE_EVENT_TEXT_CHARS {
         return Err(AppError::msg("agent_run_event_payload_too_large"));
@@ -1438,6 +1532,7 @@ fn state_for_event(payload: &RunEventPayload) -> Option<RunState> {
         RunEventPayload::Cancelled { .. } => Some(RunState::Cancelled),
         RunEventPayload::Accepted { .. }
         | RunEventPayload::ContentDelta { .. }
+        | RunEventPayload::ReasoningSummary { .. }
         | RunEventPayload::ToolStarted { .. }
         | RunEventPayload::ToolCompleted { .. }
         | RunEventPayload::CapabilityDegraded { .. }

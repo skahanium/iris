@@ -54,6 +54,7 @@ pub(super) fn parse_anthropic_response(json: &serde_json::Value) -> GatewayRespo
             .unwrap_or("unknown")
             .to_string(),
         reasoning_content: None,
+        continuation: None,
     }
 }
 

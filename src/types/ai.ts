@@ -199,6 +199,12 @@ export interface AssistantSessionMessage {
   seq: number;
   role: string;
   content: string;
+  /** Run identity when this historical message originated from the unified Run path. */
+  runId?: string;
+  /** Shared user/assistant turn identity, absent for legacy history rows. */
+  turnId?: string;
+  /** Safe, persisted process events for this assistant message only. */
+  processEvents?: AssistantRunEvent[];
   contentParts?: unknown;
   toolCalls?: unknown;
   explicitReferences: unknown[];
@@ -314,6 +320,7 @@ export type RunState =
 export type RunEventType =
   | "accepted"
   | "stage_changed"
+  | "reasoning_summary"
   | "content_delta"
   | "tool_started"
   | "tool_completed"
@@ -409,6 +416,12 @@ export type AssistantRunEventPayload =
       webReason?: WebDecisionReason;
     }
   | { kind: "stage_changed"; state: RunState; stage: string }
+  /** Provider explicitly supplied a safe, user-visible reasoning summary. */
+  | {
+      kind: "reasoning_summary";
+      summaryId: string;
+      text: string;
+    }
   | { kind: "content_delta"; delta: string }
   | { kind: "tool_started"; capability: string; toolCallId: string }
   | {

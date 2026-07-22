@@ -220,6 +220,38 @@ fn run_events_serialize_the_shared_wire_envelope_without_internal_details() {
 }
 
 #[test]
+fn reasoning_summary_is_a_distinct_replayable_event_without_raw_reasoning_fields() {
+    let event = AssistantRunEvent::new(
+        "run-1",
+        4,
+        2,
+        RunEventType::ReasoningSummary,
+        "2026-07-22T08:00:00Z",
+        RunEventPayload::ReasoningSummary {
+            summary_id: "summary-1".into(),
+            text: "先核验资料，再组织答案。".into(),
+        },
+    )
+    .expect("valid provider summary event");
+
+    assert_eq!(
+        serde_json::to_value(event).expect("serialize summary event"),
+        serde_json::json!({
+            "runId": "run-1",
+            "seq": 4,
+            "stateVersion": 2,
+            "type": "reasoning_summary",
+            "timestamp": "2026-07-22T08:00:00Z",
+            "payload": {
+                "kind": "reasoning_summary",
+                "summaryId": "summary-1",
+                "text": "先核验资料，再组织答案。"
+            }
+        })
+    );
+}
+
+#[test]
 fn execution_envelope_uses_the_same_camel_case_wire_fields_as_typescript() {
     let envelope = direct_answer_envelope();
 
@@ -398,10 +430,12 @@ fn run_event_types_match_the_stable_event_contract() {
     let event_types = [
         RunEventType::Accepted,
         RunEventType::StageChanged,
+        RunEventType::ReasoningSummary,
         RunEventType::ContentDelta,
         RunEventType::ToolStarted,
         RunEventType::ToolCompleted,
         RunEventType::CapabilityDegraded,
+        RunEventType::WebVerificationFailed,
         RunEventType::ConfirmationRequired,
         RunEventType::PermissionDenied,
         RunEventType::ProviderSwitched,
@@ -413,7 +447,7 @@ fn run_event_types_match_the_stable_event_contract() {
         RunEventType::Cancelled,
     ];
 
-    assert_eq!(event_types.len(), 15);
+    assert_eq!(event_types.len(), 17);
 }
 
 #[test]

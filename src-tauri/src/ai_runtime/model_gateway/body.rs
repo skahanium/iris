@@ -6,7 +6,9 @@ use crate::ai_types::{
 };
 use crate::error::{AppError, AppResult};
 
-use super::{messages_for_api, prepare_tool_api_messages, tool_api_message_chain_valid};
+use super::{
+    messages_for_api, prepare_tool_api_messages, tool_api_message_chain_valid, ProviderContinuation,
+};
 
 /// Tool definition for LLM function-calling format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +39,8 @@ pub struct GatewayRequest {
     /// When true, send provider thinking-mode parameters (DeepSeek-compatible).
     pub thinking: bool,
     pub reasoning: ResolvedReasoningRequest,
+    /// Opaque state returned by a provider for the next tool-loop model turn.
+    pub continuation: Option<ProviderContinuation>,
     /// Tool call IDs still awaiting user confirmation - must not receive error stubs.
     pub skip_stub_ids: Vec<String>,
 }
@@ -77,12 +81,24 @@ pub(super) fn build_llm_api_body(request: &GatewayRequest) -> AppResult<serde_js
     apply_reasoning_message_controls(&mut req);
     validate_reasoning_endpoint(&req)?;
     enforce_input_token_budget(&mut req.messages, &req.tools, req.input_token_budget)?;
-    Ok(match req.provider.endpoint_family {
-        EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
-            build_chat_completions_body_inner(&req)
+    Ok(if uses_openai_responses(&req) {
+        build_openai_responses_body_inner(&req)
+    } else {
+        match req.provider.endpoint_family {
+            EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
+                build_chat_completions_body_inner(&req)
+            }
+            EndpointFamily::AnthropicMessages => build_anthropic_messages_body_inner(&req),
         }
-        EndpointFamily::AnthropicMessages => build_anthropic_messages_body_inner(&req),
     })
+}
+
+/// OpenAI reasoning models expose their supported summary stream only through
+/// the Responses API. The adapter is therefore the explicit routing signal;
+/// ordinary OpenAI-compatible models remain on Chat Completions.
+pub(super) fn uses_openai_responses(request: &GatewayRequest) -> bool {
+    request.provider.endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
+        && effective_reasoning_request(request).adapter == ReasoningAdapter::OpenAiResponses
 }
 
 fn enforce_input_token_budget(
@@ -240,6 +256,108 @@ fn build_chat_completions_body_inner(request: &GatewayRequest) -> serde_json::Va
     body
 }
 
+/// Build a Responses API request without forwarding provider-private reasoning
+/// text from the canonical transcript. Only the documented summary facility is
+/// requested, and it is available only when the user enabled reasoning.
+fn build_openai_responses_body_inner(request: &GatewayRequest) -> serde_json::Value {
+    let mut input = Vec::new();
+    let mut system_instructions = Vec::new();
+
+    let continuation_response_id = request
+        .continuation
+        .as_ref()
+        .map(|ProviderContinuation::OpenAiResponses { response_id }| response_id.as_str());
+    let continuation_tool_start = continuation_response_id.and_then(|_| {
+        request
+            .messages
+            .iter()
+            .rposition(|message| {
+                matches!(message.role, MessageRole::Assistant)
+                    && message
+                        .tool_calls
+                        .as_ref()
+                        .is_some_and(|calls| !calls.is_empty())
+            })
+            .map(|index| index + 1)
+    });
+
+    for (index, message) in request.messages.iter().enumerate() {
+        if continuation_tool_start.is_some_and(|start| index < start) {
+            continue;
+        }
+        let text = message.content.text_content();
+        match message.role {
+            MessageRole::System if continuation_response_id.is_none() => {
+                system_instructions.push(text)
+            }
+            MessageRole::User if continuation_response_id.is_none() => {
+                input.push(serde_json::json!({
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                }))
+            }
+            MessageRole::Assistant if continuation_response_id.is_none() => {
+                input.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text}],
+                }))
+            }
+            MessageRole::Tool => {
+                if let Some(call_id) = &message.tool_call_id {
+                    input.push(serde_json::json!({
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": text,
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut body = serde_json::json!({
+        "model": request.provider.model,
+        "input": input,
+    });
+    if let Some(response_id) = continuation_response_id {
+        body["previous_response_id"] = serde_json::Value::String(response_id.to_string());
+    }
+    if !system_instructions.is_empty() {
+        body["instructions"] = serde_json::Value::String(system_instructions.join("\n\n"));
+    }
+    if !request.tools.is_empty() {
+        body["tools"] = serde_json::Value::Array(
+            request
+                .tools
+                .iter()
+                .map(|tool| {
+                    serde_json::json!({
+                        "type": "function",
+                        "name": tool.function.name,
+                        "description": tool.function.description,
+                        "parameters": tool.function.parameters,
+                    })
+                })
+                .collect(),
+        );
+    }
+    if let Some(max_output_tokens) = request.max_tokens {
+        body["max_output_tokens"] = serde_json::json!(max_output_tokens);
+    }
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = serde_json::json!(temperature);
+    }
+
+    let reasoning = effective_reasoning_request(request);
+    if reasoning.requested {
+        body["reasoning"] = serde_json::json!({
+            "effort": effort_for_mode(reasoning.mode),
+            "summary": "auto",
+        });
+    }
+    body
+}
+
 fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) {
     let reasoning = effective_reasoning_request(request);
     if !reasoning.requested {
@@ -261,9 +379,7 @@ fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) 
         ReasoningAdapter::ProviderSpecificStatic => {
             body["thinking"] = serde_json::json!({ "type": "enabled" })
         }
-        ReasoningAdapter::OpenAiResponses => {
-            body["reasoning_effort"] = serde_json::json!(effort_for_mode(reasoning.mode));
-        }
+        ReasoningAdapter::OpenAiResponses => {}
         ReasoningAdapter::GeminiThinkingConfig => {
             body["extra_body"]["google"]["thinking_config"] = serde_json::json!({
                 "thinking_level": thinking_level_for_mode(reasoning.mode),
@@ -348,8 +464,10 @@ fn reasoning_adapter_supported_by_endpoint(
         ReasoningAdapter::AnthropicExtendedThinking => {
             endpoint_family == EndpointFamily::AnthropicMessages
         }
-        ReasoningAdapter::OpenAiResponses
-        | ReasoningAdapter::DeepSeekReasoningContent
+        ReasoningAdapter::OpenAiResponses => {
+            endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
+        }
+        ReasoningAdapter::DeepSeekReasoningContent
         | ReasoningAdapter::GlmThinking
         | ReasoningAdapter::QwenChatTemplate
         | ReasoningAdapter::OpenAiCompatibleTagStream
@@ -532,6 +650,7 @@ mod phase3_adapter_contract_tests {
             stream: false,
             thinking: false,
             reasoning: ResolvedReasoningRequest::disabled(),
+            continuation: None,
             skip_stub_ids: vec![],
         }
     }
@@ -610,6 +729,7 @@ mod phase3_adapter_contract_tests {
             stream: false,
             thinking: false,
             reasoning: ResolvedReasoningRequest::disabled(),
+            continuation: None,
             skip_stub_ids: vec![],
         };
 
@@ -764,7 +884,7 @@ mod phase3_adapter_contract_tests {
     }
 
     #[test]
-    fn openai_reasoning_uses_chat_completions_effort_field() {
+    fn openai_reasoning_is_not_sent_as_a_chat_completions_parameter() {
         let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
         request.reasoning = ResolvedReasoningRequest {
             mode: ReasoningMode::Low,
@@ -777,7 +897,93 @@ mod phase3_adapter_contract_tests {
 
         let body = build_llm_api_body(&request).unwrap();
 
-        assert_eq!(body["reasoning_effort"], "low");
+        assert_eq!(body["reasoning"]["effort"], "low");
+        assert_eq!(body["reasoning"]["summary"], "auto");
+        assert!(body.get("reasoning_effort").is_none());
         assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn openai_reasoning_uses_responses_input_and_requests_safe_summary() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Low,
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let body = build_llm_api_body(&request).unwrap();
+
+        assert_eq!(body["model"], "model-a");
+        assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(body["input"][0]["content"][0]["text"], "ping");
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["reasoning"]["effort"], "low");
+        assert_eq!(body["reasoning"]["summary"], "auto");
+        assert!(body.get("messages").is_none());
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn responses_tool_continuation_uses_previous_response_id_and_only_tool_outputs() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Auto,
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+        request.continuation = Some(ProviderContinuation::OpenAiResponses {
+            response_id: "resp_prior_1".into(),
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![crate::ai_types::ToolCall::new(
+                "call_1",
+                "search_hybrid",
+                r#"{"query":"Iris"}"#,
+            )]),
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"success":true}"#.into(),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![crate::ai_types::ToolCall::new(
+                "call_2",
+                "search_hybrid",
+                r#"{"query":"Iris latest"}"#,
+            )]),
+            reasoning_content: None,
+        });
+        request.messages.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"success":true,"fresh":true}"#.into(),
+            tool_call_id: Some("call_2".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        });
+
+        let body = build_llm_api_body(&request).unwrap();
+
+        assert_eq!(body["previous_response_id"], "resp_prior_1");
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+        assert_eq!(body["input"][0]["type"], "function_call_output");
+        assert_eq!(body["input"][0]["call_id"], "call_2");
+        assert!(body.get("instructions").is_none());
     }
 }

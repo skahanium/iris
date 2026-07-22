@@ -1,6 +1,7 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import type { ChatLine } from "../AiMessageList";
+import { projectAssistantProcessEvents } from "@/lib/assistant-process";
 import type { AssistantRunEventState } from "@/lib/assistant-run-events";
 import type { ClassifiedRunResultRequest } from "@/types/ai";
 
@@ -51,10 +52,22 @@ export function useAssistantRunTranscript({
         (message) =>
           message.role === "assistant" && message.runId === run.runId,
       );
-      if (index < 0 || previous[index]?.content === run.content)
+      if (index < 0) return previous;
+      const processItems = projectAssistantProcessEvents(
+        run.events,
+        run.reasoningSummaries,
+      );
+      const current = previous[index];
+      if (
+        current?.content === run.content &&
+        sameProcessItems(current.processItems, processItems)
+      ) {
         return previous;
+      }
       return previous.map((message, messageIndex) =>
-        messageIndex === index ? { ...message, content: run.content } : message,
+        messageIndex === index
+          ? { ...message, content: run.content, processItems }
+          : message,
       );
     });
 
@@ -150,4 +163,19 @@ export function useAssistantRunTranscript({
     setStreaming,
     takeClassifiedResult,
   ]);
+}
+
+function sameProcessItems(
+  left: ChatLine["processItems"],
+  right: ChatLine["processItems"],
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every(
+    (item, index) =>
+      item.id === right[index]?.id &&
+      item.label === right[index]?.label &&
+      item.status === right[index]?.status &&
+      item.durationMs === right[index]?.durationMs,
+  );
 }

@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
 
 import { useStreamingContent } from "@/hooks/useStreamingContent";
 import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
-import type { AssistantProcessEvent } from "./AiMessageList";
+import type { AssistantProcessItem } from "@/lib/assistant-process";
 import type { DisplayMention } from "@/types/ai";
 import { sanitizeHtml, toTrustedHtml } from "@/lib/sanitize";
 
@@ -54,7 +54,7 @@ interface AiMessageBubbleProps {
   displayMentions?: DisplayMention[];
 
   /** Runtime-only safe process events. Never persisted as message content. */
-  processEvents?: AssistantProcessEvent[];
+  processItems?: AssistantProcessItem[];
 }
 
 const proseConversation =
@@ -274,7 +274,7 @@ function AssistantProcessTimeline({
   streaming,
   hasContent,
 }: {
-  events: AssistantProcessEvent[];
+  events: AssistantProcessItem[];
   streaming: boolean;
   hasContent: boolean;
 }) {
@@ -295,8 +295,7 @@ function AssistantProcessTimeline({
 
   if (events.length === 0) return null;
 
-  const visibleEvents = events.slice(-8);
-  const latest = visibleEvents[visibleEvents.length - 1];
+  const latest = events.at(-1);
 
   return (
     <div
@@ -325,8 +324,8 @@ function AssistantProcessTimeline({
         ) : null}
       </button>
       {open ? (
-        <ol className="mt-2 space-y-1.5 pl-5">
-          {visibleEvents.map((event) => {
+        <ol className="mt-2 max-h-52 space-y-1.5 overflow-y-auto pl-5 pr-1">
+          {events.map((event) => {
             const duration = formatProcessDuration(event.durationMs);
             return (
               <li key={event.id} className="list-disc pl-0.5">
@@ -555,7 +554,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
   displayMentions,
 
-  processEvents = [],
+  processItems = [],
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
 
@@ -622,7 +621,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
     );
   }
 
-  const hasProcessEvents = processEvents.length > 0;
+  const hasProcessEvents = processItems.length > 0;
   const showThinking = streaming && !content && !hasProcessEvents;
 
   return (
@@ -642,7 +641,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
     >
       {hasProcessEvents ? (
         <AssistantProcessTimeline
-          events={processEvents}
+          events={processItems}
           streaming={streaming}
           hasContent={Boolean(content)}
         />

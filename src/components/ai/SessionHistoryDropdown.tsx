@@ -5,6 +5,7 @@ import type { ChatLine } from "@/components/ai/AiMessageList";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { invokeErrorMessage } from "@/lib/credentials";
+import { projectAssistantProcessEvents } from "@/lib/assistant-process";
 import {
   assistantSessionDelete,
   assistantSessionList,
@@ -35,6 +36,11 @@ function toChatLines(messages: AssistantSessionMessage[]): ChatLine[] {
   return messages.map((message) => ({
     role: message.role as ChatLine["role"],
     content: message.content,
+    ...(message.runId ? { runId: message.runId } : {}),
+    ...(message.turnId ? { turnId: message.turnId } : {}),
+    ...(message.role === "assistant" && message.processEvents?.length
+      ? { processItems: projectAssistantProcessEvents(message.processEvents) }
+      : {}),
     ...(message.displayMentions.length > 0
       ? { displayMentions: message.displayMentions }
       : {}),

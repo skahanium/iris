@@ -12,8 +12,9 @@ use crate::error::{AppError, AppResult, ProviderErrorKind};
 
 use super::{
     abort_impl::{clear_abort, is_abort_requested},
-    body_impl::{build_llm_api_body, GatewayRequest},
+    body_impl::{build_llm_api_body, uses_openai_responses, GatewayRequest},
     http_backend_impl::format_llm_http_error,
+    responses_impl::{ResponsesStreamDelta, ResponsesStreamState},
     usage_impl::parse_usage,
     GatewayResponse,
 };
@@ -40,6 +41,7 @@ pub struct StreamEvent {
 #[serde(rename_all = "snake_case")]
 pub enum StreamEventType {
     Token,
+    ReasoningSummary,
     ToolCall,
     Done,
     Error,
@@ -90,6 +92,7 @@ impl StreamSurface {
 #[serde(untagged)]
 pub enum StreamEventData {
     Token { token: String },
+    ReasoningSummary { summary_id: String, text: String },
     ToolCall { tool_call: ToolCall },
     Done { usage: Option<TokenUsage> },
     Error { message: String, final_error: bool },
@@ -259,6 +262,7 @@ impl AnthropicStreamState {
             usage: self.usage,
             finish_reason: self.finish_reason.unwrap_or_else(|| "stop".to_string()),
             reasoning_content: None,
+            continuation: None,
         }
     }
 }
@@ -662,6 +666,18 @@ pub async fn send_streaming_request_to_observer(
             0,
             true,
         ));
+    }
+
+    if uses_openai_responses(&request) {
+        return send_openai_responses_stream(
+            request_id,
+            request,
+            observer,
+            classified,
+            surface,
+            emit_error_event,
+        )
+        .await;
     }
 
     let endpoint_family = request.provider.endpoint_family;
@@ -1078,6 +1094,7 @@ pub async fn send_streaming_request_to_observer(
                             } else {
                                 Some(full_reasoning)
                             },
+                            continuation: None,
                         });
                     };
                     if endpoint_family == EndpointFamily::AnthropicMessages {
@@ -1230,7 +1247,280 @@ pub async fn send_streaming_request_to_observer(
         } else {
             Some(full_reasoning)
         },
+        continuation: None,
     })
+}
+
+fn responses_endpoint_url(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{base}/responses")
+    } else {
+        format!("{base}/v1/responses")
+    }
+}
+
+/// Stream one documented OpenAI Responses exchange. This intentionally has a
+/// separate parser instead of pretending Responses events are Chat Completions
+/// chunks: tool call IDs and `previous_response_id` must remain exact.
+async fn send_openai_responses_stream(
+    request_id: &str,
+    request: GatewayRequest,
+    observer: &mut dyn StreamEventObserver,
+    classified: bool,
+    surface: StreamSurface,
+    emit_error_event: bool,
+) -> AppResult<GatewayResponse> {
+    let url = responses_endpoint_url(request.provider.base_url.as_str());
+    let mut body = build_llm_api_body(&request).map_err(|error| {
+        finish_stream_with_error(
+            observer,
+            request_id,
+            error.to_string(),
+            classified,
+            surface,
+            0,
+            emit_error_event,
+        )
+    })?;
+    body["stream"] = serde_json::json!(true);
+
+    let streaming_client =
+        crate::network::cert_pinning::create_streaming_https_client().map_err(|error| {
+            finish_stream_with_error(
+                observer,
+                request_id,
+                error.to_string(),
+                classified,
+                surface,
+                0,
+                emit_error_event,
+            )
+        })?;
+    let mut request_builder = streaming_client
+        .post(url)
+        .header(ACCEPT, "text/event-stream")
+        .header(ACCEPT_ENCODING, "identity")
+        .header("Content-Type", "application/json");
+    if let Some(api_key) = &request.provider.api_key {
+        request_builder = apply_streaming_auth_headers(
+            request_builder,
+            request.provider.endpoint_family,
+            api_key,
+        );
+    }
+
+    let send = request_builder.json(&body).send();
+    tokio::pin!(send);
+    let first_response_deadline = tokio::time::sleep(STREAM_FIRST_RESPONSE_TIMEOUT);
+    tokio::pin!(first_response_deadline);
+    let abort_wait = wait_for_abort_signal(request_id);
+    tokio::pin!(abort_wait);
+    let response = tokio::select! {
+        result = &mut send => result.map_err(|error| finish_stream_with_error(
+            observer, request_id, format!("LLM streaming request failed: {error}"),
+            classified, surface, 0, emit_error_event,
+        )),
+        _ = &mut first_response_deadline => Err(finish_stream_with_error(
+            observer, request_id, "llm_stream_first_response_timeout",
+            classified, surface, 0, emit_error_event,
+        )),
+        _ = &mut abort_wait => Err(finish_stream_with_error(
+            observer, request_id, "request aborted", classified, surface, 0, true,
+        )),
+    }?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        let message = format_llm_http_error(status, &text);
+        let _ = finish_stream_with_error(
+            observer,
+            request_id,
+            message.clone(),
+            classified,
+            surface,
+            0,
+            emit_error_event,
+        );
+        return Err(AppError::from_llm_http_status(status, message));
+    }
+
+    use futures_util::StreamExt;
+    let mut stream = response.bytes_stream();
+    let mut carry = String::new();
+    let mut state = ResponsesStreamState::default();
+    let mut tracker = SseJsonFailureTracker::default();
+    let mut visible_sanitizer = surface
+        .sanitizes_visible_output()
+        .then(VisibleStreamSanitizer::new);
+    let mut token_index = 0;
+    let mut completed = false;
+
+    'stream: loop {
+        let chunk = match tokio::time::timeout(ABORT_POLL_INTERVAL, stream.next()).await {
+            Ok(Some(chunk)) => chunk,
+            Ok(None) => break,
+            Err(_) => {
+                if is_abort_requested(request_id) {
+                    return Err(finish_stream_with_error(
+                        observer,
+                        request_id,
+                        "request aborted",
+                        classified,
+                        surface,
+                        token_index,
+                        true,
+                    ));
+                }
+                continue;
+            }
+        };
+        if is_abort_requested(request_id) {
+            return Err(finish_stream_with_error(
+                observer,
+                request_id,
+                "request aborted",
+                classified,
+                surface,
+                token_index,
+                true,
+            ));
+        }
+        let chunk = chunk.map_err(|error| {
+            finish_stream_with_error(
+                observer,
+                request_id,
+                format!("Stream read error: {error}"),
+                classified,
+                surface,
+                token_index,
+                emit_error_event,
+            )
+        })?;
+        carry.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(line_end) = carry.find('\n') {
+            let line: String = carry.drain(..=line_end).collect();
+            let line = line.trim_end_matches('\n').trim_end_matches('\r');
+            let Some(data) = line.strip_prefix("data: ") else {
+                continue;
+            };
+            if data == "[DONE]" {
+                // Unlike Chat Completions, a Responses stream is successful only
+                // after its documented `response.completed` event. A proxy may
+                // still append [DONE]; stop reading it, then reject the stream
+                // below if the semantic terminal event never arrived.
+                break 'stream;
+            }
+            let Some(json) = tracker.parse_data(request_id, data).map_err(|error| {
+                finish_stream_with_error(
+                    observer,
+                    request_id,
+                    error.to_string(),
+                    classified,
+                    surface,
+                    token_index,
+                    emit_error_event,
+                )
+            })?
+            else {
+                continue;
+            };
+            let terminal = matches!(json["type"].as_str(), Some("response.completed"));
+            for delta in state.apply_event_json(&json).map_err(|error| {
+                finish_stream_with_error(
+                    observer,
+                    request_id,
+                    error.to_string(),
+                    classified,
+                    surface,
+                    token_index,
+                    emit_error_event,
+                )
+            })? {
+                match delta {
+                    ResponsesStreamDelta::Text(text) => {
+                        let token = visible_token_delta(&mut visible_sanitizer, &text);
+                        emit_visible_token_delta(
+                            observer,
+                            request_id,
+                            token,
+                            surface,
+                            classified,
+                            &mut token_index,
+                        )?;
+                    }
+                    ResponsesStreamDelta::ReasoningSummary { summary_id, text } => {
+                        observer.observe(
+                            &StreamEvent {
+                                request_id: request_id.to_string(),
+                                event_type: StreamEventType::ReasoningSummary,
+                                data: StreamEventData::ReasoningSummary { summary_id, text },
+                                surface: StreamSurface::InternalCandidate,
+                                classified,
+                            },
+                            token_index,
+                        )?;
+                    }
+                }
+            }
+            if terminal {
+                completed = true;
+                break 'stream;
+            }
+        }
+    }
+
+    if !completed {
+        return Err(finish_stream_with_error(
+            observer,
+            request_id,
+            "responses_stream_incomplete",
+            classified,
+            surface,
+            token_index,
+            emit_error_event,
+        ));
+    }
+
+    let token = visible_token_finish(&mut visible_sanitizer);
+    emit_visible_token_delta(
+        observer,
+        request_id,
+        token,
+        surface,
+        classified,
+        &mut token_index,
+    )?;
+    let gateway_response = state.into_gateway_response();
+    for tool_call in &gateway_response.tool_calls {
+        observer.observe(
+            &StreamEvent {
+                request_id: request_id.to_string(),
+                event_type: StreamEventType::ToolCall,
+                data: StreamEventData::ToolCall {
+                    tool_call: tool_call.clone(),
+                },
+                surface,
+                classified,
+            },
+            token_index,
+        )?;
+    }
+    observer.observe(
+        &StreamEvent {
+            request_id: request_id.to_string(),
+            event_type: StreamEventType::Done,
+            data: StreamEventData::Done {
+                usage: Some(gateway_response.usage.clone()),
+            },
+            surface,
+            classified,
+        },
+        token_index,
+    )?;
+    clear_abort(request_id);
+    Ok(gateway_response)
 }
 
 async fn wait_for_abort_signal(request_id: &str) {

@@ -153,6 +153,7 @@ fn resume_after_tool_confirm_body_preserves_reasoning_and_thinking() {
         stream: false,
         thinking: true,
         reasoning: crate::ai_types::ResolvedReasoningRequest::legacy_enabled(true),
+        continuation: None,
         skip_stub_ids: vec![],
     });
     assert_eq!(

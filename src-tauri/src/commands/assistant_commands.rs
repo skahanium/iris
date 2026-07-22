@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetRequest,
+    AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent, AssistantRunGetRequest,
     AssistantRunGetResponse, AssistantRunRetryRequest, AssistantRunStartRequest,
     AssistantSessionRef, Effect, Effort, Freshness, Modality, SecurityDomain,
 };
@@ -88,6 +88,13 @@ pub struct AssistantSessionMessage {
     pub role: String,
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+    /// Safe, replayable process events for one historical assistant message only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub process_events: Vec<AssistantRunEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content_parts: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<serde_json::Value>,
@@ -150,18 +157,37 @@ pub async fn assistant_session_load(
 ) -> AppResult<Vec<AssistantSessionMessage>> {
     match request.session.domain {
         SecurityDomain::Normal => {
-            crate::ai_runtime::normal_session_repository::NormalSessionRepository::load_messages(
+            let items = crate::ai_runtime::normal_session_repository::NormalSessionRepository::load_messages(
                 &state.db,
                 &request.session.session_key,
                 request.limit,
-            )
-            .map(|items| {
-                items
-                    .into_iter()
-                    .map(|item| AssistantSessionMessage {
+            )?;
+            let turn_ids = items
+                .iter()
+                .filter(|item| item.role == "assistant")
+                .filter_map(|item| item.turn_id.clone())
+                .collect::<Vec<_>>();
+            let process_by_turn = crate::ai_runtime::agent_run_repository::AgentRunRepository::process_events_for_session_turns(
+                &state.db,
+                &request.session.session_key,
+                &turn_ids,
+            )?;
+            Ok(items
+                .into_iter()
+                .map(|item| {
+                    let process = (item.role == "assistant")
+                        .then_some(item.turn_id.as_deref())
+                        .flatten()
+                        .and_then(|turn_id| process_by_turn.get(turn_id));
+                    AssistantSessionMessage {
                         seq: item.seq,
                         role: item.role,
                         content: item.content,
+                        run_id: process.map(|value| value.run_id.clone()),
+                        turn_id: item.turn_id,
+                        process_events: process
+                            .map(|value| value.events.clone())
+                            .unwrap_or_default(),
                         content_parts: item
                             .content_parts
                             .and_then(|value| serde_json::from_str(&value).ok()),
@@ -170,9 +196,9 @@ pub async fn assistant_session_load(
                         context_scope: item.context_scope,
                         display_mentions: item.display_mentions,
                         created_at: item.created_at,
-                    })
-                    .collect()
-            })
+                    }
+                })
+                .collect())
         }
         SecurityDomain::Classified => {
             let _ = request;

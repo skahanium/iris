@@ -485,6 +485,64 @@ fn append_event_assigns_strict_sequence_and_safe_reader_replays_in_order() {
 }
 
 #[test]
+fn session_history_process_lookup_batches_safe_events_by_latest_turn_run() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted run");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".into(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+            },
+        },
+    )
+    .expect("preparing");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".into(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::ReasoningSummary,
+            payload: RunEventPayload::ReasoningSummary {
+                summary_id: "summary-1".into(),
+                text: "先核验资料，再组织答案。".into(),
+            },
+        },
+    )
+    .expect("safe summary");
+
+    let by_turn = AgentRunRepository::process_events_for_session_turns(
+        &db,
+        &session_key,
+        &["turn-1".to_string()],
+    )
+    .expect("batched process lookup");
+    let process = by_turn.get("turn-1").expect("turn process");
+
+    assert_eq!(process.run_id, "run-1");
+    assert_eq!(
+        process
+            .events
+            .iter()
+            .map(|event| serde_json::to_value(event).expect("event")["type"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            serde_json::json!("stage_changed"),
+            serde_json::json!("reasoning_summary")
+        ]
+    );
+    assert!(process
+        .events
+        .iter()
+        .all(|event| serde_json::to_value(event).expect("event")["type"] != "content_delta"));
+}
+
+#[test]
 fn repository_refuses_second_completed_event_for_terminal_run() {
     let (db, session_id, session_key) = setup();
     AgentRunRepository::accept(&db, accept_input(session_id, session_key)).expect("accepted run");

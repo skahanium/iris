@@ -12,6 +12,7 @@ import {
   type AiPayloadRef,
 } from "@/lib/ai-payload-store";
 import type { ContentPart, DisplayMention, ToolCallInfo } from "@/types/ai";
+import type { AssistantProcessItem } from "@/lib/assistant-process";
 
 export interface ImageAttachment {
   id: string;
@@ -39,27 +40,13 @@ export interface ChatLine {
   seq?: number;
   created_at?: string;
   toolCalls?: ToolCallInfo[];
-}
-
-export interface AssistantProcessEvent {
-  id: string;
-  requestId: string;
-  label: string;
-  kind: "trace" | "retry" | "thinking" | "reset" | "error";
-  round?: number | null;
-  status?: string | null;
-  durationMs?: number | null;
-  /** Runtime-only merge key for coalescing progress events. */
-  eventKey?: string;
-  toolName?: string | null;
-  phase?: string | null;
-  createdAt: number;
+  /** Safe Run progress rendered separately from answer content. */
+  processItems?: AssistantProcessItem[];
 }
 
 interface AiMessageListProps {
   messages: ChatLine[];
   streaming: boolean;
-  processEvents?: AssistantProcessEvent[];
   selectedIndices?: Set<number>;
   onCitationClick?: (ref: string) => void;
   onRetract?: (index: number) => void;
@@ -184,7 +171,6 @@ function AssistantMessageActions({
 export const AiMessageList = memo(function AiMessageList({
   messages,
   streaming,
-  processEvents = [],
   selectedIndices,
   onCitationClick,
   onRetract,
@@ -404,13 +390,7 @@ export const AiMessageList = memo(function AiMessageList({
     }
 
     if (row.type === "thinking") {
-      return (
-        <AiMessageBubble
-          role="assistant"
-          streaming
-          processEvents={processEvents}
-        />
-      );
+      return <AiMessageBubble role="assistant" streaming />;
     }
 
     const i = row.messageIndex;
@@ -458,11 +438,7 @@ export const AiMessageList = memo(function AiMessageList({
               role="assistant"
               content={msgContent || undefined}
               streaming={assistantStreaming}
-              processEvents={
-                assistantStreaming || (isLast && processEvents.length > 0)
-                  ? processEvents
-                  : undefined
-              }
+              processItems={m.processItems}
               selected={isSelected}
               createdAt={m.created_at}
               onCitationClick={onCitationClick}

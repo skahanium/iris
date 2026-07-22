@@ -95,15 +95,90 @@ describe("useAssistantRunTranscript", () => {
       ),
     );
 
-    expect(messages).toEqual([
+    expect(messages).toMatchObject([
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
       {
         role: "assistant",
         content: "世界",
         runId: "run-1",
         turnId: "turn-1",
+        processItems: [
+          { id: "stage:2", label: "正在准备" },
+          { id: "stage:3", label: "正在生成答复" },
+        ],
       },
     ]);
+  });
+
+  it("projects safe Run process items onto the bound assistant message", () => {
+    messages = [
+      { role: "user", content: "核验资料", runId: "run-1", turnId: "turn-1" },
+      { role: "assistant", content: "", runId: "run-1", turnId: "turn-1" },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root?.render(
+        <Probe
+          run={replayAssistantRunEvents("run-1", [
+            {
+              runId: "run-1",
+              seq: 1,
+              stateVersion: 0,
+              timestamp: "2026-07-22T08:00:00.000Z",
+              type: "accepted",
+              payload: {
+                kind: "accepted",
+                turnId: "turn-1",
+                sessionKey: "session-1",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 2,
+              stateVersion: 1,
+              timestamp: "2026-07-22T08:00:01.000Z",
+              type: "reasoning_summary",
+              payload: {
+                kind: "reasoning_summary",
+                summaryId: "summary-1",
+                text: "先核验资料，再组织答案。",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 3,
+              stateVersion: 1,
+              timestamp: "2026-07-22T08:00:02.000Z",
+              type: "tool_started",
+              payload: {
+                kind: "tool_started",
+                capability: "web_search",
+                toolCallId: "tool-1",
+              },
+            },
+          ] satisfies AssistantRunEvent[])}
+        />,
+      ),
+    );
+
+    expect(messages[1]).toMatchObject({
+      content: "",
+      processItems: [
+        {
+          id: "reasoning:summary-1",
+          kind: "reasoning_summary",
+          label: "先核验资料，再组织答案。",
+        },
+        {
+          id: "tool:tool-1",
+          kind: "tool",
+          label: "联网搜索",
+          status: "running",
+        },
+      ],
+    });
   });
 
   it("updates the assistant slot bound to the Run even when it is not last", () => {

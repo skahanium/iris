@@ -33,6 +33,8 @@ pub(crate) struct NormalSessionMessage {
     pub(crate) content: String,
     pub(crate) content_parts: Option<String>,
     pub(crate) tool_calls: Option<serde_json::Value>,
+    /// Unified Run turn identity when the row belongs to a modern Run.
+    pub(crate) turn_id: Option<String>,
     pub(crate) context_scope: serde_json::Value,
     pub(crate) display_mentions: Vec<serde_json::Value>,
     pub(crate) created_at: String,
@@ -121,7 +123,7 @@ impl NormalSessionRepository {
             .ok_or_else(|| AppError::msg("assistant session not found"))?;
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at,
+                "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
                         context_scope_json, display_mentions_json
                  FROM session_messages
                  WHERE session_id = ?1
@@ -139,8 +141,9 @@ impl NormalSessionRepository {
                             .get::<_, Option<String>>(4)?
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         created_at: row.get(5)?,
-                        context_scope: parse_json_value_or_empty_array(row.get(6)?),
-                        display_mentions: parse_json_array_or_empty(row.get(7)?),
+                        turn_id: row.get(6)?,
+                        context_scope: parse_json_value_or_empty_array(row.get(7)?),
+                        display_mentions: parse_json_array_or_empty(row.get(8)?),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -157,7 +160,7 @@ impl NormalSessionRepository {
     ) -> AppResult<Vec<NormalSessionMessage>> {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at,
+                "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
                         context_scope_json, display_mentions_json
                  FROM session_messages
                  WHERE session_id = ?1
@@ -174,8 +177,9 @@ impl NormalSessionRepository {
                         .get::<_, Option<String>>(4)?
                         .and_then(|value| serde_json::from_str(&value).ok()),
                     created_at: row.get(5)?,
-                    context_scope: parse_json_value_or_empty_array(row.get(6)?),
-                    display_mentions: parse_json_array_or_empty(row.get(7)?),
+                    turn_id: row.get(6)?,
+                    context_scope: parse_json_value_or_empty_array(row.get(7)?),
+                    display_mentions: parse_json_array_or_empty(row.get(8)?),
                 })
             })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -193,7 +197,7 @@ impl NormalSessionRepository {
     ) -> AppResult<Vec<NormalSessionMessage>> {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at,
+                "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
                         context_scope_json, display_mentions_json
                  FROM session_messages
                  WHERE session_id = ?1 AND seq < ?2 AND role IN ('user', 'assistant')
@@ -211,8 +215,9 @@ impl NormalSessionRepository {
                             .get::<_, Option<String>>(4)?
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         created_at: row.get(5)?,
-                        context_scope: parse_json_value_or_empty_array(row.get(6)?),
-                        display_mentions: parse_json_array_or_empty(row.get(7)?),
+                        turn_id: row.get(6)?,
+                        context_scope: parse_json_value_or_empty_array(row.get(7)?),
+                        display_mentions: parse_json_array_or_empty(row.get(8)?),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;

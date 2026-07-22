@@ -155,6 +155,7 @@ impl StreamingDirectAnswerProvider for MockStreamingProvider {
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
+                continuation: None,
             })
         })
     }
@@ -203,6 +204,7 @@ impl StreamingDirectAnswerProvider for MetaAnalysisStreamingProvider {
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
+                continuation: None,
             })
         })
     }
@@ -241,6 +243,7 @@ impl StreamingDirectAnswerProvider for NormalAnswerStreamingProvider {
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
+                continuation: None,
             })
         })
     }
@@ -269,6 +272,7 @@ impl ToolLoopProvider for MetaAnalysisToolLoopProvider {
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
+                continuation: None,
             })
         })
     }
@@ -351,6 +355,7 @@ fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvide
                 usage: Default::default(),
                 finish_reason: "tool_calls".to_string(),
                 reasoning_content: None,
+                continuation: None,
             },
             crate::ai_runtime::model_gateway::GatewayResponse {
                 content: Some(final_content),
@@ -358,6 +363,7 @@ fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvide
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
+                continuation: None,
             },
         ])),
     }
@@ -701,6 +707,133 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
         "稳定片段"
     );
     assert_eq!(sink.events.lock().expect("sink lock").len(), 1);
+}
+
+#[test]
+fn run_stream_observer_replays_only_safe_reasoning_summaries_after_turn_done() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: event_state_version(&preparing),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在生成答复".into(),
+            },
+        },
+    )
+    .expect("running");
+    let sink = RecordingSink::default();
+    let mut observer =
+        AgentRunStreamObserver::new(&db, &accepted.run_id, event_state_version(&running), &sink);
+
+    observer
+        .observe(
+            &StreamEvent {
+                request_id: accepted.run_id.clone(),
+                event_type: StreamEventType::ReasoningSummary,
+                data: StreamEventData::ReasoningSummary {
+                    summary_id: "summary-1".into(),
+                    text: "正在核对资料；sk-test-123456789012 不应进入历史。".into(),
+                },
+                surface: StreamSurface::InternalCandidate,
+                classified: false,
+            },
+            0,
+        )
+        .expect("transient summary");
+    assert_eq!(
+        sink.transient_events
+            .lock()
+            .expect("transient sink lock")
+            .len(),
+        1
+    );
+    observer
+        .observe(
+            &StreamEvent {
+                request_id: accepted.run_id.clone(),
+                event_type: StreamEventType::ReasoningSummary,
+                data: StreamEventData::ReasoningSummary {
+                    summary_id: "summary-2".into(),
+                    text: r#"{"query":"private search text","limit":5}"#.into(),
+                },
+                surface: StreamSurface::InternalCandidate,
+                classified: false,
+            },
+            0,
+        )
+        .expect("structured summary is generalized");
+    observer
+        .observe(
+            &StreamEvent {
+                request_id: accepted.run_id.clone(),
+                event_type: StreamEventType::ReasoningSummary,
+                data: StreamEventData::ReasoningSummary {
+                    summary_id: "summary-\u{0001}".into(),
+                    text: "安全\u{0001}".repeat(500),
+                },
+                surface: StreamSurface::InternalCandidate,
+                classified: false,
+            },
+            0,
+        )
+        .expect("escaped controls must still fit the durable event budget");
+
+    observer
+        .observe(
+            &StreamEvent {
+                request_id: accepted.run_id.clone(),
+                event_type: StreamEventType::Done,
+                data: StreamEventData::Done { usage: None },
+                surface: StreamSurface::InternalCandidate,
+                classified: false,
+            },
+            0,
+        )
+        .expect("persist final summary");
+
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run exists");
+    let persisted = replay
+        .events
+        .iter()
+        .map(|event| serde_json::to_value(event).expect("serialize summary"))
+        .filter(|event| event["type"] == "reasoning_summary")
+        .collect::<Vec<_>>();
+    assert_eq!(persisted.len(), 3);
+    assert_eq!(persisted[0]["payload"]["summaryId"], "summary-1");
+    assert!(persisted[0]["payload"]["text"]
+        .as_str()
+        .expect("summary text")
+        .contains("正在核对资料"));
+    assert_eq!(persisted[1]["payload"]["summaryId"], "summary-2");
+    assert_eq!(persisted[1]["payload"]["text"], "已完成必要的推理准备。");
+    assert_eq!(persisted[2]["payload"]["summaryId"], "summary-_");
+    let control_payload = serde_json::to_string(&persisted[2]["payload"])
+        .expect("serialize normalized control summary");
+    assert!(control_payload.chars().count() <= 2_000);
+    assert!(!control_payload.contains("\\u0001"));
+    let serialized = serde_json::to_string(&persisted).expect("serialize persisted summaries");
+    assert!(!serialized.contains("sk-test-123456789012"));
+    assert!(!serialized.contains("private search text"));
 }
 
 #[test]
@@ -1491,6 +1624,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
                     usage: Default::default(),
                     finish_reason: "stop".into(),
                     reasoning_content: None,
+                    continuation: None,
                 })
             })
         }
@@ -1612,6 +1746,7 @@ impl StreamingDirectAnswerProvider for LeakingStreamingProvider {
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
+                continuation: None,
             })
         })
     }
