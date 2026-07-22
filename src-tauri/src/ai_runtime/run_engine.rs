@@ -459,6 +459,14 @@ fn presentation_clocks() -> &'static Mutex<HashMap<String, PresentationClock>> {
     CLOCKS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Internal prep stages stay in the durable log but are not shown in the process timeline.
+fn is_internal_preparing_stage(stage: &str) -> bool {
+    matches!(
+        stage.trim(),
+        "正在准备" | "正在准备工具执行" | "正在恢复运行状态"
+    )
+}
+
 fn next_presentation_event(
     run_id: &str,
     payload: RunPresentationPayload,
@@ -498,45 +506,7 @@ impl RunEventSink for TauriRunEventSink<'_> {
         self.app_handle
             .emit("assistant:run_event", event)
             .map_err(|_| AppError::msg("agent_run_event_emit_failed"))?;
-        let payload = match event.payload() {
-            RunEventPayload::StageChanged { stage, .. } => {
-                Some(RunPresentationPayload::ProcessStarted {
-                    item_id: format!("stage:{}", event.seq()),
-                    item_kind: PresentationProcessKind::Stage,
-                    label: stage.clone(),
-                })
-            }
-            // Reasoning summaries are projected live by AgentRunStreamObserver.
-            // Re-projecting the durable event would double-count presentationSeq.
-            RunEventPayload::ReasoningSummary { .. } => None,
-            RunEventPayload::ToolStarted {
-                capability,
-                tool_call_id,
-            } => Some(RunPresentationPayload::ProcessStarted {
-                item_id: format!("tool:{tool_call_id}"),
-                item_kind: PresentationProcessKind::Tool,
-                label: capability.clone(),
-            }),
-            RunEventPayload::ToolCompleted {
-                tool_call_id,
-                duration_ms,
-                success,
-                ..
-            } => Some(RunPresentationPayload::ProcessFinished {
-                item_id: format!("tool:{tool_call_id}"),
-                status: if *success == Some(false) {
-                    PresentationProcessStatus::Failed
-                } else {
-                    PresentationProcessStatus::Completed
-                },
-                duration_ms: *duration_ms,
-            }),
-            RunEventPayload::Failed { .. } | RunEventPayload::Cancelled { .. } => {
-                Some(RunPresentationPayload::AnswerComplete)
-            }
-            _ => None,
-        };
-        if let Some(payload) = payload {
+        if let Some(payload) = presentation_payload_for_durable_event(event) {
             let _ = self.emit_presentation(event.run_id(), payload);
         }
         Ok(())
@@ -558,10 +528,59 @@ impl RunEventSink for TauriRunEventSink<'_> {
     }
 }
 
+/// Map one durable Run event into an optional live presentation payload.
+fn presentation_payload_for_durable_event(
+    event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+) -> Option<RunPresentationPayload> {
+    match event.payload() {
+        RunEventPayload::StageChanged { stage, .. } if !is_internal_preparing_stage(stage) => {
+            Some(RunPresentationPayload::ProcessStarted {
+                item_id: format!("stage:{}", event.seq()),
+                item_kind: PresentationProcessKind::Stage,
+                label: stage.clone(),
+            })
+        }
+        // Reasoning summaries are projected live by AgentRunStreamObserver.
+        // Re-projecting the durable event would double-count presentationSeq.
+        RunEventPayload::ReasoningSummary { .. } => None,
+        RunEventPayload::ToolStarted {
+            capability,
+            tool_call_id,
+        } => Some(RunPresentationPayload::ProcessStarted {
+            item_id: format!("tool:{tool_call_id}"),
+            item_kind: PresentationProcessKind::Tool,
+            label: capability.clone(),
+        }),
+        RunEventPayload::ToolCompleted {
+            tool_call_id,
+            duration_ms,
+            success,
+            ..
+        } => Some(RunPresentationPayload::ProcessFinished {
+            item_id: format!("tool:{tool_call_id}"),
+            status: if *success == Some(false) {
+                PresentationProcessStatus::Failed
+            } else {
+                PresentationProcessStatus::Completed
+            },
+            duration_ms: *duration_ms,
+        }),
+        RunEventPayload::Failed { .. } | RunEventPayload::Cancelled { .. } => {
+            Some(RunPresentationPayload::AnswerComplete)
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod presentation_clock_tests {
-    use super::{next_presentation_event, presentation_clocks};
-    use crate::ai_runtime::run_contract::{PresentationProcessKind, RunPresentationPayload};
+    use super::{
+        is_internal_preparing_stage, next_presentation_event, presentation_clocks,
+        presentation_payload_for_durable_event,
+    };
+    use crate::ai_runtime::run_contract::{
+        PresentationProcessKind, RunEventPayload, RunEventType, RunPresentationPayload, RunState,
+    };
 
     #[test]
     fn presentation_sequence_survives_a_new_sink_for_the_same_run() {
@@ -590,6 +609,47 @@ mod presentation_clock_tests {
             .lock()
             .expect("presentation clocks")
             .remove(run_id);
+    }
+
+    #[test]
+    fn internal_preparing_stages_are_not_projected_to_presentation() {
+        assert!(is_internal_preparing_stage("正在准备"));
+        assert!(is_internal_preparing_stage("正在准备工具执行"));
+        assert!(is_internal_preparing_stage("正在恢复运行状态"));
+        assert!(!is_internal_preparing_stage("正在调用模型和工具"));
+        assert!(!is_internal_preparing_stage("正在生成答复"));
+
+        let preparing = crate::ai_runtime::run_contract::AssistantRunEvent::new(
+            "run-prep",
+            2,
+            1,
+            RunEventType::StageChanged,
+            "2026-07-22T08:00:00Z",
+            RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".to_string(),
+            },
+        )
+        .expect("preparing event");
+        assert!(presentation_payload_for_durable_event(&preparing).is_none());
+
+        let running = crate::ai_runtime::run_contract::AssistantRunEvent::new(
+            "run-prep",
+            3,
+            2,
+            RunEventType::StageChanged,
+            "2026-07-22T08:00:01Z",
+            RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在调用模型和工具".to_string(),
+            },
+        )
+        .expect("running event");
+        let payload = presentation_payload_for_durable_event(&running).expect("projected");
+        assert!(matches!(
+            payload,
+            RunPresentationPayload::ProcessStarted { label, .. } if label == "正在调用模型和工具"
+        ));
     }
 }
 
@@ -651,6 +711,7 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     last_presentation_emit_at: Instant,
     presentation_content: String,
     defer_visible_deltas: bool,
+    emitted_generating_answer_stage: bool,
     reasoning_summaries: BTreeMap<String, String>,
     persisted_reasoning_summaries: BTreeMap<String, String>,
 }
@@ -686,6 +747,7 @@ impl<'a> AgentRunStreamObserver<'a> {
             last_presentation_emit_at: Instant::now(),
             presentation_content: String::new(),
             defer_visible_deltas,
+            emitted_generating_answer_stage: false,
             reasoning_summaries: BTreeMap::new(),
             persisted_reasoning_summaries: BTreeMap::new(),
         }
@@ -720,6 +782,53 @@ impl AgentRunStreamObserver<'_> {
     /// Allow a later final turn to emit AnswerDelta after tool rounds stayed private.
     pub(crate) fn clear_deferred_visible_deltas(&mut self) {
         self.defer_visible_deltas = false;
+    }
+
+    /// Hide provisional tokens again when another tool round begins.
+    pub(crate) fn enable_deferred_visible_deltas(&mut self) {
+        self.defer_visible_deltas = true;
+    }
+
+    /// Drop any already-streamed provisional answer before more tools run.
+    pub(crate) fn reset_provisional_answer_if_any(&mut self) {
+        if self.presentation_content.is_empty() && self.transient_content.is_empty() {
+            return;
+        }
+        if !self.presentation_content.is_empty() {
+            let _ = self
+                .sink
+                .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
+        }
+        self.presentation_content.clear();
+        self.transient_content.clear();
+        self.last_transient_bytes = 0;
+        self.pending_delta.clear();
+    }
+
+    /// Whether the live "正在生成答复" stage was already emitted for this Run.
+    pub(crate) fn emitted_generating_answer_stage(&self) -> bool {
+        self.emitted_generating_answer_stage
+    }
+
+    fn emit_generating_answer_stage_if_needed(&mut self) -> AppResult<()> {
+        if self.emitted_generating_answer_stage {
+            return Ok(());
+        }
+        let generating = AgentRunRepository::append_event(
+            self.db,
+            AppendRunEventInput {
+                run_id: self.run_id.to_string(),
+                state_version: self.running_state_version,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "正在生成答复".to_string(),
+                },
+            },
+        )?;
+        self.sink.emit(&generating)?;
+        self.emitted_generating_answer_stage = true;
+        Ok(())
     }
 
     /// Deliver the complete provisional snapshot to the live UI without persistence.
@@ -989,6 +1098,18 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
             crate::ai_runtime::model_gateway::StreamEventData::ToolCall { .. }
             | crate::ai_runtime::model_gateway::StreamEventData::Error { .. } => {}
         }
+        Ok(())
+    }
+
+    fn on_tools_finished(&mut self) -> AppResult<()> {
+        self.emit_generating_answer_stage_if_needed()?;
+        self.clear_deferred_visible_deltas();
+        Ok(())
+    }
+
+    fn on_tools_starting(&mut self) -> AppResult<()> {
+        self.enable_deferred_visible_deltas();
+        self.reset_provisional_answer_if_any();
         Ok(())
     }
 }
@@ -1560,14 +1681,7 @@ impl RunEngine {
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
-                if settle_cancelled_run_with_partial(
-                    db,
-                    session,
-                    run_id,
-                    &observer,
-                    sink,
-                    None,
-                )? {
+                if settle_cancelled_run_with_partial(db, session, run_id, &observer, sink, None)? {
                     return Ok(());
                 }
                 if error.to_string() == crate::ai_runtime::run_tool_loop::CONFIRMATION_PENDING_ERROR
@@ -1611,34 +1725,36 @@ impl RunEngine {
             return Ok(());
         }
         executor.emit_deferred_web_degradation_if_needed(db, sink)?;
-        let generating = match AgentRunRepository::append_event(
-            db,
-            AppendRunEventInput {
-                run_id: run_id.to_string(),
-                state_version: running_state_version,
-                event_type: RunEventType::StageChanged,
-                payload: RunEventPayload::StageChanged {
-                    state: RunState::Running,
-                    stage: "正在生成答复".to_string(),
+        if !observer.emitted_generating_answer_stage() {
+            let generating = match AgentRunRepository::append_event(
+                db,
+                AppendRunEventInput {
+                    run_id: run_id.to_string(),
+                    state_version: running_state_version,
+                    event_type: RunEventType::StageChanged,
+                    payload: RunEventPayload::StageChanged {
+                        state: RunState::Running,
+                        stage: "正在生成答复".to_string(),
+                    },
                 },
-            },
-        ) {
-            Ok(event) => event,
-            Err(error) => {
-                if settle_cancelled_run_with_partial(
-                    db,
-                    session,
-                    run_id,
-                    &observer,
-                    sink,
-                    Some(outcome.content.as_str()),
-                )? {
-                    return Ok(());
+            ) {
+                Ok(event) => event,
+                Err(error) => {
+                    if settle_cancelled_run_with_partial(
+                        db,
+                        session,
+                        run_id,
+                        &observer,
+                        sink,
+                        Some(outcome.content.as_str()),
+                    )? {
+                        return Ok(());
+                    }
+                    return Err(error);
                 }
-                return Err(error);
-            }
-        };
-        sink.emit(&generating)?;
+            };
+            sink.emit(&generating)?;
+        }
         observer.clear_deferred_visible_deltas();
         let mut content = match validated_final_model_answer(&outcome.content) {
             Ok(content) => content,
@@ -1797,14 +1913,7 @@ impl RunEngine {
         let response = match response {
             Ok(response) => response,
             Err(error) => {
-                if settle_cancelled_run_with_partial(
-                    db,
-                    session,
-                    run_id,
-                    &observer,
-                    sink,
-                    None,
-                )? {
+                if settle_cancelled_run_with_partial(db, session, run_id, &observer, sink, None)? {
                     return Ok(());
                 }
                 let code = classify_provider_failure(&error);

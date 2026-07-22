@@ -130,6 +130,7 @@ impl AgentToolLoop {
                 return Err(AppError::msg("agent_run_tool_loop_limit"));
             }
 
+            observer.on_tools_starting()?;
             messages.push(assistant_tool_message(&response));
             for call in &response.tool_calls {
                 tool_calls += 1;
@@ -149,6 +150,7 @@ impl AgentToolLoop {
                 };
                 messages.push(tool_result_message(call, &result));
             }
+            observer.on_tools_finished()?;
         }
 
         Err(AppError::msg("agent_run_tool_loop_limit"))

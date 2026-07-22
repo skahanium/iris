@@ -711,6 +711,221 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
 }
 
 #[test]
+fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备工具执行".to_string(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: event_state_version(&preparing),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在调用模型和工具".to_string(),
+            },
+        },
+    )
+    .expect("running");
+    let sink = RecordingSink::default();
+    let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
+        &db,
+        &accepted.run_id,
+        event_state_version(&running),
+        &sink,
+        true,
+    );
+
+    observer
+        .observe(
+            &StreamEvent {
+                request_id: accepted.run_id.clone(),
+                event_type: StreamEventType::Token,
+                data: StreamEventData::Token {
+                    token: "工具前预写\n".to_string(),
+                    replace_visible: false,
+                },
+                surface: StreamSurface::VisibleAnswerSanitized,
+                classified: false,
+            },
+            0,
+        )
+        .expect("deferred token");
+    assert!(
+        sink.presentation_events
+            .lock()
+            .expect("presentation lock")
+            .is_empty(),
+        "tool-turn tokens must stay deferred"
+    );
+
+    observer
+        .on_tools_starting()
+        .expect("drop deferred provisional text before tools");
+    observer
+        .on_tools_finished()
+        .expect("unlock final answer streaming");
+    assert!(
+        sink.presentation_events
+            .lock()
+            .expect("presentation lock")
+            .is_empty(),
+        "unlocking stream must not invent AnswerDelta without tokens"
+    );
+    let durable = sink.events.lock().expect("sink lock").clone();
+    assert_eq!(durable.len(), 1);
+    assert_eq!(durable[0]["payload"]["stage"], "正在生成答复");
+
+    for (token_index, token) in ["第一段\n", "第二段\n"].into_iter().enumerate() {
+        observer
+            .observe(
+                &StreamEvent {
+                    request_id: accepted.run_id.clone(),
+                    event_type: StreamEventType::Token,
+                    data: StreamEventData::Token {
+                        token: token.to_string(),
+                        replace_visible: false,
+                    },
+                    surface: StreamSurface::VisibleAnswerSanitized,
+                    classified: false,
+                },
+                token_index as u32 + 1,
+            )
+            .expect("stream final-turn token");
+    }
+
+    let presentation = sink
+        .presentation_events
+        .lock()
+        .expect("presentation lock")
+        .clone();
+    let answer_deltas = presentation
+        .iter()
+        .filter(|event| event["kind"] == "answer_delta")
+        .collect::<Vec<_>>();
+    assert!(
+        answer_deltas.len() >= 2,
+        "final turn after tools must emit multiple AnswerDelta events, got {presentation:?}"
+    );
+    assert_eq!(answer_deltas[0]["delta"], "第一段\n");
+    assert_eq!(answer_deltas[1]["delta"], "第二段\n");
+}
+
+#[test]
+fn tool_loop_observer_resets_provisional_answer_when_tools_restart() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备工具执行".to_string(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: event_state_version(&preparing),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在调用模型和工具".to_string(),
+            },
+        },
+    )
+    .expect("running");
+    let sink = RecordingSink::default();
+    let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
+        &db,
+        &accepted.run_id,
+        event_state_version(&running),
+        &sink,
+        true,
+    );
+
+    observer.on_tools_finished().expect("finish first tools");
+    observer
+        .observe(
+            &StreamEvent {
+                request_id: accepted.run_id.clone(),
+                event_type: StreamEventType::Token,
+                data: StreamEventData::Token {
+                    token: "半成品答复\n".to_string(),
+                    replace_visible: false,
+                },
+                surface: StreamSurface::VisibleAnswerSanitized,
+                classified: false,
+            },
+            0,
+        )
+        .expect("stream provisional answer");
+    assert_eq!(
+        sink.presentation_events
+            .lock()
+            .expect("presentation lock")
+            .len(),
+        1
+    );
+
+    observer
+        .on_tools_starting()
+        .expect("re-defer before next tools");
+    let presentation = sink
+        .presentation_events
+        .lock()
+        .expect("presentation lock")
+        .clone();
+    assert_eq!(presentation.len(), 2);
+    assert_eq!(presentation[0]["kind"], "answer_delta");
+    assert_eq!(presentation[0]["delta"], "半成品答复\n");
+    assert_eq!(presentation[1]["kind"], "answer_reset");
+
+    observer
+        .observe(
+            &StreamEvent {
+                request_id: accepted.run_id.clone(),
+                event_type: StreamEventType::Token,
+                data: StreamEventData::Token {
+                    token: "不应再流出\n".to_string(),
+                    replace_visible: false,
+                },
+                surface: StreamSurface::VisibleAnswerSanitized,
+                classified: false,
+            },
+            1,
+        )
+        .expect("deferred token after tools restart");
+    assert_eq!(
+        sink.presentation_events
+            .lock()
+            .expect("presentation lock")
+            .len(),
+        2,
+        "tokens during a later tool round must stay deferred"
+    );
+}
+
+#[test]
 fn run_stream_observer_replays_only_safe_reasoning_summaries_after_turn_done() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");

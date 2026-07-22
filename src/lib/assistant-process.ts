@@ -27,6 +27,9 @@ export function projectAssistantProcessEvents(
     const createdAt = timestampMs(event.timestamp);
     switch (event.payload.kind) {
       case "stage_changed":
+        if (isInternalPreparingStage(event.payload.stage)) {
+          break;
+        }
         items.push({
           id: `stage:${event.seq}`,
           kind: "stage",
@@ -103,6 +106,16 @@ export function projectAssistantProcessEvents(
   }
 
   return items;
+}
+
+/** Pure internal prep labels stay out of the user-visible process timeline. */
+function isInternalPreparingStage(stage: string): boolean {
+  const trimmed = stage.trim();
+  return (
+    trimmed === "正在准备" ||
+    trimmed === "正在准备工具执行" ||
+    trimmed === "正在恢复运行状态"
+  );
 }
 
 function displayCapability(capability: string): string {

@@ -143,12 +143,17 @@ describe("Assistant Run 处理过程投影", () => {
         state: "preparing",
         stage: "正在准备工具执行",
       }),
-      event(3, "reasoning_summary", {
+      event(3, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "正在调用模型和工具",
+      }),
+      event(4, "reasoning_summary", {
         kind: "reasoning_summary",
         summaryId: "summary-001",
         text: "先核验来源，再组织答案。",
       }),
-      event(4, "content_delta", {
+      event(5, "content_delta", {
         kind: "content_delta",
         delta: "这段最终正文不得进入处理过程。",
       }),
@@ -156,9 +161,9 @@ describe("Assistant Run 处理过程投影", () => {
 
     expect(items).toEqual([
       {
-        id: "stage:2",
+        id: "stage:3",
         kind: "stage",
-        label: "正在准备工具执行",
+        label: "正在调用模型和工具",
         status: "completed",
         createdAt: Date.parse(timestamp),
       },
@@ -166,6 +171,36 @@ describe("Assistant Run 处理过程投影", () => {
         id: "reasoning:summary-001",
         kind: "reasoning_summary",
         label: "先核验来源，再组织答案。",
+        status: "completed",
+        createdAt: Date.parse(timestamp),
+      },
+    ]);
+  });
+
+  it("跳过无信息量的内部准备阶段", () => {
+    const items = projectAssistantProcessEvents([
+      event(1, "stage_changed", {
+        kind: "stage_changed",
+        state: "preparing",
+        stage: "正在准备",
+      }),
+      event(2, "stage_changed", {
+        kind: "stage_changed",
+        state: "preparing",
+        stage: "正在恢复运行状态",
+      }),
+      event(3, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "正在生成答复",
+      }),
+    ]);
+
+    expect(items).toEqual([
+      {
+        id: "stage:3",
+        kind: "stage",
+        label: "正在生成答复",
         status: "completed",
         createdAt: Date.parse(timestamp),
       },

@@ -117,6 +117,16 @@ pub enum StreamEventData {
 pub trait StreamEventObserver: Send {
     /// Handle a stream event together with its emitted token index.
     fn observe(&mut self, event: &StreamEvent, token_index: u32) -> AppResult<()>;
+
+    /// A tool batch finished; the next model turn may be the visible final answer.
+    fn on_tools_finished(&mut self) -> AppResult<()> {
+        Ok(())
+    }
+
+    /// Another tool batch is about to run; hide any provisional visible answer.
+    fn on_tools_starting(&mut self) -> AppResult<()> {
+        Ok(())
+    }
 }
 
 fn lifecycle_content_hash(value: &str) -> String {
