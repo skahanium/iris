@@ -106,7 +106,7 @@ impl RunWebBudget {
 /// gate and audit trail before it reaches the existing typed dispatcher.
 pub(crate) struct NormalRunToolExecutor<'a> {
     state: &'a Arc<AppState>,
-    app_handle: tauri::AppHandle,
+    app_handle: Option<tauri::AppHandle>,
     accepted: &'a AssistantRunAccepted,
     context: &'a RunContext,
     policy_ctx: ToolPolicyContext,
@@ -127,7 +127,7 @@ impl<'a> NormalRunToolExecutor<'a> {
     /// Create a Run-bound executor for the already-authorized normal domain.
     pub(crate) fn new(
         state: &'a Arc<AppState>,
-        app_handle: tauri::AppHandle,
+        app_handle: Option<tauri::AppHandle>,
         accepted: &'a AssistantRunAccepted,
         context: &'a RunContext,
         policy_ctx: ToolPolicyContext,
@@ -441,7 +441,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             cold_start_packets: &self.cold_start_packets,
             retrieval_scope: &self.retrieval_scope,
             runtime_documents: &self.runtime_documents,
-            app_handle: Some(self.app_handle.clone()),
+            app_handle: self.app_handle.clone(),
             attachment_count: 0,
             skill_activation_plan: None,
         };

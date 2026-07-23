@@ -38,6 +38,9 @@ pub mod guardrails;
 pub mod mcp_host_runtime;
 pub mod mcp_runtime_registry;
 pub mod model_gateway;
+pub(crate) mod normal_run_service;
+#[cfg(test)]
+mod normal_run_service_tests;
 pub(crate) mod normal_session_repository;
 #[cfg(test)]
 mod normal_session_repository_tests;
