@@ -267,6 +267,7 @@ fn parse_case_ordinal(value: &str) -> Result<CaseOrdinal, EvalContractError> {
     };
     if raw_ordinal.is_empty()
         || raw_ordinal.len() > 6
+        || (raw_ordinal.len() > 1 && raw_ordinal.starts_with('0'))
         || !raw_ordinal.bytes().all(|byte| byte.is_ascii_digit())
     {
         return Err(EvalContractError::new("manifest_case_id_invalid"));
@@ -1192,12 +1193,12 @@ impl<'de> Deserialize<'de> for McpTransportContract {
 pub(crate) struct McpTransportFailureContract {
     outcome: ProtocolContractOutcome,
     validation_level: ProtocolValidationLevel,
-    _proof: crate::ai_runtime::mcp_host_runtime::McpStdioTransportProof,
+    _proof: Option<crate::ai_runtime::mcp_host_runtime::McpStdioTransportProof>,
 }
 
 #[cfg(test)]
 impl McpTransportFailureContract {
-    pub(crate) fn from_attested_probe(
+    pub(crate) fn from_probe(
         probe: crate::ai_runtime::mcp_host_runtime::McpStdioTransportProbe,
     ) -> Result<Self, EvalContractError> {
         let (failure, proof) = probe
@@ -1205,7 +1206,11 @@ impl McpTransportFailureContract {
             .map_err(|_| EvalContractError::new("mcp_transport_failure_expected"))?;
         Ok(Self {
             outcome: ProtocolContractOutcome::from_mcp_runtime_failure(failure),
-            validation_level: ProtocolValidationLevel::ContractVerified,
+            validation_level: if proof.is_some() {
+                ProtocolValidationLevel::ContractVerified
+            } else {
+                ProtocolValidationLevel::FailureClassifiedOnly
+            },
             _proof: proof,
         })
     }

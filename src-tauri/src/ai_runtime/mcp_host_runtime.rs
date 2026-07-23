@@ -133,7 +133,7 @@ pub struct McpStdioDiscovery {
 pub(crate) struct McpStdioTransportProbe {
     discovery: Option<McpStdioDiscovery>,
     failure: Option<McpRuntimeFailureKind>,
-    proof: McpStdioTransportProof,
+    proof: Option<McpStdioTransportProof>,
 }
 
 #[derive(Debug)]
@@ -149,20 +149,21 @@ impl McpStdioTransportProbe {
     pub(crate) fn into_discovery(
         self,
     ) -> Result<(McpStdioDiscovery, McpStdioTransportProof), McpRuntimeFailureKind> {
-        self.discovery
-            .map(|discovery| (discovery, self.proof))
-            .ok_or_else(|| {
-                self.failure
-                    .unwrap_or(McpRuntimeFailureKind::InvalidResponse)
-            })
+        match (self.discovery, self.failure, self.proof) {
+            (Some(discovery), _, Some(proof)) => Ok((discovery, proof)),
+            (_, Some(failure), _) => Err(failure),
+            _ => Err(McpRuntimeFailureKind::InvalidResponse),
+        }
     }
 
     pub(crate) fn into_failure(
         self,
-    ) -> Result<(McpRuntimeFailureKind, McpStdioTransportProof), McpStdioDiscovery> {
-        self.failure
-            .map(|failure| (failure, self.proof))
-            .ok_or_else(|| self.discovery.expect("probe always has one outcome"))
+    ) -> Result<(McpRuntimeFailureKind, Option<McpStdioTransportProof>), McpStdioDiscovery> {
+        match (self.discovery, self.failure, self.proof) {
+            (_, Some(failure), proof) => Ok((failure, proof)),
+            (Some(discovery), _, _) => Err(discovery),
+            _ => unreachable!("probe always has one outcome"),
+        }
     }
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1173,16 +1174,40 @@ pub(crate) async fn probe_provider_stdio_tools(
     provider_id: &str,
     options: McpHostRuntimeOptions,
 ) -> McpStdioTransportProbe {
-    match discover_provider_stdio_tools(db, provider_id, options).await {
+    let provider = match load_stdio_provider(db, provider_id) {
+        Ok(provider) => provider,
+        Err(error) => {
+            return McpStdioTransportProbe {
+                discovery: None,
+                failure: Some(classify_runtime_failure(&error)),
+                proof: None,
+            };
+        }
+    };
+    let env = provider.env;
+    let discovery = discover_stdio_tools_with_rmcp(
+        McpStdioLaunch {
+            command: provider.command,
+            args: provider.args,
+            cwd: options.cwd,
+            request_timeout: options.request_timeout,
+            max_stdout_line_bytes: options.max_stdout_line_bytes,
+            max_stderr_bytes: options.max_stderr_bytes,
+        },
+        env,
+    )
+    .await;
+
+    match discovery {
         Ok(discovery) => McpStdioTransportProbe {
             discovery: Some(discovery),
             failure: None,
-            proof: McpStdioTransportProof(()),
+            proof: Some(McpStdioTransportProof(())),
         },
         Err(error) => McpStdioTransportProbe {
             discovery: None,
             failure: Some(classify_runtime_failure(&error)),
-            proof: McpStdioTransportProof(()),
+            proof: Some(McpStdioTransportProof(())),
         },
     }
 }

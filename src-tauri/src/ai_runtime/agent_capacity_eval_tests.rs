@@ -217,7 +217,12 @@ fn manifest_parser_rejects_path_shaped_identifiers() {
 #[test]
 fn manifest_case_id_is_a_closed_low_information_ordinal() {
     let raw = include_str!("../../../docs/eval/fixtures/agent-answer-v1.json");
-    for id in ["3mJr7AoUXx2Wqd", "ordinarySecretWithoutSpaces"] {
+    for id in [
+        "3mJr7AoUXx2Wqd",
+        "ordinarySecretWithoutSpaces",
+        "case-01",
+        "case-001",
+    ] {
         let mut value: serde_json::Value = serde_json::from_str(raw).unwrap();
         value["id"] = serde_json::json!(id);
 
@@ -235,12 +240,46 @@ fn manifest_case_id_is_a_closed_low_information_ordinal() {
     assert!(!serialized.to_string().contains(&case.id));
 }
 
+#[tokio::test]
+async fn pretransport_mcp_failures_are_classified_but_not_transport_verified() {
+    let db = Database::open_in_memory().unwrap();
+    upsert_web_evidence_provider(
+        &db,
+        &WebEvidenceProviderInput {
+            id: "invalid-provider".into(),
+            name: "Disabled contract MCP".into(),
+            kind: "mcp".into(),
+            enabled: false,
+            transport_kind: "stdio".into(),
+            transport_config_json: r#"{"command":"/bin/sh"}"#.into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.into()),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .unwrap();
+
+    for provider_id in ["missing-provider", "invalid-provider"] {
+        let probe =
+            probe_provider_stdio_tools(&db, provider_id, stdio_options(Duration::from_millis(120)))
+                .await;
+        let failure = McpTransportFailureContract::from_probe(probe)
+            .expect("pretransport provider failures must be classified");
+
+        assert_eq!(
+            failure.validation_level(),
+            ProtocolValidationLevel::FailureClassifiedOnly,
+            "{provider_id} must not earn a transport proof"
+        );
+    }
+}
+
 #[test]
 fn parses_versioned_manifest_without_raw_answer_or_endpoint_fields() {
     let case = manifest_fixture();
 
     assert_eq!(case.schema_version, "agent-answer-v1");
-    assert_eq!(case.id, "case-001");
+    assert_eq!(case.id, "case-1");
     assert_eq!(case.evidence_group, EvidenceGroup::Hybrid);
     assert_eq!(case.web_state, WebState::Online);
     assert_eq!(
@@ -1075,7 +1114,7 @@ async fn real_stdio_mcp_transport_malformed_and_timeout_remain_safe_failures() {
         stdio_options(Duration::from_secs(1)),
     )
     .await;
-    let malformed = McpTransportFailureContract::from_attested_probe(malformed)
+    let malformed = McpTransportFailureContract::from_probe(malformed)
         .expect("malformed MCP output must be an attested failure");
     assert_eq!(
         malformed.outcome().reason_code(),
@@ -1094,7 +1133,7 @@ async fn real_stdio_mcp_transport_malformed_and_timeout_remain_safe_failures() {
         stdio_options(Duration::from_millis(120)),
     )
     .await;
-    let timeout = McpTransportFailureContract::from_attested_probe(timeout)
+    let timeout = McpTransportFailureContract::from_probe(timeout)
         .expect("non-responsive MCP output must be an attested failure");
     assert_eq!(timeout.outcome().reason_code(), "mcp_protocol_timeout");
     assert_eq!(
