@@ -6,11 +6,12 @@ use super::agent_capacity_eval::{
     evaluate_case, spawn_llm_protocol_double, AnswerObservation, CaseManifest, CheckStatus,
     CitationObservation, EvidenceGroup, FactSupportObservation, HttpResponseScript,
     ImplicitVaultExpectation, LlmProtocolDouble, McpCapabilityContract, McpOperation,
-    McpTransportContract, ObservedSource, ProtocolContractOutcome, ProtocolValidationLevel,
-    SourceKind, WebAnswerContamination, WebState,
+    McpTransportContract, McpTransportFailureContract, ObservedSource, ProtocolContractOutcome,
+    ProtocolValidationLevel, SourceKind, WebAnswerContamination, WebState,
 };
 use super::mcp_host_runtime::{
-    call_required_capability, discover_provider_stdio_tools, McpHostRuntimeOptions,
+    call_required_capability, probe_provider_stdio_tools, McpHostRuntimeOptions, McpStdioDiscovery,
+    McpToolDefinition,
 };
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::{GatewayRequest, LlmFunctionDef, LlmToolDef, ModelGateway};
@@ -214,11 +215,32 @@ fn manifest_parser_rejects_path_shaped_identifiers() {
 }
 
 #[test]
+fn manifest_case_id_is_a_closed_low_information_ordinal() {
+    let raw = include_str!("../../../docs/eval/fixtures/agent-answer-v1.json");
+    for id in ["3mJr7AoUXx2Wqd", "ordinarySecretWithoutSpaces"] {
+        let mut value: serde_json::Value = serde_json::from_str(raw).unwrap();
+        value["id"] = serde_json::json!(id);
+
+        let error = CaseManifest::parse(&value.to_string()).unwrap_err();
+
+        assert_eq!(error.reason_code(), "manifest_case_id_invalid", "{id}");
+        assert!(!error.to_string().contains(id));
+    }
+
+    let case = manifest_fixture();
+    let verdict = evaluate_case(&case, &observation_for(&case)).unwrap();
+    let serialized = serde_json::to_value(verdict).unwrap();
+    assert_eq!(serialized["caseId"], 1);
+    assert!(serialized.to_string().contains("caseId"));
+    assert!(!serialized.to_string().contains(&case.id));
+}
+
+#[test]
 fn parses_versioned_manifest_without_raw_answer_or_endpoint_fields() {
     let case = manifest_fixture();
 
     assert_eq!(case.schema_version, "agent-answer-v1");
-    assert_eq!(case.id, "contract-hybrid-001");
+    assert_eq!(case.id, "case-001");
     assert_eq!(case.evidence_group, EvidenceGroup::Hybrid);
     assert_eq!(case.web_state, WebState::Online);
     assert_eq!(
@@ -925,18 +947,51 @@ fn mcp_contract_rejects_fetch_only_and_unmapped_operations() {
     assert_eq!(unsupported.reason_code(), "mcp_operation_unmapped");
 }
 
+#[test]
+fn mcp_transport_contract_rejects_manual_discovery_and_deserialization() {
+    let mapping =
+        McpCapabilityContract::from_mappings(Some(r#"{"tool":"search","queryArg":"query"}"#), None)
+            .unwrap();
+    let manual_discovery = McpStdioDiscovery {
+        protocol_version: super::mcp_host_runtime::MCP_PROTOCOL_VERSION.into(),
+        server_name: "iris-contract-mcp".into(),
+        server_version: None,
+        tools: vec![McpToolDefinition {
+            name: "search".into(),
+            title: None,
+            description: None,
+            input_schema: serde_json::json!({"type": "object"}),
+            output_schema: None,
+        }],
+        stderr_summary: None,
+    };
+
+    let manual_error = McpTransportContract::verify_discovery(&mapping, &manual_discovery)
+        .expect_err("a bare discovery response has no transport provenance");
+    assert_eq!(
+        manual_error.reason_code(),
+        "mcp_transport_provenance_required"
+    );
+    assert!(serde_json::from_str::<McpTransportContract>(
+        r#"{"validationLevel":"contract_verified"}"#
+    )
+    .is_err());
+}
+
 #[tokio::test]
 async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
     let db = Database::open_in_memory().unwrap();
     install_contract_stdio_provider(&db, "contract-search", "search-only", false);
 
-    let discovery = discover_provider_stdio_tools(
+    let probe = probe_provider_stdio_tools(
         &db,
         "contract-search",
         stdio_options(Duration::from_secs(2)),
     )
-    .await
-    .expect("real stdio discovery must complete");
+    .await;
+    let discovery = probe
+        .discovery()
+        .expect("real stdio discovery must complete");
     assert_eq!(discovery.server_name, "iris-contract-mcp");
     assert_eq!(
         discovery
@@ -950,7 +1005,7 @@ async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
         McpCapabilityContract::from_mappings(Some(r#"{"tool":"search","queryArg":"query"}"#), None)
             .unwrap();
     assert_eq!(
-        McpTransportContract::verify_discovery(&mapping, &discovery)
+        McpTransportContract::verify_attested_probe(&mapping, probe)
             .unwrap()
             .validation_level(),
         ProtocolValidationLevel::ContractVerified
@@ -976,13 +1031,15 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
     let db = Database::open_in_memory().unwrap();
     install_contract_stdio_provider(&db, "contract-search-fetch", "search-fetch", true);
 
-    let discovery = discover_provider_stdio_tools(
+    let probe = probe_provider_stdio_tools(
         &db,
         "contract-search-fetch",
         stdio_options(Duration::from_secs(2)),
     )
-    .await
-    .expect("real stdio discovery must complete");
+    .await;
+    let discovery = probe
+        .discovery()
+        .expect("real stdio discovery must complete");
     assert_eq!(discovery.tools.len(), 2);
     let mapping = McpCapabilityContract::from_mappings(
         Some(r#"{"tool":"search","queryArg":"query"}"#),
@@ -990,7 +1047,7 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
     )
     .unwrap();
     assert_eq!(
-        McpTransportContract::verify_discovery(&mapping, &discovery)
+        McpTransportContract::verify_attested_probe(&mapping, probe)
             .unwrap()
             .validation_level(),
         ProtocolValidationLevel::ContractVerified
@@ -1012,26 +1069,38 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
 async fn real_stdio_mcp_transport_malformed_and_timeout_remain_safe_failures() {
     let malformed_db = Database::open_in_memory().unwrap();
     install_contract_stdio_provider(&malformed_db, "contract-malformed", "malformed", false);
-    let malformed = discover_provider_stdio_tools(
+    let malformed = probe_provider_stdio_tools(
         &malformed_db,
         "contract-malformed",
         stdio_options(Duration::from_secs(1)),
     )
-    .await
-    .expect_err("malformed MCP output must fail");
-    assert!(malformed.to_string().starts_with("unavailable:"));
-    assert!(!malformed.to_string().contains("not-json"));
+    .await;
+    let malformed = McpTransportFailureContract::from_attested_probe(malformed)
+        .expect("malformed MCP output must be an attested failure");
+    assert_eq!(
+        malformed.outcome().reason_code(),
+        "mcp_protocol_unavailable"
+    );
+    assert_eq!(
+        malformed.validation_level(),
+        ProtocolValidationLevel::ContractVerified
+    );
 
     let timeout_db = Database::open_in_memory().unwrap();
     install_contract_stdio_provider(&timeout_db, "contract-timeout", "timeout", false);
-    let timeout = discover_provider_stdio_tools(
+    let timeout = probe_provider_stdio_tools(
         &timeout_db,
         "contract-timeout",
         stdio_options(Duration::from_millis(120)),
     )
-    .await
-    .expect_err("non-responsive MCP output must time out");
-    assert!(timeout.to_string().starts_with("timeout:"));
+    .await;
+    let timeout = McpTransportFailureContract::from_attested_probe(timeout)
+        .expect("non-responsive MCP output must be an attested failure");
+    assert_eq!(timeout.outcome().reason_code(), "mcp_protocol_timeout");
+    assert_eq!(
+        timeout.validation_level(),
+        ProtocolValidationLevel::ContractVerified
+    );
 }
 
 #[test]

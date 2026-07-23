@@ -138,8 +138,8 @@ impl CaseManifest {
                 "manifest_schema_version_unsupported",
             ));
         }
-        for value in std::iter::once(self.id.as_str())
-            .chain(std::iter::once(self.language.as_str()))
+        parse_case_ordinal(&self.id)?;
+        for value in std::iter::once(self.language.as_str())
             .chain(std::iter::once(self.domain.as_str()))
             .chain(
                 self.local_authorization
@@ -252,6 +252,32 @@ fn safe_label(value: &str) -> bool {
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || "-_:".contains(character))
         && !looks_like_encoded_payload(value)
+}
+
+/// Case identifiers are deliberately an opaque, bounded ordinal rather than
+/// a general-purpose label. This keeps serialized verdicts free from text a
+/// fixture author could use to smuggle secret-like payloads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+struct CaseOrdinal(u32);
+
+fn parse_case_ordinal(value: &str) -> Result<CaseOrdinal, EvalContractError> {
+    let Some(raw_ordinal) = value.strip_prefix("case-") else {
+        return Err(EvalContractError::new("manifest_case_id_invalid"));
+    };
+    if raw_ordinal.is_empty()
+        || raw_ordinal.len() > 6
+        || !raw_ordinal.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(EvalContractError::new("manifest_case_id_invalid"));
+    }
+    let ordinal = raw_ordinal
+        .parse::<u32>()
+        .map_err(|_| EvalContractError::new("manifest_case_id_invalid"))?;
+    if ordinal == 0 {
+        return Err(EvalContractError::new("manifest_case_id_invalid"));
+    }
+    Ok(CaseOrdinal(ordinal))
 }
 
 fn looks_like_encoded_payload(value: &str) -> bool {
@@ -471,12 +497,12 @@ impl CheckVerdict {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(transparent)]
-struct ValidatedCaseId(String);
+struct ValidatedCaseId(CaseOrdinal);
 
 /// Stable, raw-content-free verdict consumed by reports and CI.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct EvaluationVerdict {
     case_id: ValidatedCaseId,
@@ -774,7 +800,7 @@ pub(crate) fn evaluate_case(
         && !forbidden_web_used;
 
     Ok(EvaluationVerdict {
-        case_id: ValidatedCaseId(manifest.id.clone()),
+        case_id: ValidatedCaseId(parse_case_ordinal(&manifest.id)?),
         authorization,
         required_evidence,
         fact_correctness,
@@ -1095,19 +1121,33 @@ impl McpCapabilityContract {
 }
 
 /// A contract level earned only after a real MCP discovery response has been
-/// received through Iris' transport boundary. Mapping JSON alone cannot build
-/// this value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// received through Iris' transport boundary. Mapping JSON and a manually
+/// deserialized discovery response cannot build this value.
+#[cfg(test)]
+#[derive(Debug)]
 pub(crate) struct McpTransportContract {
     validation_level: ProtocolValidationLevel,
+    _proof: crate::ai_runtime::mcp_host_runtime::McpStdioTransportProof,
 }
 
+#[cfg(test)]
 impl McpTransportContract {
+    /// Reject bare discovery data, including data produced through serde. A
+    /// successful contract must consume an attested transport probe instead.
     pub(crate) fn verify_discovery(
-        mapping: &McpCapabilityContract,
-        discovery: &crate::ai_runtime::mcp_host_runtime::McpStdioDiscovery,
+        _mapping: &McpCapabilityContract,
+        _discovery: &crate::ai_runtime::mcp_host_runtime::McpStdioDiscovery,
     ) -> Result<Self, EvalContractError> {
+        Err(EvalContractError::new("mcp_transport_provenance_required"))
+    }
+
+    pub(crate) fn verify_attested_probe(
+        mapping: &McpCapabilityContract,
+        probe: crate::ai_runtime::mcp_host_runtime::McpStdioTransportProbe,
+    ) -> Result<Self, EvalContractError> {
+        let (discovery, proof) = probe
+            .into_discovery()
+            .map_err(|_| EvalContractError::new("mcp_transport_discovery_invalid"))?;
         if discovery.protocol_version != crate::ai_runtime::mcp_host_runtime::MCP_PROTOCOL_VERSION
             || !safe_label(&discovery.server_name)
         {
@@ -1125,7 +1165,53 @@ impl McpTransportContract {
         }
         Ok(Self {
             validation_level: ProtocolValidationLevel::ContractVerified,
+            _proof: proof,
         })
+    }
+
+    pub(crate) const fn validation_level(&self) -> ProtocolValidationLevel {
+        self.validation_level
+    }
+}
+
+#[cfg(test)]
+impl<'de> Deserialize<'de> for McpTransportContract {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Err(serde::de::Error::custom(
+            "mcp_transport_provenance_required",
+        ))
+    }
+}
+
+/// A real stdio transport failure, classified only after an attested probe.
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct McpTransportFailureContract {
+    outcome: ProtocolContractOutcome,
+    validation_level: ProtocolValidationLevel,
+    _proof: crate::ai_runtime::mcp_host_runtime::McpStdioTransportProof,
+}
+
+#[cfg(test)]
+impl McpTransportFailureContract {
+    pub(crate) fn from_attested_probe(
+        probe: crate::ai_runtime::mcp_host_runtime::McpStdioTransportProbe,
+    ) -> Result<Self, EvalContractError> {
+        let (failure, proof) = probe
+            .into_failure()
+            .map_err(|_| EvalContractError::new("mcp_transport_failure_expected"))?;
+        Ok(Self {
+            outcome: ProtocolContractOutcome::from_mcp_runtime_failure(failure),
+            validation_level: ProtocolValidationLevel::ContractVerified,
+            _proof: proof,
+        })
+    }
+
+    pub(crate) const fn outcome(&self) -> ProtocolContractOutcome {
+        self.outcome
     }
 
     pub(crate) const fn validation_level(&self) -> ProtocolValidationLevel {

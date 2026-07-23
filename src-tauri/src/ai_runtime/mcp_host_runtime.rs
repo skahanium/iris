@@ -123,6 +123,48 @@ pub struct McpStdioDiscovery {
     pub tools: Vec<McpToolDefinition>,
     pub stderr_summary: Option<String>,
 }
+
+/// One result produced by this module's bounded stdio discovery boundary.
+///
+/// The proof is intentionally private to this module: callers may inspect the
+/// discovery data, but cannot manufacture an attested transport result from a
+/// deserialized `McpStdioDiscovery`.
+#[cfg(test)]
+pub(crate) struct McpStdioTransportProbe {
+    discovery: Option<McpStdioDiscovery>,
+    failure: Option<McpRuntimeFailureKind>,
+    proof: McpStdioTransportProof,
+}
+
+#[derive(Debug)]
+#[cfg(test)]
+pub(crate) struct McpStdioTransportProof(());
+
+#[cfg(test)]
+impl McpStdioTransportProbe {
+    pub(crate) fn discovery(&self) -> Option<&McpStdioDiscovery> {
+        self.discovery.as_ref()
+    }
+
+    pub(crate) fn into_discovery(
+        self,
+    ) -> Result<(McpStdioDiscovery, McpStdioTransportProof), McpRuntimeFailureKind> {
+        self.discovery
+            .map(|discovery| (discovery, self.proof))
+            .ok_or_else(|| {
+                self.failure
+                    .unwrap_or(McpRuntimeFailureKind::InvalidResponse)
+            })
+    }
+
+    pub(crate) fn into_failure(
+        self,
+    ) -> Result<(McpRuntimeFailureKind, McpStdioTransportProof), McpStdioDiscovery> {
+        self.failure
+            .map(|failure| (failure, self.proof))
+            .ok_or_else(|| self.discovery.expect("probe always has one outcome"))
+    }
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct McpToolCallResult {
     pub provider_id: String,
@@ -1120,6 +1162,45 @@ pub async fn discover_provider_stdio_tools(
         env,
     )
     .await
+}
+
+/// Execute stdio discovery and retain an unforgeable in-process attestation
+/// for evaluation contracts. This is intentionally separate from the normal
+/// discovery API, whose serializable result is used by product UI.
+#[cfg(test)]
+pub(crate) async fn probe_provider_stdio_tools(
+    db: &Database,
+    provider_id: &str,
+    options: McpHostRuntimeOptions,
+) -> McpStdioTransportProbe {
+    match discover_provider_stdio_tools(db, provider_id, options).await {
+        Ok(discovery) => McpStdioTransportProbe {
+            discovery: Some(discovery),
+            failure: None,
+            proof: McpStdioTransportProof(()),
+        },
+        Err(error) => McpStdioTransportProbe {
+            discovery: None,
+            failure: Some(classify_runtime_failure(&error)),
+            proof: McpStdioTransportProof(()),
+        },
+    }
+}
+
+#[cfg(test)]
+fn classify_runtime_failure(error: &AppError) -> McpRuntimeFailureKind {
+    match error.to_string().split_once(':').map(|(kind, _)| kind) {
+        Some("unavailable") => McpRuntimeFailureKind::Unavailable,
+        Some("tool_not_found") => McpRuntimeFailureKind::ToolNotFound,
+        Some("schema_mismatch") => McpRuntimeFailureKind::SchemaMismatch,
+        Some("timeout") => McpRuntimeFailureKind::Timeout,
+        Some("output_too_large") => McpRuntimeFailureKind::OutputTooLarge,
+        Some("auth_missing") => McpRuntimeFailureKind::AuthMissing,
+        Some("auth_failed") => McpRuntimeFailureKind::AuthFailed,
+        Some("network_denied") => McpRuntimeFailureKind::NetworkDenied,
+        Some("policy_denied") => McpRuntimeFailureKind::PolicyDenied,
+        _ => McpRuntimeFailureKind::InvalidResponse,
+    }
 }
 
 pub async fn discover_provider_tools(
