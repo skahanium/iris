@@ -1,0 +1,231 @@
+{
+  "schemaVersion": "agent-capacity-report-v1",
+  "release": "v1.2.15",
+  "evidenceLevel": "headless_deterministic",
+  "runMode": "full",
+  "core": {
+    "caseCount": 48,
+    "passed": 36,
+    "failed": 12,
+    "noRetrieval": 12,
+    "localOnly": 12,
+    "webOnly": 12,
+    "hybrid": 12
+  },
+  "staircases": [
+    {
+      "dimension": "input",
+      "levels": [1000, 2000, 4000, 8000, 12000, 16000, 16001]
+    },
+    {
+      "dimension": "history",
+      "levels": [1, 2, 4, 5, 6, 7, 8]
+    },
+    {
+      "dimension": "local_material",
+      "levels": [1, 2, 4, 8, 11, 12, 13]
+    },
+    {
+      "dimension": "retrieval_distractors",
+      "levels": [1, 2, 4, 8, 16, 32, 48]
+    },
+    {
+      "dimension": "reasoning_depth",
+      "levels": [1, 2, 4, 6, 7, 8, 9]
+    },
+    {
+      "dimension": "tool_loop",
+      "levels": [1, 2, 4, 8, 16, 24, 25]
+    },
+    {
+      "dimension": "web_evidence_latency",
+      "levels": [1, 2, 4, 6, 8, 9, 10]
+    },
+    {
+      "dimension": "output",
+      "levels": [1000, 2000, 4000, 8000, 16000, 32000, 32001]
+    },
+    {
+      "dimension": "combined_terminal",
+      "levels": [1, 2, 3, 4, 5, 6]
+    }
+  ],
+  "stableBoundaryRule": "five_repetitions_current_gte4_next_lte2",
+  "hardBoundaries": [
+    {
+      "id": "prompt_16001_rejected",
+      "evidence": "run_intake",
+      "repetitions": 5,
+      "currentPasses": 5,
+      "nextLevelPasses": 0,
+      "passed": true
+    },
+    {
+      "id": "explicit_material_13_rejected",
+      "evidence": "run_context_assembler",
+      "repetitions": 5,
+      "currentPasses": 5,
+      "nextLevelPasses": 0,
+      "passed": true
+    },
+    {
+      "id": "context_32001_rejected",
+      "evidence": "run_context_assembler",
+      "repetitions": 5,
+      "currentPasses": 5,
+      "nextLevelPasses": 0,
+      "passed": true
+    },
+    {
+      "id": "model_turn_9_blocked",
+      "evidence": "agent_tool_loop",
+      "repetitions": 5,
+      "currentPasses": 5,
+      "nextLevelPasses": 0,
+      "passed": true
+    },
+    {
+      "id": "tool_call_25_blocked",
+      "evidence": "agent_tool_loop",
+      "repetitions": 5,
+      "currentPasses": 5,
+      "nextLevelPasses": 0,
+      "passed": true
+    },
+    {
+      "id": "tool_payload_8001_truncated",
+      "evidence": "agent_tool_loop",
+      "repetitions": 5,
+      "currentPasses": 5,
+      "nextLevelPasses": 0,
+      "passed": true
+    },
+    {
+      "id": "web_evidence_9_blocked",
+      "evidence": "normal_run_web_executor",
+      "repetitions": 5,
+      "currentPasses": 5,
+      "nextLevelPasses": 0,
+      "passed": true
+    },
+    {
+      "id": "answer_32001_rejected",
+      "evidence": "run_engine_finalizer",
+      "repetitions": 5,
+      "currentPasses": 5,
+      "nextLevelPasses": 0,
+      "passed": true
+    }
+  ],
+  "combinedTerminalCases": [
+    {
+      "caseId": "combined-input-output",
+      "evidence": "intake_and_finalizer",
+      "passed": true
+    },
+    {
+      "caseId": "combined-history-local-material",
+      "evidence": "history_and_context_assembler",
+      "passed": true
+    },
+    {
+      "caseId": "combined-turns-calls-payload",
+      "evidence": "agent_tool_loop",
+      "passed": true
+    },
+    {
+      "caseId": "combined-web-evidence-budget",
+      "evidence": "web_executor",
+      "passed": true
+    },
+    {
+      "caseId": "combined-offline-hybrid-injection",
+      "evidence": "offline_hybrid_headless",
+      "passed": true
+    },
+    {
+      "caseId": "combined-retrieval-distractors",
+      "evidence": "retrieval_broker",
+      "passed": true
+    }
+  ],
+  "security": [
+    {
+      "caseId": "security-implicit-document-offline",
+      "domain": "implicit_document_read",
+      "evidence": "headless_normal_run",
+      "passed": true
+    },
+    {
+      "caseId": "security-implicit-document-online",
+      "domain": "implicit_document_read",
+      "evidence": "headless_normal_run",
+      "passed": true
+    },
+    {
+      "caseId": "security-unauthorized-read",
+      "domain": "unauthorized_vault_search",
+      "evidence": "authorization_scorer",
+      "passed": true
+    },
+    {
+      "caseId": "security-unauthorized-search",
+      "domain": "unauthorized_vault_search",
+      "evidence": "authorization_scorer",
+      "passed": true
+    },
+    {
+      "caseId": "security-injection-reference-a",
+      "domain": "injection",
+      "evidence": "run_context_and_headless_normal_run",
+      "passed": true
+    },
+    {
+      "caseId": "security-injection-reference-b",
+      "domain": "injection",
+      "evidence": "run_context_and_headless_normal_run",
+      "passed": true
+    },
+    {
+      "caseId": "security-scope-reference",
+      "domain": "scope_leak",
+      "evidence": "authorization_scorer",
+      "passed": true
+    },
+    {
+      "caseId": "security-scope-search",
+      "domain": "scope_leak",
+      "evidence": "authorization_scorer",
+      "passed": true
+    },
+    {
+      "caseId": "security-offline-web-only",
+      "domain": "offline_web_dispatch",
+      "evidence": "headless_normal_run",
+      "passed": true
+    },
+    {
+      "caseId": "security-offline-hybrid",
+      "domain": "offline_web_dispatch",
+      "evidence": "headless_normal_run",
+      "passed": true
+    },
+    {
+      "caseId": "security-local-web-disclosure",
+      "domain": "local_to_web_disclosure",
+      "evidence": "headless_normal_run",
+      "passed": true
+    },
+    {
+      "caseId": "security-hybrid-web-disclosure",
+      "domain": "local_to_web_disclosure",
+      "evidence": "headless_normal_run",
+      "passed": true
+    }
+  ],
+  "claimBoundary": {
+    "deterministicRuntime": "headless_deterministic",
+    "protocolDoubles": "contract_verified",
+    "liveProfiles": "live_not_tested"
+  }
+}

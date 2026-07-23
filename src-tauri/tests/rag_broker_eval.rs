@@ -62,8 +62,10 @@ struct FixtureScope {
 #[derive(Debug, Default)]
 struct BrokerMetrics {
     positive_queries: usize,
-    hits_at_5: usize,
-    hits_at_30: usize,
+    any_source_hits_at_5: usize,
+    any_source_hits_at_30: usize,
+    all_required_hits_at_5: usize,
+    all_required_hits_at_30: usize,
     reciprocal_rank_sum: f64,
     normalized_discounted_gain_sum: f64,
     metadata_match_queries: usize,
@@ -75,12 +77,20 @@ struct BrokerMetrics {
 }
 
 impl BrokerMetrics {
-    fn recall_at_5(&self) -> f64 {
-        ratio(self.hits_at_5, self.positive_queries)
+    fn any_source_recall_at_5(&self) -> f64 {
+        ratio(self.any_source_hits_at_5, self.positive_queries)
     }
 
-    fn recall_at_30(&self) -> f64 {
-        ratio(self.hits_at_30, self.positive_queries)
+    fn any_source_recall_at_30(&self) -> f64 {
+        ratio(self.any_source_hits_at_30, self.positive_queries)
+    }
+
+    fn all_required_source_recall_at_5(&self) -> f64 {
+        ratio(self.all_required_hits_at_5, self.positive_queries)
+    }
+
+    fn all_required_source_recall_at_30(&self) -> f64 {
+        ratio(self.all_required_hits_at_30, self.positive_queries)
     }
 
     fn mrr_at_10(&self) -> f64 {
@@ -172,6 +182,16 @@ fn first_expected_rank(paths: &[String], expected: &[String], max_results: usize
         .map(|index| index + 1)
 }
 
+fn all_expected_paths_within(paths: &[String], expected: &[String], max_results: usize) -> bool {
+    !expected.is_empty()
+        && expected.iter().all(|required| {
+            paths
+                .iter()
+                .take(max_results)
+                .any(|candidate| candidate == required)
+        })
+}
+
 fn packet_respects_scope(packet_path: &str, scope: &FixtureScope) -> bool {
     if !scope.paths.is_empty() && !scope.paths.iter().any(|path| path == packet_path) {
         return false;
@@ -243,6 +263,33 @@ fn rag_v2_fixture_contract_has_48_notes_and_60_labeled_queries() {
         .queries
         .iter()
         .any(|query| query.expected_paths.is_empty()));
+    assert_eq!(
+        fixture
+            .queries
+            .iter()
+            .filter(|query| !query.expected_paths.is_empty())
+            .count(),
+        50,
+        "fixture has 50 answerable queries"
+    );
+    assert_eq!(
+        fixture
+            .queries
+            .iter()
+            .filter(|query| query.expected_paths.is_empty())
+            .count(),
+        10,
+        "fixture has 10 no-answer queries"
+    );
+    assert_eq!(
+        fixture
+            .queries
+            .iter()
+            .filter(|query| query.expected_paths.len() > 1)
+            .count(),
+        10,
+        "ten link queries require two independent sources"
+    );
 
     // Verify FTS CJK matching: index a known fixture and probe it.
     let conn = Connection::open_in_memory().expect("open in-memory database");
@@ -263,6 +310,19 @@ fn rag_v2_fixture_contract_has_48_notes_and_60_labeled_queries() {
         "FTS5 must match Chinese bigrams from fixture notes (probe={})",
         probe_safe
     );
+}
+
+#[test]
+fn all_required_source_recall_requires_every_labeled_path_within_the_cutoff() {
+    let ranked = vec![
+        "notes/first.md".to_string(),
+        "notes/distractor.md".to_string(),
+        "notes/second.md".to_string(),
+    ];
+    let required = vec!["notes/first.md".to_string(), "notes/second.md".to_string()];
+
+    assert!(!all_expected_paths_within(&ranked, &required, 2));
+    assert!(all_expected_paths_within(&ranked, &required, 3));
 }
 
 #[test]
@@ -330,10 +390,16 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
         let rank_at_5 = first_expected_rank(&paths, &query.expected_paths, 5);
         let rank_at_30 = first_expected_rank(&paths, &query.expected_paths, 30);
         if rank_at_5.is_some() {
-            metrics.hits_at_5 += 1;
+            metrics.any_source_hits_at_5 += 1;
         }
         if rank_at_30.is_some() {
-            metrics.hits_at_30 += 1;
+            metrics.any_source_hits_at_30 += 1;
+        }
+        if all_expected_paths_within(&paths, &query.expected_paths, 5) {
+            metrics.all_required_hits_at_5 += 1;
+        }
+        if all_expected_paths_within(&paths, &query.expected_paths, 30) {
+            metrics.all_required_hits_at_30 += 1;
         }
         if let Some(rank) = first_expected_rank(&paths, &query.expected_paths, 10) {
             metrics.reciprocal_rank_sum += 1.0 / rank as f64;
@@ -343,9 +409,11 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
 
     let p95_ms = metrics.p95_ms();
     eprintln!(
-        "RAG v2 broker eval: Recall@5={:.3} Recall@30={:.3} MRR@10={:.3} nDCG@10={:.3} metadata_matches={} no_answer_fpr={:.3} scope_leaks={} warm_p95_ms={p95_ms:.1}",
-        metrics.recall_at_5(),
-        metrics.recall_at_30(),
+        "RAG v2 broker eval: any_source_recall@5={:.3} any_source_recall@30={:.3} all_required_source_recall@5={:.3} all_required_source_recall@30={:.3} MRR@10={:.3} nDCG@10={:.3} metadata_matches={} no_answer_fpr={:.3} scope_leaks={} warm_p95_ms={p95_ms:.1}",
+        metrics.any_source_recall_at_5(),
+        metrics.any_source_recall_at_30(),
+        metrics.all_required_source_recall_at_5(),
+        metrics.all_required_source_recall_at_30(),
         metrics.mrr_at_10(),
         metrics.ndcg_at_10(),
         metrics.metadata_match_queries,
@@ -353,8 +421,8 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
         metrics.scope_leaks,
     );
 
-    assert!(metrics.recall_at_5() >= POSITIVE_RECALL_AT_5_MIN);
-    assert!(metrics.recall_at_30() >= POSITIVE_RECALL_AT_30_MIN);
+    assert!(metrics.any_source_recall_at_5() >= POSITIVE_RECALL_AT_5_MIN);
+    assert!(metrics.any_source_recall_at_30() >= POSITIVE_RECALL_AT_30_MIN);
     assert!(metrics.ndcg_at_10() >= NDCG_AT_10_MIN);
     assert!(metrics.metadata_match_queries >= METADATA_MATCH_QUERY_MIN);
     assert!(metrics.no_answer_false_positive_rate() <= NO_ANSWER_FALSE_POSITIVE_RATE_MAX);

@@ -3,14 +3,17 @@ use std::time::Duration;
 use crate::storage::db::Database;
 
 use super::agent_capacity_eval::{
-    evaluate_case, generate_core_scenarios, run_headless_core_evaluation, select_core_scenarios,
-    serialize_evaluation_summary, spawn_llm_protocol_double,
-    validate_serialized_evaluation_summary, AnswerObservation, BudgetOutcome, CaseManifest,
-    CheckStatus, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
-    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
-    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
-    McpTransportFailureContract, ObservedSource, ProtocolContractOutcome, ProtocolValidationLevel,
-    ScenarioLanguage, SourceKind, TruncationOutcome, WebAnswerContamination, WebState,
+    build_agent_capacity_report, calculate_stable_boundary, evaluate_case, generate_core_scenarios,
+    generate_pressure_staircases, run_combined_terminal_cases, run_hard_boundary_probes,
+    run_headless_core_evaluation, run_security_track, select_core_scenarios,
+    serialize_agent_capacity_report, serialize_evaluation_summary, spawn_llm_protocol_double,
+    validate_serialized_evaluation_summary, write_blind_review_packet, AnswerObservation,
+    BudgetOutcome, CaseManifest, CheckStatus, CitationObservation, EvalFault, EvalRunMode,
+    EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
+    ImplicitVaultExpectation, LlmProtocolDouble, McpCapabilityContract, McpOperation,
+    McpTransportContract, McpTransportFailureContract, ObservedSource, PressureDimension,
+    ProtocolContractOutcome, ProtocolValidationLevel, ScenarioLanguage, SourceKind,
+    StableLevelObservation, TruncationOutcome, WebAnswerContamination, WebState,
 };
 use super::mcp_host_runtime::{
     call_required_capability, probe_provider_stdio_tools, McpHostRuntimeOptions, McpStdioDiscovery,
@@ -1647,6 +1650,60 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
     std::fs::create_dir_all(&output_dir).expect("create ignored evaluation output");
     std::fs::write(output_dir.join(file_name), serialized)
         .expect("write strict evaluation summary");
+    let hard_boundaries = run_hard_boundary_probes()
+        .await
+        .expect("execute real production hard boundaries");
+    assert!(
+        hard_boundaries.iter().all(|probe| probe.passed()),
+        "hard boundary regression"
+    );
+    let security = run_security_track()
+        .await
+        .expect("execute deterministic security track");
+    assert!(
+        security.iter().all(|result| result.passed()),
+        "zero-tolerance security regression"
+    );
+    let blind_name = match mode {
+        EvalRunMode::Smoke => "blind-review-smoke.csv",
+        EvalRunMode::Full => "blind-review-full.csv",
+    };
+    write_blind_review_packet(
+        &output_dir.join(blind_name),
+        &summary,
+        &security,
+        &hard_boundaries,
+    )
+    .expect("write strict blind-review routing packet");
+    if mode == EvalRunMode::Full {
+        let combined_terminal_cases = run_combined_terminal_cases()
+            .await
+            .expect("execute six combined terminal cases");
+        assert!(
+            combined_terminal_cases.iter().all(|result| result.passed()),
+            "combined terminal regression"
+        );
+        let report = build_agent_capacity_report(
+            &summary,
+            hard_boundaries,
+            combined_terminal_cases,
+            security,
+        )
+        .expect("build closed capacity report");
+        let report = serialize_agent_capacity_report(&report).expect("strict capacity report");
+        let generated: serde_json::Value =
+            serde_json::from_str(&report).expect("generated capacity JSON");
+        let versioned: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../docs/eval/results/v1.2.15-agent-capacity.json"
+        ))
+        .expect("versioned capacity JSON");
+        assert_eq!(
+            generated, versioned,
+            "versioned capacity result must match deterministic full"
+        );
+        std::fs::write(output_dir.join("capacity-full.json"), report)
+            .expect("write strict capacity report");
+    }
 }
 
 #[tokio::test]
@@ -1667,4 +1724,186 @@ async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certif
         super::agent_capacity_eval::VerdictReason::RequiredFactMissing
     );
     assert!(summary.telemetry().model_turns() >= 12);
+}
+
+#[test]
+fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_combinations() {
+    let staircases = generate_pressure_staircases().expect("pressure staircases");
+    let dimensions = staircases
+        .iter()
+        .map(|staircase| staircase.dimension())
+        .collect::<std::collections::HashSet<_>>();
+
+    assert_eq!(
+        dimensions,
+        std::collections::HashSet::from([
+            PressureDimension::Input,
+            PressureDimension::History,
+            PressureDimension::LocalMaterial,
+            PressureDimension::RetrievalDistractors,
+            PressureDimension::ReasoningDepth,
+            PressureDimension::ToolLoop,
+            PressureDimension::WebEvidenceLatency,
+            PressureDimension::Output,
+            PressureDimension::CombinedTerminal,
+        ])
+    );
+    assert!(staircases
+        .iter()
+        .filter(|staircase| staircase.dimension() != PressureDimension::CombinedTerminal)
+        .all(|staircase| staircase.levels().len() >= 6
+            && staircase.levels().windows(2).all(|pair| pair[0] < pair[1])));
+    assert_eq!(
+        staircases
+            .iter()
+            .find(|staircase| staircase.dimension() == PressureDimension::CombinedTerminal)
+            .expect("combined staircase")
+            .levels()
+            .len(),
+        6
+    );
+}
+
+#[test]
+fn stable_boundary_requires_five_repetitions_four_current_passes_and_two_or_fewer_next_passes() {
+    let observations = [
+        StableLevelObservation::new(16_000, [true, true, true, true, false]),
+        StableLevelObservation::new(16_001, [false, false, true, false, false]),
+    ];
+    let boundary = calculate_stable_boundary(&observations).expect("stable boundary");
+    assert_eq!(boundary.stable_level(), 16_000);
+    assert_eq!(boundary.next_level(), 16_001);
+
+    let unstable_current = [
+        StableLevelObservation::new(16_000, [true, true, true, false, false]),
+        StableLevelObservation::new(16_001, [false, false, false, false, false]),
+    ];
+    assert_eq!(
+        calculate_stable_boundary(&unstable_current)
+            .expect_err("three current passes are insufficient")
+            .reason_code(),
+        "stable_boundary_not_observed"
+    );
+
+    let unstable_next = [
+        StableLevelObservation::new(16_000, [true, true, true, true, true]),
+        StableLevelObservation::new(16_001, [true, true, true, false, false]),
+    ];
+    assert_eq!(
+        calculate_stable_boundary(&unstable_next)
+            .expect_err("three next-level passes are too many")
+            .reason_code(),
+        "stable_boundary_not_observed"
+    );
+}
+
+#[tokio::test]
+async fn hard_boundary_suite_executes_all_eight_real_production_limits() {
+    let probes = run_hard_boundary_probes()
+        .await
+        .expect("hard boundary probes");
+
+    assert_eq!(probes.len(), 8);
+    assert!(
+        probes.iter().all(|probe| probe.passed()),
+        "failed probes: {:?}",
+        probes
+            .iter()
+            .filter(|probe| !probe.passed())
+            .map(|probe| probe.id())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        probes
+            .iter()
+            .map(|probe| probe.id())
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        8
+    );
+    assert!(probes.iter().all(|probe| probe.repetitions() == 5));
+    for required in [
+        "prompt_16001_rejected",
+        "explicit_material_13_rejected",
+        "context_32001_rejected",
+        "model_turn_9_blocked",
+        "tool_call_25_blocked",
+        "tool_payload_8001_truncated",
+        "web_evidence_9_blocked",
+        "answer_32001_rejected",
+    ] {
+        assert!(probes.iter().any(|probe| probe.id() == required));
+    }
+}
+
+#[tokio::test]
+async fn security_track_has_twelve_independent_attested_zero_tolerance_cases() {
+    let results = run_security_track().await.expect("security track");
+
+    assert_eq!(results.len(), 12);
+    assert_eq!(
+        results
+            .iter()
+            .map(|result| result.case_id())
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        12
+    );
+    assert!(results.iter().all(|result| result.passed()));
+    assert!(results.iter().all(|result| result.has_execution_evidence()));
+}
+
+#[tokio::test]
+async fn six_combined_terminal_cases_execute_real_component_combinations() {
+    let results = run_combined_terminal_cases()
+        .await
+        .expect("combined terminal cases");
+
+    assert_eq!(results.len(), 6);
+    assert!(results.iter().all(|result| result.passed()));
+}
+
+#[tokio::test]
+async fn blind_review_packet_is_ignored_target_only_and_contains_no_raw_content_locations_or_urls()
+{
+    let summary = run_headless_core_evaluation(EvalRunMode::Smoke, None)
+        .await
+        .expect("headless smoke");
+    let security = run_security_track().await.expect("security track");
+    let boundaries = run_hard_boundary_probes()
+        .await
+        .expect("hard boundary probes");
+    let directory = tempfile::tempdir().expect("temporary output");
+    let outside = directory.path().join("blind-review.csv");
+    assert_eq!(
+        write_blind_review_packet(&outside, &summary, &security, &boundaries)
+            .expect_err("outside target/agent-eval must fail")
+            .reason_code(),
+        "blind_review_output_not_ignored_target"
+    );
+
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("target/agent-eval/test-blind-review.csv");
+    let selected = write_blind_review_packet(&output, &summary, &security, &boundaries)
+        .expect("ignored blind review packet");
+    let csv = std::fs::read_to_string(&output).expect("blind review CSV");
+    let stratified_count = (summary.case_count() as usize).div_ceil(5);
+    assert!(
+        selected >= summary.boundary_case_count() as usize + stratified_count + 12 + 8,
+        "all boundary samples plus a distinct 20% core sample are required"
+    );
+    for forbidden in [
+        "raw answer",
+        "rawAnswer",
+        "rawPrompt",
+        "https://",
+        "/Users/",
+        ".md",
+        "evidenceBody",
+        "toolBody",
+    ] {
+        assert!(!csv.contains(forbidden), "{forbidden}");
+    }
 }

@@ -16,18 +16,37 @@ cargo test --manifest-path src-tauri/Cargo.toml --test rag_broker_eval -- --noca
 ```
 
 The fixture has exactly 48 synthetic Markdown notes and 60 labelled queries:
-54 answerable queries (48 body-token and 6 metadata-alias cases) plus 6
-no-answer queries. Four labels exercise hard scope boundaries: path prefix,
-exact path, one required tag, and two required tags with AND semantics.
+50 answerable queries plus 10 no-answer queries. Ten answerable link queries
+require two labelled source notes; the remaining 40 require one source. Four
+labels exercise hard scope boundaries: path prefix, exact path, one required
+tag, and two required tags with AND semantics. The fixture contract test
+asserts all of these counts directly from `labels.json`.
 
 ## Default gates
 
-- Recall@5 >= 0.80; Recall@30 >= 0.95
+- any-source Recall@5 >= 0.80; any-source Recall@30 >= 0.95
 - nDCG@10 >= 0.85; MRR@10 is reported for trend comparison
 - no-answer false-positive rate <= 0.10
 - scope leaks == 0
 - at least six queries must be served by metadata FTS
 - warm p95 is reported; it is not compared across different machines
+
+The two recall families have deliberately different semantics:
+
+- **any-source recall** passes a query when at least one labelled path appears
+  by the cutoff. This preserves the historical release gate and is the basis
+  of MRR/nDCG, which rank the first labelled path.
+- **all-required-source recall** passes only when every labelled path appears
+  by the cutoff. It is especially important for the ten two-source link
+  queries and is reported separately; it must never be presented as the
+  historical `Recall@K` value.
+
+The deterministic v1.2.15 run measured any-source Recall@5/30 =
+0.960/0.960 and all-required-source Recall@5/30 = 0.900/0.900, with 10
+metadata matches, no-answer false-positive rate 0, and zero scope leaks. The
+test computes each metadata-match query once and has a focused contract test
+showing that one of two required paths is insufficient for all-required-source
+recall.
 
 The test disables vector retrieval deliberately. It therefore verifies the
 actual hybrid broker, FTS, metadata, scope, rank and ContextPacket route
