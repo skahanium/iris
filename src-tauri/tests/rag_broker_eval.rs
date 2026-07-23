@@ -9,7 +9,8 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use iris_lib::ai_runtime::retrieval_broker::{
-    hybrid_retrieve_with_diagnostics, RetrievalLayerStatus, RetrievalLayers, RetrievalRequest,
+    hybrid_retrieve_with_diagnostics, RetrievalLayerDiagnostic, RetrievalLayerStatus,
+    RetrievalLayers, RetrievalRequest,
 };
 use iris_lib::ai_runtime::retrieval_scope::RetrievalScope;
 use iris_lib::indexer::scan::index_vault_incremental;
@@ -74,6 +75,36 @@ struct BrokerMetrics {
     scope_leaks: usize,
 
     retrieval_latencies_ms: Vec<f64>,
+}
+
+fn metadata_match_increment(diagnostics: &[RetrievalLayerDiagnostic]) -> usize {
+    usize::from(diagnostics.iter().any(|diagnostic| {
+        diagnostic.layer == "metadata" && diagnostic.status == RetrievalLayerStatus::Ok
+    }))
+}
+
+#[test]
+fn metadata_match_query_is_counted_once_when_diagnostics_repeat() {
+    let diagnostics = vec![
+        RetrievalLayerDiagnostic {
+            layer: "metadata".to_string(),
+            status: RetrievalLayerStatus::Ok,
+            message: None,
+            backend: None,
+            model_id: None,
+            generation_id: None,
+        },
+        RetrievalLayerDiagnostic {
+            layer: "metadata".to_string(),
+            status: RetrievalLayerStatus::Ok,
+            message: None,
+            backend: None,
+            model_id: None,
+            generation_id: None,
+        },
+    ];
+
+    assert_eq!(metadata_match_increment(&diagnostics), 1);
 }
 
 impl BrokerMetrics {
@@ -354,11 +385,7 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
             "{} must exercise the FTS broker layer",
             query.id
         );
-        if outcome.diagnostics.iter().any(|diagnostic| {
-            diagnostic.layer == "metadata" && diagnostic.status == RetrievalLayerStatus::Ok
-        }) {
-            metrics.metadata_match_queries += 1;
-        }
+        metrics.metadata_match_queries += metadata_match_increment(&outcome.diagnostics);
         assert!(
             outcome
                 .diagnostics
