@@ -11,6 +11,10 @@ use zeroize::Zeroizing;
 use crate::error::{AppError, AppResult};
 use crate::security::ipc_policy::validate_credential_service;
 
+#[cfg(test)]
+static CREDENTIAL_ACCESS_PROBE: std::sync::LazyLock<std::sync::Mutex<Vec<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(Vec::new()));
+
 const SECRET_ACCOUNT: &str = "api_key";
 const LOCAL_CREDENTIAL_DIR: &str = "credentials";
 const LOCAL_MASTER_KEY_FILE: &str = "master.key";
@@ -460,7 +464,28 @@ pub fn set_api_key(service: &str, value: &str) -> AppResult<CredentialStatus> {
 
 /// Read one API key for runtime request assembly. The value must never be logged or persisted.
 pub fn get_runtime_secret(service: &str) -> AppResult<Zeroizing<String>> {
+    #[cfg(test)]
+    CREDENTIAL_ACCESS_PROBE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .push(service.trim().to_string());
     get_runtime_secret_with_backend(&local_backend()?, service)
+}
+
+#[cfg(test)]
+pub(crate) fn credential_access_probe_reset() {
+    CREDENTIAL_ACCESS_PROBE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clear();
+}
+
+#[cfg(test)]
+pub(crate) fn credential_access_probe_snapshot() -> Vec<String> {
+    CREDENTIAL_ACCESS_PROBE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone()
 }
 
 /// Read the real local encrypted credential state for one LLM/MCP service.

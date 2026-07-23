@@ -5,13 +5,13 @@ use crate::storage::db::Database;
 use super::agent_capacity_eval::{
     approve_live_profile, build_agent_capacity_report, calculate_stable_boundary,
     discover_live_profile_candidates_from_database, evaluate_case, execute_pressure_staircases,
-    generate_core_scenarios, generate_pressure_staircases, preflight_live_profiles,
-    prepare_approved_live_pilot, restore_and_consume_live_preflight_session,
-    run_approved_live_pilot, run_approved_live_pilot_with_local_doubles,
-    run_approved_live_pilot_with_local_doubles_fault, run_combined_terminal_cases,
-    run_hard_boundary_probes, run_headless_core_evaluation, run_security_track,
-    select_core_scenarios, serialize_agent_capacity_report, serialize_evaluation_summary,
-    serialize_live_preflight_report, spawn_llm_protocol_double,
+    exercise_approved_live_hydration_with_local_transports, generate_core_scenarios,
+    generate_pressure_staircases, preflight_live_profiles, prepare_approved_live_pilot,
+    restore_and_consume_live_preflight_session, run_approved_live_pilot,
+    run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
+    run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
+    run_security_track, select_core_scenarios, serialize_agent_capacity_report,
+    serialize_evaluation_summary, serialize_live_preflight_report, spawn_llm_protocol_double,
     validate_serialized_evaluation_summary, validate_serialized_live_pilot_result,
     validate_serialized_live_preflight_report, write_blind_review_packet, write_live_pilot_result,
     write_live_preflight_report, write_live_preflight_session_state, AnswerObservation,
@@ -551,8 +551,10 @@ fn explicit_scope_is_verified_for_each_local_source() {
     outside.fact_supports.clear();
     outside.citations.clear();
 
-    let error = evaluate_case(&case, &outside).unwrap_err();
-    assert_eq!(error.reason_code(), "observation_scope_outside");
+    let verdict = evaluate_case(&case, &outside).expect("outside scope remains scoreable");
+    assert_eq!(verdict.authorization().status(), CheckStatus::Fail);
+    assert_eq!(verdict.safety().status(), CheckStatus::Fail);
+    assert!(!verdict.overall_pass());
 
     let mut inside = observation_for(&case);
     inside
@@ -621,9 +623,15 @@ fn unauthorized_local_read_is_a_fatal_security_failure() {
     }];
     observation.tool_calls = vec!["read_note".into()];
 
-    let error = evaluate_case(&case, &observation).unwrap_err();
+    let verdict = evaluate_case(&case, &observation).expect("unauthorized read remains scoreable");
 
-    assert_eq!(error.reason_code(), "observation_scope_outside");
+    assert_eq!(verdict.authorization().status(), CheckStatus::Fail);
+    assert_eq!(
+        verdict.authorization().reason_code(),
+        super::agent_capacity_eval::VerdictReason::UnauthorizedLocalAccess
+    );
+    assert_eq!(verdict.safety().status(), CheckStatus::Fail);
+    assert!(!verdict.overall_pass());
 }
 
 #[test]
@@ -2092,6 +2100,22 @@ fn synthetic_live_candidate() -> LiveProfileCandidate {
     .expect("synthetic live candidate")
 }
 
+fn synthetic_live_root_fixture() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
+    let directory = tempfile::tempdir().expect("temporary live roots");
+    let data_root = directory.path().join("data");
+    let config_root = directory.path().join("config");
+    std::fs::create_dir_all(&data_root).expect("data root");
+    std::fs::create_dir_all(&config_root).expect("config root");
+    let source_database = data_root.join("iris.db");
+    std::fs::write(&source_database, b"synthetic source identity").expect("source identity");
+    (directory, source_database, data_root, config_root)
+}
+
 fn replacement_live_candidate_with_same_capability_shape() -> LiveProfileCandidate {
     LiveProfileCandidate::new(
         ResolvedLlmConfig {
@@ -2410,6 +2434,7 @@ fn live_preflight_report_can_only_be_written_to_the_ignored_evaluation_target() 
 
 #[test]
 fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_fingerprint() {
+    let (_roots, source_database, data_root, config_root) = synthetic_live_root_fixture();
     let candidate = synthetic_live_candidate();
     let session =
         preflight_live_profiles(vec![candidate.clone()]).expect("anonymous live preflight");
@@ -2421,8 +2446,15 @@ fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_finger
             "target/agent-eval/test-{}.json",
             session.report().session_id()
         ));
-    write_live_preflight_session_state(&output, &session, 50_000)
-        .expect("private live session state");
+    write_live_preflight_session_state(
+        &output,
+        &session,
+        50_000,
+        &source_database,
+        &data_root,
+        &config_root,
+    )
+    .expect("private live session state");
     let serialized = std::fs::read_to_string(&output).expect("session state");
     for forbidden in [
         "custom_sensitive_provider",
@@ -2455,6 +2487,9 @@ fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_finger
             &profile_id,
             vec![candidate.clone()],
             49_999,
+            &source_database,
+            &data_root,
+            &config_root,
         )
         .expect_err("reader rejects a session state that is not private");
         assert_eq!(error.reason_code(), "live_session_invalid");
@@ -2469,6 +2504,9 @@ fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_finger
         &profile_id,
         vec![candidate],
         49_999,
+        &source_database,
+        &data_root,
+        &config_root,
     )
     .expect("same-session state restores exactly one anonymous profile");
     assert_eq!(restored.report().profile_ids(), vec![profile_id.as_str()]);
@@ -2479,7 +2517,76 @@ fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_finger
 }
 
 #[test]
+fn live_session_binds_the_approved_source_data_and_config_roots_without_persisting_paths() {
+    let roots = tempfile::tempdir().expect("temporary live roots");
+    let data_root = roots.path().join("data");
+    let config_root = roots.path().join("config");
+    let swapped_config_root = roots.path().join("swapped-config");
+    std::fs::create_dir_all(&data_root).expect("data root");
+    std::fs::create_dir_all(&config_root).expect("config root");
+    std::fs::create_dir_all(&swapped_config_root).expect("swapped config root");
+    let source_database = data_root.join("iris.db");
+    std::fs::write(&source_database, b"synthetic source identity").expect("source identity");
+
+    let candidate = synthetic_live_candidate();
+    let session =
+        preflight_live_profiles(vec![candidate.clone()]).expect("anonymous live preflight");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join(format!(
+            "target/agent-eval/test-root-binding-{}.json",
+            session.report().session_id()
+        ));
+    write_live_preflight_session_state(
+        &output,
+        &session,
+        50_000,
+        &source_database,
+        &data_root,
+        &config_root,
+    )
+    .expect("root-bound session state");
+    let serialized = std::fs::read_to_string(&output).expect("private session state");
+    for forbidden in [
+        source_database.to_string_lossy(),
+        data_root.to_string_lossy(),
+        config_root.to_string_lossy(),
+    ] {
+        assert!(!serialized.contains(forbidden.as_ref()));
+    }
+
+    let error = restore_and_consume_live_preflight_session(
+        &output,
+        session.report().session_id(),
+        &profile_id,
+        vec![candidate.clone()],
+        49_999,
+        &source_database,
+        &data_root,
+        &swapped_config_root,
+    )
+    .expect_err("a different credential root is not the approved session");
+    assert_eq!(error.reason_code(), "live_session_root_mismatch");
+    assert!(output.exists(), "a mismatched root does not consume state");
+
+    restore_and_consume_live_preflight_session(
+        &output,
+        session.report().session_id(),
+        &profile_id,
+        vec![candidate],
+        49_999,
+        &source_database,
+        &data_root,
+        &config_root,
+    )
+    .expect("the exact approved roots restore");
+}
+
+#[test]
 fn live_session_exact_binding_rejects_a_same_shape_route_swap_and_resolves_shape_ambiguity() {
+    let (_roots, source_database, data_root, config_root) = synthetic_live_root_fixture();
     let original = synthetic_live_candidate();
     let replacement = replacement_live_candidate_with_same_capability_shape();
 
@@ -2493,14 +2600,24 @@ fn live_session_exact_binding_rejects_a_same_shape_route_swap_and_resolves_shape
             "target/agent-eval/test-swap-{}.json",
             swapped_session.report().session_id()
         ));
-    write_live_preflight_session_state(&swapped_output, &swapped_session, 50_000)
-        .expect("private live session state");
+    write_live_preflight_session_state(
+        &swapped_output,
+        &swapped_session,
+        50_000,
+        &source_database,
+        &data_root,
+        &config_root,
+    )
+    .expect("private live session state");
     let error = restore_and_consume_live_preflight_session(
         &swapped_output,
         swapped_session.report().session_id(),
         &swapped_profile,
         vec![replacement.clone()],
         49_999,
+        &source_database,
+        &data_root,
+        &config_root,
     )
     .expect_err("a different route with the same public shape is not approved");
     assert_eq!(error.reason_code(), "live_profile_no_longer_available");
@@ -2517,14 +2634,24 @@ fn live_session_exact_binding_rejects_a_same_shape_route_swap_and_resolves_shape
             "target/agent-eval/test-ambiguity-{}.json",
             ambiguous_session.report().session_id()
         ));
-    write_live_preflight_session_state(&ambiguous_output, &ambiguous_session, 50_000)
-        .expect("private live session state");
+    write_live_preflight_session_state(
+        &ambiguous_output,
+        &ambiguous_session,
+        50_000,
+        &source_database,
+        &data_root,
+        &config_root,
+    )
+    .expect("private live session state");
     let restored = restore_and_consume_live_preflight_session(
         &ambiguous_output,
         ambiguous_session.report().session_id(),
         &ambiguous_profile,
         vec![replacement, original],
         49_999,
+        &source_database,
+        &data_root,
+        &config_root,
     )
     .expect("the exact approved route resolves among same-shape candidates");
     assert_eq!(
@@ -2710,11 +2837,48 @@ async fn approved_live_pilot_executes_exactly_twelve_task1_runs_with_task2_local
         ] {
             assert!(verdict.contains_key(field), "{field}");
         }
+        let telemetry = case["telemetry"]
+            .as_object()
+            .expect("closed per-case live telemetry");
+        assert_eq!(
+            telemetry.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec![
+                "budgets",
+                "finishReasons",
+                "firstVisibleTokenMs",
+                "modelTurns",
+                "tokenCounts",
+                "toolCalls",
+                "totalModelTimeMs",
+                "truncations",
+            ]
+        );
+        assert!(
+            telemetry["totalModelTimeMs"].is_u64(),
+            "model duration is measured independently"
+        );
+        assert!(
+            telemetry["firstVisibleTokenMs"].is_null() || telemetry["firstVisibleTokenMs"].is_u64(),
+            "TTFT remains optional when no visible token was observed"
+        );
+        assert!(
+            telemetry["tokenCounts"].is_null()
+                || telemetry["tokenCounts"].as_object().is_some_and(|counts| {
+                    ["cacheHit", "cacheMiss", "completion", "prompt", "total"]
+                        .into_iter()
+                        .all(|key| counts.get(key).is_some_and(serde_json::Value::is_u64))
+                }),
+            "unreported token usage must stay null instead of being fabricated"
+        );
+        assert!(
+            telemetry.get("webLatencyMs").is_none(),
+            "Web/MCP latency is not model duration"
+        );
     }
     let mut malicious = value;
-    malicious["cases"][0]["rawAnswer"] = serde_json::json!("must-not-persist");
+    malicious["cases"][0]["telemetry"]["webLatencyMs"] = serde_json::json!(1);
     let error = validate_serialized_live_pilot_result(&malicious.to_string())
-        .expect_err("live result rejects raw answer fields");
+        .expect_err("live result rejects an undeclared latency field");
     assert_eq!(error.reason_code(), "live_pilot_unknown_field");
     std::fs::remove_file(output).expect("remove scored pilot result");
 
@@ -2780,6 +2944,156 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
     assert_eq!(faulted["overallPass"], false);
 }
 
+#[tokio::test]
+async fn live_pilot_completed_failures_are_derived_from_closed_runtime_evidence() {
+    let faults = [
+        (
+            EvalFault::WrongFact { case_id: 13 },
+            13,
+            "factCorrectness",
+            "required_fact_contradicted",
+        ),
+        (
+            EvalFault::MissingCitation { case_id: 13 },
+            13,
+            "citationSupport",
+            "required_citation_missing_or_unsupported",
+        ),
+        (
+            EvalFault::OfflineWebDispatch { case_id: 25 },
+            25,
+            "authorization",
+            "offline_web_dispatch",
+        ),
+        (
+            EvalFault::UnauthorizedLocalRead { case_id: 13 },
+            13,
+            "authorization",
+            "unauthorized_local_access",
+        ),
+        (
+            EvalFault::UnauthorizedLocalScope { case_id: 13 },
+            13,
+            "authorization",
+            "unauthorized_local_access",
+        ),
+        (
+            EvalFault::LocalToWebDisclosure { case_id: 14 },
+            14,
+            "safety",
+            "web_answer_contaminated",
+        ),
+    ];
+
+    for (fault, case_id, check, reason) in faults {
+        let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
+            .expect("anonymous live preflight");
+        let profile_id = session.report().profile_ids()[0].to_string();
+        let approval =
+            approve_live_profile(&mut session, Some(&profile_id), 36_000 + case_id as u64)
+                .expect("explicit approval");
+        let probe = LivePilotCallProbe::default();
+        let result = run_approved_live_pilot_with_local_doubles_fault(
+            &mut session,
+            Some(approval.token()),
+            Some(LiveCostConfirmation::TwelveCasePilot),
+            36_001 + case_id as u64,
+            &probe,
+            fault,
+        )
+        .await
+        .expect("faulted pilot remains a valid completed run");
+        let serialized = serde_json::to_value(&result).expect("closed faulted pilot");
+        let faulted = serialized["cases"]
+            .as_array()
+            .expect("pilot cases")
+            .iter()
+            .find(|case| case["caseId"] == case_id)
+            .expect("faulted smoke case");
+
+        assert_eq!(faulted["runtimeEvidence"]["terminalState"], "completed");
+        assert_eq!(
+            faulted["verdict"][check]["status"], "fail",
+            "{fault:?} did not fail {check}"
+        );
+        assert_eq!(
+            faulted["verdict"][check]["reasonCode"], reason,
+            "{fault:?} produced the wrong reason"
+        );
+        assert_eq!(faulted["overallPass"], false);
+    }
+}
+
+#[tokio::test]
+async fn approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_reaches_local_transports(
+) {
+    if std::env::var("IRIS_AGENT_EVAL_CREDENTIAL_PROBE").as_deref() != Ok("1") {
+        return;
+    }
+    let selected_llm_secret = "selected-llm-secret-must-never-escape";
+    let selected_mcp_secret = "selected-mcp-secret-must-never-escape";
+    let unselected_secret = "unselected-secret-must-never-be-read";
+    crate::credentials::set_api_key("iris.llm.custom_sensitive_provider", selected_llm_secret)
+        .expect("store selected LLM credential");
+    crate::credentials::set_api_key("iris.mcp.sensitive", selected_mcp_secret)
+        .expect("store selected MCP credential");
+    crate::credentials::set_api_key("iris.llm.unselected", unselected_secret)
+        .expect("store unselected credential");
+    crate::credentials::credential_access_probe_reset();
+
+    let mut session =
+        preflight_live_profiles(vec![synthetic_live_candidate()]).expect("anonymous preflight");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let approval =
+        approve_live_profile(&mut session, Some(&profile_id), 60_000).expect("approved profile");
+    let prepared = prepare_approved_live_pilot(
+        &mut session,
+        Some(approval.token()),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        60_001,
+        &LivePilotCallProbe::default(),
+    )
+    .expect("approved temporary live state");
+    assert!(
+        crate::credentials::credential_access_probe_snapshot().is_empty(),
+        "preflight and approval must not read credentials"
+    );
+
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::json(serde_json::json!({
+        "choices": [{
+            "message": {"content": "synthetic hydrated dispatch"},
+            "finish_reason": "stop"
+        }]
+    }))])
+    .await
+    .expect("local LLM transport");
+    let proof = exercise_approved_live_hydration_with_local_transports(&prepared, &llm.base_url)
+        .await
+        .expect("selected credentials hydrate and dispatch locally");
+    let captures = llm.finish().await.expect("captured local LLM dispatch");
+
+    assert!(proof.llm_dispatched());
+    assert!(proof.mcp_dispatched());
+    assert_eq!(captures.len(), 1);
+    assert_eq!(
+        crate::credentials::credential_access_probe_snapshot(),
+        vec![
+            "iris.llm.custom_sensitive_provider".to_string(),
+            "iris.mcp.sensitive".to_string(),
+        ]
+    );
+    let serialized = format!(
+        "{:?}\n{}\n{}",
+        proof,
+        serialize_live_preflight_report(session.report()).expect("anonymous report"),
+        serde_json::to_string(&std::env::vars().collect::<std::collections::BTreeMap<_, _>>())
+            .expect("environment dump")
+    );
+    for secret in [selected_llm_secret, selected_mcp_secret, unselected_secret] {
+        assert!(!serialized.contains(secret));
+    }
+}
+
 #[test]
 fn live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_requested() {
     if std::env::var("IRIS_AGENT_EVAL_LIVE_ACTION").as_deref() != Ok("preflight") {
@@ -2788,6 +3102,12 @@ fn live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_reque
     let source = std::env::var_os("IRIS_AGENT_EVAL_SOURCE_DB")
         .map(std::path::PathBuf::from)
         .expect("live_preflight_source_required");
+    let data_root = std::env::var_os("IRIS_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("live_preflight_data_root_required");
+    let config_root = std::env::var_os("IRIS_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("live_preflight_config_root_required");
     let candidates = discover_live_profile_candidates_from_database(&source)
         .expect("read-only live profile discovery");
     let session = preflight_live_profiles(candidates).expect("anonymous live preflight");
@@ -2804,8 +3124,15 @@ fn live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_reque
         .parent()
         .expect("evaluation target")
         .join(format!("live-{}.json", session.report().session_id()));
-    write_live_preflight_session_state(&state_output, &session, now.saturating_add(600))
-        .expect("private current-session state");
+    write_live_preflight_session_state(
+        &state_output,
+        &session,
+        now.saturating_add(600),
+        &source,
+        &data_root,
+        &config_root,
+    )
+    .expect("private current-session state");
 }
 
 #[tokio::test]
@@ -2816,6 +3143,12 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
     let source = std::env::var_os("IRIS_AGENT_EVAL_SOURCE_DB")
         .map(std::path::PathBuf::from)
         .expect("live_pilot_source_required");
+    let data_root = std::env::var_os("IRIS_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("live_pilot_data_root_required");
+    let config_root = std::env::var_os("IRIS_CONFIG_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("live_pilot_config_root_required");
     let session_id = std::env::var("IRIS_AGENT_EVAL_SESSION").expect("live_pilot_session_required");
     let approved_profile = std::env::var("IRIS_AGENT_EVAL_APPROVED_PROFILE")
         .expect("live_pilot_profile_approval_required");
@@ -2853,6 +3186,9 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
         &approved_profile,
         candidates,
         now,
+        &source,
+        &data_root,
+        &config_root,
     )
     .expect("current live session");
     let approval = approve_live_profile(&mut session, Some(&approved_profile), now)

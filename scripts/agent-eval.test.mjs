@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   realpathSync,
@@ -15,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildAgentEvalChildEnvironment,
   buildLivePilotChildEnvironment,
+  resolveLiveEvaluationPaths,
 } from "./agent-eval.mjs";
 
 const workspaceRoot = path.resolve(
@@ -113,22 +115,51 @@ test("live pilot CLI requires session, profile and exact one-run cost confirmati
       "--confirm-cost",
       "one-12-case-pilot",
     ).stderr,
-    /agent_eval_live_pilot_source_missing/,
+    /agent_eval_live_custom_roots_required/,
   );
 });
 
-test("live pilot child receives canonical credential roots but never credential values", () => {
+test("default live paths bind one canonical source database data root and config root", () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(os.tmpdir(), "iris-agent-eval-default-paths-"),
+  );
+  const dataDir = path.join(temporaryRoot, ".iris-dev", "app-data");
+  const configDir = path.join(temporaryRoot, ".iris-dev", "config");
+  const sourceDatabase = path.join(dataDir, "iris.db");
+  mkdirSync(dataDir, { recursive: true });
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(sourceDatabase, "synthetic sqlite placeholder");
+
+  try {
+    const resolved = resolveLiveEvaluationPaths(
+      { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+      temporaryRoot,
+    );
+    assert.deepEqual(resolved, {
+      sourceDatabase: realpathSync(sourceDatabase),
+      dataDir: realpathSync(dataDir),
+      configDir: realpathSync(configDir),
+    });
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("live child receives resolved roots but never credential values", () => {
   const temporaryRoot = mkdtempSync(
     path.join(os.tmpdir(), "iris-agent-eval-roots-"),
   );
   const dataDir = path.join(temporaryRoot, "data");
   const configDir = path.join(temporaryRoot, "config");
+  const sourceDatabase = path.join(dataDir, "iris.db");
   mkdirSync(dataDir);
   mkdirSync(configDir);
+  writeFileSync(sourceDatabase, "synthetic sqlite placeholder");
   const source = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     IRIS_DATA_DIR: dataDir,
     IRIS_CONFIG_DIR: configDir,
+    IRIS_AGENT_EVAL_SOURCE_DB: sourceDatabase,
     MINIMAX_API_KEY: "minimax-secret-must-not-cross",
     ANYSEARCH_API_KEY: "anysearch-secret-must-not-cross",
     DATABASE_URL: "postgres://user:password@private.invalid/database",
@@ -136,9 +167,15 @@ test("live pilot child receives canonical credential roots but never credential 
   };
 
   try {
-    const environment = buildLivePilotChildEnvironment(source, {
-      IRIS_AGENT_EVAL_LIVE_ACTION: "pilot",
-    });
+    const resolved = resolveLiveEvaluationPaths(source, temporaryRoot);
+    const environment = buildLivePilotChildEnvironment(
+      source,
+      {
+        IRIS_AGENT_EVAL_LIVE_ACTION: "pilot",
+        IRIS_AGENT_EVAL_SOURCE_DB: sourceDatabase,
+      },
+      resolved,
+    );
     const child = spawnSync(
       process.execPath,
       ["-e", "process.stdout.write(JSON.stringify(process.env))"],
@@ -151,6 +188,10 @@ test("live pilot child receives canonical credential roots but never credential 
     const captured = JSON.parse(child.stdout);
     assert.equal(captured.IRIS_DATA_DIR, realpathSync(dataDir));
     assert.equal(captured.IRIS_CONFIG_DIR, realpathSync(configDir));
+    assert.equal(
+      captured.IRIS_AGENT_EVAL_SOURCE_DB,
+      realpathSync(sourceDatabase),
+    );
     for (const forbidden of [
       "MINIMAX_API_KEY",
       "ANYSEARCH_API_KEY",
@@ -168,47 +209,126 @@ test("live pilot child receives canonical credential roots but never credential 
   }
 });
 
-test("live pilot child rejects missing relative and non-directory credential roots", () => {
+test("live path resolution rejects missing default config and unbound custom databases", () => {
   const temporaryRoot = mkdtempSync(
     path.join(os.tmpdir(), "iris-agent-eval-invalid-roots-"),
   );
-  const dataDir = path.join(temporaryRoot, "data");
-  const configFile = path.join(temporaryRoot, "config-file");
-  mkdirSync(dataDir);
-  writeFileSync(configFile, "not a directory");
+  const defaultDataDir = path.join(temporaryRoot, ".iris-dev", "app-data");
+  mkdirSync(defaultDataDir, { recursive: true });
+  writeFileSync(path.join(defaultDataDir, "iris.db"), "synthetic sqlite");
+  const customDataDir = path.join(temporaryRoot, "custom-data");
+  const otherDataDir = path.join(temporaryRoot, "other-data");
+  const configDir = path.join(temporaryRoot, "config");
+  mkdirSync(customDataDir);
+  mkdirSync(otherDataDir);
+  mkdirSync(configDir);
+  const customDatabase = path.join(customDataDir, "iris.db");
+  writeFileSync(customDatabase, "synthetic sqlite");
 
   try {
     assert.throws(
       () =>
-        buildLivePilotChildEnvironment(
+        resolveLiveEvaluationPaths(
           { PATH: process.env.PATH ?? "/usr/bin:/bin" },
-          {},
-        ),
-      /agent_eval_live_credential_roots_required/,
-    );
-    assert.throws(
-      () =>
-        buildLivePilotChildEnvironment(
-          {
-            PATH: process.env.PATH ?? "/usr/bin:/bin",
-            IRIS_DATA_DIR: "relative/data",
-            IRIS_CONFIG_DIR: temporaryRoot,
-          },
-          {},
+          temporaryRoot,
         ),
       /agent_eval_live_credential_root_invalid/,
     );
     assert.throws(
       () =>
-        buildLivePilotChildEnvironment(
+        resolveLiveEvaluationPaths(
           {
             PATH: process.env.PATH ?? "/usr/bin:/bin",
-            IRIS_DATA_DIR: dataDir,
-            IRIS_CONFIG_DIR: configFile,
+            IRIS_AGENT_EVAL_SOURCE_DB: customDatabase,
           },
-          {},
+          temporaryRoot,
         ),
-      /agent_eval_live_credential_root_invalid/,
+      /agent_eval_live_custom_roots_required/,
+    );
+    assert.throws(
+      () =>
+        resolveLiveEvaluationPaths(
+          {
+            PATH: process.env.PATH ?? "/usr/bin:/bin",
+            IRIS_AGENT_EVAL_SOURCE_DB: customDatabase,
+            IRIS_DATA_DIR: otherDataDir,
+            IRIS_CONFIG_DIR: configDir,
+          },
+          temporaryRoot,
+        ),
+      /agent_eval_live_source_root_mismatch/,
+    );
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("live child uses the separated encrypted store without exposing selected or unselected keys", () => {
+  const temporaryRoot = mkdtempSync(
+    path.join(os.tmpdir(), "iris-agent-eval-encrypted-child-"),
+  );
+  const dataDir = path.join(temporaryRoot, "data");
+  const configDir = path.join(temporaryRoot, "config");
+  const sourceDatabase = path.join(dataDir, "iris.db");
+  mkdirSync(dataDir);
+  mkdirSync(configDir);
+  writeFileSync(sourceDatabase, "");
+  const source = {
+    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    HOME: process.env.HOME,
+    CARGO_HOME: process.env.CARGO_HOME,
+    RUSTUP_HOME: process.env.RUSTUP_HOME,
+    CARGO_TARGET_DIR: process.env.CARGO_TARGET_DIR,
+    IRIS_DATA_DIR: dataDir,
+    IRIS_CONFIG_DIR: configDir,
+    IRIS_AGENT_EVAL_SOURCE_DB: sourceDatabase,
+  };
+
+  try {
+    const resolved = resolveLiveEvaluationPaths(source, temporaryRoot);
+    const environment = buildLivePilotChildEnvironment(
+      source,
+      {
+        IRIS_AGENT_EVAL_CREDENTIAL_PROBE: "1",
+        IRIS_AGENT_EVAL_SOURCE_DB: sourceDatabase,
+      },
+      resolved,
+    );
+    const child = spawnSync(
+      "cargo",
+      [
+        "test",
+        "--manifest-path",
+        "src-tauri/Cargo.toml",
+        "--lib",
+        "ai_runtime::agent_capacity_eval_tests::approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_reaches_local_transports",
+        "--",
+        "--exact",
+        "--nocapture",
+        "--test-threads=1",
+      ],
+      {
+        cwd: workspaceRoot,
+        env: environment,
+        encoding: "utf8",
+      },
+    );
+    assert.equal(child.status, 0, child.stderr);
+    assert.equal(environment.IRIS_AGENT_EVAL_CREDENTIAL_PROBE, "1");
+    assert.equal(
+      existsSync(path.join(configDir, "master.key")),
+      true,
+      "separated master key must be created by the real credential backend",
+    );
+    assert.equal(
+      existsSync(path.join(dataDir, "credentials")),
+      true,
+      "encrypted credential records must be created under the data root",
+    );
+    const output = `${child.stdout}\n${child.stderr}`;
+    assert.doesNotMatch(
+      output,
+      /selected-llm-secret|selected-mcp-secret|unselected-secret/,
     );
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });

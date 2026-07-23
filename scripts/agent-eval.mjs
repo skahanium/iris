@@ -41,6 +41,7 @@ const allowedControlKeys = new Set([
   "IRIS_AGENT_EVAL_SESSION",
   "IRIS_AGENT_EVAL_APPROVED_PROFILE",
   "IRIS_AGENT_EVAL_COST_CONFIRMATION",
+  "IRIS_AGENT_EVAL_CREDENTIAL_PROBE",
   "IRIS_DATA_DIR",
   "IRIS_CONFIG_DIR",
 ]);
@@ -60,8 +61,7 @@ export function buildAgentEvalChildEnvironment(source, controls = {}) {
   return environment;
 }
 
-function canonicalCredentialRoot(source, key) {
-  const raw = source[key];
+function canonicalCredentialRoot(raw) {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new Error("agent_eval_live_credential_roots_required");
   }
@@ -90,11 +90,69 @@ function canonicalCredentialRoot(source, key) {
   return canonical;
 }
 
-export function buildLivePilotChildEnvironment(source, controls = {}) {
+function canonicalSourceDatabase(raw) {
+  if (typeof raw !== "string" || raw.length === 0 || !path.isAbsolute(raw)) {
+    throw new Error("agent_eval_live_source_invalid");
+  }
+  try {
+    const canonical = realpathSync(raw);
+    const metadata = statSync(canonical);
+    const wrongOwner =
+      typeof process.getuid === "function" && metadata.uid !== process.getuid();
+    if (!metadata.isFile() || wrongOwner || (metadata.mode & 0o022) !== 0) {
+      throw new Error("agent_eval_live_source_invalid");
+    }
+    return canonical;
+  } catch {
+    throw new Error("agent_eval_live_source_invalid");
+  }
+}
+
+export function resolveLiveEvaluationPaths(
+  source,
+  evaluationWorkspaceRoot = workspaceRoot,
+) {
+  const customSource =
+    typeof source.IRIS_AGENT_EVAL_SOURCE_DB === "string" &&
+    source.IRIS_AGENT_EVAL_SOURCE_DB.length > 0;
+  if (customSource && (!source.IRIS_DATA_DIR || !source.IRIS_CONFIG_DIR)) {
+    throw new Error("agent_eval_live_custom_roots_required");
+  }
+  const dataDir = canonicalCredentialRoot(
+    source.IRIS_DATA_DIR ||
+      path.join(evaluationWorkspaceRoot, ".iris-dev", "app-data"),
+  );
+  const configDir = canonicalCredentialRoot(
+    source.IRIS_CONFIG_DIR ||
+      path.join(evaluationWorkspaceRoot, ".iris-dev", "config"),
+  );
+  const sourceDatabase = canonicalSourceDatabase(
+    customSource
+      ? source.IRIS_AGENT_EVAL_SOURCE_DB
+      : path.join(dataDir, "iris.db"),
+  );
+  let boundDatabase;
+  try {
+    boundDatabase = realpathSync(path.join(dataDir, "iris.db"));
+  } catch {
+    throw new Error("agent_eval_live_source_root_mismatch");
+  }
+  if (sourceDatabase !== boundDatabase) {
+    throw new Error("agent_eval_live_source_root_mismatch");
+  }
+  return { sourceDatabase, dataDir, configDir };
+}
+
+export function buildLivePilotChildEnvironment(
+  source,
+  controls = {},
+  resolvedPaths = resolveLiveEvaluationPaths(source),
+) {
   return buildAgentEvalChildEnvironment(source, {
     ...controls,
-    IRIS_DATA_DIR: canonicalCredentialRoot(source, "IRIS_DATA_DIR"),
-    IRIS_CONFIG_DIR: canonicalCredentialRoot(source, "IRIS_CONFIG_DIR"),
+    IRIS_AGENT_EVAL_SOURCE_DB: resolvedPaths.sourceDatabase,
+    IRIS_DATA_DIR: resolvedPaths.dataDir,
+    IRIS_CONFIG_DIR: resolvedPaths.configDir,
   });
 }
 
@@ -136,13 +194,18 @@ function argumentValue(name) {
 
 function runLive() {
   const action = process.argv[3];
-  const sourceDatabase =
-    process.env.IRIS_AGENT_EVAL_SOURCE_DB ||
-    path.join(
-      process.env.IRIS_DATA_DIR ||
-        path.join(workspaceRoot, ".iris-dev", "app-data"),
-      "iris.db",
-    );
+  const resolvePathsOrExit = () => {
+    try {
+      return resolveLiveEvaluationPaths(process.env);
+    } catch (error) {
+      console.error(
+        error instanceof Error
+          ? error.message
+          : "agent_eval_live_path_resolution_failed",
+      );
+      process.exit(2);
+    }
+  };
   if (action === "pilot") {
     const session = argumentValue("--session");
     const approvedProfile = argumentValue("--approve");
@@ -159,10 +222,8 @@ function runLive() {
       console.error("agent_eval_live_pilot_requires_user_cost_checkpoint");
       process.exit(2);
     }
-    if (!existsSync(sourceDatabase)) {
-      console.error("agent_eval_live_pilot_source_missing");
-      process.exit(2);
-    }
+    const resolvedPaths = resolvePathsOrExit();
+    const sourceDatabase = resolvedPaths.sourceDatabase;
     const result = runCargoEntrypoint(
       "ai_runtime::agent_capacity_eval_tests::live_pilot_command_entrypoint_runs_only_an_approved_current_session_when_requested",
       {
@@ -172,7 +233,8 @@ function runLive() {
         IRIS_AGENT_EVAL_APPROVED_PROFILE: approvedProfile,
         IRIS_AGENT_EVAL_COST_CONFIRMATION: costConfirmation,
       },
-      buildLivePilotChildEnvironment,
+      (source, controls) =>
+        buildLivePilotChildEnvironment(source, controls, resolvedPaths),
     );
     exitFromCargo(result, "agent_eval_live_pilot_runner_failed");
     const output = path.join(
@@ -195,10 +257,8 @@ function runLive() {
     );
     process.exit(2);
   }
-  if (!existsSync(sourceDatabase)) {
-    console.error("agent_eval_live_preflight_source_missing");
-    process.exit(2);
-  }
+  const resolvedPaths = resolvePathsOrExit();
+  const sourceDatabase = resolvedPaths.sourceDatabase;
   const output = path.join(
     workspaceRoot,
     "target",
@@ -212,7 +272,8 @@ function runLive() {
       IRIS_AGENT_EVAL_LIVE_ACTION: "preflight",
       IRIS_AGENT_EVAL_SOURCE_DB: sourceDatabase,
     },
-    buildAgentEvalChildEnvironment,
+    (source, controls) =>
+      buildLivePilotChildEnvironment(source, controls, resolvedPaths),
   );
   exitFromCargo(result, "agent_eval_live_preflight_runner_failed");
   if (!existsSync(output)) {
