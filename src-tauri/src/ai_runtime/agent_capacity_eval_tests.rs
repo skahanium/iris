@@ -3,9 +3,10 @@ use std::time::Duration;
 use crate::storage::db::Database;
 
 use super::agent_capacity_eval::{
-    evaluate_case, generate_core_scenarios, run_deterministic_core_evaluation,
-    serialize_evaluation_summary, spawn_llm_protocol_double, AnswerObservation, BudgetOutcome,
-    CaseManifest, CheckStatus, CitationObservation, EvalRunMode, EvaluationTelemetryTap,
+    evaluate_case, generate_core_scenarios, run_headless_core_evaluation, select_core_scenarios,
+    serialize_evaluation_summary, spawn_llm_protocol_double,
+    validate_serialized_evaluation_summary, AnswerObservation, BudgetOutcome, CaseManifest,
+    CheckStatus, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
     EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
     LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
     McpTransportFailureContract, ObservedSource, ProtocolContractOutcome, ProtocolValidationLevel,
@@ -1493,27 +1494,67 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
 }
 
 #[test]
-fn deterministic_smoke_is_stratified_and_full_summary_is_strictly_whitelisted() {
-    let smoke = run_deterministic_core_evaluation(EvalRunMode::Smoke).expect("deterministic smoke");
-    assert_eq!(smoke.case_count(), 12);
-    assert_eq!(smoke.boundary_case_count(), 4);
+fn core_selection_is_stratified_without_claiming_execution_results() {
+    let smoke = select_core_scenarios(EvalRunMode::Smoke).expect("smoke selection");
+    assert_eq!(smoke.len(), 12);
+    assert_eq!(
+        smoke
+            .iter()
+            .filter(|scenario| scenario.is_hard_boundary())
+            .count(),
+        4
+    );
     for group in [
         EvidenceGroup::NoRetrieval,
         EvidenceGroup::LocalOnly,
         EvidenceGroup::WebOnly,
         EvidenceGroup::Hybrid,
     ] {
-        assert_eq!(smoke.group_count(group), 3);
+        assert_eq!(
+            smoke
+                .iter()
+                .filter(|scenario| scenario.evidence_group() == group)
+                .count(),
+            3
+        );
     }
-    assert_eq!(smoke.language_count(ScenarioLanguage::Chinese), 8);
-    assert_eq!(smoke.language_count(ScenarioLanguage::English), 3);
-    assert_eq!(smoke.language_count(ScenarioLanguage::Mixed), 1);
-    assert_eq!(smoke.telemetry().first_visible_token_ms(), Some(1));
+    assert_eq!(
+        smoke
+            .iter()
+            .filter(|scenario| scenario.language() == ScenarioLanguage::Chinese)
+            .count(),
+        8
+    );
+    assert_eq!(
+        smoke
+            .iter()
+            .filter(|scenario| scenario.language() == ScenarioLanguage::English)
+            .count(),
+        3
+    );
+    assert_eq!(
+        smoke
+            .iter()
+            .filter(|scenario| scenario.language() == ScenarioLanguage::Mixed)
+            .count(),
+        1
+    );
+    assert_eq!(
+        select_core_scenarios(EvalRunMode::Full)
+            .expect("full selection")
+            .len(),
+        48
+    );
+}
 
-    let full = run_deterministic_core_evaluation(EvalRunMode::Full).expect("deterministic full");
-    assert_eq!(full.case_count(), 48);
-    assert_eq!(full.passed(), 48);
-    let serialized = serialize_evaluation_summary(&full).expect("strict summary");
+#[tokio::test]
+async fn headless_smoke_summary_exposes_only_the_closed_contract() {
+    let smoke = run_headless_core_evaluation(EvalRunMode::Smoke, None)
+        .await
+        .expect("headless smoke");
+    assert_eq!(smoke.case_count(), 12);
+    assert_eq!(smoke.boundary_case_count(), 4);
+    let serialized = serialize_evaluation_summary(&smoke).expect("strict summary");
     let value: serde_json::Value = serde_json::from_str(&serialized).expect("summary json");
     let keys = value
         .as_object()
@@ -1538,7 +1579,7 @@ fn deterministic_smoke_is_stratified_and_full_summary_is_strictly_whitelisted() 
             "cases",
         ])
     );
-    assert_eq!(value["evidenceLevel"], "deterministic_fixture");
+    assert_eq!(value["evidenceLevel"], "headless_deterministic");
     assert!(!serialized.contains("请在不检索"));
     for forbidden in [
         "rawPrompt",
@@ -1551,10 +1592,42 @@ fn deterministic_smoke_is_stratified_and_full_summary_is_strictly_whitelisted() 
     ] {
         assert!(!serialized.contains(forbidden));
     }
+
+    let assert_rejected_without_echo = |value: serde_json::Value, secret: &str| {
+        let malicious = serde_json::to_string(&value).expect("malicious summary JSON");
+        let error =
+            validate_serialized_evaluation_summary(&malicious).expect_err("must fail closed");
+        assert!(!error.to_string().contains(secret));
+    };
+
+    let mut nested_unknown = value.clone();
+    nested_unknown["cases"][0]["verdict"]["authorization"]["noteContent"] =
+        serde_json::json!("do-not-persist");
+    assert_rejected_without_echo(nested_unknown, "do-not-persist");
+
+    let mut unknown_status = value.clone();
+    unknown_status["cases"][0]["verdict"]["authorization"]["status"] =
+        serde_json::json!("secret_status");
+    assert_rejected_without_echo(unknown_status, "secret_status");
+
+    let mut unknown_reason = value.clone();
+    unknown_reason["cases"][0]["verdict"]["authorization"]["reasonCode"] =
+        serde_json::json!("secret_reason");
+    assert_rejected_without_echo(unknown_reason, "secret_reason");
+
+    for unsafe_fact_id in [
+        "/Users/example/private-note.md",
+        "https://example.invalid/private",
+        "c2Vuc2l0aXZlLW5vdGUtY29udGVudA==",
+    ] {
+        let mut unsafe_identifier = value.clone();
+        unsafe_identifier["cases"][0]["requiredFactIds"] = serde_json::json!([unsafe_fact_id]);
+        assert_rejected_without_echo(unsafe_identifier, unsafe_fact_id);
+    }
 }
 
-#[test]
-fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested() {
+#[tokio::test]
+async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested() {
     let Ok(mode) = std::env::var("IRIS_AGENT_EVAL_MODE") else {
         return;
     };
@@ -1563,7 +1636,9 @@ fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_requeste
         "full" => (EvalRunMode::Full, "core-full.json"),
         _ => panic!("agent_eval_mode_invalid"),
     };
-    let summary = run_deterministic_core_evaluation(mode).expect("deterministic evaluation");
+    let summary = run_headless_core_evaluation(mode, None)
+        .await
+        .expect("headless evaluation");
     let serialized = serialize_evaluation_summary(&summary).expect("strict summary");
     let output_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -1572,4 +1647,24 @@ fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_requeste
     std::fs::create_dir_all(&output_dir).expect("create ignored evaluation output");
     std::fs::write(output_dir.join(file_name), serialized)
         .expect("write strict evaluation summary");
+}
+
+#[tokio::test]
+async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certifying() {
+    let summary = run_headless_core_evaluation(
+        EvalRunMode::Smoke,
+        Some(EvalFault::MissingFact { case_id: 13 }),
+    )
+    .await
+    .expect("headless smoke with deterministic fault");
+    let verdict = summary.case_verdict(13).expect("faulted case verdict");
+
+    assert_eq!(summary.case_count(), 12);
+    assert!(summary.passed() < summary.case_count());
+    assert_eq!(verdict.fact_correctness().status(), CheckStatus::Fail);
+    assert_eq!(
+        verdict.fact_correctness().reason_code(),
+        super::agent_capacity_eval::VerdictReason::RequiredFactMissing
+    );
+    assert!(summary.telemetry().model_turns() >= 12);
 }

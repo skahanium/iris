@@ -175,6 +175,8 @@ pub(crate) struct FailoverStreamingDirectAnswerProvider<'a> {
     db: &'a Database,
     session: &'a AssistantSessionRef,
     sink: &'a dyn RunEventSink,
+    #[cfg(test)]
+    test_streaming_client: Option<reqwest::Client>,
 }
 
 impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
@@ -191,7 +193,17 @@ impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
             db,
             session,
             sink,
+            #[cfg(test)]
+            test_streaming_client: None,
         }
+    }
+
+    /// Test-only transport seam matching the tool-loop provider. Production
+    /// construction keeps the HTTPS-only default client.
+    #[cfg(test)]
+    pub(crate) fn with_test_streaming_client(mut self, client: reqwest::Client) -> Self {
+        self.test_streaming_client = Some(client);
+        self
     }
 }
 
@@ -214,6 +226,17 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
+                #[cfg(test)]
+                let gateway = match &self.test_streaming_client {
+                    Some(client) => crate::ai_runtime::model_gateway::ModelGateway::new(
+                        client.clone(),
+                        vec![dispatch.provider.clone()],
+                    ),
+                    None => crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![
+                        dispatch.provider.clone(),
+                    ])?,
+                };
+                #[cfg(not(test))]
                 let gateway =
                     crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![dispatch
                         .provider
@@ -738,7 +761,6 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     emitted_generating_answer_stage: bool,
     reasoning_summaries: BTreeMap<String, String>,
     persisted_reasoning_summaries: BTreeMap<String, String>,
-    #[cfg(test)]
     evaluation_telemetry: Option<crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
 }
 
@@ -776,14 +798,12 @@ impl<'a> AgentRunStreamObserver<'a> {
             emitted_generating_answer_stage: false,
             reasoning_summaries: BTreeMap::new(),
             persisted_reasoning_summaries: BTreeMap::new(),
-            #[cfg(test)]
             evaluation_telemetry: None,
         }
     }
 
     /// Evaluation-only observer constructor. Measurements remain in the
     /// supplied memory tap and never enter the Run repository.
-    #[cfg(test)]
     pub(crate) fn new_with_eval_telemetry(
         db: &'a Database,
         run_id: &'a str,
@@ -944,8 +964,9 @@ impl AgentRunStreamObserver<'_> {
                 }
             }
         }
-        self.sink
-            .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete)?;
+        let _ = self
+            .sink
+            .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete);
         Ok(())
     }
 
@@ -1111,7 +1132,6 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
         event: &crate::ai_runtime::model_gateway::StreamEvent,
         _token_index: u32,
     ) -> AppResult<()> {
-        #[cfg(test)]
         if let Some(telemetry) = &self.evaluation_telemetry {
             telemetry.record_stream_event(event);
         }
@@ -1586,6 +1606,33 @@ impl RunEngine {
             None,
             provider,
             sink,
+            None,
+        )
+        .await
+    }
+
+    /// Evaluation-only entry that records the real direct Gateway/stream/finalization path.
+    #[cfg(test)]
+    pub(crate) async fn execute_direct_streaming_with_eval_telemetry(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        provider: &impl StreamingDirectAnswerProvider,
+        sink: &impl RunEventSink,
+        telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+    ) -> AppResult<()> {
+        let message = user_message_for_run(db, &session.session_key, run_id)?;
+        let messages = [direct_user_message(&message)];
+        Self::execute_direct_streaming_with_messages_and_sink(
+            db,
+            session,
+            run_id,
+            &messages,
+            &[],
+            None,
+            provider,
+            sink,
+            Some(telemetry),
         )
         .await
     }
@@ -1610,6 +1657,7 @@ impl RunEngine {
             None,
             provider,
             sink,
+            None,
         )
         .await
     }
@@ -1637,6 +1685,7 @@ impl RunEngine {
             Some(domain_plan),
             provider,
             sink,
+            None,
         )
         .await
     }
@@ -1662,6 +1711,35 @@ impl RunEngine {
             Some(domain_plan),
             provider,
             sink,
+            None,
+        )
+        .await
+    }
+
+    /// Evaluation-only direct path with the same messages, evidence, verifier,
+    /// Gateway and finalization stages as production.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_direct_streaming_with_messages_evidence_and_domain_plan_with_eval_telemetry(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        messages: &[crate::ai_runtime::LlmMessage],
+        evidence_ids: &[i64],
+        domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
+        provider: &impl StreamingDirectAnswerProvider,
+        sink: &impl RunEventSink,
+        telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+    ) -> AppResult<()> {
+        Self::execute_direct_streaming_with_messages_and_sink(
+            db,
+            session,
+            run_id,
+            messages,
+            evidence_ids,
+            Some(domain_plan),
+            provider,
+            sink,
+            Some(telemetry),
         )
         .await
     }
@@ -1681,6 +1759,67 @@ impl RunEngine {
         provider: &impl ToolLoopProvider,
         executor: &impl ToolLoopExecutor,
         sink: &impl RunEventSink,
+    ) -> AppResult<()> {
+        Self::execute_tool_loop_with_sink_internal(
+            db,
+            session,
+            run_id,
+            messages,
+            tools,
+            evidence_ids,
+            domain_plan,
+            provider,
+            executor,
+            sink,
+            None,
+        )
+        .await
+    }
+
+    /// Evaluation-only tool-loop entry; only observation is added.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_tool_loop_with_eval_telemetry(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        messages: Vec<crate::ai_runtime::LlmMessage>,
+        tools: Vec<crate::ai_runtime::ToolSpec>,
+        evidence_ids: &[i64],
+        domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
+        provider: &impl ToolLoopProvider,
+        executor: &impl ToolLoopExecutor,
+        sink: &impl RunEventSink,
+        telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+    ) -> AppResult<()> {
+        Self::execute_tool_loop_with_sink_internal(
+            db,
+            session,
+            run_id,
+            messages,
+            tools,
+            evidence_ids,
+            domain_plan,
+            provider,
+            executor,
+            sink,
+            Some(telemetry),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_tool_loop_with_sink_internal(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        messages: Vec<crate::ai_runtime::LlmMessage>,
+        tools: Vec<crate::ai_runtime::ToolSpec>,
+        evidence_ids: &[i64],
+        domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
+        provider: &impl ToolLoopProvider,
+        executor: &impl ToolLoopExecutor,
+        sink: &impl RunEventSink,
+        telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
@@ -1726,16 +1865,41 @@ impl RunEngine {
         let running_state_version = running.state_version();
         // Tool-call turns may stream provisional text. Keep it private until
         // the loop reaches a final assistant answer so it cannot be duplicated.
-        let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
-            db,
-            run_id,
-            running_state_version,
-            sink,
-            true,
-        );
-        let outcome = AgentToolLoop::default()
-            .execute(provider, executor, run_id, messages, tools, &mut observer)
-            .await;
+        let mut observer = if let Some(telemetry) = telemetry {
+            AgentRunStreamObserver::new_with_eval_telemetry(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                true,
+                telemetry.clone(),
+            )
+        } else {
+            AgentRunStreamObserver::new_with_deferred_deltas(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                true,
+            )
+        };
+        let outcome = if let Some(telemetry) = telemetry {
+            AgentToolLoop::default()
+                .execute_with_eval_telemetry(
+                    provider,
+                    executor,
+                    run_id,
+                    messages,
+                    tools,
+                    &mut observer,
+                    telemetry,
+                )
+                .await
+        } else {
+            AgentToolLoop::default()
+                .execute(provider, executor, run_id, messages, tools, &mut observer)
+                .await
+        };
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -1799,18 +1963,19 @@ impl RunEngine {
             }
         }
         observer.clear_deferred_visible_deltas();
-        let mut content = match validated_final_model_answer(&outcome.content) {
-            Ok(content) => content,
-            Err(failure) => {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    failure,
-                );
-            }
-        };
+        let mut content =
+            match validated_final_model_answer_with_telemetry(&outcome.content, telemetry) {
+                Ok(content) => content,
+                Err(failure) => {
+                    return fail_finalization_with_sink(
+                        db,
+                        run_id,
+                        running_state_version,
+                        sink,
+                        failure,
+                    );
+                }
+            };
         if let Some(plan) = domain_plan {
             if let Err(error) = plan.verify_output(&content) {
                 return fail_finalization_with_sink(
@@ -1851,7 +2016,7 @@ impl RunEngine {
             &final_evidence_ids,
             sink,
         )?;
-        content = match validated_final_model_answer(&content) {
+        content = match validated_final_model_answer_with_telemetry(&content, telemetry) {
             Ok(content) => content,
             Err(failure) => {
                 return fail_finalization_with_sink(
@@ -1897,6 +2062,7 @@ impl RunEngine {
         domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
         provider: &impl StreamingDirectAnswerProvider,
         sink: &impl RunEventSink,
+        telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
@@ -1949,13 +2115,25 @@ impl RunEngine {
         let defer_visible_deltas = domain_plan.is_some_and(
             crate::ai_runtime::domain_executor::DomainExecutionPlan::requires_output_verification,
         );
-        let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
-            db,
-            run_id,
-            running_state_version,
-            sink,
-            defer_visible_deltas,
-        );
+        let mut observer = if let Some(telemetry) = telemetry {
+            AgentRunStreamObserver::new_with_eval_telemetry(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                defer_visible_deltas,
+                telemetry.clone(),
+            )
+        } else {
+            AgentRunStreamObserver::new_with_deferred_deltas(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                defer_visible_deltas,
+            )
+        };
+        let model_started_at = Instant::now();
         let response = provider
             .answer_streaming(run_id, messages, &mut observer)
             .await;
@@ -1982,6 +2160,9 @@ impl RunEngine {
                 return Err(AppError::msg(code.as_str()));
             }
         };
+        if let Some(telemetry) = telemetry {
+            telemetry.record_model_turn(&response, model_started_at);
+        }
         if settle_cancelled_run_with_partial(
             db,
             session,
@@ -2021,19 +2202,21 @@ impl RunEngine {
             sink.emit(&failed)?;
             return Err(AppError::msg("agent_run_direct_response_invalid"));
         }
-        let mut content =
-            match validated_final_model_answer(response.content.as_deref().unwrap_or_default()) {
-                Ok(content) => content,
-                Err(failure) => {
-                    return fail_finalization_with_sink(
-                        db,
-                        run_id,
-                        running_state_version,
-                        sink,
-                        failure,
-                    );
-                }
-            };
+        let mut content = match validated_final_model_answer_with_telemetry(
+            response.content.as_deref().unwrap_or_default(),
+            telemetry,
+        ) {
+            Ok(content) => content,
+            Err(failure) => {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    failure,
+                );
+            }
+        };
         if let Some(plan) = domain_plan {
             if let Err(error) = plan.verify_output(&content) {
                 return fail_finalization_with_sink(
@@ -2064,7 +2247,7 @@ impl RunEngine {
             );
         }
         validate_final_evidence_or_fail(db, run_id, running_state_version, evidence_ids, sink)?;
-        content = match validated_final_model_answer(&content) {
+        content = match validated_final_model_answer_with_telemetry(&content, telemetry) {
             Ok(content) => content,
             Err(failure) => {
                 return fail_finalization_with_sink(
@@ -2154,6 +2337,23 @@ fn validated_final_model_answer(content: &str) -> Result<String, RunFinalization
         ));
     }
     Ok(normalized)
+}
+
+fn validated_final_model_answer_with_telemetry(
+    content: &str,
+    telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+) -> Result<String, RunFinalizationFailure> {
+    let result = validated_final_model_answer(content);
+    if let Some(telemetry) = telemetry {
+        match &result {
+            Ok(_) => telemetry.record_final_output_validation(true, false),
+            Err(failure) => telemetry.record_final_output_validation(
+                false,
+                failure.code == SafeRunErrorCode::OutputTooLong,
+            ),
+        }
+    }
+    result
 }
 
 fn log_finalization_failure(run_id: &str, stage: RunFinalizationStage, code: SafeRunErrorCode) {

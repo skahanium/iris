@@ -106,7 +106,6 @@ impl AgentToolLoop {
 
     /// Evaluation-only seam that observes the real bounded loop without
     /// persisting measurements or changing production dispatch behavior.
-    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_with_eval_telemetry(
         &self,
@@ -163,11 +162,6 @@ impl AgentToolLoop {
                 let content = response.content.unwrap_or_default();
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
-                }
-                if let Some(telemetry) = telemetry {
-                    telemetry.record_budget(
-                        crate::ai_runtime::agent_capacity_eval::BudgetOutcome::WithinBudget,
-                    );
                 }
                 return Ok(AgentToolLoopOutcome {
                     content,

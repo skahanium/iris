@@ -34,6 +34,30 @@ pub(crate) async fn execute_normal_run(
     app_handle: Option<AppHandle>,
     sink: &impl RunEventSink,
 ) {
+    execute_normal_run_internal(state, accepted, vault, app_handle, sink, None).await;
+}
+
+/// Evaluation-only headless entry. It shares the complete production
+/// orchestration and adds only an in-memory telemetry observer.
+#[cfg(test)]
+pub(crate) async fn execute_normal_run_with_eval_telemetry(
+    state: Arc<AppState>,
+    accepted: AssistantRunAccepted,
+    vault: Option<PathBuf>,
+    sink: &impl RunEventSink,
+    telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+) {
+    execute_normal_run_internal(state, accepted, vault, None, sink, Some(telemetry)).await;
+}
+
+async fn execute_normal_run_internal(
+    state: Arc<AppState>,
+    accepted: AssistantRunAccepted,
+    vault: Option<PathBuf>,
+    app_handle: Option<AppHandle>,
+    sink: &impl RunEventSink,
+    telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+) {
     let db = Arc::clone(&state.db);
     if RunEngine::mark_preparing_with_sink(&db, &accepted.session, &accepted.run_id, sink).is_err()
     {
@@ -108,6 +132,7 @@ pub(crate) async fn execute_normal_run(
         &domain_plan,
         &evidence_ids,
         sink,
+        telemetry,
     )
     .await;
     if let Err(error) = execution {
@@ -167,6 +192,7 @@ async fn dispatch_normal_run_after_context(
     domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
     registered_evidence_ids: &[i64],
     sink: &impl RunEventSink,
+    telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
 ) -> AppResult<()> {
     let messages = context.messages_with_domain_plan(domain_plan);
     let routing_prompt = context.prompt_with_domain_plan(domain_plan);
@@ -246,19 +272,36 @@ async fn dispatch_normal_run_after_context(
             sink,
             None,
         );
-        return RunEngine::execute_tool_loop_with_sink(
-            db,
-            &accepted.session,
-            &accepted.run_id,
-            messages,
-            tools,
-            &evidence_ids,
-            Some(domain_plan),
-            &provider,
-            &executor,
-            sink,
-        )
-        .await;
+        return if let Some(telemetry) = telemetry {
+            RunEngine::execute_tool_loop_with_eval_telemetry(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                messages,
+                tools,
+                &evidence_ids,
+                Some(domain_plan),
+                &provider,
+                &executor,
+                sink,
+                telemetry,
+            )
+            .await
+        } else {
+            RunEngine::execute_tool_loop_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                messages,
+                tools,
+                &evidence_ids,
+                Some(domain_plan),
+                &provider,
+                &executor,
+                sink,
+            )
+            .await
+        };
     }
 
     let direct_requirements = crate::ai_runtime::provider_router::ProviderRequirements {
@@ -287,17 +330,38 @@ async fn dispatch_normal_run_after_context(
         &accepted.session,
         sink,
     );
-    RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
-        db,
-        &accepted.session,
-        &accepted.run_id,
-        &messages,
-        &evidence_ids,
-        domain_plan,
-        &provider,
-        sink,
-    )
-    .await
+    #[cfg(test)]
+    let provider = if let Some(client) = state.test_streaming_client() {
+        provider.with_test_streaming_client(client)
+    } else {
+        provider
+    };
+    if let Some(telemetry) = telemetry {
+        RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_eval_telemetry(
+            db,
+            &accepted.session,
+            &accepted.run_id,
+            &messages,
+            &evidence_ids,
+            domain_plan,
+            &provider,
+            sink,
+            telemetry,
+        )
+        .await
+    } else {
+        RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+            db,
+            &accepted.session,
+            &accepted.run_id,
+            &messages,
+            &evidence_ids,
+            domain_plan,
+            &provider,
+            sink,
+        )
+        .await
+    }
 }
 
 fn resolve_normal_route(

@@ -1,11 +1,13 @@
 use std::sync::{Arc, Mutex};
 
-use super::agent_capacity_eval::{spawn_llm_protocol_double, HttpResponseScript};
+use super::agent_capacity_eval::{
+    spawn_llm_protocol_double, EvaluationTelemetryTap, HttpResponseScript,
+};
 use super::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
 use super::agent_tool_loop::ToolLoopExecutor;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::ModelGateway;
-use super::normal_run_service::execute_normal_run;
+use super::normal_run_service::{execute_normal_run, execute_normal_run_with_eval_telemetry};
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
@@ -323,4 +325,62 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
         .events
         .iter()
         .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+}
+
+#[tokio::test]
+async fn evaluation_headless_entry_observes_the_real_normal_service_direct_path() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"真实无头链路答复\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["headless-contract-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "headless-contract-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+    let sink = RecordingSink::default();
+    let accepted =
+        RunIntake::start_with_sink(&state.db, direct_request(), &sink).expect("accepted run");
+    let telemetry = EvaluationTelemetryTap::default();
+
+    execute_normal_run_with_eval_telemetry(
+        Arc::clone(&state),
+        accepted.clone(),
+        None,
+        &sink,
+        &telemetry,
+    )
+    .await;
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "terminal payload: {:?}",
+        response.events.last().map(|event| event.payload())
+    );
+    let calls = tokio::time::timeout(std::time::Duration::from_secs(2), llm.finish())
+        .await
+        .expect("LLM double must be called")
+        .expect("LLM double completion");
+    let snapshot = telemetry.snapshot();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(snapshot.model_turns(), 1);
+    assert_eq!(snapshot.final_output_successes(), 1);
 }

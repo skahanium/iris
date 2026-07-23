@@ -41,6 +41,10 @@ struct MockStreamingProvider {
     failure: Option<&'static str>,
 }
 
+struct FixedContentStreamingProvider {
+    content: String,
+}
+
 struct MakeSqliteReadonlyProvider<'a> {
     db: &'a Database,
 }
@@ -153,6 +157,51 @@ impl StreamingDirectAnswerProvider for MockStreamingProvider {
                 content: Some("流式最终答复".to_string()),
                 tool_calls: vec![],
                 usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            })
+        })
+    }
+}
+
+impl StreamingDirectAnswerProvider for FixedContentStreamingProvider {
+    fn answer_streaming<'a>(
+        &'a self,
+        run_id: &'a str,
+        _messages: &'a [crate::ai_runtime::LlmMessage],
+        observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            observer.observe(
+                &StreamEvent {
+                    request_id: run_id.to_string(),
+                    event_type: StreamEventType::Token,
+                    data: StreamEventData::Token {
+                        token: self.content.clone(),
+                        replace_visible: false,
+                    },
+                    surface: StreamSurface::VisibleAnswerSanitized,
+                    classified: false,
+                },
+                0,
+            )?;
+            Ok(crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some(self.content.clone()),
+                tool_calls: Vec::new(),
+                usage: crate::ai_types::TokenUsage {
+                    prompt_tokens: 7,
+                    completion_tokens: 5,
+                    total_tokens: 12,
+                    prompt_cache_hit_tokens: 0,
+                    prompt_cache_miss_tokens: 7,
+                },
                 finish_reason: "stop".to_string(),
                 reasoning_content: None,
                 continuation: None,
@@ -776,6 +825,65 @@ fn evaluation_stream_tap_observes_first_visible_token_without_persisting_measure
         .expect("run");
     assert!(telemetry.snapshot().first_visible_token_ms().is_some());
     assert_eq!(after.events.len(), before.events.len());
+}
+
+#[tokio::test]
+async fn evaluation_direct_run_records_real_successful_final_output_and_gateway_usage() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let sink = RecordingSink::default();
+    let telemetry = EvaluationTelemetryTap::default();
+
+    RunEngine::execute_direct_streaming_with_eval_telemetry(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &FixedContentStreamingProvider {
+            content: "bounded answer".to_string(),
+        },
+        &sink,
+        &telemetry,
+    )
+    .await
+    .expect("successful evaluation run");
+
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.model_turns(), 1);
+    assert_eq!(snapshot.total_tokens(), 12);
+    assert_eq!(snapshot.final_output_successes(), 1);
+    assert_eq!(snapshot.final_output_rejections(), 0);
+    assert_eq!(snapshot.output_budget_reached(), 0);
+}
+
+#[tokio::test]
+async fn evaluation_direct_run_records_real_oversized_final_output_rejection() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let sink = RecordingSink::default();
+    let telemetry = EvaluationTelemetryTap::default();
+
+    let error = RunEngine::execute_direct_streaming_with_eval_telemetry(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &FixedContentStreamingProvider {
+            content: "x".repeat(32_001),
+        },
+        &sink,
+        &telemetry,
+    )
+    .await
+    .expect_err("oversized final output");
+
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    let snapshot = telemetry.snapshot();
+    assert_eq!(error.to_string(), SafeRunErrorCode::OutputTooLong.as_str());
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert_eq!(snapshot.final_output_successes(), 0);
+    assert_eq!(snapshot.final_output_rejections(), 1);
+    assert_eq!(snapshot.output_budget_reached(), 1);
 }
 
 #[test]

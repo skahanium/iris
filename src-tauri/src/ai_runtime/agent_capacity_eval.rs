@@ -1036,7 +1036,7 @@ impl CoreScenario {
         self.prompt
     }
 
-    const fn is_hard_boundary(&self) -> bool {
+    pub(crate) const fn is_hard_boundary(&self) -> bool {
         self.hard_boundary
     }
 }
@@ -1454,6 +1454,7 @@ struct EvaluationTelemetryState {
     budget_model_turns: u32,
     budget_tool_calls: u32,
     budget_output: u32,
+    final_output_recorded: bool,
 }
 
 /// Cloneable, evaluation-only in-memory tap. It owns no database handle and
@@ -1598,6 +1599,30 @@ impl EvaluationTelemetryTap {
         }
     }
 
+    pub(crate) fn record_final_output_validation(
+        &self,
+        accepted: bool,
+        output_budget_reached: bool,
+    ) {
+        if let Ok(mut state) = self.state.lock() {
+            if state.final_output_recorded {
+                return;
+            }
+            state.final_output_recorded = true;
+            if accepted {
+                state.truncation_none = state.truncation_none.saturating_add(1);
+                state.budget_within = state.budget_within.saturating_add(1);
+            } else {
+                state.truncation_final_output = state.truncation_final_output.saturating_add(1);
+                if output_budget_reached {
+                    state.budget_output = state.budget_output.saturating_add(1);
+                } else {
+                    state.budget_within = state.budget_within.saturating_add(1);
+                }
+            }
+        }
+    }
+
     pub(crate) fn snapshot(&self) -> EvaluationTelemetrySummary {
         let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         EvaluationTelemetrySummary {
@@ -1707,6 +1732,18 @@ impl EvaluationTelemetrySummary {
     pub(crate) const fn tool_result_truncations(&self) -> u32 {
         self.truncations.tool_result
     }
+
+    pub(crate) const fn final_output_successes(&self) -> u32 {
+        self.truncations.none
+    }
+
+    pub(crate) const fn final_output_rejections(&self) -> u32 {
+        self.truncations.final_output
+    }
+
+    pub(crate) const fn output_budget_reached(&self) -> u32 {
+        self.budgets.output
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1716,12 +1753,13 @@ pub(crate) enum EvalRunMode {
     Full,
 }
 
-/// Strength of the evidence behind one result file. Deterministic fixtures
-/// validate Iris contracts and routing logic, not live model capability.
+/// Strength of the evidence behind one result file. The headless harness
+/// validates Iris orchestration with deterministic external peers; it does not
+/// claim live model or vendor capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EvaluationEvidenceLevel {
-    DeterministicFixture,
+    HeadlessDeterministic,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1748,8 +1786,61 @@ struct EvaluationCaseSummary {
     evidence_group: EvidenceGroup,
     web_state: WebState,
     language: ScenarioLanguage,
-    hard_boundary: bool,
+    required_fact_ids: Vec<ValidatedFactId>,
+    runtime_evidence: RuntimeEvidenceSummary,
+    boundary: Option<BoundaryVerdict>,
+    verdict: EvaluationVerdict,
     overall_pass: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+struct ValidatedFactId(String);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum EvaluationTerminalState {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RuntimeEvidenceSummary {
+    terminal_state: EvaluationTerminalState,
+    event_count: u32,
+    observed_source_kinds: Vec<SourceKind>,
+    tool_call_count: u32,
+    degradation_observed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BoundaryKind {
+    OfflineDirectGate,
+    ExplicitLocalIsolation,
+    OfflineWebDegradation,
+    OfflineHybridPartialEvidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum BoundaryReason {
+    Verified,
+    TerminalStateMismatch,
+    WebDispatchObservedOffline,
+    LocalIsolationFailed,
+    DegradationMissing,
+    PartialEvidenceMissing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BoundaryVerdict {
+    kind: BoundaryKind,
+    status: CheckStatus,
+    reason_code: BoundaryReason,
 }
 
 /// Closed, persistence-safe evaluation result. All fields are fixed enums,
@@ -1803,14 +1894,21 @@ impl EvaluationSummary {
     pub(crate) const fn telemetry(&self) -> &EvaluationTelemetrySummary {
         &self.telemetry
     }
+
+    pub(crate) fn case_verdict(&self, case_id: u32) -> Option<&EvaluationVerdict> {
+        self.cases
+            .iter()
+            .find(|case| case.case_id == case_id)
+            .map(|case| &case.verdict)
+    }
 }
 
-/// Run the synthetic core matrix without a network peer or application DB.
-pub(crate) fn run_deterministic_core_evaluation(
+/// Select the fixed core subset. Selection alone makes no capability claim.
+pub(crate) fn select_core_scenarios(
     mode: EvalRunMode,
-) -> Result<EvaluationSummary, EvalContractError> {
+) -> Result<Vec<CoreScenario>, EvalContractError> {
     let scenarios = generate_core_scenarios()?;
-    let selected = match mode {
+    Ok(match mode {
         EvalRunMode::Full => scenarios,
         EvalRunMode::Smoke => {
             let mut chinese_online = HashSet::<EvidenceGroup>::new();
@@ -1838,67 +1936,79 @@ pub(crate) fn run_deterministic_core_evaluation(
                 })
                 .collect()
         }
-    };
-    let telemetry = EvaluationTelemetryTap::default();
-    let mut cases = Vec::with_capacity(selected.len());
-    let mut passed = 0_u32;
-    for scenario in &selected {
-        let observation = deterministic_observation(scenario);
-        let verdict = evaluate_case(&scenario.manifest, &observation)?;
-        if verdict.overall_pass() {
-            passed = passed.saturating_add(1);
+    })
+}
+
+/// Test-only deterministic-provider fault used to prove that the headless
+/// runner reports a real failed answer instead of copying the manifest.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EvalFault {
+    MissingFact { case_id: u32 },
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct HeadlessEvaluationSink {
+    tool_calls: std::sync::Mutex<Vec<String>>,
+    degraded: std::sync::Mutex<bool>,
+}
+
+#[cfg(test)]
+impl crate::ai_runtime::run_engine::RunEventSink for HeadlessEvaluationSink {
+    fn emit(
+        &self,
+        event: &crate::ai_runtime::run_contract::AssistantRunEvent,
+    ) -> crate::error::AppResult<()> {
+        match event.payload() {
+            crate::ai_runtime::run_contract::RunEventPayload::ToolStarted {
+                capability, ..
+            } => {
+                self.tool_calls
+                    .lock()
+                    .map_err(|_| crate::error::AppError::msg("eval_sink_lock_failed"))?
+                    .push(capability.clone());
+            }
+            crate::ai_runtime::run_contract::RunEventPayload::CapabilityDegraded { .. }
+            | crate::ai_runtime::run_contract::RunEventPayload::WebVerificationFailed { .. } => {
+                *self
+                    .degraded
+                    .lock()
+                    .map_err(|_| crate::error::AppError::msg("eval_sink_lock_failed"))? = true;
+            }
+            _ => {}
         }
-        let response = crate::ai_runtime::model_gateway::GatewayResponse {
-            content: Some("synthetic".to_string()),
-            tool_calls: observation
-                .tool_calls
-                .iter()
-                .enumerate()
-                .map(|(index, name)| crate::ai_runtime::ToolCall {
-                    id: format!("call-{}", index + 1),
-                    call_type: "function".to_string(),
-                    function: crate::ai_runtime::FunctionCall {
-                        name: name.clone(),
-                        arguments: "{}".to_string(),
-                    },
-                })
-                .collect(),
-            usage: crate::ai_types::TokenUsage {
-                prompt_tokens: 8,
-                completion_tokens: 4,
-                total_tokens: 12,
-                prompt_cache_hit_tokens: 0,
-                prompt_cache_miss_tokens: 8,
-            },
-            finish_reason: "stop".to_string(),
-            reasoning_content: None,
-            continuation: None,
-        };
-        telemetry.record_model_turn_at(&response, 1);
-        telemetry.record_stream_event_at(
-            &crate::ai_runtime::model_gateway::StreamEvent {
-                request_id: "synthetic".to_string(),
-                event_type: crate::ai_runtime::model_gateway::StreamEventType::Token,
-                data: crate::ai_runtime::model_gateway::StreamEventData::Token {
-                    token: "x".to_string(),
-                    replace_visible: false,
-                },
-                surface: crate::ai_runtime::model_gateway::StreamSurface::VisibleAnswerSanitized,
-                classified: false,
-            },
-            1,
-        );
-        telemetry.record_budget(BudgetOutcome::WithinBudget);
-        telemetry.record_truncation(TruncationOutcome::None);
-        cases.push(EvaluationCaseSummary {
-            case_id: scenario.case_id(),
-            evidence_group: scenario.evidence_group(),
-            web_state: scenario.web_state(),
-            language: scenario.language(),
-            hard_boundary: scenario.is_hard_boundary(),
-            overall_pass: verdict.overall_pass(),
-        });
+        Ok(())
     }
+}
+
+#[cfg(test)]
+struct ExecutedCoreCase {
+    summary: EvaluationCaseSummary,
+    telemetry: EvaluationTelemetrySummary,
+}
+
+/// Execute every selected case through the Task-1 headless normal service.
+/// Only the LLM HTTP and MCP stdio peers are deterministic doubles.
+#[cfg(test)]
+pub(crate) async fn run_headless_core_evaluation(
+    mode: EvalRunMode,
+    fault: Option<EvalFault>,
+) -> Result<EvaluationSummary, EvalContractError> {
+    let selected = select_core_scenarios(mode)?;
+    let mut executed = Vec::with_capacity(selected.len());
+    for scenario in &selected {
+        executed.push(execute_headless_core_case(scenario, fault).await?);
+    }
+    let cases = executed
+        .iter()
+        .map(|result| result.summary.clone())
+        .collect::<Vec<_>>();
+    let passed = cases
+        .iter()
+        .filter(|case| case.overall_pass)
+        .count()
+        .min(u32::MAX as usize) as u32;
     let group_count = |group| {
         selected
             .iter()
@@ -1916,7 +2026,7 @@ pub(crate) fn run_deterministic_core_evaluation(
     let case_count = selected.len().min(u32::MAX as usize) as u32;
     Ok(EvaluationSummary {
         schema_version: "agent-eval-summary-v1",
-        evidence_level: EvaluationEvidenceLevel::DeterministicFixture,
+        evidence_level: EvaluationEvidenceLevel::HeadlessDeterministic,
         run_mode: mode,
         case_count,
         passed,
@@ -1937,22 +2047,183 @@ pub(crate) fn run_deterministic_core_evaluation(
             english: language_count(ScenarioLanguage::English),
             mixed: language_count(ScenarioLanguage::Mixed),
         },
-        telemetry: telemetry.snapshot(),
+        telemetry: aggregate_telemetry(executed.iter().map(|result| &result.telemetry)),
         cases,
     })
 }
 
-fn deterministic_observation(scenario: &CoreScenario) -> AnswerObservation {
-    let offline = scenario.web_state() == WebState::Offline;
-    let sources = scenario
+#[cfg(test)]
+async fn execute_headless_core_case(
+    scenario: &CoreScenario,
+    fault: Option<EvalFault>,
+) -> Result<ExecutedCoreCase, EvalContractError> {
+    use crate::ai_runtime::normal_run_service::execute_normal_run_with_eval_telemetry;
+    use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
+    use crate::ai_runtime::run_contract::{
+        AssistantRunStartRequest, AssistantTurnDraft, SecurityDomain,
+    };
+    use crate::ai_runtime::run_intake::RunIntake;
+    use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
+    use crate::llm::config::{LlmRoutingConfig, ModelReference, ProviderOverride};
+
+    let directory =
+        tempfile::tempdir().map_err(|_| EvalContractError::new("eval_temp_directory_failed"))?;
+    let vault = directory.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes"))
+        .map_err(|_| EvalContractError::new("eval_vault_setup_failed"))?;
+    let local_body = format!("synthetic material {}", scenario.case_id());
+    std::fs::write(vault.join("notes/authorized.md"), &local_body)
+        .map_err(|_| EvalContractError::new("eval_vault_setup_failed"))?;
+    std::fs::write(
+        vault.join("notes/unmentioned.md"),
+        "synthetic unmentioned material",
+    )
+    .map_err(|_| EvalContractError::new("eval_vault_setup_failed"))?;
+    let state = crate::app::AppState::new(directory.path().join("data"))
+        .map_err(|_| EvalContractError::new("eval_state_setup_failed"))?;
+    if scenario
         .manifest
         .required_sources
         .iter()
-        .filter(|source| !(offline && source.kind == SourceKind::Web))
-        .map(|source| ObservedSource {
-            id: source.id.clone(),
-            kind: source.kind,
-            authorization_scope_id: None,
+        .any(|source| source.kind == SourceKind::Web && scenario.web_state() == WebState::Online)
+    {
+        install_headless_eval_mcp(&state)?;
+    }
+    let final_content = headless_final_content(scenario, fault);
+    let needs_web_tool = scenario.web_state() == WebState::Online
+        && scenario
+            .manifest
+            .required_sources
+            .iter()
+            .any(|source| source.kind == SourceKind::Web);
+    let scripts = if needs_web_tool {
+        vec![
+            HttpResponseScript::sse(
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"eval-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+            ),
+            sse_content(&final_content),
+        ]
+    } else {
+        vec![sse_content(&final_content)]
+    };
+    let llm = spawn_llm_protocol_double(scripts)
+        .await
+        .map_err(|_| EvalContractError::new("eval_llm_double_failed"))?;
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".to_string(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["agent-capacity-contract".to_string()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".to_string(),
+        model_id: "agent-capacity-contract".to_string(),
+    });
+    crate::llm::config::save(&state.db, &routing)
+        .map_err(|_| EvalContractError::new("eval_route_setup_failed"))?;
+    state.set_test_streaming_client(reqwest::Client::new());
+    let explicit_references = if scenario
+        .manifest
+        .local_authorization
+        .explicit_reference_ids
+        .is_empty()
+    {
+        Vec::new()
+    } else {
+        vec![ContextReferenceWire {
+            id: scenario.manifest.local_authorization.explicit_reference_ids[0].clone(),
+            kind: ContextReferenceKind::Note,
+            file_path: Some("notes/authorized.md".to_string()),
+            content_hash: Some(crate::cas::hash::content_hash_str(&local_body)),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        }]
+    };
+    let request = AssistantRunStartRequest {
+        client_request_id: format!("agent-eval-{}", scenario.case_id()),
+        session: None,
+        turn: AssistantTurnDraft {
+            message: scenario.prompt().to_string(),
+            content_parts: None,
+            explicit_references,
+            retrieval_scope: Default::default(),
+            display_mentions: Vec::new(),
+        },
+        explicit_action: None,
+        web_enabled: scenario.web_state() == WebState::Online,
+        model_override: None,
+        security_domain: SecurityDomain::Normal,
+        classified_context_ref: None,
+    };
+    let sink = HeadlessEvaluationSink::default();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
+        .map_err(|_| EvalContractError::new("eval_run_intake_failed"))?;
+    let telemetry = EvaluationTelemetryTap::default();
+    execute_normal_run_with_eval_telemetry(
+        std::sync::Arc::clone(&state),
+        accepted.clone(),
+        Some(vault),
+        &sink,
+        &telemetry,
+    )
+    .await;
+    let captures = tokio::time::timeout(std::time::Duration::from_secs(3), llm.finish())
+        .await
+        .map_err(|_| EvalContractError::new("eval_llm_double_incomplete"))?
+        .map_err(|_| EvalContractError::new("eval_llm_double_failed"))?;
+    if captures.is_empty() {
+        return Err(EvalContractError::new("eval_llm_double_unused"));
+    }
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .map_err(|_| EvalContractError::new("eval_run_read_failed"))?
+        .ok_or_else(|| EvalContractError::new("eval_run_missing"))?;
+    let final_answer =
+        NormalSessionRepository::load_messages(&state.db, &accepted.session.session_key, 8)
+            .map_err(|_| EvalContractError::new("eval_messages_read_failed"))?
+            .into_iter()
+            .rev()
+            .find(|message| message.role == "assistant")
+            .map_or_else(String::new, |message| message.content);
+    let observed_kinds = state
+        .db
+        .with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT DISTINCT source_type FROM session_evidence WHERE origin_run_id = ?1",
+            )?;
+            let kinds = statement
+                .query_map([&accepted.run_id], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Into::into);
+            kinds
+        })
+        .map_err(|_| EvalContractError::new("eval_evidence_read_failed"))?;
+    let sources = observed_kinds
+        .iter()
+        .filter_map(|kind| {
+            let kind = match kind.as_str() {
+                "local" => SourceKind::Local,
+                "web" => SourceKind::Web,
+                _ => return None,
+            };
+            scenario
+                .manifest
+                .available_sources
+                .iter()
+                .find(|source| source.kind == kind)
+                .map(|source| ObservedSource {
+                    id: source.id.clone(),
+                    kind,
+                    authorization_scope_id: None,
+                })
         })
         .collect::<Vec<_>>();
     let observed_ids = sources
@@ -1966,7 +2237,9 @@ fn deterministic_observation(scenario: &CoreScenario) -> AnswerObservation {
         .filter_map(|fact| {
             fact.allowed_sources
                 .iter()
-                .find(|source| observed_ids.contains(source.as_str()))
+                .find(|source| {
+                    observed_ids.contains(source.as_str()) && final_answer.contains(&fact.id)
+                })
                 .map(|source| FactSupportObservation {
                     fact_id: fact.id.clone(),
                     source_ids: vec![source.clone()],
@@ -1975,44 +2248,398 @@ fn deterministic_observation(scenario: &CoreScenario) -> AnswerObservation {
         .collect::<Vec<_>>();
     let citations = fact_supports
         .iter()
-        .map(|support| CitationObservation {
-            fact_id: support.fact_id.clone(),
-            source_id: support.source_ids[0].clone(),
+        .filter_map(|support| {
+            let source_id = &support.source_ids[0];
+            final_answer
+                .contains(&format!("[cite:{source_id}]"))
+                .then(|| CitationObservation {
+                    fact_id: support.fact_id.clone(),
+                    source_id: source_id.clone(),
+                })
         })
         .collect();
-    let mut tool_calls = Vec::new();
-    if matches!(
-        scenario.evidence_group(),
-        EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
-    ) {
-        tool_calls.push("search_hybrid".to_string());
-    }
-    if !offline
-        && matches!(
-            scenario.evidence_group(),
-            EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
-        )
-    {
-        tool_calls.push("web_search".to_string());
-    }
-    let offline_web = offline
-        && matches!(
-            scenario.evidence_group(),
-            EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
-        );
-    AnswerObservation {
+    let tool_calls = sink
+        .tool_calls
+        .lock()
+        .map_err(|_| EvalContractError::new("eval_sink_lock_failed"))?
+        .clone();
+    let degraded_event = *sink
+        .degraded
+        .lock()
+        .map_err(|_| EvalContractError::new("eval_sink_lock_failed"))?;
+    let disclosures = scenario
+        .manifest
+        .disclosure_constraints
+        .iter()
+        .filter(|constraint| final_answer.contains(constraint.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let observation = AnswerObservation {
         case_id: scenario.manifest.id.clone(),
         sources,
         fact_supports,
         contradicted_fact_ids: Vec::new(),
         citations,
         tool_calls,
-        disclosures: scenario.manifest.disclosure_constraints.clone(),
-        degraded: offline_web,
+        disclosures,
+        degraded: degraded_event || final_answer.contains("degraded:"),
         clarification_requested: false,
-        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
+        web_answer_contamination: if final_answer.contains("fact-web-")
+            && matches!(
+                scenario.evidence_group(),
+                EvidenceGroup::NoRetrieval | EvidenceGroup::LocalOnly
+            ) {
+            WebAnswerContamination::Detected
+        } else {
+            WebAnswerContamination::ConfirmedAbsent
+        },
         safety_violations: Vec::new(),
+    };
+    let verdict = evaluate_case(&scenario.manifest, &observation)?;
+    let boundary = evaluate_hard_boundary(
+        scenario,
+        response.run.state,
+        &observation,
+        observed_kinds.len(),
+    );
+    let boundary_pass = boundary
+        .as_ref()
+        .is_none_or(|result| result.status == CheckStatus::Pass);
+    let required_fact_ids = scenario
+        .manifest
+        .required_facts
+        .iter()
+        .map(|fact| ValidatedFactId(fact.id.clone()))
+        .collect();
+    let terminal_state = match response.run.state {
+        crate::ai_runtime::run_contract::RunState::Completed => EvaluationTerminalState::Completed,
+        crate::ai_runtime::run_contract::RunState::Failed => EvaluationTerminalState::Failed,
+        crate::ai_runtime::run_contract::RunState::Cancelled => EvaluationTerminalState::Cancelled,
+        _ => return Err(EvalContractError::new("eval_run_not_terminal")),
+    };
+    let runtime_evidence = RuntimeEvidenceSummary {
+        terminal_state,
+        event_count: response.events.len().min(u32::MAX as usize) as u32,
+        observed_source_kinds: observed_kinds
+            .iter()
+            .filter_map(|kind| match kind.as_str() {
+                "local" => Some(SourceKind::Local),
+                "web" => Some(SourceKind::Web),
+                _ => None,
+            })
+            .collect(),
+        tool_call_count: observation.tool_calls.len().min(u32::MAX as usize) as u32,
+        degradation_observed: observation.degraded,
+    };
+    Ok(ExecutedCoreCase {
+        summary: EvaluationCaseSummary {
+            case_id: scenario.case_id(),
+            evidence_group: scenario.evidence_group(),
+            web_state: scenario.web_state(),
+            language: scenario.language(),
+            required_fact_ids,
+            runtime_evidence,
+            boundary,
+            overall_pass: verdict.overall_pass() && boundary_pass,
+            verdict,
+        },
+        telemetry: telemetry.snapshot(),
+    })
+}
+
+#[cfg(test)]
+fn install_headless_eval_mcp(state: &crate::app::AppState) -> Result<(), EvalContractError> {
+    let fixture = format!(
+        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+        &state.db,
+        &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+            id: "agent-capacity-headless-mcp".to_string(),
+            name: "Agent capacity headless MCP".to_string(),
+            kind: "mcp".to_string(),
+            enabled: true,
+            transport_kind: "stdio".to_string(),
+            transport_config_json: serde_json::json!({
+                "command": "/bin/sh",
+                "args": [fixture, "search-only"],
+            })
+            .to_string(),
+            credential_refs_json: "{}".to_string(),
+            web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.to_string()),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .map_err(|_| EvalContractError::new("eval_mcp_setup_failed"))
+}
+
+#[cfg(test)]
+fn sse_content(content: &str) -> HttpResponseScript {
+    let event = serde_json::json!({
+        "choices": [{
+            "delta": { "content": content }
+        }]
+    });
+    HttpResponseScript::sse(&format!("data: {event}\n\ndata: [DONE]\n\n"))
+}
+
+#[cfg(test)]
+fn headless_final_content(scenario: &CoreScenario, fault: Option<EvalFault>) -> String {
+    let missing_fact = match fault {
+        Some(EvalFault::MissingFact { case_id }) if case_id == scenario.case_id() => scenario
+            .manifest
+            .required_facts
+            .first()
+            .map(|fact| fact.id.as_str()),
+        _ => None,
+    };
+    let offline = scenario.web_state() == WebState::Offline;
+    let mut parts = scenario
+        .manifest
+        .required_facts
+        .iter()
+        .filter(|fact| Some(fact.id.as_str()) != missing_fact)
+        .filter_map(|fact| {
+            let source_id = fact.allowed_sources.first()?;
+            let source_kind = scenario
+                .manifest
+                .available_sources
+                .iter()
+                .find(|source| source.id == *source_id)?
+                .kind;
+            if offline && source_kind == SourceKind::Web {
+                return None;
+            }
+            Some(format!("{} [cite:{}]", fact.id, source_id))
+        })
+        .collect::<Vec<_>>();
+    for disclosure in &scenario.manifest.disclosure_constraints {
+        parts.push(format!("degraded:{disclosure}"));
     }
+    if parts.is_empty() {
+        parts.push("synthetic bounded answer".to_string());
+    }
+    parts.join(" ")
+}
+
+#[cfg(test)]
+fn evaluate_hard_boundary(
+    scenario: &CoreScenario,
+    terminal_state: crate::ai_runtime::run_contract::RunState,
+    observation: &AnswerObservation,
+    observed_kind_count: usize,
+) -> Option<BoundaryVerdict> {
+    if !scenario.is_hard_boundary() {
+        return None;
+    }
+    let completed = terminal_state == crate::ai_runtime::run_contract::RunState::Completed;
+    let used_web = observation
+        .tool_calls
+        .iter()
+        .any(|tool| tool == "web_search");
+    let has_local = observation
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Local);
+    let has_web = observation
+        .sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Web);
+    let (kind, status, reason_code) = match scenario.evidence_group() {
+        EvidenceGroup::NoRetrieval => {
+            let kind = BoundaryKind::OfflineDirectGate;
+            if !completed {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::TerminalStateMismatch,
+                )
+            } else if used_web || has_web {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::WebDispatchObservedOffline,
+                )
+            } else {
+                (kind, CheckStatus::Pass, BoundaryReason::Verified)
+            }
+        }
+        EvidenceGroup::LocalOnly => {
+            let kind = BoundaryKind::ExplicitLocalIsolation;
+            if !completed {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::TerminalStateMismatch,
+                )
+            } else if !has_local || has_web || observed_kind_count != 1 {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::LocalIsolationFailed,
+                )
+            } else {
+                (kind, CheckStatus::Pass, BoundaryReason::Verified)
+            }
+        }
+        EvidenceGroup::WebOnly => {
+            let kind = BoundaryKind::OfflineWebDegradation;
+            if !completed {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::TerminalStateMismatch,
+                )
+            } else if used_web || has_web {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::WebDispatchObservedOffline,
+                )
+            } else if !observation.degraded || observation.disclosures.is_empty() {
+                (kind, CheckStatus::Fail, BoundaryReason::DegradationMissing)
+            } else {
+                (kind, CheckStatus::Pass, BoundaryReason::Verified)
+            }
+        }
+        EvidenceGroup::Hybrid => {
+            let kind = BoundaryKind::OfflineHybridPartialEvidence;
+            if !completed {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::TerminalStateMismatch,
+                )
+            } else if used_web || has_web {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::WebDispatchObservedOffline,
+                )
+            } else if !has_local || !observation.degraded || observation.disclosures.is_empty() {
+                (
+                    kind,
+                    CheckStatus::Fail,
+                    BoundaryReason::PartialEvidenceMissing,
+                )
+            } else {
+                (kind, CheckStatus::Pass, BoundaryReason::Verified)
+            }
+        }
+    };
+    Some(BoundaryVerdict {
+        kind,
+        status,
+        reason_code,
+    })
+}
+
+#[cfg(test)]
+fn aggregate_telemetry<'a>(
+    summaries: impl Iterator<Item = &'a EvaluationTelemetrySummary>,
+) -> EvaluationTelemetrySummary {
+    let mut aggregate = EvaluationTelemetrySummary {
+        model_turns: 0,
+        tool_calls: 0,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+        cache_hit_tokens: 0,
+        cache_miss_tokens: 0,
+        first_visible_token_ms: None,
+        total_model_time_ms: 0,
+        finish_reasons: FinishReasonCounts {
+            stop: 0,
+            tool_calls: 0,
+            length: 0,
+            other: 0,
+        },
+        truncations: TruncationCounts {
+            none: 0,
+            tool_result: 0,
+            final_output: 0,
+        },
+        budgets: BudgetCounts {
+            within: 0,
+            model_turns: 0,
+            tool_calls: 0,
+            output: 0,
+        },
+    };
+    for summary in summaries {
+        aggregate.model_turns = aggregate.model_turns.saturating_add(summary.model_turns);
+        aggregate.tool_calls = aggregate.tool_calls.saturating_add(summary.tool_calls);
+        aggregate.prompt_tokens = aggregate
+            .prompt_tokens
+            .saturating_add(summary.prompt_tokens);
+        aggregate.completion_tokens = aggregate
+            .completion_tokens
+            .saturating_add(summary.completion_tokens);
+        aggregate.total_tokens = aggregate.total_tokens.saturating_add(summary.total_tokens);
+        aggregate.cache_hit_tokens = aggregate
+            .cache_hit_tokens
+            .saturating_add(summary.cache_hit_tokens);
+        aggregate.cache_miss_tokens = aggregate
+            .cache_miss_tokens
+            .saturating_add(summary.cache_miss_tokens);
+        aggregate.first_visible_token_ms = match (
+            aggregate.first_visible_token_ms,
+            summary.first_visible_token_ms,
+        ) {
+            (Some(current), Some(next)) => Some(current.max(next)),
+            (None, next) => next,
+            (current, None) => current,
+        };
+        aggregate.total_model_time_ms = aggregate
+            .total_model_time_ms
+            .saturating_add(summary.total_model_time_ms);
+        aggregate.finish_reasons.stop = aggregate
+            .finish_reasons
+            .stop
+            .saturating_add(summary.finish_reasons.stop);
+        aggregate.finish_reasons.tool_calls = aggregate
+            .finish_reasons
+            .tool_calls
+            .saturating_add(summary.finish_reasons.tool_calls);
+        aggregate.finish_reasons.length = aggregate
+            .finish_reasons
+            .length
+            .saturating_add(summary.finish_reasons.length);
+        aggregate.finish_reasons.other = aggregate
+            .finish_reasons
+            .other
+            .saturating_add(summary.finish_reasons.other);
+        aggregate.truncations.none = aggregate
+            .truncations
+            .none
+            .saturating_add(summary.truncations.none);
+        aggregate.truncations.tool_result = aggregate
+            .truncations
+            .tool_result
+            .saturating_add(summary.truncations.tool_result);
+        aggregate.truncations.final_output = aggregate
+            .truncations
+            .final_output
+            .saturating_add(summary.truncations.final_output);
+        aggregate.budgets.within = aggregate
+            .budgets
+            .within
+            .saturating_add(summary.budgets.within);
+        aggregate.budgets.model_turns = aggregate
+            .budgets
+            .model_turns
+            .saturating_add(summary.budgets.model_turns);
+        aggregate.budgets.tool_calls = aggregate
+            .budgets
+            .tool_calls
+            .saturating_add(summary.budgets.tool_calls);
+        aggregate.budgets.output = aggregate
+            .budgets
+            .output
+            .saturating_add(summary.budgets.output);
+    }
+    aggregate
 }
 
 /// Serialize only the closed summary type; callers cannot attach arbitrary
@@ -2020,8 +2647,453 @@ fn deterministic_observation(scenario: &CoreScenario) -> AnswerObservation {
 pub(crate) fn serialize_evaluation_summary(
     summary: &EvaluationSummary,
 ) -> Result<String, EvalContractError> {
-    serde_json::to_string_pretty(summary)
-        .map_err(|_| EvalContractError::new("evaluation_summary_serialization_failed"))
+    let serialized = serde_json::to_string_pretty(summary)
+        .map_err(|_| EvalContractError::new("evaluation_summary_serialization_failed"))?;
+    validate_serialized_evaluation_summary(&serialized)?;
+    Ok(serialized)
+}
+
+/// Recursively validates the persisted report contract. This is deliberately
+/// independent of Rust's serializer so a future nested field cannot silently
+/// widen the allowlist.
+pub(crate) fn validate_serialized_evaluation_summary(
+    serialized: &str,
+) -> Result<(), EvalContractError> {
+    if serialized.len() > 512 * 1024 {
+        return Err(EvalContractError::new("evaluation_summary_too_large"));
+    }
+    let root: serde_json::Value = serde_json::from_str(serialized)
+        .map_err(|_| EvalContractError::new("evaluation_summary_invalid"))?;
+    let root = exact_object(
+        &root,
+        &[
+            "schemaVersion",
+            "evidenceLevel",
+            "runMode",
+            "caseCount",
+            "passed",
+            "failed",
+            "boundaryCaseCount",
+            "groups",
+            "languages",
+            "telemetry",
+            "cases",
+        ],
+    )?;
+    exact_string(root.get("schemaVersion"), &["agent-eval-summary-v1"])?;
+    exact_string(root.get("evidenceLevel"), &["headless_deterministic"])?;
+    exact_string(root.get("runMode"), &["smoke", "full"])?;
+    let case_count = bounded_u64(root.get("caseCount"), 48)?;
+    let passed = bounded_u64(root.get("passed"), 48)?;
+    let failed = bounded_u64(root.get("failed"), 48)?;
+    let boundary_case_count = bounded_u64(root.get("boundaryCaseCount"), 4)?;
+    if passed.saturating_add(failed) != case_count {
+        return Err(EvalContractError::new(
+            "evaluation_summary_count_inconsistent",
+        ));
+    }
+    validate_group_counts(root.get("groups"), case_count)?;
+    validate_language_counts(root.get("languages"), case_count)?;
+    validate_telemetry_summary(root.get("telemetry"))?;
+
+    let cases = root
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if cases.len() as u64 != case_count {
+        return Err(EvalContractError::new(
+            "evaluation_summary_count_inconsistent",
+        ));
+    }
+    let mut case_ids = HashSet::with_capacity(cases.len());
+    let mut observed_passed = 0_u64;
+    let mut observed_boundaries = 0_u64;
+    for case in cases {
+        let (case_id, overall_pass, has_boundary) = validate_case_summary(case)?;
+        if !case_ids.insert(case_id) {
+            return Err(EvalContractError::new("evaluation_summary_case_duplicate"));
+        }
+        observed_passed = observed_passed.saturating_add(u64::from(overall_pass));
+        observed_boundaries = observed_boundaries.saturating_add(u64::from(has_boundary));
+    }
+    if observed_passed != passed || observed_boundaries != boundary_case_count {
+        return Err(EvalContractError::new(
+            "evaluation_summary_count_inconsistent",
+        ));
+    }
+    Ok(())
+}
+
+fn exact_object<'a>(
+    value: &'a serde_json::Value,
+    expected_keys: &[&str],
+) -> Result<&'a serde_json::Map<String, serde_json::Value>, EvalContractError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if object.len() != expected_keys.len()
+        || expected_keys.iter().any(|key| !object.contains_key(*key))
+    {
+        return Err(EvalContractError::new("evaluation_summary_unknown_field"));
+    }
+    Ok(object)
+}
+
+fn exact_string(
+    value: Option<&serde_json::Value>,
+    allowed: &[&str],
+) -> Result<(), EvalContractError> {
+    let value = value
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(EvalContractError::new("evaluation_summary_value_invalid"))
+    }
+}
+
+fn bounded_u64(value: Option<&serde_json::Value>, maximum: u64) -> Result<u64, EvalContractError> {
+    let value = value
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if value <= maximum {
+        Ok(value)
+    } else {
+        Err(EvalContractError::new("evaluation_summary_value_invalid"))
+    }
+}
+
+fn exact_bool(value: Option<&serde_json::Value>) -> Result<bool, EvalContractError> {
+    value
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))
+}
+
+fn validate_group_counts(
+    value: Option<&serde_json::Value>,
+    case_count: u64,
+) -> Result<(), EvalContractError> {
+    let object = exact_object(
+        value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &["noRetrieval", "localOnly", "webOnly", "hybrid"],
+    )?;
+    let total = ["noRetrieval", "localOnly", "webOnly", "hybrid"]
+        .into_iter()
+        .try_fold(0_u64, |total, key| {
+            bounded_u64(object.get(key), 48).map(|count| total.saturating_add(count))
+        })?;
+    if total != case_count {
+        return Err(EvalContractError::new(
+            "evaluation_summary_count_inconsistent",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_language_counts(
+    value: Option<&serde_json::Value>,
+    case_count: u64,
+) -> Result<(), EvalContractError> {
+    let object = exact_object(
+        value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &["chinese", "english", "mixed"],
+    )?;
+    let total = ["chinese", "english", "mixed"]
+        .into_iter()
+        .try_fold(0_u64, |total, key| {
+            bounded_u64(object.get(key), 48).map(|count| total.saturating_add(count))
+        })?;
+    if total != case_count {
+        return Err(EvalContractError::new(
+            "evaluation_summary_count_inconsistent",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_telemetry_summary(value: Option<&serde_json::Value>) -> Result<(), EvalContractError> {
+    let object = exact_object(
+        value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &[
+            "modelTurns",
+            "toolCalls",
+            "promptTokens",
+            "completionTokens",
+            "totalTokens",
+            "cacheHitTokens",
+            "cacheMissTokens",
+            "firstVisibleTokenMs",
+            "totalModelTimeMs",
+            "finishReasons",
+            "truncations",
+            "budgets",
+        ],
+    )?;
+    bounded_u64(object.get("modelTurns"), 1_000)?;
+    bounded_u64(object.get("toolCalls"), 1_000)?;
+    for key in [
+        "promptTokens",
+        "completionTokens",
+        "totalTokens",
+        "cacheHitTokens",
+        "cacheMissTokens",
+    ] {
+        bounded_u64(object.get(key), 1_000_000_000)?;
+    }
+    match object.get("firstVisibleTokenMs") {
+        Some(serde_json::Value::Null) => {}
+        value => {
+            bounded_u64(value, 86_400_000)?;
+        }
+    }
+    bounded_u64(object.get("totalModelTimeMs"), 604_800_000)?;
+    validate_counter_object(
+        object.get("finishReasons"),
+        &["stop", "toolCalls", "length", "other"],
+    )?;
+    validate_counter_object(
+        object.get("truncations"),
+        &["none", "toolResult", "finalOutput"],
+    )?;
+    validate_counter_object(
+        object.get("budgets"),
+        &["within", "modelTurns", "toolCalls", "output"],
+    )
+}
+
+fn validate_counter_object(
+    value: Option<&serde_json::Value>,
+    keys: &[&str],
+) -> Result<(), EvalContractError> {
+    let object = exact_object(
+        value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        keys,
+    )?;
+    for key in keys {
+        bounded_u64(object.get(*key), 1_000)?;
+    }
+    Ok(())
+}
+
+fn validate_case_summary(
+    value: &serde_json::Value,
+) -> Result<(u64, bool, bool), EvalContractError> {
+    let object = exact_object(
+        value,
+        &[
+            "caseId",
+            "evidenceGroup",
+            "webState",
+            "language",
+            "requiredFactIds",
+            "runtimeEvidence",
+            "boundary",
+            "verdict",
+            "overallPass",
+        ],
+    )?;
+    let case_id = bounded_u64(object.get("caseId"), 48)?;
+    if case_id == 0 {
+        return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+    }
+    exact_string(
+        object.get("evidenceGroup"),
+        &["no_retrieval", "local_only", "web_only", "hybrid"],
+    )?;
+    exact_string(object.get("webState"), &["offline", "online"])?;
+    exact_string(object.get("language"), &["chinese", "english", "mixed"])?;
+    validate_fact_ids(object.get("requiredFactIds"))?;
+    validate_runtime_evidence(object.get("runtimeEvidence"))?;
+    let (has_boundary, boundary_pass) = match object.get("boundary") {
+        Some(serde_json::Value::Null) => (false, true),
+        Some(boundary) => {
+            let passed = validate_boundary(boundary)?;
+            (true, passed)
+        }
+        None => return Err(EvalContractError::new("evaluation_summary_shape_invalid")),
+    };
+    let verdict_pass = validate_evaluation_verdict(
+        object
+            .get("verdict")
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        case_id,
+    )?;
+    let overall_pass = exact_bool(object.get("overallPass"))?;
+    if overall_pass != (verdict_pass && boundary_pass) {
+        return Err(EvalContractError::new(
+            "evaluation_summary_verdict_inconsistent",
+        ));
+    }
+    Ok((case_id, overall_pass, has_boundary))
+}
+
+fn validate_runtime_evidence(value: Option<&serde_json::Value>) -> Result<(), EvalContractError> {
+    let object = exact_object(
+        value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &[
+            "terminalState",
+            "eventCount",
+            "observedSourceKinds",
+            "toolCallCount",
+            "degradationObserved",
+        ],
+    )?;
+    exact_string(
+        object.get("terminalState"),
+        &["completed", "failed", "cancelled"],
+    )?;
+    bounded_u64(object.get("eventCount"), 10_000)?;
+    bounded_u64(object.get("toolCallCount"), 1_000)?;
+    exact_bool(object.get("degradationObserved"))?;
+    let source_kinds = object
+        .get("observedSourceKinds")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if source_kinds.len() > 2 {
+        return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+    }
+    let mut observed = HashSet::with_capacity(source_kinds.len());
+    for source_kind in source_kinds {
+        exact_string(Some(source_kind), &["local", "web"])?;
+        let source_kind = source_kind
+            .as_str()
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+        if !observed.insert(source_kind) {
+            return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_fact_ids(value: Option<&serde_json::Value>) -> Result<(), EvalContractError> {
+    let values = value
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if values.len() > 16 {
+        return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+    }
+    let mut observed = HashSet::with_capacity(values.len());
+    for value in values {
+        let value = value
+            .as_str()
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+        if value.len() > 64 || !value.starts_with("fact-") || !safe_label(value) {
+            return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+        }
+        if !observed.insert(value) {
+            return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_boundary(value: &serde_json::Value) -> Result<bool, EvalContractError> {
+    let object = exact_object(value, &["kind", "status", "reasonCode"])?;
+    exact_string(
+        object.get("kind"),
+        &[
+            "offline_direct_gate",
+            "explicit_local_isolation",
+            "offline_web_degradation",
+            "offline_hybrid_partial_evidence",
+        ],
+    )?;
+    exact_string(object.get("status"), &["pass", "fail"])?;
+    exact_string(
+        object.get("reasonCode"),
+        &[
+            "verified",
+            "terminal_state_mismatch",
+            "web_dispatch_observed_offline",
+            "local_isolation_failed",
+            "degradation_missing",
+            "partial_evidence_missing",
+        ],
+    )?;
+    let passed = object.get("status").and_then(serde_json::Value::as_str) == Some("pass");
+    let verified = object.get("reasonCode").and_then(serde_json::Value::as_str) == Some("verified");
+    if passed != verified {
+        return Err(EvalContractError::new(
+            "evaluation_summary_verdict_inconsistent",
+        ));
+    }
+    Ok(passed)
+}
+
+fn validate_evaluation_verdict(
+    value: &serde_json::Value,
+    expected_case_id: u64,
+) -> Result<bool, EvalContractError> {
+    let object = exact_object(
+        value,
+        &[
+            "caseId",
+            "authorization",
+            "requiredEvidence",
+            "factCorrectness",
+            "citationSupport",
+            "routeEfficiency",
+            "degradationOrClarification",
+            "safety",
+            "overallPass",
+        ],
+    )?;
+    if bounded_u64(object.get("caseId"), 48)? != expected_case_id {
+        return Err(EvalContractError::new(
+            "evaluation_summary_verdict_inconsistent",
+        ));
+    }
+    for key in [
+        "authorization",
+        "requiredEvidence",
+        "factCorrectness",
+        "citationSupport",
+        "routeEfficiency",
+        "degradationOrClarification",
+        "safety",
+    ] {
+        validate_check_verdict(
+            object
+                .get(key)
+                .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        )?;
+    }
+    exact_bool(object.get("overallPass"))
+}
+
+fn validate_check_verdict(value: &serde_json::Value) -> Result<(), EvalContractError> {
+    let object = exact_object(value, &["status", "reasonCode"])?;
+    exact_string(object.get("status"), &["pass", "fail", "not_applicable"])?;
+    exact_string(
+        object.get("reasonCode"),
+        &[
+            "authorization_satisfied",
+            "offline_web_dispatch",
+            "unauthorized_local_access",
+            "offline_degradation_disclosed",
+            "offline_degradation_missing",
+            "no_disclosure_required",
+            "required_disclosure_present",
+            "required_disclosure_missing",
+            "required_source_missing",
+            "required_sources_satisfied",
+            "required_fact_contradicted",
+            "required_fact_missing",
+            "required_facts_satisfied",
+            "required_citation_missing_or_unsupported",
+            "citation_support_satisfied",
+            "citation_not_required",
+            "required_web_search_missing",
+            "forbidden_web_search",
+            "unnecessary_web_search",
+            "unnecessary_local_search",
+            "route_efficient",
+            "web_answer_contaminated",
+            "safety_or_tool_policy_violation",
+            "safety_satisfied",
+        ],
+    )
 }
 
 /// MCP operation represented by one configured capability mapping.
