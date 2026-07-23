@@ -948,21 +948,37 @@ async fn discover_stdio_tools_with_rmcp(
     launch: McpStdioLaunch,
     env: Vec<(String, String)>,
 ) -> AppResult<McpStdioDiscovery> {
+    discover_stdio_tools_with_rmcp_attempt(launch, env).await.0
+}
+
+/// Return whether a child transport was successfully spawned along with the
+/// discovery result. Configuration and spawn failures are deliberately
+/// distinguished from failures observed after a transport attempt.
+async fn discover_stdio_tools_with_rmcp_attempt(
+    launch: McpStdioLaunch,
+    env: Vec<(String, String)>,
+) -> (AppResult<McpStdioDiscovery>, bool) {
     if launch.max_stdout_line_bytes == 0 {
-        return Err(runtime_error(
-            McpRuntimeFailureKind::OutputTooLarge,
-            "MCP stdout cap must be greater than zero",
-        ));
+        return (
+            Err(runtime_error(
+                McpRuntimeFailureKind::OutputTooLarge,
+                "MCP stdout cap must be greater than zero",
+            )),
+            false,
+        );
     }
     let request_timeout = launch.request_timeout;
     let max_response_bytes = launch.max_stdout_line_bytes;
-    let (transport, stderr_task) = spawn_rmcp_stdio_transport(
+    let (transport, stderr_task) = match spawn_rmcp_stdio_transport(
         launch.command,
         launch.args,
         env,
         launch.cwd,
         launch.max_stderr_bytes,
-    )?;
+    ) {
+        Ok(transport) => transport,
+        Err(error) => return (Err(error), false),
+    };
     let run = async move {
         let client = rmcp_client_info()
             .serve(transport)
@@ -1001,10 +1017,13 @@ async fn discover_stdio_tools_with_rmcp(
         )),
     };
     let stderr_summary = finish_rmcp_stdio_stderr(stderr_task).await;
-    result.map(|mut discovery| {
-        discovery.stderr_summary = stderr_summary;
-        discovery
-    })
+    (
+        result.map(|mut discovery| {
+            discovery.stderr_summary = stderr_summary;
+            discovery
+        }),
+        true,
+    )
 }
 
 async fn call_stdio_tool_with_rmcp(
@@ -1185,7 +1204,7 @@ pub(crate) async fn probe_provider_stdio_tools(
         }
     };
     let env = provider.env;
-    let discovery = discover_stdio_tools_with_rmcp(
+    let (discovery, transport_spawned) = discover_stdio_tools_with_rmcp_attempt(
         McpStdioLaunch {
             command: provider.command,
             args: provider.args,
@@ -1202,12 +1221,12 @@ pub(crate) async fn probe_provider_stdio_tools(
         Ok(discovery) => McpStdioTransportProbe {
             discovery: Some(discovery),
             failure: None,
-            proof: Some(McpStdioTransportProof(())),
+            proof: transport_spawned.then_some(McpStdioTransportProof(())),
         },
         Err(error) => McpStdioTransportProbe {
             discovery: None,
             failure: Some(classify_runtime_failure(&error)),
-            proof: Some(McpStdioTransportProof(())),
+            proof: transport_spawned.then_some(McpStdioTransportProof(())),
         },
     }
 }

@@ -274,6 +274,47 @@ async fn pretransport_mcp_failures_are_classified_but_not_transport_verified() {
     }
 }
 
+#[tokio::test]
+async fn pre_spawn_mcp_failures_are_classified_but_not_transport_verified() {
+    let db = Database::open_in_memory().unwrap();
+    install_contract_stdio_provider(&db, "zero-cap-provider", "search-only", false);
+    upsert_web_evidence_provider(
+        &db,
+        &WebEvidenceProviderInput {
+            id: "spawn-failure-provider".into(),
+            name: "Unspawnable contract MCP".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
+            transport_config_json: r#"{"command":"/definitely/missing/iris-mcp"}"#.into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.into()),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .unwrap();
+
+    let mut zero_cap_options = stdio_options(Duration::from_millis(120));
+    zero_cap_options.max_stdout_line_bytes = 0;
+    for (provider_id, options) in [
+        ("zero-cap-provider", zero_cap_options),
+        (
+            "spawn-failure-provider",
+            stdio_options(Duration::from_millis(120)),
+        ),
+    ] {
+        let probe = probe_provider_stdio_tools(&db, provider_id, options).await;
+        let failure = McpTransportFailureContract::from_probe(probe)
+            .expect("pre-spawn provider failures must be classified");
+
+        assert_eq!(
+            failure.validation_level(),
+            ProtocolValidationLevel::FailureClassifiedOnly,
+            "{provider_id} must not earn a transport proof"
+        );
+    }
+}
+
 #[test]
 fn parses_versioned_manifest_without_raw_answer_or_endpoint_fields() {
     let case = manifest_fixture();
