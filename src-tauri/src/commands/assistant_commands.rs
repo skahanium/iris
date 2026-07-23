@@ -642,11 +642,26 @@ fn spawn_rejected_change_finalization(
 /// Context, policy and bounded Web evidence are prepared from persisted Run
 /// facts before the streaming Provider is dispatched. The Run Engine remains
 /// the sole owner of lifecycle persistence and terminalization.
-fn dispatch_desktop_normal_run<R: tauri::Runtime, T>(
+async fn dispatch_normal_run_service<'a, R, S, Execute, Execution>(
+    state: Arc<AppState>,
+    accepted: AssistantRunAccepted,
+    vault: Option<std::path::PathBuf>,
     app_handle: AppHandle<R>,
-    dispatch: impl FnOnce(Option<AppHandle<R>>) -> T,
-) -> T {
-    dispatch(Some(app_handle))
+    sink: &'a S,
+    execute: Execute,
+) where
+    R: tauri::Runtime,
+    S: RunEventSink,
+    Execute: FnOnce(
+        Arc<AppState>,
+        AssistantRunAccepted,
+        Option<std::path::PathBuf>,
+        Option<AppHandle<R>>,
+        &'a S,
+    ) -> Execution,
+    Execution: std::future::Future<Output = ()> + 'a,
+{
+    execute(state, accepted, vault, Some(app_handle), sink).await;
 }
 
 fn spawn_normal_direct_run(
@@ -655,21 +670,17 @@ fn spawn_normal_direct_run(
     accepted: AssistantRunAccepted,
     vault: Option<std::path::PathBuf>,
 ) {
-    dispatch_desktop_normal_run(app_handle, |app_handle| {
-        tauri::async_runtime::spawn(async move {
-            let sink_handle = app_handle
-                .as_ref()
-                .expect("desktop normal Run adapter must preserve AppHandle");
-            let sink = TauriRunEventSink::new(sink_handle);
-            crate::ai_runtime::normal_run_service::execute_normal_run(
-                state,
-                accepted,
-                vault,
-                app_handle.clone(),
-                &sink,
-            )
-            .await;
-        });
+    tauri::async_runtime::spawn(async move {
+        let sink = TauriRunEventSink::new(&app_handle);
+        dispatch_normal_run_service(
+            state,
+            accepted,
+            vault,
+            app_handle.clone(),
+            &sink,
+            crate::ai_runtime::normal_run_service::execute_normal_run,
+        )
+        .await;
     });
 }
 
@@ -893,20 +904,64 @@ fn fail_ephemeral_classified_run(
 #[cfg(test)]
 mod normal_run_desktop_adapter_tests {
     use std::cell::Cell;
+    use std::sync::Arc;
 
-    use super::dispatch_desktop_normal_run;
+    use super::dispatch_normal_run_service;
+    use crate::ai_runtime::run_contract::{
+        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, SecurityDomain,
+    };
+    use crate::ai_runtime::run_engine::RunEventSink;
+    use crate::ai_runtime::run_intake::RunIntake;
+    use crate::app::AppState;
+    use crate::error::AppResult;
 
-    #[test]
-    fn production_desktop_adapter_dispatches_a_present_app_handle() {
+    struct NoopSink;
+
+    impl RunEventSink for NoopSink {
+        fn emit(&self, _event: &AssistantRunEvent) -> AppResult<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn production_service_dispatch_receives_a_present_desktop_app_handle() {
         let app = tauri::test::mock_app();
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let accepted = RunIntake::start(
+            &state.db,
+            AssistantRunStartRequest {
+                client_request_id: "desktop-service-dispatch".to_string(),
+                session: None,
+                turn: AssistantTurnDraft {
+                    message: "请回答".to_string(),
+                    content_parts: None,
+                    explicit_references: vec![],
+                    retrieval_scope: Default::default(),
+                    display_mentions: vec![],
+                },
+                explicit_action: None,
+                web_enabled: false,
+                model_override: None,
+                security_domain: SecurityDomain::Normal,
+                classified_context_ref: None,
+            },
+        )
+        .expect("accepted run");
         let observed_present = Cell::new(false);
 
-        dispatch_desktop_normal_run(
+        dispatch_normal_run_service(
+            Arc::clone(&state),
+            accepted,
+            None,
             app.handle().clone(),
-            |app_handle: Option<tauri::AppHandle<tauri::test::MockRuntime>>| {
+            &NoopSink,
+            |_, _, _, app_handle: Option<tauri::AppHandle<tauri::test::MockRuntime>>, _| {
                 observed_present.set(app_handle.is_some());
+                std::future::ready(())
             },
-        );
+        )
+        .await;
 
         assert!(observed_present.get());
     }
