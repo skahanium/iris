@@ -3,6 +3,7 @@ import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import type { ChatLine } from "../AiMessageList";
 import { projectAssistantProcessEvents } from "@/lib/assistant-process";
 import type { AssistantPresentationState } from "@/lib/assistant-presentation";
+import { deriveRunOutputting } from "@/lib/assistant-run-activity";
 import type { AssistantRunEventState } from "@/lib/assistant-run-events";
 import type { ClassifiedRunResultRequest } from "@/types/ai";
 
@@ -33,6 +34,25 @@ export function useAssistantRunTranscript({
   takeClassifiedResult,
 }: AssistantRunTranscriptOptions) {
   const appliedEventRef = useRef<string | null>(null);
+
+  // Streaming must also react to presentation.answerComplete without a new durable seq.
+  useEffect(() => {
+    if (!run) return;
+    const outputting = deriveRunOutputting(run, presentation);
+    setStreaming(outputting);
+    if (!outputting) {
+      if (
+        ["completed", "failed", "cancelled"].includes(run.state ?? "") ||
+        (presentation?.runId === run.runId && presentation.answerComplete)
+      ) {
+        if (run.state !== "failed" && run.state !== "cancelled") {
+          setActivityHint(null);
+        }
+      }
+    } else {
+      setActivityHint(run.stage);
+    }
+  }, [presentation, run, setActivityHint, setStreaming]);
 
   useEffect(() => {
     if (!run || run.lastSeq === 0) return;
@@ -107,7 +127,6 @@ export function useAssistantRunTranscript({
       case "preparing":
       case "running":
       case "verifying":
-        setStreaming(true);
         return;
       case "awaiting_confirmation":
       case "paused":

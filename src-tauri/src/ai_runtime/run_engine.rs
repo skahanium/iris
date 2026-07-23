@@ -565,9 +565,9 @@ fn presentation_payload_for_durable_event(
             },
             duration_ms: *duration_ms,
         }),
-        RunEventPayload::Failed { .. } | RunEventPayload::Cancelled { .. } => {
-            Some(RunPresentationPayload::AnswerComplete)
-        }
+        RunEventPayload::Failed { .. }
+        | RunEventPayload::Cancelled { .. }
+        | RunEventPayload::Completed { .. } => Some(RunPresentationPayload::AnswerComplete),
         _ => None,
     }
 }
@@ -859,42 +859,43 @@ impl AgentRunStreamObserver<'_> {
     /// Run events reject payloads over the 2_000-char safe-event budget. A single long
     /// web-grounded answer previously failed flush as `agent_run_persistence_failed`
     /// after evidence had already registered.
+    ///
+    /// Even when `pending_delta` is empty (already streamed or a retry after a partial
+    /// flush), AnswerComplete must still be delivered so the UI can leave streaming.
     pub(crate) fn flush(&mut self) -> AppResult<()> {
         let emit_final_presentation = self.presentation_content != self.pending_delta;
-        if self.pending_delta.is_empty() {
-            return Ok(());
-        }
-        let mut remaining = mem::take(&mut self.pending_delta);
-        while !remaining.is_empty() {
-            let chunk = take_safe_content_delta_chunk(&mut remaining)?;
-            if chunk.is_empty() {
-                break;
-            }
-            let persisted = AgentRunRepository::append_event(
-                self.db,
-                AppendRunEventInput {
-                    run_id: self.run_id.to_string(),
-                    state_version: self.running_state_version,
-                    event_type: RunEventType::ContentDelta,
-                    payload: RunEventPayload::ContentDelta {
-                        delta: chunk.clone(),
+        if !self.pending_delta.is_empty() {
+            let mut remaining = mem::take(&mut self.pending_delta);
+            while !remaining.is_empty() {
+                let chunk = take_safe_content_delta_chunk(&mut remaining)?;
+                if chunk.is_empty() {
+                    break;
+                }
+                let persisted = AgentRunRepository::append_event(
+                    self.db,
+                    AppendRunEventInput {
+                        run_id: self.run_id.to_string(),
+                        state_version: self.running_state_version,
+                        event_type: RunEventType::ContentDelta,
+                        payload: RunEventPayload::ContentDelta {
+                            delta: chunk.clone(),
+                        },
                     },
-                },
-            )?;
-            self.sink.emit(&persisted)?;
-            if emit_final_presentation {
-                let _ = self.sink.emit_presentation(
-                    self.run_id,
-                    RunPresentationPayload::AnswerDelta {
-                        delta: chunk.clone(),
-                    },
-                );
-                self.presentation_content.push_str(&chunk);
+                )?;
+                self.sink.emit(&persisted)?;
+                if emit_final_presentation {
+                    let _ = self.sink.emit_presentation(
+                        self.run_id,
+                        RunPresentationPayload::AnswerDelta {
+                            delta: chunk.clone(),
+                        },
+                    );
+                    self.presentation_content.push_str(&chunk);
+                }
             }
         }
-        let _ = self
-            .sink
-            .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete);
+        self.sink
+            .emit_presentation(self.run_id, RunPresentationPayload::AnswerComplete)?;
         Ok(())
     }
 
@@ -1854,6 +1855,8 @@ impl RunEngine {
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
+                let analyzing_materials =
+                    domain_plan.is_some_and(|plan| !plan.rendered_context.trim().is_empty());
                 let preparing = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {
@@ -1862,7 +1865,11 @@ impl RunEngine {
                         event_type: RunEventType::StageChanged,
                         payload: RunEventPayload::StageChanged {
                             state: RunState::Preparing,
-                            stage: "正在准备".to_string(),
+                            stage: if analyzing_materials {
+                                "正在分析附带材料".to_string()
+                            } else {
+                                "正在准备".to_string()
+                            },
                         },
                     },
                 )?;
@@ -2211,7 +2218,9 @@ fn flush_validated_stream_or_fail(
     })
 }
 
-fn finalize_and_emit_with_sink(
+/// Shared Direct/ToolLoop terminal contract:
+/// AnswerComplete (via flush) → durable `completed` emit → clear abort handle.
+fn emit_run_terminal(
     db: &Database,
     session: &AssistantSessionRef,
     run_id: &str,
@@ -2256,7 +2265,28 @@ fn finalize_and_emit_with_sink(
             SafeRunErrorCode::EventDeliveryFailed.as_str(),
         ));
     }
+    crate::ai_runtime::model_gateway::clear_abort(run_id);
     Ok(())
+}
+
+fn finalize_and_emit_with_sink(
+    db: &Database,
+    session: &AssistantSessionRef,
+    run_id: &str,
+    state_version: u64,
+    content: String,
+    evidence_ids: Vec<i64>,
+    sink: &impl RunEventSink,
+) -> AppResult<()> {
+    emit_run_terminal(
+        db,
+        session,
+        run_id,
+        state_version,
+        content,
+        evidence_ids,
+        sink,
+    )
 }
 
 fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
@@ -2276,6 +2306,7 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::WebProviderFailed => "联网证据服务暂时不可用，请稍后重试",
         SafeRunErrorCode::WebEvidenceInvalid => "联网证据服务未返回可用结果，请稍后重试",
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
+        SafeRunErrorCode::ToolLoopLimit => "模型调用工具次数过多，请基于已附资料缩小问题后重试",
         SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
         SafeRunErrorCode::OutputTooLong => "模型回答超过本次运行上限，请缩小问题范围后重试",
         SafeRunErrorCode::EvidenceInvalid => "回答与所附证据无法安全关联，请重新附带资料后重试",
@@ -2354,9 +2385,8 @@ pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
         "agent_run_web_evidence_invalid" | "agent_run_web_evidence_required" => {
             SafeRunErrorCode::WebEvidenceInvalid
         }
-        "agent_run_tool_loop_limit" | "agent_run_invalid_model_response" => {
-            SafeRunErrorCode::InvalidRequest
-        }
+        "agent_run_tool_loop_limit" => SafeRunErrorCode::ToolLoopLimit,
+        "agent_run_invalid_model_response" => SafeRunErrorCode::InvalidRequest,
         _ => classify_provider_failure(error),
     }
 }

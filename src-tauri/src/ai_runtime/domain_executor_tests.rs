@@ -190,6 +190,29 @@ fn golden_novel_without_explicit_reference_has_no_vault_read_or_search_trace() {
 }
 
 #[test]
+fn explicit_reference_answer_prefers_attached_materials_without_research_tools() {
+    let plan = DomainExecutor::plan(
+        &envelope(
+            ContextMode::ExplicitReferences,
+            vec![MaterialNeed::Reference],
+        ),
+        "根据附件分析责任",
+        &[material(
+            DomainMaterialRole::Reference,
+            "问题线索工作思路（刘CG）",
+            "重点核对时间线与职责边界。",
+        )],
+        &[],
+    );
+
+    assert!(plan
+        .prompt_instructions
+        .contains("用户已通过 @ 附带授权材料"));
+    assert!(plan.prompt_instructions.contains("不要对同一路径再次调用"));
+    assert!(plan.rendered_context.contains("问题线索工作思路（刘CG）"));
+}
+
+#[test]
 fn golden_novel_reads_only_two_explicit_references_in_declared_scope() {
     let plan = DomainExecutor::plan(
         &envelope(

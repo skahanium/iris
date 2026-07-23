@@ -252,7 +252,11 @@ export function reconcileDisplayMentions(
 ): DisplayMention[] {
   const current = validDisplayMentions(previousText, mentions);
   if (previousText === nextText) return validDisplayMentions(nextText, current);
-  if (!edit || !isValidMentionTextEdit(previousText, nextText, edit)) return [];
+  // Missing or inconsistent edit transactions must not wipe annotations that
+  // still match the readable text (e.g. IME / stale beforeinput after @ insert).
+  if (!edit || !isValidMentionTextEdit(previousText, nextText, edit)) {
+    return validDisplayMentions(nextText, current);
+  }
 
   const delta = edit.insertedTextLength - (edit.to - edit.from);
   const insertion = edit.from === edit.to;

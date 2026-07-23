@@ -882,7 +882,9 @@ fn tool_loop_observer_defers_generating_stage_until_after_later_tool_rounds() {
 
     observer.on_tools_finished().expect("finish search tools");
     observer.on_tools_starting().expect("start read_note round");
-    observer.on_tools_finished().expect("finish read_note tools");
+    observer
+        .on_tools_finished()
+        .expect("finish read_note tools");
     assert!(
         sink.events
             .lock()
@@ -2184,5 +2186,27 @@ fn tool_loop_web_failures_keep_their_web_safe_codes() {
             "agent_run_web_evidence_invalid",
         )),
         SafeRunErrorCode::WebEvidenceInvalid,
+    );
+}
+
+#[test]
+fn tool_loop_limit_keeps_a_dedicated_safe_code_and_message() {
+    assert_eq!(
+        super::run_engine::classify_tool_loop_failure(&AppError::msg("agent_run_tool_loop_limit",)),
+        SafeRunErrorCode::ToolLoopLimit,
+    );
+    assert_eq!(
+        SafeRunErrorCode::ToolLoopLimit.as_str(),
+        "agent_run_tool_loop_limit"
+    );
+    let failed = RunEventPayload::Failed {
+        code: SafeRunErrorCode::ToolLoopLimit,
+        message: "模型调用工具次数过多，请基于已附资料缩小问题后重试".into(),
+    };
+    let encoded = serde_json::to_value(&failed).expect("serialize failed payload");
+    assert_eq!(encoded["code"], "agent_run_tool_loop_limit");
+    assert_eq!(
+        encoded["message"],
+        "模型调用工具次数过多，请基于已附资料缩小问题后重试"
     );
 }

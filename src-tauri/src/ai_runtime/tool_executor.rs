@@ -75,6 +75,30 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// When the user @-attached notes without a vault folder/tag scope, hide
+    /// vault-wide search/list tools so the model stays on the authorized materials.
+    pub(crate) fn constrain_for_explicit_references(
+        tools: Vec<ToolSpec>,
+        context_mode: crate::ai_runtime::run_contract::ContextMode,
+        retrieval_scope: &crate::ai_runtime::retrieval_scope::RetrievalScope,
+    ) -> Vec<ToolSpec> {
+        use crate::ai_runtime::run_contract::ContextMode;
+        if context_mode != ContextMode::ExplicitReferences || !retrieval_scope.is_unrestricted() {
+            return tools;
+        }
+        const ALLOWED: &[&str] = &[
+            "read_note",
+            "get_outline",
+            "get_context_packets",
+            "get_backlinks",
+            "web_search",
+        ];
+        tools
+            .into_iter()
+            .filter(|tool| ALLOWED.contains(&tool.name.as_str()))
+            .collect()
+    }
+
     /// Catalog entries that do not need user confirmation.
     pub fn confirmation_free_catalog_entries(&self) -> Vec<&ToolSpec> {
         self.catalog_entries()
@@ -190,5 +214,49 @@ mod tests {
 
         assert!(!surface.iter().any(|tool| tool.name == "spawn_subagent"));
         assert!(!surface.iter().any(|tool| tool.name == "conclude_reasoning"));
+    }
+
+    #[test]
+    fn explicit_references_without_vault_scope_hide_search_and_list_tools() {
+        let registry = ToolRegistry::new();
+        let surface = registry.tools_for_surface(ToolSurfaceFilter {
+            web_search_enabled: true,
+            allow_research: true,
+            ..ToolSurfaceFilter::default()
+        });
+        let constrained = ToolRegistry::constrain_for_explicit_references(
+            surface,
+            crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,
+            &crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+        );
+        let names: Vec<_> = constrained.iter().map(|tool| tool.name.as_str()).collect();
+        assert!(names.contains(&"read_note"));
+        assert!(names.contains(&"get_outline"));
+        assert!(names.contains(&"web_search"));
+        assert!(!names.contains(&"search_hybrid"));
+        assert!(!names.contains(&"search_keyword"));
+        assert!(!names.contains(&"search_semantic"));
+        assert!(!names.contains(&"list_vault"));
+    }
+
+    #[test]
+    fn folder_scope_keeps_full_retrieval_tool_surface() {
+        let registry = ToolRegistry::new();
+        let surface = registry.tools_for_surface(ToolSurfaceFilter {
+            web_search_enabled: true,
+            allow_research: true,
+            ..ToolSurfaceFilter::default()
+        });
+        let scoped = ToolRegistry::constrain_for_explicit_references(
+            surface,
+            crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,
+            &crate::ai_runtime::retrieval_scope::RetrievalScope {
+                path_prefixes: vec!["线索/".into()],
+                paths: Vec::new(),
+                required_tags: Vec::new(),
+            },
+        );
+        assert!(scoped.iter().any(|tool| tool.name == "search_hybrid"));
+        assert!(scoped.iter().any(|tool| tool.name == "list_vault"));
     }
 }

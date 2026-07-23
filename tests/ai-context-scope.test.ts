@@ -135,7 +135,7 @@ describe("ai-context-scope", () => {
     ]);
   });
 
-  it("rejects a transaction that does not explain the changed text", () => {
+  it("keeps matching mentions when the edit transaction cannot explain the text change", () => {
     expect(
       reconcileDisplayMentions(
         "查 Guide 然后继续",
@@ -143,7 +143,33 @@ describe("ai-context-scope", () => {
         [guideMention],
         { from: 12, to: 12, insertedTextLength: 0 },
       ),
-    ).toEqual([]);
+    ).toEqual([guideMention]);
+  });
+
+  it("keeps Chinese fullwidth-parenthesis mentions when typing continues after them", () => {
+    const label = "问题线索工作思路（刘CG）";
+    const previous = `根据 ${label}`;
+    const from = previous.indexOf(label);
+    const mention: DisplayMention = {
+      kind: "file",
+      value: "线索/问题线索工作思路（刘CG）.md",
+      label,
+      range: { from, to: from + label.length },
+    };
+    const suffix = "，我们应该怎样分析刘CG的责任？";
+    const next = `${previous}${suffix}`;
+
+    expect(
+      reconcileDisplayMentions(previous, next, [mention], {
+        from: previous.length,
+        to: previous.length,
+        insertedTextLength: suffix.length,
+      }),
+    ).toEqual([mention]);
+
+    expect(reconcileDisplayMentions(previous, next, [mention])).toEqual([
+      mention,
+    ]);
   });
 
   it.each([

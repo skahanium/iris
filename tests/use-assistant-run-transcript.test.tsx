@@ -11,6 +11,7 @@ import type { AssistantRunEvent } from "@/types/ai";
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let messages: ChatLine[] = [];
+let streaming = false;
 
 function Probe({
   run,
@@ -26,7 +27,9 @@ function Probe({
     setMessages: (updater) => {
       messages = typeof updater === "function" ? updater(messages) : updater;
     },
-    setStreaming: () => undefined,
+    setStreaming: (next) => {
+      streaming = next;
+    },
     setActivityHint: () => undefined,
     setError: () => undefined,
   });
@@ -39,9 +42,87 @@ afterEach(() => {
   root = null;
   host = null;
   messages = [];
+  streaming = false;
 });
 
 describe("useAssistantRunTranscript", () => {
+  it("answerComplete 先到而 durable completed 丢失时仍结束 streaming", () => {
+    messages = [
+      { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
+      {
+        role: "assistant",
+        content: "完整答复",
+        runId: "run-1",
+        turnId: "turn-1",
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const running = replayAssistantRunEvents("run-1", [
+      {
+        runId: "run-1",
+        seq: 1,
+        stateVersion: 0,
+        timestamp: "2026-07-22T08:00:00.000Z",
+        type: "accepted",
+        payload: {
+          kind: "accepted",
+          turnId: "turn-1",
+          sessionKey: "session-1",
+        },
+      },
+      {
+        runId: "run-1",
+        seq: 2,
+        stateVersion: 1,
+        timestamp: "2026-07-22T08:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在生成答复",
+        },
+      },
+    ] satisfies AssistantRunEvent[]);
+
+    act(() =>
+      root?.render(
+        <Probe
+          presentation={{
+            runId: "run-1",
+            lastSeq: 2,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [],
+            answer: "完整答复",
+            answerComplete: false,
+          }}
+          run={running}
+        />,
+      ),
+    );
+    expect(streaming).toBe(true);
+
+    act(() =>
+      root?.render(
+        <Probe
+          presentation={{
+            runId: "run-1",
+            lastSeq: 3,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [],
+            answer: "完整答复",
+            answerComplete: true,
+          }}
+          run={running}
+        />,
+      ),
+    );
+    expect(streaming).toBe(false);
+  });
+
   it("终态遇到展示序号缺口时以可靠事实正文收敛，不遗留局部答案", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },

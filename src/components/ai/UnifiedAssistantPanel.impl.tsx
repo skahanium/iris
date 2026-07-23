@@ -19,6 +19,7 @@ import {
   openExternalHttpsUrl,
 } from "@/lib/ipc";
 import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
+import { deriveDisplayRunState } from "@/lib/assistant-run-activity";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AssistantComposerDock } from "./AssistantComposerDock";
@@ -206,8 +207,19 @@ export function UnifiedAssistantPanel({
     assistantRun.isBusy ||
     isStarting ||
     assistantRun.pendingConfirmation !== null;
+  const displayRunState = deriveDisplayRunState(
+    assistantRun.runState,
+    streaming || assistantRun.isBusy,
+  );
   const stopStreaming = useCallback(() => {
-    void assistantRun.cancel();
+    void assistantRun
+      .cancel()
+      .then((message) => {
+        if (message) setLastError(message);
+      })
+      .catch(() => {
+        setLastError("停止失败，请稍后重试。");
+      });
   }, [assistantRun]);
   const refreshClassifiedContext = useCallback(() => {
     if (aiDomain !== "classified" || !classifiedPath) return;
@@ -284,7 +296,7 @@ export function UnifiedAssistantPanel({
           else assistantRun.reset();
         }}
         profile={promptProfile}
-        runState={assistantRun.runState}
+        runState={displayRunState}
         webSearch={webSearch}
         webSearchProviderName={webSearchProviderName}
       />

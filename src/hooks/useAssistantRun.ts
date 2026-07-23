@@ -15,11 +15,16 @@ import {
   type AssistantPresentationState,
 } from "@/lib/assistant-presentation";
 import {
+  deriveRunOutputting,
+  isTerminalRunState,
+} from "@/lib/assistant-run-activity";
+import {
   createAssistantRunEventState,
   reduceAssistantRunEvent,
   replayAssistantRunEvents,
   type AssistantRunEventState,
 } from "@/lib/assistant-run-events";
+import { invokeErrorMessage } from "@/lib/credentials";
 import type {
   AssistantRunEvent,
   AssistantRunGetResponse,
@@ -29,6 +34,11 @@ import type {
   PendingConfirmation,
   RunState,
 } from "@/types/ai";
+
+function isStateVersionConflict(error: unknown): boolean {
+  const message = invokeErrorMessage(error);
+  return message.includes("agent_run_state_version_conflict");
+}
 
 /** UI state is the persisted Run state, with `idle` before a Run exists. */
 export type AssistantRunState = RunState | "idle";
@@ -88,6 +98,7 @@ export function useAssistantRun() {
     new Map<string, AssistantPresentationEvent[]>(),
   );
   const resyncingRef = useRef(new Set<string>());
+  const answerCompleteResyncRef = useRef<string | null>(null);
 
   const currentRun = useMemo<ActiveAssistantRun | null>(() => {
     if (!runIdentity) return null;
@@ -108,7 +119,10 @@ export function useAssistantRun() {
     () => ({ runState, activityHint, currentRun }),
     [activityHint, currentRun, runState],
   );
-  const isBusy = isAssistantRunBusy(runState);
+  const isBusy = deriveRunOutputting(
+    currentRun ? { runId: currentRun.runId, state: currentRun.state } : null,
+    presentationState,
+  );
   const pendingConfirmation = useMemo<AssistantRunConfirmation | null>(() => {
     if (!currentRun || runState !== "awaiting_confirmation") return null;
     const confirmation = eventState?.pendingConfirmation;
@@ -233,6 +247,7 @@ export function useAssistantRun() {
       earlyPresentationRef.current.delete(accepted.runId);
       setPresentationState(presentation);
       setLatestEvent(replayState.events.at(-1) ?? null);
+      answerCompleteResyncRef.current = null;
       void replay(run);
       return accepted;
     },
@@ -259,16 +274,68 @@ export function useAssistantRun() {
     return activateAccepted(accepted);
   }, [activateAccepted, currentRun, eventState?.webVerificationFailure]);
 
-  const cancel = useCallback(async () => {
-    const run = currentRun;
-    if (!run) return;
-    await assistantRunControl({
-      session: run.session,
-      runId: run.runId,
-      expectedStateVersion: run.stateVersion,
-      action: { type: "cancel" },
-    });
-  }, [currentRun]);
+  const cancel = useCallback(async (): Promise<string | null> => {
+    const run = currentRunRef.current;
+    if (!run) return null;
+
+    const submitCancel = async (target: ActiveAssistantRun) => {
+      await assistantRunControl({
+        session: target.session,
+        runId: target.runId,
+        expectedStateVersion: target.stateVersion,
+        action: { type: "cancel" },
+      });
+    };
+
+    const resyncFromPersisted = async (
+      target: ActiveAssistantRun,
+    ): Promise<ActiveAssistantRun | null> => {
+      const persisted = await assistantRunGet({
+        session: target.session,
+        runId: target.runId,
+      });
+      if (!persisted || activeRunIdRef.current !== target.runId) return null;
+      const refreshed: ActiveAssistantRun = {
+        runId: persisted.run.runId,
+        turnId: persisted.run.turnId,
+        session: persisted.run.session,
+        state: persisted.run.state,
+        stateVersion: persisted.run.stateVersion,
+      };
+      setRunIdentity(refreshed);
+      setEventState(
+        replayAssistantRunEvents(refreshed.runId, persisted.events),
+      );
+      setLatestEvent(persisted.events.at(-1) ?? null);
+      currentRunRef.current = refreshed;
+      return refreshed;
+    };
+
+    try {
+      await submitCancel(run);
+      return null;
+    } catch (error) {
+      if (!isStateVersionConflict(error)) throw error;
+      const refreshed = await resyncFromPersisted(run);
+      if (!refreshed) {
+        return "停止请求已过期，请刷新后再试。";
+      }
+      if (isTerminalRunState(refreshed.state)) {
+        return null;
+      }
+      try {
+        await submitCancel(refreshed);
+        return null;
+      } catch (retryError) {
+        if (isStateVersionConflict(retryError)) {
+          const settled = await resyncFromPersisted(refreshed);
+          if (settled && isTerminalRunState(settled.state)) return null;
+          return "停止失败：运行状态已变化，请稍后重试。";
+        }
+        throw retryError;
+      }
+    }
+  }, []);
 
   const approveChange = useCallback(async () => {
     const run = currentRun;
@@ -319,11 +386,24 @@ export function useAssistantRun() {
 
   const reset = useCallback(() => {
     activeRunIdRef.current = null;
+    answerCompleteResyncRef.current = null;
     setRunIdentity(null);
     setEventState(null);
     setLatestEvent(null);
     setPresentationState(null);
   }, []);
+
+  // Presentation finished but durable completed may be missing — resync once.
+  useEffect(() => {
+    if (!currentRun || !presentationState) return;
+    if (presentationState.runId !== currentRun.runId) return;
+    if (!presentationState.answerComplete) return;
+    if (isTerminalRunState(currentRun.state)) return;
+    const key = `${currentRun.runId}:${presentationState.lastSeq}`;
+    if (answerCompleteResyncRef.current === key) return;
+    answerCompleteResyncRef.current = key;
+    void replay(currentRun);
+  }, [currentRun, presentationState, replay]);
 
   return {
     runState,

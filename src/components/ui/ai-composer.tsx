@@ -5,7 +5,7 @@ import type {
   ReactNode,
   RefObject,
 } from "react";
-import { useCallback, useRef } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -196,6 +196,13 @@ export function AiComposer({
     };
   };
 
+  // Keep edit snapshots aligned when the parent restores text/cursor after @ insert.
+  useLayoutEffect(() => {
+    const textarea = textareaRef?.current;
+    if (!textarea || textarea.value !== value) return;
+    captureSelection(textarea);
+  }, [textareaRef, value]);
+
   const handleSelection = (
     event: React.SyntheticEvent<HTMLTextAreaElement>,
   ) => {
@@ -314,6 +321,7 @@ export function AiComposer({
             if (!textarea) return;
             textarea.focus();
             textarea.setSelectionRange(mention.range.to, mention.range.to);
+            captureSelection(textarea);
           }}
         >
           {value.slice(mention.range.from, mention.range.to)}

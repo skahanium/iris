@@ -10,6 +10,7 @@ import {
   type RefObject,
   type SetStateAction,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
 import {
@@ -186,13 +187,26 @@ export function useAssistantContextScope({
       ]);
       previousInputRef.current = next.text;
       commitDisplayMentions(nextMentions);
-      setInput(next.text);
+      flushSync(() => {
+        setInput(next.text);
+      });
       setMentionOpen(false);
-      requestAnimationFrame(() => {
-        const el = textareaRef.current;
-        if (!el) return;
+      const el = textareaRef.current;
+      if (el) {
         el.focus();
         el.setSelectionRange(next.cursor, next.cursor);
+      }
+      // Focus/selection fallback if the textarea remounts after the sync update.
+      requestAnimationFrame(() => {
+        const latest = textareaRef.current;
+        if (!latest) return;
+        if (document.activeElement !== latest) latest.focus();
+        if (
+          latest.selectionStart !== next.cursor ||
+          latest.selectionEnd !== next.cursor
+        ) {
+          latest.setSelectionRange(next.cursor, next.cursor);
+        }
       });
     },
     [commitDisplayMentions, input, mentionStart, setInput, textareaRef],

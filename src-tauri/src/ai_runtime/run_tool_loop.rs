@@ -447,6 +447,62 @@ impl<'a> NormalRunToolExecutor<'a> {
         };
         dispatch_tool_with_retry(self.state.as_ref(), &dispatch_context, tool_name, args).await
     }
+
+    /// Return already-authorized note text without a second vault read when the
+    /// requested path was injected as a Run material or exact-path fallback chunk.
+    fn cached_authorized_note(&self, args: &serde_json::Value) -> Option<ToolCallResult> {
+        let path = args.get("path").and_then(serde_json::Value::as_str)?;
+        let normalized = crate::ai_runtime::retrieval_scope::normalize_note_path(path).ok()?;
+        let max_chars = args
+            .get("max_chars")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(12_000) as usize;
+
+        if let Some(material) = self
+            .context
+            .materials
+            .iter()
+            .find(|material| material.source_path == normalized)
+        {
+            let truncated = material.content.chars().count() > max_chars;
+            let body: String = material.content.chars().take(max_chars).collect();
+            return Some(ToolCallResult {
+                tool_name: "read_note".to_string(),
+                success: true,
+                output: serde_json::json!({
+                    "path": normalized,
+                    "content": body,
+                    "truncated": truncated,
+                    "cached": true,
+                }),
+                duration_ms: 0,
+                tokens_used: None,
+                error: None,
+            });
+        }
+
+        let packet = self.cold_start_packets.iter().find(|packet| {
+            packet
+                .source_path
+                .as_deref()
+                .is_some_and(|source| source == normalized)
+        })?;
+        let truncated = packet.excerpt.chars().count() > max_chars;
+        let body: String = packet.excerpt.chars().take(max_chars).collect();
+        Some(ToolCallResult {
+            tool_name: "read_note".to_string(),
+            success: true,
+            output: serde_json::json!({
+                "path": normalized,
+                "content": body,
+                "truncated": truncated,
+                "cached": true,
+            }),
+            duration_ms: 0,
+            tokens_used: None,
+            error: None,
+        })
+    }
 }
 
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
@@ -512,6 +568,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 failed_tool_call(&call.function.name, "tool_confirmation_required")
             } else if call.function.name == WEB_TOOL_NAME {
                 self.execute_web_search(&args, state_version).await?
+            } else if call.function.name == "read_note" {
+                if let Some(cached) = self.cached_authorized_note(&args) {
+                    cached
+                } else {
+                    self.dispatch_non_web_tool(&call.function.name, &args).await
+                }
             } else {
                 self.dispatch_non_web_tool(&call.function.name, &args).await
             };

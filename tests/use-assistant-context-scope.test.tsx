@@ -175,6 +175,43 @@ describe("useAssistantContextScope", () => {
     });
   });
 
+  it("keeps Chinese fullwidth-parenthesis mentions after continued typing without an edit snapshot", async () => {
+    const label = "问题线索工作思路（刘CG）";
+    await act(async () => setInput("根据 @刘"));
+    moveCursorToEnd();
+    await act(async () => api.syncMentionFromInput());
+    await act(async () =>
+      api.selectMention({
+        id: `file:线索/${label}.md`,
+        kind: "file",
+        label,
+        subtitle: `线索/${label}.md`,
+        value: `线索/${label}.md`,
+      }),
+    );
+    expect(api.displayMentions).toEqual([
+      {
+        kind: "file",
+        value: `线索/${label}.md`,
+        label,
+        range: { from: 3, to: 3 + label.length },
+      },
+    ]);
+
+    const withMention = input;
+    const suffix = "，我们应该怎样分析刘CG的责任？";
+    await act(async () => api.handleInputChange(`${withMention}${suffix}`));
+    expect(api.displayMentions).toEqual([
+      {
+        kind: "file",
+        value: `线索/${label}.md`,
+        label,
+        range: { from: 3, to: 3 + label.length },
+      },
+    ]);
+    expect(input).toBe(`${withMention}${suffix}`);
+  });
+
   it("shifts or safely unbinds annotations as the editable text changes", async () => {
     await act(async () => {
       setInput("ask @");

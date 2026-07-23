@@ -1035,6 +1035,9 @@ pub(crate) enum SafeRunErrorCode {
     /// Input did not satisfy the Run contract.
     #[serde(rename = "agent_run_invalid_request")]
     InvalidRequest,
+    /// The tool-loop budget (model turns or tool calls) was exhausted.
+    #[serde(rename = "agent_run_tool_loop_limit")]
+    ToolLoopLimit,
     /// Provider output contained no user-visible final answer.
     #[serde(rename = "agent_run_empty_output")]
     EmptyOutput,
@@ -1123,6 +1126,7 @@ impl SafeRunErrorCode {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidRequest => "agent_run_invalid_request",
+            Self::ToolLoopLimit => "agent_run_tool_loop_limit",
             Self::EmptyOutput => "agent_run_empty_output",
             Self::OutputTooLong => "agent_run_output_too_long",
             Self::EvidenceInvalid => "agent_run_evidence_invalid",

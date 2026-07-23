@@ -807,8 +807,12 @@ async fn dispatch_normal_run_after_context(
             allow_skill_management: false,
         };
         let registry = ToolRegistry::new();
-        let tools = registry
-            .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable);
+        let tools = ToolRegistry::constrain_for_explicit_references(
+            registry
+                .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable),
+            context.envelope.context,
+            &context.retrieval_scope,
+        );
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
             streaming: true,

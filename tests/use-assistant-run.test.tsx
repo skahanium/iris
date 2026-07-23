@@ -370,4 +370,176 @@ describe("useAssistantRun", () => {
       payload: { kind: "stage_changed", stage: "等待确认" },
     });
   });
+
+  it("cancel recovers from state_version_conflict by replaying then retrying", async () => {
+    let emit:
+      | ((
+          event: Parameters<Parameters<typeof listenAssistantRunEvent>[0]>[0],
+        ) => void)
+      | null = null;
+    mockAssistantRunStart.mockResolvedValue({
+      runId: "run-cancel",
+      turnId: "turn-cancel",
+      session: { domain: "normal", sessionKey: "session-cancel" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    mockAssistantRunGet.mockResolvedValue({
+      run: {
+        runId: "run-cancel",
+        turnId: "turn-cancel",
+        session: { domain: "normal", sessionKey: "session-cancel" },
+        state: "running",
+        stateVersion: 5,
+      },
+      events: [
+        {
+          runId: "run-cancel",
+          seq: 1,
+          stateVersion: 0,
+          timestamp: "2026-07-22T08:00:00.000Z",
+          type: "accepted",
+          payload: {
+            kind: "accepted",
+            turnId: "turn-cancel",
+            sessionKey: "session-cancel",
+          },
+        },
+        {
+          runId: "run-cancel",
+          seq: 2,
+          stateVersion: 5,
+          timestamp: "2026-07-22T08:00:05.000Z",
+          type: "stage_changed",
+          payload: {
+            kind: "stage_changed",
+            state: "running",
+            stage: "正在生成答复",
+          },
+        },
+      ],
+    });
+    mockListenAssistantRunEvent.mockImplementation(async (handler) => {
+      emit = handler;
+      return () => undefined;
+    });
+    mockListenAssistantRunPresentation.mockResolvedValue(() => undefined);
+    mockAssistantRunControl
+      .mockRejectedValueOnce(new Error("agent_run_state_version_conflict"))
+      .mockResolvedValueOnce(undefined);
+    mountProbe();
+
+    await act(async () => {
+      await runApi?.start({
+        ...request(),
+        clientRequestId: "client-run-cancel",
+      });
+    });
+    act(() => {
+      emit?.({
+        runId: "run-cancel",
+        seq: 2,
+        stateVersion: 2,
+        timestamp: "2026-07-22T08:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在生成答复",
+        },
+      });
+    });
+
+    let cancelResult: string | null | undefined;
+    await act(async () => {
+      cancelResult = await runApi?.cancel();
+    });
+
+    expect(cancelResult).toBeNull();
+    expect(mockAssistantRunControl).toHaveBeenCalledTimes(2);
+    expect(mockAssistantRunControl).toHaveBeenLastCalledWith({
+      session: { domain: "normal", sessionKey: "session-cancel" },
+      runId: "run-cancel",
+      expectedStateVersion: 5,
+      action: { type: "cancel" },
+    });
+    expect(mockAssistantRunGet).toHaveBeenCalled();
+  });
+
+  it("answerComplete 使 isBusy 变为 false，即使 durable 仍是 running", async () => {
+    let emitPresentation:
+      | ((
+          event: Parameters<
+            Parameters<typeof listenAssistantRunPresentation>[0]
+          >[0],
+        ) => void)
+      | null = null;
+    let emit:
+      | ((
+          event: Parameters<Parameters<typeof listenAssistantRunEvent>[0]>[0],
+        ) => void)
+      | null = null;
+    mockAssistantRunStart.mockResolvedValue({
+      runId: "run-complete-ui",
+      turnId: "turn-complete-ui",
+      session: { domain: "normal", sessionKey: "session-complete-ui" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    mockAssistantRunGet.mockResolvedValue(null);
+    mockListenAssistantRunEvent.mockImplementation(async (handler) => {
+      emit = handler;
+      return () => undefined;
+    });
+    mockListenAssistantRunPresentation.mockImplementation(async (handler) => {
+      emitPresentation = handler;
+      return () => undefined;
+    });
+    mountProbe();
+
+    await act(async () => {
+      await runApi?.start({
+        ...request(),
+        clientRequestId: "client-run-complete-ui",
+      });
+    });
+    act(() => {
+      emit?.({
+        runId: "run-complete-ui",
+        seq: 2,
+        stateVersion: 2,
+        timestamp: "2026-07-22T08:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在生成答复",
+        },
+      });
+    });
+    expect(runApi?.isBusy).toBe(true);
+
+    act(() => {
+      emitPresentation?.({
+        runId: "run-complete-ui",
+        presentationSeq: 1,
+        elapsedMs: 10,
+        type: "answer_delta",
+        payload: { kind: "answer_delta", delta: "答复正文" },
+      });
+      emitPresentation?.({
+        runId: "run-complete-ui",
+        presentationSeq: 2,
+        elapsedMs: 20,
+        type: "answer_complete",
+        payload: { kind: "answer_complete" },
+      });
+    });
+
+    expect(runApi?.presentationState?.answerComplete).toBe(true);
+    expect(runApi?.isBusy).toBe(false);
+    expect(["accepted", "preparing", "running", "verifying"]).toContain(
+      runApi?.runState,
+    );
+  });
 });

@@ -1099,6 +1099,64 @@ fn web_enabled_general_question_is_online_by_default_without_keywords() {
 }
 
 #[test]
+fn explicit_file_reference_answer_keeps_tool_loop_when_online() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message =
+        "根据 问题线索工作思路（刘CG），我们应该怎样分析刘CG的责任？".to_string();
+    request
+        .turn
+        .explicit_references
+        .push(crate::ai_types::ContextReferenceWire {
+            id: "note-liu".into(),
+            kind: crate::ai_types::ContextReferenceKind::Note,
+            file_path: Some("线索/问题线索工作思路（刘CG）.md".into()),
+            content_hash: Some("hash-liu".into()),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        });
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.context, ContextMode::ExplicitReferences);
+    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+}
+
+#[test]
+fn explicit_reference_with_retrieval_scope_still_uses_tool_loop() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "在这个文件夹里再找相关笔记并总结".to_string();
+    request
+        .turn
+        .explicit_references
+        .push(crate::ai_types::ContextReferenceWire {
+            id: "note-liu".into(),
+            kind: crate::ai_types::ContextReferenceKind::Note,
+            file_path: Some("线索/问题线索工作思路（刘CG）.md".into()),
+            content_hash: Some("hash-liu".into()),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        });
+    request.turn.retrieval_scope.path_prefixes = vec!["线索/".into()];
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+}
+
+#[test]
 fn web_enabled_trusted_runtime_questions_remain_offline() {
     for message in [
         "今天星期几？",

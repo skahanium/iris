@@ -354,6 +354,7 @@ fn legacy_freshness_and_reason_aliases_deserialize() {
 fn safe_run_errors_serialize_as_stable_agent_run_codes() {
     for code in [
         SafeRunErrorCode::InvalidRequest,
+        SafeRunErrorCode::ToolLoopLimit,
         SafeRunErrorCode::InvalidExplicitReference,
         SafeRunErrorCode::ExplicitReferenceChanged,
         SafeRunErrorCode::InvalidRetrievalScope,

@@ -189,6 +189,16 @@ impl DomainExecutor {
         if active_executors.is_empty() {
             instructions.push("仅基于用户请求和已授权材料回答；不得推断未提供的事实。".to_string());
         }
+        if matches!(envelope.context, ContextMode::ExplicitReferences)
+            && !allowed_materials.is_empty()
+        {
+            instructions.push(
+                "用户已通过 @ 附带授权材料，内容在 <authorized-material> 中。优先直接基于这些材料作答；\
+                 除非材料明确标注为不完整片段且问题需要未包含段落，否则不要对同一路径再次调用 search、\
+                 read_note 或 get_outline。"
+                    .to_string(),
+            );
+        }
         if requires_user_decision {
             let labels = unresolved_conflicts
                 .iter()
