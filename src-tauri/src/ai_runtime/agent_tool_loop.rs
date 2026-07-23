@@ -96,9 +96,50 @@ impl AgentToolLoop {
         provider: &impl ToolLoopProvider,
         executor: &impl ToolLoopExecutor,
         run_id: &str,
+        messages: Vec<LlmMessage>,
+        tools: Vec<ToolSpec>,
+        observer: &mut dyn StreamEventObserver,
+    ) -> AppResult<AgentToolLoopOutcome> {
+        self.execute_internal(provider, executor, run_id, messages, tools, observer, None)
+            .await
+    }
+
+    /// Evaluation-only seam that observes the real bounded loop without
+    /// persisting measurements or changing production dispatch behavior.
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_with_eval_telemetry(
+        &self,
+        provider: &impl ToolLoopProvider,
+        executor: &impl ToolLoopExecutor,
+        run_id: &str,
+        messages: Vec<LlmMessage>,
+        tools: Vec<ToolSpec>,
+        observer: &mut dyn StreamEventObserver,
+        telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+    ) -> AppResult<AgentToolLoopOutcome> {
+        self.execute_internal(
+            provider,
+            executor,
+            run_id,
+            messages,
+            tools,
+            observer,
+            Some(telemetry),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_internal(
+        &self,
+        provider: &impl ToolLoopProvider,
+        executor: &impl ToolLoopExecutor,
+        run_id: &str,
         mut messages: Vec<LlmMessage>,
         tools: Vec<ToolSpec>,
         observer: &mut dyn StreamEventObserver,
+        telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
     ) -> AppResult<AgentToolLoopOutcome> {
         let allowed_tools = tools
             .iter()
@@ -110,14 +151,23 @@ impl AgentToolLoop {
 
         while model_turns < self.max_model_turns {
             model_turns += 1;
+            let model_started_at = std::time::Instant::now();
             let response = provider
                 .answer_turn(run_id, &messages, &tools, observer)
                 .await?;
+            if let Some(telemetry) = telemetry {
+                telemetry.record_model_turn(&response, model_started_at);
+            }
 
             if response.tool_calls.is_empty() {
                 let content = response.content.unwrap_or_default();
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
+                }
+                if let Some(telemetry) = telemetry {
+                    telemetry.record_budget(
+                        crate::ai_runtime::agent_capacity_eval::BudgetOutcome::WithinBudget,
+                    );
                 }
                 return Ok(AgentToolLoopOutcome {
                     content,
@@ -127,6 +177,11 @@ impl AgentToolLoop {
             }
 
             if tool_calls.saturating_add(response.tool_calls.len() as u32) > self.max_tool_calls {
+                if let Some(telemetry) = telemetry {
+                    telemetry.record_budget(
+                        crate::ai_runtime::agent_capacity_eval::BudgetOutcome::ToolCallsExhausted,
+                    );
+                }
                 return Err(AppError::msg("agent_run_tool_loop_limit"));
             }
 
@@ -148,11 +203,24 @@ impl AgentToolLoop {
                         executor.execute(run_id, call, tool_calls).await?
                     }
                 };
-                messages.push(tool_result_message(call, &result));
+                let (message, truncated) = tool_result_message(call, &result);
+                if truncated {
+                    if let Some(telemetry) = telemetry {
+                        telemetry.record_truncation(
+                            crate::ai_runtime::agent_capacity_eval::TruncationOutcome::ToolResultTruncated,
+                        );
+                    }
+                }
+                messages.push(message);
             }
             observer.on_tools_finished()?;
         }
 
+        if let Some(telemetry) = telemetry {
+            telemetry.record_budget(
+                crate::ai_runtime::agent_capacity_eval::BudgetOutcome::ModelTurnsExhausted,
+            );
+        }
         Err(AppError::msg("agent_run_tool_loop_limit"))
     }
 }
@@ -167,7 +235,7 @@ fn assistant_tool_message(response: &GatewayResponse) -> LlmMessage {
     }
 }
 
-fn tool_result_message(call: &ToolCall, result: &ToolCallResult) -> LlmMessage {
+fn tool_result_message(call: &ToolCall, result: &ToolCallResult) -> (LlmMessage, bool) {
     let payload = serde_json::json!({
         "success": result.success,
         "output": result.output,
@@ -176,14 +244,18 @@ fn tool_result_message(call: &ToolCall, result: &ToolCallResult) -> LlmMessage {
     let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| {
         "{\"success\":false,\"error\":\"tool_result_serialization_failed\"}".into()
     });
+    let truncated = serialized.chars().count() > MAX_TOOL_RESULT_CHARS;
     let content = truncate_chars(&serialized, MAX_TOOL_RESULT_CHARS);
-    LlmMessage {
-        role: MessageRole::Tool,
-        content: content.into(),
-        tool_call_id: Some(call.id.clone()),
-        tool_calls: None,
-        reasoning_content: None,
-    }
+    (
+        LlmMessage {
+            role: MessageRole::Tool,
+            content: content.into(),
+            tool_call_id: Some(call.id.clone()),
+            tool_calls: None,
+            reasoning_content: None,
+        },
+        truncated,
+    )
 }
 
 fn valid_call_arguments(call: &ToolCall) -> bool {

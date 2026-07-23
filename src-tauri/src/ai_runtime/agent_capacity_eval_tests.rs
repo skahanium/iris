@@ -3,11 +3,13 @@ use std::time::Duration;
 use crate::storage::db::Database;
 
 use super::agent_capacity_eval::{
-    evaluate_case, spawn_llm_protocol_double, AnswerObservation, CaseManifest, CheckStatus,
-    CitationObservation, EvidenceGroup, FactSupportObservation, HttpResponseScript,
-    ImplicitVaultExpectation, LlmProtocolDouble, McpCapabilityContract, McpOperation,
-    McpTransportContract, McpTransportFailureContract, ObservedSource, ProtocolContractOutcome,
-    ProtocolValidationLevel, SourceKind, WebAnswerContamination, WebState,
+    evaluate_case, generate_core_scenarios, run_deterministic_core_evaluation,
+    serialize_evaluation_summary, spawn_llm_protocol_double, AnswerObservation, BudgetOutcome,
+    CaseManifest, CheckStatus, CitationObservation, EvalRunMode, EvaluationTelemetryTap,
+    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
+    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
+    McpTransportFailureContract, ObservedSource, ProtocolContractOutcome, ProtocolValidationLevel,
+    ScenarioLanguage, SourceKind, TruncationOutcome, WebAnswerContamination, WebState,
 };
 use super::mcp_host_runtime::{
     call_required_capability, probe_provider_stdio_tools, McpHostRuntimeOptions, McpStdioDiscovery,
@@ -1379,4 +1381,195 @@ fn protocol_double_debug_output_does_not_expose_captured_bodies() {
     assert!(debug.contains("LlmProtocolDouble"));
     assert!(!debug.contains("protocol probe"));
     assert!(!debug.contains("captured"));
+}
+
+#[test]
+fn core_generator_produces_exactly_48_paired_scenarios_and_12_per_group() {
+    let scenarios = generate_core_scenarios().expect("core scenarios");
+    let mut ids = std::collections::HashSet::new();
+    let mut groups = std::collections::HashMap::new();
+    let mut pairs = std::collections::HashMap::new();
+    let mut prompts = std::collections::HashMap::new();
+
+    for scenario in &scenarios {
+        assert!(ids.insert(scenario.case_id()));
+        assert!(!scenario.prompt().trim().is_empty());
+        *groups.entry(scenario.evidence_group()).or_insert(0_usize) += 1;
+        pairs
+            .entry(scenario.base_question_id())
+            .or_insert_with(Vec::new)
+            .push(scenario.web_state());
+        prompts
+            .entry(scenario.base_question_id())
+            .or_insert_with(std::collections::HashSet::new)
+            .insert(scenario.prompt());
+    }
+
+    assert_eq!(scenarios.len(), 48);
+    assert_eq!(groups.get(&EvidenceGroup::NoRetrieval), Some(&12));
+    assert_eq!(groups.get(&EvidenceGroup::LocalOnly), Some(&12));
+    assert_eq!(groups.get(&EvidenceGroup::WebOnly), Some(&12));
+    assert_eq!(groups.get(&EvidenceGroup::Hybrid), Some(&12));
+    assert_eq!(pairs.len(), 24);
+    assert!(prompts.values().all(|variants| variants.len() == 1));
+    assert!(pairs.values().all(|states| {
+        states.len() == 2
+            && states.contains(&WebState::Offline)
+            && states.contains(&WebState::Online)
+    }));
+}
+
+#[test]
+fn core_generator_uses_nearest_pair_preserving_70_20_10_language_allocation() {
+    let scenarios = generate_core_scenarios().expect("core scenarios");
+    let mut languages = std::collections::HashMap::new();
+    for scenario in scenarios {
+        *languages.entry(scenario.language()).or_insert(0_usize) += 1;
+    }
+
+    // Each base question has an offline/online pair, so every language count
+    // must be even. 34/10/4 is the nearest 48-case allocation to 70/20/10
+    // while preserving those pairs.
+    assert_eq!(languages.get(&ScenarioLanguage::Chinese), Some(&34));
+    assert_eq!(languages.get(&ScenarioLanguage::English), Some(&10));
+    assert_eq!(languages.get(&ScenarioLanguage::Mixed), Some(&4));
+}
+
+#[test]
+fn evaluation_telemetry_aggregates_only_bounded_measurements() {
+    let telemetry = EvaluationTelemetryTap::default();
+    telemetry.record_model_turn_at(
+        &super::model_gateway::GatewayResponse {
+            content: Some("raw-answer-must-not-survive".into()),
+            tool_calls: vec![ToolCall {
+                id: "sensitive-call-id".into(),
+                call_type: "function".into(),
+                function: crate::ai_runtime::FunctionCall {
+                    name: "web_search".into(),
+                    arguments: r#"{"query":"private question"}"#.into(),
+                },
+            }],
+            usage: crate::ai_types::TokenUsage {
+                prompt_tokens: 11,
+                completion_tokens: 7,
+                total_tokens: 18,
+                prompt_cache_hit_tokens: 3,
+                prompt_cache_miss_tokens: 8,
+            },
+            finish_reason: "length".into(),
+            reasoning_content: Some("private reasoning".into()),
+            continuation: None,
+        },
+        31,
+    );
+    telemetry.record_stream_event_at(
+        &super::model_gateway::StreamEvent {
+            request_id: "secret-request".into(),
+            event_type: super::model_gateway::StreamEventType::Token,
+            data: super::model_gateway::StreamEventData::Token {
+                token: "private visible token".into(),
+                replace_visible: false,
+            },
+            surface: super::model_gateway::StreamSurface::VisibleAnswerSanitized,
+            classified: false,
+        },
+        23,
+    );
+    telemetry.record_truncation(TruncationOutcome::ToolResultTruncated);
+    telemetry.record_budget(BudgetOutcome::OutputBudgetReached);
+
+    let snapshot = telemetry.snapshot();
+    let serialized = serde_json::to_string(&snapshot).expect("safe telemetry summary");
+
+    assert_eq!(snapshot.model_turns(), 1);
+    assert_eq!(snapshot.tool_calls(), 1);
+    assert_eq!(snapshot.total_tokens(), 18);
+    assert_eq!(snapshot.first_visible_token_ms(), Some(23));
+    assert_eq!(snapshot.total_model_time_ms(), 31);
+    assert!(!serialized.contains("raw-answer"));
+    assert!(!serialized.contains("private"));
+    assert!(!serialized.contains("sensitive-call-id"));
+    assert!(!serialized.contains("secret-request"));
+}
+
+#[test]
+fn deterministic_smoke_is_stratified_and_full_summary_is_strictly_whitelisted() {
+    let smoke = run_deterministic_core_evaluation(EvalRunMode::Smoke).expect("deterministic smoke");
+    assert_eq!(smoke.case_count(), 12);
+    assert_eq!(smoke.boundary_case_count(), 4);
+    for group in [
+        EvidenceGroup::NoRetrieval,
+        EvidenceGroup::LocalOnly,
+        EvidenceGroup::WebOnly,
+        EvidenceGroup::Hybrid,
+    ] {
+        assert_eq!(smoke.group_count(group), 3);
+    }
+    assert_eq!(smoke.language_count(ScenarioLanguage::Chinese), 8);
+    assert_eq!(smoke.language_count(ScenarioLanguage::English), 3);
+    assert_eq!(smoke.language_count(ScenarioLanguage::Mixed), 1);
+    assert_eq!(smoke.telemetry().first_visible_token_ms(), Some(1));
+
+    let full = run_deterministic_core_evaluation(EvalRunMode::Full).expect("deterministic full");
+    assert_eq!(full.case_count(), 48);
+    assert_eq!(full.passed(), 48);
+    let serialized = serialize_evaluation_summary(&full).expect("strict summary");
+    let value: serde_json::Value = serde_json::from_str(&serialized).expect("summary json");
+    let keys = value
+        .as_object()
+        .expect("summary object")
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(
+        keys,
+        std::collections::BTreeSet::from([
+            "schemaVersion",
+            "evidenceLevel",
+            "runMode",
+            "caseCount",
+            "passed",
+            "failed",
+            "boundaryCaseCount",
+            "groups",
+            "languages",
+            "telemetry",
+            "cases",
+        ])
+    );
+    assert_eq!(value["evidenceLevel"], "deterministic_fixture");
+    assert!(!serialized.contains("请在不检索"));
+    for forbidden in [
+        "rawPrompt",
+        "rawAnswer",
+        "path",
+        "url",
+        "evidenceBody",
+        "toolBody",
+        "apiKey",
+    ] {
+        assert!(!serialized.contains(forbidden));
+    }
+}
+
+#[test]
+fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested() {
+    let Ok(mode) = std::env::var("IRIS_AGENT_EVAL_MODE") else {
+        return;
+    };
+    let (mode, file_name) = match mode.as_str() {
+        "smoke" => (EvalRunMode::Smoke, "core-smoke.json"),
+        "full" => (EvalRunMode::Full, "core-full.json"),
+        _ => panic!("agent_eval_mode_invalid"),
+    };
+    let summary = run_deterministic_core_evaluation(mode).expect("deterministic evaluation");
+    let serialized = serialize_evaluation_summary(&summary).expect("strict summary");
+    let output_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("target/agent-eval");
+    std::fs::create_dir_all(&output_dir).expect("create ignored evaluation output");
+    std::fs::write(output_dir.join(file_name), serialized)
+        .expect("write strict evaluation summary");
 }

@@ -4,6 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
 use super::domain_executor::{AuthorizedDomainMaterial, DomainExecutor, DomainMaterialRole};
 use super::policy_decision_engine::RunPolicyDecision;
@@ -708,6 +709,73 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
         "稳定片段"
     );
     assert_eq!(sink.events.lock().expect("sink lock").len(), 1);
+}
+
+#[test]
+fn evaluation_stream_tap_observes_first_visible_token_without_persisting_measurements() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".to_string(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: event_state_version(&preparing),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在生成答复".to_string(),
+            },
+        },
+    )
+    .expect("running");
+    let sink = RecordingSink::default();
+    let telemetry = EvaluationTelemetryTap::default();
+    let mut observer = AgentRunStreamObserver::new_with_eval_telemetry(
+        &db,
+        &accepted.run_id,
+        event_state_version(&running),
+        &sink,
+        false,
+        telemetry.clone(),
+    );
+    let before = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("before replay")
+        .expect("run");
+
+    observer
+        .observe(
+            &StreamEvent {
+                request_id: "raw-request-id".to_string(),
+                event_type: StreamEventType::Token,
+                data: StreamEventData::Token {
+                    token: "visible but never measured as text".to_string(),
+                    replace_visible: false,
+                },
+                surface: StreamSurface::VisibleAnswerSanitized,
+                classified: false,
+            },
+            0,
+        )
+        .expect("observe");
+
+    let after = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("after replay")
+        .expect("run");
+    assert!(telemetry.snapshot().first_visible_token_ms().is_some());
+    assert_eq!(after.events.len(), before.events.len());
 }
 
 #[test]

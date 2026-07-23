@@ -10,7 +10,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// Minimal evidence needed to answer one evaluation case.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EvidenceGroup {
     NoRetrieval,
@@ -20,7 +20,7 @@ pub(crate) enum EvidenceGroup {
 }
 
 /// Whether Web access is available to the evaluated Run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum WebState {
     Offline,
@@ -987,6 +987,1041 @@ fn validate_observation(
         }
     }
     Ok(())
+}
+
+/// Closed language classes used by the core capacity suite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ScenarioLanguage {
+    Chinese,
+    English,
+    Mixed,
+}
+
+/// One generated core scenario. The prompt itself remains an ephemeral fixture
+/// concern; this contract carries only closed classes and bounded synthetic IDs.
+#[derive(Debug, Clone)]
+pub(crate) struct CoreScenario {
+    base_question_id: u32,
+    language: ScenarioLanguage,
+    hard_boundary: bool,
+    prompt: &'static str,
+    manifest: CaseManifest,
+}
+
+impl CoreScenario {
+    pub(crate) fn case_id(&self) -> u32 {
+        parse_case_ordinal(&self.manifest.id)
+            .expect("generated scenario IDs are validated")
+            .0
+    }
+
+    pub(crate) const fn base_question_id(&self) -> u32 {
+        self.base_question_id
+    }
+
+    pub(crate) const fn evidence_group(&self) -> EvidenceGroup {
+        self.manifest.evidence_group
+    }
+
+    pub(crate) const fn web_state(&self) -> WebState {
+        self.manifest.web_state
+    }
+
+    pub(crate) const fn language(&self) -> ScenarioLanguage {
+        self.language
+    }
+
+    pub(crate) const fn prompt(&self) -> &'static str {
+        self.prompt
+    }
+
+    const fn is_hard_boundary(&self) -> bool {
+        self.hard_boundary
+    }
+}
+
+#[derive(Clone, Copy)]
+struct BaseQuestionPlan {
+    group: EvidenceGroup,
+    language: ScenarioLanguage,
+    domain: &'static str,
+    answer_mode: AnswerMode,
+    prompt: &'static str,
+}
+
+const BASE_QUESTION_PLANS: [BaseQuestionPlan; 24] = [
+    BaseQuestionPlan {
+        group: EvidenceGroup::NoRetrieval,
+        language: ScenarioLanguage::Chinese,
+        domain: "writing",
+        answer_mode: AnswerMode::Creative,
+        prompt: "请在不检索任何资料的前提下，写一个三句式的产品发布开场白。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::NoRetrieval,
+        language: ScenarioLanguage::Chinese,
+        domain: "rewrite",
+        answer_mode: AnswerMode::Rewrite,
+        prompt: "请把“我们需要尽快解决这个问题”改写得更具体、克制，不增加新事实。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::NoRetrieval,
+        language: ScenarioLanguage::Chinese,
+        domain: "reasoning",
+        answer_mode: AnswerMode::Creative,
+        prompt: "请解释为什么反例足以否定全称命题，并给出一个纯虚构例子。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::NoRetrieval,
+        language: ScenarioLanguage::Chinese,
+        domain: "planning",
+        answer_mode: AnswerMode::Creative,
+        prompt: "请设计一个不依赖外部资料的十五分钟复盘流程，限定为四步。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::NoRetrieval,
+        language: ScenarioLanguage::English,
+        domain: "writing",
+        answer_mode: AnswerMode::Rewrite,
+        prompt: "Rewrite this synthetic status update in a concise, neutral tone without adding facts.",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::NoRetrieval,
+        language: ScenarioLanguage::Mixed,
+        domain: "engineering",
+        answer_mode: AnswerMode::Creative,
+        prompt: "用中文解释 idempotency，并用 one short English example 收尾；不要检索。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::LocalOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "notes",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "仅根据明确附带的 synthetic 项目笔记，列出已决定事项并逐条引用。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::LocalOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "project",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "根据授权的本地项目资料总结里程碑；联网开关不改变所需证据范围。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::LocalOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "research",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "从授权本地材料提炼三个研究假设，不得读取未授权笔记。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::LocalOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "meeting",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "根据本地会议记录生成行动项、负责人代号与依据引用。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::LocalOnly,
+        language: ScenarioLanguage::English,
+        domain: "notes",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "Summarize the explicitly authorized synthetic note and cite each claim.",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::LocalOnly,
+        language: ScenarioLanguage::English,
+        domain: "project",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "Compare milestones across the authorized local project scope without using Web facts.",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::WebOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "current-events",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "核实 synthetic 产品今天的公开状态，并为所有时效性事实提供网页证据。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::WebOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "market",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "查找 synthetic 市场的最新公开规模估计，区分事实与不确定性。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::WebOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "standards",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "核对 synthetic 标准的当前版本与发布日期，给出来源。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::WebOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "software",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "确认 synthetic 软件当前稳定版本，不使用本地笔记作为版本事实。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::WebOnly,
+        language: ScenarioLanguage::Chinese,
+        domain: "policy",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "检索 synthetic 政策的最新公开文本，并说明无法验证时的限制。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::WebOnly,
+        language: ScenarioLanguage::English,
+        domain: "research",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "Find the current public status of the synthetic study and cite supporting Web evidence.",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::Hybrid,
+        language: ScenarioLanguage::Chinese,
+        domain: "competitive-analysis",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "把授权本地方案与 synthetic 竞品的最新公开信息对比，分别引用本地与网页证据。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::Hybrid,
+        language: ScenarioLanguage::Chinese,
+        domain: "project-risk",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "结合本地风险登记与最新公开依赖状态，给出证据分层的风险判断。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::Hybrid,
+        language: ScenarioLanguage::Chinese,
+        domain: "technical-review",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "用授权设计记录解释内部约束，再核实外部 synthetic API 的当前兼容性。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::Hybrid,
+        language: ScenarioLanguage::Chinese,
+        domain: "decision-support",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "根据本地决策标准和最新公开事实比较两个 synthetic 选项。",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::Hybrid,
+        language: ScenarioLanguage::English,
+        domain: "research",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "Compare the authorized local hypothesis with current public synthetic evidence and cite both.",
+    },
+    BaseQuestionPlan {
+        group: EvidenceGroup::Hybrid,
+        language: ScenarioLanguage::Mixed,
+        domain: "engineering",
+        answer_mode: AnswerMode::EvidenceGrounded,
+        prompt: "依据本地 design note 与最新 Web status 做 gap analysis，并清楚区分两类来源。",
+    },
+];
+
+/// Generate the fixed 48-case core matrix from 24 base questions. Each base
+/// question keeps its language and evidence class across one Offline and one
+/// Online variant; enabling Web therefore never changes the evidence contract.
+pub(crate) fn generate_core_scenarios() -> Result<Vec<CoreScenario>, EvalContractError> {
+    let mut scenarios = Vec::with_capacity(BASE_QUESTION_PLANS.len() * 2);
+    let mut group_base_index = HashMap::<EvidenceGroup, usize>::new();
+    for (base_index, plan) in BASE_QUESTION_PLANS.iter().copied().enumerate() {
+        let ordinal_in_group = *group_base_index.entry(plan.group).or_insert(0);
+        *group_base_index.entry(plan.group).or_insert(0) += 1;
+        for web_state in [WebState::Offline, WebState::Online] {
+            let case_ordinal = u32::try_from(scenarios.len() + 1)
+                .map_err(|_| EvalContractError::new("core_case_count_invalid"))?;
+            let base_question_id = u32::try_from(base_index + 1)
+                .map_err(|_| EvalContractError::new("core_base_count_invalid"))?;
+            let manifest = build_core_manifest(case_ordinal, plan, web_state, ordinal_in_group);
+            manifest.validate()?;
+            scenarios.push(CoreScenario {
+                base_question_id,
+                language: plan.language,
+                hard_boundary: ordinal_in_group == 0 && web_state == WebState::Offline,
+                prompt: plan.prompt,
+                manifest,
+            });
+        }
+    }
+    validate_core_matrix(&scenarios)?;
+    Ok(scenarios)
+}
+
+fn build_core_manifest(
+    case_ordinal: u32,
+    plan: BaseQuestionPlan,
+    web_state: WebState,
+    ordinal_in_group: usize,
+) -> CaseManifest {
+    let local_id = format!("local-{case_ordinal}");
+    let web_id = format!("web-{case_ordinal}");
+    let local_fact_id = format!("fact-local-{case_ordinal}");
+    let web_fact_id = format!("fact-web-{case_ordinal}");
+    let needs_local = matches!(plan.group, EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid);
+    let needs_web = matches!(plan.group, EvidenceGroup::WebOnly | EvidenceGroup::Hybrid);
+    let implicit_vault = if needs_local && ordinal_in_group % 2 == 1 {
+        ImplicitVaultExpectation::Allowed
+    } else {
+        ImplicitVaultExpectation::Forbidden
+    };
+    let explicit_reference_ids =
+        if needs_local && implicit_vault == ImplicitVaultExpectation::Forbidden {
+            vec![local_id.clone()]
+        } else {
+            Vec::new()
+        };
+    let mut available_sources = Vec::new();
+    let mut required_sources = Vec::new();
+    let mut required_facts = Vec::new();
+    if needs_local {
+        let source = RequiredSource {
+            id: local_id.clone(),
+            kind: SourceKind::Local,
+        };
+        available_sources.push(source.clone());
+        required_sources.push(source);
+        required_facts.push(RequiredFact {
+            id: local_fact_id,
+            allowed_sources: vec![local_id],
+            citation_required: true,
+        });
+    }
+    if needs_web {
+        let source = RequiredSource {
+            id: web_id.clone(),
+            kind: SourceKind::Web,
+        };
+        available_sources.push(source.clone());
+        required_sources.push(source);
+        required_facts.push(RequiredFact {
+            id: web_fact_id,
+            allowed_sources: vec![web_id],
+            citation_required: true,
+        });
+    }
+
+    let local_tools = [
+        "read_note",
+        "search_hybrid",
+        "list_vault",
+        "get_outline",
+        "get_backlinks",
+    ];
+    let mut allowed = Vec::new();
+    let mut forbidden = Vec::new();
+    for tool in local_tools {
+        if needs_local {
+            allowed.push(tool.to_string());
+        } else {
+            forbidden.push(tool.to_string());
+        }
+    }
+    // In Online mode a model may decide to search even when Web evidence is
+    // unnecessary. The evaluator records that as route inefficiency, not a
+    // permission failure, unless the answer becomes contaminated.
+    allowed.push("web_search".to_string());
+
+    CaseManifest {
+        schema_version: "agent-answer-v1".to_string(),
+        id: format!("case-{case_ordinal}"),
+        evidence_group: plan.group,
+        language: match plan.language {
+            ScenarioLanguage::Chinese => "zh",
+            ScenarioLanguage::English => "en",
+            ScenarioLanguage::Mixed => "mixed",
+        }
+        .to_string(),
+        domain: plan.domain.to_string(),
+        web_state,
+        local_authorization: LocalAuthorization {
+            explicit_reference_ids,
+            explicit_scope_id: None,
+            explicit_scope_source_ids: Vec::new(),
+            implicit_vault,
+        },
+        available_sources,
+        required_facts,
+        required_sources,
+        tool_policy: ToolPolicy {
+            allowed,
+            forbidden,
+            web_search: if needs_web {
+                WebSearchPolicy::Required
+            } else {
+                WebSearchPolicy::Optional
+            },
+        },
+        answer_mode: plan.answer_mode,
+        citation_expectation: if needs_local || needs_web {
+            CitationExpectation::Required
+        } else {
+            CitationExpectation::None
+        },
+        disclosure_constraints: if needs_web && web_state == WebState::Offline {
+            vec!["web-offline-uncertainty".to_string()]
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+fn validate_core_matrix(scenarios: &[CoreScenario]) -> Result<(), EvalContractError> {
+    if scenarios.len() != 48 {
+        return Err(EvalContractError::new("core_case_count_invalid"));
+    }
+    for group in [
+        EvidenceGroup::NoRetrieval,
+        EvidenceGroup::LocalOnly,
+        EvidenceGroup::WebOnly,
+        EvidenceGroup::Hybrid,
+    ] {
+        if scenarios
+            .iter()
+            .filter(|scenario| scenario.evidence_group() == group)
+            .count()
+            != 12
+        {
+            return Err(EvalContractError::new("core_group_distribution_invalid"));
+        }
+    }
+    let language_count = |language| {
+        scenarios
+            .iter()
+            .filter(|scenario| scenario.language() == language)
+            .count()
+    };
+    // An Offline/Online pair shares one base question and language, hence all
+    // counts are even. 34/10/4 minimizes error against 70/20/10 for 48 cases
+    // while preserving those symmetric variants.
+    if language_count(ScenarioLanguage::Chinese) != 34
+        || language_count(ScenarioLanguage::English) != 10
+        || language_count(ScenarioLanguage::Mixed) != 4
+    {
+        return Err(EvalContractError::new("core_language_distribution_invalid"));
+    }
+    Ok(())
+}
+
+/// Closed finish-reason classes; raw provider text never enters a result file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum FinishReasonClass {
+    Stop,
+    ToolCalls,
+    Length,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TruncationOutcome {
+    None,
+    ToolResultTruncated,
+    FinalOutputRejected,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BudgetOutcome {
+    WithinBudget,
+    ModelTurnsExhausted,
+    ToolCallsExhausted,
+    OutputBudgetReached,
+}
+
+#[derive(Debug, Default)]
+struct EvaluationTelemetryState {
+    model_turns: u32,
+    tool_calls: u32,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    cache_hit_tokens: u64,
+    cache_miss_tokens: u64,
+    first_visible_token_ms: Option<u64>,
+    total_model_time_ms: u64,
+    finish_stop: u32,
+    finish_tool_calls: u32,
+    finish_length: u32,
+    finish_other: u32,
+    truncation_none: u32,
+    truncation_tool_result: u32,
+    truncation_final_output: u32,
+    budget_within: u32,
+    budget_model_turns: u32,
+    budget_tool_calls: u32,
+    budget_output: u32,
+}
+
+/// Cloneable, evaluation-only in-memory tap. It owns no database handle and
+/// exposes no raw provider, prompt, answer, token, tool-argument, or path data.
+#[derive(Debug, Clone)]
+pub(crate) struct EvaluationTelemetryTap {
+    state: std::sync::Arc<std::sync::Mutex<EvaluationTelemetryState>>,
+    started_at: std::sync::Arc<std::time::Instant>,
+}
+
+impl Default for EvaluationTelemetryTap {
+    fn default() -> Self {
+        Self {
+            state: std::sync::Arc::new(std::sync::Mutex::new(EvaluationTelemetryState::default())),
+            started_at: std::sync::Arc::new(std::time::Instant::now()),
+        }
+    }
+}
+
+impl EvaluationTelemetryTap {
+    pub(crate) fn record_model_turn_at(
+        &self,
+        response: &crate::ai_runtime::model_gateway::GatewayResponse,
+        elapsed_ms: u64,
+    ) {
+        if let Ok(mut state) = self.state.lock() {
+            state.model_turns = state.model_turns.saturating_add(1);
+            state.tool_calls = state
+                .tool_calls
+                .saturating_add(response.tool_calls.len().min(u32::MAX as usize) as u32);
+            state.prompt_tokens = state
+                .prompt_tokens
+                .saturating_add(u64::from(response.usage.prompt_tokens));
+            state.completion_tokens = state
+                .completion_tokens
+                .saturating_add(u64::from(response.usage.completion_tokens));
+            state.total_tokens = state
+                .total_tokens
+                .saturating_add(u64::from(response.usage.total_tokens));
+            state.cache_hit_tokens = state
+                .cache_hit_tokens
+                .saturating_add(u64::from(response.usage.prompt_cache_hit_tokens));
+            state.cache_miss_tokens = state
+                .cache_miss_tokens
+                .saturating_add(u64::from(response.usage.prompt_cache_miss_tokens));
+            state.total_model_time_ms = state.total_model_time_ms.saturating_add(elapsed_ms);
+            match classify_finish_reason(&response.finish_reason) {
+                FinishReasonClass::Stop => state.finish_stop = state.finish_stop.saturating_add(1),
+                FinishReasonClass::ToolCalls => {
+                    state.finish_tool_calls = state.finish_tool_calls.saturating_add(1);
+                }
+                FinishReasonClass::Length => {
+                    state.finish_length = state.finish_length.saturating_add(1);
+                }
+                FinishReasonClass::Other => {
+                    state.finish_other = state.finish_other.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn record_model_turn(
+        &self,
+        response: &crate::ai_runtime::model_gateway::GatewayResponse,
+        started_at: std::time::Instant,
+    ) {
+        self.record_model_turn_at(
+            response,
+            started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+        );
+    }
+
+    pub(crate) fn record_stream_event_at(
+        &self,
+        event: &crate::ai_runtime::model_gateway::StreamEvent,
+        elapsed_ms: u64,
+    ) {
+        if !matches!(
+            event.surface,
+            crate::ai_runtime::model_gateway::StreamSurface::VisibleAnswer
+                | crate::ai_runtime::model_gateway::StreamSurface::VisibleAnswerSanitized
+        ) || !matches!(
+            event.data,
+            crate::ai_runtime::model_gateway::StreamEventData::Token { .. }
+        ) {
+            return;
+        }
+        if let Ok(mut state) = self.state.lock() {
+            state.first_visible_token_ms = Some(
+                state
+                    .first_visible_token_ms
+                    .map_or(elapsed_ms, |current| current.min(elapsed_ms)),
+            );
+        }
+    }
+
+    pub(crate) fn record_stream_event(
+        &self,
+        event: &crate::ai_runtime::model_gateway::StreamEvent,
+    ) {
+        self.record_stream_event_at(
+            event,
+            self.started_at
+                .elapsed()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64,
+        );
+    }
+
+    pub(crate) fn record_truncation(&self, outcome: TruncationOutcome) {
+        if let Ok(mut state) = self.state.lock() {
+            match outcome {
+                TruncationOutcome::None => {
+                    state.truncation_none = state.truncation_none.saturating_add(1);
+                }
+                TruncationOutcome::ToolResultTruncated => {
+                    state.truncation_tool_result = state.truncation_tool_result.saturating_add(1);
+                }
+                TruncationOutcome::FinalOutputRejected => {
+                    state.truncation_final_output = state.truncation_final_output.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn record_budget(&self, outcome: BudgetOutcome) {
+        if let Ok(mut state) = self.state.lock() {
+            match outcome {
+                BudgetOutcome::WithinBudget => {
+                    state.budget_within = state.budget_within.saturating_add(1);
+                }
+                BudgetOutcome::ModelTurnsExhausted => {
+                    state.budget_model_turns = state.budget_model_turns.saturating_add(1);
+                }
+                BudgetOutcome::ToolCallsExhausted => {
+                    state.budget_tool_calls = state.budget_tool_calls.saturating_add(1);
+                }
+                BudgetOutcome::OutputBudgetReached => {
+                    state.budget_output = state.budget_output.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> EvaluationTelemetrySummary {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        EvaluationTelemetrySummary {
+            model_turns: state.model_turns,
+            tool_calls: state.tool_calls,
+            prompt_tokens: state.prompt_tokens,
+            completion_tokens: state.completion_tokens,
+            total_tokens: state.total_tokens,
+            cache_hit_tokens: state.cache_hit_tokens,
+            cache_miss_tokens: state.cache_miss_tokens,
+            first_visible_token_ms: state.first_visible_token_ms,
+            total_model_time_ms: state.total_model_time_ms,
+            finish_reasons: FinishReasonCounts {
+                stop: state.finish_stop,
+                tool_calls: state.finish_tool_calls,
+                length: state.finish_length,
+                other: state.finish_other,
+            },
+            truncations: TruncationCounts {
+                none: state.truncation_none,
+                tool_result: state.truncation_tool_result,
+                final_output: state.truncation_final_output,
+            },
+            budgets: BudgetCounts {
+                within: state.budget_within,
+                model_turns: state.budget_model_turns,
+                tool_calls: state.budget_tool_calls,
+                output: state.budget_output,
+            },
+        }
+    }
+}
+
+fn classify_finish_reason(value: &str) -> FinishReasonClass {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "stop" | "end_turn" | "completed" => FinishReasonClass::Stop,
+        "tool_calls" | "tool_use" => FinishReasonClass::ToolCalls,
+        "length" | "max_tokens" => FinishReasonClass::Length,
+        _ => FinishReasonClass::Other,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FinishReasonCounts {
+    stop: u32,
+    tool_calls: u32,
+    length: u32,
+    other: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TruncationCounts {
+    none: u32,
+    tool_result: u32,
+    final_output: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct BudgetCounts {
+    within: u32,
+    model_turns: u32,
+    tool_calls: u32,
+    output: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EvaluationTelemetrySummary {
+    model_turns: u32,
+    tool_calls: u32,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+    cache_hit_tokens: u64,
+    cache_miss_tokens: u64,
+    first_visible_token_ms: Option<u64>,
+    total_model_time_ms: u64,
+    finish_reasons: FinishReasonCounts,
+    truncations: TruncationCounts,
+    budgets: BudgetCounts,
+}
+
+impl EvaluationTelemetrySummary {
+    pub(crate) const fn model_turns(&self) -> u32 {
+        self.model_turns
+    }
+
+    pub(crate) const fn tool_calls(&self) -> u32 {
+        self.tool_calls
+    }
+
+    pub(crate) const fn total_tokens(&self) -> u64 {
+        self.total_tokens
+    }
+
+    pub(crate) const fn first_visible_token_ms(&self) -> Option<u64> {
+        self.first_visible_token_ms
+    }
+
+    pub(crate) const fn total_model_time_ms(&self) -> u64 {
+        self.total_model_time_ms
+    }
+
+    pub(crate) const fn tool_result_truncations(&self) -> u32 {
+        self.truncations.tool_result
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EvalRunMode {
+    Smoke,
+    Full,
+}
+
+/// Strength of the evidence behind one result file. Deterministic fixtures
+/// validate Iris contracts and routing logic, not live model capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EvaluationEvidenceLevel {
+    DeterministicFixture,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GroupCounts {
+    no_retrieval: u32,
+    local_only: u32,
+    web_only: u32,
+    hybrid: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LanguageCounts {
+    chinese: u32,
+    english: u32,
+    mixed: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct EvaluationCaseSummary {
+    case_id: u32,
+    evidence_group: EvidenceGroup,
+    web_state: WebState,
+    language: ScenarioLanguage,
+    hard_boundary: bool,
+    overall_pass: bool,
+}
+
+/// Closed, persistence-safe evaluation result. All fields are fixed enums,
+/// bounded counters, booleans, or the Task-2 numeric case ordinal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EvaluationSummary {
+    schema_version: &'static str,
+    evidence_level: EvaluationEvidenceLevel,
+    run_mode: EvalRunMode,
+    case_count: u32,
+    passed: u32,
+    failed: u32,
+    boundary_case_count: u32,
+    groups: GroupCounts,
+    languages: LanguageCounts,
+    telemetry: EvaluationTelemetrySummary,
+    cases: Vec<EvaluationCaseSummary>,
+}
+
+impl EvaluationSummary {
+    pub(crate) const fn case_count(&self) -> u32 {
+        self.case_count
+    }
+
+    pub(crate) const fn passed(&self) -> u32 {
+        self.passed
+    }
+
+    pub(crate) const fn boundary_case_count(&self) -> u32 {
+        self.boundary_case_count
+    }
+
+    pub(crate) const fn group_count(&self, group: EvidenceGroup) -> u32 {
+        match group {
+            EvidenceGroup::NoRetrieval => self.groups.no_retrieval,
+            EvidenceGroup::LocalOnly => self.groups.local_only,
+            EvidenceGroup::WebOnly => self.groups.web_only,
+            EvidenceGroup::Hybrid => self.groups.hybrid,
+        }
+    }
+
+    pub(crate) const fn language_count(&self, language: ScenarioLanguage) -> u32 {
+        match language {
+            ScenarioLanguage::Chinese => self.languages.chinese,
+            ScenarioLanguage::English => self.languages.english,
+            ScenarioLanguage::Mixed => self.languages.mixed,
+        }
+    }
+
+    pub(crate) const fn telemetry(&self) -> &EvaluationTelemetrySummary {
+        &self.telemetry
+    }
+}
+
+/// Run the synthetic core matrix without a network peer or application DB.
+pub(crate) fn run_deterministic_core_evaluation(
+    mode: EvalRunMode,
+) -> Result<EvaluationSummary, EvalContractError> {
+    let scenarios = generate_core_scenarios()?;
+    let selected = match mode {
+        EvalRunMode::Full => scenarios,
+        EvalRunMode::Smoke => {
+            let mut chinese_online = HashSet::<EvidenceGroup>::new();
+            let mut minority_online = HashSet::<EvidenceGroup>::new();
+            scenarios
+                .into_iter()
+                .filter(|scenario| {
+                    if scenario.is_hard_boundary() {
+                        return true;
+                    }
+                    if scenario.web_state() != WebState::Online {
+                        return false;
+                    }
+                    if scenario.language() == ScenarioLanguage::Chinese {
+                        return chinese_online.insert(scenario.evidence_group());
+                    }
+                    let expected_minority =
+                        if scenario.evidence_group() == EvidenceGroup::NoRetrieval {
+                            ScenarioLanguage::Mixed
+                        } else {
+                            ScenarioLanguage::English
+                        };
+                    scenario.language() == expected_minority
+                        && minority_online.insert(scenario.evidence_group())
+                })
+                .collect()
+        }
+    };
+    let telemetry = EvaluationTelemetryTap::default();
+    let mut cases = Vec::with_capacity(selected.len());
+    let mut passed = 0_u32;
+    for scenario in &selected {
+        let observation = deterministic_observation(scenario);
+        let verdict = evaluate_case(&scenario.manifest, &observation)?;
+        if verdict.overall_pass() {
+            passed = passed.saturating_add(1);
+        }
+        let response = crate::ai_runtime::model_gateway::GatewayResponse {
+            content: Some("synthetic".to_string()),
+            tool_calls: observation
+                .tool_calls
+                .iter()
+                .enumerate()
+                .map(|(index, name)| crate::ai_runtime::ToolCall {
+                    id: format!("call-{}", index + 1),
+                    call_type: "function".to_string(),
+                    function: crate::ai_runtime::FunctionCall {
+                        name: name.clone(),
+                        arguments: "{}".to_string(),
+                    },
+                })
+                .collect(),
+            usage: crate::ai_types::TokenUsage {
+                prompt_tokens: 8,
+                completion_tokens: 4,
+                total_tokens: 12,
+                prompt_cache_hit_tokens: 0,
+                prompt_cache_miss_tokens: 8,
+            },
+            finish_reason: "stop".to_string(),
+            reasoning_content: None,
+            continuation: None,
+        };
+        telemetry.record_model_turn_at(&response, 1);
+        telemetry.record_stream_event_at(
+            &crate::ai_runtime::model_gateway::StreamEvent {
+                request_id: "synthetic".to_string(),
+                event_type: crate::ai_runtime::model_gateway::StreamEventType::Token,
+                data: crate::ai_runtime::model_gateway::StreamEventData::Token {
+                    token: "x".to_string(),
+                    replace_visible: false,
+                },
+                surface: crate::ai_runtime::model_gateway::StreamSurface::VisibleAnswerSanitized,
+                classified: false,
+            },
+            1,
+        );
+        telemetry.record_budget(BudgetOutcome::WithinBudget);
+        telemetry.record_truncation(TruncationOutcome::None);
+        cases.push(EvaluationCaseSummary {
+            case_id: scenario.case_id(),
+            evidence_group: scenario.evidence_group(),
+            web_state: scenario.web_state(),
+            language: scenario.language(),
+            hard_boundary: scenario.is_hard_boundary(),
+            overall_pass: verdict.overall_pass(),
+        });
+    }
+    let group_count = |group| {
+        selected
+            .iter()
+            .filter(|scenario| scenario.evidence_group() == group)
+            .count()
+            .min(u32::MAX as usize) as u32
+    };
+    let language_count = |language| {
+        selected
+            .iter()
+            .filter(|scenario| scenario.language() == language)
+            .count()
+            .min(u32::MAX as usize) as u32
+    };
+    let case_count = selected.len().min(u32::MAX as usize) as u32;
+    Ok(EvaluationSummary {
+        schema_version: "agent-eval-summary-v1",
+        evidence_level: EvaluationEvidenceLevel::DeterministicFixture,
+        run_mode: mode,
+        case_count,
+        passed,
+        failed: case_count.saturating_sub(passed),
+        boundary_case_count: selected
+            .iter()
+            .filter(|scenario| scenario.is_hard_boundary())
+            .count()
+            .min(u32::MAX as usize) as u32,
+        groups: GroupCounts {
+            no_retrieval: group_count(EvidenceGroup::NoRetrieval),
+            local_only: group_count(EvidenceGroup::LocalOnly),
+            web_only: group_count(EvidenceGroup::WebOnly),
+            hybrid: group_count(EvidenceGroup::Hybrid),
+        },
+        languages: LanguageCounts {
+            chinese: language_count(ScenarioLanguage::Chinese),
+            english: language_count(ScenarioLanguage::English),
+            mixed: language_count(ScenarioLanguage::Mixed),
+        },
+        telemetry: telemetry.snapshot(),
+        cases,
+    })
+}
+
+fn deterministic_observation(scenario: &CoreScenario) -> AnswerObservation {
+    let offline = scenario.web_state() == WebState::Offline;
+    let sources = scenario
+        .manifest
+        .required_sources
+        .iter()
+        .filter(|source| !(offline && source.kind == SourceKind::Web))
+        .map(|source| ObservedSource {
+            id: source.id.clone(),
+            kind: source.kind,
+            authorization_scope_id: None,
+        })
+        .collect::<Vec<_>>();
+    let observed_ids = sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect::<HashSet<_>>();
+    let fact_supports = scenario
+        .manifest
+        .required_facts
+        .iter()
+        .filter_map(|fact| {
+            fact.allowed_sources
+                .iter()
+                .find(|source| observed_ids.contains(source.as_str()))
+                .map(|source| FactSupportObservation {
+                    fact_id: fact.id.clone(),
+                    source_ids: vec![source.clone()],
+                })
+        })
+        .collect::<Vec<_>>();
+    let citations = fact_supports
+        .iter()
+        .map(|support| CitationObservation {
+            fact_id: support.fact_id.clone(),
+            source_id: support.source_ids[0].clone(),
+        })
+        .collect();
+    let mut tool_calls = Vec::new();
+    if matches!(
+        scenario.evidence_group(),
+        EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
+    ) {
+        tool_calls.push("search_hybrid".to_string());
+    }
+    if !offline
+        && matches!(
+            scenario.evidence_group(),
+            EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
+        )
+    {
+        tool_calls.push("web_search".to_string());
+    }
+    let offline_web = offline
+        && matches!(
+            scenario.evidence_group(),
+            EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
+        );
+    AnswerObservation {
+        case_id: scenario.manifest.id.clone(),
+        sources,
+        fact_supports,
+        contradicted_fact_ids: Vec::new(),
+        citations,
+        tool_calls,
+        disclosures: scenario.manifest.disclosure_constraints.clone(),
+        degraded: offline_web,
+        clarification_requested: false,
+        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
+        safety_violations: Vec::new(),
+    }
+}
+
+/// Serialize only the closed summary type; callers cannot attach arbitrary
+/// metadata, raw prompts, model output, paths, URLs, evidence, or tool bodies.
+pub(crate) fn serialize_evaluation_summary(
+    summary: &EvaluationSummary,
+) -> Result<String, EvalContractError> {
+    serde_json::to_string_pretty(summary)
+        .map_err(|_| EvalContractError::new("evaluation_summary_serialization_failed"))
 }
 
 /// MCP operation represented by one configured capability mapping.

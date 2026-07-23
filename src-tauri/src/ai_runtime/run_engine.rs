@@ -738,6 +738,8 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     emitted_generating_answer_stage: bool,
     reasoning_summaries: BTreeMap<String, String>,
     persisted_reasoning_summaries: BTreeMap<String, String>,
+    #[cfg(test)]
+    evaluation_telemetry: Option<crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
 }
 
 impl<'a> AgentRunStreamObserver<'a> {
@@ -774,7 +776,31 @@ impl<'a> AgentRunStreamObserver<'a> {
             emitted_generating_answer_stage: false,
             reasoning_summaries: BTreeMap::new(),
             persisted_reasoning_summaries: BTreeMap::new(),
+            #[cfg(test)]
+            evaluation_telemetry: None,
         }
+    }
+
+    /// Evaluation-only observer constructor. Measurements remain in the
+    /// supplied memory tap and never enter the Run repository.
+    #[cfg(test)]
+    pub(crate) fn new_with_eval_telemetry(
+        db: &'a Database,
+        run_id: &'a str,
+        running_state_version: u64,
+        sink: &'a dyn RunEventSink,
+        defer_visible_deltas: bool,
+        telemetry: crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
+    ) -> Self {
+        let mut observer = Self::new_with_deferred_deltas(
+            db,
+            run_id,
+            running_state_version,
+            sink,
+            defer_visible_deltas,
+        );
+        observer.evaluation_telemetry = Some(telemetry);
+        observer
     }
 }
 
@@ -1085,6 +1111,10 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
         event: &crate::ai_runtime::model_gateway::StreamEvent,
         _token_index: u32,
     ) -> AppResult<()> {
+        #[cfg(test)]
+        if let Some(telemetry) = &self.evaluation_telemetry {
+            telemetry.record_stream_event(event);
+        }
         match &event.data {
             crate::ai_runtime::model_gateway::StreamEventData::Token {
                 token,

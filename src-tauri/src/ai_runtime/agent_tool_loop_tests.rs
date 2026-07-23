@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
+use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
 use super::model_gateway::{StreamEventObserver, StreamSurface};
 use crate::ai_runtime::{
@@ -50,6 +51,28 @@ struct RecordingExecutor {
 }
 
 struct FailingWebExecutor;
+struct LargeResultExecutor;
+
+impl ToolLoopExecutor for LargeResultExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "body": "x".repeat(8_500) }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+}
 
 impl ToolLoopExecutor for FailingWebExecutor {
     fn execute<'a>(
@@ -333,4 +356,78 @@ async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
                 .text_content()
                 .contains("agent_run_web_provider_timeout")
     }));
+}
+
+#[tokio::test]
+async fn evaluation_tool_loop_tap_records_turns_usage_tools_and_truncation_in_memory() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call()],
+                usage: crate::ai_types::TokenUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 3,
+                    total_tokens: 13,
+                    prompt_cache_hit_tokens: 0,
+                    prompt_cache_miss_tokens: 10,
+                },
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("final answer".into()),
+                tool_calls: Vec::new(),
+                usage: crate::ai_types::TokenUsage {
+                    prompt_tokens: 12,
+                    completion_tokens: 5,
+                    total_tokens: 17,
+                    prompt_cache_hit_tokens: 4,
+                    prompt_cache_miss_tokens: 8,
+                },
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let telemetry = EvaluationTelemetryTap::default();
+    let mut observer = NoopObserver;
+    let tools = vec![ToolSpec {
+        name: "system_time_now".into(),
+        description: "Get time".into(),
+        input_schema: serde_json::json!({ "type": "object" }),
+        access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+        requires_confirmation: false,
+        max_results: None,
+        capability_affinity: Vec::new(),
+    }];
+
+    AgentToolLoop::default()
+        .execute_with_eval_telemetry(
+            &provider,
+            &LargeResultExecutor,
+            "run-eval",
+            vec![LlmMessage {
+                role: MessageRole::User,
+                content: "synthetic".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            }],
+            tools,
+            &mut observer,
+            &telemetry,
+        )
+        .await
+        .expect("evaluation loop");
+
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.model_turns(), 2);
+    assert_eq!(snapshot.tool_calls(), 1);
+    assert_eq!(snapshot.total_tokens(), 30);
+    assert_eq!(snapshot.tool_result_truncations(), 1);
 }
