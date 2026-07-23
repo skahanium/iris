@@ -2110,6 +2110,38 @@ impl LiveProfileCandidate {
             },
         }
     }
+
+    fn exact_session_binding(&self, binding_key: &str) -> String {
+        use sha2::{Digest, Sha256};
+
+        let identity = serde_json::json!({
+            "provider": self.llm.provider_id,
+            "model": self.llm.model,
+            "base": self.llm.base_url,
+            "thinking": self.llm.thinking,
+            "reasoning": self.llm.reasoning,
+            "inputBudget": self.llm.input_budget,
+            "outputBudget": self.llm.output_budget,
+            "endpointFamily": self.llm.endpoint_family,
+            "supportsStreaming": self.llm.supports_streaming,
+            "supportsTools": self.llm.supports_tools,
+            "supportsVision": self.llm.supports_vision,
+            "supportsReasoning": self.llm.supports_reasoning,
+            "mcpId": self.mcp.id,
+            "mcpKind": self.mcp.kind,
+            "mcpTransport": self.mcp.transport_kind,
+            "mcpTransportConfig": self.mcp.transport_config_json,
+            "mcpCredentialRefs": self.mcp.credential_refs_json,
+            "mcpSearch": self.mcp.web_search_mapping_json,
+            "mcpFetch": self.mcp.web_fetch_mapping_json,
+        });
+        let mut digest = Sha256::new();
+        digest.update(b"iris-agent-live-profile-session-binding-v1\0");
+        digest.update(binding_key.as_bytes());
+        digest.update(b"\0");
+        digest.update(identity.to_string().as_bytes());
+        format!("binding-{}", hex::encode(digest.finalize()))
+    }
 }
 
 /// Discover enabled live route combinations from an application database
@@ -2749,31 +2781,15 @@ pub(crate) async fn run_approved_live_pilot_with_local_doubles(
     now_seconds: u64,
     probe: &LivePilotCallProbe,
 ) -> Result<LivePilotResult, EvalContractError> {
-    let _prepared = prepare_approved_live_pilot(
+    run_approved_live_pilot_with_executor(
         session,
         approval_token,
         cost_confirmation,
         now_seconds,
         probe,
-    )?;
-    let scenarios = select_core_scenarios(EvalRunMode::Smoke)?;
-    if scenarios.len() != 12 {
-        return Err(EvalContractError::new("live_pilot_case_contract_invalid"));
-    }
-    let mut completed_case_count = 0_u32;
-    for scenario in &scenarios {
-        probe
-            .dispatch_calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        execute_headless_core_case(scenario, None).await?;
-        completed_case_count = completed_case_count.saturating_add(1);
-    }
-    Ok(LivePilotResult {
-        schema_version: "agent-live-pilot-v1",
-        required_case_count: 12,
-        completed_case_count,
-        status: "live_not_tested",
-    })
+        LivePilotCaseExecutor::LocalDoubles,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -2849,15 +2865,21 @@ async fn execute_live_pilot_case(
     Ok(response.run.state == RunState::Completed)
 }
 
-/// Execute the approved 12-case live pilot through the production headless
-/// normal service. A partial or failed set remains `live_not_tested`.
 #[cfg(test)]
-pub(crate) async fn run_approved_live_pilot(
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LivePilotCaseExecutor {
+    LocalDoubles,
+    Live,
+}
+
+#[cfg(test)]
+async fn run_approved_live_pilot_with_executor(
     session: &mut LivePreflightSession,
     approval_token: Option<&str>,
     cost_confirmation: Option<LiveCostConfirmation>,
     now_seconds: u64,
     probe: &LivePilotCallProbe,
+    executor: LivePilotCaseExecutor,
 ) -> Result<LivePilotResult, EvalContractError> {
     let prepared = prepare_approved_live_pilot(
         session,
@@ -2875,20 +2897,49 @@ pub(crate) async fn run_approved_live_pilot(
         probe
             .dispatch_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        if execute_live_pilot_case(&prepared, scenario).await? {
+        let completed = match executor {
+            LivePilotCaseExecutor::LocalDoubles => {
+                execute_headless_core_case(scenario, None).await?;
+                true
+            }
+            LivePilotCaseExecutor::Live => execute_live_pilot_case(&prepared, scenario).await?,
+        };
+        if completed {
             completed_case_count = completed_case_count.saturating_add(1);
         }
     }
+    let status = if executor == LivePilotCaseExecutor::Live && completed_case_count == 12 {
+        "live_pilot_executed"
+    } else {
+        "live_not_tested"
+    };
     Ok(LivePilotResult {
         schema_version: "agent-live-pilot-v1",
         required_case_count: 12,
         completed_case_count,
-        status: if completed_case_count == 12 {
-            "live_pilot_executed"
-        } else {
-            "live_not_tested"
-        },
+        status,
     })
+}
+
+/// Execute the approved 12-case live pilot through the production headless
+/// normal service. A partial or failed set remains `live_not_tested`.
+#[cfg(test)]
+pub(crate) async fn run_approved_live_pilot(
+    session: &mut LivePreflightSession,
+    approval_token: Option<&str>,
+    cost_confirmation: Option<LiveCostConfirmation>,
+    now_seconds: u64,
+    probe: &LivePilotCallProbe,
+) -> Result<LivePilotResult, EvalContractError> {
+    run_approved_live_pilot_with_executor(
+        session,
+        approval_token,
+        cost_confirmation,
+        now_seconds,
+        probe,
+        LivePilotCaseExecutor::Live,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -2913,7 +2964,7 @@ pub(crate) fn write_live_pilot_result(
     let canonical_parent = parent
         .canonicalize()
         .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
-    if !canonical_parent.starts_with(&canonical_target) {
+    if !canonical_parent.starts_with(&canonical_target) || output.symlink_metadata().is_ok() {
         return Err(EvalContractError::new(
             "live_pilot_output_not_ignored_target",
         ));
@@ -2936,18 +2987,36 @@ pub(crate) fn write_live_pilot_result(
         root.get("status"),
         &["live_not_tested", "live_pilot_executed"],
     )?;
+    let completed_case_count = root
+        .get("completedCaseCount")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| EvalContractError::new("live_pilot_value_invalid"))?;
+    let status = root
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("live_pilot_value_invalid"))?;
     if root
         .get("requiredCaseCount")
         .and_then(serde_json::Value::as_u64)
         != Some(12)
-        || root
-            .get("completedCaseCount")
-            .and_then(serde_json::Value::as_u64)
-            .is_none_or(|count| count > 12)
+        || completed_case_count > 12
+        || (status == "live_pilot_executed" && completed_case_count != 12)
+        || (completed_case_count < 12 && status != "live_not_tested")
     {
         return Err(EvalContractError::new("live_pilot_value_invalid"));
     }
-    std::fs::write(output, serialized)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(output)
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    use std::io::Write;
+    file.write_all(serialized.as_bytes())
         .map_err(|_| EvalContractError::new("live_pilot_output_failed"))
 }
 
@@ -2957,6 +3026,7 @@ pub(crate) fn write_live_pilot_result(
 struct StoredLiveProfileBinding {
     profile_id: String,
     capabilities: LiveCapabilityFingerprint,
+    exact_binding: String,
 }
 
 #[cfg(test)]
@@ -2965,6 +3035,7 @@ struct StoredLiveProfileBinding {
 struct StoredLivePreflightSession {
     schema_version: String,
     session_id: String,
+    binding_key: String,
     expires_at: u64,
     profiles: Vec<StoredLiveProfileBinding>,
 }
@@ -2994,26 +3065,26 @@ pub(crate) fn write_live_preflight_session_state(
     let canonical_parent = parent
         .canonicalize()
         .map_err(|_| EvalContractError::new("live_session_output_failed"))?;
-    if !canonical_parent.starts_with(&canonical_target)
-        || output
-            .symlink_metadata()
-            .is_ok_and(|metadata| metadata.file_type().is_symlink())
-    {
+    if !canonical_parent.starts_with(&canonical_target) || output.symlink_metadata().is_ok() {
         return Err(EvalContractError::new(
             "live_session_output_not_ignored_target",
         ));
     }
+    let binding_key = random_live_token("binding-key-", 32)?;
     let stored = StoredLivePreflightSession {
         schema_version: "agent-live-session-v1".to_string(),
         session_id: session.session_id.clone(),
+        binding_key: binding_key.clone(),
         expires_at,
         profiles: session
             .report
             .profiles
             .iter()
-            .map(|profile| StoredLiveProfileBinding {
+            .zip(&session.candidates)
+            .map(|(profile, candidate)| StoredLiveProfileBinding {
                 profile_id: profile.profile_id.clone(),
                 capabilities: profile.capabilities.clone(),
+                exact_binding: candidate.exact_session_binding(&binding_key),
             })
             .collect(),
     };
@@ -3023,7 +3094,7 @@ pub(crate) fn write_live_preflight_session_state(
         return Err(EvalContractError::new("live_session_too_large"));
     }
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -3047,8 +3118,60 @@ pub(crate) fn restore_and_consume_live_preflight_session(
     candidates: Vec<LiveProfileCandidate>,
     now_seconds: u64,
 ) -> Result<LivePreflightSession, EvalContractError> {
-    let serialized = std::fs::read_to_string(input)
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_preflight_workspace_invalid"))?;
+    let canonical_target = workspace
+        .join("target/agent-eval")
+        .canonicalize()
         .map_err(|_| EvalContractError::new("live_session_missing"))?;
+    let canonical_parent = input
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_session_invalid"))?
+        .canonicalize()
+        .map_err(|_| EvalContractError::new("live_session_invalid"))?;
+    let metadata = input
+        .symlink_metadata()
+        .map_err(|_| EvalContractError::new("live_session_missing"))?;
+    if canonical_parent != canonical_target
+        || !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > 64 * 1024
+    {
+        return Err(EvalContractError::new("live_session_invalid"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let parent_metadata = canonical_parent
+            .metadata()
+            .map_err(|_| EvalContractError::new("live_session_invalid"))?;
+        if metadata.uid() != parent_metadata.uid() || metadata.permissions().mode() & 0o077 != 0 {
+            return Err(EvalContractError::new("live_session_invalid"));
+        }
+    }
+    let file =
+        std::fs::File::open(input).map_err(|_| EvalContractError::new("live_session_missing"))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|_| EvalContractError::new("live_session_invalid"))?;
+    if !opened_metadata.file_type().is_file() || opened_metadata.len() > 64 * 1024 {
+        return Err(EvalContractError::new("live_session_invalid"));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if opened_metadata.uid() != metadata.uid()
+            || opened_metadata.permissions().mode() & 0o077 != 0
+        {
+            return Err(EvalContractError::new("live_session_invalid"));
+        }
+    }
+    use std::io::Read;
+    let mut serialized = String::new();
+    file.take(64 * 1024 + 1)
+        .read_to_string(&mut serialized)
+        .map_err(|_| EvalContractError::new("live_session_invalid"))?;
     if serialized.len() > 64 * 1024 {
         return Err(EvalContractError::new("live_session_too_large"));
     }
@@ -3058,6 +3181,17 @@ pub(crate) fn restore_and_consume_live_preflight_session(
     {
         return Err(EvalContractError::new("live_session_mismatch"));
     }
+    let binding_key_suffix = stored
+        .binding_key
+        .strip_prefix("binding-key-")
+        .filter(|suffix| {
+            suffix.len() == 64
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
+        .ok_or_else(|| EvalContractError::new("live_session_invalid"))?;
+    let _ = binding_key_suffix;
     if now_seconds > stored.expires_at {
         let _ = std::fs::remove_file(input);
         return Err(EvalContractError::new("live_session_expired"));
@@ -3067,9 +3201,10 @@ pub(crate) fn restore_and_consume_live_preflight_session(
         .iter()
         .find(|profile| profile.profile_id == approved_profile_id)
         .ok_or_else(|| EvalContractError::new("live_profile_not_in_preflight"))?;
-    let mut matches = candidates
-        .into_iter()
-        .filter(|candidate| candidate.fingerprint() == stored_profile.capabilities);
+    let mut matches = candidates.into_iter().filter(|candidate| {
+        candidate.fingerprint() == stored_profile.capabilities
+            && candidate.exact_session_binding(&stored.binding_key) == stored_profile.exact_binding
+    });
     let candidate = matches
         .next()
         .ok_or_else(|| EvalContractError::new("live_profile_no_longer_available"))?;

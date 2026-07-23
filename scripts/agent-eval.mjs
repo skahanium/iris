@@ -138,7 +138,7 @@ function runLive() {
       workspaceRoot,
       "target",
       "agent-eval",
-      "live-pilot.json",
+      `live-pilot-${session}.json`,
     );
     if (!existsSync(output)) {
       console.error("agent_eval_live_pilot_summary_missing");

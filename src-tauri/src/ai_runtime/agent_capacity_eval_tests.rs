@@ -2067,6 +2067,40 @@ fn synthetic_live_candidate() -> LiveProfileCandidate {
     .expect("synthetic live candidate")
 }
 
+fn replacement_live_candidate_with_same_capability_shape() -> LiveProfileCandidate {
+    LiveProfileCandidate::new(
+        ResolvedLlmConfig {
+            provider_id: "replacement_provider".into(),
+            model: "replacement-model".into(),
+            base_url: "https://replacement-provider.invalid/v1".into(),
+            thinking: false,
+            reasoning: ResolvedReasoningRequest::disabled(),
+            input_budget: 128_000,
+            output_budget: 16_000,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: false,
+            supports_reasoning: true,
+        },
+        WebEvidenceProviderInput {
+            id: "replacement-mcp".into(),
+            name: "Replacement Search".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "https".into(),
+            transport_config_json:
+                r#"{"url":"https://replacement-search.invalid/mcp","timeoutMs":10000}"#.into(),
+            credential_refs_json: r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.replacement"}}}"#.into(),
+            web_search_mapping_json: Some(
+                r#"{"tool":"search","queryArg":"query","maxResultsArg":"count"}"#.into(),
+            ),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .expect("same-shape replacement candidate")
+}
+
 #[test]
 fn live_preflight_exposes_only_anonymous_profile_ids_and_closed_capability_fingerprints() {
     let session = preflight_live_profiles(vec![synthetic_live_candidate()])
@@ -2362,6 +2396,20 @@ fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_finger
                 & 0o777,
             0o600
         );
+        std::fs::set_permissions(&output, std::fs::Permissions::from_mode(0o644))
+            .expect("weaken test state mode");
+        let error = restore_and_consume_live_preflight_session(
+            &output,
+            session.report().session_id(),
+            &profile_id,
+            vec![candidate.clone()],
+            49_999,
+        )
+        .expect_err("reader rejects a session state that is not private");
+        assert_eq!(error.reason_code(), "live_session_invalid");
+        assert!(output.exists(), "invalid mode is not consumed");
+        std::fs::set_permissions(&output, std::fs::Permissions::from_mode(0o600))
+            .expect("restore private test state mode");
     }
 
     let restored = restore_and_consume_live_preflight_session(
@@ -2376,6 +2424,61 @@ fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_finger
     assert!(
         !output.exists(),
         "successful restore must consume the state"
+    );
+}
+
+#[test]
+fn live_session_exact_binding_rejects_a_same_shape_route_swap_and_resolves_shape_ambiguity() {
+    let original = synthetic_live_candidate();
+    let replacement = replacement_live_candidate_with_same_capability_shape();
+
+    let swapped_session =
+        preflight_live_profiles(vec![original.clone()]).expect("anonymous live preflight");
+    let swapped_profile = swapped_session.report().profile_ids()[0].to_string();
+    let swapped_output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join(format!(
+            "target/agent-eval/test-swap-{}.json",
+            swapped_session.report().session_id()
+        ));
+    write_live_preflight_session_state(&swapped_output, &swapped_session, 50_000)
+        .expect("private live session state");
+    let error = restore_and_consume_live_preflight_session(
+        &swapped_output,
+        swapped_session.report().session_id(),
+        &swapped_profile,
+        vec![replacement.clone()],
+        49_999,
+    )
+    .expect_err("a different route with the same public shape is not approved");
+    assert_eq!(error.reason_code(), "live_profile_no_longer_available");
+    assert!(swapped_output.exists(), "rejected binding is not consumed");
+    std::fs::remove_file(&swapped_output).expect("remove rejected test state");
+
+    let ambiguous_session =
+        preflight_live_profiles(vec![original.clone()]).expect("anonymous live preflight");
+    let ambiguous_profile = ambiguous_session.report().profile_ids()[0].to_string();
+    let ambiguous_output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join(format!(
+            "target/agent-eval/test-ambiguity-{}.json",
+            ambiguous_session.report().session_id()
+        ));
+    write_live_preflight_session_state(&ambiguous_output, &ambiguous_session, 50_000)
+        .expect("private live session state");
+    let restored = restore_and_consume_live_preflight_session(
+        &ambiguous_output,
+        ambiguous_session.report().session_id(),
+        &ambiguous_profile,
+        vec![replacement, original],
+        49_999,
+    )
+    .expect("the exact approved route resolves among same-shape candidates");
+    assert_eq!(
+        restored.report().profile_ids(),
+        vec![ambiguous_profile.as_str()]
     );
 }
 
@@ -2510,6 +2613,30 @@ async fn approved_live_pilot_executes_exactly_twelve_task1_runs_with_task2_local
     assert_eq!(result.required_case_count(), 12);
     assert_eq!(result.completed_case_count(), 12);
     assert_eq!(result.status_code(), "live_not_tested");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        let outside_directory = tempfile::tempdir().expect("outside result directory");
+        let outside = outside_directory.path().join("outside.json");
+        std::fs::write(&outside, "must remain unchanged").expect("outside result");
+        let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join(format!(
+                "target/agent-eval/test-live-pilot-symlink-{profile_id}.json"
+            ));
+        symlink(&outside, &output).expect("precreated result symlink");
+        let error = write_live_pilot_result(&output, &result)
+            .expect_err("live result must never follow a precreated symlink");
+        assert_eq!(error.reason_code(), "live_pilot_output_not_ignored_target");
+        assert_eq!(
+            std::fs::read_to_string(&outside).expect("outside result"),
+            "must remain unchanged"
+        );
+        std::fs::remove_file(output).expect("remove result symlink");
+    }
 }
 
 #[test]
@@ -2602,7 +2729,7 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
     assert_eq!(probe.hydration_calls(), 1);
     assert_eq!(probe.dispatch_calls(), 12);
     write_live_pilot_result(
-        &workspace.join("target/agent-eval/live-pilot.json"),
+        &workspace.join(format!("target/agent-eval/live-pilot-{session_id}.json")),
         &result,
     )
     .expect("strict live pilot result");

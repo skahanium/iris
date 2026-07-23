@@ -191,4 +191,5 @@ npm run agent:eval:live -- pilot --session session-<64hex> \
 `docs/eval/results/v1.2.15-agent-capacity.json`。`agent:eval:live -- preflight`
 只生成被 Git 忽略的 `target/agent-eval/live-preflight.json`；它不是 live
 测试结果，也不会绕过后续批准与费用 checkpoint。Pilot 的严格白名单结果写入
-同目录的 `live-pilot.json`，不会包含 prompt、answer、route 或凭据。
+同目录的 `live-pilot-session-<64hex>.json`，不会包含 prompt、answer、route
+或凭据。
