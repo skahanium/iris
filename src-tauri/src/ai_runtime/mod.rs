@@ -5,6 +5,13 @@
 
 pub use crate::ai_types::*;
 
+#[allow(
+    dead_code,
+    reason = "Task 2 stages the evaluator contract for the Task 3 command-line runner"
+)]
+pub(crate) mod agent_capacity_eval;
+#[cfg(test)]
+mod agent_capacity_eval_tests;
 pub(crate) mod agent_evidence_repository;
 #[cfg(test)]
 mod agent_evidence_repository_tests;

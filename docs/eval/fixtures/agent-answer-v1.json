@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "agent-answer-v1",
+  "id": "contract-hybrid-001",
+  "evidenceGroup": "hybrid",
+  "language": "zh-CN",
+  "domain": "research",
+  "webState": "online",
+  "localAuthorization": {
+    "explicitReferenceIds": ["local-authority"],
+    "explicitScopeId": "scope-synthetic",
+    "implicitVault": "allowed"
+  },
+  "requiredFacts": [
+    {
+      "id": "fact-synthetic",
+      "allowedSources": ["local-authority"],
+      "citationRequired": true
+    }
+  ],
+  "requiredSources": [
+    {
+      "id": "local-authority",
+      "kind": "local"
+    },
+    {
+      "id": "web-authority",
+      "kind": "web"
+    }
+  ],
+  "toolPolicy": {
+    "allowed": ["read_note", "search_hybrid", "web_search"],
+    "forbidden": ["write_note"],
+    "webSearch": "optional"
+  },
+  "answerMode": "evidence_grounded",
+  "citationExpectation": "required",
+  "disclosureConstraints": ["source_conflict"]
+}
