@@ -31,7 +31,7 @@
     "audit:rust": "node scripts/with-iris-env.mjs -- node scripts/cargo-audit.mjs",
     "model:prepare": "node scripts/prepare-embedding-model.mjs",
     "rag:eval": "node scripts/with-iris-env.mjs -- cargo test --manifest-path src-tauri/Cargo.toml --test rag_broker_eval -- --nocapture",
-    "agent:eval:smoke": "node scripts/agent-eval.mjs smoke",
+    "agent:eval:smoke": "node --test scripts/agent-eval.test.mjs && node scripts/agent-eval.mjs smoke",
     "agent:eval": "node scripts/agent-eval.mjs full",
     "agent:eval:live": "node scripts/agent-eval.mjs live",
     "icon:gen": "node scripts/gen-icon.mjs",

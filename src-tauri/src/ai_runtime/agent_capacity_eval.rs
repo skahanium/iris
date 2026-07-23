@@ -2092,29 +2092,6 @@ impl LiveProfileCandidate {
         Ok(Self { llm, mcp })
     }
 
-    fn anonymous_id(&self) -> String {
-        use sha2::{Digest, Sha256};
-
-        let identity = serde_json::json!({
-            "provider": self.llm.provider_id,
-            "model": self.llm.model,
-            "base": self.llm.base_url,
-            "endpointFamily": self.llm.endpoint_family,
-            "mcpId": self.mcp.id,
-            "mcpKind": self.mcp.kind,
-            "mcpTransport": self.mcp.transport_kind,
-            "mcpTransportConfig": self.mcp.transport_config_json,
-            "mcpCredentialRefs": self.mcp.credential_refs_json,
-            "mcpSearch": self.mcp.web_search_mapping_json,
-            "mcpFetch": self.mcp.web_fetch_mapping_json,
-        });
-        let mut digest = Sha256::new();
-        digest.update(b"iris-agent-live-profile-v1\0");
-        digest.update(identity.to_string().as_bytes());
-        let digest = digest.finalize();
-        format!("profile-{}", hex::encode(&digest[..6]))
-    }
-
     fn fingerprint(&self) -> LiveCapabilityFingerprint {
         LiveCapabilityFingerprint {
             endpoint_family: live_endpoint_family(&self.llm),
@@ -2256,7 +2233,7 @@ pub(crate) fn discover_live_profile_candidates_from_database(
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum LiveEndpointFamily {
     OpenaiCompatibleChat,
@@ -2284,7 +2261,7 @@ fn live_endpoint_family(llm: &crate::llm::config::ResolvedLlmConfig) -> LiveEndp
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum LiveContextBucket {
     #[serde(rename = "up_to_8k")]
@@ -2308,7 +2285,7 @@ fn context_bucket(tokens: usize) -> LiveContextBucket {
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum LiveOutputBucket {
     #[serde(rename = "up_to_4k")]
@@ -2329,7 +2306,7 @@ fn output_bucket(tokens: usize) -> LiveOutputBucket {
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum LiveMcpTransport {
     Stdio,
@@ -2337,7 +2314,7 @@ enum LiveMcpTransport {
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LiveMcpFingerprint {
     search: bool,
@@ -2346,7 +2323,7 @@ struct LiveMcpFingerprint {
 }
 
 #[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LiveCapabilityFingerprint {
     endpoint_family: LiveEndpointFamily,
@@ -2381,6 +2358,7 @@ struct LivePreflightProfile {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct LivePreflightReport {
     schema_version: &'static str,
+    session_id: String,
     status: LiveResultStatus,
     profile_count: u32,
     profiles: Vec<LivePreflightProfile>,
@@ -2388,6 +2366,10 @@ pub(crate) struct LivePreflightReport {
 
 #[cfg(test)]
 impl LivePreflightReport {
+    pub(crate) fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
     pub(crate) fn profile_ids(&self) -> Vec<&str> {
         self.profiles
             .iter()
@@ -2400,8 +2382,10 @@ impl LivePreflightReport {
 /// It has no serializer and cannot be reconstructed from a user-supplied ID.
 #[cfg(test)]
 pub(crate) struct LivePreflightSession {
+    session_id: String,
     candidates: Vec<LiveProfileCandidate>,
     report: LivePreflightReport,
+    approvals: HashMap<String, LiveApprovalBinding>,
 }
 
 #[cfg(test)]
@@ -2422,6 +2406,50 @@ impl LivePreflightSession {
     }
 }
 
+#[cfg(test)]
+const LIVE_APPROVAL_TTL_SECONDS: u64 = 300;
+
+#[cfg(test)]
+#[derive(Clone)]
+struct LiveApprovalBinding {
+    profile_index: usize,
+    expires_at: u64,
+    consumed: bool,
+}
+
+#[cfg(test)]
+pub(crate) struct LiveProfileApproval {
+    token: String,
+}
+
+#[cfg(test)]
+impl fmt::Debug for LiveProfileApproval {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveProfileApproval")
+            .field("token", &"[redacted-random-approval-token]")
+            .finish()
+    }
+}
+
+#[cfg(test)]
+impl LiveProfileApproval {
+    pub(crate) fn token(&self) -> &str {
+        &self.token
+    }
+}
+
+#[cfg(test)]
+fn random_live_token(prefix: &str, bytes: usize) -> Result<String, EvalContractError> {
+    use rand::RngCore;
+
+    let mut random = vec![0_u8; bytes];
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut random)
+        .map_err(|_| EvalContractError::new("live_random_token_failed"))?;
+    Ok(format!("{prefix}{}", hex::encode(random)))
+}
+
 /// Build an anonymous preflight without contacting any endpoint or resolving
 /// any credential reference.
 #[cfg(test)]
@@ -2436,15 +2464,15 @@ pub(crate) fn preflight_live_profiles(
     let mut paired = candidates
         .into_iter()
         .map(|candidate| {
-            let profile_id = candidate.anonymous_id();
+            let profile_id = random_live_token("profile-", 16)?;
             let profile = LivePreflightProfile {
                 profile_id: profile_id.clone(),
                 capabilities: candidate.fingerprint(),
                 status: LiveResultStatus::LiveNotTested,
             };
-            (profile_id, candidate, profile)
+            Ok((profile_id, candidate, profile))
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, EvalContractError>>()?;
     paired.sort_by(|left, right| left.0.cmp(&right.0));
     if paired.windows(2).any(|pair| pair[0].0 == pair[1].0) {
         return Err(EvalContractError::new(
@@ -2461,12 +2489,48 @@ pub(crate) fn preflight_live_profiles(
         .collect::<Vec<_>>();
     let report = LivePreflightReport {
         schema_version: "agent-live-preflight-v1",
+        session_id: random_live_token("session-", 32)?,
         status: LiveResultStatus::LiveNotTested,
         profile_count: profiles.len().min(u32::MAX as usize) as u32,
         profiles,
     };
     serialize_live_preflight_report(&report)?;
-    Ok(LivePreflightSession { candidates, report })
+    Ok(LivePreflightSession {
+        session_id: report.session_id.clone(),
+        candidates,
+        report,
+        approvals: HashMap::new(),
+    })
+}
+
+/// Convert one explicit profile selection into a short-lived, one-use,
+/// same-session approval token. The token is independent of route metadata.
+#[cfg(test)]
+pub(crate) fn approve_live_profile(
+    session: &mut LivePreflightSession,
+    approved_profile_id: Option<&str>,
+    now_seconds: u64,
+) -> Result<LiveProfileApproval, EvalContractError> {
+    let approved_profile_id = approved_profile_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| EvalContractError::new("live_profile_approval_required"))?;
+    let profile_index = session
+        .report
+        .profiles
+        .iter()
+        .position(|profile| profile.profile_id == approved_profile_id)
+        .ok_or_else(|| EvalContractError::new("live_profile_not_in_preflight"))?;
+    let token = random_live_token("approval-", 32)?;
+    session.approvals.insert(
+        token.clone(),
+        LiveApprovalBinding {
+            profile_index,
+            expires_at: now_seconds.saturating_add(LIVE_APPROVAL_TTL_SECONDS),
+            consumed: false,
+        },
+    );
+    Ok(LiveProfileApproval { token })
 }
 
 /// A prepared pilot owns a temporary application state. Approval does not
@@ -2475,6 +2539,7 @@ pub(crate) fn preflight_live_profiles(
 pub(crate) struct PreparedLivePilot {
     profile_id: String,
     state: std::sync::Arc<crate::app::AppState>,
+    vault: std::path::PathBuf,
     _directory: tempfile::TempDir,
 }
 
@@ -2509,32 +2574,25 @@ impl PreparedLivePilot {
     }
 }
 
-/// Validate an explicit anonymous ID and copy only the selected route metadata
-/// into a fresh temporary `AppState`. No credential value is read here.
+/// Copy the already-authorized route metadata into a fresh temporary
+/// `AppState`. No credential value is read here.
 #[cfg(test)]
-pub(crate) fn prepare_approved_live_pilot(
-    session: &LivePreflightSession,
-    approved_profile_id: Option<&str>,
+fn prepare_live_pilot_candidate(
+    candidate: &LiveProfileCandidate,
+    approved_profile_id: &str,
 ) -> Result<PreparedLivePilot, EvalContractError> {
-    let approved_profile_id = approved_profile_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| EvalContractError::new("live_profile_approval_required"))?;
-    let index = session
-        .report
-        .profiles
-        .iter()
-        .position(|profile| profile.profile_id == approved_profile_id)
-        .ok_or_else(|| EvalContractError::new("live_profile_not_in_preflight"))?;
-    let candidate = session
-        .candidates
-        .get(index)
-        .ok_or_else(|| EvalContractError::new("live_preflight_binding_invalid"))?;
-
     let directory =
         tempfile::tempdir().map_err(|_| EvalContractError::new("live_temp_state_failed"))?;
     let state = crate::app::AppState::new(directory.path().join("data"))
         .map_err(|_| EvalContractError::new("live_temp_state_failed"))?;
+    let vault = directory.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes"))
+        .map_err(|_| EvalContractError::new("live_temp_state_failed"))?;
+    std::fs::write(
+        vault.join("notes/authorized.md"),
+        "synthetic live pilot local material",
+    )
+    .map_err(|_| EvalContractError::new("live_temp_state_failed"))?;
     let mut routing = crate::llm::config::LlmRoutingConfig::default();
     routing.providers.clear();
     routing.providers.insert(
@@ -2578,7 +2636,464 @@ pub(crate) fn prepare_approved_live_pilot(
     Ok(PreparedLivePilot {
         profile_id: approved_profile_id.to_string(),
         state,
+        vault,
         _directory: directory,
+    })
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveCostConfirmation {
+    TwelveCasePilot,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct LivePilotCallProbe {
+    hydration_calls: std::sync::atomic::AtomicU32,
+    dispatch_calls: std::sync::atomic::AtomicU32,
+}
+
+#[cfg(test)]
+impl LivePilotCallProbe {
+    pub(crate) fn hydration_calls(&self) -> u32 {
+        self.hydration_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub(crate) fn dispatch_calls(&self) -> u32 {
+        self.dispatch_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LivePilotResult {
+    schema_version: &'static str,
+    required_case_count: u32,
+    completed_case_count: u32,
+    status: &'static str,
+}
+
+#[cfg(test)]
+impl LivePilotResult {
+    pub(crate) const fn required_case_count(&self) -> u32 {
+        self.required_case_count
+    }
+
+    pub(crate) const fn completed_case_count(&self) -> u32 {
+        self.completed_case_count
+    }
+
+    pub(crate) const fn status_code(&self) -> &'static str {
+        self.status
+    }
+}
+
+/// Validate and consume the approval/cost gates before copying route metadata
+/// into isolated state. All rejections happen before the hydration boundary.
+#[cfg(test)]
+pub(crate) fn prepare_approved_live_pilot(
+    session: &mut LivePreflightSession,
+    approval_token: Option<&str>,
+    cost_confirmation: Option<LiveCostConfirmation>,
+    now_seconds: u64,
+    probe: &LivePilotCallProbe,
+) -> Result<PreparedLivePilot, EvalContractError> {
+    if cost_confirmation != Some(LiveCostConfirmation::TwelveCasePilot) {
+        return Err(EvalContractError::new("live_cost_confirmation_required"));
+    }
+    let approval_token = approval_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| EvalContractError::new("live_approval_required"))?;
+    let binding = session
+        .approvals
+        .get_mut(approval_token)
+        .ok_or_else(|| EvalContractError::new("live_approval_not_in_session"))?;
+    if binding.consumed {
+        return Err(EvalContractError::new("live_approval_already_consumed"));
+    }
+    if now_seconds > binding.expires_at {
+        return Err(EvalContractError::new("live_approval_expired"));
+    }
+    let profile_index = binding.profile_index;
+    binding.consumed = true;
+    let candidate = session
+        .candidates
+        .get(profile_index)
+        .ok_or_else(|| EvalContractError::new("live_preflight_binding_invalid"))?;
+    let profile_id = session
+        .report
+        .profiles
+        .get(profile_index)
+        .map(|profile| profile.profile_id.as_str())
+        .ok_or_else(|| EvalContractError::new("live_preflight_binding_invalid"))?;
+
+    probe
+        .hydration_calls
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    prepare_live_pilot_candidate(candidate, profile_id)
+}
+
+/// Consume a current-session approval and run the fixed smoke pilot through
+/// the Task-1 normal headless path. Test executions use only Task-2 local
+/// protocol doubles.
+#[cfg(test)]
+pub(crate) async fn run_approved_live_pilot_with_local_doubles(
+    session: &mut LivePreflightSession,
+    approval_token: Option<&str>,
+    cost_confirmation: Option<LiveCostConfirmation>,
+    now_seconds: u64,
+    probe: &LivePilotCallProbe,
+) -> Result<LivePilotResult, EvalContractError> {
+    let _prepared = prepare_approved_live_pilot(
+        session,
+        approval_token,
+        cost_confirmation,
+        now_seconds,
+        probe,
+    )?;
+    let scenarios = select_core_scenarios(EvalRunMode::Smoke)?;
+    if scenarios.len() != 12 {
+        return Err(EvalContractError::new("live_pilot_case_contract_invalid"));
+    }
+    let mut completed_case_count = 0_u32;
+    for scenario in &scenarios {
+        probe
+            .dispatch_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        execute_headless_core_case(scenario, None).await?;
+        completed_case_count = completed_case_count.saturating_add(1);
+    }
+    Ok(LivePilotResult {
+        schema_version: "agent-live-pilot-v1",
+        required_case_count: 12,
+        completed_case_count,
+        status: "live_not_tested",
+    })
+}
+
+#[cfg(test)]
+async fn execute_live_pilot_case(
+    prepared: &PreparedLivePilot,
+    scenario: &CoreScenario,
+) -> Result<bool, EvalContractError> {
+    use crate::ai_runtime::normal_run_service::execute_normal_run_with_eval_telemetry;
+    use crate::ai_runtime::run_contract::{
+        AssistantRunStartRequest, AssistantTurnDraft, RunState, SecurityDomain,
+    };
+    use crate::ai_runtime::run_intake::RunIntake;
+    use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
+
+    let local_body = "synthetic live pilot local material";
+    let explicit_references = if scenario
+        .manifest
+        .local_authorization
+        .explicit_reference_ids
+        .is_empty()
+    {
+        Vec::new()
+    } else {
+        vec![ContextReferenceWire {
+            id: scenario.manifest.local_authorization.explicit_reference_ids[0].clone(),
+            kind: ContextReferenceKind::Note,
+            file_path: Some("notes/authorized.md".to_string()),
+            content_hash: Some(crate::cas::hash::content_hash_str(local_body)),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        }]
+    };
+    let request = AssistantRunStartRequest {
+        client_request_id: format!(
+            "agent-live-pilot-{}-{}",
+            prepared.profile_id(),
+            scenario.case_id()
+        ),
+        session: None,
+        turn: AssistantTurnDraft {
+            message: scenario.prompt().to_string(),
+            content_parts: None,
+            explicit_references,
+            retrieval_scope: Default::default(),
+            display_mentions: Vec::new(),
+        },
+        explicit_action: None,
+        web_enabled: scenario.web_state() == WebState::Online,
+        model_override: None,
+        security_domain: SecurityDomain::Normal,
+        classified_context_ref: None,
+    };
+    let sink = HeadlessEvaluationSink::default();
+    let accepted = RunIntake::start_with_sink(&prepared.state.db, request, &sink)
+        .map_err(|_| EvalContractError::new("live_pilot_run_intake_failed"))?;
+    let telemetry = EvaluationTelemetryTap::default();
+    execute_normal_run_with_eval_telemetry(
+        std::sync::Arc::clone(&prepared.state),
+        accepted.clone(),
+        Some(prepared.vault.clone()),
+        &sink,
+        &telemetry,
+    )
+    .await;
+    let response = RunIntake::get(&prepared.state.db, &accepted.session, &accepted.run_id)
+        .map_err(|_| EvalContractError::new("live_pilot_run_read_failed"))?
+        .ok_or_else(|| EvalContractError::new("live_pilot_run_missing"))?;
+    Ok(response.run.state == RunState::Completed)
+}
+
+/// Execute the approved 12-case live pilot through the production headless
+/// normal service. A partial or failed set remains `live_not_tested`.
+#[cfg(test)]
+pub(crate) async fn run_approved_live_pilot(
+    session: &mut LivePreflightSession,
+    approval_token: Option<&str>,
+    cost_confirmation: Option<LiveCostConfirmation>,
+    now_seconds: u64,
+    probe: &LivePilotCallProbe,
+) -> Result<LivePilotResult, EvalContractError> {
+    let prepared = prepare_approved_live_pilot(
+        session,
+        approval_token,
+        cost_confirmation,
+        now_seconds,
+        probe,
+    )?;
+    let scenarios = select_core_scenarios(EvalRunMode::Smoke)?;
+    if scenarios.len() != 12 {
+        return Err(EvalContractError::new("live_pilot_case_contract_invalid"));
+    }
+    let mut completed_case_count = 0_u32;
+    for scenario in &scenarios {
+        probe
+            .dispatch_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if execute_live_pilot_case(&prepared, scenario).await? {
+            completed_case_count = completed_case_count.saturating_add(1);
+        }
+    }
+    Ok(LivePilotResult {
+        schema_version: "agent-live-pilot-v1",
+        required_case_count: 12,
+        completed_case_count,
+        status: if completed_case_count == 12 {
+            "live_pilot_executed"
+        } else {
+            "live_not_tested"
+        },
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn write_live_pilot_result(
+    output: &std::path::Path,
+    result: &LivePilotResult,
+) -> Result<(), EvalContractError> {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_pilot_workspace_invalid"))?;
+    let target = workspace.join("target/agent-eval");
+    std::fs::create_dir_all(&target)
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    let parent = output
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_pilot_output_not_ignored_target"))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))?;
+    if !canonical_parent.starts_with(&canonical_target) {
+        return Err(EvalContractError::new(
+            "live_pilot_output_not_ignored_target",
+        ));
+    }
+    let serialized = serde_json::to_string_pretty(result)
+        .map_err(|_| EvalContractError::new("live_pilot_serialization_failed"))?;
+    let value: serde_json::Value = serde_json::from_str(&serialized)
+        .map_err(|_| EvalContractError::new("live_pilot_serialization_failed"))?;
+    let root = live_exact_object(
+        &value,
+        &[
+            "schemaVersion",
+            "requiredCaseCount",
+            "completedCaseCount",
+            "status",
+        ],
+    )?;
+    live_exact_string(root.get("schemaVersion"), &["agent-live-pilot-v1"])?;
+    live_exact_string(
+        root.get("status"),
+        &["live_not_tested", "live_pilot_executed"],
+    )?;
+    if root
+        .get("requiredCaseCount")
+        .and_then(serde_json::Value::as_u64)
+        != Some(12)
+        || root
+            .get("completedCaseCount")
+            .and_then(serde_json::Value::as_u64)
+            .is_none_or(|count| count > 12)
+    {
+        return Err(EvalContractError::new("live_pilot_value_invalid"));
+    }
+    std::fs::write(output, serialized)
+        .map_err(|_| EvalContractError::new("live_pilot_output_failed"))
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredLiveProfileBinding {
+    profile_id: String,
+    capabilities: LiveCapabilityFingerprint,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct StoredLivePreflightSession {
+    schema_version: String,
+    session_id: String,
+    expires_at: u64,
+    profiles: Vec<StoredLiveProfileBinding>,
+}
+
+/// Persist only random handles, expiry and anonymous capability fingerprints
+/// for the cross-process preflight-to-pilot handoff.
+#[cfg(test)]
+pub(crate) fn write_live_preflight_session_state(
+    output: &std::path::Path,
+    session: &LivePreflightSession,
+    expires_at: u64,
+) -> Result<(), EvalContractError> {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_preflight_workspace_invalid"))?;
+    let target = workspace.join("target/agent-eval");
+    std::fs::create_dir_all(&target)
+        .map_err(|_| EvalContractError::new("live_session_output_failed"))?;
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|_| EvalContractError::new("live_session_output_failed"))?;
+    let parent = output
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_session_output_not_ignored_target"))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|_| EvalContractError::new("live_session_output_failed"))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|_| EvalContractError::new("live_session_output_failed"))?;
+    if !canonical_parent.starts_with(&canonical_target)
+        || output
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(EvalContractError::new(
+            "live_session_output_not_ignored_target",
+        ));
+    }
+    let stored = StoredLivePreflightSession {
+        schema_version: "agent-live-session-v1".to_string(),
+        session_id: session.session_id.clone(),
+        expires_at,
+        profiles: session
+            .report
+            .profiles
+            .iter()
+            .map(|profile| StoredLiveProfileBinding {
+                profile_id: profile.profile_id.clone(),
+                capabilities: profile.capabilities.clone(),
+            })
+            .collect(),
+    };
+    let serialized = serde_json::to_string_pretty(&stored)
+        .map_err(|_| EvalContractError::new("live_session_serialization_failed"))?;
+    if serialized.len() > 64 * 1024 {
+        return Err(EvalContractError::new("live_session_too_large"));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
+        .open(output)
+        .map_err(|_| EvalContractError::new("live_session_output_failed"))?;
+    use std::io::Write;
+    file.write_all(serialized.as_bytes())
+        .map_err(|_| EvalContractError::new("live_session_output_failed"))
+}
+
+/// Restore one uniquely fingerprinted profile, then consume the transient
+/// state before any route hydration or external dispatch can begin.
+#[cfg(test)]
+pub(crate) fn restore_and_consume_live_preflight_session(
+    input: &std::path::Path,
+    expected_session_id: &str,
+    approved_profile_id: &str,
+    candidates: Vec<LiveProfileCandidate>,
+    now_seconds: u64,
+) -> Result<LivePreflightSession, EvalContractError> {
+    let serialized = std::fs::read_to_string(input)
+        .map_err(|_| EvalContractError::new("live_session_missing"))?;
+    if serialized.len() > 64 * 1024 {
+        return Err(EvalContractError::new("live_session_too_large"));
+    }
+    let stored: StoredLivePreflightSession = serde_json::from_str(&serialized)
+        .map_err(|_| EvalContractError::new("live_session_invalid"))?;
+    if stored.schema_version != "agent-live-session-v1" || stored.session_id != expected_session_id
+    {
+        return Err(EvalContractError::new("live_session_mismatch"));
+    }
+    if now_seconds > stored.expires_at {
+        let _ = std::fs::remove_file(input);
+        return Err(EvalContractError::new("live_session_expired"));
+    }
+    let stored_profile = stored
+        .profiles
+        .iter()
+        .find(|profile| profile.profile_id == approved_profile_id)
+        .ok_or_else(|| EvalContractError::new("live_profile_not_in_preflight"))?;
+    let mut matches = candidates
+        .into_iter()
+        .filter(|candidate| candidate.fingerprint() == stored_profile.capabilities);
+    let candidate = matches
+        .next()
+        .ok_or_else(|| EvalContractError::new("live_profile_no_longer_available"))?;
+    if matches.next().is_some() {
+        return Err(EvalContractError::new("live_profile_fingerprint_ambiguous"));
+    }
+    std::fs::remove_file(input)
+        .map_err(|_| EvalContractError::new("live_session_consume_failed"))?;
+    let profile = LivePreflightProfile {
+        profile_id: stored_profile.profile_id.clone(),
+        capabilities: stored_profile.capabilities.clone(),
+        status: LiveResultStatus::LiveNotTested,
+    };
+    Ok(LivePreflightSession {
+        session_id: stored.session_id.clone(),
+        candidates: vec![candidate],
+        report: LivePreflightReport {
+            schema_version: "agent-live-preflight-v1",
+            session_id: stored.session_id,
+            status: LiveResultStatus::LiveNotTested,
+            profile_count: 1,
+            profiles: vec![profile],
+        },
+        approvals: HashMap::new(),
     })
 }
 
@@ -2642,9 +3157,27 @@ pub(crate) fn validate_serialized_live_preflight_report(
         .map_err(|_| EvalContractError::new("live_preflight_invalid"))?;
     let root = live_exact_object(
         &value,
-        &["schemaVersion", "status", "profileCount", "profiles"],
+        &[
+            "schemaVersion",
+            "sessionId",
+            "status",
+            "profileCount",
+            "profiles",
+        ],
     )?;
     live_exact_string(root.get("schemaVersion"), &["agent-live-preflight-v1"])?;
+    let session_id = root
+        .get("sessionId")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|value| value.strip_prefix("session-"))
+        .filter(|suffix| {
+            suffix.len() == 64
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        })
+        .ok_or_else(|| EvalContractError::new("live_preflight_value_invalid"))?;
+    let _ = session_id;
     live_exact_string(root.get("status"), &["live_not_tested"])?;
     let profile_count = root
         .get("profileCount")
@@ -2668,7 +3201,7 @@ pub(crate) fn validate_serialized_live_preflight_report(
         let suffix = profile_id
             .strip_prefix("profile-")
             .ok_or_else(|| EvalContractError::new("live_preflight_value_invalid"))?;
-        if suffix.len() != 12
+        if suffix.len() != 32
             || !suffix
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))

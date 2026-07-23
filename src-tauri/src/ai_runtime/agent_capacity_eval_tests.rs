@@ -3,21 +3,24 @@ use std::time::Duration;
 use crate::storage::db::Database;
 
 use super::agent_capacity_eval::{
-    build_agent_capacity_report, calculate_stable_boundary,
+    approve_live_profile, build_agent_capacity_report, calculate_stable_boundary,
     discover_live_profile_candidates_from_database, evaluate_case, execute_pressure_staircases,
     generate_core_scenarios, generate_pressure_staircases, preflight_live_profiles,
-    prepare_approved_live_pilot, run_combined_terminal_cases, run_hard_boundary_probes,
-    run_headless_core_evaluation, run_security_track, select_core_scenarios,
-    serialize_agent_capacity_report, serialize_evaluation_summary, serialize_live_preflight_report,
-    spawn_llm_protocol_double, validate_serialized_evaluation_summary,
-    validate_serialized_live_preflight_report, write_blind_review_packet,
-    write_live_preflight_report, AnswerObservation, BudgetOutcome, CaseManifest, CheckStatus,
-    CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap, EvidenceGroup,
-    FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation, LiveProfileCandidate,
-    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
-    McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
-    ProtocolValidationLevel, ScenarioLanguage, SourceKind, StableLevelObservation,
-    TruncationOutcome, WebAnswerContamination, WebState,
+    prepare_approved_live_pilot, restore_and_consume_live_preflight_session,
+    run_approved_live_pilot, run_approved_live_pilot_with_local_doubles,
+    run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
+    run_security_track, select_core_scenarios, serialize_agent_capacity_report,
+    serialize_evaluation_summary, serialize_live_preflight_report, spawn_llm_protocol_double,
+    validate_serialized_evaluation_summary, validate_serialized_live_preflight_report,
+    write_blind_review_packet, write_live_pilot_result, write_live_preflight_report,
+    write_live_preflight_session_state, AnswerObservation, BudgetOutcome, CaseManifest,
+    CheckStatus, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
+    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
+    LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate, LlmProtocolDouble,
+    McpCapabilityContract, McpOperation, McpTransportContract, McpTransportFailureContract,
+    ObservedSource, PressureDimension, ProtocolContractOutcome, ProtocolValidationLevel,
+    ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
+    WebAnswerContamination, WebState,
 };
 use super::mcp_host_runtime::{
     call_required_capability, probe_provider_stdio_tools, McpHostRuntimeOptions, McpStdioDiscovery,
@@ -2074,11 +2077,14 @@ fn live_preflight_exposes_only_anonymous_profile_ids_and_closed_capability_finge
     let profile = &value["profiles"][0];
 
     assert_eq!(value["schemaVersion"], "agent-live-preflight-v1");
+    assert!(value["sessionId"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("session-") && id.len() == 72));
     assert_eq!(value["status"], "live_not_tested");
     assert_eq!(value["profileCount"], 1);
     assert!(profile["profileId"]
         .as_str()
-        .is_some_and(|id| id.starts_with("profile-") && id.len() == 20));
+        .is_some_and(|id| id.starts_with("profile-") && id.len() == 40));
     assert_eq!(profile["status"], "live_not_tested");
     assert_eq!(
         profile["capabilities"],
@@ -2112,17 +2118,17 @@ fn live_preflight_exposes_only_anonymous_profile_ids_and_closed_capability_finge
 
 #[test]
 fn live_pilot_rejects_missing_and_unknown_profile_approval_before_preparation() {
-    let session = preflight_live_profiles(vec![synthetic_live_candidate()])
+    let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
         .expect("anonymous live preflight");
     assert_eq!(
-        prepare_approved_live_pilot(&session, None)
+        approve_live_profile(&mut session, None, 1_000)
             .expect_err("missing approval must fail")
             .reason_code(),
         "live_profile_approval_required"
     );
 
     let unknown = "profile-not-approved";
-    let error = prepare_approved_live_pilot(&session, Some(unknown))
+    let error = approve_live_profile(&mut session, Some(unknown), 1_000)
         .expect_err("unknown approval must fail");
     assert_eq!(error.reason_code(), "live_profile_not_in_preflight");
     assert!(!error.to_string().contains(unknown));
@@ -2154,11 +2160,19 @@ fn live_preflight_validator_rejects_unknown_fields_and_status_promotion_without_
 #[test]
 fn approved_live_profile_is_copied_to_an_isolated_temporary_state_without_status_promotion() {
     let candidate = synthetic_live_candidate();
-    let session = preflight_live_profiles(vec![candidate]).expect("anonymous live preflight");
+    let mut session = preflight_live_profiles(vec![candidate]).expect("anonymous live preflight");
     let profile_id = session.report().profile_ids()[0].to_string();
-
-    let prepared = prepare_approved_live_pilot(&session, Some(&profile_id))
-        .expect("approved profile prepares an isolated state");
+    let approval =
+        approve_live_profile(&mut session, Some(&profile_id), 1_000).expect("explicit approval");
+    let probe = LivePilotCallProbe::default();
+    let prepared = prepare_approved_live_pilot(
+        &mut session,
+        Some(approval.token()),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        1_001,
+        &probe,
+    )
+    .expect("approved profile prepares an isolated state");
     let routing =
         crate::llm::config::load(&prepared.state().db).expect("temporary routing metadata");
     let providers = super::mcp_runtime_registry::list_web_evidence_providers(&prepared.state().db)
@@ -2181,6 +2195,7 @@ fn approved_live_profile_is_copied_to_an_isolated_temporary_state_without_status
     assert_eq!(prepared.profile_id(), profile_id);
     assert_eq!(prepared.result_status_code(), "live_not_tested");
     assert_eq!(prepared.pilot_case_limit(), 12);
+    assert_eq!(probe.hydration_calls(), 1);
 }
 
 #[test]
@@ -2253,10 +2268,18 @@ fn live_preflight_discovers_source_metadata_read_only_and_never_mutates_the_sour
 
     let candidates = discover_live_profile_candidates_from_database(&source_db_path)
         .expect("read-only source discovery");
-    let session = preflight_live_profiles(candidates).expect("anonymous preflight");
+    let mut session = preflight_live_profiles(candidates).expect("anonymous preflight");
     let profile_id = session.report().profile_ids()[0].to_string();
-    let prepared = prepare_approved_live_pilot(&session, Some(&profile_id))
-        .expect("approved metadata is copied to a temporary state");
+    let approval =
+        approve_live_profile(&mut session, Some(&profile_id), 1_000).expect("explicit approval");
+    let prepared = prepare_approved_live_pilot(
+        &mut session,
+        Some(approval.token()),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        1_001,
+        &LivePilotCallProbe::default(),
+    )
+    .expect("approved metadata is copied to a temporary state");
     let after = snapshot(&source_state.db);
 
     assert_eq!(before, after);
@@ -2301,6 +2324,195 @@ fn live_preflight_report_can_only_be_written_to_the_ignored_evaluation_target() 
 }
 
 #[test]
+fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_fingerprint() {
+    let candidate = synthetic_live_candidate();
+    let session =
+        preflight_live_profiles(vec![candidate.clone()]).expect("anonymous live preflight");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join(format!(
+            "target/agent-eval/test-{}.json",
+            session.report().session_id()
+        ));
+    write_live_preflight_session_state(&output, &session, 50_000)
+        .expect("private live session state");
+    let serialized = std::fs::read_to_string(&output).expect("session state");
+    for forbidden in [
+        "custom_sensitive_provider",
+        "sensitive-model-name",
+        "private-provider.invalid",
+        "sensitive-mcp-name",
+        "Sensitive Search Service",
+        "private-search.invalid",
+        "iris.mcp.sensitive",
+        "credential://",
+    ] {
+        assert!(!serialized.contains(forbidden), "{forbidden}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&output)
+                .expect("session metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    let restored = restore_and_consume_live_preflight_session(
+        &output,
+        session.report().session_id(),
+        &profile_id,
+        vec![candidate],
+        49_999,
+    )
+    .expect("same-session state restores exactly one anonymous profile");
+    assert_eq!(restored.report().profile_ids(), vec![profile_id.as_str()]);
+    assert!(
+        !output.exists(),
+        "successful restore must consume the state"
+    );
+}
+
+#[tokio::test]
+async fn live_preflight_ids_and_approval_tokens_are_random_session_bound_and_non_replayable() {
+    let mut first = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("first anonymous live preflight");
+    let mut second = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("second anonymous live preflight");
+    let first_profile = first.report().profile_ids()[0].to_string();
+    let second_profile = second.report().profile_ids()[0].to_string();
+    assert_ne!(first_profile, second_profile);
+
+    let approval =
+        approve_live_profile(&mut first, Some(&first_profile), 10_000).expect("explicit approval");
+    let approval_token = approval.token().to_string();
+    let cross_session_probe = LivePilotCallProbe::default();
+    let error = run_approved_live_pilot_with_local_doubles(
+        &mut second,
+        Some(&approval_token),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        10_001,
+        &cross_session_probe,
+    )
+    .await
+    .expect_err("cross-session approval must fail closed");
+    assert_eq!(error.reason_code(), "live_approval_not_in_session");
+    assert_eq!(cross_session_probe.hydration_calls(), 0);
+    assert_eq!(cross_session_probe.dispatch_calls(), 0);
+
+    let first_probe = LivePilotCallProbe::default();
+    let result = run_approved_live_pilot_with_local_doubles(
+        &mut first,
+        Some(&approval_token),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        10_001,
+        &first_probe,
+    )
+    .await
+    .expect("current-session approval runs once");
+    assert_eq!(result.completed_case_count(), 12);
+
+    let replay_probe = LivePilotCallProbe::default();
+    let error = run_approved_live_pilot_with_local_doubles(
+        &mut first,
+        Some(&approval_token),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        10_002,
+        &replay_probe,
+    )
+    .await
+    .expect_err("consumed approval must not replay");
+    assert_eq!(error.reason_code(), "live_approval_already_consumed");
+    assert_eq!(replay_probe.hydration_calls(), 0);
+    assert_eq!(replay_probe.dispatch_calls(), 0);
+}
+
+#[tokio::test]
+async fn live_pilot_rejects_expired_unknown_and_missing_cost_confirmation_before_hydration() {
+    let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous live preflight");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let approval =
+        approve_live_profile(&mut session, Some(&profile_id), 20_000).expect("explicit approval");
+    let approval_token = approval.token().to_string();
+
+    let missing_cost_probe = LivePilotCallProbe::default();
+    let error = run_approved_live_pilot_with_local_doubles(
+        &mut session,
+        Some(&approval_token),
+        None,
+        20_001,
+        &missing_cost_probe,
+    )
+    .await
+    .expect_err("cost confirmation is mandatory");
+    assert_eq!(error.reason_code(), "live_cost_confirmation_required");
+    assert_eq!(missing_cost_probe.hydration_calls(), 0);
+    assert_eq!(missing_cost_probe.dispatch_calls(), 0);
+
+    let unknown_probe = LivePilotCallProbe::default();
+    let error = run_approved_live_pilot_with_local_doubles(
+        &mut session,
+        Some("approval-0000000000000000000000000000000000000000000000000000000000000000"),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        20_001,
+        &unknown_probe,
+    )
+    .await
+    .expect_err("unknown approval must fail closed");
+    assert_eq!(error.reason_code(), "live_approval_not_in_session");
+    assert_eq!(unknown_probe.hydration_calls(), 0);
+    assert_eq!(unknown_probe.dispatch_calls(), 0);
+
+    let expired_probe = LivePilotCallProbe::default();
+    let error = run_approved_live_pilot_with_local_doubles(
+        &mut session,
+        Some(&approval_token),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        99_999,
+        &expired_probe,
+    )
+    .await
+    .expect_err("expired approval must fail closed");
+    assert_eq!(error.reason_code(), "live_approval_expired");
+    assert_eq!(expired_probe.hydration_calls(), 0);
+    assert_eq!(expired_probe.dispatch_calls(), 0);
+}
+
+#[tokio::test]
+async fn approved_live_pilot_executes_exactly_twelve_task1_runs_with_task2_local_doubles() {
+    let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous live preflight");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let approval =
+        approve_live_profile(&mut session, Some(&profile_id), 30_000).expect("explicit approval");
+    let approval_token = approval.token().to_string();
+    let probe = LivePilotCallProbe::default();
+
+    let result = run_approved_live_pilot_with_local_doubles(
+        &mut session,
+        Some(&approval_token),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        30_001,
+        &probe,
+    )
+    .await
+    .expect("approved pilot");
+
+    assert_eq!(probe.hydration_calls(), 1);
+    assert_eq!(probe.dispatch_calls(), 12);
+    assert_eq!(result.required_case_count(), 12);
+    assert_eq!(result.completed_case_count(), 12);
+    assert_eq!(result.status_code(), "live_not_tested");
+}
+
+#[test]
 fn live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_requested() {
     if std::env::var("IRIS_AGENT_EVAL_LIVE_ACTION").as_deref() != Ok("preflight") {
         return;
@@ -2316,4 +2528,82 @@ fn live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_reque
         .expect("workspace root")
         .join("target/agent-eval/live-preflight.json");
     write_live_preflight_report(&output, session.report()).expect("strict preflight output");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs();
+    let state_output = output
+        .parent()
+        .expect("evaluation target")
+        .join(format!("live-{}.json", session.report().session_id()));
+    write_live_preflight_session_state(&state_output, &session, now.saturating_add(600))
+        .expect("private current-session state");
+}
+
+#[tokio::test]
+async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_when_requested() {
+    if std::env::var("IRIS_AGENT_EVAL_LIVE_ACTION").as_deref() != Ok("pilot") {
+        return;
+    }
+    let source = std::env::var_os("IRIS_AGENT_EVAL_SOURCE_DB")
+        .map(std::path::PathBuf::from)
+        .expect("live_pilot_source_required");
+    let session_id = std::env::var("IRIS_AGENT_EVAL_SESSION").expect("live_pilot_session_required");
+    let approved_profile = std::env::var("IRIS_AGENT_EVAL_APPROVED_PROFILE")
+        .expect("live_pilot_profile_approval_required");
+    assert_eq!(
+        std::env::var("IRIS_AGENT_EVAL_COST_CONFIRMATION").as_deref(),
+        Ok("one-12-case-pilot"),
+        "live_pilot_cost_confirmation_required"
+    );
+    let session_suffix = session_id
+        .strip_prefix("session-")
+        .expect("live_pilot_session_invalid");
+    assert!(
+        session_suffix.len() == 64
+            && session_suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')),
+        "live_pilot_session_invalid"
+    );
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let state_path = workspace
+        .join("target/agent-eval")
+        .join(format!("live-{session_id}.json"));
+    assert!(state_path.is_file(), "live_session_missing");
+    let candidates = discover_live_profile_candidates_from_database(&source)
+        .expect("read-only live profile discovery");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock")
+        .as_secs();
+    let mut session = restore_and_consume_live_preflight_session(
+        &state_path,
+        &session_id,
+        &approved_profile,
+        candidates,
+        now,
+    )
+    .expect("current live session");
+    let approval = approve_live_profile(&mut session, Some(&approved_profile), now)
+        .expect("same-session explicit approval");
+    let probe = LivePilotCallProbe::default();
+    let result = run_approved_live_pilot(
+        &mut session,
+        Some(approval.token()),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        now,
+        &probe,
+    )
+    .await
+    .expect("approved live pilot");
+    assert_eq!(probe.hydration_calls(), 1);
+    assert_eq!(probe.dispatch_calls(), 12);
+    write_live_pilot_result(
+        &workspace.join("target/agent-eval/live-pilot.json"),
+        &result,
+    )
+    .expect("strict live pilot result");
 }
