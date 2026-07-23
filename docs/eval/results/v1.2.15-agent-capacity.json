@@ -278,7 +278,7 @@
       "nextLevel": 25
     },
     {
-      "dimension": "web_evidence_latency",
+      "dimension": "web_evidence_count",
       "validationStatus": "stable_boundary_observed",
       "witness": "normal_run_web_executor",
       "levels": [
@@ -597,6 +597,7 @@
   "claimBoundary": {
     "deterministicRuntime": "headless_deterministic",
     "protocolDoubles": "contract_verified",
-    "liveProfiles": "live_not_tested"
+    "liveProfiles": "live_not_tested",
+    "webLatency": "live_not_tested"
   }
 }

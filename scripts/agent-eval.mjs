@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -41,6 +41,8 @@ const allowedControlKeys = new Set([
   "IRIS_AGENT_EVAL_SESSION",
   "IRIS_AGENT_EVAL_APPROVED_PROFILE",
   "IRIS_AGENT_EVAL_COST_CONFIRMATION",
+  "IRIS_DATA_DIR",
+  "IRIS_CONFIG_DIR",
 ]);
 
 export function buildAgentEvalChildEnvironment(source, controls = {}) {
@@ -58,7 +60,45 @@ export function buildAgentEvalChildEnvironment(source, controls = {}) {
   return environment;
 }
 
-function runCargoEntrypoint(testName, controls) {
+function canonicalCredentialRoot(source, key) {
+  const raw = source[key];
+  if (typeof raw !== "string" || raw.length === 0) {
+    throw new Error("agent_eval_live_credential_roots_required");
+  }
+  if (!path.isAbsolute(raw)) {
+    throw new Error("agent_eval_live_credential_root_invalid");
+  }
+  let canonical;
+  let metadata;
+  try {
+    canonical = realpathSync(raw);
+    metadata = statSync(canonical);
+  } catch {
+    throw new Error("agent_eval_live_credential_root_invalid");
+  }
+  const filesystemRoot = path.parse(canonical).root;
+  const wrongOwner =
+    typeof process.getuid === "function" && metadata.uid !== process.getuid();
+  if (
+    !metadata.isDirectory() ||
+    canonical === filesystemRoot ||
+    wrongOwner ||
+    (metadata.mode & 0o022) !== 0
+  ) {
+    throw new Error("agent_eval_live_credential_root_invalid");
+  }
+  return canonical;
+}
+
+export function buildLivePilotChildEnvironment(source, controls = {}) {
+  return buildAgentEvalChildEnvironment(source, {
+    ...controls,
+    IRIS_DATA_DIR: canonicalCredentialRoot(source, "IRIS_DATA_DIR"),
+    IRIS_CONFIG_DIR: canonicalCredentialRoot(source, "IRIS_CONFIG_DIR"),
+  });
+}
+
+function runCargoEntrypoint(testName, controls, environmentBuilder) {
   return spawnSync(
     "cargo",
     [
@@ -73,7 +113,7 @@ function runCargoEntrypoint(testName, controls) {
     ],
     {
       cwd: workspaceRoot,
-      env: buildAgentEvalChildEnvironment(process.env, controls),
+      env: environmentBuilder(process.env, controls),
       stdio: "inherit",
     },
   );
@@ -132,6 +172,7 @@ function runLive() {
         IRIS_AGENT_EVAL_APPROVED_PROFILE: approvedProfile,
         IRIS_AGENT_EVAL_COST_CONFIRMATION: costConfirmation,
       },
+      buildLivePilotChildEnvironment,
     );
     exitFromCargo(result, "agent_eval_live_pilot_runner_failed");
     const output = path.join(
@@ -158,20 +199,22 @@ function runLive() {
     console.error("agent_eval_live_preflight_source_missing");
     process.exit(2);
   }
-  const result = runCargoEntrypoint(
-    "ai_runtime::agent_capacity_eval_tests::live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_requested",
-    {
-      IRIS_AGENT_EVAL_LIVE_ACTION: "preflight",
-      IRIS_AGENT_EVAL_SOURCE_DB: sourceDatabase,
-    },
-  );
-  exitFromCargo(result, "agent_eval_live_preflight_runner_failed");
   const output = path.join(
     workspaceRoot,
     "target",
     "agent-eval",
     "live-preflight.json",
   );
+  rmSync(output, { force: true });
+  const result = runCargoEntrypoint(
+    "ai_runtime::agent_capacity_eval_tests::live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_requested",
+    {
+      IRIS_AGENT_EVAL_LIVE_ACTION: "preflight",
+      IRIS_AGENT_EVAL_SOURCE_DB: sourceDatabase,
+    },
+    buildAgentEvalChildEnvironment,
+  );
+  exitFromCargo(result, "agent_eval_live_preflight_runner_failed");
   if (!existsSync(output)) {
     console.error("agent_eval_live_preflight_summary_missing");
     process.exit(1);
@@ -196,6 +239,7 @@ function main() {
     {
       IRIS_AGENT_EVAL_MODE: mode,
     },
+    buildAgentEvalChildEnvironment,
   );
   exitFromCargo(result, "agent_eval_runner_failed");
   const output = path.join(

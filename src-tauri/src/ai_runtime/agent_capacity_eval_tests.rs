@@ -8,19 +8,20 @@ use super::agent_capacity_eval::{
     generate_core_scenarios, generate_pressure_staircases, preflight_live_profiles,
     prepare_approved_live_pilot, restore_and_consume_live_preflight_session,
     run_approved_live_pilot, run_approved_live_pilot_with_local_doubles,
-    run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
-    run_security_track, select_core_scenarios, serialize_agent_capacity_report,
-    serialize_evaluation_summary, serialize_live_preflight_report, spawn_llm_protocol_double,
-    validate_serialized_evaluation_summary, validate_serialized_live_preflight_report,
-    write_blind_review_packet, write_live_pilot_result, write_live_preflight_report,
-    write_live_preflight_session_state, AnswerObservation, BudgetOutcome, CaseManifest,
-    CheckStatus, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
-    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
-    LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate, LlmProtocolDouble,
-    McpCapabilityContract, McpOperation, McpTransportContract, McpTransportFailureContract,
-    ObservedSource, PressureDimension, ProtocolContractOutcome, ProtocolValidationLevel,
-    ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
-    WebAnswerContamination, WebState,
+    run_approved_live_pilot_with_local_doubles_fault, run_combined_terminal_cases,
+    run_hard_boundary_probes, run_headless_core_evaluation, run_security_track,
+    select_core_scenarios, serialize_agent_capacity_report, serialize_evaluation_summary,
+    serialize_live_preflight_report, spawn_llm_protocol_double,
+    validate_serialized_evaluation_summary, validate_serialized_live_pilot_result,
+    validate_serialized_live_preflight_report, write_blind_review_packet, write_live_pilot_result,
+    write_live_preflight_report, write_live_preflight_session_state, AnswerObservation,
+    BudgetOutcome, CaseManifest, CheckStatus, CitationObservation, EvalFault, EvalRunMode,
+    EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
+    ImplicitVaultExpectation, LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate,
+    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
+    McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
+    ProtocolValidationLevel, ScenarioLanguage, SourceKind, StableLevelObservation,
+    TruncationOutcome, WebAnswerContamination, WebState,
 };
 use super::mcp_host_runtime::{
     call_required_capability, probe_provider_stdio_tools, McpHostRuntimeOptions, McpStdioDiscovery,
@@ -1750,7 +1751,7 @@ fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_c
             PressureDimension::RetrievalDistractors,
             PressureDimension::ReasoningDepth,
             PressureDimension::ToolLoop,
-            PressureDimension::WebEvidenceLatency,
+            PressureDimension::WebEvidenceCount,
             PressureDimension::Output,
             PressureDimension::CombinedTerminal,
         ])
@@ -1769,6 +1770,30 @@ fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_c
             .len(),
         6
     );
+    let web_evidence = staircases
+        .iter()
+        .find(|staircase| staircase.dimension() == PressureDimension::WebEvidenceCount)
+        .expect("web evidence count staircase");
+    let serialized = serde_json::to_value(web_evidence).expect("serialized staircase");
+    assert_eq!(serialized["dimension"], "web_evidence_count");
+}
+
+#[test]
+fn machine_report_separates_web_evidence_count_from_unmeasured_live_latency() {
+    let report: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../docs/eval/results/v1.2.15-agent-capacity.json"
+    ))
+    .expect("versioned capacity report");
+    let dimensions = report["staircases"]
+        .as_array()
+        .expect("pressure staircases")
+        .iter()
+        .filter_map(|staircase| staircase["dimension"].as_str())
+        .collect::<Vec<_>>();
+
+    assert!(dimensions.contains(&"web_evidence_count"));
+    assert!(!dimensions.contains(&"web_evidence_latency"));
+    assert_eq!(report["claimBoundary"]["webLatency"], "live_not_tested");
 }
 
 #[test]
@@ -1952,7 +1977,7 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         (PressureDimension::History, 6, 7),
         (PressureDimension::LocalMaterial, 12, 13),
         (PressureDimension::ToolLoop, 24, 25),
-        (PressureDimension::WebEvidenceLatency, 8, 9),
+        (PressureDimension::WebEvidenceCount, 8, 9),
         (PressureDimension::Output, 32_000, 32_001),
     ] {
         let execution = executions
@@ -2351,10 +2376,36 @@ fn live_preflight_report_can_only_be_written_to_the_ignored_evaluation_target() 
     let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("workspace root")
-        .join("target/agent-eval/test-live-preflight.json");
+        .join(format!(
+            "target/agent-eval/test-live-preflight-{}.json",
+            session.report().session_id()
+        ));
     write_live_preflight_report(&output, session.report()).expect("strict preflight output");
-    let serialized = std::fs::read_to_string(output).expect("preflight output");
+    let serialized = std::fs::read_to_string(&output).expect("preflight output");
     validate_serialized_live_preflight_report(&serialized).expect("strict persisted report");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let metadata = std::fs::metadata(&output).expect("preflight metadata");
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+
+        let existing = output.with_file_name(format!(
+            "test-live-preflight-existing-{}.json",
+            session.report().session_id()
+        ));
+        std::fs::write(&existing, "must remain unchanged").expect("precreated output");
+        let error = write_live_preflight_report(&existing, session.report())
+            .expect_err("precreated output must fail closed");
+        assert_eq!(error.reason_code(), "live_preflight_output_failed");
+        assert_eq!(
+            std::fs::read_to_string(&existing).expect("precreated output"),
+            "must remain unchanged"
+        );
+        std::fs::remove_file(existing).expect("remove precreated output");
+    }
+    std::fs::remove_file(output).expect("remove preflight output");
 }
 
 #[test]
@@ -2613,6 +2664,59 @@ async fn approved_live_pilot_executes_exactly_twelve_task1_runs_with_task2_local
     assert_eq!(result.required_case_count(), 12);
     assert_eq!(result.completed_case_count(), 12);
     assert_eq!(result.status_code(), "live_not_tested");
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join(format!(
+            "target/agent-eval/test-live-pilot-result-{profile_id}.json"
+        ));
+    write_live_pilot_result(&output, &result).expect("strict scored pilot result");
+    let serialized = std::fs::read_to_string(&output).expect("scored pilot result");
+    let value: serde_json::Value = serde_json::from_str(&serialized).expect("pilot result JSON");
+    assert_eq!(
+        value
+            .as_object()
+            .expect("pilot result object")
+            .keys()
+            .collect::<Vec<_>>(),
+        vec![
+            "capabilityFingerprint",
+            "caseCount",
+            "cases",
+            "completedCaseCount",
+            "failed",
+            "passed",
+            "requiredCaseCount",
+            "schemaVersion",
+            "status",
+        ]
+    );
+    assert_eq!(value["caseCount"], 12);
+    assert_eq!(value["cases"].as_array().map(Vec::len), Some(12));
+    assert_eq!(
+        value["passed"].as_u64().unwrap_or_default() + value["failed"].as_u64().unwrap_or_default(),
+        12
+    );
+    for case in value["cases"].as_array().expect("pilot cases") {
+        let verdict = case["verdict"].as_object().expect("closed verdict");
+        for field in [
+            "authorization",
+            "requiredEvidence",
+            "factCorrectness",
+            "citationSupport",
+            "routeEfficiency",
+            "degradationOrClarification",
+            "safety",
+        ] {
+            assert!(verdict.contains_key(field), "{field}");
+        }
+    }
+    let mut malicious = value;
+    malicious["cases"][0]["rawAnswer"] = serde_json::json!("must-not-persist");
+    let error = validate_serialized_live_pilot_result(&malicious.to_string())
+        .expect_err("live result rejects raw answer fields");
+    assert_eq!(error.reason_code(), "live_pilot_unknown_field");
+    std::fs::remove_file(output).expect("remove scored pilot result");
 
     #[cfg(unix)]
     {
@@ -2637,6 +2741,43 @@ async fn approved_live_pilot_executes_exactly_twelve_task1_runs_with_task2_local
         );
         std::fs::remove_file(output).expect("remove result symlink");
     }
+}
+
+#[tokio::test]
+async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
+    let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous live preflight");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let approval =
+        approve_live_profile(&mut session, Some(&profile_id), 35_000).expect("explicit approval");
+    let probe = LivePilotCallProbe::default();
+
+    let result = run_approved_live_pilot_with_local_doubles_fault(
+        &mut session,
+        Some(approval.token()),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        35_001,
+        &probe,
+        EvalFault::MissingFact { case_id: 13 },
+    )
+    .await
+    .expect("faulted approved pilot");
+
+    assert_eq!(probe.hydration_calls(), 1);
+    assert_eq!(probe.dispatch_calls(), 12);
+    assert_eq!(result.completed_case_count(), 12);
+    assert!(result.passed() < result.required_case_count());
+    assert!(result.failed() > 0);
+    let serialized = serde_json::to_value(&result).expect("faulted pilot result");
+    let faulted = serialized["cases"]
+        .as_array()
+        .expect("pilot cases")
+        .iter()
+        .find(|case| case["caseId"] == 13)
+        .expect("faulted smoke case");
+    assert_eq!(faulted["runtimeEvidence"]["terminalState"], "completed");
+    assert_eq!(faulted["verdict"]["factCorrectness"]["status"], "fail");
+    assert_eq!(faulted["overallPass"], false);
 }
 
 #[test]
