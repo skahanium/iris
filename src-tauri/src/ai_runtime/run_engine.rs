@@ -274,6 +274,8 @@ pub(crate) struct FailoverStreamingToolLoopProvider<'a> {
     session: &'a AssistantSessionRef,
     sink: &'a dyn RunEventSink,
     continuations: Mutex<HashMap<String, SelectedResponseContinuation>>,
+    #[cfg(test)]
+    test_streaming_client: Option<reqwest::Client>,
 }
 
 #[derive(Clone)]
@@ -297,7 +299,18 @@ impl<'a> FailoverStreamingToolLoopProvider<'a> {
             session,
             sink,
             continuations: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            test_streaming_client: None,
         }
+    }
+
+    /// Test-only seam for exercising the production failover loop against a
+    /// local deterministic transport without weakening the HTTPS-only client
+    /// used by every production construction path.
+    #[cfg(test)]
+    pub(crate) fn with_test_streaming_client(mut self, client: reqwest::Client) -> Self {
+        self.test_streaming_client = Some(client);
+        self
     }
 }
 
@@ -331,6 +344,17 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
+                #[cfg(test)]
+                let gateway = match &self.test_streaming_client {
+                    Some(client) => crate::ai_runtime::model_gateway::ModelGateway::new(
+                        client.clone(),
+                        vec![dispatch.provider.clone()],
+                    ),
+                    None => crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![
+                        dispatch.provider.clone(),
+                    ])?,
+                };
+                #[cfg(not(test))]
                 let gateway =
                     crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![dispatch
                         .provider

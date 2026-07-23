@@ -8,8 +8,23 @@
   "localAuthorization": {
     "explicitReferenceIds": ["local-authority"],
     "explicitScopeId": "scope-synthetic",
+    "explicitScopeSourceIds": ["local-authority"],
     "implicitVault": "allowed"
   },
+  "availableSources": [
+    {
+      "id": "local-authority",
+      "kind": "local"
+    },
+    {
+      "id": "local-scope-outside",
+      "kind": "local"
+    },
+    {
+      "id": "web-authority",
+      "kind": "web"
+    }
+  ],
   "requiredFacts": [
     {
       "id": "fact-synthetic",

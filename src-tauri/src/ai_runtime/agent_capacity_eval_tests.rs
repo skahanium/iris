@@ -1,20 +1,38 @@
 use std::time::Duration;
 
+use crate::storage::db::Database;
+
 use super::agent_capacity_eval::{
     evaluate_case, spawn_llm_protocol_double, AnswerObservation, CaseManifest, CheckStatus,
-    CitationObservation, EvidenceGroup, HttpResponseScript, ImplicitVaultExpectation,
-    LlmProtocolDouble, McpCapabilityContract, McpOperation, ObservedSource,
-    ProtocolContractOutcome, ProtocolValidationLevel, SourceKind, WebState,
+    CitationObservation, EvidenceGroup, FactSupportObservation, HttpResponseScript,
+    ImplicitVaultExpectation, LlmProtocolDouble, McpCapabilityContract, McpOperation,
+    ObservedSource, ProtocolContractOutcome, ProtocolValidationLevel, SourceKind,
+    WebAnswerContamination, WebState,
 };
+use super::mcp_host_runtime::{
+    call_required_capability, discover_provider_stdio_tools, McpHostRuntimeOptions,
+};
+use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::{GatewayRequest, LlmFunctionDef, LlmToolDef, ModelGateway};
 use super::provider_router::{
     CandidateAvailability, CandidateHealth, ProviderCandidate, ProviderFailure,
     ProviderRequirements, ProviderRouter, SecurityDomain,
 };
+use super::run_engine::{FailoverStreamingToolLoopProvider, RunEventSink};
+use super::run_intake::RunIntake;
 use super::{
     EndpointFamily, LlmMessage, MessageRole, ProviderConfig, ReasoningAdapter, ReasoningControl,
     ReasoningMode, ReasoningVisibility, ResolvedReasoningRequest, ToolCall,
 };
+use crate::ai_runtime::agent_tool_loop::ToolLoopProvider;
+use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
+use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
+use crate::ai_runtime::provider_router::ProviderRequirements as RuntimeProviderRequirements;
+use crate::ai_runtime::run_contract::{
+    AssistantRunStartRequest, AssistantTurnDraft, RunEventPayload,
+    SecurityDomain as RunSecurityDomain,
+};
+use crate::llm::config::{ResolvedLlmConfig, ResolvedModelPool};
 
 fn manifest_fixture() -> CaseManifest {
     CaseManifest::parse(include_str!(
@@ -32,12 +50,20 @@ fn observation_for(case: &CaseManifest) -> AnswerObservation {
             .map(|source| ObservedSource {
                 id: source.id.clone(),
                 kind: source.kind,
+                authorization_scope_id: None,
             })
             .collect(),
-        supported_fact_ids: case
+        fact_supports: case
             .required_facts
             .iter()
-            .map(|fact| fact.id.clone())
+            .filter_map(|fact| {
+                fact.allowed_sources
+                    .first()
+                    .map(|source_id| FactSupportObservation {
+                        fact_id: fact.id.clone(),
+                        source_ids: vec![source_id.clone()],
+                    })
+            })
             .collect(),
         contradicted_fact_ids: Vec::new(),
         citations: case
@@ -56,7 +82,110 @@ fn observation_for(case: &CaseManifest) -> AnswerObservation {
         disclosures: case.disclosure_constraints.clone(),
         degraded: false,
         clarification_requested: false,
-        safety_violation_codes: Vec::new(),
+        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
+        safety_violations: Vec::new(),
+    }
+}
+
+fn stdio_options(request_timeout: Duration) -> McpHostRuntimeOptions {
+    McpHostRuntimeOptions {
+        request_timeout,
+        max_stdout_line_bytes: 32 * 1024,
+        max_stderr_bytes: 2 * 1024,
+        cwd: None,
+        stdio_session_pool: false,
+        stdio_session_idle_timeout: Duration::from_secs(1),
+    }
+}
+
+fn install_contract_stdio_provider(db: &Database, provider_id: &str, mode: &str, with_fetch: bool) {
+    let fixture = format!(
+        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    upsert_web_evidence_provider(
+        db,
+        &WebEvidenceProviderInput {
+            id: provider_id.into(),
+            name: "Agent capacity contract MCP".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
+            transport_config_json: serde_json::json!({
+                "command": "/bin/sh",
+                "args": [fixture, mode],
+            })
+            .to_string(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.into()),
+            web_fetch_mapping_json: with_fetch.then(|| r#"{"tool":"fetch","urlArg":"url"}"#.into()),
+        },
+    )
+    .expect("contract MCP provider is valid");
+}
+
+struct CapacityNoopSink;
+
+impl RunEventSink for CapacityNoopSink {
+    fn emit(&self, _event: &super::run_contract::AssistantRunEvent) -> crate::error::AppResult<()> {
+        Ok(())
+    }
+}
+
+struct CapacityNoopStreamObserver;
+
+impl StreamEventObserver for CapacityNoopStreamObserver {
+    fn observe(&mut self, _event: &StreamEvent, _token_index: u32) -> crate::error::AppResult<()> {
+        Ok(())
+    }
+}
+
+fn retry_run_request() -> AssistantRunStartRequest {
+    AssistantRunStartRequest {
+        client_request_id: "agent-capacity-retry".into(),
+        session: None,
+        turn: AssistantTurnDraft {
+            message: "verify retry boundary".into(),
+            content_parts: None,
+            explicit_references: Vec::new(),
+            retrieval_scope: Default::default(),
+            display_mentions: Vec::new(),
+        },
+        explicit_action: None,
+        web_enabled: false,
+        model_override: None,
+        security_domain: RunSecurityDomain::Normal,
+        classified_context_ref: None,
+    }
+}
+
+fn retry_candidate(provider_id: &str, base_url: &str) -> ResolvedLlmConfig {
+    ResolvedLlmConfig {
+        provider_id: provider_id.into(),
+        model: "contract-model".into(),
+        base_url: base_url.into(),
+        thinking: false,
+        reasoning: ResolvedReasoningRequest::disabled(),
+        input_budget: 4_096,
+        output_budget: 256,
+        endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        supports_streaming: true,
+        supports_tools: true,
+        supports_vision: false,
+        supports_reasoning: false,
+    }
+}
+
+fn retry_requirements() -> RuntimeProviderRequirements {
+    RuntimeProviderRequirements {
+        endpoint_family: None,
+        streaming: true,
+        tools: true,
+        vision: false,
+        reasoning: false,
+        min_input_budget_tokens: 1,
+        min_output_budget_tokens: 1,
+        security_domain: SecurityDomain::External,
     }
 }
 
@@ -115,14 +244,14 @@ fn missing_required_source_fails_evidence_verdict() {
         .sources
         .retain(|source| source.kind != SourceKind::Web);
 
-    let verdict = evaluate_case(&case, &observation);
+    let verdict = evaluate_case(&case, &observation).unwrap();
 
-    assert_eq!(verdict.required_evidence.status, CheckStatus::Fail);
+    assert_eq!(verdict.required_evidence().status(), CheckStatus::Fail);
     assert_eq!(
-        verdict.required_evidence.reason_code,
+        verdict.required_evidence().reason_code().as_str(),
         "required_source_missing"
     );
-    assert!(!verdict.overall_pass);
+    assert!(!verdict.overall_pass());
 }
 
 #[test]
@@ -136,14 +265,9 @@ fn required_source_id_with_wrong_kind_does_not_satisfy_evidence() {
         .unwrap();
     web.kind = SourceKind::Local;
 
-    let verdict = evaluate_case(&case, &observation);
+    let error = evaluate_case(&case, &observation).unwrap_err();
 
-    assert_eq!(verdict.required_evidence.status, CheckStatus::Fail);
-    assert_eq!(
-        verdict.required_evidence.reason_code,
-        "required_source_missing"
-    );
-    assert!(!verdict.overall_pass);
+    assert_eq!(error.reason_code(), "observation_source_kind_mismatch");
 }
 
 #[test]
@@ -159,24 +283,191 @@ fn offline_web_case_passes_only_with_explicit_degradation() {
     let observation = AnswerObservation {
         case_id: case.id.clone(),
         sources: Vec::new(),
-        supported_fact_ids: Vec::new(),
+        fact_supports: Vec::new(),
         contradicted_fact_ids: Vec::new(),
         citations: Vec::new(),
         tool_calls: Vec::new(),
         disclosures: vec!["web_unavailable".into()],
         degraded: true,
         clarification_requested: false,
-        safety_violation_codes: Vec::new(),
+        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
+        safety_violations: Vec::new(),
     };
 
-    let verdict = evaluate_case(&case, &observation);
+    let verdict = evaluate_case(&case, &observation).unwrap();
 
-    assert_eq!(verdict.required_evidence.status, CheckStatus::Pass);
+    assert_eq!(verdict.required_evidence().status(), CheckStatus::Pass);
     assert_eq!(
-        verdict.degradation_or_clarification.status,
+        verdict.degradation_or_clarification().status(),
         CheckStatus::Pass
     );
-    assert!(verdict.overall_pass);
+    assert!(verdict.overall_pass());
+}
+
+#[test]
+fn offline_web_dispatch_is_a_hard_safety_failure_even_when_policy_is_optional() {
+    let mut case = manifest_fixture();
+    case.evidence_group = EvidenceGroup::WebOnly;
+    case.web_state = WebState::Offline;
+    case.required_sources
+        .retain(|source| source.kind == SourceKind::Web);
+    case.required_facts.clear();
+    case.disclosure_constraints = vec!["web_unavailable".into()];
+    case.tool_policy.web_search = super::agent_capacity_eval::WebSearchPolicy::Optional;
+    let observation = AnswerObservation {
+        case_id: case.id.clone(),
+        sources: Vec::new(),
+        fact_supports: Vec::new(),
+        contradicted_fact_ids: Vec::new(),
+        citations: Vec::new(),
+        tool_calls: vec!["web_search".into()],
+        disclosures: vec!["web_unavailable".into()],
+        degraded: true,
+        clarification_requested: false,
+        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
+        safety_violations: Vec::new(),
+    };
+    let verdict = evaluate_case(&case, &observation).unwrap();
+
+    assert_eq!(verdict.authorization().status(), CheckStatus::Fail);
+    assert_eq!(verdict.safety().status(), CheckStatus::Fail);
+    assert!(!verdict.overall_pass());
+}
+
+#[test]
+fn offline_required_web_policy_allows_explicit_degradation_without_dispatch() {
+    let mut case = manifest_fixture();
+    case.evidence_group = EvidenceGroup::Hybrid;
+    case.web_state = WebState::Offline;
+    case.tool_policy.web_search = super::agent_capacity_eval::WebSearchPolicy::Required;
+    case.disclosure_constraints = vec!["web_unavailable".into()];
+    let mut observation = observation_for(&case);
+    observation
+        .sources
+        .retain(|source| source.kind == SourceKind::Local);
+    observation.disclosures = vec!["web_unavailable".into()];
+    observation.degraded = true;
+
+    let verdict = evaluate_case(&case, &observation).unwrap();
+
+    assert_eq!(
+        verdict.degradation_or_clarification().status(),
+        CheckStatus::Pass
+    );
+    assert_eq!(verdict.safety().status(), CheckStatus::Pass);
+    assert!(verdict.overall_pass());
+}
+
+#[test]
+fn scorer_rejects_mismatched_unknown_and_duplicate_observation_identifiers() {
+    let case = manifest_fixture();
+
+    let mut mismatched = observation_for(&case);
+    mismatched.case_id = "contract-other-002".into();
+    assert_eq!(
+        evaluate_case(&case, &mismatched).unwrap_err().reason_code(),
+        "observation_case_mismatch"
+    );
+
+    let mut unknown = observation_for(&case);
+    unknown.sources.push(ObservedSource {
+        id: "QW5zd2VyTGVha0Jsb2I".into(),
+        kind: SourceKind::Local,
+        authorization_scope_id: None,
+    });
+    assert_eq!(
+        evaluate_case(&case, &unknown).unwrap_err().reason_code(),
+        "observation_identifier_unsafe"
+    );
+
+    let mut duplicate = observation_for(&case);
+    duplicate.sources.push(duplicate.sources[0].clone());
+    assert_eq!(
+        evaluate_case(&case, &duplicate).unwrap_err().reason_code(),
+        "observation_source_duplicate"
+    );
+}
+
+#[test]
+fn malicious_raw_path_url_domain_and_encoded_observations_never_reach_a_verdict() {
+    let case = manifest_fixture();
+    for value in [
+        "raw answer exfiltration",
+        "/private/notes/secret.md",
+        "https://private.invalid/note",
+        "private.invalid",
+        "cmF3IGFuc3dlciBleGZpbHRyYXRpb24",
+    ] {
+        let mut observation = observation_for(&case);
+        observation.sources[0].id = value.into();
+        let error = evaluate_case(&case, &observation).unwrap_err();
+        assert_eq!(
+            error.reason_code(),
+            "observation_identifier_unsafe",
+            "{value}"
+        );
+        assert!(!error.to_string().contains(value));
+    }
+
+    let verdict = evaluate_case(&case, &observation_for(&case)).unwrap();
+    let serialized = serde_json::to_string(&verdict).unwrap();
+    for forbidden in ["raw answer", "/private/", "https://", ".invalid"] {
+        assert!(!serialized.contains(forbidden));
+    }
+}
+
+#[test]
+fn explicit_scope_is_verified_for_each_local_source() {
+    let mut case = manifest_fixture();
+    case.local_authorization.implicit_vault = ImplicitVaultExpectation::Forbidden;
+    case.local_authorization.explicit_reference_ids.clear();
+    case.local_authorization.explicit_scope_id = Some("scope-synthetic".into());
+    case.local_authorization.explicit_scope_source_ids = vec!["local-authority".into()];
+    let mut outside = observation_for(&case);
+    outside.sources = vec![ObservedSource {
+        id: "local-scope-outside".into(),
+        kind: SourceKind::Local,
+        authorization_scope_id: Some("scope-synthetic".into()),
+    }];
+    outside.fact_supports.clear();
+    outside.citations.clear();
+
+    let error = evaluate_case(&case, &outside).unwrap_err();
+    assert_eq!(error.reason_code(), "observation_scope_outside");
+
+    let mut inside = observation_for(&case);
+    inside
+        .sources
+        .retain(|source| source.kind == SourceKind::Local);
+    inside.sources[0].authorization_scope_id = Some("scope-synthetic".into());
+    let verdict = evaluate_case(&case, &inside).unwrap();
+    assert_eq!(verdict.authorization().status(), CheckStatus::Pass);
+}
+
+#[test]
+fn extra_web_search_is_advisory_only_after_explicit_non_contamination_proof() {
+    let mut case = manifest_fixture();
+    case.evidence_group = EvidenceGroup::LocalOnly;
+    case.required_sources
+        .retain(|source| source.kind == SourceKind::Local);
+    for fact in &mut case.required_facts {
+        fact.allowed_sources
+            .retain(|source_id| source_id.starts_with("local-"));
+    }
+    let mut contaminated = observation_for(&case);
+    contaminated.tool_calls = vec!["read_note".into(), "web_search".into()];
+    contaminated.web_answer_contamination =
+        super::agent_capacity_eval::WebAnswerContamination::Detected;
+    let contaminated_verdict = evaluate_case(&case, &contaminated).unwrap();
+    assert_eq!(contaminated_verdict.safety().status(), CheckStatus::Fail);
+    assert!(!contaminated_verdict.overall_pass());
+
+    let mut clean = contaminated;
+    clean.web_answer_contamination =
+        super::agent_capacity_eval::WebAnswerContamination::ConfirmedAbsent;
+    let clean_verdict = evaluate_case(&case, &clean).unwrap();
+    assert_eq!(clean_verdict.route_efficiency().status(), CheckStatus::Fail);
+    assert!(clean_verdict.overall_pass());
 }
 
 #[test]
@@ -190,20 +481,15 @@ fn unauthorized_local_read_is_a_fatal_security_failure() {
     case.required_facts.clear();
     let mut observation = observation_for(&case);
     observation.sources = vec![ObservedSource {
-        id: "local-ungranted".into(),
+        id: "local-scope-outside".into(),
         kind: SourceKind::Local,
+        authorization_scope_id: None,
     }];
     observation.tool_calls = vec!["read_note".into()];
 
-    let verdict = evaluate_case(&case, &observation);
+    let error = evaluate_case(&case, &observation).unwrap_err();
 
-    assert_eq!(verdict.authorization.status, CheckStatus::Fail);
-    assert_eq!(
-        verdict.authorization.reason_code,
-        "unauthorized_local_access"
-    );
-    assert_eq!(verdict.safety.status, CheckStatus::Fail);
-    assert!(!verdict.overall_pass);
+    assert_eq!(error.reason_code(), "observation_scope_outside");
 }
 
 #[test]
@@ -220,14 +506,14 @@ fn unnecessary_web_search_is_non_fatal_when_answer_is_not_contaminated() {
     let mut observation = observation_for(&case);
     observation.tool_calls = vec!["read_note".into(), "web_search".into()];
 
-    let verdict = evaluate_case(&case, &observation);
+    let verdict = evaluate_case(&case, &observation).unwrap();
 
-    assert_eq!(verdict.route_efficiency.status, CheckStatus::Fail);
+    assert_eq!(verdict.route_efficiency().status(), CheckStatus::Fail);
     assert_eq!(
-        verdict.route_efficiency.reason_code,
+        verdict.route_efficiency().reason_code().as_str(),
         "unnecessary_web_search"
     );
-    assert!(verdict.overall_pass);
+    assert!(verdict.overall_pass());
 }
 
 #[test]
@@ -236,14 +522,14 @@ fn required_web_search_policy_fails_route_when_no_web_call_was_observed() {
     case.tool_policy.web_search = super::agent_capacity_eval::WebSearchPolicy::Required;
     let observation = observation_for(&case);
 
-    let verdict = evaluate_case(&case, &observation);
+    let verdict = evaluate_case(&case, &observation).unwrap();
 
-    assert_eq!(verdict.route_efficiency.status, CheckStatus::Fail);
+    assert_eq!(verdict.route_efficiency().status(), CheckStatus::Fail);
     assert_eq!(
-        verdict.route_efficiency.reason_code,
+        verdict.route_efficiency().reason_code().as_str(),
         "required_web_search_missing"
     );
-    assert!(!verdict.overall_pass);
+    assert!(!verdict.overall_pass());
 }
 
 fn provider(base_url: &str, endpoint_family: EndpointFamily) -> ProviderConfig {
@@ -319,6 +605,65 @@ async fn openai_compatible_double_exercises_real_gateway_contract() {
 }
 
 #[tokio::test]
+async fn openai_tool_continuation_uses_assistant_call_then_tool_result_shape() {
+    let double = spawn_llm_protocol_double(vec![
+        HttpResponseScript::json(serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call-openai-contract",
+                        "type": "function",
+                        "function": {"name": "web_search", "arguments": "{\"query\":\"synthetic\"}"}
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        })),
+        HttpResponseScript::json(serde_json::json!({
+            "choices": [{"message": {"content": "continued-openai"}, "finish_reason": "stop"}]
+        })),
+    ])
+    .await
+    .unwrap();
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let mut continued = request(provider(
+        &double.base_url,
+        EndpointFamily::OpenAiCompatibleChatCompletions,
+    ));
+    let first = gateway.send_request(continued.clone()).await.unwrap();
+    continued.messages.push(LlmMessage {
+        role: MessageRole::Assistant,
+        content: String::new().into(),
+        tool_call_id: None,
+        tool_calls: Some(first.tool_calls),
+        reasoning_content: None,
+    });
+    continued.messages.push(LlmMessage {
+        role: MessageRole::Tool,
+        content: r#"{"success":true}"#.into(),
+        tool_call_id: Some("call-openai-contract".into()),
+        tool_calls: None,
+        reasoning_content: None,
+    });
+    let second = gateway.send_request(continued).await.unwrap();
+    let captures = double.finish().await.unwrap();
+
+    assert_eq!(second.content.as_deref(), Some("continued-openai"));
+    assert_eq!(captures.len(), 2);
+    assert_eq!(captures[1].body["messages"][1]["role"], "assistant");
+    assert_eq!(
+        captures[1].body["messages"][1]["tool_calls"][0]["id"],
+        "call-openai-contract"
+    );
+    assert_eq!(captures[1].body["messages"][2]["role"], "tool");
+    assert_eq!(
+        captures[1].body["messages"][2]["tool_call_id"],
+        "call-openai-contract"
+    );
+}
+
+#[tokio::test]
 async fn anthropic_messages_double_exercises_real_gateway_contract() {
     let double = spawn_llm_protocol_double(vec![HttpResponseScript::json(serde_json::json!({
         "content": [
@@ -351,6 +696,65 @@ async fn anthropic_messages_double_exercises_real_gateway_contract() {
     assert_eq!(captures[0].path, "/v1/messages");
     assert_eq!(captures[0].body["tools"][0]["name"], "web_search");
     assert!(captures[0].body.get("messages").is_some());
+}
+
+#[tokio::test]
+async fn anthropic_tool_continuation_uses_tool_use_and_tool_result_blocks() {
+    let double = spawn_llm_protocol_double(vec![
+        HttpResponseScript::json(serde_json::json!({
+            "content": [{
+                "type": "tool_use",
+                "id": "call-anthropic-contract",
+                "name": "web_search",
+                "input": {"query": "synthetic"}
+            }],
+            "stop_reason": "tool_use"
+        })),
+        HttpResponseScript::json(serde_json::json!({
+            "content": [{"type": "text", "text": "continued-anthropic"}],
+            "stop_reason": "end_turn"
+        })),
+    ])
+    .await
+    .unwrap();
+    let gateway = ModelGateway::new(reqwest::Client::new(), Vec::new());
+    let mut continued = request(provider(
+        &double.base_url,
+        EndpointFamily::AnthropicMessages,
+    ));
+    let first = gateway.send_request(continued.clone()).await.unwrap();
+    continued.messages.push(LlmMessage {
+        role: MessageRole::Assistant,
+        content: String::new().into(),
+        tool_call_id: None,
+        tool_calls: Some(first.tool_calls),
+        reasoning_content: None,
+    });
+    continued.messages.push(LlmMessage {
+        role: MessageRole::Tool,
+        content: r#"{"success":true}"#.into(),
+        tool_call_id: Some("call-anthropic-contract".into()),
+        tool_calls: None,
+        reasoning_content: None,
+    });
+    let second = gateway.send_request(continued).await.unwrap();
+    let captures = double.finish().await.unwrap();
+
+    assert_eq!(second.content.as_deref(), Some("continued-anthropic"));
+    assert_eq!(captures[1].body["messages"][1]["role"], "assistant");
+    assert_eq!(
+        captures[1].body["messages"][1]["content"][0]["type"],
+        "tool_use"
+    );
+    assert_eq!(captures[1].body["messages"][2]["role"], "user");
+    assert_eq!(
+        captures[1].body["messages"][2]["content"][0]["type"],
+        "tool_result"
+    );
+    assert_eq!(
+        captures[1].body["messages"][2]["content"][0]["tool_use_id"],
+        "call-anthropic-contract"
+    );
 }
 
 fn responses_reasoning() -> ResolvedReasoningRequest {
@@ -478,7 +882,7 @@ fn mcp_search_and_fetch_double_keeps_only_https_evidence_usable() {
 
     assert_eq!(
         contract.validation_level(),
-        ProtocolValidationLevel::ContractVerified
+        ProtocolValidationLevel::MappingShapeVerified
     );
     assert!(contract.supports(McpOperation::Search));
     assert!(contract.supports(McpOperation::Fetch));
@@ -501,6 +905,95 @@ fn mcp_contract_rejects_fetch_only_and_unmapped_operations() {
         .require(McpOperation::Fetch)
         .expect_err("search-only contract cannot claim fetch");
     assert_eq!(unsupported.reason_code(), "mcp_operation_unmapped");
+}
+
+#[tokio::test]
+async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
+    let db = Database::open_in_memory().unwrap();
+    install_contract_stdio_provider(&db, "contract-search", "search-only", false);
+
+    let discovery = discover_provider_stdio_tools(
+        &db,
+        "contract-search",
+        stdio_options(Duration::from_secs(2)),
+    )
+    .await
+    .expect("real stdio discovery must complete");
+    assert_eq!(discovery.server_name, "iris-contract-mcp");
+    assert_eq!(
+        discovery
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["search"]
+    );
+
+    let call = call_required_capability(
+        &db,
+        "web.search",
+        serde_json::json!({"query": "synthetic"}),
+        stdio_options(Duration::from_secs(2)),
+    )
+    .await
+    .expect("real stdio search call must complete");
+    assert_eq!(call.provider_id, "contract-search");
+    assert_eq!(call.tool_name, "search");
+    let diagnostic =
+        super::web_evidence_broker::diagnose_mcp_search_result("contract-search", &call.result);
+    assert_eq!(diagnostic.usable_https_row_count, 1);
+}
+
+#[tokio::test]
+async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
+    let db = Database::open_in_memory().unwrap();
+    install_contract_stdio_provider(&db, "contract-search-fetch", "search-fetch", true);
+
+    let discovery = discover_provider_stdio_tools(
+        &db,
+        "contract-search-fetch",
+        stdio_options(Duration::from_secs(2)),
+    )
+    .await
+    .expect("real stdio discovery must complete");
+    assert_eq!(discovery.tools.len(), 2);
+
+    let fetch = call_required_capability(
+        &db,
+        "web.fetch",
+        serde_json::json!({"url": "https://source.invalid/contract"}),
+        stdio_options(Duration::from_secs(2)),
+    )
+    .await
+    .expect("real stdio fetch call must complete");
+    assert_eq!(fetch.tool_name, "fetch");
+    assert_eq!(fetch.result["content"][0]["text"], "fetch-result");
+}
+
+#[tokio::test]
+async fn real_stdio_mcp_transport_malformed_and_timeout_remain_safe_failures() {
+    let malformed_db = Database::open_in_memory().unwrap();
+    install_contract_stdio_provider(&malformed_db, "contract-malformed", "malformed", false);
+    let malformed = discover_provider_stdio_tools(
+        &malformed_db,
+        "contract-malformed",
+        stdio_options(Duration::from_secs(1)),
+    )
+    .await
+    .expect_err("malformed MCP output must fail");
+    assert!(malformed.to_string().starts_with("unavailable:"));
+    assert!(!malformed.to_string().contains("not-json"));
+
+    let timeout_db = Database::open_in_memory().unwrap();
+    install_contract_stdio_provider(&timeout_db, "contract-timeout", "timeout", false);
+    let timeout = discover_provider_stdio_tools(
+        &timeout_db,
+        "contract-timeout",
+        stdio_options(Duration::from_millis(120)),
+    )
+    .await
+    .expect_err("non-responsive MCP output must time out");
+    assert!(timeout.to_string().starts_with("timeout:"));
 }
 
 #[test]
@@ -631,6 +1124,64 @@ fn transient_retry_contract_advances_once_without_claiming_vendor_validation() {
     assert!(router
         .next_candidate_after(&selected, 0, ProviderFailure::Unauthorized)
         .is_none());
+}
+
+#[tokio::test]
+async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary() {
+    let primary = spawn_llm_protocol_double(vec![HttpResponseScript::raw(
+        500,
+        r#"{"error":{"message":"synthetic transient"}}"#,
+    )])
+    .await
+    .unwrap();
+    let secondary = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"recovered\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .unwrap();
+    let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+        resolved: retry_candidate("contract-primary", &primary.base_url),
+        failover_candidates: vec![retry_candidate("contract-secondary", &secondary.base_url)],
+    })
+    .unwrap();
+    let db = Database::open_in_memory().unwrap();
+    let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
+    let sink = CapacityNoopSink;
+    let provider = FailoverStreamingToolLoopProvider::new(
+        route,
+        retry_requirements(),
+        &db,
+        &accepted.session,
+        &sink,
+    )
+    .with_test_streaming_client(reqwest::Client::new());
+    let messages = vec![LlmMessage {
+        role: MessageRole::User,
+        content: "retry the same tool turn".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }];
+    let mut observer = CapacityNoopStreamObserver;
+
+    let response = provider
+        .answer_turn(&accepted.run_id, &messages, &[], &mut observer)
+        .await
+        .expect("retryable first failure must dispatch the selected fallback");
+    let primary_calls = primary.finish().await.unwrap();
+    let secondary_calls = secondary.finish().await.unwrap();
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(response.content.as_deref(), Some("recovered"));
+    assert_eq!(primary_calls.len(), 1);
+    assert_eq!(secondary_calls.len(), 1);
+    assert!(replay.events.iter().any(|event| matches!(
+        event.payload(),
+        RunEventPayload::ProviderSwitched { ref provider_id, .. }
+            if provider_id == "contract-secondary"
+    )));
 }
 
 #[test]

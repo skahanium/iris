@@ -770,6 +770,11 @@ pub async fn send_streaming_request_to_observer(
     })?;
     body["stream"] = serde_json::json!(true);
 
+    // Production always builds the dedicated HTTPS-only streaming client. The
+    // injected client is used only by deterministic local protocol tests.
+    #[cfg(test)]
+    let streaming_client = _client.clone();
+    #[cfg(not(test))]
     let streaming_client =
         crate::network::cert_pinning::create_streaming_https_client().map_err(|e| {
             finish_stream_with_error(

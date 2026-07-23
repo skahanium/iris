@@ -569,18 +569,45 @@ fn parse_data_url(url: &str) -> (&str, &str) {
 fn build_anthropic_messages_body_inner(request: &GatewayRequest) -> serde_json::Value {
     let mut system_parts = Vec::new();
     let mut messages = Vec::new();
-    for message in &request.messages {
+    let mut index = 0;
+    while index < request.messages.len() {
+        let message = &request.messages[index];
         match message.role {
             MessageRole::System => system_parts.push(message.content.text_content()),
-            MessageRole::Assistant => messages.push(serde_json::json!({
-                "role": "assistant",
-                "content": content_to_anthropic_json(&message.content),
-            })),
-            MessageRole::User | MessageRole::Tool => messages.push(serde_json::json!({
+            MessageRole::Assistant => {
+                let content = anthropic_assistant_content(message);
+                messages.push(serde_json::json!({
+                    "role": "assistant",
+                    "content": content,
+                }));
+            }
+            MessageRole::User => messages.push(serde_json::json!({
                 "role": "user",
                 "content": content_to_anthropic_json(&message.content),
             })),
+            MessageRole::Tool => {
+                let mut tool_results = Vec::new();
+                while index < request.messages.len()
+                    && matches!(request.messages[index].role, MessageRole::Tool)
+                {
+                    let tool = &request.messages[index];
+                    if let Some(tool_use_id) = tool.tool_call_id.as_deref() {
+                        tool_results.push(serde_json::json!({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use_id,
+                            "content": content_to_anthropic_json(&tool.content),
+                        }));
+                    }
+                    index += 1;
+                }
+                messages.push(serde_json::json!({
+                    "role": "user",
+                    "content": tool_results,
+                }));
+                continue;
+            }
         }
+        index += 1;
     }
 
     let mut body = serde_json::json!({
@@ -613,6 +640,39 @@ fn build_anthropic_messages_body_inner(request: &GatewayRequest) -> serde_json::
     }
     apply_anthropic_reasoning_body(&mut body, request);
     body
+}
+
+/// Anthropic represents an assistant tool request as `tool_use` content
+/// blocks, unlike OpenAI-compatible `tool_calls` fields.
+fn anthropic_assistant_content(message: &LlmMessage) -> serde_json::Value {
+    let Some(tool_calls) = message
+        .tool_calls
+        .as_ref()
+        .filter(|calls| !calls.is_empty())
+    else {
+        return content_to_anthropic_json(&message.content);
+    };
+
+    let mut blocks = match content_to_anthropic_json(&message.content) {
+        serde_json::Value::String(text) if text.is_empty() => Vec::new(),
+        serde_json::Value::String(text) => vec![serde_json::json!({
+            "type": "text",
+            "text": text,
+        })],
+        serde_json::Value::Array(blocks) => blocks,
+        _ => Vec::new(),
+    };
+    for call in tool_calls {
+        let input = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        blocks.push(serde_json::json!({
+            "type": "tool_use",
+            "id": call.id,
+            "name": call.function.name,
+            "input": input,
+        }));
+    }
+    serde_json::Value::Array(blocks)
 }
 
 #[cfg(test)]
