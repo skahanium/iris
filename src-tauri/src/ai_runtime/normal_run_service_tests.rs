@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use super::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
 use super::agent_tool_loop::ToolLoopExecutor;
-use super::normal_run_service::{desktop_app_handle, execute_normal_run};
+use super::normal_run_service::execute_normal_run;
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
@@ -49,15 +49,6 @@ fn direct_request() -> AssistantRunStartRequest {
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     }
-}
-
-#[test]
-fn desktop_adapter_preserves_the_app_handle_as_present() {
-    let app = tauri::test::mock_app();
-
-    let adapted = desktop_app_handle(app.handle().clone());
-
-    assert!(adapted.is_some());
 }
 
 #[tokio::test]

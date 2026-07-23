@@ -642,22 +642,34 @@ fn spawn_rejected_change_finalization(
 /// Context, policy and bounded Web evidence are prepared from persisted Run
 /// facts before the streaming Provider is dispatched. The Run Engine remains
 /// the sole owner of lifecycle persistence and terminalization.
+fn dispatch_desktop_normal_run<R: tauri::Runtime, T>(
+    app_handle: AppHandle<R>,
+    dispatch: impl FnOnce(Option<AppHandle<R>>) -> T,
+) -> T {
+    dispatch(Some(app_handle))
+}
+
 fn spawn_normal_direct_run(
     state: Arc<AppState>,
     app_handle: AppHandle,
     accepted: AssistantRunAccepted,
     vault: Option<std::path::PathBuf>,
 ) {
-    tauri::async_runtime::spawn(async move {
-        let sink = TauriRunEventSink::new(&app_handle);
-        crate::ai_runtime::normal_run_service::execute_normal_run(
-            state,
-            accepted,
-            vault,
-            crate::ai_runtime::normal_run_service::desktop_app_handle(app_handle.clone()),
-            &sink,
-        )
-        .await;
+    dispatch_desktop_normal_run(app_handle, |app_handle| {
+        tauri::async_runtime::spawn(async move {
+            let sink_handle = app_handle
+                .as_ref()
+                .expect("desktop normal Run adapter must preserve AppHandle");
+            let sink = TauriRunEventSink::new(sink_handle);
+            crate::ai_runtime::normal_run_service::execute_normal_run(
+                state,
+                accepted,
+                vault,
+                app_handle.clone(),
+                &sink,
+            )
+            .await;
+        });
     });
 }
 
@@ -875,5 +887,27 @@ fn fail_ephemeral_classified_run(
         if let Ok(failed) = failed {
             let _ = sink.emit(&failed);
         }
+    }
+}
+
+#[cfg(test)]
+mod normal_run_desktop_adapter_tests {
+    use std::cell::Cell;
+
+    use super::dispatch_desktop_normal_run;
+
+    #[test]
+    fn production_desktop_adapter_dispatches_a_present_app_handle() {
+        let app = tauri::test::mock_app();
+        let observed_present = Cell::new(false);
+
+        dispatch_desktop_normal_run(
+            app.handle().clone(),
+            |app_handle: Option<tauri::AppHandle<tauri::test::MockRuntime>>| {
+                observed_present.set(app_handle.is_some());
+            },
+        );
+
+        assert!(observed_present.get());
     }
 }
