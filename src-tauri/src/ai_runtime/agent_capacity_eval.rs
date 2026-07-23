@@ -255,23 +255,36 @@ fn safe_label(value: &str) -> bool {
 }
 
 fn looks_like_encoded_payload(value: &str) -> bool {
-    if value.len() < 16 || value.contains(['-', '_', ':']) {
+    if value.len() < 16 {
         return false;
     }
-    use base64::{engine::general_purpose::STANDARD, Engine as _};
-    let padded = match value.len() % 4 {
-        0 => value.to_string(),
-        remainder => format!("{value}{}", "=".repeat(4 - remainder)),
+    if value.len() % 2 == 0 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return true;
+    }
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_uppercase() || matches!(byte, b'2'..=b'7'))
+    {
+        return true;
+    }
+
+    use base64::{
+        engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD},
+        Engine as _,
     };
-    STANDARD
-        .decode(padded)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .is_some_and(|decoded| {
-            !decoded.is_empty()
-                && decoded
-                    .chars()
-                    .all(|character| character.is_ascii_graphic() || character.is_whitespace())
+    [STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD]
+        .into_iter()
+        .any(|engine| {
+            engine
+                .decode(value)
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok())
+                .is_some_and(|decoded| {
+                    !decoded.is_empty()
+                        && decoded.chars().all(|character| {
+                            character.is_ascii_graphic() || character.is_whitespace()
+                        })
+                })
         })
 }
 
@@ -843,6 +856,7 @@ fn validate_observation(
         .map(|source| source.id.as_str())
         .collect::<HashSet<_>>();
     let mut supported = HashSet::new();
+    let mut fact_support_sources = HashMap::new();
     for support in &observation.fact_supports {
         if !safe_label(&support.fact_id) || !supported.insert(support.fact_id.as_str()) {
             return Err(EvalContractError::new("observation_fact_duplicate"));
@@ -867,6 +881,7 @@ fn validate_observation(
                 return Err(EvalContractError::new("observation_fact_support_invalid"));
             }
         }
+        fact_support_sources.insert(support.fact_id.as_str(), support_sources);
     }
     let mut contradicted = HashSet::new();
     for fact_id in &observation.contradicted_fact_ids {
@@ -898,6 +913,14 @@ fn validate_observation(
             || !observed_source_ids.contains(citation.source_id.as_str())
         {
             return Err(EvalContractError::new("observation_citation_invalid"));
+        }
+        if !fact_support_sources
+            .get(citation.fact_id.as_str())
+            .is_some_and(|sources| sources.contains(citation.source_id.as_str()))
+        {
+            return Err(EvalContractError::new(
+                "observation_citation_support_mismatch",
+            ));
         }
     }
     let known_tools = manifest
@@ -954,6 +977,7 @@ pub(crate) enum McpOperation {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProtocolValidationLevel {
     MappingShapeVerified,
+    FailureClassifiedOnly,
     ContractVerified,
     LiveNotTested,
 }
@@ -1010,7 +1034,7 @@ impl ProtocolContractOutcome {
     }
 
     pub(crate) const fn validation_level(self) -> ProtocolValidationLevel {
-        ProtocolValidationLevel::ContractVerified
+        ProtocolValidationLevel::FailureClassifiedOnly
     }
 
     pub(crate) const fn live_vendor_tested(self) -> bool {
@@ -1067,6 +1091,45 @@ impl McpCapabilityContract {
         } else {
             Err(EvalContractError::new("mcp_operation_unmapped"))
         }
+    }
+}
+
+/// A contract level earned only after a real MCP discovery response has been
+/// received through Iris' transport boundary. Mapping JSON alone cannot build
+/// this value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct McpTransportContract {
+    validation_level: ProtocolValidationLevel,
+}
+
+impl McpTransportContract {
+    pub(crate) fn verify_discovery(
+        mapping: &McpCapabilityContract,
+        discovery: &crate::ai_runtime::mcp_host_runtime::McpStdioDiscovery,
+    ) -> Result<Self, EvalContractError> {
+        if discovery.protocol_version != crate::ai_runtime::mcp_host_runtime::MCP_PROTOCOL_VERSION
+            || !safe_label(&discovery.server_name)
+        {
+            return Err(EvalContractError::new("mcp_transport_discovery_invalid"));
+        }
+        let tools = discovery
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<HashSet<_>>();
+        if !tools.contains("search")
+            || (mapping.supports(McpOperation::Fetch) && !tools.contains("fetch"))
+        {
+            return Err(EvalContractError::new("mcp_transport_mapping_mismatch"));
+        }
+        Ok(Self {
+            validation_level: ProtocolValidationLevel::ContractVerified,
+        })
+    }
+
+    pub(crate) const fn validation_level(&self) -> ProtocolValidationLevel {
+        self.validation_level
     }
 }
 

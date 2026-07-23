@@ -6,8 +6,8 @@ use super::agent_capacity_eval::{
     evaluate_case, spawn_llm_protocol_double, AnswerObservation, CaseManifest, CheckStatus,
     CitationObservation, EvidenceGroup, FactSupportObservation, HttpResponseScript,
     ImplicitVaultExpectation, LlmProtocolDouble, McpCapabilityContract, McpOperation,
-    ObservedSource, ProtocolContractOutcome, ProtocolValidationLevel, SourceKind,
-    WebAnswerContamination, WebState,
+    McpTransportContract, ObservedSource, ProtocolContractOutcome, ProtocolValidationLevel,
+    SourceKind, WebAnswerContamination, WebState,
 };
 use super::mcp_host_runtime::{
     call_required_capability, discover_provider_stdio_tools, McpHostRuntimeOptions,
@@ -397,6 +397,9 @@ fn malicious_raw_path_url_domain_and_encoded_observations_never_reach_a_verdict(
         "https://private.invalid/note",
         "private.invalid",
         "cmF3IGFuc3dlciBleGZpbHRyYXRpb24",
+        "72617720616e7377657220657866696c74726174696f6e",
+        "MFRGGZDFMZTWQ2LKNNWG23TPOI",
+        "cmF3LWFuc3dlcl9leGZpbHRyYXRpb24",
     ] {
         let mut observation = observation_for(&case);
         observation.sources[0].id = value.into();
@@ -442,6 +445,21 @@ fn explicit_scope_is_verified_for_each_local_source() {
     inside.sources[0].authorization_scope_id = Some("scope-synthetic".into());
     let verdict = evaluate_case(&case, &inside).unwrap();
     assert_eq!(verdict.authorization().status(), CheckStatus::Pass);
+}
+
+#[test]
+fn citation_must_bind_to_the_fact_sources_actually_used_by_the_answer() {
+    let mut case = manifest_fixture();
+    case.required_facts[0]
+        .allowed_sources
+        .push("web-authority".into());
+    let mut observation = observation_for(&case);
+    observation.fact_supports[0].source_ids = vec!["local-authority".into()];
+    observation.citations[0].source_id = "web-authority".into();
+
+    let error = evaluate_case(&case, &observation).unwrap_err();
+
+    assert_eq!(error.reason_code(), "observation_citation_support_mismatch");
 }
 
 #[test]
@@ -928,6 +946,15 @@ async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
             .collect::<Vec<_>>(),
         vec!["search"]
     );
+    let mapping =
+        McpCapabilityContract::from_mappings(Some(r#"{"tool":"search","queryArg":"query"}"#), None)
+            .unwrap();
+    assert_eq!(
+        McpTransportContract::verify_discovery(&mapping, &discovery)
+            .unwrap()
+            .validation_level(),
+        ProtocolValidationLevel::ContractVerified
+    );
 
     let call = call_required_capability(
         &db,
@@ -957,6 +984,17 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
     .await
     .expect("real stdio discovery must complete");
     assert_eq!(discovery.tools.len(), 2);
+    let mapping = McpCapabilityContract::from_mappings(
+        Some(r#"{"tool":"search","queryArg":"query"}"#),
+        Some(r#"{"tool":"fetch","urlArg":"url"}"#),
+    )
+    .unwrap();
+    assert_eq!(
+        McpTransportContract::verify_discovery(&mapping, &discovery)
+            .unwrap()
+            .validation_level(),
+        ProtocolValidationLevel::ContractVerified
+    );
 
     let fetch = call_required_capability(
         &db,
@@ -1022,7 +1060,7 @@ fn mcp_timeout_is_recorded_as_contract_outcome_not_vendor_capability() {
     assert_eq!(outcome.reason_code(), "mcp_protocol_timeout");
     assert_eq!(
         outcome.validation_level(),
-        ProtocolValidationLevel::ContractVerified
+        ProtocolValidationLevel::FailureClassifiedOnly
     );
     assert!(!outcome.live_vendor_tested());
 }

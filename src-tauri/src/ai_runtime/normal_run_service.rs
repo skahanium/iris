@@ -231,6 +231,12 @@ async fn dispatch_normal_run_after_context(
             &accepted.session,
             sink,
         );
+        #[cfg(test)]
+        let provider = if let Some(client) = state.test_streaming_client() {
+            provider.with_test_streaming_client(client)
+        } else {
+            provider
+        };
         let executor = NormalRunToolExecutor::new(
             state,
             app_handle,

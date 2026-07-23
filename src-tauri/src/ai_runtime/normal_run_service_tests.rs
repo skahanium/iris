@@ -21,6 +21,7 @@ use super::{AutonomyLevel, ToolCall};
 use crate::ai_types::{EndpointFamily, ProviderConfig};
 use crate::app::AppState;
 use crate::error::AppResult;
+use crate::llm::config::{LlmRoutingConfig, ModelReference, ProviderOverride};
 
 #[derive(Default)]
 struct RecordingSink {
@@ -269,6 +270,55 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         web_evidence_count >= 1,
         "web result must enter the evidence ledger"
     );
+    assert!(response
+        .events
+        .iter()
+        .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+}
+
+#[tokio::test]
+async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    install_headless_contract_mcp(&state);
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"service-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"服务链路已核实。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["headless-contract-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "headless-contract-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+
+    let sink = RecordingSink::default();
+    let accepted = RunIntake::start_with_sink(&state.db, web_tool_loop_request(), &sink)
+        .expect("accepted web tool-loop run");
+    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+
+    let calls = llm.finish().await.expect("LLM double completion");
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(calls.len(), 2, "service must complete a tool continuation");
+    assert_eq!(response.run.state, RunState::Completed);
     assert!(response
         .events
         .iter()

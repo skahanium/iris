@@ -156,7 +156,12 @@ impl DirectProviderRoute {
 }
 
 fn provider_candidate_from_resolved(resolved: ResolvedLlmConfig) -> ProviderCandidate {
-    let credential_service = crate::llm::providers::requires_api_key(&resolved.provider_id)
+    let requires_credential = crate::llm::providers::requires_api_key(&resolved.provider_id);
+    #[cfg(test)]
+    let requires_credential = requires_credential
+        && !(crate::llm::providers::is_custom_provider(&resolved.provider_id)
+            && resolved.base_url.starts_with("http://127.0.0.1:"));
+    let credential_service = requires_credential
         .then(|| crate::llm::providers::credential_service(&resolved.provider_id));
 
     ProviderCandidate {

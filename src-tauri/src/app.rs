@@ -239,6 +239,10 @@ pub struct AppState {
 
     pub db: Arc<Database>,
     pub brute_force: BruteForceProtection,
+    /// Test-only local transport injection for deterministic normal-Run tests.
+    /// Production builds have neither this field nor its accessor.
+    #[cfg(test)]
+    test_streaming_client: Mutex<Option<reqwest::Client>>,
 }
 
 impl AppState {
@@ -277,6 +281,8 @@ impl AppState {
             data_dir,
             watcher: Mutex::new(None),
             brute_force: BruteForceProtection::new(),
+            #[cfg(test)]
+            test_streaming_client: Mutex::new(None),
         });
         if state.db.with_conn(recover_interrupted_generation).is_err() {
             tracing::warn!(
@@ -307,6 +313,23 @@ impl AppState {
         self.ai
             .vector_index_ready
             .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Install a local deterministic streaming transport for one test state.
+    #[cfg(test)]
+    pub(crate) fn set_test_streaming_client(&self, client: reqwest::Client) {
+        if let Ok(mut slot) = self.test_streaming_client.lock() {
+            *slot = Some(client);
+        }
+    }
+
+    /// Return the test-only streaming transport without exposing it to production.
+    #[cfg(test)]
+    pub(crate) fn test_streaming_client(&self) -> Option<reqwest::Client> {
+        self.test_streaming_client
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
     }
 
     pub fn embedding_scheduler(&self) -> Arc<EmbeddingScheduler> {
