@@ -25,6 +25,14 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+/// Preserve a desktop runtime handle as present when adapting into the
+/// headless-capable normal Run service.
+pub(crate) fn desktop_app_handle<R: tauri::Runtime>(
+    app_handle: AppHandle<R>,
+) -> Option<AppHandle<R>> {
+    Some(app_handle)
+}
+
 /// Execute one already-accepted normal-domain Run through the production
 /// orchestration path without requiring a desktop runtime.
 pub(crate) async fn execute_normal_run(

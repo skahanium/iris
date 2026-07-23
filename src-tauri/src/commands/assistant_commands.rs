@@ -654,7 +654,7 @@ fn spawn_normal_direct_run(
             state,
             accepted,
             vault,
-            Some(app_handle.clone()),
+            crate::ai_runtime::normal_run_service::desktop_app_handle(app_handle.clone()),
             &sink,
         )
         .await;
