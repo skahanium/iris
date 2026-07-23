@@ -2045,6 +2045,724 @@ pub(crate) enum EvaluationEvidenceLevel {
     HeadlessDeterministic,
 }
 
+/// Secret-free metadata for one candidate live evaluation route.
+///
+/// This type is intentionally not serializable and its `Debug` output is
+/// redacted. It may carry routing identifiers, endpoint metadata, and MCP
+/// credential *references*, but never credential values.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct LiveProfileCandidate {
+    llm: crate::llm::config::ResolvedLlmConfig,
+    mcp: crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput,
+}
+
+#[cfg(test)]
+impl fmt::Debug for LiveProfileCandidate {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LiveProfileCandidate")
+            .field("llm", &"[redacted-routing-metadata]")
+            .field("mcp", &"[redacted-mcp-metadata]")
+            .finish()
+    }
+}
+
+#[cfg(test)]
+impl LiveProfileCandidate {
+    pub(crate) fn new(
+        llm: crate::llm::config::ResolvedLlmConfig,
+        mcp: crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput,
+    ) -> Result<Self, EvalContractError> {
+        if !llm.base_url.trim().starts_with("https://") {
+            return Err(EvalContractError::new("live_profile_https_required"));
+        }
+        if !mcp.enabled || mcp.kind != "mcp" {
+            return Err(EvalContractError::new("live_profile_mcp_unavailable"));
+        }
+        if !matches!(mcp.transport_kind.as_str(), "https" | "stdio") {
+            return Err(EvalContractError::new(
+                "live_profile_mcp_transport_unsupported",
+            ));
+        }
+        McpCapabilityContract::from_mappings(
+            mcp.web_search_mapping_json.as_deref(),
+            mcp.web_fetch_mapping_json.as_deref(),
+        )?;
+        Ok(Self { llm, mcp })
+    }
+
+    fn anonymous_id(&self) -> String {
+        use sha2::{Digest, Sha256};
+
+        let identity = serde_json::json!({
+            "provider": self.llm.provider_id,
+            "model": self.llm.model,
+            "base": self.llm.base_url,
+            "endpointFamily": self.llm.endpoint_family,
+            "mcpId": self.mcp.id,
+            "mcpKind": self.mcp.kind,
+            "mcpTransport": self.mcp.transport_kind,
+            "mcpTransportConfig": self.mcp.transport_config_json,
+            "mcpCredentialRefs": self.mcp.credential_refs_json,
+            "mcpSearch": self.mcp.web_search_mapping_json,
+            "mcpFetch": self.mcp.web_fetch_mapping_json,
+        });
+        let mut digest = Sha256::new();
+        digest.update(b"iris-agent-live-profile-v1\0");
+        digest.update(identity.to_string().as_bytes());
+        let digest = digest.finalize();
+        format!("profile-{}", hex::encode(&digest[..6]))
+    }
+
+    fn fingerprint(&self) -> LiveCapabilityFingerprint {
+        LiveCapabilityFingerprint {
+            endpoint_family: live_endpoint_family(&self.llm),
+            tools: self.llm.supports_tools,
+            streaming: self.llm.supports_streaming,
+            reasoning: self.llm.supports_reasoning,
+            context_bucket: context_bucket(self.llm.input_budget),
+            output_bucket: output_bucket(self.llm.output_budget as usize),
+            mcp: LiveMcpFingerprint {
+                search: self.mcp.web_search_mapping_json.is_some(),
+                fetch: self.mcp.web_fetch_mapping_json.is_some(),
+                transport: match self.mcp.transport_kind.as_str() {
+                    "stdio" => LiveMcpTransport::Stdio,
+                    _ => LiveMcpTransport::Https,
+                },
+            },
+        }
+    }
+}
+
+/// Discover enabled live route combinations from an application database
+/// opened with SQLite's read-only flag. Routing normalization and model
+/// resolution happen against a separate in-memory database, so even legacy
+/// migration cleanup cannot write back to the source. Credential references
+/// are copied as opaque metadata and are never resolved by this function.
+#[cfg(test)]
+pub(crate) fn discover_live_profile_candidates_from_database(
+    source_database: &std::path::Path,
+) -> Result<Vec<LiveProfileCandidate>, EvalContractError> {
+    use rusqlite::OptionalExtension;
+
+    if !source_database.is_file() {
+        return Err(EvalContractError::new("live_preflight_source_missing"));
+    }
+    let source = rusqlite::Connection::open_with_flags(
+        source_database,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| EvalContractError::new("live_preflight_source_unavailable"))?;
+    let routing_json = source
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [crate::llm::config::SETTINGS_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|_| EvalContractError::new("live_preflight_source_invalid"))?
+        .ok_or_else(|| EvalContractError::new("live_preflight_routing_missing"))?;
+    if routing_json.len() > 1024 * 1024 {
+        return Err(EvalContractError::new("live_preflight_source_invalid"));
+    }
+
+    let mut statement = source
+        .prepare(
+            "SELECT id, name, kind, enabled, transport_kind,
+                    transport_config_json, credential_refs_json,
+                    web_search_mapping_json, web_fetch_mapping_json
+             FROM web_evidence_providers
+             WHERE enabled = 1 AND kind = 'mcp'
+                   AND web_search_mapping_json IS NOT NULL
+             ORDER BY id",
+        )
+        .map_err(|_| EvalContractError::new("live_preflight_source_invalid"))?;
+    let providers = statement
+        .query_map([], |row| {
+            Ok(
+                crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    kind: row.get(2)?,
+                    enabled: row.get::<_, i64>(3)? != 0,
+                    transport_kind: row.get(4)?,
+                    transport_config_json: row.get(5)?,
+                    credential_refs_json: row.get(6)?,
+                    web_search_mapping_json: row.get(7)?,
+                    web_fetch_mapping_json: row.get(8)?,
+                },
+            )
+        })
+        .map_err(|_| EvalContractError::new("live_preflight_source_invalid"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| EvalContractError::new("live_preflight_source_invalid"))?;
+    if providers.is_empty()
+        || providers.iter().any(|provider| {
+            provider.transport_config_json.len() > 256 * 1024
+                || provider.credential_refs_json.len() > 64 * 1024
+                || provider
+                    .web_search_mapping_json
+                    .as_ref()
+                    .is_some_and(|mapping| mapping.len() > 64 * 1024)
+                || provider
+                    .web_fetch_mapping_json
+                    .as_ref()
+                    .is_some_and(|mapping| mapping.len() > 64 * 1024)
+        })
+    {
+        return Err(EvalContractError::new("live_preflight_mcp_profile_missing"));
+    }
+
+    let scratch = crate::storage::db::Database::open_in_memory()
+        .map_err(|_| EvalContractError::new("live_preflight_scratch_failed"))?;
+    scratch
+        .with_conn(|connection| {
+            connection.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![crate::llm::config::SETTINGS_KEY, routing_json],
+            )?;
+            Ok(())
+        })
+        .map_err(|_| EvalContractError::new("live_preflight_scratch_failed"))?;
+    let pool = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
+        &scratch,
+        crate::llm::config::ModelPoolRequirements {
+            context_tokens: 1,
+            has_images: false,
+            needs_tools: false,
+            needs_reasoning: false,
+        },
+    )
+    .map_err(|_| EvalContractError::new("live_preflight_llm_profile_missing"))?;
+    let llms = std::iter::once(pool.resolved)
+        .chain(pool.failover_candidates)
+        .collect::<Vec<_>>();
+    let candidates = llms
+        .into_iter()
+        .flat_map(|llm| {
+            providers.iter().filter_map(move |provider| {
+                LiveProfileCandidate::new(llm.clone(), provider.clone()).ok()
+            })
+        })
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Err(EvalContractError::new(
+            "live_preflight_no_compatible_profile",
+        ));
+    }
+    Ok(candidates)
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LiveEndpointFamily {
+    OpenaiCompatibleChat,
+    AnthropicMessages,
+    OpenaiResponses,
+}
+
+#[cfg(test)]
+fn live_endpoint_family(llm: &crate::llm::config::ResolvedLlmConfig) -> LiveEndpointFamily {
+    if llm.reasoning.adapter == crate::ai_types::ReasoningAdapter::OpenAiResponses {
+        LiveEndpointFamily::OpenaiResponses
+    } else {
+        match llm.endpoint_family {
+            crate::ai_types::EndpointFamily::AnthropicMessages => {
+                LiveEndpointFamily::AnthropicMessages
+            }
+            crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions => {
+                LiveEndpointFamily::OpenaiCompatibleChat
+            }
+            crate::ai_types::EndpointFamily::ResponsesReserved => {
+                LiveEndpointFamily::OpenaiResponses
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LiveContextBucket {
+    #[serde(rename = "up_to_8k")]
+    UpTo8k,
+    #[serde(rename = "up_to_32k")]
+    UpTo32k,
+    #[serde(rename = "up_to_128k")]
+    UpTo128k,
+    #[serde(rename = "above_128k")]
+    Above128k,
+}
+
+#[cfg(test)]
+fn context_bucket(tokens: usize) -> LiveContextBucket {
+    match tokens {
+        0..=8_000 => LiveContextBucket::UpTo8k,
+        8_001..=32_000 => LiveContextBucket::UpTo32k,
+        32_001..=128_000 => LiveContextBucket::UpTo128k,
+        _ => LiveContextBucket::Above128k,
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LiveOutputBucket {
+    #[serde(rename = "up_to_4k")]
+    UpTo4k,
+    #[serde(rename = "up_to_16k")]
+    UpTo16k,
+    #[serde(rename = "above_16k")]
+    Above16k,
+}
+
+#[cfg(test)]
+fn output_bucket(tokens: usize) -> LiveOutputBucket {
+    match tokens {
+        0..=4_000 => LiveOutputBucket::UpTo4k,
+        4_001..=16_000 => LiveOutputBucket::UpTo16k,
+        _ => LiveOutputBucket::Above16k,
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LiveMcpTransport {
+    Stdio,
+    Https,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LiveMcpFingerprint {
+    search: bool,
+    fetch: bool,
+    transport: LiveMcpTransport,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LiveCapabilityFingerprint {
+    endpoint_family: LiveEndpointFamily,
+    tools: bool,
+    streaming: bool,
+    reasoning: bool,
+    context_bucket: LiveContextBucket,
+    output_bucket: LiveOutputBucket,
+    mcp: LiveMcpFingerprint,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum LiveResultStatus {
+    LiveNotTested,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LivePreflightProfile {
+    profile_id: String,
+    capabilities: LiveCapabilityFingerprint,
+    status: LiveResultStatus,
+}
+
+/// Strict, anonymous preflight output. The route metadata used to build it is
+/// retained only by `LivePreflightSession` and cannot enter this serializer.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LivePreflightReport {
+    schema_version: &'static str,
+    status: LiveResultStatus,
+    profile_count: u32,
+    profiles: Vec<LivePreflightProfile>,
+}
+
+#[cfg(test)]
+impl LivePreflightReport {
+    pub(crate) fn profile_ids(&self) -> Vec<&str> {
+        self.profiles
+            .iter()
+            .map(|profile| profile.profile_id.as_str())
+            .collect()
+    }
+}
+
+/// In-memory binding between anonymous preflight IDs and non-secret routes.
+/// It has no serializer and cannot be reconstructed from a user-supplied ID.
+#[cfg(test)]
+pub(crate) struct LivePreflightSession {
+    candidates: Vec<LiveProfileCandidate>,
+    report: LivePreflightReport,
+}
+
+#[cfg(test)]
+impl fmt::Debug for LivePreflightSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("LivePreflightSession")
+            .field("candidate_count", &self.candidates.len())
+            .field("report", &self.report)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+impl LivePreflightSession {
+    pub(crate) const fn report(&self) -> &LivePreflightReport {
+        &self.report
+    }
+}
+
+/// Build an anonymous preflight without contacting any endpoint or resolving
+/// any credential reference.
+#[cfg(test)]
+pub(crate) fn preflight_live_profiles(
+    candidates: Vec<LiveProfileCandidate>,
+) -> Result<LivePreflightSession, EvalContractError> {
+    if candidates.is_empty() || candidates.len() > 128 {
+        return Err(EvalContractError::new(
+            "live_preflight_candidate_count_invalid",
+        ));
+    }
+    let mut paired = candidates
+        .into_iter()
+        .map(|candidate| {
+            let profile_id = candidate.anonymous_id();
+            let profile = LivePreflightProfile {
+                profile_id: profile_id.clone(),
+                capabilities: candidate.fingerprint(),
+                status: LiveResultStatus::LiveNotTested,
+            };
+            (profile_id, candidate, profile)
+        })
+        .collect::<Vec<_>>();
+    paired.sort_by(|left, right| left.0.cmp(&right.0));
+    if paired.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+        return Err(EvalContractError::new(
+            "live_preflight_profile_id_collision",
+        ));
+    }
+    let candidates = paired
+        .iter()
+        .map(|(_, candidate, _)| candidate.clone())
+        .collect::<Vec<_>>();
+    let profiles = paired
+        .into_iter()
+        .map(|(_, _, profile)| profile)
+        .collect::<Vec<_>>();
+    let report = LivePreflightReport {
+        schema_version: "agent-live-preflight-v1",
+        status: LiveResultStatus::LiveNotTested,
+        profile_count: profiles.len().min(u32::MAX as usize) as u32,
+        profiles,
+    };
+    serialize_live_preflight_report(&report)?;
+    Ok(LivePreflightSession { candidates, report })
+}
+
+/// A prepared pilot owns a temporary application state. Approval does not
+/// promote the result: only a future completed live execution may do that.
+#[cfg(test)]
+pub(crate) struct PreparedLivePilot {
+    profile_id: String,
+    state: std::sync::Arc<crate::app::AppState>,
+    _directory: tempfile::TempDir,
+}
+
+#[cfg(test)]
+impl fmt::Debug for PreparedLivePilot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PreparedLivePilot")
+            .field("profile_id", &self.profile_id)
+            .field("state", &"[isolated-temporary-state]")
+            .field("result_status", &"live_not_tested")
+            .finish()
+    }
+}
+
+#[cfg(test)]
+impl PreparedLivePilot {
+    pub(crate) const fn state(&self) -> &std::sync::Arc<crate::app::AppState> {
+        &self.state
+    }
+
+    pub(crate) fn profile_id(&self) -> &str {
+        &self.profile_id
+    }
+
+    pub(crate) const fn result_status_code(&self) -> &'static str {
+        "live_not_tested"
+    }
+
+    pub(crate) const fn pilot_case_limit(&self) -> u32 {
+        12
+    }
+}
+
+/// Validate an explicit anonymous ID and copy only the selected route metadata
+/// into a fresh temporary `AppState`. No credential value is read here.
+#[cfg(test)]
+pub(crate) fn prepare_approved_live_pilot(
+    session: &LivePreflightSession,
+    approved_profile_id: Option<&str>,
+) -> Result<PreparedLivePilot, EvalContractError> {
+    let approved_profile_id = approved_profile_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| EvalContractError::new("live_profile_approval_required"))?;
+    let index = session
+        .report
+        .profiles
+        .iter()
+        .position(|profile| profile.profile_id == approved_profile_id)
+        .ok_or_else(|| EvalContractError::new("live_profile_not_in_preflight"))?;
+    let candidate = session
+        .candidates
+        .get(index)
+        .ok_or_else(|| EvalContractError::new("live_preflight_binding_invalid"))?;
+
+    let directory =
+        tempfile::tempdir().map_err(|_| EvalContractError::new("live_temp_state_failed"))?;
+    let state = crate::app::AppState::new(directory.path().join("data"))
+        .map_err(|_| EvalContractError::new("live_temp_state_failed"))?;
+    let mut routing = crate::llm::config::LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        candidate.llm.provider_id.clone(),
+        crate::llm::config::ProviderOverride {
+            base_url: Some(candidate.llm.base_url.clone()),
+            default_model: Some(candidate.llm.model.clone()),
+            enabled_models: Some(vec![candidate.llm.model.clone()]),
+            model_capabilities: std::collections::HashMap::from([(
+                candidate.llm.model.clone(),
+                crate::llm::config::ModelCapabilityOverride {
+                    reasoning_adapter: Some(candidate.llm.reasoning.adapter),
+                    reasoning_control: Some(candidate.llm.reasoning.control),
+                    reasoning_visibility: Some(candidate.llm.reasoning.visibility),
+                    supported_modes: Some(vec![candidate.llm.reasoning.mode]),
+                    default_mode: Some(candidate.llm.reasoning.mode),
+                    disable_supported: Some(true),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(crate::llm::config::ModelReference {
+        provider_id: candidate.llm.provider_id.clone(),
+        model_id: candidate.llm.model.clone(),
+    });
+    crate::llm::config::save(&state.db, &routing)
+        .map_err(|_| EvalContractError::new("live_temp_route_copy_failed"))?;
+    crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+        &state.db,
+        &candidate.mcp,
+    )
+    .map_err(|_| EvalContractError::new("live_temp_mcp_copy_failed"))?;
+    crate::ai_runtime::mcp_runtime_registry::save_selected_web_search_provider_id(
+        &state.db,
+        Some(&candidate.mcp.id),
+    )
+    .map_err(|_| EvalContractError::new("live_temp_mcp_copy_failed"))?;
+
+    Ok(PreparedLivePilot {
+        profile_id: approved_profile_id.to_string(),
+        state,
+        _directory: directory,
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn serialize_live_preflight_report(
+    report: &LivePreflightReport,
+) -> Result<String, EvalContractError> {
+    let serialized = serde_json::to_string_pretty(report)
+        .map_err(|_| EvalContractError::new("live_preflight_serialization_failed"))?;
+    validate_serialized_live_preflight_report(&serialized)?;
+    Ok(serialized)
+}
+
+/// Persist a preflight only under the repository's ignored evaluation target.
+/// The typed report contains no route metadata and is revalidated immediately
+/// before the write.
+#[cfg(test)]
+pub(crate) fn write_live_preflight_report(
+    output: &std::path::Path,
+    report: &LivePreflightReport,
+) -> Result<(), EvalContractError> {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_preflight_workspace_invalid"))?;
+    let target = workspace.join("target/agent-eval");
+    std::fs::create_dir_all(&target)
+        .map_err(|_| EvalContractError::new("live_preflight_output_failed"))?;
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|_| EvalContractError::new("live_preflight_output_failed"))?;
+    let parent = output
+        .parent()
+        .ok_or_else(|| EvalContractError::new("live_preflight_output_not_ignored_target"))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|_| EvalContractError::new("live_preflight_output_failed"))?;
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|_| EvalContractError::new("live_preflight_output_failed"))?;
+    if !canonical_parent.starts_with(&canonical_target)
+        || output
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(EvalContractError::new(
+            "live_preflight_output_not_ignored_target",
+        ));
+    }
+    let serialized = serialize_live_preflight_report(report)?;
+    std::fs::write(output, serialized)
+        .map_err(|_| EvalContractError::new("live_preflight_output_failed"))
+}
+
+#[cfg(test)]
+pub(crate) fn validate_serialized_live_preflight_report(
+    serialized: &str,
+) -> Result<(), EvalContractError> {
+    if serialized.len() > 64 * 1024 {
+        return Err(EvalContractError::new("live_preflight_too_large"));
+    }
+    let value: serde_json::Value = serde_json::from_str(serialized)
+        .map_err(|_| EvalContractError::new("live_preflight_invalid"))?;
+    let root = live_exact_object(
+        &value,
+        &["schemaVersion", "status", "profileCount", "profiles"],
+    )?;
+    live_exact_string(root.get("schemaVersion"), &["agent-live-preflight-v1"])?;
+    live_exact_string(root.get("status"), &["live_not_tested"])?;
+    let profile_count = root
+        .get("profileCount")
+        .and_then(serde_json::Value::as_u64)
+        .filter(|count| (1..=128).contains(count))
+        .ok_or_else(|| EvalContractError::new("live_preflight_value_invalid"))?;
+    let profiles = root
+        .get("profiles")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| EvalContractError::new("live_preflight_shape_invalid"))?;
+    if profiles.len() as u64 != profile_count {
+        return Err(EvalContractError::new("live_preflight_count_inconsistent"));
+    }
+    let mut ids = HashSet::with_capacity(profiles.len());
+    for profile in profiles {
+        let profile = live_exact_object(profile, &["profileId", "capabilities", "status"])?;
+        let profile_id = profile
+            .get("profileId")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| EvalContractError::new("live_preflight_shape_invalid"))?;
+        let suffix = profile_id
+            .strip_prefix("profile-")
+            .ok_or_else(|| EvalContractError::new("live_preflight_value_invalid"))?;
+        if suffix.len() != 12
+            || !suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            || !ids.insert(profile_id)
+        {
+            return Err(EvalContractError::new("live_preflight_value_invalid"));
+        }
+        live_exact_string(profile.get("status"), &["live_not_tested"])?;
+        let capabilities = live_exact_object(
+            profile
+                .get("capabilities")
+                .ok_or_else(|| EvalContractError::new("live_preflight_shape_invalid"))?,
+            &[
+                "endpointFamily",
+                "tools",
+                "streaming",
+                "reasoning",
+                "contextBucket",
+                "outputBucket",
+                "mcp",
+            ],
+        )?;
+        live_exact_string(
+            capabilities.get("endpointFamily"),
+            &[
+                "openai_compatible_chat",
+                "anthropic_messages",
+                "openai_responses",
+            ],
+        )?;
+        for key in ["tools", "streaming", "reasoning"] {
+            if capabilities
+                .get(key)
+                .and_then(serde_json::Value::as_bool)
+                .is_none()
+            {
+                return Err(EvalContractError::new("live_preflight_shape_invalid"));
+            }
+        }
+        live_exact_string(
+            capabilities.get("contextBucket"),
+            &["up_to_8k", "up_to_32k", "up_to_128k", "above_128k"],
+        )?;
+        live_exact_string(
+            capabilities.get("outputBucket"),
+            &["up_to_4k", "up_to_16k", "above_16k"],
+        )?;
+        let mcp = live_exact_object(
+            capabilities
+                .get("mcp")
+                .ok_or_else(|| EvalContractError::new("live_preflight_shape_invalid"))?,
+            &["search", "fetch", "transport"],
+        )?;
+        for key in ["search", "fetch"] {
+            if mcp.get(key).and_then(serde_json::Value::as_bool).is_none() {
+                return Err(EvalContractError::new("live_preflight_shape_invalid"));
+            }
+        }
+        live_exact_string(mcp.get("transport"), &["stdio", "https"])?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn live_exact_object<'a>(
+    value: &'a serde_json::Value,
+    expected_keys: &[&str],
+) -> Result<&'a serde_json::Map<String, serde_json::Value>, EvalContractError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| EvalContractError::new("live_preflight_shape_invalid"))?;
+    if object.len() != expected_keys.len()
+        || expected_keys.iter().any(|key| !object.contains_key(*key))
+    {
+        return Err(EvalContractError::new("live_preflight_unknown_field"));
+    }
+    Ok(object)
+}
+
+#[cfg(test)]
+fn live_exact_string(
+    value: Option<&serde_json::Value>,
+    allowed: &[&str],
+) -> Result<(), EvalContractError> {
+    let value = value
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("live_preflight_shape_invalid"))?;
+    if allowed.contains(&value) {
+        Ok(())
+    } else {
+        Err(EvalContractError::new("live_preflight_value_invalid"))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct GroupCounts {

@@ -3,18 +3,21 @@ use std::time::Duration;
 use crate::storage::db::Database;
 
 use super::agent_capacity_eval::{
-    build_agent_capacity_report, calculate_stable_boundary, evaluate_case,
-    execute_pressure_staircases, generate_core_scenarios, generate_pressure_staircases,
-    run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
-    run_security_track, select_core_scenarios, serialize_agent_capacity_report,
-    serialize_evaluation_summary, spawn_llm_protocol_double,
-    validate_serialized_evaluation_summary, write_blind_review_packet, AnswerObservation,
-    BudgetOutcome, CaseManifest, CheckStatus, CitationObservation, EvalFault, EvalRunMode,
-    EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
-    ImplicitVaultExpectation, LlmProtocolDouble, McpCapabilityContract, McpOperation,
-    McpTransportContract, McpTransportFailureContract, ObservedSource, PressureDimension,
-    ProtocolContractOutcome, ProtocolValidationLevel, ScenarioLanguage, SourceKind,
-    StableLevelObservation, TruncationOutcome, WebAnswerContamination, WebState,
+    build_agent_capacity_report, calculate_stable_boundary,
+    discover_live_profile_candidates_from_database, evaluate_case, execute_pressure_staircases,
+    generate_core_scenarios, generate_pressure_staircases, preflight_live_profiles,
+    prepare_approved_live_pilot, run_combined_terminal_cases, run_hard_boundary_probes,
+    run_headless_core_evaluation, run_security_track, select_core_scenarios,
+    serialize_agent_capacity_report, serialize_evaluation_summary, serialize_live_preflight_report,
+    spawn_llm_protocol_double, validate_serialized_evaluation_summary,
+    validate_serialized_live_preflight_report, write_blind_review_packet,
+    write_live_preflight_report, AnswerObservation, BudgetOutcome, CaseManifest, CheckStatus,
+    CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap, EvidenceGroup,
+    FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation, LiveProfileCandidate,
+    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
+    McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
+    ProtocolValidationLevel, ScenarioLanguage, SourceKind, StableLevelObservation,
+    TruncationOutcome, WebAnswerContamination, WebState,
 };
 use super::mcp_host_runtime::{
     call_required_capability, probe_provider_stdio_tools, McpHostRuntimeOptions, McpStdioDiscovery,
@@ -2025,4 +2028,292 @@ async fn blind_review_packet_is_ignored_target_only_and_contains_no_raw_content_
     ] {
         assert!(!csv.contains(forbidden), "{forbidden}");
     }
+}
+
+fn synthetic_live_candidate() -> LiveProfileCandidate {
+    LiveProfileCandidate::new(
+        ResolvedLlmConfig {
+            provider_id: "custom_sensitive_provider".into(),
+            model: "sensitive-model-name".into(),
+            base_url: "https://private-provider.invalid/v1".into(),
+            thinking: false,
+            reasoning: ResolvedReasoningRequest::disabled(),
+            input_budget: 128_000,
+            output_budget: 16_000,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: false,
+            supports_reasoning: true,
+        },
+        WebEvidenceProviderInput {
+            id: "sensitive-mcp-name".into(),
+            name: "Sensitive Search Service".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "https".into(),
+            transport_config_json:
+                r#"{"url":"https://private-search.invalid/mcp","timeoutMs":10000}"#.into(),
+            credential_refs_json: r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.sensitive"}}}"#.into(),
+            web_search_mapping_json: Some(
+                r#"{"tool":"search","queryArg":"query","maxResultsArg":"count"}"#.into(),
+            ),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .expect("synthetic live candidate")
+}
+
+#[test]
+fn live_preflight_exposes_only_anonymous_profile_ids_and_closed_capability_fingerprints() {
+    let session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous live preflight");
+    let serialized =
+        serialize_live_preflight_report(session.report()).expect("strict preflight report");
+    let value: serde_json::Value = serde_json::from_str(&serialized).expect("preflight JSON");
+    let profile = &value["profiles"][0];
+
+    assert_eq!(value["schemaVersion"], "agent-live-preflight-v1");
+    assert_eq!(value["status"], "live_not_tested");
+    assert_eq!(value["profileCount"], 1);
+    assert!(profile["profileId"]
+        .as_str()
+        .is_some_and(|id| id.starts_with("profile-") && id.len() == 20));
+    assert_eq!(profile["status"], "live_not_tested");
+    assert_eq!(
+        profile["capabilities"],
+        serde_json::json!({
+            "endpointFamily": "openai_compatible_chat",
+            "tools": true,
+            "streaming": true,
+            "reasoning": true,
+            "contextBucket": "up_to_128k",
+            "outputBucket": "up_to_16k",
+            "mcp": {
+                "search": true,
+                "fetch": false,
+                "transport": "https"
+            }
+        })
+    );
+    for forbidden in [
+        "custom_sensitive_provider",
+        "sensitive-model-name",
+        "private-provider.invalid",
+        "sensitive-mcp-name",
+        "Sensitive Search Service",
+        "private-search.invalid",
+        "iris.mcp.sensitive",
+        "credential://",
+    ] {
+        assert!(!serialized.contains(forbidden), "{forbidden}");
+    }
+}
+
+#[test]
+fn live_pilot_rejects_missing_and_unknown_profile_approval_before_preparation() {
+    let session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous live preflight");
+    assert_eq!(
+        prepare_approved_live_pilot(&session, None)
+            .expect_err("missing approval must fail")
+            .reason_code(),
+        "live_profile_approval_required"
+    );
+
+    let unknown = "profile-not-approved";
+    let error = prepare_approved_live_pilot(&session, Some(unknown))
+        .expect_err("unknown approval must fail");
+    assert_eq!(error.reason_code(), "live_profile_not_in_preflight");
+    assert!(!error.to_string().contains(unknown));
+}
+
+#[test]
+fn live_preflight_validator_rejects_unknown_fields_and_status_promotion_without_echoing_input() {
+    let session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous live preflight");
+    let serialized =
+        serialize_live_preflight_report(session.report()).expect("strict preflight report");
+    let mut value: serde_json::Value = serde_json::from_str(&serialized).expect("preflight JSON");
+    value["profiles"][0]["rawEndpoint"] =
+        serde_json::json!("https://must-not-survive.invalid/private");
+    let malicious = value.to_string();
+    let error = validate_serialized_live_preflight_report(&malicious)
+        .expect_err("unknown report field must fail closed");
+    assert_eq!(error.reason_code(), "live_preflight_unknown_field");
+    assert!(!error.to_string().contains("must-not-survive"));
+
+    let mut promoted: serde_json::Value =
+        serde_json::from_str(&serialized).expect("preflight JSON");
+    promoted["profiles"][0]["status"] = serde_json::json!("live_verified");
+    let error = validate_serialized_live_preflight_report(&promoted.to_string())
+        .expect_err("preflight cannot self-promote to a live result");
+    assert_eq!(error.reason_code(), "live_preflight_value_invalid");
+}
+
+#[test]
+fn approved_live_profile_is_copied_to_an_isolated_temporary_state_without_status_promotion() {
+    let candidate = synthetic_live_candidate();
+    let session = preflight_live_profiles(vec![candidate]).expect("anonymous live preflight");
+    let profile_id = session.report().profile_ids()[0].to_string();
+
+    let prepared = prepare_approved_live_pilot(&session, Some(&profile_id))
+        .expect("approved profile prepares an isolated state");
+    let routing =
+        crate::llm::config::load(&prepared.state().db).expect("temporary routing metadata");
+    let providers = super::mcp_runtime_registry::list_web_evidence_providers(&prepared.state().db)
+        .expect("temporary MCP metadata");
+
+    assert_ne!(
+        prepared.state().data_dir(),
+        std::path::Path::new(".iris-dev/app-data")
+    );
+    assert_eq!(routing.providers.len(), 1);
+    assert_eq!(
+        routing
+            .default_model
+            .as_ref()
+            .map(|model| model.model_id.as_str()),
+        Some("sensitive-model-name")
+    );
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].id, "sensitive-mcp-name");
+    assert_eq!(prepared.profile_id(), profile_id);
+    assert_eq!(prepared.result_status_code(), "live_not_tested");
+    assert_eq!(prepared.pilot_case_limit(), 12);
+}
+
+#[test]
+fn live_preflight_discovers_source_metadata_read_only_and_never_mutates_the_source_database() {
+    let source_directory = tempfile::tempdir().expect("source directory");
+    let source_state = crate::app::AppState::new(source_directory.path().join("source-data"))
+        .expect("source state");
+    let mut routing = crate::llm::config::LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom_read_only_probe".into(),
+        crate::llm::config::ProviderOverride {
+            base_url: Some("https://read-only-provider.invalid/v1".into()),
+            enabled_models: Some(vec!["read-only-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(crate::llm::config::ModelReference {
+        provider_id: "custom_read_only_probe".into(),
+        model_id: "read-only-model".into(),
+    });
+    crate::llm::config::save(&source_state.db, &routing).expect("source routing");
+    let mcp = WebEvidenceProviderInput {
+        id: "read-only-mcp".into(),
+        name: "Read-only MCP".into(),
+        kind: "mcp".into(),
+        enabled: true,
+        transport_kind: "https".into(),
+        transport_config_json:
+            r#"{"url":"https://read-only-search.invalid/mcp","timeoutMs":10000}"#.into(),
+        credential_refs_json: r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.read_only"}}}"#.into(),
+        web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.into()),
+        web_fetch_mapping_json: None,
+    };
+    upsert_web_evidence_provider(&source_state.db, &mcp).expect("source MCP");
+
+    let snapshot = |db: &Database| {
+        db.with_read_conn(|connection| {
+            let routing = connection.query_row(
+                "SELECT value FROM settings WHERE key = 'llm_routing'",
+                [],
+                |row| row.get::<_, String>(0),
+            )?;
+            let provider = connection.query_row(
+                "SELECT id, name, kind, enabled, transport_kind,
+                        transport_config_json, credential_refs_json,
+                        web_search_mapping_json, web_fetch_mapping_json
+                 FROM web_evidence_providers WHERE id = 'read-only-mcp'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                    ))
+                },
+            )?;
+            Ok((routing, provider))
+        })
+        .expect("source snapshot")
+    };
+    let before = snapshot(&source_state.db);
+    let source_db_path = source_state.data_dir().join("iris.db");
+
+    let candidates = discover_live_profile_candidates_from_database(&source_db_path)
+        .expect("read-only source discovery");
+    let session = preflight_live_profiles(candidates).expect("anonymous preflight");
+    let profile_id = session.report().profile_ids()[0].to_string();
+    let prepared = prepare_approved_live_pilot(&session, Some(&profile_id))
+        .expect("approved metadata is copied to a temporary state");
+    let after = snapshot(&source_state.db);
+
+    assert_eq!(before, after);
+    assert_eq!(session.report().profile_ids().len(), 1);
+    assert_ne!(prepared.state().data_dir(), source_state.data_dir());
+    let serialized =
+        serialize_live_preflight_report(session.report()).expect("strict preflight report");
+    for forbidden in [
+        "custom_read_only_probe",
+        "read-only-model",
+        "read-only-provider.invalid",
+        "read-only-mcp",
+        "read-only-search.invalid",
+        "iris.mcp.read_only",
+    ] {
+        assert!(!serialized.contains(forbidden), "{forbidden}");
+    }
+}
+
+#[test]
+fn live_preflight_report_can_only_be_written_to_the_ignored_evaluation_target() {
+    let session = preflight_live_profiles(vec![synthetic_live_candidate()])
+        .expect("anonymous live preflight");
+    let outside = tempfile::tempdir()
+        .expect("outside directory")
+        .path()
+        .join("live-preflight.json");
+    assert_eq!(
+        write_live_preflight_report(&outside, session.report())
+            .expect_err("outside target must fail")
+            .reason_code(),
+        "live_preflight_output_not_ignored_target"
+    );
+
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("target/agent-eval/test-live-preflight.json");
+    write_live_preflight_report(&output, session.report()).expect("strict preflight output");
+    let serialized = std::fs::read_to_string(output).expect("preflight output");
+    validate_serialized_live_preflight_report(&serialized).expect("strict persisted report");
+}
+
+#[test]
+fn live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_requested() {
+    if std::env::var("IRIS_AGENT_EVAL_LIVE_ACTION").as_deref() != Ok("preflight") {
+        return;
+    }
+    let source = std::env::var_os("IRIS_AGENT_EVAL_SOURCE_DB")
+        .map(std::path::PathBuf::from)
+        .expect("live_preflight_source_required");
+    let candidates = discover_live_profile_candidates_from_database(&source)
+        .expect("read-only live profile discovery");
+    let session = preflight_live_profiles(candidates).expect("anonymous live preflight");
+    let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root")
+        .join("target/agent-eval/live-preflight.json");
+    write_live_preflight_report(&output, session.report()).expect("strict preflight output");
 }
