@@ -786,8 +786,10 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
         "unlocking stream must not invent AnswerDelta without tokens"
     );
     let durable = sink.events.lock().expect("sink lock").clone();
-    assert_eq!(durable.len(), 1);
-    assert_eq!(durable[0]["payload"]["stage"], "正在生成答复");
+    assert!(
+        durable.is_empty(),
+        "tools_finished must not emit 正在生成答复 before the tool loop is done: {durable:?}"
+    );
 
     for (token_index, token) in ["第一段\n", "第二段\n"].into_iter().enumerate() {
         observer
@@ -822,6 +824,82 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
     );
     assert_eq!(answer_deltas[0]["delta"], "第一段\n");
     assert_eq!(answer_deltas[1]["delta"], "第二段\n");
+    assert!(
+        sink.events
+            .lock()
+            .expect("sink lock")
+            .iter()
+            .all(|event| event["payload"]["stage"] != "正在生成答复"),
+        "answer streaming after an intermediate tools_finished must not invent 正在生成答复"
+    );
+
+    observer
+        .emit_generating_answer_stage_if_needed()
+        .expect("final answer stage after tool loop");
+    let durable = sink.events.lock().expect("sink lock").clone();
+    assert_eq!(durable.len(), 1);
+    assert_eq!(durable[0]["payload"]["stage"], "正在生成答复");
+}
+
+#[test]
+fn tool_loop_observer_defers_generating_stage_until_after_later_tool_rounds() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备工具执行".to_string(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: event_state_version(&preparing),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在调用模型和工具".to_string(),
+            },
+        },
+    )
+    .expect("running");
+    let sink = RecordingSink::default();
+    let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
+        &db,
+        &accepted.run_id,
+        event_state_version(&running),
+        &sink,
+        true,
+    );
+
+    observer.on_tools_finished().expect("finish search tools");
+    observer.on_tools_starting().expect("start read_note round");
+    observer.on_tools_finished().expect("finish read_note tools");
+    assert!(
+        sink.events
+            .lock()
+            .expect("sink lock")
+            .iter()
+            .all(|event| event["payload"]["stage"] != "正在生成答复"),
+        "generating stage must stay after every tool round, including read_note"
+    );
+    assert!(!observer.emitted_generating_answer_stage());
+
+    observer
+        .emit_generating_answer_stage_if_needed()
+        .expect("emit after tool loop returns");
+    let durable = sink.events.lock().expect("sink lock").clone();
+    assert_eq!(durable.len(), 1);
+    assert_eq!(durable[0]["payload"]["stage"], "正在生成答复");
+    assert!(observer.emitted_generating_answer_stage());
 }
 
 #[test]

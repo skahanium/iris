@@ -1,8 +1,14 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
+
+const globalsCss = readFileSync(resolve("src/styles/globals.css"), "utf8");
+const proseCss = readFileSync(resolve("src/styles/markdown-prose.css"), "utf8");
 
 describe("AiMessageBubble inline display mentions", () => {
   let host: HTMLDivElement;
@@ -52,6 +58,57 @@ describe("AiMessageBubble inline display mentions", () => {
     expect(host.textContent?.trim()).toBe(content);
     expect(host.textContent).not.toContain("引用：");
     expect(host.textContent).not.toMatch(/@|\[|\]/);
+    expect(host.querySelector("[data-ai-message-mentions]")).toBeNull();
+  });
+
+  it("keeps mention green above conversation prose text-foreground", () => {
+    expect(globalsCss).toContain(
+      ".ai-message-body.iris-markdown-content .ai-display-mention",
+    );
+    expect(globalsCss).toContain(
+      ".ai-message-bubble-user .ai-display-mention",
+    );
+    expect(proseCss).toContain(
+      ".ai-message-body.iris-markdown-content[data-prose-surface=\"conversation\"]",
+    );
+    expect(proseCss).toMatch(
+      /\.ai-message-body\.iris-markdown-content\[data-prose-surface="conversation"\]\s*\n\s*\.ai-display-mention/,
+    );
+    expect(proseCss).toContain("color: hsl(var(--ai-mention))");
+  });
+
+  it("keeps Chinese fullwidth-parenthesis note titles as inline mentions", async () => {
+    const label = "问题线索工作思路（王Y）";
+    const content = `你如何看待 ${label} 中反映的这些线索？`;
+    const from = content.indexOf(label);
+    expect(from).toBeGreaterThan(0);
+
+    await act(async () => {
+      root.render(
+        createElement(AiMessageBubble, {
+          role: "user",
+          content,
+          displayMentions: [
+            {
+              kind: "file",
+              value: "线索/问题线索工作思路（王Y）.md",
+              label,
+              range: { from, to: from + label.length },
+            },
+          ],
+        }),
+      );
+    });
+
+    const mention = host.querySelector(".ai-display-mention");
+    expect(mention).not.toBeNull();
+    expect(mention?.textContent).toBe(label);
+    expect(mention?.getAttribute("title")).toBe(
+      "文档：线索/问题线索工作思路（王Y）.md",
+    );
+    expect(mention?.className).toContain("ai-display-mention");
+    expect(host.textContent?.trim()).toBe(content);
+    expect(host.textContent).not.toContain("@");
     expect(host.querySelector("[data-ai-message-mentions]")).toBeNull();
   });
 

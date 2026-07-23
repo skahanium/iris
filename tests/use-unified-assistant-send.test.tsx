@@ -344,4 +344,56 @@ describe("useUnifiedAssistantSend", () => {
     expect(start).not.toHaveBeenCalled();
     expect(setError).toHaveBeenCalledWith(expect.stringContaining("其他引用"));
   });
+
+  it("commits Chinese fullwidth-parenthesis file mentions into the transcript", async () => {
+    const label = "问题线索工作思路（王Y）";
+    const input = `你如何看待 ${label} 中反映的这些线索？`;
+    const from = input.indexOf(label);
+    const displayMentions: DisplayMention[] = [
+      {
+        kind: "file",
+        value: "线索/问题线索工作思路（王Y）.md",
+        label,
+        range: { from, to: from + label.length },
+      },
+    ];
+    const commitAcceptedTurn = vi.fn();
+    start.mockResolvedValue({
+      runId: "run-zh-mention",
+      turnId: "turn-zh-mention",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    getFileSignature.mockResolvedValue({
+      path: "线索/问题线索工作思路（王Y）.md",
+      contentHash: "zh-mention-hash",
+    });
+
+    renderProbe(
+      normalOptions({
+        input,
+        contextReferences: [],
+        displayMentions,
+        commitAcceptedTurn,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        turn: expect.objectContaining({
+          message: input,
+          displayMentions,
+        }),
+      }),
+    );
+    expect(commitAcceptedTurn).toHaveBeenCalledWith(
+      input,
+      expect.objectContaining({ runId: "run-zh-mention" }),
+      [],
+      displayMentions,
+    );
+  });
 });

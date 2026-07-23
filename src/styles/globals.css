@@ -1095,7 +1095,9 @@
   }
 
   .ai-display-mention,
-  .ai-composer-display-mention {
+  .ai-composer-display-mention,
+  .ai-message-body.iris-markdown-content .ai-display-mention,
+  .ai-message-bubble-user .ai-display-mention {
     color: hsl(var(--ai-mention));
   }
 

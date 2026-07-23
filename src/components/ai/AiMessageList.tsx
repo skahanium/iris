@@ -453,6 +453,7 @@ export const AiMessageList = memo(function AiMessageList({
     }
 
     if (m.role === "user") {
+      const userContent = restoreChatLineContent(m);
       return (
         <div className="group/ai-message-row flex w-full items-start justify-end gap-1">
           <div className="pt-1">
@@ -465,7 +466,7 @@ export const AiMessageList = memo(function AiMessageList({
           </div>
           <AiMessageBubble
             role="user"
-            content={m.content}
+            content={userContent}
             selected={isSelected}
             images={m.images}
             displayMentions={m.displayMentions}

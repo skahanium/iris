@@ -286,6 +286,12 @@
     @apply text-foreground;
   }
 
+  /* Keep @-mention green above conversation prose `text-foreground`. */
+  .ai-message-body.iris-markdown-content[data-prose-surface="conversation"]
+    .ai-display-mention {
+    color: hsl(var(--ai-mention));
+  }
+
   [data-prose-surface="conversation"].iris-markdown-content
     :where(p, li, blockquote, td, th) {
     min-width: 0;

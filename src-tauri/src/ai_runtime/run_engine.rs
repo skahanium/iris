@@ -810,7 +810,8 @@ impl AgentRunStreamObserver<'_> {
         self.emitted_generating_answer_stage
     }
 
-    fn emit_generating_answer_stage_if_needed(&mut self) -> AppResult<()> {
+    /// Persist the user-visible generating stage once the tool loop will not run again.
+    pub(crate) fn emit_generating_answer_stage_if_needed(&mut self) -> AppResult<()> {
         if self.emitted_generating_answer_stage {
             return Ok(());
         }
@@ -1102,7 +1103,9 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
     }
 
     fn on_tools_finished(&mut self) -> AppResult<()> {
-        self.emit_generating_answer_stage_if_needed()?;
+        // Unlock provisional/final streaming between model turns, but do not emit
+        // "正在生成答复" here: later tool rounds (e.g. read_note after search) must
+        // still appear before that stage in the process timeline.
         self.clear_deferred_visible_deltas();
         Ok(())
     }
@@ -1726,34 +1729,19 @@ impl RunEngine {
         }
         executor.emit_deferred_web_degradation_if_needed(db, sink)?;
         if !observer.emitted_generating_answer_stage() {
-            let generating = match AgentRunRepository::append_event(
-                db,
-                AppendRunEventInput {
-                    run_id: run_id.to_string(),
-                    state_version: running_state_version,
-                    event_type: RunEventType::StageChanged,
-                    payload: RunEventPayload::StageChanged {
-                        state: RunState::Running,
-                        stage: "正在生成答复".to_string(),
-                    },
-                },
-            ) {
-                Ok(event) => event,
-                Err(error) => {
-                    if settle_cancelled_run_with_partial(
-                        db,
-                        session,
-                        run_id,
-                        &observer,
-                        sink,
-                        Some(outcome.content.as_str()),
-                    )? {
-                        return Ok(());
-                    }
-                    return Err(error);
+            if let Err(error) = observer.emit_generating_answer_stage_if_needed() {
+                if settle_cancelled_run_with_partial(
+                    db,
+                    session,
+                    run_id,
+                    &observer,
+                    sink,
+                    Some(outcome.content.as_str()),
+                )? {
+                    return Ok(());
                 }
-            };
-            sink.emit(&generating)?;
+                return Err(error);
+            }
         }
         observer.clear_deferred_visible_deltas();
         let mut content = match validated_final_model_answer(&outcome.content) {
