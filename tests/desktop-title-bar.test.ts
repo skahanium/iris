@@ -303,7 +303,10 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain('isMacDesktop && "-ml-1.5"');
     expect(bar).toContain("min-w-[6.75rem]");
     expect(bar).not.toContain("iris-brand-rail flex h-full");
-    expect(bar).toContain("iris-brand-rail--active");
+    expect(bar).toContain("pointer-events-none");
+    expect(bar).not.toContain("iris-brand-rail--active");
+    expect(bar).not.toContain("onHome");
+    expect(bar).not.toContain("isHomeActive");
     expect(bar).toContain("iris-rail-tab--active");
     expect(css).toContain(".iris-brand-rail:hover");
     expect(css).toContain("inset 0 0 0 1px hsl(var(--knowledge-accent)");
@@ -323,7 +326,7 @@ describe("desktop title bar", () => {
     expect(bar).toContain("pl-[var(--titlebar-leading-inset)]");
     expect(bar).not.toContain("-ml-1.5");
     expect(css).toMatch(
-      /html\[data-iris-platform-macos\]:not\(\[data-iris-window-fullscreen\]\)\s+button\.iris-brand-rail\s*\{[^}]*margin-left:\s*-0\.375rem/,
+      /html\[data-iris-platform-macos\]:not\(\[data-iris-window-fullscreen\]\)\s+div\.iris-brand-rail\s*\{[^}]*margin-left:\s*-0\.375rem/,
     );
   });
 

@@ -102,7 +102,7 @@ function baseProps() {
     handleLockToggle: vi.fn(async () => undefined),
     handleNewNoteLeavingHome: vi.fn(),
     getNoteContent: vi.fn(() => ""),
-    homeActive: false,
+    workspaceEmpty: false,
     inlineAi: {
       retry: vi.fn(async () => undefined),
       dismiss: vi.fn(),
@@ -156,7 +156,7 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
         <AppEditorWorkspace
           {...baseProps()}
           activePath={null}
-          homeActive={false}
+          workspaceEmpty={false}
           openNotePaths={[]}
           pendingOpen={
             {
@@ -231,7 +231,7 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
         <AppEditorWorkspace
           {...baseProps()}
           activePath={null}
-          homeActive={false}
+          workspaceEmpty={false}
           openNotePaths={[]}
           pendingOpen={
             {

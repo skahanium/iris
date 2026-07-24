@@ -96,7 +96,7 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 ## Iris Rail 完整刷新设计
 
-Iris Rail 由持久品牌轨、Rail Segments Tab、Outline Rail、AI Conversation Workspace 与 Overlay Family 组成。品牌轨是唯一 Home 入口；Rail Segments Tab 只承载已打开工作区对象；Outline Rail 负责当前文档结构；AI Conversation Workspace 保持写作上下文、证据和工具确认；Overlay Family 负责搜索、图谱、设置、版本和管理中心等临时任务。
+Iris Rail 由持久品牌轨、Rail Segments Tab、Outline Rail、AI Conversation Workspace 与 Overlay Family 组成。品牌轨为纯身份标识（不可点击、无激活态）；Rail Segments Tab 只承载已打开工作区对象；Outline Rail 负责当前文档结构；AI Conversation Workspace 保持写作上下文、证据和工具确认；Overlay Family 负责搜索、图谱、设置、版本和管理中心等临时任务。
 
 TaskPlan 体验遵循 Markdown-first：助手对话先形成可读 Markdown 草稿；临时 tab 是高价值产物，用于承载结构化结果。过程 tab 只用于长任务进度，不替代最终笔记；引用显示短摘要、来源和可追溯证据，不展示原始敏感载荷。
 

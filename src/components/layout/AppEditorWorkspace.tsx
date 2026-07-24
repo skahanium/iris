@@ -91,7 +91,7 @@ interface AppEditorWorkspaceProps {
   handleEditorReady: (editor: Editor | null) => void;
   handleLockToggle: (locked: boolean) => Promise<void>;
   handleNewNoteLeavingHome: () => void | Promise<void>;
-  homeActive: boolean;
+  workspaceEmpty: boolean;
   inlineAi: {
     retry: (editor: Editor) => Promise<void>;
     dismiss: (editor: Editor) => void;
@@ -218,7 +218,7 @@ export function AppEditorWorkspace({
   handleEditorReady,
   handleLockToggle,
   handleNewNoteLeavingHome,
-  homeActive,
+  workspaceEmpty,
   inlineAi,
   isMutationBlocked = () => false,
   persistenceBarrierActive = false,
@@ -246,7 +246,7 @@ export function AppEditorWorkspace({
   zen,
 }: AppEditorWorkspaceProps) {
   const { recentNotes, refreshRecent } = useHomeRecentNotes({
-    enabled: homeActive,
+    enabled: workspaceEmpty,
     onPrepare: onPrepareNote,
     vaultIndexEpoch,
     vaultPath,
@@ -272,13 +272,13 @@ export function AppEditorWorkspace({
     pendingOpen &&
     pendingOpen.kind !== "new-note" &&
     !pendingOpen.error &&
-    !homeActive,
+    !workspaceEmpty,
   );
 
   const currentEditorSurface = useMemo<EditorSurfaceSnapshot | null>(() => {
     if (
       !effectiveNotePath ||
-      (homeActive && !pendingNoteOpen) ||
+      (workspaceEmpty && !pendingNoteOpen) ||
       hideCurrentSurfaceForPendingOpen ||
       activeMediaTab
     ) {
@@ -316,7 +316,7 @@ export function AppEditorWorkspace({
     effectivePreparedHtml,
     effectiveTitle,
     hideCurrentSurfaceForPendingOpen,
-    homeActive,
+    workspaceEmpty,
     pendingNoteOpen,
     warmPreparedNotes,
   ]);
@@ -537,7 +537,7 @@ export function AppEditorWorkspace({
     activeSurfaceRecord.ready,
   );
   const pendingOpenLoading = Boolean(
-    !homeActive &&
+    !workspaceEmpty &&
     !activeMediaTab &&
     pendingOpen &&
     !pendingOpen.error &&
@@ -560,7 +560,7 @@ export function AppEditorWorkspace({
   const showDocumentLoading = Boolean(
     loadingPolicyAllowsSurface &&
     !activeMediaTab &&
-    !homeActive &&
+    !workspaceEmpty &&
     (currentEditorSurface || pendingOpenLoadingIdentity) &&
     documentLoadingGate.identityKey ===
       (currentSurfaceIdentity ?? pendingOpenLoadingIdentity) &&
@@ -931,7 +931,7 @@ export function AppEditorWorkspace({
         outlineOpen && !zen && effectiveNotePath && "iris-editor-outline-open",
       )}
     >
-      {activeMediaTab && !homeActive ? (
+      {activeMediaTab && !workspaceEmpty ? (
         <MediaWorkspaceView tab={activeMediaTab} />
       ) : currentEditorSurface || pendingOpenLoading ? (
         renderEditorStack()

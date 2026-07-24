@@ -10,7 +10,7 @@ type OpenNoteFn = (
   titleHint?: string,
   options?: unknown,
 ) => Promise<void>;
-type SetHomeActiveFn = (active: boolean) => void;
+type SetWorkspaceEmptyFn = (empty: boolean) => void;
 type ActivateTabFn = (path: string, options?: unknown) => Promise<void> | void;
 type HandleNewNoteFn = (options?: unknown) => Promise<void>;
 
@@ -32,7 +32,7 @@ function Harness({
   handleNewNote = vi.fn(async () => undefined),
   openTabs = [],
   openNote,
-  setHomeActive,
+  setWorkspaceEmpty,
 }: {
   activePath?: string | null;
   activateTab?: ActivateTabFn;
@@ -41,7 +41,7 @@ function Harness({
   handleNewNote?: HandleNewNoteFn;
   openTabs?: Array<{ path: string }>;
   openNote: OpenNoteFn;
-  setHomeActive: SetHomeActiveFn;
+  setWorkspaceEmpty: SetWorkspaceEmptyFn;
 }) {
   void activePath;
   apiRef.current = useHomeWorkspaceTransitions({
@@ -50,7 +50,7 @@ function Harness({
     handleNewNote,
     openNote,
     openTabs,
-    setHomeActive,
+    setWorkspaceEmpty,
   });
   return null;
 }
@@ -81,10 +81,10 @@ describe("useHomeWorkspaceTransitions", () => {
     };
     const stagedOpen = deferred<void>();
     const openNote = vi.fn(() => stagedOpen.promise);
-    const setHomeActive = vi.fn();
+    const setWorkspaceEmpty = vi.fn();
 
     await act(async () => {
-      root.render(createElement(Harness, { apiRef, openNote, setHomeActive }));
+      root.render(createElement(Harness, { apiRef, openNote, setWorkspaceEmpty }));
     });
 
     let openPromise!: Promise<void>;
@@ -92,7 +92,7 @@ describe("useHomeWorkspaceTransitions", () => {
       openPromise = apiRef.current!.openNoteLeavingHome("new.md", "New");
     });
 
-    expect(setHomeActive).toHaveBeenCalledWith(false);
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(false);
     expect(apiRef.current!.pendingOpen).toMatchObject({
       kind: "note",
       path: "new.md",
@@ -121,10 +121,10 @@ describe("useHomeWorkspaceTransitions", () => {
     };
     const stalledOpen = deferred<void>();
     const openNote = vi.fn(() => stalledOpen.promise);
-    const setHomeActive = vi.fn();
+    const setWorkspaceEmpty = vi.fn();
 
     await act(async () => {
-      root.render(createElement(Harness, { apiRef, openNote, setHomeActive }));
+      root.render(createElement(Harness, { apiRef, openNote, setWorkspaceEmpty }));
     });
 
     await act(async () => {
@@ -135,7 +135,7 @@ describe("useHomeWorkspaceTransitions", () => {
       vi.advanceTimersByTime(15_000);
     });
 
-    expect(setHomeActive).toHaveBeenCalledWith(true);
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(true);
     expect(apiRef.current!.pendingOpen).toMatchObject({
       error: expect.stringContaining("文档打开超时"),
       path: "stalled.md",
@@ -146,7 +146,7 @@ describe("useHomeWorkspaceTransitions", () => {
       await stalledOpen.promise;
     });
 
-    expect(setHomeActive).not.toHaveBeenLastCalledWith(false);
+    expect(setWorkspaceEmpty).not.toHaveBeenLastCalledWith(false);
   });
 
   it("starts welcome new-note opens with disabled loading and passes the home sequence forward", async () => {
@@ -157,7 +157,7 @@ describe("useHomeWorkspaceTransitions", () => {
     };
     const handleNewNote = vi.fn(async () => undefined);
     const openNote = vi.fn(async () => undefined);
-    const setHomeActive = vi.fn();
+    const setWorkspaceEmpty = vi.fn();
 
     await act(async () => {
       root.render(
@@ -165,7 +165,7 @@ describe("useHomeWorkspaceTransitions", () => {
           apiRef,
           handleNewNote,
           openNote,
-          setHomeActive,
+          setWorkspaceEmpty,
         }),
       );
     });
@@ -191,7 +191,7 @@ describe("useHomeWorkspaceTransitions", () => {
     };
     const activateTab = vi.fn(async () => undefined);
     const openNote = vi.fn(async () => undefined);
-    const setHomeActive = vi.fn();
+    const setWorkspaceEmpty = vi.fn();
 
     await act(async () => {
       root.render(
@@ -201,7 +201,7 @@ describe("useHomeWorkspaceTransitions", () => {
           apiRef,
           openNote,
           openTabs: [{ path: "current.md" }],
-          setHomeActive,
+          setWorkspaceEmpty,
         }),
       );
     });
@@ -217,11 +217,11 @@ describe("useHomeWorkspaceTransitions", () => {
       expect.objectContaining({ openBudgetKind: "hot", source: "welcome" }),
     );
     expect(openNote).not.toHaveBeenCalled();
-    expect(setHomeActive).toHaveBeenCalledWith(false);
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(false);
     expect(apiRef.current!.pendingOpen).toBeNull();
   });
 
-  it("does not flip homeActive until the target tab commits, avoiding a flash of the previous document", async () => {
+  it("does not flip workspaceEmpty until the target tab commits, avoiding a flash of the previous document", async () => {
     const apiRef: {
       current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
     } = {
@@ -230,7 +230,7 @@ describe("useHomeWorkspaceTransitions", () => {
     const stagedActivate = deferred<void>();
     const activateTab = vi.fn(() => stagedActivate.promise);
     const openNote = vi.fn(async () => undefined);
-    const setHomeActive = vi.fn();
+    const setWorkspaceEmpty = vi.fn();
 
     await act(async () => {
       root.render(
@@ -240,7 +240,7 @@ describe("useHomeWorkspaceTransitions", () => {
           apiRef,
           openNote,
           openTabs: [{ path: "current.md" }],
-          setHomeActive,
+          setWorkspaceEmpty,
         }),
       );
     });
@@ -255,28 +255,28 @@ describe("useHomeWorkspaceTransitions", () => {
 
     // Before the target tab commits: must NOT route through openNote (its async
     // IPC gap is what reveals the still-active previous document), and must NOT
-    // flip homeActive yet (that would surface the previous document's retained
+    // flip workspaceEmpty yet (that would surface the previous document's retained
     // editor surface at full opacity).
     expect(activateTab).toHaveBeenCalledWith(
       "current.md",
       expect.objectContaining({ openBudgetKind: "hot" }),
     );
     expect(openNote).not.toHaveBeenCalled();
-    expect(setHomeActive).not.toHaveBeenCalledWith(false);
+    expect(setWorkspaceEmpty).not.toHaveBeenCalledWith(false);
 
     await act(async () => {
       stagedActivate.resolve();
       await openPromise;
     });
 
-    // Once activateTab has committed the target tab, homeActive flips so the
+    // Once activateTab has committed the target tab, workspaceEmpty flips so the
     // target document is shown directly — with no intermediate render of the
     // previous document.
-    expect(setHomeActive).toHaveBeenCalledWith(false);
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(false);
     expect(apiRef.current!.pendingOpen).toBeNull();
   });
 
-  it("leaves Home active when showHome interrupts an in-flight already-open tab activation", async () => {
+  it("keeps workspace empty when enterWorkspaceEmpty interrupts an in-flight already-open tab activation", async () => {
     const apiRef: {
       current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
     } = {
@@ -285,7 +285,7 @@ describe("useHomeWorkspaceTransitions", () => {
     const stagedActivate = deferred<void>();
     const activateTab = vi.fn(() => stagedActivate.promise);
     const openNote = vi.fn(async () => undefined);
-    const setHomeActive = vi.fn();
+    const setWorkspaceEmpty = vi.fn();
 
     await act(async () => {
       root.render(
@@ -295,7 +295,7 @@ describe("useHomeWorkspaceTransitions", () => {
           apiRef,
           openNote,
           openTabs: [{ path: "current.md" }],
-          setHomeActive,
+          setWorkspaceEmpty,
         }),
       );
     });
@@ -308,9 +308,9 @@ describe("useHomeWorkspaceTransitions", () => {
       );
     });
 
-    // User clicks the logo to stay on Home while activation is in flight.
+    // User returns to empty workspace while activation is in flight.
     await act(async () => {
-      apiRef.current!.showHome();
+      apiRef.current!.enterWorkspaceEmpty();
     });
 
     await act(async () => {
@@ -318,10 +318,10 @@ describe("useHomeWorkspaceTransitions", () => {
       await openPromise;
     });
 
-    // showHome won: the late activateTab resolution must NOT override it by
-    // flipping homeActive off, or the user would be dragged out of Home.
-    expect(setHomeActive).toHaveBeenCalledWith(true);
-    expect(setHomeActive).not.toHaveBeenCalledWith(false);
+    // enterWorkspaceEmpty won: the late activateTab resolution must NOT override it by
+    // flipping workspaceEmpty off, or the user would be dragged out of the empty workspace.
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(true);
+    expect(setWorkspaceEmpty).not.toHaveBeenCalledWith(false);
   });
 
   it("cancels the editor tab activation as well as the Home transition", async () => {
@@ -336,13 +336,13 @@ describe("useHomeWorkspaceTransitions", () => {
           apiRef,
           cancelPendingDocumentOpen,
           openNote: vi.fn(async () => undefined),
-          setHomeActive: vi.fn(),
+          setWorkspaceEmpty: vi.fn(),
         }),
       );
     });
 
     await act(async () => {
-      apiRef.current!.showHome();
+      apiRef.current!.enterWorkspaceEmpty();
     });
 
     expect(cancelPendingDocumentOpen).toHaveBeenCalledTimes(1);

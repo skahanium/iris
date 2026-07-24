@@ -31,7 +31,7 @@ function Harness({ vaultPath }: { vaultPath: string | null }) {
     classifiedVaultStatus: "locked",
     handleNewNote: vi.fn(async () => undefined),
     openNote: vi.fn(async () => undefined),
-    setHomeActive: vi.fn(),
+    setWorkspaceEmpty: vi.fn(),
     tabs: [],
     vaultPath,
   });

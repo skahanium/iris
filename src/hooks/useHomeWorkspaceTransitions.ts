@@ -30,7 +30,7 @@ interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
     options?: OpenNoteOptions,
   ) => Promise<void>;
   openTabs?: readonly { path: string }[];
-  setHomeActive: (active: boolean) => void;
+  setWorkspaceEmpty: (active: boolean) => void;
 }
 
 export function useHomeWorkspaceTransitions<OpenNoteOptions>({
@@ -39,7 +39,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
   handleNewNote,
   openNote,
   openTabs = [],
-  setHomeActive,
+  setWorkspaceEmpty,
 }: UseHomeWorkspaceTransitionsOptions<OpenNoteOptions>) {
   const homeOpenSequenceRef = useRef(0);
   const [pendingOpen, setPendingOpenState] = useState<HomePendingOpen | null>(
@@ -80,23 +80,23 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
           ...current,
           error: "文档打开超时，未修改文件内容",
         });
-        setHomeActive(true);
+        setWorkspaceEmpty(true);
       }, HOME_OPEN_WATCHDOG_MS);
     },
-    [clearOpenWatchdog, setHomeActive, setPendingOpen],
+    [clearOpenWatchdog, setWorkspaceEmpty, setPendingOpen],
   );
 
-  const showHome = useCallback(
+  const enterWorkspaceEmpty = useCallback(
     (_closedPath?: string | null) => {
       clearOpenWatchdog();
       cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
       cancelPendingDocumentOpen?.();
-      setHomeActive(true);
+      setWorkspaceEmpty(true);
     },
     [
       cancelPendingDocumentOpen,
       clearOpenWatchdog,
-      setHomeActive,
+      setWorkspaceEmpty,
       setPendingOpen,
     ],
   );
@@ -120,7 +120,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
         )
           .then(() => {
             if (homeOpenSequenceRef.current !== sequence) return;
-            setHomeActive(false);
+            setWorkspaceEmpty(false);
           })
           .catch(() => undefined);
       }
@@ -140,7 +140,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
         startedAt: openTransitionNow(),
         title,
       };
-      setHomeActive(false);
+      setWorkspaceEmpty(false);
       scheduleOpenWatchdog(pending);
       return openNote(path, titleHint, options)
         .then(() => {
@@ -149,7 +149,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
         })
         .catch((error: unknown) => {
           clearOpenWatchdog();
-          setHomeActive(true);
+          setWorkspaceEmpty(true);
           failHomeOpenLoading({
             message: error instanceof Error ? error.message : "无法打开笔记",
             pending,
@@ -165,7 +165,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       openNote,
       openTabs,
       scheduleOpenWatchdog,
-      setHomeActive,
+      setWorkspaceEmpty,
       setPendingOpen,
     ],
   );
@@ -201,9 +201,9 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
         priority: "hot",
         source: "tab",
       } as OpenNoteOptions);
-      setHomeActive(false);
+      setWorkspaceEmpty(false);
     },
-    [activateTab, setHomeActive, setPendingOpen],
+    [activateTab, setWorkspaceEmpty, setPendingOpen],
   );
 
   const handleNewNoteLeavingHome = useCallback((): Promise<void> => {
@@ -224,7 +224,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       startedAt: openTransitionNow(),
       title,
     };
-    setHomeActive(false);
+    setWorkspaceEmpty(false);
     scheduleOpenWatchdog(pending);
     return handleNewNote({ homeOpenSequence: sequence })
       .then(() => {
@@ -233,7 +233,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       })
       .catch((error: unknown) => {
         clearOpenWatchdog();
-        setHomeActive(true);
+        setWorkspaceEmpty(true);
         failHomeOpenLoading({
           message: error instanceof Error ? error.message : "新建笔记失败",
           pending,
@@ -246,7 +246,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     clearOpenWatchdog,
     handleNewNote,
     scheduleOpenWatchdog,
-    setHomeActive,
+    setWorkspaceEmpty,
     setPendingOpen,
   ]);
 
@@ -256,6 +256,6 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     handleNewNoteLeavingHome,
     openNoteLeavingHome,
     pendingOpen,
-    showHome,
+    enterWorkspaceEmpty,
   };
 }

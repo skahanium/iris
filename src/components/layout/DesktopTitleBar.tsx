@@ -51,8 +51,6 @@ interface DesktopTitleBarProps {
   variant?: DesktopTitleBarVariant;
   tabs: TabItem[];
   activePath: string | null;
-  isHomeActive?: boolean;
-  onHome?: () => void;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
   onNew: () => void;
@@ -67,8 +65,6 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   variant = "document",
   tabs,
   activePath,
-  isHomeActive = false,
-  onHome,
   onSelect,
   onClose,
   onNew,
@@ -284,22 +280,14 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
           ) : null}
 
           {isDesktop ? (
-            <button
-              type="button"
+            <div
               data-testid="iris-brand-rail"
-              data-tauri-drag-region-exclude
-              className={cn(
-                "iris-brand-rail flex h-8 min-w-[6.75rem] shrink-0 items-center justify-center gap-2 px-3 text-foreground",
-                isHomeActive && "iris-brand-rail--active",
-              )}
-              aria-label={isHomeActive ? "Home" : "回到 Home"}
-              aria-current={isHomeActive ? "page" : undefined}
-              onMouseDown={(event) => event.stopPropagation()}
-              onClick={onHome}
+              data-tauri-drag-region
+              className="iris-brand-rail flex h-8 min-w-[6.75rem] shrink-0 items-center justify-center gap-2 px-3 text-foreground pointer-events-none select-none"
             >
               <IrisMark size={18} />
               <span className="text-sm font-semibold">Iris</span>
-            </button>
+            </div>
           ) : null}
 
           {showTabStrip ? (

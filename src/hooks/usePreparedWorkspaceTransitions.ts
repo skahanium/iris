@@ -36,7 +36,7 @@ interface UsePreparedWorkspaceTransitionsOptions<
     titleHint?: string,
     options?: OpenOptions,
   ) => Promise<void>;
-  setHomeActive: (active: boolean) => void;
+  setWorkspaceEmpty: (active: boolean) => void;
   tabs: readonly OpenTabLike[];
   vaultPath: string | null;
 }
@@ -49,7 +49,7 @@ export function usePreparedWorkspaceTransitions<
   classifiedVaultStatus,
   handleNewNote,
   openNote,
-  setHomeActive,
+  setWorkspaceEmpty,
   tabs,
   vaultPath,
 }: UsePreparedWorkspaceTransitionsOptions<OpenOptions>) {
@@ -92,7 +92,7 @@ export function usePreparedWorkspaceTransitions<
     handleNewNote,
     openNote: openPreparedNote,
     openTabs: tabs,
-    setHomeActive,
+    setWorkspaceEmpty,
   });
 
   return {

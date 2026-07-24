@@ -42,7 +42,7 @@ handleUndo
 scheduleUndoRedoStateRefresh
 handleRedo
 scheduleUndoRedoStateRefresh
-homeActive
+workspaceEmpty
 ManagementCenterPanel
 data-testid="editor-shell"
 runEditorAction

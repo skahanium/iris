@@ -114,9 +114,9 @@ function App() {
     null,
   );
   const { editorStats, updateEditorStats, resetEditorStats } = useEditorStats();
-  // With no restored tab the workspace is Home, not an editor fallback.
-  // Keeping this true also lets Home immediately read the recovered catalog.
-  const [homeActive, setHomeActive] = useState(true);
+  // With no restored tab the workspace is empty, not an editor fallback.
+  // Keeping this true also lets the empty workspace read the recovered catalog.
+  const [workspaceEmpty, setWorkspaceEmpty] = useState(true);
   const [zen, setZen] = useState(false);
   useZenExitKeyboard({ zen, setZen });
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
@@ -305,7 +305,7 @@ function App() {
     prepareVisibleNote,
     prepareNotePath,
     prepareClassifiedNotePath,
-    showHome,
+    enterWorkspaceEmpty,
     warmPreparedNotes,
   } = usePreparedWorkspaceTransitions<
     NonNullable<Parameters<typeof openNote>[2]>
@@ -315,7 +315,7 @@ function App() {
     classifiedVaultStatus,
     handleNewNote: guardedHandleNewNote,
     openNote: guardedOpenNote,
-    setHomeActive,
+    setWorkspaceEmpty,
     tabs,
     vaultPath,
   });
@@ -338,8 +338,8 @@ function App() {
     handleActivateNoteTab,
     handleNewNoteLeavingHome,
     openNoteLeavingHome,
-    setHomeActive,
-    showHome,
+    setWorkspaceEmpty,
+    enterWorkspaceEmpty,
     tabs,
   });
   useEffect(() => {
@@ -823,8 +823,6 @@ function App() {
           <TabBar
             tabs={workspaceTabs}
             activePath={activeWorkspacePath}
-            isHomeActive={homeActive}
-            onHome={showHome}
             onSelect={handleActivateWorkspaceTab}
             onClose={handleCloseWorkspaceTab}
             onNew={handleNewWorkspaceNote}
@@ -850,7 +848,7 @@ function App() {
             handleEditorReady={handleEditorReady}
             handleLockToggle={handleLockToggleWithPromotion}
             handleNewNoteLeavingHome={handleNewWorkspaceNote}
-            homeActive={homeActive}
+            workspaceEmpty={workspaceEmpty}
             inlineAi={inlineAi}
             isMutationBlocked={isEditorMutationBlocked}
             persistenceBarrierActive={isPersistenceBarrierActive}

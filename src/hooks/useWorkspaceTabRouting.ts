@@ -25,8 +25,8 @@ interface UseWorkspaceTabRoutingOptions<OpenOptions> {
     titleHint?: string,
     options?: OpenOptions,
   ) => MaybePromise<void>;
-  setHomeActive: (active: boolean) => void;
-  showHome: (closedPath?: string | null) => void;
+  setWorkspaceEmpty: (active: boolean) => void;
+  enterWorkspaceEmpty: (closedPath?: string | null) => void;
   tabs: readonly NoteTabLike[];
 }
 
@@ -37,8 +37,8 @@ export function useWorkspaceTabRouting<OpenOptions>({
   handleActivateNoteTab,
   handleNewNoteLeavingHome,
   openNoteLeavingHome,
-  setHomeActive,
-  showHome,
+  setWorkspaceEmpty,
+  enterWorkspaceEmpty,
   tabs,
 }: UseWorkspaceTabRoutingOptions<OpenOptions>) {
   const {
@@ -61,26 +61,26 @@ export function useWorkspaceTabRouting<OpenOptions>({
       options?: OpenOptions,
     ): Promise<void> => {
       if (openMediaPath(path, titleHint)) {
-        setHomeActive(false);
+        setWorkspaceEmpty(false);
         return Promise.resolve();
       }
       setActiveMediaId(null);
       return Promise.resolve(openNoteLeavingHome(path, titleHint, options));
     },
-    [openMediaPath, openNoteLeavingHome, setActiveMediaId, setHomeActive],
+    [openMediaPath, openNoteLeavingHome, setActiveMediaId, setWorkspaceEmpty],
   );
 
   const handleActivateWorkspaceTab = useCallback(
     (path: string) => {
       if (path.startsWith("media:")) {
-        setHomeActive(false);
+        setWorkspaceEmpty(false);
         activateMedia(path);
         return;
       }
       setActiveMediaId(null);
       handleActivateNoteTab(path);
     },
-    [activateMedia, handleActivateNoteTab, setActiveMediaId, setHomeActive],
+    [activateMedia, handleActivateNoteTab, setActiveMediaId, setWorkspaceEmpty],
   );
 
   const handleNewWorkspaceNote = useCallback((): Promise<void> => {
@@ -99,15 +99,15 @@ export function useWorkspaceTabRouting<OpenOptions>({
           if (!result.closed || result.remainingNoteCount > 0) return;
           const nextMedia = mediaTabs[0];
           if (nextMedia) {
-            setHomeActive(false);
+            setWorkspaceEmpty(false);
             activateMedia(nextMedia.id);
             return;
           }
-          showHome(path);
+          enterWorkspaceEmpty(path);
         })
         .catch(() => undefined);
     },
-    [activateMedia, closeMedia, closeTab, mediaTabs, setHomeActive, showHome],
+    [activateMedia, closeMedia, closeTab, mediaTabs, setWorkspaceEmpty, enterWorkspaceEmpty],
   );
 
   const workspaceTabs: TabItem[] = useMemo(

@@ -128,7 +128,7 @@ function baseProps() {
     handleLockToggle: vi.fn(async () => undefined),
     handleNewNoteLeavingHome: vi.fn(),
     getNoteContent: vi.fn(() => ""),
-    homeActive: false,
+    workspaceEmpty: false,
     inlineAi: {
       retry: vi.fn(async () => undefined),
       dismiss: vi.fn(),

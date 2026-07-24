@@ -30,7 +30,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(design).toContain("Overlay Family");
   });
 
-  it("defines persistent brand rail as the only Home entry plus Rail Segments tabs", () => {
+  it("defines persistent static brand rail plus Rail Segments tabs", () => {
     const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
     const css = read("src/styles/globals.css");
     const app = read("src/App.tsx");
@@ -42,16 +42,17 @@ describe("Iris Rail complete interface contracts", () => {
     expect(titleBar).toContain('data-testid="rail-segment-tab"');
     expect(titleBar).not.toContain('data-testid="home-segment"');
     expect(titleBar).not.toContain("iris-home-segment");
-    expect(titleBar).toContain("onHome");
-    expect(titleBar).toContain("isHomeActive");
+    expect(titleBar).not.toContain("onHome");
+    expect(titleBar).not.toContain("isHomeActive");
+    expect(titleBar).not.toContain("iris-brand-rail--active");
+    expect(titleBar).not.toContain("onClick={onHome}");
+    expect(titleBar).toContain("pointer-events-none");
     expect(titleBar).toContain("iris-brand-rail flex h-8");
     expect(titleBar).toContain("min-w-[6.75rem]");
     expect(titleBar).not.toContain("iris-brand-rail flex h-full");
     expect(css).toContain(".iris-brand-rail:hover");
-    expect(titleBar).toContain("iris-brand-rail--active");
-    expect(app).toContain("homeActive");
+    expect(app).toContain("workspaceEmpty");
     expect(welcome).toContain('data-testid="home-workbench"');
-    expect(welcome).toContain("home-workbench-grid");
     expect(welcome).toContain('data-testid="home-quick-actions"');
     expect(welcome).toContain('className="grid gap-5"');
     expect(welcome).toContain("grid grid-cols-1 gap-5");
