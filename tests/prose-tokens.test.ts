@@ -27,7 +27,13 @@ describe("prose polish v2 tokens", () => {
     expect(markdownProse).not.toContain("text-justify: inter-ideograph");
     expect(markdownProse).toContain("--prose-wiki: var(--brand)");
     expect(markdownProse).toContain("--prose-measure: 52rem");
+    expect(markdownProse).toContain("--prose-block-gap: 0.875em");
+    expect(markdownProse).toContain("--prose-heading-gap-before: 1.85em");
+    expect(markdownProse).toContain("--prose-h1: 1.75rem");
+    expect(markdownProse).toContain("--prose-h2: 1.4375rem");
     expect(globalsCss).toContain("max-width: var(--prose-measure)");
+    expect(globalsCss).toContain("--editor-code-bg: 210 10% 92%");
+    expect(globalsCss).toContain("--editor-code-fg: 210 12% 18%");
     expect(globalsCss).toContain(
       "noto-sans-sc-chinese-simplified-400-normal.woff2",
     );

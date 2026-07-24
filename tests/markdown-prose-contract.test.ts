@@ -28,6 +28,9 @@ describe("markdown prose CSS contract", () => {
     expect(proseCss).toContain(
       ".iris-markdown-content blockquote[data-callout-type] {",
     );
+    expect(proseCss).not.toMatch(
+      /\.iris-markdown-content blockquote\[data-callout-type\]\s*\{[\s\S]*?bg-muted\/25/,
+    );
     expect(proseCss).toContain("border-left-width: 4px;");
     expect(proseCss).toContain(
       ".iris-markdown-content blockquote[data-callout-type] > p:first-child",

@@ -326,8 +326,8 @@
     --editor-ink: var(--foreground);
     --editor-muted: 0 0% 45%;
     --editor-border: var(--border);
-    --editor-code-bg: 210 12% 95%;
-    --editor-code-fg: 210 10% 22%;
+    --editor-code-bg: 210 10% 92%;
+    --editor-code-fg: 210 12% 18%;
 
     --shadow-overlay:
       0 12px 40px hsl(0 0% 10% / 0.12), 0 4px 12px hsl(0 0% 10% / 0.08),
