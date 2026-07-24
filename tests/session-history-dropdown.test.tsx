@@ -239,6 +239,13 @@ describe("SessionHistoryDropdown", () => {
               status: "completed",
               createdAt: Date.parse("2026-07-22T08:00:01.000Z"),
             },
+            {
+              id: "stage:answer-complete",
+              kind: "stage",
+              label: "答复完毕",
+              status: "completed",
+              createdAt: Date.parse("2026-07-22T08:00:01.000Z"),
+            },
           ],
           seq: 2,
           created_at: "2026-07-22T08:01:00.000Z",

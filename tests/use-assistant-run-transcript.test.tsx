@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { useAssistantRunTranscript } from "@/components/ai/hooks/useAssistantRunTranscript";
 import type { ChatLine } from "@/components/ai/AiMessageList";
-import type { AssistantPresentationState } from "@/lib/assistant-presentation";
+import {
+  ANSWER_COMPLETE_PROCESS_LABEL,
+  type AssistantPresentationState,
+} from "@/lib/assistant-presentation";
 import { replayAssistantRunEvents } from "@/lib/assistant-run-events";
 import type { AssistantRunEvent } from "@/types/ai";
 
@@ -625,6 +628,114 @@ describe("useAssistantRunTranscript", () => {
       "run-2",
       "run-2",
     ]);
+  });
+
+  it("presentation 冻结 processItems 且 run 已 completed 时末项收敛为答复完毕", () => {
+    messages = [
+      { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
+      {
+        role: "assistant",
+        content: "完整答复",
+        runId: "run-1",
+        turnId: "turn-1",
+        processItems: [
+          {
+            id: "stage:3",
+            kind: "stage",
+            label: "正在生成答复",
+            status: "completed",
+            createdAt: 3,
+          },
+        ],
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const run = replayAssistantRunEvents("run-1", [
+      {
+        runId: "run-1",
+        seq: 1,
+        stateVersion: 0,
+        timestamp: "2026-07-22T08:00:00.000Z",
+        type: "accepted",
+        payload: {
+          kind: "accepted",
+          turnId: "turn-1",
+          sessionKey: "session-1",
+        },
+      },
+      {
+        runId: "run-1",
+        seq: 2,
+        stateVersion: 1,
+        timestamp: "2026-07-22T08:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "preparing",
+          stage: "正在准备",
+        },
+      },
+      {
+        runId: "run-1",
+        seq: 3,
+        stateVersion: 2,
+        timestamp: "2026-07-22T08:00:02.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在生成答复",
+        },
+      },
+      {
+        runId: "run-1",
+        seq: 4,
+        stateVersion: 2,
+        timestamp: "2026-07-22T08:00:03.000Z",
+        type: "content_delta",
+        payload: { kind: "content_delta", delta: "完整答复" },
+      },
+      {
+        runId: "run-1",
+        seq: 5,
+        stateVersion: 3,
+        timestamp: "2026-07-22T08:00:04.000Z",
+        type: "completed",
+        payload: { kind: "completed", messageId: "message-1" },
+      },
+    ] satisfies AssistantRunEvent[]);
+    expect(run.state).toBe("completed");
+
+    act(() =>
+      root?.render(
+        <Probe
+          presentation={{
+            runId: "run-1",
+            lastSeq: 5,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [
+              {
+                id: "stage:3",
+                kind: "stage",
+                label: "正在生成答复",
+                status: "completed",
+                elapsedMs: 1,
+              },
+            ],
+            answer: "完整答复",
+            answerComplete: true,
+          }}
+          run={run}
+        />,
+      ),
+    );
+
+    expect(messages[1]?.processItems?.at(-1)?.label).toBe(
+      ANSWER_COMPLETE_PROCESS_LABEL,
+    );
   });
 
   it("ignores a late Run event when no transcript slot is bound to it", () => {

@@ -2,6 +2,7 @@ import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import type { ChatLine } from "../AiMessageList";
 import { projectAssistantProcessEvents } from "@/lib/assistant-process";
+import { ensureTerminalAnswerComplete } from "@/lib/ensure-answer-complete-process";
 import type { AssistantPresentationState } from "@/lib/assistant-presentation";
 import { deriveRunOutputting } from "@/lib/assistant-run-activity";
 import type { AssistantRunEventState } from "@/lib/assistant-run-events";
@@ -93,9 +94,10 @@ export function useAssistantRunTranscript({
           presentation.answerComplete ||
           cancelledWithVisiblePartial);
       const durableContent = run.content;
-      const processItems = presentationOwnsMessage
+      const rawItems = presentationOwnsMessage
         ? current?.processItems
         : projectAssistantProcessEvents(run.events, run.reasoningSummaries);
+      const processItems = ensureTerminalAnswerComplete(rawItems, run.state);
       const content = presentationOwnsMessage
         ? current?.content?.trim()
           ? current.content

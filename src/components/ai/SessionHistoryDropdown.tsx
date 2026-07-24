@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { invokeErrorMessage } from "@/lib/credentials";
 import { projectAssistantProcessEvents } from "@/lib/assistant-process";
+import { ensureTerminalAnswerComplete } from "@/lib/ensure-answer-complete-process";
 import {
   assistantSessionDelete,
   assistantSessionList,
@@ -39,7 +40,12 @@ function toChatLines(messages: AssistantSessionMessage[]): ChatLine[] {
     ...(message.runId ? { runId: message.runId } : {}),
     ...(message.turnId ? { turnId: message.turnId } : {}),
     ...(message.role === "assistant" && message.processEvents?.length
-      ? { processItems: projectAssistantProcessEvents(message.processEvents) }
+      ? {
+          processItems: ensureTerminalAnswerComplete(
+            projectAssistantProcessEvents(message.processEvents),
+            "completed",
+          ),
+        }
       : {}),
     ...(message.displayMentions.length > 0
       ? { displayMentions: message.displayMentions }
