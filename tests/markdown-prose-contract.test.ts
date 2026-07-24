@@ -50,13 +50,12 @@ describe("markdown prose CSS contract", () => {
     );
   });
 
-  it("left-aligns editor body prose blocks (no forced justify)", () => {
+  it("justifies only editor body prose blocks", () => {
     const editorBodyRule = readRule(
       /\.iris-editor-body\s+\.ProseMirror\.iris-markdown-content\[data-prose-surface="editor"\]\s+> p,[\s\S]+?> blockquote\s*\{[\s\S]+?\}/,
     );
-    expect(editorBodyRule).toContain("text-align: start;");
-    expect(editorBodyRule).not.toContain("text-align: justify;");
-    expect(editorBodyRule).not.toContain("text-justify");
+    expect(editorBodyRule).toContain("text-align: justify;");
+    expect(editorBodyRule).toContain("text-justify: inter-character;");
     expect(editorBodyRule).toContain("line-break: loose;");
     expect(editorBodyRule).not.toContain("text-align-last");
 

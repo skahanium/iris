@@ -596,7 +596,7 @@ export function markdownToHtmlPage(md: string, title?: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${cleanTitle}</title>
 <style>
-  body { max-width: 42rem; margin: clamp(2rem, 6vh, 3rem) auto; padding: 0 clamp(1.25rem, 4vw, 2rem); font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Inter, sans-serif; font-size: 1.0625rem; line-height: 1.75; letter-spacing: 0.01em; color: #1f1f1f; background: #ffffff; }
+  body { max-width: 52rem; margin: clamp(2rem, 6vh, 3rem) auto; padding: 0 clamp(1.25rem, 4vw, 2rem); font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Inter, sans-serif; font-size: 1rem; line-height: 1.7; letter-spacing: 0.01em; color: #1f1f1f; background: #ffffff; text-align: justify; text-justify: inter-character; }
   h1 { font-size: 1.625rem; font-weight: 700; margin: 1.75em 0 0.55em; line-height: 1.35; }
   h2 { font-size: 1.375rem; font-weight: 600; margin: 1.75em 0 0.55em; line-height: 1.35; }
   h3 { font-size: 1.1875rem; font-weight: 600; margin: 1.4em 0 0.55em; }

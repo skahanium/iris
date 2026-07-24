@@ -67,11 +67,12 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 正文规则：
 
-- 编辑态 `text-align: start`（不强制两端对齐）
-- 行宽 `max-width: var(--prose-measure)`（canvas 必须消费该 token）
+- 编辑态保持 `text-align: justify`（`inter-character`）；标题仍左对齐
+- 行宽默认 `--prose-measure: 52rem`（canvas 必须消费该 token；勿擅自收窄）
 - 外链 `--prose-link`（primary + 实线下划线）；wiki `--prose-wiki`（brand + 虚线下划线）
 - Callout：`tip` → brand；`warning` → `--warning`；`danger` → destructive
 - 亮/暗主题均需保证 code / callout / blockquote 可辨对比度
+- 浮层进场仅允许 opacity 动效；禁止对居中浮层动画 `transform`（会覆盖 `-translate-*` 导致闪到角落）
 
 ## 组件边界
 

@@ -214,6 +214,7 @@ describe("html page export (v0.3)", () => {
     expect(page).toContain("Noto Sans SC");
     expect(page).not.toContain("Noto Serif SC");
     expect(page).toContain("background: #ffffff");
+    expect(page).toContain("max-width: 52rem");
   });
 
   it("falls back to default title", () => {

@@ -185,42 +185,16 @@ export default {
           from: { opacity: "1" },
           to: { opacity: "0" },
         },
-        "iris-zoom-in": {
-          from: { opacity: "0", transform: "scale(0.95)" },
-          to: { opacity: "1", transform: "scale(1)" },
-        },
-        "iris-zoom-out": {
-          from: { opacity: "1", transform: "scale(1)" },
-          to: { opacity: "0", transform: "scale(0.95)" },
-        },
-        "iris-slide-in-from-top": {
-          from: { transform: "translateY(-0.25rem)" },
-          to: { transform: "translateY(0)" },
-        },
-        "iris-slide-in-from-bottom": {
-          from: { transform: "translateY(0.25rem)" },
-          to: { transform: "translateY(0)" },
-        },
-        "iris-slide-in-from-left": {
-          from: { transform: "translateX(-0.25rem)" },
-          to: { transform: "translateX(0)" },
-        },
-        "iris-slide-in-from-right": {
-          from: { transform: "translateX(0.25rem)" },
-          to: { transform: "translateX(0)" },
-        },
+        // Overlay panels center with -translate-x/y-1/2. Never animate `transform`
+        // (scale/slide) on those shells — it overrides translate and flashes off-center.
       },
       animation: {
         "iris-fade-in":
           "iris-fade-in var(--motion-base) var(--motion-ease-out)",
         "iris-fade-out": "iris-fade-out var(--motion-exit) var(--motion-ease)",
-        "iris-zoom-in":
-          "iris-zoom-in var(--motion-base) var(--motion-ease-out)",
-        "iris-zoom-out": "iris-zoom-out var(--motion-exit) var(--motion-ease)",
-        "iris-enter":
-          "iris-fade-in var(--motion-base) var(--motion-ease-out), iris-zoom-in var(--motion-base) var(--motion-ease-out)",
-        "iris-exit":
-          "iris-fade-out var(--motion-exit) var(--motion-ease), iris-zoom-out var(--motion-exit) var(--motion-ease)",
+        // Opacity-only: safe for centered overlays and floating menus alike.
+        "iris-enter": "iris-fade-in var(--motion-base) var(--motion-ease-out)",
+        "iris-exit": "iris-fade-out var(--motion-exit) var(--motion-ease)",
       },
       transitionDuration: {
         fast: "var(--motion-fast)",
