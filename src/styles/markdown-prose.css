@@ -145,8 +145,12 @@
     background: transparent;
   }
 
-  .iris-markdown-content img {
+  .iris-markdown-content img:not(.iris-editor-media-image) {
     @apply my-3 max-w-full rounded-md border border-border;
+  }
+
+  .iris-markdown-content img.iris-editor-media-image {
+    @apply my-0 max-w-full border-0;
   }
 
   .iris-markdown-content table {

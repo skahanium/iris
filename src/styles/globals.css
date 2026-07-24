@@ -985,16 +985,6 @@
     pointer-events: none;
   }
 
-  .outline-ghost-empty {
-    display: block;
-    margin: 0.35rem 0 0 var(--editor-outline-bar-offset);
-    max-width: 2rem;
-    font-size: 0.6875rem;
-    line-height: 1.3;
-    color: hsl(var(--muted-foreground));
-    writing-mode: vertical-rl;
-  }
-
   .outline-ghost-item {
     --outline-bar-indent: 0rem;
     position: relative;
@@ -1436,13 +1426,29 @@
     display: grid;
     width: 100%;
     max-width: 100%;
-    min-height: min(40vh, 22rem);
-    aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9);
+    min-height: 0;
+    height: auto;
+    aspect-ratio: unset;
     place-items: center;
-    overflow: hidden;
+    overflow: visible;
     border: 1px solid hsl(var(--border) / 0.7);
     border-radius: var(--radius-md);
     background: hsl(var(--background));
+  }
+
+  /* Loading / error: keep a stable 16:9 placeholder so layout does not jump. */
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-frame[data-media-state="deferred"],
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-frame[data-media-state="pending"],
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-frame[data-media-error="true"] {
+    min-height: min(40vh, 22rem);
+    aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9);
+    overflow: hidden;
   }
 
   .iris-editor-body .ProseMirror .iris-editor-media-frame::before {
@@ -1486,6 +1492,8 @@
     width: auto;
     height: auto;
     object-fit: contain;
+    border: 0;
+    border-radius: 0;
     backface-visibility: hidden;
   }
 
@@ -1497,16 +1505,37 @@
   }
 
   .iris-editor-body .ProseMirror .iris-editor-media-embed {
-    @apply my-4 overflow-hidden rounded-md border border-border/70 bg-panel;
+    @apply my-4 rounded-md border border-border/70 bg-panel;
     contain: content;
   }
 
   .iris-editor-body
     .ProseMirror
-    .iris-editor-media-embed[data-media-kind="image"],
+    .iris-editor-media-embed[data-media-kind="image"] {
+    overflow: visible;
+    aspect-ratio: unset;
+    min-height: 0;
+    height: auto;
+  }
+
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-embed[data-media-kind="image"][data-media-state="deferred"],
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-embed[data-media-kind="image"][data-media-state="pending"],
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-embed[data-media-kind="image"][data-media-error="true"] {
+    min-height: min(40vh, 22rem);
+    aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9);
+    overflow: hidden;
+  }
+
   .iris-editor-body
     .ProseMirror
     .iris-editor-media-embed[data-media-kind="video"] {
+    overflow: hidden;
     aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9);
   }
 

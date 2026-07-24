@@ -161,8 +161,8 @@ describe("outline ghost spine", () => {
     ).toHaveLength(0);
     expect(
       document.querySelector('[data-testid="outline-ghost-empty"]'),
-    ).not.toBeNull();
-    expect(document.body.textContent).toContain("暂无章节");
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain("暂无章节");
   });
 
   it("marks the active section and jumps with keyboard navigation", () => {

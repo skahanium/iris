@@ -15,6 +15,7 @@ describe("editor media rendering contract", () => {
       "src/components/editor/extensions/WikiMediaEmbedExtension.ts",
     );
     const css = read("src/styles/globals.css");
+    const proseCss = read("src/styles/markdown-prose.css");
 
     expect(extension).toContain('"iris-editor-media-frame"');
     expect(extension).toContain('"iris-editor-media-image"');
@@ -23,11 +24,18 @@ describe("editor media rendering contract", () => {
     expect(css).toContain(".iris-editor-media-image");
     expect(css).toContain("background: hsl(var(--background))");
     expect(css).toContain(".iris-editor-media-frame[data-media-error");
-    expect(css).toContain(
-      "aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9)",
+    expect(css).toContain("object-fit: contain");
+
+    // Loaded images follow natural aspect ratio; only placeholder states lock 16:9.
+    expect(css).toContain("aspect-ratio: unset");
+    expect(css).toContain("overflow: visible");
+    expect(css).toMatch(
+      /\[data-media-state="pending"\][\s\S]*?aspect-ratio: var\(--iris-media-aspect-ratio, 16 \/ 9\)/,
     );
     expect(css).toContain("min-height: min(40vh, 22rem)");
-    expect(css).toContain("object-fit: contain");
+
+    // Avoid double borders from prose + frame.
+    expect(proseCss).toContain("img:not(.iris-editor-media-image)");
 
     const imageRule = css.match(
       /\.iris-editor-body \.ProseMirror \.iris-editor-media-image \{[^}]+\}/,

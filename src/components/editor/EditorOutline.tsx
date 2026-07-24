@@ -375,11 +375,7 @@ export const EditorOutline = memo(function EditorOutline({
         onScroll={() => updatePreviewTop(previewIndex ?? null)}
       >
         <div ref={barRef} className="outline-ghost-bar" aria-hidden />
-        {entries.length === 0 ? (
-          <p className="outline-ghost-empty" data-testid="outline-ghost-empty">
-            暂无章节
-          </p>
-        ) : (
+        {entries.length === 0 ? null : (
           <div
             className="outline-ghost-items relative w-full"
             style={{ height: `${outlineTotalSize}px` }}
