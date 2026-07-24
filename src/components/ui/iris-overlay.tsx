@@ -47,7 +47,7 @@ export function IrisOverlay({
           className={irisOverlayPanelClass(size, cn("task-overlay", className))}
         >
           {showTitleBar ? (
-            <div className="task-overlay-header border-subtle flex h-11 shrink-0 items-center justify-between border-b bg-surface-elevated px-4">
+            <div className="task-overlay-header flex h-11 shrink-0 items-center justify-between border-b border-border-subtle bg-surface-elevated px-4">
               <DialogPrimitive.Title className="text-sm font-semibold tracking-tight text-foreground">
                 {title}
               </DialogPrimitive.Title>

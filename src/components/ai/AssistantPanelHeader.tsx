@@ -43,7 +43,7 @@ export function AssistantPanelHeader({
   webSearchProviderName,
 }: AssistantPanelHeaderProps) {
   return (
-    <header className="ai-sidecar-header border-subtle shrink-0 border-b px-3 py-1">
+    <header className="ai-sidecar-header shrink-0 border-b border-border-subtle px-3 py-1">
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center">
           <AssistantPersonaDisplay profile={profile} />

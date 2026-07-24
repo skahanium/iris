@@ -258,10 +258,10 @@ describe("Iris Rail complete interface contracts", () => {
     ]) {
       expect(source).not.toContain("border-border/60");
     }
-    expect(statusBar).toContain("border-subtle");
+    expect(statusBar).toContain("border-border-subtle");
     expect(statusBar).toContain("text-caption");
     expect(statusBar).not.toContain("text-[11px]");
-    expect(titleBar).toContain("border-subtle");
+    expect(titleBar).toContain("border-border-subtle");
     expect(design).toContain("壳层边框与字号");
     expect(css).toContain("--iris-rail-active: var(--brand)");
     expect(css).toContain("--outline-rail-active: var(--brand)");

@@ -336,7 +336,7 @@ export function AiComposer({
   return (
     <div
       className={cn(
-        "border-subtle shrink-0 border-t bg-ai-composer p-3",
+        "shrink-0 border-t border-border-subtle bg-ai-composer p-3",
         className,
       )}
       onDrop={handleDrop}

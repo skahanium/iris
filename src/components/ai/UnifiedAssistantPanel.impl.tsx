@@ -366,7 +366,7 @@ export function UnifiedAssistantPanel({
       ) : null}
       {import.meta.env.DEV && assistantRun.eventState?.provider ? (
         <p
-          className="border-subtle border-b px-3 py-1 text-caption text-muted-foreground"
+          className="border-b border-border-subtle px-3 py-1 text-caption text-muted-foreground"
           data-testid="assistant-run-provider-diagnostic"
         >
           当前模型：{assistantRun.eventState.provider.providerId}
@@ -400,7 +400,7 @@ export function UnifiedAssistantPanel({
         onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
       />
       {aiDomain === "classified" ? (
-        <div className="border-subtle border-t px-3 py-2">
+        <div className="border-t border-border-subtle px-3 py-2">
           <Button
             type="button"
             size="sm"

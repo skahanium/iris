@@ -129,7 +129,7 @@ export const StatusBar = memo(function StatusBar({
   return (
     <footer
       data-testid="status-bar"
-      className="border-subtle flex h-8 shrink-0 items-center gap-3 border-t bg-surface-chrome px-3 font-sans text-caption tracking-wide text-muted-foreground"
+      className="flex h-8 shrink-0 items-center gap-3 border-t border-border-subtle bg-surface-chrome px-3 font-sans text-caption tracking-wide text-muted-foreground"
     >
       <span
         data-testid="status-bar-document-title"
