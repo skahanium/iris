@@ -105,6 +105,11 @@ impl RetrievalScope {
         }
     }
 
+    /// Add an exact vault-relative path constraint (e.g. an explicit `@` note).
+    pub(crate) fn constrain_with_path(&mut self, path: String) {
+        self.push_path(path);
+    }
+
     fn push_required_tag(&mut self, tag: String) {
         let norm = tag.trim().to_lowercase();
         if norm.is_empty() {

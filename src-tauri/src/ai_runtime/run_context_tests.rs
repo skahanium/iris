@@ -1255,6 +1255,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
         .expect("registered context packet tool");
     let tool_policy = ToolPolicyContext {
         autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
+        allow_implicit_vault: true,
         ..ToolPolicyContext::default()
     };
     let tool_gate = ToolExecutionGate {

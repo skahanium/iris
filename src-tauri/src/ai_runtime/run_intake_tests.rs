@@ -1067,6 +1067,56 @@ fn web_enabled_pure_rewrite_remains_direct_without_tool_loop() {
 }
 
 #[test]
+fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
+    let mut request = request();
+    request.web_enabled = false;
+    request.turn.message =
+        "根据授权的本地项目资料总结里程碑；联网开关不改变所需证据范围。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+}
+
+#[test]
+fn allow_implicit_vault_decision_table_covers_work_creative_and_scoped_cases() {
+    use crate::ai_runtime::run_contract::SecurityDomain;
+    use crate::ai_runtime::run_intake::allow_implicit_vault_for_run;
+
+    assert!(allow_implicit_vault_for_run(
+        SecurityDomain::Normal,
+        "根据授权的本地项目资料总结里程碑",
+        false,
+    ));
+    assert!(!allow_implicit_vault_for_run(
+        SecurityDomain::Normal,
+        "请继续创作这部小说的下一章。",
+        false,
+    ));
+    assert!(!allow_implicit_vault_for_run(
+        SecurityDomain::Normal,
+        "Rewrite this sentence more clearly: The team met yesterday.",
+        false,
+    ));
+    assert!(!allow_implicit_vault_for_run(
+        SecurityDomain::Normal,
+        "bounded security boundary request",
+        false,
+    ));
+    assert!(allow_implicit_vault_for_run(
+        SecurityDomain::Normal,
+        "bounded security boundary request",
+        true,
+    ));
+    assert!(!allow_implicit_vault_for_run(
+        SecurityDomain::Classified,
+        "根据本地笔记回答",
+        false,
+    ));
+}
+
+#[test]
 fn web_enabled_external_question_is_online_without_forced_web_capability() {
     let mut request = request();
     request.web_enabled = true;

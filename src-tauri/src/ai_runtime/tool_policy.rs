@@ -16,6 +16,10 @@ pub struct ToolPolicyContext {
     pub allow_writes: bool,
     pub allow_research: bool,
     pub allow_skill_management: bool,
+    /// When false, vault read/search tools are denied unless another capability
+    /// path authorizes them. Explicit `@`/`#` Runs keep this true and rely on
+    /// `RetrievalScope` to constrain paths.
+    pub allow_implicit_vault: bool,
 }
 
 impl Default for ToolPolicyContext {
@@ -26,6 +30,7 @@ impl Default for ToolPolicyContext {
             allow_writes: false,
             allow_research: false,
             allow_skill_management: false,
+            allow_implicit_vault: false,
         }
     }
 }
@@ -44,6 +49,7 @@ pub enum DenialReason {
     CapabilityMismatch,
     InsufficientAutonomy,
     WebSearchDisabled,
+    ImplicitVaultDenied,
 }
 
 /// User-safe explanation for a denied tool request.
@@ -58,6 +64,9 @@ pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
         }
         DenialReason::InsufficientAutonomy => {
             format!("current autonomy level is too low to use {tool_name}")
+        }
+        DenialReason::ImplicitVaultDenied => {
+            format!("vault access is not authorized for this Run, so {tool_name} cannot be used")
         }
     }
 }
@@ -79,13 +88,16 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
     if entry.access_level == ToolAccessLevel::Network && !ctx.web_search_enabled {
         return ToolPolicyVerdict::Denied(DenialReason::WebSearchDisabled);
     }
+    if is_vault_read_tool(entry) && !ctx.allow_implicit_vault {
+        return ToolPolicyVerdict::Denied(DenialReason::ImplicitVaultDenied);
+    }
     if !META_SKILL_TOOLS.contains(&entry.name)
         && !entry
             .capability_affinity()
             .iter()
             .copied()
             .any(|capability| capability_allowed(capability, ctx))
-        && !is_default_read_tool(entry)
+        && !is_default_read_tool(entry, ctx)
     {
         return ToolPolicyVerdict::Denied(DenialReason::CapabilityMismatch);
     }
@@ -101,8 +113,17 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
     }
 }
 
-fn is_default_read_tool(entry: &ToolCatalogEntry) -> bool {
+fn is_vault_read_tool(entry: &ToolCatalogEntry) -> bool {
     entry.default_enabled_without_skill
+        && matches!(
+            entry.access_level,
+            ToolAccessLevel::ReadIndex | ToolAccessLevel::ReadNoteSpan
+        )
+}
+
+fn is_default_read_tool(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> bool {
+    ctx.allow_implicit_vault
+        && entry.default_enabled_without_skill
         && matches!(
             entry.access_level,
             ToolAccessLevel::ReadIndex
@@ -127,7 +148,7 @@ fn required_autonomy(entry: &ToolCatalogEntry) -> Option<AutonomyLevel> {
 fn capability_allowed(capability: ToolCapabilityAffinity, ctx: &ToolPolicyContext) -> bool {
     use ToolCapabilityAffinity::*;
     match capability {
-        ReadNotes | SearchNotes => true,
+        ReadNotes | SearchNotes => ctx.allow_implicit_vault,
         WebFetch => ctx.web_search_enabled && ctx.allow_research,
         ResearchSynthesis => ctx.allow_research,
         SkillManagement => ctx.allow_skill_management,
@@ -172,6 +193,7 @@ mod tests {
     fn read_context() -> ToolPolicyContext {
         ToolPolicyContext {
             autonomy_level: AutonomyLevel::L2,
+            allow_implicit_vault: true,
             ..ToolPolicyContext::default()
         }
     }
@@ -181,6 +203,23 @@ mod tests {
         assert!(is_tool_exposed("search_hybrid", &read_context()));
         assert!(is_tool_exposed("read_note", &read_context()));
         assert!(!is_tool_exposed("insert_text_at_cursor", &read_context()));
+    }
+
+    #[test]
+    fn vault_read_tools_are_denied_when_implicit_vault_is_disabled() {
+        let ctx = ToolPolicyContext {
+            autonomy_level: AutonomyLevel::L2,
+            allow_implicit_vault: false,
+            ..ToolPolicyContext::default()
+        };
+        assert_eq!(
+            evaluate_tool("read_note", &ctx),
+            ToolPolicyVerdict::Denied(DenialReason::ImplicitVaultDenied)
+        );
+        assert_eq!(
+            evaluate_tool("search_hybrid", &ctx),
+            ToolPolicyVerdict::Denied(DenialReason::ImplicitVaultDenied)
+        );
     }
 
     #[test]

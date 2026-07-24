@@ -98,7 +98,11 @@ impl RunIntake {
         });
         let effort = match effect {
             Effect::Apply => Effort::Durable,
-            _ if freshness != Freshness::Offline || has_images || has_retrieval_scope(request) => {
+            _ if freshness != Freshness::Offline
+                || has_images
+                || has_retrieval_scope(request)
+                || needs_offline_vault_tool_loop(request, &message) =>
+            {
                 Effort::ToolLoop
             }
             _ => Effort::Direct,
@@ -942,6 +946,86 @@ fn is_novel_writing_request(message: &str) -> bool {
         ],
     )
 }
+
+/// Offline Answers without explicit `@`/`#` materials still need a tool loop when the
+/// user clearly depends on vault notes; otherwise the model cannot call `read_note` /
+/// `search_hybrid`. Creative, greeting, and pure rewrite paths stay Direct.
+pub(crate) fn needs_offline_vault_tool_loop(
+    request: &AssistantRunStartRequest,
+    message: &str,
+) -> bool {
+    if !request.turn.explicit_references.is_empty() || has_retrieval_scope(request) {
+        return false;
+    }
+    if request.security_domain == SecurityDomain::Classified {
+        return false;
+    }
+    if is_novel_writing_request(message)
+        || is_short_greeting(message)
+        || is_conversation_meta_request(message)
+    {
+        return false;
+    }
+    if is_local_transformation_request(message) && !looks_like_local_vault_dependency(message) {
+        return false;
+    }
+    looks_like_local_vault_dependency(message)
+}
+
+/// Decide whether vault read/search tools may run for this Answer.
+///
+/// Decision table:
+/// - Explicit `@`/`#` or folder/tag scope → allow (path scope enforces bounds)
+/// - Ordinary/work task with clear local dependency → allow full vault
+/// - Creative / rewrite / novel / classified / no local dependency → deny
+pub(crate) fn allow_implicit_vault_for_run(
+    security_domain: SecurityDomain,
+    user_message: &str,
+    has_explicit_materials_or_scope: bool,
+) -> bool {
+    if has_explicit_materials_or_scope {
+        return true;
+    }
+    if security_domain == SecurityDomain::Classified {
+        return false;
+    }
+    if is_novel_writing_request(user_message)
+        || is_short_greeting(user_message)
+        || is_conversation_meta_request(user_message)
+    {
+        return false;
+    }
+    if is_local_transformation_request(user_message)
+        && !looks_like_local_vault_dependency(user_message)
+    {
+        return false;
+    }
+    looks_like_local_vault_dependency(user_message)
+}
+
+pub(crate) fn looks_like_local_vault_dependency(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "本地",
+            "笔记",
+            "授权",
+            "材料",
+            "会议记录",
+            "项目资料",
+            "项目笔记",
+            "vault",
+            "note",
+            "notes",
+            "authorized",
+            "local project",
+            "local note",
+            "local material",
+            "local meeting",
+        ],
+    )
+}
+
 fn is_official_writing_request(message: &str) -> bool {
     contains_any(message, &["memo", "brief", "official notice"])
 }

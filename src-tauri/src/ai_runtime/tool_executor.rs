@@ -17,6 +17,7 @@ pub struct ToolSurfaceFilter {
     pub allow_writes: bool,
     pub allow_research: bool,
     pub allow_skill_management: bool,
+    pub allow_implicit_vault: bool,
     /// When true, only tools that do not require user confirmation are returned.
     pub only_auto: bool,
 }
@@ -50,6 +51,7 @@ impl ToolRegistry {
             allow_writes: filter.allow_writes,
             allow_research: filter.allow_research,
             allow_skill_management: filter.allow_skill_management,
+            allow_implicit_vault: filter.allow_implicit_vault,
         };
         self.tools_for_policy_surface(&ctx, filter.only_auto)
     }
@@ -209,6 +211,7 @@ mod tests {
             allow_writes: true,
             allow_research: true,
             allow_skill_management: true,
+            allow_implicit_vault: true,
             only_auto: false,
         });
 
@@ -222,6 +225,7 @@ mod tests {
         let surface = registry.tools_for_surface(ToolSurfaceFilter {
             web_search_enabled: true,
             allow_research: true,
+            allow_implicit_vault: true,
             ..ToolSurfaceFilter::default()
         });
         let constrained = ToolRegistry::constrain_for_explicit_references(
@@ -245,6 +249,7 @@ mod tests {
         let surface = registry.tools_for_surface(ToolSurfaceFilter {
             web_search_enabled: true,
             allow_research: true,
+            allow_implicit_vault: true,
             ..ToolSurfaceFilter::default()
         });
         let scoped = ToolRegistry::constrain_for_explicit_references(

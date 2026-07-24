@@ -221,6 +221,11 @@ async fn dispatch_normal_run_after_context(
             allow_writes: context.envelope.effort == Effort::Durable,
             allow_research: context.envelope.freshness != Freshness::Offline,
             allow_skill_management: false,
+            allow_implicit_vault: crate::ai_runtime::run_intake::allow_implicit_vault_for_run(
+                context.envelope.security_domain,
+                &context.user_message,
+                !context.materials.is_empty() || !context.retrieval_scope.is_unrestricted(),
+            ),
         };
         let registry = ToolRegistry::new();
         let tools = ToolRegistry::constrain_for_explicit_references(

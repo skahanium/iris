@@ -164,6 +164,7 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
             allow_writes: false,
             allow_research: false,
             allow_skill_management: false,
+            allow_implicit_vault: false,
         },
         &sink,
         None,
@@ -230,6 +231,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         allow_writes: false,
         allow_research: true,
         allow_skill_management: false,
+        allow_implicit_vault: true,
     };
     let tools = ToolRegistry::new().tools_for_policy_surface(&policy, true);
     assert!(tools.iter().any(|tool| tool.name == "web_search"));

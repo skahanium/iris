@@ -347,6 +347,17 @@ impl RunContextAssembler {
             total_chars = total_chars.saturating_add(material_chars);
             materials.push(material);
         }
+        // Explicit `@` notes without a folder/tag scope still constrain tool reads
+        // to the authorized material paths (search remains hidden by the tool surface).
+        let mut retrieval_scope = retrieval_scope;
+        if !materials.is_empty() && retrieval_scope.is_unrestricted() {
+            for material in &materials {
+                retrieval_scope.constrain_with_path(material.source_path.clone());
+            }
+            for fallback in &fallback_paths {
+                retrieval_scope.constrain_with_path(fallback.path.clone());
+            }
+        }
         Ok(RunContext {
             session_id: input.session_id,
             message_seq_first: input.message_seq_first,

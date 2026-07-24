@@ -10,25 +10,26 @@ use crate::storage::db::Database;
 use super::agent_capacity_eval::{
     aggregate_capacity_scorecard, approve_live_profile, build_agent_capacity_report,
     calculate_stable_boundary, controlled_live_fact_source_support,
-    discover_live_profile_candidates_from_database, evaluate_case, execute_pressure_staircases,
-    generate_core_scenarios, generate_pressure_staircases, measure_case_quality,
-    pairwise_live_capability_matrix, preflight_live_profiles, prepare_approved_live_pilot,
-    restore_and_consume_live_preflight_session, run_approved_live_pilot,
-    run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
-    run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
-    run_security_track, select_core_scenarios, serialize_agent_capacity_report,
-    serialize_evaluation_summary, serialize_live_preflight_report,
-    spawn_live_pilot_dynamic_llm_protocol_double, spawn_llm_protocol_double,
-    validate_serialized_evaluation_summary, validate_serialized_live_pilot_result,
-    validate_serialized_live_preflight_report, write_blind_review_packet, write_live_pilot_result,
-    write_live_preflight_report, write_live_preflight_session_state, AnswerObservation,
-    BudgetOutcome, CaseManifest, CheckStatus, CitationObservation, EvalFault, EvalRunMode,
-    EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
-    ImplicitVaultExpectation, LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate,
-    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
-    McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
-    ProtocolValidationLevel, ScenarioLanguage, SourceKind, StableLevelObservation,
-    TruncationOutcome, WebAnswerContamination, WebState,
+    discover_live_profile_candidates_from_database, evaluate_case, execute_headless_core_case,
+    execute_pressure_staircases, generate_core_scenarios, generate_pressure_staircases,
+    measure_case_quality, pairwise_live_capability_matrix, preflight_live_profiles,
+    prepare_approved_live_pilot, restore_and_consume_live_preflight_session,
+    run_approved_live_pilot, run_approved_live_pilot_with_local_doubles,
+    run_approved_live_pilot_with_local_doubles_fault, run_combined_terminal_cases,
+    run_hard_boundary_probes, run_headless_core_evaluation, run_security_track,
+    select_core_scenarios, serialize_agent_capacity_report, serialize_evaluation_summary,
+    serialize_live_preflight_report, spawn_live_pilot_dynamic_llm_protocol_double,
+    spawn_llm_protocol_double, validate_serialized_evaluation_summary,
+    validate_serialized_live_pilot_result, validate_serialized_live_preflight_report,
+    write_blind_review_packet, write_live_pilot_result, write_live_preflight_report,
+    write_live_preflight_session_state, AnswerObservation, BudgetOutcome, CaseManifest,
+    CheckStatus, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
+    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
+    LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate, LlmProtocolDouble,
+    McpCapabilityContract, McpOperation, McpTransportContract, McpTransportFailureContract,
+    ObservedSource, PressureDimension, ProtocolContractOutcome, ProtocolValidationLevel,
+    ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
+    WebAnswerContamination, WebState,
 };
 
 #[test]
@@ -1732,21 +1733,44 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
         let report = serialize_agent_capacity_report(&report).expect("strict capacity report");
         let generated: serde_json::Value =
             serde_json::from_str(&report).expect("generated capacity JSON");
-        let versioned: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../docs/eval/results/v1.2.15-agent-capacity.json"
-        ))
+        let versioned_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root")
+            .join("docs/eval/results/v1.2.15-agent-capacity.json");
+        let versioned: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&versioned_path).expect("versioned capacity JSON"),
+        )
         .expect("versioned capacity JSON");
         std::fs::write(output_dir.join("capacity-full.json"), &report)
             .expect("write strict capacity report");
         if std::env::var_os("IRIS_AGENT_EVAL_UPDATE_VERSIONED").is_some() {
-            let versioned_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .expect("workspace root")
-                .join("docs/eval/results/v1.2.15-agent-capacity.json");
-            std::fs::write(&versioned_path, &report).expect("update versioned capacity report");
+            let mut updated = generated.clone();
+            // A completed live pilot promotes claimBoundary.liveProfiles. Keep the
+            // stronger claim across deterministic rebuilds until deliberately reset.
+            if versioned
+                .pointer("/claimBoundary/liveProfiles")
+                .and_then(|value| value.as_str())
+                == Some("live_pilot_executed")
+            {
+                updated["claimBoundary"]["liveProfiles"] =
+                    serde_json::Value::String("live_pilot_executed".to_string());
+            }
+            let updated_text =
+                serde_json::to_string_pretty(&updated).expect("serialize updated capacity");
+            std::fs::write(&versioned_path, format!("{updated_text}\n"))
+                .expect("update versioned capacity report");
         } else {
+            let mut comparable = generated.clone();
+            if versioned
+                .pointer("/claimBoundary/liveProfiles")
+                .and_then(|value| value.as_str())
+                == Some("live_pilot_executed")
+            {
+                comparable["claimBoundary"]["liveProfiles"] =
+                    serde_json::Value::String("live_pilot_executed".to_string());
+            }
             assert_eq!(
-                generated, versioned,
+                comparable, versioned,
                 "versioned capacity result must match deterministic full"
             );
         }
@@ -1771,6 +1795,40 @@ async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certif
         super::agent_capacity_eval::VerdictReason::RequiredFactMissing
     );
     assert!(summary.telemetry().model_turns() >= 12);
+}
+
+#[tokio::test]
+async fn headless_allowed_implicit_vault_scripts_local_retrieval_and_satisfies_facts() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| {
+            scenario.implicit_vault() == ImplicitVaultExpectation::Allowed
+                && scenario.evidence_group() == EvidenceGroup::LocalOnly
+                && scenario.web_state() == WebState::Offline
+        })
+        .expect("allowed implicit-vault local-only offline scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless allowed implicit vault case");
+
+    assert!(
+        executed.tool_call_count() >= 1,
+        "Allowed implicit vault must observe local vault tool use"
+    );
+    assert!(
+        executed.observed_local_source(),
+        "Allowed implicit vault must register authorized local evidence"
+    );
+    assert!(
+        executed.fact_correctness_passed(),
+        "scripted local retrieval must support required local facts"
+    );
+    assert!(
+        executed.overall_pass(),
+        "honest local-tool harness must pass the allowed implicit-vault case"
+    );
 }
 
 #[test]
@@ -3315,6 +3373,15 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
     assert_eq!(result.completed_case_count(), 12);
     assert!(result.passed() < result.required_case_count());
     assert!(result.failed() > 0);
+    assert_eq!(
+        result.status_code(),
+        "live_not_tested",
+        "local doubles never promote the live claim boundary"
+    );
+    let mut executed_claim = serde_json::to_value(&result).expect("faulted pilot result");
+    executed_claim["status"] = serde_json::json!("live_pilot_executed");
+    validate_serialized_live_pilot_result(&executed_claim.to_string())
+        .expect("live_pilot_executed requires twelve Completed runs, not a perfect pass rate");
     let serialized = serde_json::to_value(&result).expect("faulted pilot result");
     let faulted = serialized["cases"]
         .as_array()
@@ -3698,7 +3765,7 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
     );
     eprintln!(
         "live_credential_mcp_available={:?}",
-        crate::credentials::credential_available("iris.mcp.any.search")
+        crate::credentials::credential_available("iris.mcp.anysearch")
     );
     crate::credentials::credential_access_probe_reset();
     let result = run_approved_live_pilot(
