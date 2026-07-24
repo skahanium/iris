@@ -18,7 +18,7 @@ export function AssistantPersonaDisplay({
       data-testid="assistant-persona-display"
     >
       <AssistantAvatar identity={identity} />
-      <span className="truncate text-sm font-medium text-foreground">
+      <span className="truncate text-caption font-medium text-foreground">
         {identity.displayName}
       </span>
     </div>

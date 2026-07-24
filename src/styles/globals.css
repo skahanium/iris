@@ -274,7 +274,7 @@
     --command-highlight-bg: 210 22% 52% / 0.14;
     --command-highlight-ring: 210 22% 58% / 0.32;
     --command-group-label: 0 0% 55%;
-    --ai-user-bg: 0 0% 18%;
+    --ai-user-bg: 150 10% 16%;
     --ai-assistant-border: 0 0% 22%;
     --ai-composer-bg: 0 0% 14%;
     --ai-stream-pulse: 210 18% 62%;
@@ -358,7 +358,7 @@
     --command-highlight-bg: 210 14% 42% / 0.1;
     --command-highlight-ring: 210 14% 42% / 0.22;
     --command-group-label: 0 0% 45%;
-    --ai-user-bg: 0 0% 94%;
+    --ai-user-bg: 150 12% 94%;
     --ai-assistant-border: 0 0% 88%;
     --ai-composer-bg: 0 0% 100%;
     --ai-stream-pulse: 210 12% 45%;
@@ -1182,7 +1182,7 @@
   }
 
   .ai-message-surface-user {
-    background: hsl(var(--surface-inset) / 0.82);
+    background: hsl(var(--ai-user-bg));
   }
 
   .ai-composer-workbench {
@@ -1811,16 +1811,20 @@
   }
 
   .ai-message-bubble-user {
-    @apply rounded-xl;
+    @apply rounded-lg;
     max-width: 88%;
-    background: hsl(var(--ai-user-bg) / 0.88);
+    background: hsl(var(--ai-user-bg));
   }
 
   .ai-message-assistant,
   .ai-message-bubble-assistant {
-    @apply rounded-xl;
-    background: hsl(var(--surface-elevated) / 0.65);
-    border: 1px solid hsl(var(--border) / 0.55);
+    @apply rounded-lg;
+    background: transparent;
+    border: 1px solid hsl(var(--ai-assistant-border) / 0.42);
+  }
+
+  .assistant-process-footnote {
+    @apply border-b border-border/35 bg-transparent px-3 py-1.5 text-caption text-muted-foreground;
   }
 
   .ai-message-bubble-streaming[data-streaming] {

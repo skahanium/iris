@@ -342,7 +342,7 @@ export function AiComposer({
       onDrop={handleDrop}
       onDragOver={handleDragOver}
     >
-      <div className="ai-composer-workbench relative flex items-end gap-2 rounded-lg border border-border/80 bg-surface-inset/50 p-2 focus-within:ring-2 focus-within:ring-primary/25">
+      <div className="ai-composer-workbench relative flex items-end gap-2 rounded-lg border border-border/80 bg-surface-elevated p-2 focus-within:ring-2 focus-within:ring-primary/25">
         {mentionPopover ? (
           <div className="absolute bottom-full left-0 right-0 z-20 mb-1.5">
             {mentionPopover}
@@ -470,6 +470,7 @@ export function AiComposer({
             <Button
               type="button"
               size="icon"
+              variant="brand"
               className="h-9 w-9"
               disabled={
                 disabled || (!value.trim() && !(images && images.length > 0))

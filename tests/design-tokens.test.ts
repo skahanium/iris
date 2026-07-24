@@ -50,7 +50,8 @@ describe("design tokens", () => {
     expect(cssVariable("--surface-chrome")).toBe("0 0% 12%");
     expect(cssVariable("--surface-elevated")).toBe("0 0% 14%");
     expect(cssVariable("--command-highlight-bg")).toBeDefined();
-    expect(cssVariable("--ai-user-bg")).toBe("0 0% 18%");
+    expect(cssVariable("--ai-user-bg")).toBe("150 10% 16%");
+    expect(globalsCss).toMatch(/\.light[\s\S]*--ai-user-bg:\s*150 12% 94%/);
     expect(cssVariable("--ai-composer-bg")).toBe("0 0% 14%");
     expect(tailwindConfigSource).toContain(
       'chrome: "hsl(var(--surface-chrome))"',

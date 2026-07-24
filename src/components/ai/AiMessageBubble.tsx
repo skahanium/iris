@@ -335,7 +335,7 @@ function AssistantProcessTimeline({
 
   return (
     <div
-      className="border-b border-border/40 px-3 py-2 text-[11px] text-muted-foreground"
+      className="assistant-process-footnote"
       data-testid="assistant-process-timeline"
     >
       <button

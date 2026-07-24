@@ -64,7 +64,9 @@ describe("assistant process fold summary", () => {
       );
     });
 
-    const timeline = host.querySelector('[data-testid="assistant-process-timeline"]');
+    const timeline = host.querySelector(
+      '[data-testid="assistant-process-timeline"]',
+    );
     expect(timeline?.textContent).toContain(ANSWER_COMPLETE_PROCESS_LABEL);
     expect(timeline?.textContent).not.toMatch(/正在生成答复[^完]/);
     expect(processItems.at(-1)?.id).toBe(ANSWER_COMPLETE_PROCESS_ID);

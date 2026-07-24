@@ -43,12 +43,12 @@ export function AssistantPanelHeader({
   webSearchProviderName,
 }: AssistantPanelHeaderProps) {
   return (
-    <header className="ai-sidecar-header shrink-0 border-b border-border/60 px-3 py-1.5">
-      <div className="flex items-center justify-between gap-3">
+    <header className="ai-sidecar-header shrink-0 border-b border-border/60 px-3 py-1">
+      <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 flex-1 items-center">
           <AssistantPersonaDisplay profile={profile} />
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1">
           <AgentStatusBadge
             webSearchEnabled={webSearch}
             webSearchProviderName={webSearchProviderName}
@@ -76,7 +76,7 @@ export function AssistantPanelHeader({
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 gap-1 px-2 text-xs"
+            className="h-7 gap-1 px-2 text-caption"
             title="新建对话"
             onClick={onNewChat}
             disabled={chromeActionsDisabled}

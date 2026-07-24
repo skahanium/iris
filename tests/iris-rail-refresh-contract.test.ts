@@ -199,9 +199,15 @@ describe("Iris Rail complete interface contracts", () => {
     expect(sender).toContain("securityDomain: aiDomain");
     expect(bubble).toContain("ai-message-surface-assistant");
     expect(bubble).toContain("ai-message-surface-user");
+    expect(bubble).toContain("assistant-process-footnote");
     expect(composer).toContain("ai-composer-workbench");
+    expect(composer).toMatch(/variant="brand"/);
     expect(css).toContain(".ai-sidecar");
     expect(css).toContain(".ai-composer-workbench");
+    expect(css).toMatch(/--ai-user-bg:\s*150 10% 16%/);
+    expect(css).toMatch(
+      /\.ai-message-bubble-assistant[\s\S]*background:\s*transparent/,
+    );
   });
 
   it("uses task-capsule overlay family hooks across command surfaces", () => {

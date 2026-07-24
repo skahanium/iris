@@ -50,7 +50,7 @@ export function AgentStatusBadge({
       type="button"
       variant="outline"
       size="sm"
-      className="h-8 shrink-0 gap-1 px-2 text-xs"
+      className="h-7 shrink-0 gap-1 px-2 text-caption"
       title={`${runStateLabel(runState)}；${webLabel}`}
       disabled={disabled}
       data-testid="agent-status-trigger"
