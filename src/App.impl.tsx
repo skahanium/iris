@@ -318,6 +318,7 @@ function App() {
     setWorkspaceEmpty,
     tabs,
     vaultPath,
+    workspaceEmpty,
   });
   const currentNoteIsClassified = Boolean(
     activePath && isClassifiedVaultPath(activePath),

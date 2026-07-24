@@ -8,6 +8,11 @@ const prepareClassifiedNotePath = vi.fn();
 const prepareNotePath = vi.fn();
 const prepareVisibleNote = vi.fn();
 const warmNotePath = vi.fn();
+const fileList = vi.fn();
+
+vi.mock("@/lib/ipc", () => ({
+  fileList: (...args: unknown[]) => fileList(...args),
+}));
 
 vi.mock("@/hooks/usePreparedNoteOpener", () => ({
   usePreparedNoteOpener: () => ({
@@ -25,15 +30,24 @@ vi.mock("@/hooks/usePreparedNoteOpener", () => ({
 import { usePreparedWorkspaceTransitions } from "@/hooks/usePreparedWorkspaceTransitions";
 import { saveWorkspaceSessionSnapshot } from "@/lib/workspace-session-snapshot";
 
-function Harness({ vaultPath }: { vaultPath: string | null }) {
+function Harness({
+  tabs = [] as { path: string }[],
+  vaultPath,
+  workspaceEmpty = true,
+}: {
+  tabs?: { path: string }[];
+  vaultPath: string | null;
+  workspaceEmpty?: boolean;
+}) {
   usePreparedWorkspaceTransitions({
     activateTab: vi.fn(),
     classifiedVaultStatus: "locked",
     handleNewNote: vi.fn(async () => undefined),
     openNote: vi.fn(async () => undefined),
     setWorkspaceEmpty: vi.fn(),
-    tabs: [],
+    tabs,
     vaultPath,
+    workspaceEmpty,
   });
   return null;
 }
@@ -47,6 +61,8 @@ describe("usePreparedWorkspaceTransitions startup warmup", () => {
     localStorage.clear();
     clearPreparedNotes.mockClear();
     warmNotePath.mockClear();
+    openPreparedNote.mockClear();
+    fileList.mockReset();
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -58,7 +74,7 @@ describe("usePreparedWorkspaceTransitions startup warmup", () => {
     host.remove();
   });
 
-  it("warms saved session notes as startup background work without activating them", () => {
+  it("warms saved session notes as startup background work without activating them", async () => {
     saveWorkspaceSessionSnapshot("/vault", {
       activePath: "notes/a.md",
       openNotes: [
@@ -66,6 +82,14 @@ describe("usePreparedWorkspaceTransitions startup warmup", () => {
         { path: "notes/b.md", title: "B", isLocked: true, lastActiveAt: 1 },
       ],
     });
+    fileList.mockResolvedValue([
+      {
+        path: "notes/a.md",
+        title: "A",
+        updatedAt: "2026-01-01T00:00:00Z",
+        isLocked: false,
+      },
+    ]);
 
     act(() => {
       root.render(<Harness vaultPath="/vault" />);
@@ -75,6 +99,10 @@ describe("usePreparedWorkspaceTransitions startup warmup", () => {
 
     act(() => {
       vi.runOnlyPendingTimers();
+    });
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
     });
 
     expect(warmNotePath).toHaveBeenNthCalledWith(1, "notes/a.md", "A", {
@@ -89,6 +117,142 @@ describe("usePreparedWorkspaceTransitions startup warmup", () => {
       source: "startup",
       useSignature: false,
     });
+    expect(openPreparedNote).toHaveBeenCalledTimes(1);
+    expect(openPreparedNote).toHaveBeenCalledWith("notes/a.md", "A", {
+      source: "startup",
+    });
+  });
+});
+
+describe("usePreparedWorkspaceTransitions cold-start auto-open", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    localStorage.clear();
+    clearPreparedNotes.mockClear();
+    warmNotePath.mockClear();
+    openPreparedNote.mockClear();
+    fileList.mockReset();
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("opens the resolved startup note once from snapshot and fileList", async () => {
+    saveWorkspaceSessionSnapshot("/vault", {
+      activePath: "notes/active.md",
+      openNotes: [
+        {
+          path: "notes/active.md",
+          title: "Active",
+          isLocked: false,
+          lastActiveAt: 1,
+        },
+      ],
+    });
+    fileList.mockResolvedValue([
+      {
+        path: "notes/recent.md",
+        title: "Recent",
+        updatedAt: "2026-01-02T00:00:00Z",
+        isLocked: false,
+      },
+      {
+        path: "notes/active.md",
+        title: "Active",
+        updatedAt: "2026-01-01T00:00:00Z",
+        isLocked: false,
+      },
+    ]);
+
+    act(() => {
+      root.render(<Harness vaultPath="/vault" workspaceEmpty />);
+    });
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(fileList).toHaveBeenCalledTimes(1);
+    expect(openPreparedNote).toHaveBeenCalledTimes(1);
+    expect(openPreparedNote).toHaveBeenCalledWith("notes/active.md", "Active", {
+      source: "startup",
+    });
+  });
+
+  it("does not auto-open again after the user returns to an empty workspace", async () => {
+    fileList.mockResolvedValue([
+      {
+        path: "notes/only.md",
+        title: "Only",
+        updatedAt: "2026-01-01T00:00:00Z",
+        isLocked: false,
+      },
+    ]);
+
+    act(() => {
+      root.render(<Harness vaultPath="/vault" workspaceEmpty tabs={[]} />);
+    });
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(openPreparedNote).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root.render(
+        <Harness
+          vaultPath="/vault"
+          workspaceEmpty={false}
+          tabs={[{ path: "notes/only.md" }]}
+        />,
+      );
+    });
+
+    act(() => {
+      root.render(<Harness vaultPath="/vault" workspaceEmpty tabs={[]} />);
+    });
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(openPreparedNote).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips startup auto-open when tabs are already open", async () => {
+    fileList.mockResolvedValue([
+      {
+        path: "notes/a.md",
+        title: "A",
+        updatedAt: "2026-01-01T00:00:00Z",
+        isLocked: false,
+      },
+    ]);
+
+    act(() => {
+      root.render(
+        <Harness
+          vaultPath="/vault"
+          workspaceEmpty={false}
+          tabs={[{ path: "notes/a.md" }]}
+        />,
+      );
+    });
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
     expect(openPreparedNote).not.toHaveBeenCalled();
   });
 });
