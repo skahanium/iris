@@ -1,5 +1,6 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const useHomeRecentNotes = vi.hoisted(() => vi.fn());
@@ -137,6 +138,43 @@ describe("AppEditorWorkspace empty main surface", () => {
     expect(
       document.querySelector('[data-testid="workspace-empty-open-recent"]'),
     ).toBeTruthy();
+  });
+
+  it("opens the resolved startup note when open-recent is clicked", async () => {
+    const openNoteLeavingHome = vi.fn(async () => undefined);
+    useHomeRecentNotes.mockReturnValue({
+      catalogPaths: ["notes/a.md", "notes/b.md"],
+      recentNotes: [
+        { path: "notes/a.md", title: "A" },
+        { path: "notes/b.md", title: "B" },
+      ],
+      vaultHasNotes: true,
+      refreshRecent: vi.fn(),
+    });
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          openNoteLeavingHome={openNoteLeavingHome}
+        />,
+      );
+    });
+
+    await userEvent.click(
+      document.querySelector(
+        '[data-testid="workspace-empty-open-recent"]',
+      ) as Element,
+    );
+
+    expect(openNoteLeavingHome).toHaveBeenCalledWith(
+      "notes/a.md",
+      "A",
+      expect.objectContaining({
+        priority: "foreground",
+        source: "workspace_empty",
+      }),
+    );
   });
 
   it("surfaces pending open errors on the empty main surface", () => {

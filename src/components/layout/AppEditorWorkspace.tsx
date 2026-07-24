@@ -263,7 +263,7 @@ export function AppEditorWorkspace({
     )?.title;
     void openNoteLeavingHome(candidate.path, titleHint, {
       priority: "foreground",
-      source: "welcome",
+      source: "workspace_empty",
     });
   }, [catalogPaths, openNoteLeavingHome, openNotePaths, recentNotes]);
 

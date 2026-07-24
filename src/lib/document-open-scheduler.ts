@@ -2,6 +2,7 @@
 
 export type NoteOpenSource =
   | "welcome"
+  | "workspace_empty"
   | "quick-open"
   | "file-tree"
   | "tab"

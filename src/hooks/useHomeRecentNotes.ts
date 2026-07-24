@@ -84,7 +84,7 @@ export function useHomeRecentNotes({
 
   useEffect(() => {
     if (enabled) {
-      recentNotes.forEach((file) => onPrepare?.(file, "welcome"));
+      recentNotes.forEach((file) => onPrepare?.(file, "workspace_empty"));
     }
   }, [enabled, onPrepare, recentNotes]);
 

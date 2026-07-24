@@ -159,8 +159,8 @@ export function usePreparedNoteOpener<
         ? await enrichRequestSignature(baseRequest)
         : baseRequest;
       const openTraceRequest = options?.openTraceRequest ?? lookupRequest;
-      if (source === "welcome") {
-        // A recent-note click is the user-facing recovery path after startup.
+      if (source === "welcome" || source === "workspace_empty") {
+        // Empty-surface recent open is user-facing recovery after startup.
         // Warm HTML is strictly speculative: it must never decide whether that
         // path opens. Re-read Markdown through the normal open pipeline so a
         // stale/prepared editor surface cannot strand the user on Home.

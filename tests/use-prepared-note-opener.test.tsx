@@ -543,7 +543,7 @@ describe("usePreparedNoteOpener", () => {
     );
   });
 
-  it("uses an authoritative reread for a Home recent-note click", async () => {
+  it("uses an authoritative reread for a workspace-empty recent-note click", async () => {
     const openNote = vi.fn(async () => undefined);
     let api!: HookApi;
     fileRead.mockResolvedValue({
@@ -569,7 +569,7 @@ describe("usePreparedNoteOpener", () => {
 
     await act(async () => {
       await api.openPreparedNote("notes/recent.md", "Recent", {
-        source: "welcome",
+        source: "workspace_empty",
       });
     });
 
