@@ -101,9 +101,6 @@ interface AppEditorWorkspaceProps {
   isMutationBlocked?: () => boolean;
   persistenceBarrierActive?: boolean;
   onOutlineOpenChange: (open: boolean) => void;
-  onOpenAiManagement: () => void;
-  onOpenQuickOpen: () => void;
-  onOpenSearch: () => void;
   openNoteLeavingHome: (
     path: string,
     titleHint?: string,
@@ -118,7 +115,6 @@ interface AppEditorWorkspaceProps {
     titleHint?: string,
     source?: NoteOpenSource,
   ) => void;
-  onBeforeFileDelete?: (path: string) => Promise<void>;
   outlineOpen: boolean;
   pendingOpen: HomePendingOpen | null;
   pendingNoteOpen: PendingNoteOpen | null;

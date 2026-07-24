@@ -857,13 +857,9 @@ function App() {
               setOutlineOpen(open);
               saveOutlineOpen(open);
             }}
-            onOpenAiManagement={() => overlays.openManagementCenter("ai")}
-            onOpenQuickOpen={() => overlays.openOverlay("quickOpen")}
-            onOpenSearch={() => overlays.openOverlay("search")}
             openNoteLeavingHome={openWorkspacePathLeavingHome}
             onPrepareNotePath={prepareNotePath}
             onPrepareNote={prepareVisibleNote}
-            onBeforeFileDelete={handleBeforeFileDelete}
             outlineOpen={outlineOpen}
             pendingOpen={pendingOpen}
             pendingNoteOpen={pendingNoteOpen}
