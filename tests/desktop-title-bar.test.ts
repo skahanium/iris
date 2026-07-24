@@ -303,13 +303,16 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain('isMacDesktop && "-ml-1.5"');
     expect(bar).toContain("min-w-[6.75rem]");
     expect(bar).not.toContain("iris-brand-rail flex h-full");
-    expect(bar).toContain("pointer-events-none");
+    expect(bar).not.toContain("pointer-events-none");
+    expect(bar).toContain("data-tauri-drag-region");
     expect(bar).not.toContain("iris-brand-rail--active");
     expect(bar).not.toContain("onHome");
     expect(bar).not.toContain("isHomeActive");
+    expect(bar).not.toContain("onClick={onHome}");
+    expect(bar).not.toContain('role="button"');
     expect(bar).toContain("iris-rail-tab--active");
-    expect(css).toContain(".iris-brand-rail:hover");
-    expect(css).toContain("inset 0 0 0 1px hsl(var(--knowledge-accent)");
+    expect(css).not.toContain(".iris-brand-rail:hover");
+    expect(css).toContain(".iris-brand-rail {");
   });
 
   it("reserves a left safe-area for the brand rail on Windows and macOS fullscreen", () => {

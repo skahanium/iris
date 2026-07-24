@@ -46,11 +46,12 @@ describe("Iris Rail complete interface contracts", () => {
     expect(titleBar).not.toContain("isHomeActive");
     expect(titleBar).not.toContain("iris-brand-rail--active");
     expect(titleBar).not.toContain("onClick={onHome}");
-    expect(titleBar).toContain("pointer-events-none");
+    expect(titleBar).not.toContain("pointer-events-none");
+    expect(titleBar).toContain("data-tauri-drag-region");
     expect(titleBar).toContain("iris-brand-rail flex h-8");
     expect(titleBar).toContain("min-w-[6.75rem]");
     expect(titleBar).not.toContain("iris-brand-rail flex h-full");
-    expect(css).toContain(".iris-brand-rail:hover");
+    expect(css).not.toContain(".iris-brand-rail:hover");
     expect(app).toContain("workspaceEmpty");
     expect(welcome).toContain('data-testid="home-workbench"');
     expect(welcome).toContain('data-testid="home-quick-actions"');
