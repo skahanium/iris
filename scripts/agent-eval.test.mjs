@@ -24,7 +24,7 @@ const workspaceRoot = path.resolve(
   "..",
 );
 
-test("agent eval child receives only the explicit toolchain allowlist", () => {
+test("agent eval child receives toolchain allowlist and never inherits cloud keys", () => {
   const environment = buildAgentEvalChildEnvironment(
     {
       PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -32,13 +32,14 @@ test("agent eval child receives only the explicit toolchain allowlist", () => {
       PRIVATE_KEY: "private-key-must-not-cross",
       AWS_ACCESS_KEY_ID: "aws-access-key-must-not-cross",
       DATABASE_URL: "postgres://user:password@private.invalid/database",
-      HTTP_PROXY: "http://proxy-user:proxy-password@proxy.invalid:8080",
-      HTTPS_PROXY: "https://proxy-user:proxy-password@proxy.invalid:8443",
+      HTTP_PROXY: "http://127.0.0.1:7890",
+      HTTPS_PROXY: "http://127.0.0.1:7890",
       ANYSEARCH_API_KEY: "anysearch-key-must-not-cross",
       MINIMAX_API_KEY: "minimax-key-must-not-cross",
     },
     {
       IRIS_AGENT_EVAL_MODE: "smoke",
+      IRIS_AGENT_EVAL_LIVE_ACTION: "pilot",
     },
   );
   const child = spawnSync(
@@ -55,12 +56,12 @@ test("agent eval child receives only the explicit toolchain allowlist", () => {
   assert.equal(captured.PATH, environment.PATH);
   assert.equal(captured.LANG, "zh_CN.UTF-8");
   assert.equal(captured.IRIS_AGENT_EVAL_MODE, "smoke");
+  assert.equal(captured.HTTP_PROXY, "http://127.0.0.1:7890");
+  assert.equal(captured.HTTPS_PROXY, "http://127.0.0.1:7890");
   for (const forbidden of [
     "PRIVATE_KEY",
     "AWS_ACCESS_KEY_ID",
     "DATABASE_URL",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
     "ANYSEARCH_API_KEY",
     "MINIMAX_API_KEY",
   ]) {
@@ -68,7 +69,7 @@ test("agent eval child receives only the explicit toolchain allowlist", () => {
   }
   assert.doesNotMatch(
     child.stdout,
-    /private-key|aws-access|password|anysearch-key|minimax-key/,
+    /private-key|aws-access|postgres:\/\/user:password|anysearch-key|minimax-key/,
   );
 });
 
@@ -196,10 +197,10 @@ test("live child receives resolved roots but never credential values", () => {
       "MINIMAX_API_KEY",
       "ANYSEARCH_API_KEY",
       "DATABASE_URL",
-      "HTTPS_PROXY",
     ]) {
       assert.equal(captured[forbidden], undefined, forbidden);
     }
+    assert.equal(captured.HTTPS_PROXY, undefined);
     assert.doesNotMatch(
       child.stdout,
       /minimax-secret|anysearch-secret|password|proxy-user/,

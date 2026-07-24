@@ -33,6 +33,19 @@ const allowedEnvironmentKeys = new Set([
   "PKG_CONFIG_PATH",
   "LD_LIBRARY_PATH",
   "DYLD_LIBRARY_PATH",
+  // Live provider exits may require the same proxy the desktop app follows.
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+  "SOCKS_PROXY",
+  "SOCKS5_PROXY",
+  "socks_proxy",
+  "socks5_proxy",
 ]);
 const allowedControlKeys = new Set([
   "IRIS_AGENT_EVAL_MODE",
@@ -42,6 +55,7 @@ const allowedControlKeys = new Set([
   "IRIS_AGENT_EVAL_APPROVED_PROFILE",
   "IRIS_AGENT_EVAL_COST_CONFIRMATION",
   "IRIS_AGENT_EVAL_CREDENTIAL_PROBE",
+  "IRIS_AGENT_EVAL_UPDATE_VERSIONED",
   "IRIS_DATA_DIR",
   "IRIS_CONFIG_DIR",
 ]);
@@ -50,6 +64,11 @@ export function buildAgentEvalChildEnvironment(source, controls = {}) {
   const environment = {};
   for (const [key, value] of Object.entries(source)) {
     if (allowedEnvironmentKeys.has(key) && typeof value === "string") {
+      if (key.toUpperCase().includes("PROXY") && /:\/\/[^/@]+@/.test(value)) {
+        // Proxy endpoints may be inherited for live HTTPS exits, but embedded
+        // proxy credentials must never cross into the evaluation subprocess.
+        continue;
+      }
       environment[key] = value;
     }
   }
@@ -299,6 +318,12 @@ function main() {
     "ai_runtime::agent_capacity_eval_tests::deterministic_command_entrypoint_writes_only_the_strict_summary_when_requested",
     {
       IRIS_AGENT_EVAL_MODE: mode,
+      ...(typeof process.env.IRIS_AGENT_EVAL_UPDATE_VERSIONED === "string"
+        ? {
+            IRIS_AGENT_EVAL_UPDATE_VERSIONED:
+              process.env.IRIS_AGENT_EVAL_UPDATE_VERSIONED,
+          }
+        : {}),
     },
     buildAgentEvalChildEnvironment,
   );

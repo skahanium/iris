@@ -8,10 +8,11 @@ use tokio::task::JoinHandle;
 use crate::storage::db::Database;
 
 use super::agent_capacity_eval::{
-    approve_live_profile, build_agent_capacity_report, calculate_stable_boundary,
-    controlled_live_fact_source_support, discover_live_profile_candidates_from_database,
-    evaluate_case, execute_pressure_staircases, generate_core_scenarios,
-    generate_pressure_staircases, preflight_live_profiles, prepare_approved_live_pilot,
+    aggregate_capacity_scorecard, approve_live_profile, build_agent_capacity_report,
+    calculate_stable_boundary, controlled_live_fact_source_support,
+    discover_live_profile_candidates_from_database, evaluate_case, execute_pressure_staircases,
+    generate_core_scenarios, generate_pressure_staircases, measure_case_quality,
+    pairwise_live_capability_matrix, preflight_live_profiles, prepare_approved_live_pilot,
     restore_and_consume_live_preflight_session, run_approved_live_pilot,
     run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
     run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
@@ -1616,6 +1617,7 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
             "groups",
             "languages",
             "telemetry",
+            "scorecard",
             "cases",
         ])
     );
@@ -1736,10 +1738,18 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
         .expect("versioned capacity JSON");
         std::fs::write(output_dir.join("capacity-full.json"), &report)
             .expect("write strict capacity report");
-        assert_eq!(
-            generated, versioned,
-            "versioned capacity result must match deterministic full"
-        );
+        if std::env::var_os("IRIS_AGENT_EVAL_UPDATE_VERSIONED").is_some() {
+            let versioned_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .expect("workspace root")
+                .join("docs/eval/results/v1.2.15-agent-capacity.json");
+            std::fs::write(&versioned_path, &report).expect("update versioned capacity report");
+        } else {
+            assert_eq!(
+                generated, versioned,
+                "versioned capacity result must match deterministic full"
+            );
+        }
     }
 }
 
@@ -1777,19 +1787,34 @@ fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_c
             PressureDimension::Input,
             PressureDimension::History,
             PressureDimension::LocalMaterial,
+            PressureDimension::LocalMaterialChars,
             PressureDimension::RetrievalDistractors,
+            PressureDimension::IndexScale,
+            PressureDimension::VectorAvailability,
             PressureDimension::ReasoningDepth,
             PressureDimension::ToolLoop,
             PressureDimension::WebEvidenceCount,
+            PressureDimension::WebLatency,
             PressureDimension::Output,
             PressureDimension::CombinedTerminal,
         ])
     );
+    assert!(staircases.iter().all(|staircase| {
+        !staircase.levels().is_empty()
+            && staircase.levels().windows(2).all(|pair| pair[0] < pair[1])
+    }));
     assert!(staircases
         .iter()
-        .filter(|staircase| staircase.dimension() != PressureDimension::CombinedTerminal)
-        .all(|staircase| staircase.levels().len() >= 6
-            && staircase.levels().windows(2).all(|pair| pair[0] < pair[1])));
+        .filter(|staircase| matches!(
+            staircase.dimension(),
+            PressureDimension::Input
+                | PressureDimension::LocalMaterial
+                | PressureDimension::ReasoningDepth
+                | PressureDimension::ToolLoop
+                | PressureDimension::WebEvidenceCount
+                | PressureDimension::Output
+        ))
+        .all(|staircase| staircase.levels().len() >= 6));
     assert_eq!(
         staircases
             .iter()
@@ -1986,7 +2011,7 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         .await
         .expect("execute pressure staircases");
 
-    assert_eq!(executions.len(), 9);
+    assert_eq!(executions.len(), 13);
     for execution in &executions {
         assert!(execution.has_runtime_witness());
         assert!(execution
@@ -2005,6 +2030,7 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         (PressureDimension::Input, 16_000, 16_001),
         (PressureDimension::History, 6, 7),
         (PressureDimension::LocalMaterial, 12, 13),
+        (PressureDimension::LocalMaterialChars, 32_000, 32_001),
         (PressureDimension::ToolLoop, 24, 25),
         (PressureDimension::WebEvidenceCount, 8, 9),
         (PressureDimension::Output, 32_000, 32_001),
@@ -2024,14 +2050,21 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
             .validation_status_code(),
         "lower_bound_only"
     );
-    assert_eq!(
-        executions
-            .iter()
-            .find(|execution| execution.dimension() == PressureDimension::ReasoningDepth)
-            .expect("reasoning depth")
-            .validation_status_code(),
-        "live_not_tested"
-    );
+    for dimension in [
+        PressureDimension::IndexScale,
+        PressureDimension::VectorAvailability,
+        PressureDimension::ReasoningDepth,
+        PressureDimension::WebLatency,
+    ] {
+        assert_eq!(
+            executions
+                .iter()
+                .find(|execution| execution.dimension() == dimension)
+                .expect("live-gated pressure dimension")
+                .validation_status_code(),
+            "live_not_tested"
+        );
+    }
     assert_eq!(
         executions
             .iter()
@@ -3653,6 +3686,21 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
     let approval = approve_live_profile(&mut session, Some(&approved_profile), now)
         .expect("same-session explicit approval");
     let probe = LivePilotCallProbe::default();
+    eprintln!(
+        "live_proxy_env_present http={} https={} all={}",
+        std::env::var_os("HTTP_PROXY").is_some() || std::env::var_os("http_proxy").is_some(),
+        std::env::var_os("HTTPS_PROXY").is_some() || std::env::var_os("https_proxy").is_some(),
+        std::env::var_os("ALL_PROXY").is_some() || std::env::var_os("all_proxy").is_some(),
+    );
+    eprintln!(
+        "live_credential_custom_available={:?}",
+        crate::credentials::credential_available("iris.llm.custom")
+    );
+    eprintln!(
+        "live_credential_mcp_available={:?}",
+        crate::credentials::credential_available("iris.mcp.any.search")
+    );
+    crate::credentials::credential_access_probe_reset();
     let result = run_approved_live_pilot(
         &mut session,
         Some(approval.token()),
@@ -3662,6 +3710,10 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
     )
     .await
     .expect("approved live pilot");
+    eprintln!(
+        "live_credential_access_probe={:?}",
+        crate::credentials::credential_access_probe_snapshot()
+    );
     assert_eq!(probe.hydration_calls(), 1);
     assert_eq!(probe.dispatch_calls(), 12);
     write_live_pilot_result(
@@ -3669,4 +3721,155 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
         &result,
     )
     .expect("strict live pilot result");
+    let error_codes = result
+        .terminal_error_codes()
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    if result.completed_case_count() < 12 {
+        eprintln!(
+            "live_pilot_partial status={} completed={} passed={} safe_error_codes={:?}",
+            result.status_code(),
+            result.completed_case_count(),
+            result.passed(),
+            error_codes
+        );
+    }
+}
+
+#[test]
+fn measure_case_quality_counts_atomic_fact_source_citation_and_constraint_atoms() {
+    let case = manifest_fixture();
+    let mut observation = observation_for(&case);
+    observation.fact_supports.pop();
+    observation.citations.clear();
+    observation.disclosures.clear();
+    observation.sources.pop();
+
+    let atoms = measure_case_quality(&case, &observation).expect("atomic quality");
+    assert_eq!(atoms.required_facts(), 1);
+    assert_eq!(atoms.true_positive_facts(), 0);
+    assert_eq!(atoms.false_negative_facts(), 1);
+    assert_eq!(atoms.false_positive_facts(), 0);
+    assert_eq!(atoms.required_sources(), 2);
+    assert_eq!(atoms.recalled_required_sources(), 1);
+    assert_eq!(atoms.citation_required(), 1);
+    assert_eq!(atoms.citation_supported(), 0);
+    assert_eq!(atoms.constraints_required(), 1);
+    assert_eq!(atoms.constraints_satisfied(), 0);
+}
+
+#[test]
+fn aggregate_capacity_scorecard_reports_split_columns_and_threshold_gates() {
+    let case = manifest_fixture();
+    let perfect = measure_case_quality(&case, &observation_for(&case)).expect("perfect atoms");
+    let mut missing = observation_for(&case);
+    missing.fact_supports.clear();
+    missing.citations.clear();
+    missing.sources.clear();
+    missing.disclosures.clear();
+    let incomplete = measure_case_quality(&case, &missing).expect("incomplete atoms");
+
+    let scorecard = aggregate_capacity_scorecard(
+        &[perfect, incomplete],
+        &[10, 20, 30, 40, 100],
+        &[1, 2, 3, 4, 50],
+        &[CheckStatus::Pass, CheckStatus::Fail],
+    )
+    .expect("split scorecard");
+    assert_eq!(scorecard.quality().fact_precision_bps(), 10_000);
+    assert_eq!(scorecard.quality().fact_recall_bps(), 5_000);
+    assert_eq!(scorecard.quality().fact_f1_bps(), 6_666);
+    assert_eq!(scorecard.quality().required_source_recall_bps(), 5_000);
+    assert_eq!(scorecard.quality().citation_support_bps(), 5_000);
+    assert_eq!(scorecard.quality().constraint_adherence_bps(), 5_000);
+    assert!(!scorecard.quality().fact_recall_gate());
+    assert!(!scorecard.quality().citation_support_gate());
+    assert!(!scorecard.quality().constraint_adherence_gate());
+    assert_eq!(scorecard.hard_admission().authorization_violations(), 0);
+    assert_eq!(scorecard.hard_admission().offline_web_leaks(), 0);
+    assert_eq!(scorecard.hard_admission().unsupported_high_risk_claims(), 1);
+    assert!(!scorecard.hard_admission().zero_tolerance_gate());
+    assert_eq!(scorecard.performance().total_model_time_p50_ms(), Some(30));
+    assert_eq!(scorecard.performance().total_model_time_p95_ms(), Some(100));
+    assert_eq!(scorecard.performance().ttft_p50_ms(), Some(3));
+    assert_eq!(scorecard.performance().ttft_p95_ms(), Some(50));
+    assert_eq!(scorecard.fault_recovery().degradation_cases(), 0);
+    assert_eq!(scorecard.fault_recovery().constraint_fail_cases(), 1);
+    let serialized = serde_json::to_value(&scorecard).expect("scorecard json");
+    assert!(serialized.get("overallScore").is_none());
+    assert!(serialized["hardAdmission"].is_object());
+    assert!(serialized["quality"].is_object());
+    assert!(serialized["performance"].is_object());
+    assert!(serialized["faultRecovery"].is_object());
+}
+
+#[test]
+fn pressure_plan_includes_user_spec_refined_axes_and_live_not_tested_schedules() {
+    let staircases = generate_pressure_staircases().expect("pressure staircases");
+    let by_dimension = |dimension| {
+        staircases
+            .iter()
+            .find(|staircase| staircase.dimension() == dimension)
+            .expect("dimension present")
+            .levels()
+            .to_vec()
+    };
+
+    assert!(by_dimension(PressureDimension::Input).contains(&15_500));
+    assert!(by_dimension(PressureDimension::History).contains(&20));
+    assert!(by_dimension(PressureDimension::History).contains(&50));
+    assert_eq!(
+        by_dimension(PressureDimension::RetrievalDistractors),
+        vec![0, 10, 48, 100, 1_000]
+    );
+    assert_eq!(
+        by_dimension(PressureDimension::IndexScale),
+        vec![48, 1_000, 10_000, 50_000]
+    );
+    assert_eq!(
+        by_dimension(PressureDimension::LocalMaterialChars),
+        vec![8_000, 16_000, 24_000, 32_000, 32_001]
+    );
+    assert_eq!(
+        by_dimension(PressureDimension::WebLatency),
+        vec![0, 3, 9, 11]
+    );
+    assert_eq!(
+        by_dimension(PressureDimension::VectorAvailability),
+        vec![0, 1, 2]
+    );
+}
+
+#[test]
+fn pairwise_live_capability_matrix_marks_missing_layers_not_tested() {
+    let matrix = pairwise_live_capability_matrix(&[]).expect("empty matrix");
+    assert!(!matrix.combinations().is_empty());
+    assert!(matrix
+        .combinations()
+        .iter()
+        .all(|entry| entry.status() == "live_not_tested" || entry.status() == "contract_verified"));
+    assert!(matrix
+        .combinations()
+        .iter()
+        .any(|entry| entry.layer() == "openai_compatible_chat"));
+    assert!(matrix
+        .combinations()
+        .iter()
+        .any(|entry| entry.layer() == "anthropic_messages"));
+    assert!(matrix
+        .combinations()
+        .iter()
+        .any(|entry| entry.layer() == "openai_responses"));
+    assert!(matrix
+        .combinations()
+        .iter()
+        .any(|entry| entry.layer() == "mcp_search_only"));
+    assert!(matrix
+        .combinations()
+        .iter()
+        .any(|entry| entry.layer() == "mcp_search_fetch"));
+    assert!(matrix
+        .combinations()
+        .iter()
+        .any(|entry| entry.layer() == "mcp_stdio"));
 }

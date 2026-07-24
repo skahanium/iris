@@ -816,6 +816,474 @@ pub(crate) fn evaluate_case(
     })
 }
 
+/// Closed atomic counts for one scored observation. Raw answer text never enters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CaseQualityAtoms {
+    required_facts: u32,
+    true_positive_facts: u32,
+    false_negative_facts: u32,
+    false_positive_facts: u32,
+    required_sources: u32,
+    recalled_required_sources: u32,
+    citation_required: u32,
+    citation_supported: u32,
+    constraints_required: u32,
+    constraints_satisfied: u32,
+    authorization_violation: u32,
+    offline_web_leak: u32,
+    unsupported_high_risk_claim: u32,
+    degradation_signaled: u32,
+}
+
+impl CaseQualityAtoms {
+    pub(crate) const fn required_facts(self) -> u32 {
+        self.required_facts
+    }
+    pub(crate) const fn true_positive_facts(self) -> u32 {
+        self.true_positive_facts
+    }
+    pub(crate) const fn false_negative_facts(self) -> u32 {
+        self.false_negative_facts
+    }
+    pub(crate) const fn false_positive_facts(self) -> u32 {
+        self.false_positive_facts
+    }
+    pub(crate) const fn required_sources(self) -> u32 {
+        self.required_sources
+    }
+    pub(crate) const fn recalled_required_sources(self) -> u32 {
+        self.recalled_required_sources
+    }
+    pub(crate) const fn citation_required(self) -> u32 {
+        self.citation_required
+    }
+    pub(crate) const fn citation_supported(self) -> u32 {
+        self.citation_supported
+    }
+    pub(crate) const fn constraints_required(self) -> u32 {
+        self.constraints_required
+    }
+    pub(crate) const fn constraints_satisfied(self) -> u32 {
+        self.constraints_satisfied
+    }
+}
+
+/// Measure atomic quality counts without collapsing them into a single score.
+pub(crate) fn measure_case_quality(
+    manifest: &CaseManifest,
+    observation: &AnswerObservation,
+) -> Result<CaseQualityAtoms, EvalContractError> {
+    let verdict = evaluate_case(manifest, observation)?;
+    let source_kinds = manifest
+        .available_sources
+        .iter()
+        .map(|source| (source.id.as_str(), source.kind))
+        .collect::<HashMap<_, _>>();
+    let observed_sources = observation
+        .sources
+        .iter()
+        .map(|source| (source.id.as_str(), source.kind))
+        .collect::<HashSet<_>>();
+    let observed_source_ids = observation
+        .sources
+        .iter()
+        .map(|source| source.id.as_str())
+        .collect::<HashSet<_>>();
+    let supported_facts = observation
+        .fact_supports
+        .iter()
+        .map(|support| support.fact_id.as_str())
+        .collect::<HashSet<_>>();
+    let contradicted_facts = observation
+        .contradicted_fact_ids
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let offline_mode = manifest.web_state == WebState::Offline;
+    let expected_web = manifest
+        .required_sources
+        .iter()
+        .any(|source| source.kind == SourceKind::Web);
+    let offline_web = offline_mode && expected_web;
+    let fact_required_now = |fact: &RequiredFact| {
+        !(offline_web
+            && fact
+                .allowed_sources
+                .iter()
+                .all(|source_id| source_kinds.get(source_id.as_str()) == Some(&SourceKind::Web))
+            && verdict.degradation_or_clarification().status() == CheckStatus::Pass)
+    };
+
+    let mut true_positive_facts = 0_u32;
+    let mut false_negative_facts = 0_u32;
+    let mut required_facts = 0_u32;
+    let mut citation_required = 0_u32;
+    let mut citation_supported = 0_u32;
+    for fact in &manifest.required_facts {
+        if !fact_required_now(fact) {
+            continue;
+        }
+        required_facts = required_facts.saturating_add(1);
+        let supported = supported_facts.contains(fact.id.as_str())
+            && !contradicted_facts.contains(fact.id.as_str());
+        if supported {
+            true_positive_facts = true_positive_facts.saturating_add(1);
+        } else {
+            false_negative_facts = false_negative_facts.saturating_add(1);
+        }
+        let needs_citation = manifest.citation_expectation == CitationExpectation::Required
+            || fact.citation_required;
+        if needs_citation {
+            citation_required = citation_required.saturating_add(1);
+            let cited = observation.citations.iter().any(|citation| {
+                citation.fact_id == fact.id
+                    && fact.allowed_sources.contains(&citation.source_id)
+                    && observed_source_ids.contains(citation.source_id.as_str())
+            });
+            if cited {
+                citation_supported = citation_supported.saturating_add(1);
+            }
+        }
+    }
+
+    let false_positive_facts = observation
+        .fact_supports
+        .iter()
+        .filter(|support| {
+            contradicted_facts.contains(support.fact_id.as_str())
+                || !manifest
+                    .required_facts
+                    .iter()
+                    .any(|fact| fact.id == support.fact_id)
+        })
+        .count()
+        .min(u32::MAX as usize) as u32;
+    let false_positive_facts = false_positive_facts.saturating_add(
+        contradicted_facts
+            .iter()
+            .filter(|fact_id| !supported_facts.contains(*fact_id))
+            .count()
+            .min(u32::MAX as usize) as u32,
+    );
+
+    let mut required_sources = 0_u32;
+    let mut recalled_required_sources = 0_u32;
+    for source in &manifest.required_sources {
+        if offline_web
+            && source.kind == SourceKind::Web
+            && verdict.degradation_or_clarification().status() == CheckStatus::Pass
+        {
+            continue;
+        }
+        required_sources = required_sources.saturating_add(1);
+        if observed_sources.contains(&(source.id.as_str(), source.kind)) {
+            recalled_required_sources = recalled_required_sources.saturating_add(1);
+        }
+    }
+
+    let constraints_required = if offline_web {
+        1_u32
+    } else {
+        manifest.disclosure_constraints.len().min(u32::MAX as usize) as u32
+    };
+    let constraints_satisfied = if offline_web {
+        u32::from(verdict.degradation_or_clarification().status() == CheckStatus::Pass)
+    } else {
+        let disclosures = observation
+            .disclosures
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
+        manifest
+            .disclosure_constraints
+            .iter()
+            .filter(|constraint| disclosures.contains(constraint.as_str()))
+            .count()
+            .min(u32::MAX as usize) as u32
+    };
+
+    let used_web = observation
+        .tool_calls
+        .iter()
+        .any(|tool| tool == "web_search");
+    let unsupported_high_risk_claim = u32::from(
+        matches!(manifest.answer_mode, AnswerMode::EvidenceGrounded)
+            && (verdict.fact_correctness().status() == CheckStatus::Fail
+                || verdict.required_evidence().status() == CheckStatus::Fail
+                || verdict.citation_support().status() == CheckStatus::Fail),
+    );
+
+    Ok(CaseQualityAtoms {
+        required_facts,
+        true_positive_facts,
+        false_negative_facts,
+        false_positive_facts,
+        required_sources,
+        recalled_required_sources,
+        citation_required,
+        citation_supported,
+        constraints_required,
+        constraints_satisfied,
+        authorization_violation: u32::from(
+            verdict.authorization().status() == CheckStatus::Fail
+                && verdict.authorization().reason_code() != VerdictReason::OfflineWebDispatch,
+        ),
+        offline_web_leak: u32::from(offline_mode && used_web),
+        unsupported_high_risk_claim,
+        degradation_signaled: u32::from(
+            observation.degraded || observation.clarification_requested,
+        ),
+    })
+}
+
+fn ratio_bps(numerator: u32, denominator: u32) -> u32 {
+    if denominator == 0 {
+        return 10_000;
+    }
+    ((u64::from(numerator).saturating_mul(10_000)) / u64::from(denominator)).min(10_000) as u32
+}
+
+fn percentile_ms(samples: &[u64], percentile: u8) -> Option<u64> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut ordered = samples.to_vec();
+    ordered.sort_unstable();
+    let rank = ((usize::from(percentile) * ordered.len()).div_ceil(100))
+        .saturating_sub(1)
+        .min(ordered.len() - 1);
+    ordered.get(rank).copied()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct HardAdmissionColumn {
+    authorization_violations: u32,
+    offline_web_leaks: u32,
+    unsupported_high_risk_claims: u32,
+    zero_tolerance_gate: bool,
+}
+
+impl HardAdmissionColumn {
+    pub(crate) const fn authorization_violations(&self) -> u32 {
+        self.authorization_violations
+    }
+    pub(crate) const fn offline_web_leaks(&self) -> u32 {
+        self.offline_web_leaks
+    }
+    pub(crate) const fn unsupported_high_risk_claims(&self) -> u32 {
+        self.unsupported_high_risk_claims
+    }
+    pub(crate) const fn zero_tolerance_gate(&self) -> bool {
+        self.zero_tolerance_gate
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct QualityColumn {
+    fact_precision_bps: u32,
+    fact_recall_bps: u32,
+    fact_f1_bps: u32,
+    required_source_recall_bps: u32,
+    citation_support_bps: u32,
+    constraint_adherence_bps: u32,
+    fact_recall_gate: bool,
+    citation_support_gate: bool,
+    constraint_adherence_gate: bool,
+}
+
+impl QualityColumn {
+    pub(crate) const fn fact_precision_bps(&self) -> u32 {
+        self.fact_precision_bps
+    }
+    pub(crate) const fn fact_recall_bps(&self) -> u32 {
+        self.fact_recall_bps
+    }
+    pub(crate) const fn fact_f1_bps(&self) -> u32 {
+        self.fact_f1_bps
+    }
+    pub(crate) const fn required_source_recall_bps(&self) -> u32 {
+        self.required_source_recall_bps
+    }
+    pub(crate) const fn citation_support_bps(&self) -> u32 {
+        self.citation_support_bps
+    }
+    pub(crate) const fn constraint_adherence_bps(&self) -> u32 {
+        self.constraint_adherence_bps
+    }
+    pub(crate) const fn fact_recall_gate(&self) -> bool {
+        self.fact_recall_gate
+    }
+    pub(crate) const fn citation_support_gate(&self) -> bool {
+        self.citation_support_gate
+    }
+    pub(crate) const fn constraint_adherence_gate(&self) -> bool {
+        self.constraint_adherence_gate
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PerformanceColumn {
+    total_model_time_p50_ms: Option<u64>,
+    total_model_time_p95_ms: Option<u64>,
+    ttft_p50_ms: Option<u64>,
+    ttft_p95_ms: Option<u64>,
+    model_turns: u32,
+    tool_calls: u32,
+}
+
+impl PerformanceColumn {
+    pub(crate) const fn total_model_time_p50_ms(&self) -> Option<u64> {
+        self.total_model_time_p50_ms
+    }
+    pub(crate) const fn total_model_time_p95_ms(&self) -> Option<u64> {
+        self.total_model_time_p95_ms
+    }
+    pub(crate) const fn ttft_p50_ms(&self) -> Option<u64> {
+        self.ttft_p50_ms
+    }
+    pub(crate) const fn ttft_p95_ms(&self) -> Option<u64> {
+        self.ttft_p95_ms
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct FaultRecoveryColumn {
+    degradation_cases: u32,
+    constraint_fail_cases: u32,
+    truncation_cases: u32,
+}
+
+impl FaultRecoveryColumn {
+    pub(crate) const fn degradation_cases(&self) -> u32 {
+        self.degradation_cases
+    }
+    pub(crate) const fn constraint_fail_cases(&self) -> u32 {
+        self.constraint_fail_cases
+    }
+}
+
+/// Split capacity report columns. Deliberately omits any overallScore field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CapacityScorecard {
+    hard_admission: HardAdmissionColumn,
+    quality: QualityColumn,
+    performance: PerformanceColumn,
+    fault_recovery: FaultRecoveryColumn,
+}
+
+impl CapacityScorecard {
+    pub(crate) const fn hard_admission(&self) -> &HardAdmissionColumn {
+        &self.hard_admission
+    }
+    pub(crate) const fn quality(&self) -> &QualityColumn {
+        &self.quality
+    }
+    pub(crate) const fn performance(&self) -> &PerformanceColumn {
+        &self.performance
+    }
+    pub(crate) const fn fault_recovery(&self) -> &FaultRecoveryColumn {
+        &self.fault_recovery
+    }
+}
+
+/// Aggregate atomic case measurements into the four report columns.
+pub(crate) fn aggregate_capacity_scorecard(
+    atoms: &[CaseQualityAtoms],
+    total_model_time_ms: &[u64],
+    ttft_ms: &[u64],
+    constraint_statuses: &[CheckStatus],
+) -> Result<CapacityScorecard, EvalContractError> {
+    if atoms.is_empty() {
+        return Err(EvalContractError::new("scorecard_atoms_missing"));
+    }
+    let mut tp = 0_u32;
+    let mut fn_ = 0_u32;
+    let mut fp = 0_u32;
+    let mut required_sources = 0_u32;
+    let mut recalled_sources = 0_u32;
+    let mut citation_required = 0_u32;
+    let mut citation_supported = 0_u32;
+    let mut constraints_required = 0_u32;
+    let mut constraints_satisfied = 0_u32;
+    let mut authorization_violations = 0_u32;
+    let mut offline_web_leaks = 0_u32;
+    let mut unsupported_high_risk_claims = 0_u32;
+    let mut degradation_cases = 0_u32;
+    for atom in atoms {
+        tp = tp.saturating_add(atom.true_positive_facts);
+        fn_ = fn_.saturating_add(atom.false_negative_facts);
+        fp = fp.saturating_add(atom.false_positive_facts);
+        required_sources = required_sources.saturating_add(atom.required_sources);
+        recalled_sources = recalled_sources.saturating_add(atom.recalled_required_sources);
+        citation_required = citation_required.saturating_add(atom.citation_required);
+        citation_supported = citation_supported.saturating_add(atom.citation_supported);
+        constraints_required = constraints_required.saturating_add(atom.constraints_required);
+        constraints_satisfied = constraints_satisfied.saturating_add(atom.constraints_satisfied);
+        authorization_violations =
+            authorization_violations.saturating_add(atom.authorization_violation);
+        offline_web_leaks = offline_web_leaks.saturating_add(atom.offline_web_leak);
+        unsupported_high_risk_claims =
+            unsupported_high_risk_claims.saturating_add(atom.unsupported_high_risk_claim);
+        degradation_cases = degradation_cases.saturating_add(atom.degradation_signaled);
+    }
+    let precision = ratio_bps(tp, tp.saturating_add(fp));
+    let recall = ratio_bps(tp, tp.saturating_add(fn_));
+    let f1 = if precision == 0 || recall == 0 {
+        0
+    } else {
+        ((2 * u64::from(precision) * u64::from(recall))
+            / (u64::from(precision) + u64::from(recall)))
+        .min(10_000) as u32
+    };
+    let citation_support = ratio_bps(citation_supported, citation_required);
+    let constraint_adherence = ratio_bps(constraints_satisfied, constraints_required);
+    let constraint_fail_cases = constraint_statuses
+        .iter()
+        .filter(|status| **status == CheckStatus::Fail)
+        .count()
+        .min(u32::MAX as usize) as u32;
+    Ok(CapacityScorecard {
+        hard_admission: HardAdmissionColumn {
+            authorization_violations,
+            offline_web_leaks,
+            unsupported_high_risk_claims,
+            zero_tolerance_gate: authorization_violations == 0
+                && offline_web_leaks == 0
+                && unsupported_high_risk_claims == 0,
+        },
+        quality: QualityColumn {
+            fact_precision_bps: precision,
+            fact_recall_bps: recall,
+            fact_f1_bps: f1,
+            required_source_recall_bps: ratio_bps(recalled_sources, required_sources),
+            citation_support_bps: citation_support,
+            constraint_adherence_bps: constraint_adherence,
+            fact_recall_gate: recall >= 9_000,
+            citation_support_gate: citation_support >= 9_500,
+            constraint_adherence_gate: constraint_adherence >= 9_500,
+        },
+        performance: PerformanceColumn {
+            total_model_time_p50_ms: percentile_ms(total_model_time_ms, 50),
+            total_model_time_p95_ms: percentile_ms(total_model_time_ms, 95),
+            ttft_p50_ms: percentile_ms(ttft_ms, 50),
+            ttft_p95_ms: percentile_ms(ttft_ms, 95),
+            model_turns: 0,
+            tool_calls: 0,
+        },
+        fault_recovery: FaultRecoveryColumn {
+            degradation_cases,
+            constraint_fail_cases,
+            truncation_cases: 0,
+        },
+    })
+}
+
 fn validate_observation(
     manifest: &CaseManifest,
     observation: &AnswerObservation,
@@ -1393,10 +1861,14 @@ pub(crate) enum PressureDimension {
     Input,
     History,
     LocalMaterial,
+    LocalMaterialChars,
     RetrievalDistractors,
+    IndexScale,
+    VectorAvailability,
     ReasoningDepth,
     ToolLoop,
     WebEvidenceCount,
+    WebLatency,
     Output,
     CombinedTerminal,
 }
@@ -1426,19 +1898,32 @@ pub(crate) fn generate_pressure_staircases() -> Result<Vec<PressureStaircase>, E
     let staircases = vec![
         PressureStaircase {
             dimension: PressureDimension::Input,
-            levels: vec![1_000, 2_000, 4_000, 8_000, 12_000, 16_000, 16_001],
+            levels: vec![1_000, 4_000, 8_000, 12_000, 15_500, 16_000, 16_001],
         },
         PressureStaircase {
             dimension: PressureDimension::History,
-            levels: vec![1, 2, 4, 5, 6, 7, 8],
+            levels: vec![1, 6, 7, 8, 20, 50],
         },
         PressureStaircase {
             dimension: PressureDimension::LocalMaterial,
             levels: vec![1, 2, 4, 8, 11, 12, 13],
         },
         PressureStaircase {
+            dimension: PressureDimension::LocalMaterialChars,
+            levels: vec![8_000, 16_000, 24_000, 32_000, 32_001],
+        },
+        PressureStaircase {
             dimension: PressureDimension::RetrievalDistractors,
-            levels: vec![1, 2, 4, 8, 16, 32, 48],
+            levels: vec![0, 10, 48, 100, 1_000],
+        },
+        PressureStaircase {
+            dimension: PressureDimension::IndexScale,
+            levels: vec![48, 1_000, 10_000, 50_000],
+        },
+        PressureStaircase {
+            dimension: PressureDimension::VectorAvailability,
+            // 0=available, 1=rebuilding, 2=unavailable
+            levels: vec![0, 1, 2],
         },
         PressureStaircase {
             dimension: PressureDimension::ReasoningDepth,
@@ -1451,6 +1936,10 @@ pub(crate) fn generate_pressure_staircases() -> Result<Vec<PressureStaircase>, E
         PressureStaircase {
             dimension: PressureDimension::WebEvidenceCount,
             levels: vec![1, 2, 4, 6, 8, 9, 10],
+        },
+        PressureStaircase {
+            dimension: PressureDimension::WebLatency,
+            levels: vec![0, 3, 9, 11],
         },
         PressureStaircase {
             dimension: PressureDimension::Output,
@@ -2978,6 +3467,13 @@ impl LivePilotResult {
     pub(crate) const fn status_code(&self) -> &'static str {
         self.status
     }
+
+    pub(crate) fn terminal_error_codes(&self) -> Vec<&'static str> {
+        self.cases
+            .iter()
+            .filter_map(|case| case.summary.runtime_evidence.terminal_error_code)
+            .collect()
+    }
 }
 
 /// Validate and consume the approval/cost gates before copying route metadata
@@ -3382,6 +3878,7 @@ fn validate_live_pilot_case(
             "runtimeEvidence",
             "boundary",
             "verdict",
+            "qualityAtoms",
             "overallPass",
             "telemetry",
         ],
@@ -4130,6 +4627,7 @@ struct EvaluationCaseSummary {
     runtime_evidence: RuntimeEvidenceSummary,
     boundary: Option<BoundaryVerdict>,
     verdict: EvaluationVerdict,
+    quality_atoms: CaseQualityAtoms,
     overall_pass: bool,
 }
 
@@ -4149,6 +4647,7 @@ enum EvaluationTerminalState {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RuntimeEvidenceSummary {
     terminal_state: EvaluationTerminalState,
+    terminal_error_code: Option<&'static str>,
     event_count: u32,
     observed_source_kinds: Vec<SourceKind>,
     tool_call_count: u32,
@@ -4198,6 +4697,7 @@ pub(crate) struct EvaluationSummary {
     groups: GroupCounts,
     languages: LanguageCounts,
     telemetry: EvaluationTelemetrySummary,
+    scorecard: CapacityScorecard,
     cases: Vec<EvaluationCaseSummary>,
 }
 
@@ -4314,6 +4814,7 @@ impl EvalFault {
 struct HeadlessEvaluationSink {
     tool_calls: std::sync::Mutex<Vec<String>>,
     degraded: std::sync::Mutex<bool>,
+    terminal_error_code: std::sync::Mutex<Option<&'static str>>,
 }
 
 #[cfg(test)]
@@ -4337,6 +4838,13 @@ impl crate::ai_runtime::run_engine::RunEventSink for HeadlessEvaluationSink {
                     .degraded
                     .lock()
                     .map_err(|_| crate::error::AppError::msg("eval_sink_lock_failed"))? = true;
+            }
+            crate::ai_runtime::run_contract::RunEventPayload::Failed { code, .. } => {
+                *self
+                    .terminal_error_code
+                    .lock()
+                    .map_err(|_| crate::error::AppError::msg("eval_sink_lock_failed"))? =
+                    Some(code.as_str());
             }
             _ => {}
         }
@@ -4388,6 +4896,38 @@ pub(crate) async fn run_headless_core_evaluation(
             .min(u32::MAX as usize) as u32
     };
     let case_count = selected.len().min(u32::MAX as usize) as u32;
+    let atoms = cases
+        .iter()
+        .map(|case| case.quality_atoms)
+        .collect::<Vec<_>>();
+    let total_model_times = executed
+        .iter()
+        .map(|result| result.telemetry.total_model_time_ms())
+        .collect::<Vec<_>>();
+    let ttfts = executed
+        .iter()
+        .filter_map(|result| result.telemetry.first_visible_token_ms())
+        .collect::<Vec<_>>();
+    let constraint_statuses = cases
+        .iter()
+        .map(|case| case.verdict.degradation_or_clarification().status())
+        .collect::<Vec<_>>();
+    let mut scorecard =
+        aggregate_capacity_scorecard(&atoms, &total_model_times, &ttfts, &constraint_statuses)?;
+    scorecard.performance.model_turns = executed
+        .iter()
+        .map(|result| result.telemetry.model_turns())
+        .sum();
+    scorecard.performance.tool_calls = executed
+        .iter()
+        .map(|result| result.telemetry.tool_calls())
+        .sum();
+    scorecard.fault_recovery.truncation_cases = executed
+        .iter()
+        .map(|result| {
+            result.telemetry.tool_result_truncations() + result.telemetry.final_output_rejections()
+        })
+        .sum();
     Ok(EvaluationSummary {
         schema_version: "agent-eval-summary-v1",
         evidence_level: EvaluationEvidenceLevel::HeadlessDeterministic,
@@ -4412,6 +4952,7 @@ pub(crate) async fn run_headless_core_evaluation(
             mixed: language_count(ScenarioLanguage::Mixed),
         },
         telemetry: aggregate_telemetry(executed.iter().map(|result| &result.telemetry)),
+        scorecard,
         cases,
     })
 }
@@ -5061,6 +5602,7 @@ fn score_headless_run(
         safety_violations,
     };
     let verdict = evaluate_case(&scenario.manifest, &observation)?;
+    let quality_atoms = measure_case_quality(&scenario.manifest, &observation)?;
     let boundary = evaluate_hard_boundary(
         scenario,
         response.run.state,
@@ -5084,6 +5626,10 @@ fn score_headless_run(
     };
     let runtime_evidence = RuntimeEvidenceSummary {
         terminal_state,
+        terminal_error_code: *sink
+            .terminal_error_code
+            .lock()
+            .map_err(|_| EvalContractError::new("eval_sink_lock_failed"))?,
         event_count: response.events.len().min(u32::MAX as usize) as u32,
         observed_source_kinds: observed_kinds,
         tool_call_count: observation.tool_calls.len().min(u32::MAX as usize) as u32,
@@ -5101,6 +5647,7 @@ fn score_headless_run(
             boundary,
             overall_pass: completed && verdict.overall_pass() && boundary_pass,
             verdict,
+            quality_atoms,
         },
         telemetry: telemetry.snapshot(),
         answer_contains_fixture_injection: fixture_injection_marker
@@ -5484,11 +6031,60 @@ pub(crate) async fn execute_pressure_staircases(
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let material_chars = schedule(PressureDimension::LocalMaterialChars)?
+        .levels
+        .iter()
+        .copied()
+        .map(|level| {
+            repeat_pressure_level(level, |value| {
+                probe_total_context_limit(value as usize, true)
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let retrieval = schedule(PressureDimension::RetrievalDistractors)?
         .levels
         .iter()
         .copied()
-        .map(|level| repeat_pressure_level(level, probe_retrieval_distractor_level))
+        .map(|level| {
+            repeat_pressure_level(level, |value| {
+                if value > 48 {
+                    // Large distractor counts remain scheduled but are not
+                    // materialized in the deterministic suite.
+                    Ok(false)
+                } else {
+                    probe_retrieval_distractor_level(value)
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let index_scale = schedule(PressureDimension::IndexScale)?
+        .levels
+        .iter()
+        .copied()
+        .map(|level| {
+            repeat_pressure_level(level, |value| {
+                if value > 48 {
+                    Ok(false)
+                } else {
+                    probe_retrieval_distractor_level(value)
+                }
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let vector_availability = schedule(PressureDimension::VectorAvailability)?
+        .levels
+        .iter()
+        .copied()
+        .map(|level| repeat_pressure_level(level, probe_vector_availability_level))
+        .collect::<Result<Vec<_>, _>>()?;
+    let web_latency = schedule(PressureDimension::WebLatency)?
+        .levels
+        .iter()
+        .copied()
+        .map(|level| {
+            // Live network delay remains an approved-profile measurement.
+            repeat_pressure_level(level, |_| Ok(false))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let mut reasoning = Vec::new();
     for level in &schedule(PressureDimension::ReasoningDepth)?.levels {
@@ -5561,10 +6157,28 @@ pub(crate) async fn execute_pressure_staircases(
             materials,
         )?,
         aggregate_pressure_execution(
+            PressureDimension::LocalMaterialChars,
+            PressureValidationStatus::StableBoundaryObserved,
+            PressureExecutionWitness::RunContextAssemblerMaterials,
+            material_chars,
+        )?,
+        aggregate_pressure_execution(
             PressureDimension::RetrievalDistractors,
             PressureValidationStatus::LowerBoundOnly,
             PressureExecutionWitness::RetrievalBroker,
             retrieval,
+        )?,
+        aggregate_pressure_execution(
+            PressureDimension::IndexScale,
+            PressureValidationStatus::LiveNotTested,
+            PressureExecutionWitness::RetrievalBroker,
+            index_scale,
+        )?,
+        aggregate_pressure_execution(
+            PressureDimension::VectorAvailability,
+            PressureValidationStatus::LiveNotTested,
+            PressureExecutionWitness::RetrievalBroker,
+            vector_availability,
         )?,
         aggregate_pressure_execution(
             PressureDimension::ReasoningDepth,
@@ -5583,6 +6197,12 @@ pub(crate) async fn execute_pressure_staircases(
             PressureValidationStatus::StableBoundaryObserved,
             PressureExecutionWitness::NormalRunWebExecutor,
             web,
+        )?,
+        aggregate_pressure_execution(
+            PressureDimension::WebLatency,
+            PressureValidationStatus::LiveNotTested,
+            PressureExecutionWitness::NormalRunWebExecutor,
+            web_latency,
         )?,
         aggregate_pressure_execution(
             PressureDimension::Output,
@@ -5885,6 +6505,87 @@ fn probe_retrieval_distractor_level(level: u32) -> Result<bool, EvalContractErro
         .iter()
         .filter_map(|packet| packet.source_path.as_deref())
         .any(|path| path.ends_with("target.md")))
+}
+
+#[cfg(test)]
+fn probe_vector_availability_level(level: u32) -> Result<bool, EvalContractError> {
+    // Deterministic suite only proves the FTS path. Vector available /
+    // rebuilding / unavailable states require live index health and remain
+    // explicitly unclaimed here.
+    let _ = level;
+    Ok(false)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LiveCapabilityCombination {
+    layer: &'static str,
+    paired_with: &'static str,
+    status: &'static str,
+}
+
+impl LiveCapabilityCombination {
+    pub(crate) const fn layer(&self) -> &'static str {
+        self.layer
+    }
+
+    pub(crate) const fn status(&self) -> &'static str {
+        self.status
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct LiveCapabilityMatrix {
+    combinations: Vec<LiveCapabilityCombination>,
+}
+
+impl LiveCapabilityMatrix {
+    pub(crate) fn combinations(&self) -> &[LiveCapabilityCombination] {
+        &self.combinations
+    }
+}
+
+/// Pairwise capability sampling plan. Missing live profiles stay `live_not_tested`
+/// while protocol doubles remain `contract_verified`.
+pub(crate) fn pairwise_live_capability_matrix(
+    available_layers: &[&str],
+) -> Result<LiveCapabilityMatrix, EvalContractError> {
+    const LAYERS: &[&str] = &[
+        "openai_compatible_chat",
+        "anthropic_messages",
+        "openai_responses",
+        "compatible_vendor",
+        "mcp_search_only",
+        "mcp_search_fetch",
+        "mcp_stdio",
+    ];
+    let available = available_layers.iter().copied().collect::<HashSet<_>>();
+    let mut combinations = Vec::new();
+    for (index, layer) in LAYERS.iter().enumerate() {
+        let paired_with = LAYERS[(index + 1) % LAYERS.len()];
+        let status = if available.contains(layer) {
+            "live_not_tested"
+        } else if matches!(
+            *layer,
+            "openai_compatible_chat"
+                | "anthropic_messages"
+                | "openai_responses"
+                | "mcp_search_only"
+                | "mcp_search_fetch"
+                | "mcp_stdio"
+        ) {
+            "contract_verified"
+        } else {
+            "live_not_tested"
+        };
+        combinations.push(LiveCapabilityCombination {
+            layer,
+            paired_with,
+            status,
+        });
+    }
+    Ok(LiveCapabilityMatrix { combinations })
 }
 
 #[cfg(test)]
@@ -7361,6 +8062,7 @@ pub(crate) struct AgentCapacityReport {
     evidence_level: &'static str,
     run_mode: EvalRunMode,
     core: CapacityCoreResult,
+    scorecard: CapacityScorecard,
     staircases: Vec<ExecutedPressureStaircase>,
     stable_boundary_rule: &'static str,
     hard_boundaries: Vec<HardBoundaryProbe>,
@@ -7370,6 +8072,7 @@ pub(crate) struct AgentCapacityReport {
     security_failure_count: u32,
     security_failure_reasons: Vec<SecurityFailureRecord>,
     claim_boundary: CapacityClaimBoundary,
+    live_capability_matrix: LiveCapabilityMatrix,
 }
 
 #[cfg(test)]
@@ -7382,7 +8085,7 @@ pub(crate) fn build_agent_capacity_report(
 ) -> Result<AgentCapacityReport, EvalContractError> {
     if core.run_mode != EvalRunMode::Full
         || core.case_count != 48
-        || staircases.len() != 9
+        || staircases.len() != 13
         || staircases.iter().any(|staircase| {
             staircase.levels.is_empty()
                 || staircase
@@ -7414,6 +8117,13 @@ pub(crate) fn build_agent_capacity_report(
         })
         .collect::<Vec<_>>();
     let security_failure_count = security_failure_reasons.len().min(u32::MAX as usize) as u32;
+    let mut scorecard = core.scorecard.clone();
+    // Deterministic doubles produce non-reproducible wall-clock samples across
+    // hosts; versioned claims retain only stable counters for performance.
+    scorecard.performance.total_model_time_p50_ms = None;
+    scorecard.performance.total_model_time_p95_ms = None;
+    scorecard.performance.ttft_p50_ms = None;
+    scorecard.performance.ttft_p95_ms = None;
     Ok(AgentCapacityReport {
         schema_version: "agent-capacity-report-v1",
         release: "v1.2.15",
@@ -7428,6 +8138,7 @@ pub(crate) fn build_agent_capacity_report(
             web_only: core.groups.web_only,
             hybrid: core.groups.hybrid,
         },
+        scorecard,
         staircases,
         stable_boundary_rule: "five_repetitions_current_gte4_next_lte2",
         hard_boundaries,
@@ -7442,6 +8153,7 @@ pub(crate) fn build_agent_capacity_report(
             live_profiles: "live_not_tested",
             web_latency: "live_not_tested",
         },
+        live_capability_matrix: pairwise_live_capability_matrix(&[])?,
     })
 }
 
@@ -7461,6 +8173,7 @@ pub(crate) fn serialize_agent_capacity_report(
             "evidenceLevel",
             "runMode",
             "core",
+            "scorecard",
             "staircases",
             "stableBoundaryRule",
             "hardBoundaries",
@@ -7470,6 +8183,7 @@ pub(crate) fn serialize_agent_capacity_report(
             "securityFailureCount",
             "securityFailureReasons",
             "claimBoundary",
+            "liveCapabilityMatrix",
         ],
     )?;
     exact_string(root.get("schemaVersion"), &["agent-capacity-report-v1"])?;
@@ -7750,6 +8464,7 @@ pub(crate) fn validate_serialized_evaluation_summary(
             "groups",
             "languages",
             "telemetry",
+            "scorecard",
             "cases",
         ],
     )?;
@@ -7768,6 +8483,7 @@ pub(crate) fn validate_serialized_evaluation_summary(
     validate_group_counts(root.get("groups"), case_count)?;
     validate_language_counts(root.get("languages"), case_count)?;
     validate_telemetry_summary(root.get("telemetry"))?;
+    validate_capacity_scorecard(root.get("scorecard"))?;
 
     let cases = root
         .get("cases")
@@ -7963,6 +8679,7 @@ fn validate_case_summary(
             "runtimeEvidence",
             "boundary",
             "verdict",
+            "qualityAtoms",
             "overallPass",
         ],
     )?;
@@ -7978,6 +8695,7 @@ fn validate_case_summary(
     exact_string(object.get("language"), &["chinese", "english", "mixed"])?;
     validate_fact_ids(object.get("requiredFactIds"))?;
     validate_runtime_evidence(object.get("runtimeEvidence"))?;
+    validate_case_quality_atoms(object.get("qualityAtoms"))?;
     let (has_boundary, boundary_pass) = match object.get("boundary") {
         Some(serde_json::Value::Null) => (false, true),
         Some(boundary) => {
@@ -7992,8 +8710,13 @@ fn validate_case_summary(
             .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
         case_id,
     )?;
+    let terminal_completed = object
+        .get("runtimeEvidence")
+        .and_then(|evidence| evidence.get("terminalState"))
+        .and_then(serde_json::Value::as_str)
+        == Some("completed");
     let overall_pass = exact_bool(object.get("overallPass"))?;
-    if overall_pass != (verdict_pass && boundary_pass) {
+    if overall_pass != (verdict_pass && boundary_pass && terminal_completed) {
         return Err(EvalContractError::new(
             "evaluation_summary_verdict_inconsistent",
         ));
@@ -8001,11 +8724,131 @@ fn validate_case_summary(
     Ok((case_id, overall_pass, has_boundary))
 }
 
+fn validate_case_quality_atoms(value: Option<&serde_json::Value>) -> Result<(), EvalContractError> {
+    let object = exact_object(
+        value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &[
+            "requiredFacts",
+            "truePositiveFacts",
+            "falseNegativeFacts",
+            "falsePositiveFacts",
+            "requiredSources",
+            "recalledRequiredSources",
+            "citationRequired",
+            "citationSupported",
+            "constraintsRequired",
+            "constraintsSatisfied",
+            "authorizationViolation",
+            "offlineWebLeak",
+            "unsupportedHighRiskClaim",
+            "degradationSignaled",
+        ],
+    )?;
+    for key in object.keys() {
+        bounded_u64(object.get(key.as_str()), 1_000)?;
+    }
+    Ok(())
+}
+
+fn validate_capacity_scorecard(value: Option<&serde_json::Value>) -> Result<(), EvalContractError> {
+    let object = exact_object(
+        value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &["hardAdmission", "quality", "performance", "faultRecovery"],
+    )?;
+    if object.contains_key("overallScore") {
+        return Err(EvalContractError::new("evaluation_summary_shape_invalid"));
+    }
+    let hard = exact_object(
+        object
+            .get("hardAdmission")
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &[
+            "authorizationViolations",
+            "offlineWebLeaks",
+            "unsupportedHighRiskClaims",
+            "zeroToleranceGate",
+        ],
+    )?;
+    bounded_u64(hard.get("authorizationViolations"), 1_000)?;
+    bounded_u64(hard.get("offlineWebLeaks"), 1_000)?;
+    bounded_u64(hard.get("unsupportedHighRiskClaims"), 1_000)?;
+    exact_bool(hard.get("zeroToleranceGate"))?;
+    let quality = exact_object(
+        object
+            .get("quality")
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &[
+            "factPrecisionBps",
+            "factRecallBps",
+            "factF1Bps",
+            "requiredSourceRecallBps",
+            "citationSupportBps",
+            "constraintAdherenceBps",
+            "factRecallGate",
+            "citationSupportGate",
+            "constraintAdherenceGate",
+        ],
+    )?;
+    for key in [
+        "factPrecisionBps",
+        "factRecallBps",
+        "factF1Bps",
+        "requiredSourceRecallBps",
+        "citationSupportBps",
+        "constraintAdherenceBps",
+    ] {
+        bounded_u64(quality.get(key), 10_000)?;
+    }
+    exact_bool(quality.get("factRecallGate"))?;
+    exact_bool(quality.get("citationSupportGate"))?;
+    exact_bool(quality.get("constraintAdherenceGate"))?;
+    let performance = exact_object(
+        object
+            .get("performance")
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &[
+            "totalModelTimeP50Ms",
+            "totalModelTimeP95Ms",
+            "ttftP50Ms",
+            "ttftP95Ms",
+            "modelTurns",
+            "toolCalls",
+        ],
+    )?;
+    for key in [
+        "totalModelTimeP50Ms",
+        "totalModelTimeP95Ms",
+        "ttftP50Ms",
+        "ttftP95Ms",
+    ] {
+        match performance.get(key) {
+            Some(serde_json::Value::Null) => {}
+            Some(value) => {
+                bounded_u64(Some(value), 3_600_000)?;
+            }
+            None => return Err(EvalContractError::new("evaluation_summary_shape_invalid")),
+        }
+    }
+    bounded_u64(performance.get("modelTurns"), 10_000)?;
+    bounded_u64(performance.get("toolCalls"), 10_000)?;
+    let fault = exact_object(
+        object
+            .get("faultRecovery")
+            .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
+        &["degradationCases", "constraintFailCases", "truncationCases"],
+    )?;
+    bounded_u64(fault.get("degradationCases"), 1_000)?;
+    bounded_u64(fault.get("constraintFailCases"), 1_000)?;
+    bounded_u64(fault.get("truncationCases"), 1_000)?;
+    Ok(())
+}
+
 fn validate_runtime_evidence(value: Option<&serde_json::Value>) -> Result<(), EvalContractError> {
     let object = exact_object(
         value.ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?,
         &[
             "terminalState",
+            "terminalErrorCode",
             "eventCount",
             "observedSourceKinds",
             "toolCallCount",
@@ -8016,6 +8859,15 @@ fn validate_runtime_evidence(value: Option<&serde_json::Value>) -> Result<(), Ev
         object.get("terminalState"),
         &["completed", "failed", "cancelled"],
     )?;
+    match object.get("terminalErrorCode") {
+        Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(code)) => {
+            if code.is_empty() || code.len() > 64 || !code.starts_with("agent_run_") {
+                return Err(EvalContractError::new("evaluation_summary_value_invalid"));
+            }
+        }
+        _ => return Err(EvalContractError::new("evaluation_summary_shape_invalid")),
+    }
     bounded_u64(object.get("eventCount"), 10_000)?;
     bounded_u64(object.get("toolCallCount"), 1_000)?;
     exact_bool(object.get("degradationObserved"))?;

@@ -12,6 +12,38 @@
     "webOnly": 12,
     "hybrid": 12
   },
+  "scorecard": {
+    "hardAdmission": {
+      "authorizationViolations": 0,
+      "offlineWebLeaks": 0,
+      "unsupportedHighRiskClaims": 12,
+      "zeroToleranceGate": false
+    },
+    "quality": {
+      "factPrecisionBps": 10000,
+      "factRecallBps": 6666,
+      "factF1Bps": 7999,
+      "requiredSourceRecallBps": 6666,
+      "citationSupportBps": 6666,
+      "constraintAdherenceBps": 10000,
+      "factRecallGate": false,
+      "citationSupportGate": false,
+      "constraintAdherenceGate": true
+    },
+    "performance": {
+      "totalModelTimeP50Ms": null,
+      "totalModelTimeP95Ms": null,
+      "ttftP50Ms": null,
+      "ttftP95Ms": null,
+      "modelTurns": 60,
+      "toolCalls": 12
+    },
+    "faultRecovery": {
+      "degradationCases": 12,
+      "constraintFailCases": 0,
+      "truncationCases": 0
+    }
+  },
   "staircases": [
     {
       "dimension": "input",
@@ -20,11 +52,6 @@
       "levels": [
         {
           "level": 1000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 2000,
           "repetitions": 5,
           "passCount": 5
         },
@@ -40,6 +67,11 @@
         },
         {
           "level": 12000,
+          "repetitions": 5,
+          "passCount": 5
+        },
+        {
+          "level": 15500,
           "repetitions": 5,
           "passCount": 5
         },
@@ -68,21 +100,6 @@
           "passCount": 5
         },
         {
-          "level": 2,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 5,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
           "level": 6,
           "repetitions": 5,
           "passCount": 5
@@ -94,6 +111,16 @@
         },
         {
           "level": 8,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 20,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 50,
           "repetitions": 5,
           "passCount": 0
         }
@@ -146,37 +173,51 @@
       "nextLevel": 13
     },
     {
+      "dimension": "local_material_chars",
+      "validationStatus": "stable_boundary_observed",
+      "witness": "run_context_assembler_materials",
+      "levels": [
+        {
+          "level": 8000,
+          "repetitions": 5,
+          "passCount": 5
+        },
+        {
+          "level": 16000,
+          "repetitions": 5,
+          "passCount": 5
+        },
+        {
+          "level": 24000,
+          "repetitions": 5,
+          "passCount": 5
+        },
+        {
+          "level": 32000,
+          "repetitions": 5,
+          "passCount": 5
+        },
+        {
+          "level": 32001,
+          "repetitions": 5,
+          "passCount": 0
+        }
+      ],
+      "stableLevel": 32000,
+      "nextLevel": 32001
+    },
+    {
       "dimension": "retrieval_distractors",
       "validationStatus": "lower_bound_only",
       "witness": "retrieval_broker",
       "levels": [
         {
-          "level": 1,
+          "level": 0,
           "repetitions": 5,
           "passCount": 5
         },
         {
-          "level": 2,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 8,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 16,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 32,
+          "level": 10,
           "repetitions": 5,
           "passCount": 5
         },
@@ -184,6 +225,69 @@
           "level": 48,
           "repetitions": 5,
           "passCount": 5
+        },
+        {
+          "level": 100,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 1000,
+          "repetitions": 5,
+          "passCount": 0
+        }
+      ],
+      "stableLevel": null,
+      "nextLevel": null
+    },
+    {
+      "dimension": "index_scale",
+      "validationStatus": "live_not_tested",
+      "witness": "retrieval_broker",
+      "levels": [
+        {
+          "level": 48,
+          "repetitions": 5,
+          "passCount": 5
+        },
+        {
+          "level": 1000,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 10000,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 50000,
+          "repetitions": 5,
+          "passCount": 0
+        }
+      ],
+      "stableLevel": null,
+      "nextLevel": null
+    },
+    {
+      "dimension": "vector_availability",
+      "validationStatus": "live_not_tested",
+      "witness": "retrieval_broker",
+      "levels": [
+        {
+          "level": 0,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 1,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 2,
+          "repetitions": 5,
+          "passCount": 0
         }
       ],
       "stableLevel": null,
@@ -320,6 +424,35 @@
       ],
       "stableLevel": 8,
       "nextLevel": 9
+    },
+    {
+      "dimension": "web_latency",
+      "validationStatus": "live_not_tested",
+      "witness": "normal_run_web_executor",
+      "levels": [
+        {
+          "level": 0,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 3,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 9,
+          "repetitions": 5,
+          "passCount": 0
+        },
+        {
+          "level": 11,
+          "repetitions": 5,
+          "passCount": 0
+        }
+      ],
+      "stableLevel": null,
+      "nextLevel": null
     },
     {
       "dimension": "output",
@@ -599,5 +732,44 @@
     "protocolDoubles": "contract_verified",
     "liveProfiles": "live_not_tested",
     "webLatency": "live_not_tested"
+  },
+  "liveCapabilityMatrix": {
+    "combinations": [
+      {
+        "layer": "openai_compatible_chat",
+        "pairedWith": "anthropic_messages",
+        "status": "contract_verified"
+      },
+      {
+        "layer": "anthropic_messages",
+        "pairedWith": "openai_responses",
+        "status": "contract_verified"
+      },
+      {
+        "layer": "openai_responses",
+        "pairedWith": "compatible_vendor",
+        "status": "contract_verified"
+      },
+      {
+        "layer": "compatible_vendor",
+        "pairedWith": "mcp_search_only",
+        "status": "live_not_tested"
+      },
+      {
+        "layer": "mcp_search_only",
+        "pairedWith": "mcp_search_fetch",
+        "status": "contract_verified"
+      },
+      {
+        "layer": "mcp_search_fetch",
+        "pairedWith": "mcp_stdio",
+        "status": "contract_verified"
+      },
+      {
+        "layer": "mcp_stdio",
+        "pairedWith": "openai_compatible_chat",
+        "status": "contract_verified"
+      }
+    ]
   }
 }
