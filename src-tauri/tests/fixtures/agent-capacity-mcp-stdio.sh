@@ -42,7 +42,13 @@ while IFS= read -r line; do
           printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"fetch-result"}],"isError":false}}\n' "$id"
           ;;
         *)
-          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic\"}],\"isError\":false}}"
+          claims=''
+          ordinal=1
+          while [ "$ordinal" -le 48 ]; do
+            claims="$claims fact-web-$ordinal=value-$ordinal"
+            ordinal=$((ordinal + 1))
+          done
+          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\"}],\"isError\":false}}"
           ;;
       esac
       ;;

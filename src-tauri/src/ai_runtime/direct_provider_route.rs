@@ -8,6 +8,38 @@ use crate::ai_types::{ProviderConfig, ResolvedReasoningRequest};
 use crate::error::{AppError, AppResult};
 use crate::llm::config::{ResolvedLlmConfig, ResolvedModelPool};
 
+#[cfg(test)]
+static TEST_LOOPBACK_CREDENTIAL_SERVICES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<(String, String), String>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+/// Register one test-construction-only loopback credential binding. No
+/// production configuration, command argument, or persisted route can reach
+/// this registry because it is not compiled outside test builds.
+#[cfg(test)]
+pub(crate) fn register_test_loopback_credential_service(
+    provider_id: &str,
+    base_url: &str,
+    credential_service: &str,
+) {
+    TEST_LOOPBACK_CREDENTIAL_SERVICES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(
+            (provider_id.to_string(), base_url.to_string()),
+            credential_service.to_string(),
+        );
+}
+
+#[cfg(test)]
+fn test_loopback_credential_service(resolved: &ResolvedLlmConfig) -> Option<String> {
+    TEST_LOOPBACK_CREDENTIAL_SERVICES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&(resolved.provider_id.clone(), resolved.base_url.clone()))
+        .cloned()
+}
+
 /// Normal-domain direct adapter route built solely from a secret-free resolver result.
 ///
 /// This is intentionally an assembly boundary, not a dispatcher. It provides ordered
@@ -161,6 +193,12 @@ fn provider_candidate_from_resolved(resolved: ResolvedLlmConfig) -> ProviderCand
     let requires_credential = requires_credential
         && !(crate::llm::providers::is_custom_provider(&resolved.provider_id)
             && resolved.base_url.starts_with("http://127.0.0.1:"));
+    #[cfg(test)]
+    let credential_service = test_loopback_credential_service(&resolved).or_else(|| {
+        requires_credential
+            .then(|| crate::llm::providers::credential_service(&resolved.provider_id))
+    });
+    #[cfg(not(test))]
     let credential_service = requires_credential
         .then(|| crate::llm::providers::credential_service(&resolved.provider_id));
 

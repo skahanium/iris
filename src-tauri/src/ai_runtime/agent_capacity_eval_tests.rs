@@ -1,17 +1,23 @@
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 
 use crate::storage::db::Database;
 
 use super::agent_capacity_eval::{
     approve_live_profile, build_agent_capacity_report, calculate_stable_boundary,
-    discover_live_profile_candidates_from_database, evaluate_case, execute_pressure_staircases,
-    exercise_approved_live_hydration_with_local_transports, generate_core_scenarios,
+    controlled_live_fact_source_support, discover_live_profile_candidates_from_database,
+    evaluate_case, execute_pressure_staircases, generate_core_scenarios,
     generate_pressure_staircases, preflight_live_profiles, prepare_approved_live_pilot,
     restore_and_consume_live_preflight_session, run_approved_live_pilot,
     run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
     run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
     run_security_track, select_core_scenarios, serialize_agent_capacity_report,
-    serialize_evaluation_summary, serialize_live_preflight_report, spawn_llm_protocol_double,
+    serialize_evaluation_summary, serialize_live_preflight_report,
+    spawn_live_pilot_dynamic_llm_protocol_double, spawn_llm_protocol_double,
     validate_serialized_evaluation_summary, validate_serialized_live_pilot_result,
     validate_serialized_live_preflight_report, write_blind_review_packet, write_live_pilot_result,
     write_live_preflight_report, write_live_preflight_session_state, AnswerObservation,
@@ -23,6 +29,21 @@ use super::agent_capacity_eval::{
     ProtocolValidationLevel, ScenarioLanguage, SourceKind, StableLevelObservation,
     TruncationOutcome, WebAnswerContamination, WebState,
 };
+
+#[test]
+fn controlled_live_fact_oracle_rejects_a_model_placeholder_without_source_binding() {
+    assert!(
+        !controlled_live_fact_source_support(
+            "fact-local-13=value-13",
+            "fact-local-13=value-13",
+            "unrelated controlled source body",
+            SourceKind::Local,
+            Some("notes/authorized.md"),
+            None,
+        ),
+        "a model echo of the evaluator placeholder is not evidence unless the controlled source contains that claim"
+    );
+}
 use super::mcp_host_runtime::{
     call_required_capability, probe_provider_stdio_tools, McpHostRuntimeOptions, McpStdioDiscovery,
     McpToolDefinition,
@@ -2100,6 +2121,331 @@ fn synthetic_live_candidate() -> LiveProfileCandidate {
     .expect("synthetic live candidate")
 }
 
+/// Construct an otherwise ordinary live profile whose endpoints are confined
+/// to deterministic loopback protocol peers. This is test-only setup; the
+/// production CLI can create candidates only through source-db discovery.
+fn local_transport_live_candidate(llm_base_url: &str, mcp_url: &str) -> LiveProfileCandidate {
+    LiveProfileCandidate::new_for_local_transport(
+        ResolvedLlmConfig {
+            provider_id: "custom_sensitive_provider".into(),
+            model: "sensitive-model-name".into(),
+            base_url: llm_base_url.to_string(),
+            thinking: false,
+            reasoning: ResolvedReasoningRequest::disabled(),
+            input_budget: 128_000,
+            output_budget: 16_000,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: false,
+            supports_reasoning: true,
+        },
+        WebEvidenceProviderInput {
+            id: "sensitive-mcp-name".into(),
+            name: "Local test MCP".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "https".into(),
+            transport_config_json: serde_json::json!({
+                "url": mcp_url,
+                "allow_localhost_dev": true,
+                "timeoutMs": 10_000,
+            })
+            .to_string(),
+            credential_refs_json: r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.sensitive"}}}"#.into(),
+            web_search_mapping_json: Some(
+                r#"{"tool":"search","queryArg":"query","maxResultsArg":"count"}"#.into(),
+            ),
+            web_fetch_mapping_json: None,
+        },
+    )
+    .expect("test-only loopback profile")
+}
+
+fn live_pilot_llm_scripts() -> Vec<HttpResponseScript> {
+    select_core_scenarios(EvalRunMode::Smoke)
+        .expect("smoke scenarios")
+        .into_iter()
+        .flat_map(|scenario| {
+            let needs_web = matches!(
+                scenario.evidence_group(),
+                EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
+            );
+            let needs_local = matches!(
+                scenario.evidence_group(),
+                EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
+            );
+            let needs_web_tool = scenario.web_state() == WebState::Online && needs_web;
+            let mut parts = Vec::new();
+            if needs_local {
+                parts.push(format!(
+                    "fact-local-{}=value-{} [cite:local-{}]",
+                    scenario.case_id(),
+                    scenario.case_id(),
+                    scenario.case_id()
+                ));
+            }
+            if needs_web && scenario.web_state() == WebState::Online {
+                parts.push(format!(
+                    "fact-web-{}=value-{} [cite:web-{}]",
+                    scenario.case_id(),
+                    scenario.case_id(),
+                    scenario.case_id()
+                ));
+            }
+            if needs_web && scenario.web_state() == WebState::Offline {
+                parts.push("degraded:web-offline-uncertainty".to_string());
+            }
+            if parts.is_empty() {
+                parts.push("synthetic bounded answer".to_string());
+            }
+            let final_content = parts.join(" ");
+            if needs_web_tool {
+                vec![
+                    live_pilot_tool_call_script(
+                        "live-pilot-web-call",
+                        "web_search",
+                        r#"{"query":"controlled live pilot query"}"#,
+                    ),
+                    live_pilot_content_script(&final_content),
+                ]
+            } else {
+                vec![live_pilot_content_script(&final_content)]
+            }
+        })
+        .collect()
+}
+
+fn live_pilot_content_script(content: &str) -> HttpResponseScript {
+    let event = serde_json::json!({
+        "choices": [{"delta": {"content": content}}]
+    });
+    HttpResponseScript::sse(&format!("data: {event}\n\ndata: [DONE]\n\n"))
+}
+
+fn live_pilot_tool_call_script(id: &str, name: &str, arguments: &str) -> HttpResponseScript {
+    let event = serde_json::json!({
+        "choices": [{"delta": {"tool_calls": [{
+            "index": 0,
+            "id": id,
+            "type": "function",
+            "function": {"name": name, "arguments": arguments}
+        }]}}]
+    });
+    HttpResponseScript::sse(&format!("data: {event}\n\ndata: [DONE]\n\n"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LivePilotMcpCapture {
+    method: String,
+    authorization_present: bool,
+}
+
+struct LivePilotMcpDouble {
+    url: String,
+    captures: Arc<Mutex<Vec<LivePilotMcpCapture>>>,
+    task: JoinHandle<()>,
+}
+
+impl LivePilotMcpDouble {
+    async fn finish(self) -> Result<Vec<LivePilotMcpCapture>, String> {
+        self.task.abort();
+        let _ = self.task.await;
+        Arc::try_unwrap(self.captures)
+            .map_err(|_| "live MCP captures are still shared".to_string())?
+            .into_inner()
+            .map_err(|_| "live MCP capture lock is poisoned".to_string())
+    }
+
+    fn method_snapshot(&self) -> Vec<String> {
+        self.captures
+            .lock()
+            .map(|captures| {
+                captures
+                    .iter()
+                    .map(|capture| capture.method.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+async fn spawn_live_pilot_mcp_double() -> Result<LivePilotMcpDouble, String> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|_| "live MCP double bind failed".to_string())?;
+    let address = listener
+        .local_addr()
+        .map_err(|_| "live MCP double address failed".to_string())?;
+    let captures = Arc::new(Mutex::new(Vec::new()));
+    let task_captures = Arc::clone(&captures);
+    let task = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            // A client is allowed to close an individual HTTP connection after
+            // consuming its reply. Keep the loopback peer alive for the next
+            // independently isolated pilot case instead of treating that close
+            // as a server-wide transport failure.
+            let _ = serve_live_pilot_mcp_request(&mut socket, Arc::clone(&task_captures)).await;
+        }
+    });
+    Ok(LivePilotMcpDouble {
+        url: format!("http://{address}/mcp"),
+        captures,
+        task,
+    })
+}
+
+async fn serve_live_pilot_mcp_request(
+    socket: &mut tokio::net::TcpStream,
+    captures: Arc<Mutex<Vec<LivePilotMcpCapture>>>,
+) -> Result<(), String> {
+    const MAX_REQUEST_BYTES: usize = 256 * 1024;
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let header_end = loop {
+        let read = socket
+            .read(&mut chunk)
+            .await
+            .map_err(|_| "live MCP double read failed".to_string())?;
+        if read == 0 {
+            return Err("live MCP request incomplete".to_string());
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if bytes.len() > MAX_REQUEST_BYTES {
+            return Err("live MCP request too large".to_string());
+        }
+        if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            break index + 4;
+        }
+    };
+    let header_text = String::from_utf8_lossy(&bytes[..header_end]).into_owned();
+    let request_method = header_text
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next())
+        .unwrap_or_default();
+    let authorization_present = header_text.lines().any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.eq_ignore_ascii_case("authorization")
+                && value.trim().to_ascii_lowercase().starts_with("bearer ")
+        })
+    });
+    if request_method == "GET" {
+        captures
+            .lock()
+            .map_err(|_| "live MCP capture lock is poisoned".to_string())?
+            .push(LivePilotMcpCapture {
+                method: "GET".to_string(),
+                authorization_present,
+            });
+        socket
+            .write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .map_err(|_| "live MCP response failed".to_string())?;
+        return Ok(());
+    }
+    let content_length = header_text
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    let expected_length = header_end.saturating_add(content_length);
+    while bytes.len() < expected_length {
+        let read = socket
+            .read(&mut chunk)
+            .await
+            .map_err(|_| "live MCP double read failed".to_string())?;
+        if read == 0 {
+            return Err("live MCP request incomplete".to_string());
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if bytes.len() > MAX_REQUEST_BYTES {
+            return Err("live MCP request too large".to_string());
+        }
+    }
+    let request: serde_json::Value = serde_json::from_slice(&bytes[header_end..expected_length])
+        .map_err(|_| "live MCP request body invalid".to_string())?;
+    let method = request
+        .get("method")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    captures
+        .lock()
+        .map_err(|_| "live MCP capture lock is poisoned".to_string())?
+        .push(LivePilotMcpCapture {
+            method: method.clone(),
+            authorization_present,
+        });
+    let id = request
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    if method.starts_with("notifications/") {
+        socket
+            .write_all(b"HTTP/1.1 202 Accepted\r\nMcp-Session-Id: live-pilot-loopback\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .map_err(|_| "live MCP response failed".to_string())?;
+        return Ok(());
+    }
+    let result = match method.as_str() {
+        "initialize" => serde_json::json!({
+            "protocolVersion": "2025-03-26",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "iris-live-pilot-loopback", "version": "1"}
+        }),
+        "tools/call" => serde_json::json!({
+            "content": [{
+                "type": "text",
+                "text": live_pilot_mcp_evidence_text(live_pilot_mcp_case_id(&request)?)
+            }],
+            "isError": false
+        }),
+        _ => serde_json::json!({}),
+    };
+    let body = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nMcp-Session-Id: live-pilot-loopback\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(), body
+    );
+    socket
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|_| "live MCP response failed".to_string())?;
+    socket
+        .shutdown()
+        .await
+        .map_err(|_| "live MCP shutdown failed".to_string())
+}
+
+fn live_pilot_mcp_case_id(request: &serde_json::Value) -> Result<u32, String> {
+    request
+        .pointer("/params/arguments/query")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|query| query.strip_prefix("agent-live-pilot-case:"))
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|ordinal| (1..=48).contains(ordinal))
+        .ok_or_else(|| "live MCP controlled case id missing".to_string())
+}
+
+fn live_pilot_mcp_evidence_text(case_id: u32) -> String {
+    let claims = [26_u32, 36, 38, 46]
+        .into_iter()
+        .map(|ordinal| format!("fact-web-{ordinal}=value-{ordinal}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "[1] title: Contract\nurl: https://source.invalid/contract\nsnippet: controlled request-case-{case_id} {claims}"
+    )
+}
+
 fn synthetic_live_root_fixture() -> (
     tempfile::TempDir,
     std::path::PathBuf,
@@ -2697,7 +3043,11 @@ async fn live_preflight_ids_and_approval_tokens_are_random_session_bound_and_non
     )
     .await
     .expect("current-session approval runs once");
-    assert_eq!(result.completed_case_count(), 12);
+    assert_eq!(
+        result.completed_case_count(),
+        12,
+        "the closed result exposes terminal state without secret-bearing transport data: {result:?}"
+    );
 
     let replay_probe = LivePilotCallProbe::default();
     let error = run_approved_live_pilot_with_local_doubles(
@@ -3041,50 +3391,158 @@ async fn approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_rea
         .expect("store unselected credential");
     crate::credentials::credential_access_probe_reset();
 
-    let mut session =
-        preflight_live_profiles(vec![synthetic_live_candidate()]).expect("anonymous preflight");
+    let unbound_llm = spawn_llm_protocol_double(live_pilot_llm_scripts())
+        .await
+        .expect("unbound local LLM transport");
+    let mut unbound_session = preflight_live_profiles(vec![local_transport_live_candidate(
+        &unbound_llm.base_url,
+        "http://127.0.0.1:1/mcp",
+    )])
+    .expect("anonymous unbound preflight");
+    let unbound_profile_id = unbound_session.report().profile_ids()[0].to_string();
+    let unbound_approval =
+        approve_live_profile(&mut unbound_session, Some(&unbound_profile_id), 59_000)
+            .expect("unbound approval");
+    let unbound_result = run_approved_live_pilot(
+        &mut unbound_session,
+        Some(unbound_approval.token()),
+        Some(LiveCostConfirmation::TwelveCasePilot),
+        59_001,
+        &LivePilotCallProbe::default(),
+    )
+    .await
+    .expect("unbound pilot returns closed failures");
+    drop(unbound_llm);
+    assert_eq!(unbound_result.completed_case_count(), 0);
+    assert!(
+        crate::credentials::credential_access_probe_snapshot().is_empty(),
+        "an unbound loopback candidate must not read a selected LLM credential"
+    );
+
+    crate::credentials::credential_access_probe_reset();
+    let llm = spawn_live_pilot_dynamic_llm_protocol_double()
+        .await
+        .expect("local LLM transport");
+    let mcp = spawn_live_pilot_mcp_double()
+        .await
+        .expect("local MCP transport");
+    let mut session = preflight_live_profiles(vec![local_transport_live_candidate(
+        &llm.base_url,
+        &mcp.url,
+    )
+    .with_test_loopback_credential_service("iris.llm.custom_sensitive_provider")
+    .expect("test-only selected LLM credential binding")])
+    .expect("anonymous preflight");
     let profile_id = session.report().profile_ids()[0].to_string();
     let approval =
         approve_live_profile(&mut session, Some(&profile_id), 60_000).expect("approved profile");
-    let prepared = prepare_approved_live_pilot(
-        &mut session,
-        Some(approval.token()),
-        Some(LiveCostConfirmation::TwelveCasePilot),
-        60_001,
-        &LivePilotCallProbe::default(),
-    )
-    .expect("approved temporary live state");
     assert!(
         crate::credentials::credential_access_probe_snapshot().is_empty(),
         "preflight and approval must not read credentials"
     );
 
-    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::json(serde_json::json!({
-        "choices": [{
-            "message": {"content": "synthetic hydrated dispatch"},
-            "finish_reason": "stop"
-        }]
-    }))])
-    .await
-    .expect("local LLM transport");
-    let proof = exercise_approved_live_hydration_with_local_transports(&prepared, &llm.base_url)
-        .await
-        .expect("selected credentials hydrate and dispatch locally");
-    let captures = llm.finish().await.expect("captured local LLM dispatch");
+    let probe = LivePilotCallProbe::default();
+    let pilot = tokio::time::timeout(
+        Duration::from_secs(10),
+        run_approved_live_pilot(
+            &mut session,
+            Some(approval.token()),
+            Some(LiveCostConfirmation::TwelveCasePilot),
+            60_001,
+            &probe,
+        ),
+    )
+    .await;
+    let result = match pilot {
+        Ok(result) => result.expect("the full approved pilot reaches local transports"),
+        Err(_) => panic!(
+            "the full approved pilot timed out after local LLM requests={} shapes={:?} and MCP methods={:?}",
+            llm.request_count(),
+            llm.request_shape_summary(),
+            mcp.method_snapshot()
+        ),
+    };
+    // Do not wait for every optional scripted response: that would measure
+    // fixture exhaustion rather than the completed Run.
+    let mcp_captures = mcp.finish().await.expect("captured local MCP dispatch");
 
-    assert!(proof.llm_dispatched());
-    assert!(proof.mcp_dispatched());
-    assert_eq!(captures.len(), 1);
+    assert_eq!(probe.hydration_calls(), 1);
+    assert_eq!(probe.dispatch_calls(), 12);
+    let serialized_result = serde_json::to_value(&result).expect("closed live pilot result");
+    let failed_case_ids = serialized_result["cases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|case| case["runtimeEvidence"]["terminalState"] != "completed")
+        .filter_map(|case| case["caseId"].as_u64())
+        .collect::<Vec<_>>();
     assert_eq!(
-        crate::credentials::credential_access_probe_snapshot(),
-        vec![
-            "iris.llm.custom_sensitive_provider".to_string(),
-            "iris.mcp.sensitive".to_string(),
-        ]
+        result.completed_case_count(),
+        12,
+        "closed failed case ids={failed_case_ids:?}; LLM request count is {}; LLM shapes={:?}; MCP methods={:?}",
+        llm.request_count(),
+        llm.request_shape_summary(),
+        mcp_captures
+            .iter()
+            .map(|capture| capture.method.as_str())
+            .collect::<Vec<_>>()
     );
+    let non_passing_case_ids = serialized_result["cases"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|case| case["overallPass"] != true)
+        .filter_map(|case| case["caseId"].as_u64())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        result.passed(),
+        12,
+        "completed cases with a closed verdict failure={non_passing_case_ids:?}; LLM shapes={:?}; MCP methods={:?}",
+        llm.request_shape_summary(),
+        mcp_captures
+            .iter()
+            .map(|capture| capture.method.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(result.status_code(), "live_pilot_executed");
+    assert!(
+        serialized_result["cases"]
+            .as_array()
+            .is_some_and(|cases| cases.iter().all(|case| {
+                case["telemetry"]["modelTurns"]
+                    .as_u64()
+                    .is_some_and(|turns| turns > 0)
+            })),
+        "each live case must contain telemetry from a real selected-model turn"
+    );
+    assert!(
+        mcp_captures
+            .iter()
+            .any(|capture| capture.method == "tools/call"),
+        "web and hybrid cases must invoke the selected MCP through its real HTTP transport"
+    );
+    assert!(
+        mcp_captures
+            .iter()
+            .all(|capture| !capture.method.is_empty() && capture.authorization_present),
+        "the local MCP peer receives a hydrated Authorization header without retaining its value"
+    );
+    let accessed = crate::credentials::credential_access_probe_snapshot();
+    assert!(accessed
+        .iter()
+        .any(|service| service == "iris.llm.custom_sensitive_provider"));
+    assert!(accessed
+        .iter()
+        .any(|service| service == "iris.mcp.sensitive"));
+    assert!(accessed.iter().all(|service| {
+        matches!(
+            service.as_str(),
+            "iris.llm.custom_sensitive_provider" | "iris.mcp.sensitive"
+        )
+    }));
     let serialized = format!(
         "{:?}\n{}\n{}",
-        proof,
+        result,
         serialize_live_preflight_report(session.report()).expect("anonymous report"),
         serde_json::to_string(&std::env::vars().collect::<std::collections::BTreeMap<_, _>>())
             .expect("environment dump")
@@ -3092,6 +3550,7 @@ async fn approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_rea
     for secret in [selected_llm_secret, selected_mcp_secret, unselected_secret] {
         assert!(!serialized.contains(secret));
     }
+    drop(llm);
 }
 
 #[test]

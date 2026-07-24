@@ -89,6 +89,44 @@ pub fn query_by_run(db: &Database, run_id: &str) -> AppResult<Vec<ToolAuditEntry
     })
 }
 
+/// Persist a content-free local-to-Web taint witness at the actual dispatch
+/// boundary.  Only a truncated query digest, material count and closed
+/// verdict are retained; local bodies, paths and URLs never cross this API.
+pub fn record_web_query_taint_witness(
+    db: &Database,
+    run_id: &str,
+    run_step: u32,
+    query: &str,
+    local_materials: impl IntoIterator<Item = String>,
+) -> AppResult<()> {
+    let materials = local_materials.into_iter().collect::<Vec<_>>();
+    let detected = materials
+        .iter()
+        .filter(|material| !material.is_empty())
+        .any(|material| query.contains(material));
+    let arguments = serde_json::json!({
+        "query": query,
+        "localMaterialCount": materials.len(),
+    });
+    let result = serde_json::json!({
+        "verdict": if detected { "detected" } else { "confirmed_absent" },
+    });
+    record_audit(
+        db,
+        &ToolAuditInput {
+            run_id,
+            run_step,
+            tool_name: "web_taint_witness",
+            arguments: &arguments,
+            result: &result,
+            error: None,
+            success: true,
+            duration_ms: 0,
+            subagent_depth: 0,
+        },
+    )
+}
+
 /// Count tool records for one Run.
 pub fn count_by_run(db: &Database, run_id: &str) -> AppResult<i64> {
     db.with_read_conn(|conn| {
@@ -142,6 +180,20 @@ fn sanitize_arguments(tool_name: &str, arguments: &serde_json::Value) -> Option<
                 audit_hash(query)
             ))
         }
+        "web_taint_witness" => {
+            let query = object
+                .get("query")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            let material_count = object
+                .get("localMaterialCount")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0);
+            Some(format!(
+                "query_hash={}, local_material_count={material_count}",
+                audit_hash(query)
+            ))
+        }
         _ => Some(json_shape_summary(arguments)),
     }
 }
@@ -174,6 +226,11 @@ fn sanitize_result(
                 .unwrap_or(false)
         )),
         "replace_selection" | "insert_text_at_cursor" => Some("ok".into()),
+        "web_taint_witness" => result
+            .get("verdict")
+            .and_then(|value| value.as_str())
+            .filter(|value| matches!(*value, "detected" | "confirmed_absent"))
+            .map(|value| format!("taint={value}")),
         _ => Some(json_shape_summary(result)),
     }
 }

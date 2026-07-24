@@ -65,11 +65,9 @@ describe("AiMessageBubble inline display mentions", () => {
     expect(globalsCss).toContain(
       ".ai-message-body.iris-markdown-content .ai-display-mention",
     );
-    expect(globalsCss).toContain(
-      ".ai-message-bubble-user .ai-display-mention",
-    );
+    expect(globalsCss).toContain(".ai-message-bubble-user .ai-display-mention");
     expect(proseCss).toContain(
-      ".ai-message-body.iris-markdown-content[data-prose-surface=\"conversation\"]",
+      '.ai-message-body.iris-markdown-content[data-prose-surface="conversation"]',
     );
     expect(proseCss).toMatch(
       /\.ai-message-body\.iris-markdown-content\[data-prose-surface="conversation"\]\s*\n\s*\.ai-display-mention/,

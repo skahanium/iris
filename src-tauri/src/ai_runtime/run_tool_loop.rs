@@ -20,6 +20,7 @@ use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, RunEventPayload, RunEventType, SafeRunErrorCode, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::RunEventSink;
+use crate::ai_runtime::tool_audit::record_web_query_taint_witness;
 use crate::ai_runtime::tool_catalog::catalog_find;
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
 use crate::ai_runtime::tool_execution_pipeline::{
@@ -165,6 +166,16 @@ impl<'a> NormalRunToolExecutor<'a> {
             .and_then(serde_json::Value::as_str)
             .filter(|query| !query.trim().is_empty())
             .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
+        record_web_query_taint_witness(
+            &self.state.db,
+            &self.accepted.run_id,
+            u32::try_from(state_version).unwrap_or(u32::MAX),
+            query,
+            self.context
+                .materials
+                .iter()
+                .map(|material| material.content.clone()),
+        )?;
         let urls = args
             .get("urls")
             .and_then(serde_json::Value::as_array)
