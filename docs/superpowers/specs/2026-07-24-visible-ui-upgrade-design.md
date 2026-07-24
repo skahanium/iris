@@ -6,16 +6,16 @@
 
 ## Locked decisions
 
-| 决策 | 选择 |
-|------|------|
-| 感知重心 | 写作画布为主，壳层配套 sharpen |
+| 决策           | 选择                                                                           |
+| -------------- | ------------------------------------------------------------------------------ |
+| 感知重心       | 写作画布为主，壳层配套 sharpen                                                 |
 | 肯定性主操作色 | 知识绿 `--brand`（新建、发送等）；灰蓝 `--primary`/`--ring` 仅外链与通用 focus |
-| Agent 空对话 | 轻修顶栏密度、发送钮、边框；不加建议问题 chips |
-| 对话气泡 | 轻分层：助手几乎无底；用户极浅 brand tint；过程区脚注感 |
-| Home | 取消独立欢迎工作台；冷启动自动打开最近/上次笔记 |
-| 品牌轨 | 纯身份标识，取消点击与 Home/`--active` 态 |
-| 关到零 Tab | 主区轻空态 +「新建笔记」，**不**自动打开；可有「打开最近」弱链 |
-| 交付切段 | 按表面 A：Home → Agent → 正文 → 壳层 |
+| Agent 空对话   | 轻修顶栏密度、发送钮、边框；不加建议问题 chips                                 |
+| 对话气泡       | 轻分层：助手几乎无底；用户极浅 brand tint；过程区脚注感                        |
+| Home           | 取消独立欢迎工作台；冷启动自动打开最近/上次笔记                                |
+| 品牌轨         | 纯身份标识，取消点击与 Home/`--active` 态                                      |
+| 关到零 Tab     | 主区轻空态 +「新建笔记」，**不**自动打开；可有「打开最近」弱链                 |
+| 交付切段       | 按表面 A：Home → Agent → 正文 → 壳层                                           |
 
 过程折叠摘要产品文案以现有常量为准：`答复完毕`（`ANSWER_COMPLETE_PROCESS_LABEL`），不另造「回答完毕」分叉。
 
@@ -32,12 +32,12 @@
 
 ### Behavior
 
-| 场景 | 行为 |
-|------|------|
-| 冷启动 / 选库完成 | 有最近或上次会话笔记 → 自动打开；库空 → **VaultEmpty** |
-| 关掉最后一个 Tab | **不**自动打开 → **WorkspaceEmpty** |
-| 点击 Iris 品牌 | 无操作；不可作按钮；去掉 `isHomeActive` / `iris-brand-rail--active` |
-| 打开失败 / 超时 | 落到 WorkspaceEmpty + 可读错误；不再 `setHomeActive(true)` 回欢迎工作台 |
+| 场景              | 行为                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| 冷启动 / 选库完成 | 有最近或上次会话笔记 → 自动打开；库空 → **VaultEmpty**                  |
+| 关掉最后一个 Tab  | **不**自动打开 → **WorkspaceEmpty**                                     |
+| 点击 Iris 品牌    | 无操作；不可作按钮；去掉 `isHomeActive` / `iris-brand-rail--active`     |
+| 打开失败 / 超时   | 落到 WorkspaceEmpty + 可读错误；不再 `setHomeActive(true)` 回欢迎工作台 |
 
 ### Empty surfaces（替代 WelcomeEmpty 工作台）
 
@@ -113,20 +113,20 @@ Agent 侧栏在空主区时保持打开策略不变。
 
 ## Verification
 
-| 段 | 必须证明 |
-|----|----------|
-| 1 | 无欢迎工作台；冷启动打开最近；零 Tab 不自动打开；品牌轨不可点；库空仅 VaultEmpty |
-| 2 | 气泡轻分层可辨；发送为 brand；完成后折叠摘要为「答复完毕」；历史轮次同理 |
-| 3 | measure/justify/overlay opacity 合同测试仍绿；light code/callout 对比提升有断言或清单 |
-| 4 | chrome 边框/字号抽样一致；Rail/Outline brand 激活不破坏 ghost 几何 |
+| 段  | 必须证明                                                                              |
+| --- | ------------------------------------------------------------------------------------- |
+| 1   | 无欢迎工作台；冷启动打开最近；零 Tab 不自动打开；品牌轨不可点；库空仅 VaultEmpty      |
+| 2   | 气泡轻分层可辨；发送为 brand；完成后折叠摘要为「答复完毕」；历史轮次同理              |
+| 3   | measure/justify/overlay opacity 合同测试仍绿；light code/callout 对比提升有断言或清单 |
+| 4   | chrome 边框/字号抽样一致；Rail/Outline brand 激活不破坏 ghost 几何                    |
 
 前端质量门：相关 vitest + `npm run lint` + `typecheck` + `format:check`（涉及面合并前按 AGENTS.md）。
 
 ## Delivery order
 
-1. Segment 1 Home  
-2. Segment 2 Agent  
-3. Segment 3 Prose  
-4. Segment 4 Chrome  
+1. Segment 1 Home
+2. Segment 2 Agent
+3. Segment 3 Prose
+4. Segment 4 Chrome
 
 每段独立可截图验收后再进入下一段。

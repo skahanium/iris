@@ -81,7 +81,7 @@ describe("App shell refactor contract", () => {
     expect(component).toContain("TipTapEditor");
     expect(component).toContain("EditorOutline");
     expect(component).toContain("EditorFindReplaceBar");
-    expect(component).toContain("WelcomeEmpty");
+    expect(component).toContain("WorkspaceEmpty");
     expect(app).toContain("<AppEditorWorkspace");
     expect(app).not.toContain("<TipTapEditor");
   });

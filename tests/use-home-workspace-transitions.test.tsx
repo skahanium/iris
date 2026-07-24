@@ -84,7 +84,9 @@ describe("useHomeWorkspaceTransitions", () => {
     const setWorkspaceEmpty = vi.fn();
 
     await act(async () => {
-      root.render(createElement(Harness, { apiRef, openNote, setWorkspaceEmpty }));
+      root.render(
+        createElement(Harness, { apiRef, openNote, setWorkspaceEmpty }),
+      );
     });
 
     let openPromise!: Promise<void>;
@@ -124,7 +126,9 @@ describe("useHomeWorkspaceTransitions", () => {
     const setWorkspaceEmpty = vi.fn();
 
     await act(async () => {
-      root.render(createElement(Harness, { apiRef, openNote, setWorkspaceEmpty }));
+      root.render(
+        createElement(Harness, { apiRef, openNote, setWorkspaceEmpty }),
+      );
     });
 
     await act(async () => {

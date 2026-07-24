@@ -8,7 +8,8 @@ import { EditorOutline } from "@/components/editor/EditorOutline";
 import { MediaWorkspaceView } from "@/components/layout/MediaWorkspaceView";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
+import { WorkspaceEmpty } from "@/components/layout/WorkspaceEmpty";
+import { resolveStartupNote } from "@/lib/resolve-startup-note";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
@@ -223,13 +224,9 @@ export function AppEditorWorkspace({
   isMutationBlocked = () => false,
   persistenceBarrierActive = false,
   onOutlineOpenChange,
-  onOpenAiManagement,
-  onOpenQuickOpen,
-  onOpenSearch,
   openNoteLeavingHome,
   onPrepareNote,
   onPrepareNotePath,
-  onBeforeFileDelete,
   outlineOpen,
   pendingOpen,
   pendingNoteOpen,
@@ -245,12 +242,30 @@ export function AppEditorWorkspace({
   openNotePaths = activePath ? [activePath] : [],
   zen,
 }: AppEditorWorkspaceProps) {
-  const { recentNotes, refreshRecent } = useHomeRecentNotes({
+  const { catalogPaths, recentNotes, vaultHasNotes } = useHomeRecentNotes({
     enabled: workspaceEmpty,
     onPrepare: onPrepareNote,
     vaultIndexEpoch,
     vaultPath,
   });
+
+  const handleOpenRecentFromEmpty = useCallback(() => {
+    const candidate = resolveStartupNote({
+      activePath: null,
+      openNotePaths,
+      recentPaths: catalogPaths,
+    });
+    if (!candidate) {
+      return;
+    }
+    const titleHint = recentNotes.find(
+      (file) => file.path === candidate.path,
+    )?.title;
+    void openNoteLeavingHome(candidate.path, titleHint, {
+      priority: "foreground",
+      source: "welcome",
+    });
+  }, [catalogPaths, openNoteLeavingHome, openNotePaths, recentNotes]);
 
   const effectiveNotePath = pendingNoteOpen?.path ?? activePath;
   const effectiveBodyMarkdown =
@@ -936,25 +951,12 @@ export function AppEditorWorkspace({
       ) : currentEditorSurface || pendingOpenLoading ? (
         renderEditorStack()
       ) : (
-        <>
-          <WelcomeEmpty
-            onBeforeFileDelete={onBeforeFileDelete}
-            onOpen={(path, titleHint, source) =>
-              openNoteLeavingHome(path, titleHint, {
-                priority: "foreground",
-                source,
-              })
-            }
-            onNew={handleNewNoteLeavingHome}
-            onQuickOpen={onOpenQuickOpen}
-            onSearch={onOpenSearch}
-            onOpenAiManagement={onOpenAiManagement}
-            onPrepare={(file, source) => onPrepareNote?.(file, source)}
-            onRefreshRecent={refreshRecent}
-            pendingOpen={pendingOpen}
-            recentNotes={recentNotes}
-          />
-        </>
+        <WorkspaceEmpty
+          mode={vaultHasNotes ? "workspace" : "vault"}
+          onNew={handleNewNoteLeavingHome}
+          onOpenRecent={vaultHasNotes ? handleOpenRecentFromEmpty : undefined}
+          errorMessage={pendingOpen?.error ?? null}
+        />
       )}
       <IrisContextMenu
         open={editorContextMenu.menu.open}

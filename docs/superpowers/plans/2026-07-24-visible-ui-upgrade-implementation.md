@@ -22,17 +22,17 @@
 
 ## File map（锁定拆分）
 
-| 单元 | 路径 | 职责 |
-|------|------|------|
-| Brand CTA | `src/components/ui/button.tsx` | 唯一 `brand` variant |
-| 空主面 UI | `src/components/layout/WorkspaceEmpty.tsx`（新建；取代 WelcomeEmpty） | VaultEmpty / WorkspaceEmpty |
-| 状态机 | `useHomeWorkspaceTransitions.ts` 等 | `showHome`→`enterWorkspaceEmpty`；布尔语义澄清 |
-| 冷启动打开 | `usePreparedWorkspaceTransitions.ts` + 小纯函数 | snapshot/recent 自动打开 |
-| 过程真相 | `useAssistantRunTranscript.ts` + presentation/process | terminal 必含「答复完毕」 |
-| 气泡/Composer | `globals.css` + `ai-composer.tsx` + `AiMessageBubble.tsx` | 轻分层与发送绿 |
-| 正文 | `markdown-prose.css` + light `--editor-code-*` | 节奏与对比 |
-| 壳层 | StatusBar / TitleBar / Overlay 边框字号 | token 收敛 |
-| 文档 | design-system、ROADMAP、rail checklist、E2E 契约 | 与实现同步 |
+| 单元          | 路径                                                                  | 职责                                           |
+| ------------- | --------------------------------------------------------------------- | ---------------------------------------------- |
+| Brand CTA     | `src/components/ui/button.tsx`                                        | 唯一 `brand` variant                           |
+| 空主面 UI     | `src/components/layout/WorkspaceEmpty.tsx`（新建；取代 WelcomeEmpty） | VaultEmpty / WorkspaceEmpty                    |
+| 状态机        | `useHomeWorkspaceTransitions.ts` 等                                   | `showHome`→`enterWorkspaceEmpty`；布尔语义澄清 |
+| 冷启动打开    | `usePreparedWorkspaceTransitions.ts` + 小纯函数                       | snapshot/recent 自动打开                       |
+| 过程真相      | `useAssistantRunTranscript.ts` + presentation/process                 | terminal 必含「答复完毕」                      |
+| 气泡/Composer | `globals.css` + `ai-composer.tsx` + `AiMessageBubble.tsx`             | 轻分层与发送绿                                 |
+| 正文          | `markdown-prose.css` + light `--editor-code-*`                        | 节奏与对比                                     |
+| 壳层          | StatusBar / TitleBar / Overlay 边框字号                               | token 收敛                                     |
+| 文档          | design-system、ROADMAP、rail checklist、E2E 契约                      | 与实现同步                                     |
 
 ---
 
@@ -41,10 +41,12 @@
 ### Task 1: `Button` 增加 `brand` variant（全计划 CTA 地基）
 
 **Files:**
+
 - Modify: `src/components/ui/button.tsx`
 - Test: `tests/button-brand-variant.test.ts`（新建）
 
 **Interfaces:**
+
 - Produces: `buttonVariants` 增加 `brand`，绑定 `--brand` / `--brand-foreground`
 - Consumes: 无
 
@@ -102,11 +104,13 @@ EOF
 ### Task 2: `WorkspaceEmpty` 取代欢迎工作台 UI
 
 **Files:**
+
 - Create: `src/components/layout/WorkspaceEmpty.tsx`
 - Create: `tests/workspace-empty.test.tsx`
 - Delete later (Task 5): `src/components/layout/WelcomeEmpty.tsx`
 
 **Interfaces:**
+
 - Produces:
 
 ```ts
@@ -180,6 +184,7 @@ EOF
 **目标：** 空主面布尔只表示「主区无已提交文档/媒体主面」。品牌轨不可点。`showHome` 重命名为 `enterWorkspaceEmpty`。本 Task **一次性**将 `homeActive`/`setHomeActive` 重命名为 `workspaceEmpty`/`setWorkspaceEmpty`（约 11–14 文件），禁止半改留下双名。
 
 **Files:**
+
 - Modify: `src/hooks/useHomeWorkspaceTransitions.ts`
 - Modify: `src/hooks/usePreparedWorkspaceTransitions.ts`
 - Modify: `src/hooks/useWorkspaceTabRouting.ts`
@@ -190,13 +195,14 @@ EOF
 - Docs: `docs/design-system.md`, `docs/testing/iris-rail-refresh-manual-checklist.md`
 
 **Interfaces:**
+
 - Produces: `enterWorkspaceEmpty(closedPath?: string | null): void`（清 watchdog、取消 pending open、`setWorkspaceEmpty(true)`）
 - DesktopTitleBar **删除** `onHome` / `isHomeActive`；品牌区静态：
 
 ```tsx
 <div
   data-testid="iris-brand-rail"
-  className="iris-brand-rail flex h-8 min-w-[6.75rem] shrink-0 items-center justify-center gap-2 px-3 text-foreground pointer-events-none select-none"
+  className="iris-brand-rail pointer-events-none flex h-8 min-w-[6.75rem] shrink-0 select-none items-center justify-center gap-2 px-3 text-foreground"
 >
   {/* logo + Iris；无 button role；无 onClick；无 --active */}
 </div>
@@ -237,12 +243,14 @@ EOF
 ### Task 4: 冷启动自动打开（snapshot → recent → vault empty）
 
 **Files:**
+
 - Create: `src/lib/resolve-startup-note.ts`
 - Create: `tests/resolve-startup-note.test.ts`
 - Modify: `src/hooks/usePreparedWorkspaceTransitions.ts`
 - Modify: `tests/use-prepared-workspace-transitions.test.tsx`
 
 **Interfaces:**
+
 - Produces:
 
 ```ts
@@ -260,11 +268,13 @@ export function resolveStartupNote(input: {
 ```
 
 规则：
+
 1. `activePath` 非空且（在 `openNotePaths` 或 `recentPaths`）→ 选它
 2. 否则 `recentPaths[0]`
 3. 否则 `null`（库空 → VaultEmpty）
 
 冷启动 effect（vault 就绪后）：
+
 1. 保留现有 `warmNotePath` warmup
 2. 若已有 tabs / 非 empty → 不抢开
 3. `resolveStartupNote` 有结果 → 走既有 `openNote` 离开空态路径（`source: "startup"`）
@@ -289,6 +299,7 @@ EOF
 ### Task 5: 接线空主面、删除 WelcomeEmpty、修 E2E 契约
 
 **Files:**
+
 - Modify: `src/components/layout/AppEditorWorkspace.tsx`
 - Delete: `src/components/layout/WelcomeEmpty.tsx`
 - Rewrite: `tests/welcome-empty-recent.test.tsx` → 删除或改为空主面接线测
@@ -298,6 +309,7 @@ EOF
 - Modify: `ROADMAP.md`（Segment 1 验收；去欢迎工作台表述）
 
 **Wiring:**
+
 - 无 media 且无 editor surface 且无 pending loading → `<WorkspaceEmpty mode={vaultHasNotes ? "workspace" : "vault"} ... />`
 - `vaultHasNotes`：`fileList().length > 0`（或等价 catalog），禁止用「是否有 recent 缓存」猜测
 - `onOpenRecent`：仅 workspace；打开与 `resolveStartupNote` 同序的第一篇
@@ -339,6 +351,7 @@ EOF
 **根因：** 折叠 UI 读 `events.at(-1).label`；`useAssistantRunTranscript` 在 `presentationOwnsMessage` 时冻结 `current.processItems`。若缺 `answer_complete` / durable `completed`，末项停在「正在生成答复」。禁止 UI 字符串 hack。
 
 **Files:**
+
 - Create: `src/lib/ensure-answer-complete-process.ts`
 - Create: `tests/ensure-answer-complete-process.test.ts`
 - Modify: `src/components/ai/hooks/useAssistantRunTranscript.ts`
@@ -347,6 +360,7 @@ EOF
 - Create or modify: `tests/assistant-process-summary.test.tsx`（折叠摘要可见「答复完毕」）
 
 **Interfaces:**
+
 - Produces: `ensureTerminalAnswerComplete(items, runState)` — 仅当 `runState === "completed"` 且列表尚无 `ANSWER_COMPLETE_PROCESS_ID` / `ANSWER_COMPLETE_PROCESS_LABEL` 时追加完成项；`failed`/`cancelled` 不追加「答复完毕」
 
 ```ts
@@ -356,7 +370,9 @@ import {
 } from "@/lib/assistant-presentation";
 
 export function ensureTerminalAnswerComplete(
-  items: readonly { id: string; label: string; kind: string; status: string }[] | undefined,
+  items:
+    | readonly { id: string; label: string; kind: string; status: string }[]
+    | undefined,
   runState: string | null | undefined,
 ): typeof items extends undefined ? [] : NonNullable<typeof items> {
   const list = items ? [...items] : [];
@@ -411,6 +427,7 @@ EOF
 ### Task 7: 气泡轻分层 + Composer 发送绿 + Header 密度
 
 **Files:**
+
 - Modify: `src/styles/globals.css`
 - Modify: `src/components/ai/AiMessageBubble.tsx`（过程区脚注感 class）
 - Modify: `src/components/ui/ai-composer.tsx`（发送 `variant="brand"` `size="icon"`）
@@ -419,6 +436,7 @@ EOF
 - Modify: `tests/design-tokens.test.ts`（若改 `--ai-user-bg`）
 
 **视觉锁定：**
+
 - 助手：近透明底；弱边或仅分隔；可 `rounded-lg`
 - 用户：`--ai-user-bg` 改为极浅 brand tint（例 light `150 12% 94%`，dark `150 10% 16%`）
 - 过程区：去厚底；caption 字号；弱上边线
@@ -451,6 +469,7 @@ EOF
 ### Task 8: 标题阶梯、块距、亮色 code/callout
 
 **Files:**
+
 - Modify: `src/styles/markdown-prose.css`
 - Modify: `src/styles/globals.css`（light `--editor-code-*`）
 - Modify: `tests/prose-tokens.test.ts`
@@ -502,6 +521,7 @@ EOF
 ### Task 9: 边框/字号收敛 + 文档收官
 
 **Files:**
+
 - Modify: `src/components/layout/DesktopTitleBar.tsx`
 - Modify: StatusBar 组件（仓库内 StatusBar 实现文件）
 - Modify: Overlay 顶栏（`IrisOverlay` / task overlay header）
@@ -549,10 +569,10 @@ EOF
 
 ## Spec coverage
 
-| Spec 段 | Task |
-|---------|------|
-| Segment 1 Home / 品牌轨 / 空态 | 2–5 |
-| Segment 2 气泡 / Composer / 答复完毕 | 6–7 |
-| Segment 3 正文 | 8 |
-| Segment 4 壳层 + 文档 | 3（部分）、5、9 |
-| Brand CTA 地基 | 1、2、5、7 |
+| Spec 段                              | Task            |
+| ------------------------------------ | --------------- |
+| Segment 1 Home / 品牌轨 / 空态       | 2–5             |
+| Segment 2 气泡 / Composer / 答复完毕 | 6–7             |
+| Segment 3 正文                       | 8               |
+| Segment 4 壳层 + 文档                | 3（部分）、5、9 |
+| Brand CTA 地基                       | 1、2、5、7      |

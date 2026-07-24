@@ -12,7 +12,9 @@ interface UseHomeRecentNotesOptions {
 }
 
 interface UseHomeRecentNotesResult {
+  catalogPaths: readonly string[];
   recentNotes: readonly FileListItem[];
+  vaultHasNotes: boolean;
   refreshRecent: () => Promise<void>;
 }
 
@@ -32,6 +34,7 @@ export function useHomeRecentNotes({
   vaultIndexEpoch,
   vaultPath,
 }: UseHomeRecentNotesOptions): UseHomeRecentNotesResult {
+  const [catalogFiles, setCatalogFiles] = useState<FileListItem[]>([]);
   const [recentNotes, setRecentNotes] = useState<FileListItem[]>([]);
   const requestSequenceRef = useRef(0);
   const vaultPathRef = useRef(vaultPath);
@@ -44,6 +47,7 @@ export function useHomeRecentNotes({
     requestSequenceRef.current = requestSequence;
 
     if (!requestVaultPath) {
+      setCatalogFiles([]);
       setRecentNotes([]);
       return;
     }
@@ -56,7 +60,9 @@ export function useHomeRecentNotes({
       ) {
         return;
       }
-      setRecentNotes(dedupeByPath(files).slice(0, 5));
+      const catalog = dedupeByPath(files);
+      setCatalogFiles(catalog);
+      setRecentNotes(catalog.slice(0, 5));
     } catch (error) {
       console.warn("[Home] recent notes refresh failed:", error);
     }
@@ -67,6 +73,7 @@ export function useHomeRecentNotes({
     vaultPathRef.current = vaultPath;
     if (previousVaultPath !== vaultPath) {
       requestSequenceRef.current += 1;
+      setCatalogFiles([]);
       setRecentNotes([]);
       previousVaultPathRef.current = vaultPath;
     }
@@ -82,7 +89,9 @@ export function useHomeRecentNotes({
   }, [enabled, onPrepare, recentNotes]);
 
   return {
+    catalogPaths: catalogFiles.map((file) => file.path),
     recentNotes,
+    vaultHasNotes: catalogFiles.length > 0,
     refreshRecent,
   };
 }

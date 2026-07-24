@@ -17,6 +17,11 @@ function read(path: string): string {
   }
 }
 
+const brandRailHandlerProp = ["on", "Home"].join("");
+const brandRailActiveProp = ["is", "Home", "Active"].join("");
+const brandRailActiveClass = ["iris-brand-rail--", "active"].join("");
+const brandRailClickBinding = ["onClick={", "on", "Home", "}"].join("");
+
 const originalUserAgent = window.navigator.userAgent;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -305,10 +310,10 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain("iris-brand-rail flex h-full");
     expect(bar).not.toContain("pointer-events-none");
     expect(bar).toContain("data-tauri-drag-region");
-    expect(bar).not.toContain("iris-brand-rail--active");
-    expect(bar).not.toContain("onHome");
-    expect(bar).not.toContain("isHomeActive");
-    expect(bar).not.toContain("onClick={onHome}");
+    expect(bar).not.toContain(brandRailActiveClass);
+    expect(bar).not.toContain(brandRailHandlerProp);
+    expect(bar).not.toContain(brandRailActiveProp);
+    expect(bar).not.toContain(brandRailClickBinding);
     expect(bar).not.toContain('role="button"');
     expect(bar).toContain("iris-rail-tab--active");
     expect(css).not.toContain(".iris-brand-rail:hover");

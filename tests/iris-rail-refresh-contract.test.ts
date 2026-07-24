@@ -7,6 +7,11 @@ function read(path: string): string {
 }
 
 const removedVendor = ["mini", "max"].join("");
+const legacyWelcomeComponent = ["Welcome", "Empty"].join("");
+const brandRailHandlerProp = ["on", "Home"].join("");
+const brandRailActiveProp = ["is", "Home", "Active"].join("");
+const brandRailActiveClass = ["iris-brand-rail--", "active"].join("");
+const brandRailClickBinding = ["onClick={", "on", "Home", "}"].join("");
 
 describe("Iris Rail complete interface contracts", () => {
   it("defines semantic tokens for the full Iris Rail interface system", () => {
@@ -34,7 +39,8 @@ describe("Iris Rail complete interface contracts", () => {
     const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
     const css = read("src/styles/globals.css");
     const app = read("src/App.tsx");
-    const welcome = read("src/components/layout/WelcomeEmpty.tsx");
+    const workspaceEmpty = read("src/components/layout/WorkspaceEmpty.tsx");
+    const appEditor = read("src/components/layout/AppEditorWorkspace.tsx");
     const platform = read("src/lib/platform-chrome.ts");
     const macos = read("src-tauri/tauri.macos.conf.json");
 
@@ -42,10 +48,10 @@ describe("Iris Rail complete interface contracts", () => {
     expect(titleBar).toContain('data-testid="rail-segment-tab"');
     expect(titleBar).not.toContain('data-testid="home-segment"');
     expect(titleBar).not.toContain("iris-home-segment");
-    expect(titleBar).not.toContain("onHome");
-    expect(titleBar).not.toContain("isHomeActive");
-    expect(titleBar).not.toContain("iris-brand-rail--active");
-    expect(titleBar).not.toContain("onClick={onHome}");
+    expect(titleBar).not.toContain(brandRailHandlerProp);
+    expect(titleBar).not.toContain(brandRailActiveProp);
+    expect(titleBar).not.toContain(brandRailActiveClass);
+    expect(titleBar).not.toContain(brandRailClickBinding);
     expect(titleBar).not.toContain("pointer-events-none");
     expect(titleBar).toContain("data-tauri-drag-region");
     expect(titleBar).toContain("iris-brand-rail flex h-8");
@@ -53,20 +59,13 @@ describe("Iris Rail complete interface contracts", () => {
     expect(titleBar).not.toContain("iris-brand-rail flex h-full");
     expect(css).not.toContain(".iris-brand-rail:hover");
     expect(app).toContain("workspaceEmpty");
-    expect(welcome).toContain('data-testid="home-workbench"');
-    expect(welcome).toContain('data-testid="home-quick-actions"');
-    expect(welcome).toContain('className="grid gap-5"');
-    expect(welcome).toContain("grid grid-cols-1 gap-5");
-    expect(welcome).not.toContain('data-testid="home-status-summary"');
-    expect(welcome).not.toContain("useConnectivityStatus");
-    expect(welcome).not.toContain("Vault 已连接");
-    expect(welcome).not.toContain("篇已索引");
-    expect(welcome).not.toContain("LLM 可用");
-    expect(welcome.toLowerCase()).not.toContain(`${removedVendor} 检索`);
-    expect(welcome).not.toContain("shadow-floating");
-    expect(welcome).not.toContain("max-w-md");
-    expect(welcome).not.toContain("本地优先的知识工作台");
-    expect(welcome).not.toContain("<IrisMark");
+    expect(workspaceEmpty).toContain('data-testid="workspace-empty"');
+    expect(workspaceEmpty).toContain('data-testid="workspace-empty-new"');
+    expect(workspaceEmpty).toContain(
+      'data-testid="workspace-empty-open-recent"',
+    );
+    expect(appEditor).toContain("WorkspaceEmpty");
+    expect(appEditor).not.toContain(legacyWelcomeComponent);
     expect(platform).toContain("showCustomWindowControls");
     expect(platform).toContain("isWindowsDesktopChrome");
     expect(macos).toContain('"decorations": true');

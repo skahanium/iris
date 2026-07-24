@@ -73,11 +73,15 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
 
   it("第二次真实启动后经应用 UI 打开笔记并断言正文", () => {
     const runner = read(runnerPath);
-    const welcome = read("src/components/layout/WelcomeEmpty.tsx");
+    const workspaceEmpty = read("src/components/layout/WorkspaceEmpty.tsx");
 
-    expect(welcome).toContain('data-testid="home-recent-note"');
+    expect(workspaceEmpty).toContain(
+      'data-testid="workspace-empty-open-recent"',
+    );
     expect(runner).toContain("openPersistedNoteInApplication");
-    expect(runner).toContain('data-testid="home-recent-note"');
+    expect(runner).toContain('data-testid="workspace-empty"');
+    const legacyHomeRecent = ["home-", "recent-note"].join("");
+    expect(runner).not.toContain(`data-testid="${legacyHomeRecent}"`);
     expect(runner).toContain("assertOpenedNote");
     expect(runner).toContain("reopened_editor_body_mismatch");
   });

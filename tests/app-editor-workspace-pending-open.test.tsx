@@ -16,7 +16,12 @@ vi.mock("@/lib/ipc", () => ({
 }));
 
 vi.mock("@/hooks/useHomeRecentNotes", () => ({
-  useHomeRecentNotes: () => ({ recentNotes: [], refreshRecent: vi.fn() }),
+  useHomeRecentNotes: () => ({
+    catalogPaths: [],
+    recentNotes: [],
+    vaultHasNotes: false,
+    refreshRecent: vi.fn(),
+  }),
 }));
 
 vi.mock("@/components/editor/TipTapEditor", () => ({
@@ -56,8 +61,8 @@ vi.mock("@/components/editor/EditorFindReplaceBar", () => ({
   EditorFindReplaceBar: () => <div data-testid="find-replace" />,
 }));
 
-vi.mock("@/components/layout/WelcomeEmpty", () => ({
-  WelcomeEmpty: () => <div data-testid="home-workbench" />,
+vi.mock("@/components/layout/WorkspaceEmpty", () => ({
+  WorkspaceEmpty: () => <div data-testid="workspace-empty" />,
 }));
 
 vi.mock("@/components/layout/MediaWorkspaceView", () => ({
@@ -174,7 +179,9 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeNull();
-    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="workspace-empty"]'),
+    ).toBeNull();
 
     act(() => {
       vi.advanceTimersByTime(DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs);
@@ -183,7 +190,9 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeTruthy();
-    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="workspace-empty"]'),
+    ).toBeNull();
     expect(document.querySelector("[data-opening]")).toBeNull();
   });
 
@@ -215,7 +224,9 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
       );
     });
 
-    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="workspace-empty"]'),
+    ).toBeNull();
     expect(
       document
         .querySelector('[data-path="old.md"]')
@@ -255,7 +266,7 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
       document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeNull();
     expect(
-      document.querySelector('[data-testid="home-workbench"]'),
+      document.querySelector('[data-testid="workspace-empty"]'),
     ).toBeTruthy();
   });
 
@@ -345,7 +356,9 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
     expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7, {
       skipContentTick: true,
     });
-    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="workspace-empty"]'),
+    ).toBeNull();
   });
 
   it("shows loading instead of readable markdown before the first editor frame", () => {

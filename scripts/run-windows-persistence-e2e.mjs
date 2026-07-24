@@ -413,13 +413,40 @@ function normalizedEditorText(value) {
   return String(value).replaceAll("\r\n", "\n").trim();
 }
 
-async function openPersistedNoteInApplication(sessionId) {
-  await waitForElement(sessionId, '[data-testid="home-workbench"]');
-  const recentNote = await waitForElement(
-    sessionId,
-    '[data-testid="home-recent-note"]',
+async function waitForEditorOrWorkspaceEmpty(sessionId) {
+  await waitUntil(
+    () =>
+      executeSync(
+        sessionId,
+        `
+          return Boolean(
+            document.querySelector('[data-editor-visibility="visible"] [contenteditable="true"]')
+            || document.querySelector('[data-testid="workspace-empty"]'),
+          );
+        `,
+      ),
+    "startup_surface_missing",
   );
-  await click(sessionId, recentNote);
+}
+
+async function openPersistedNoteInApplication(sessionId) {
+  await waitForEditorOrWorkspaceEmpty(sessionId);
+  const hasEditor = await executeSync(
+    sessionId,
+    `
+      return Boolean(
+        document.querySelector('[data-editor-visibility="visible"] [contenteditable="true"]'),
+      );
+    `,
+  );
+  if (hasEditor) {
+    return;
+  }
+  const openRecent = await waitForElement(
+    sessionId,
+    '[data-testid="workspace-empty-open-recent"]',
+  );
+  await click(sessionId, openRecent);
 }
 
 async function assertOpenedNote(sessionId) {
@@ -447,7 +474,7 @@ async function assertOpenedNote(sessionId) {
 
 async function runScenario(sessionId, vaultPath) {
   debugStep("wait-home");
-  await waitForElement(sessionId, '[data-testid="home-workbench"]');
+  await waitForElement(sessionId, '[data-testid="workspace-empty"]');
 
   debugStep("new-note");
   const newNote = await waitForElement(

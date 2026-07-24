@@ -81,8 +81,17 @@ vi.mock("@/components/editor/EditorFindReplaceBar", () => ({
   EditorFindReplaceBar: () => <div data-testid="find-replace" />,
 }));
 
-vi.mock("@/components/layout/WelcomeEmpty", () => ({
-  WelcomeEmpty: () => <div data-testid="home-workbench" />,
+vi.mock("@/hooks/useHomeRecentNotes", () => ({
+  useHomeRecentNotes: () => ({
+    catalogPaths: [],
+    recentNotes: [],
+    vaultHasNotes: false,
+    refreshRecent: vi.fn(),
+  }),
+}));
+
+vi.mock("@/components/layout/WorkspaceEmpty", () => ({
+  WorkspaceEmpty: () => <div data-testid="workspace-empty" />,
 }));
 
 vi.mock("@/components/layout/MediaWorkspaceView", () => ({

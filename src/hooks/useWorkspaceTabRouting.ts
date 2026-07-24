@@ -107,7 +107,14 @@ export function useWorkspaceTabRouting<OpenOptions>({
         })
         .catch(() => undefined);
     },
-    [activateMedia, closeMedia, closeTab, mediaTabs, setWorkspaceEmpty, enterWorkspaceEmpty],
+    [
+      activateMedia,
+      closeMedia,
+      closeTab,
+      mediaTabs,
+      setWorkspaceEmpty,
+      enterWorkspaceEmpty,
+    ],
   );
 
   const workspaceTabs: TabItem[] = useMemo(

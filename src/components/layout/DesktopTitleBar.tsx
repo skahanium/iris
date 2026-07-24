@@ -283,7 +283,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
             <div
               data-testid="iris-brand-rail"
               data-tauri-drag-region
-              className="iris-brand-rail flex h-8 min-w-[6.75rem] shrink-0 items-center justify-center gap-2 px-3 text-foreground select-none"
+              className="iris-brand-rail flex h-8 min-w-[6.75rem] shrink-0 select-none items-center justify-center gap-2 px-3 text-foreground"
             >
               <IrisMark size={18} />
               <span className="text-sm font-semibold">Iris</span>
