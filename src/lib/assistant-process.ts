@@ -11,6 +11,21 @@ export interface AssistantProcessItem {
   durationMs?: number;
 }
 
+const INTERNAL_RUNTIME_TOOLS = new Set([
+  "system_time_now",
+  "app_context_read",
+  "capabilities_read",
+]);
+
+/**
+ * Runtime-context reads are for the model, not the user-facing process
+ * timeline. Capability may arrive as snake_case or dotted MCP-style names.
+ */
+export function isInternalRuntimeTool(capability: string): boolean {
+  const normalized = capability.trim().replaceAll(".", "_");
+  return INTERNAL_RUNTIME_TOOLS.has(normalized);
+}
+
 /**
  * Project persisted or live Run events into user-visible process items.
  * Final answer deltas, tool arguments, raw outputs, and provider internals are
@@ -48,6 +63,9 @@ export function projectAssistantProcessEvents(
         });
         break;
       case "tool_started": {
+        if (isInternalRuntimeTool(event.payload.capability)) {
+          break;
+        }
         const id = `tool:${event.payload.toolCallId}`;
         toolIndexes.set(event.payload.toolCallId, items.length);
         items.push({
@@ -60,6 +78,9 @@ export function projectAssistantProcessEvents(
         break;
       }
       case "tool_completed": {
+        if (isInternalRuntimeTool(event.payload.capability)) {
+          break;
+        }
         const index = toolIndexes.get(event.payload.toolCallId);
         const current = index === undefined ? undefined : items[index];
         if (index !== undefined && current) {

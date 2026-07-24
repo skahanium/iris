@@ -8,7 +8,10 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import type { ChatLine } from "../AiMessageList";
-import type { AssistantProcessItem } from "@/lib/assistant-process";
+import {
+  isInternalRuntimeTool,
+  type AssistantProcessItem,
+} from "@/lib/assistant-process";
 import type {
   AssistantPresentationItem,
   AssistantPresentationState,
@@ -41,7 +44,11 @@ export function useAssistantPresentationPlayback({
       stoppedRunsRef.current.delete(presentation.runId);
     }
     const content = sanitizeAssistantVisibleText(presentation.answer);
-    const processItems = presentation.processItems.map(toProcessItem);
+    const processItems = presentation.processItems
+      .filter(
+        (item) => item.kind !== "tool" || !isInternalRuntimeTool(item.label),
+      )
+      .map(toProcessItem);
     const presentationStreaming = !presentation.answerComplete;
     setMessages((previous) => {
       let changed = false;

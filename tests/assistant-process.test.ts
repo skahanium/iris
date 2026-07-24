@@ -206,4 +206,73 @@ describe("Assistant Run 处理过程投影", () => {
       },
     ]);
   });
+
+  it("隐藏运行时只读内部工具，但仍合并展示联网搜索", () => {
+    const items = projectAssistantProcessEvents([
+      event(1, "tool_started", {
+        kind: "tool_started",
+        capability: "system_time_now",
+        toolCallId: "tool-time",
+      }),
+      event(2, "tool_completed", {
+        kind: "tool_completed",
+        capability: "system_time_now",
+        toolCallId: "tool-time",
+        summary: "工具调用完成",
+        durationMs: 0,
+      } as Extract<AssistantRunEvent["payload"], { kind: "tool_completed" }>),
+      event(3, "tool_started", {
+        kind: "tool_started",
+        capability: "app_context_read",
+        toolCallId: "tool-app",
+      }),
+      event(4, "tool_completed", {
+        kind: "tool_completed",
+        capability: "app_context_read",
+        toolCallId: "tool-app",
+        summary: "工具调用完成",
+        durationMs: 1,
+      } as Extract<AssistantRunEvent["payload"], { kind: "tool_completed" }>),
+      event(5, "tool_started", {
+        kind: "tool_started",
+        capability: "capabilities_read",
+        toolCallId: "tool-caps",
+      }),
+      event(6, "tool_completed", {
+        kind: "tool_completed",
+        capability: "capabilities_read",
+        toolCallId: "tool-caps",
+        summary: "工具调用完成",
+        durationMs: 1,
+      } as Extract<AssistantRunEvent["payload"], { kind: "tool_completed" }>),
+      event(7, "tool_started", {
+        kind: "tool_started",
+        capability: "web.search",
+        toolCallId: "tool-web",
+      }),
+      event(
+        8,
+        "tool_completed",
+        {
+          kind: "tool_completed",
+          capability: "web.search",
+          toolCallId: "tool-web",
+          summary: "工具调用完成",
+          durationMs: 8000,
+        } as Extract<AssistantRunEvent["payload"], { kind: "tool_completed" }>,
+        "2026-07-22T08:00:08.000Z",
+      ),
+    ]);
+
+    expect(items).toEqual([
+      {
+        id: "tool:tool-web",
+        kind: "tool",
+        label: "联网搜索",
+        status: "completed",
+        createdAt: Date.parse(timestamp),
+        durationMs: 8000,
+      },
+    ]);
+  });
 });
