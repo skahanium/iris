@@ -213,7 +213,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
           ) : null}
           <span className="min-w-0 truncate">{tab.title}</span>
           {isArtifact ? (
-            <span className="ml-1 shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground">
+            <span className="border-subtle ml-1 shrink-0 rounded-sm border px-1 text-micro text-muted-foreground">
               临时
             </span>
           ) : null}
@@ -248,7 +248,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
       role="banner"
       data-testid="desktop-title-bar"
       className={cn(
-        "iris-desktop-titlebar flex h-[var(--titlebar-height)] shrink-0 cursor-default select-none border-b border-border/60 bg-surface-chrome",
+        "iris-desktop-titlebar border-subtle flex h-[var(--titlebar-height)] shrink-0 cursor-default select-none border-b bg-surface-chrome",
         "items-center pl-[var(--titlebar-leading-inset)]",
         isDesktop && "iris-desktop-titlebar--desktop",
         customWindowControls && "relative pr-[var(--window-controls-width)]",

@@ -32,7 +32,7 @@ export function OverlaySearchHeader({
   return (
     <div
       className={cn(
-        "task-overlay-header flex h-12 shrink-0 items-center gap-2 border-b border-border/60 bg-surface-elevated px-3",
+        "task-overlay-header border-subtle flex h-12 shrink-0 items-center gap-2 border-b bg-surface-elevated px-3",
         className,
       )}
     >

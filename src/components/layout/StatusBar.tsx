@@ -129,7 +129,7 @@ export const StatusBar = memo(function StatusBar({
   return (
     <footer
       data-testid="status-bar"
-      className="flex h-8 shrink-0 items-center gap-3 border-t border-border/60 bg-surface-chrome px-3 font-sans text-[11px] tracking-wide text-muted-foreground"
+      className="border-subtle flex h-8 shrink-0 items-center gap-3 border-t bg-surface-chrome px-3 font-sans text-caption tracking-wide text-muted-foreground"
     >
       <span
         data-testid="status-bar-document-title"
@@ -244,7 +244,7 @@ export const StatusBar = memo(function StatusBar({
               type="button"
               data-testid="status-bar-update-available"
               title="查看 Iris 更新"
-              className="iris-focus-soft hover:bg-status-llm-ready/16 inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm border border-status-llm-ready/45 bg-status-llm-ready/10 px-2 text-[11px] text-foreground transition-[background-color,color,transform] duration-base ease-iris-out focus:outline-none active:scale-[0.98]"
+              className="iris-focus-soft hover:bg-status-llm-ready/16 inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm border border-status-llm-ready/45 bg-status-llm-ready/10 px-2 text-caption text-foreground transition-[background-color,color,transform] duration-base ease-iris-out focus:outline-none active:scale-[0.98]"
               onClick={onOpenUpdateCenter}
             >
               <DownloadCloud className="h-3.5 w-3.5" />

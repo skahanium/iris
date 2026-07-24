@@ -100,6 +100,10 @@ Iris Rail 由持久品牌轨、Rail Segments Tab、Outline Rail、AI Conversatio
 
 TaskPlan 体验遵循 Markdown-first：助手对话先形成可读 Markdown 草稿；临时 tab 是高价值产物，用于承载结构化结果。过程 tab 只用于长任务进度，不替代最终笔记；引用显示短摘要、来源和可追溯证据，不展示原始敏感载荷。
 
+### 壳层边框与字号
+
+顶栏、底栏、AI 侧车外层分隔线与 Overlay 顶栏统一使用 Tailwind `border-subtle`（映射 `--border-subtle`），避免在壳层散落 `border-border/60` 等任意透明度。底栏、徽章与次要标注优先 `text-caption`（`--text-caption`）或 `text-micro`（`--text-micro`），不用裸 `text-[11px]`。Rail Tab 激活态与 Outline 当前章节 marker 仅消费 `--brand`（经 `--iris-rail-active` / `--outline-rail-active`），不改变 Outline ghost 几何与留白合同。
+
 ## 验收
 
 ### 文档持久化与嵌入状态

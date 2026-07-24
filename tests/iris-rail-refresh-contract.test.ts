@@ -232,5 +232,38 @@ describe("Iris Rail complete interface contracts", () => {
     expect(checklist).toContain("Outline Ghost Spine 长文");
     expect(checklist).toContain("AI 协作侧车长对话");
     expect(checklist).toContain("任务舱 Overlay");
+    expect(checklist).toContain("壳层边框与字号");
+    expect(checklist).toContain("答复完毕");
+  });
+
+  it("converges chrome shell borders and caption typography", () => {
+    const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
+    const statusBar = read("src/components/layout/StatusBar.tsx");
+    const overlay = read("src/components/ui/iris-overlay.tsx");
+    const overlayChrome = read("src/components/ui/overlay-chrome.tsx");
+    const aiHeader = read("src/components/ai/AssistantPanelHeader.tsx");
+    const aiPanel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const composer = read("src/components/ui/ai-composer.tsx");
+    const css = read("src/styles/globals.css");
+    const design = read("docs/design-system.md");
+
+    for (const source of [
+      titleBar,
+      statusBar,
+      overlay,
+      overlayChrome,
+      aiHeader,
+      aiPanel,
+      composer,
+    ]) {
+      expect(source).not.toContain("border-border/60");
+    }
+    expect(statusBar).toContain("border-subtle");
+    expect(statusBar).toContain("text-caption");
+    expect(statusBar).not.toContain("text-[11px]");
+    expect(titleBar).toContain("border-subtle");
+    expect(design).toContain("壳层边框与字号");
+    expect(css).toContain("--iris-rail-active: var(--brand)");
+    expect(css).toContain("--outline-rail-active: var(--brand)");
   });
 });
