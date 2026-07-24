@@ -5,17 +5,17 @@ export function scopeLabel(scope: string): "global" | "vault" {
 }
 
 export function scopeText(scope: string): string {
-  return scopeLabel(scope) === "vault" ? "Current vault" : "Global";
+  return scopeLabel(scope) === "vault" ? "当前库" : "全局";
 }
 
 export function statusText(skill: SkillListEntryDto): string {
-  if (!skill.enabled) return "Disabled";
+  if (!skill.enabled) return "已禁用";
   if (skill.confirmation_status === "needs_confirmation") {
-    return "Needs confirmation";
+    return "待确认";
   }
-  if (skill.task_active === true) return "Matched";
-  if (skill.activation_ready) return "Ready";
-  return "Prompt-only";
+  if (skill.task_active === true) return "已匹配";
+  if (skill.activation_ready) return "就绪";
+  return "纯提示词";
 }
 
 export function confirmationState(skill: SkillListEntryDto): {
@@ -25,14 +25,14 @@ export function confirmationState(skill: SkillListEntryDto): {
 } {
   if (skill.confirmation_status === "confirmed") {
     return {
-      label: "Confirmed",
-      detail: "Prompt content has been confirmed.",
+      label: "已确认",
+      detail: "提示词内容已确认。",
       needsAttention: false,
     };
   }
   return {
-    label: "Needs confirmation",
-    detail: "Confirm before prompt injection.",
+    label: "待确认",
+    detail: "注入提示词前需先确认。",
     needsAttention: true,
   };
 }
@@ -43,9 +43,8 @@ export function runtimeState(skill: SkillListEntryDto): {
   needsAttention: boolean;
 } {
   return {
-    label:
-      skill.kind === "legacy_prompt_only" ? "legacy prompt" : "prompt-only",
-    detail: skill.activation_ready ? "Ready" : "Waiting for confirmation",
+    label: skill.kind === "legacy_prompt_only" ? "旧版提示词" : "纯提示词",
+    detail: skill.activation_ready ? "就绪" : "等待确认",
     needsAttention: !skill.activation_ready,
   };
 }

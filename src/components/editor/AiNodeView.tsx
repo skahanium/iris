@@ -45,7 +45,7 @@ export function AiNodeView({ editor, node }: NodeViewProps) {
     >
       <div
         className={cn(
-          "overflow-hidden rounded-lg border border-border/60 bg-surface-elevated/90 shadow-sm",
+          "overflow-hidden rounded-lg border border-border/60 bg-surface-elevated/90",
           "border-l-2 border-l-primary/50",
         )}
       >

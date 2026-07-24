@@ -6,39 +6,90 @@
 
 Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先，命令与 AI 是辅助层。避免纸墨/信纸视觉、紫色渐变、聊天主屏化、第三方主题和插件换肤。
 
+气质：**冷灰 N 壳层 + 低饱和知识绿品牌点**。灰蓝仅作 chrome focus/ring；知识交互（wiki、rail 激活、overlay 选中）统一走品牌绿。
+
 ## Token 与实现位置
 
 主题变量在 `src/styles/globals.css`；新增或调整 token 时，先更新本文档、ROADMAP 对应事项和样式源，再修改组件。
 
-| Token 组                                   | 用途                                       |
-| ------------------------------------------ | ------------------------------------------ |
-| `--background`、`--foreground`、`--border` | 基础画布、文字与分隔                       |
-| `--surface-*`                              | Chrome、浮层、输入区与内嵌表面             |
-| `--command-highlight-*`                    | 命令列表焦点与选中态                       |
-| `--ai-*`                                   | AI 消息、输入、流式状态与协作侧栏          |
-| `--knowledge-accent`、`--outline-rail-*`   | 链接、目录、知识图谱与当前章节             |
-| `--iris-rail-*`                            | 品牌轨、Tab rail 与激活/hover 状态         |
-| `--shadow-overlay`、`--shadow-floating`    | 仅用于浮层和悬浮工具；编辑区不使用纸页阴影 |
+### 品牌色层级
 
-动效通常为 150–200ms；`prefers-reduced-motion` 下必须降级。
+| 角色           | Token                                       | 用途                                                     |
+| -------------- | ------------------------------------------- | -------------------------------------------------------- |
+| Brand          | `--brand`（= knowledge 绿系）               | wiki、rail 激活、overlay 选中、tip callout、知识相关强调 |
+| Primary / Ring | `--primary`、`--ring`                       | chrome 焦点环、外链、通用控件 focus；非品牌点缀          |
+| Warning        | `--warning`、`--warning-bg`、`--warning-fg` | 非终态警示、warning callout；禁止业务层裸用 `amber-*`    |
+| Success        | `--success`、`--success-bg`、`--success-fg` | 就绪/成功徽章；禁止业务层裸用 `emerald-*`                |
+| Destructive    | `--destructive`                             | 终态错误与危险操作                                       |
+
+### 表面与边框
+
+| Token 组                                            | 用途                                                   |
+| --------------------------------------------------- | ------------------------------------------------------ |
+| `--background`、`--foreground`、`--panel`、`--card` | 基础画布与面板                                         |
+| `--surface-chrome` / `elevated` / `inset`           | 壳层三级表面                                           |
+| `--border-subtle` / `--border` / `--border-strong`  | 边框强度三级（替代随意 `/40`–`/90`）                   |
+| `--shadow-overlay`、`--shadow-floating`             | 仅浮层与悬浮工具；控件禁止默认 `shadow-sm`/`shadow-md` |
+
+### Rail 与知识
+
+`--brand` 与 `--knowledge-accent` 同值；`--iris-rail-*` 与 `--outline-rail-active` 对齐 brand。Tab / 品牌轨 / Outline 激活态只消费 `rail.*` 或 outline 映射，不另写任意色。
+
+### 状态与 AI
+
+| Token 组                | 用途                                                                                 |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `--status-*`            | 底栏连通性；组件用 `bg-status-*` / `text-status-*`，禁止 `bg-[hsl(var(--status-…))]` |
+| `--command-highlight-*` | 命令列表焦点与选中                                                                   |
+| `--ai-*`                | AI 消息、输入、流式、mention、citation                                               |
+
+### 字号阶梯（Chrome）
+
+| Token            | 约值 | 用途                 |
+| ---------------- | ---- | -------------------- |
+| `--text-micro`   | 10px | 极少用的次级标注     |
+| `--text-caption` | 11px | 底栏、徽章、辅助说明 |
+| `--text-ui`      | 13px | 菜单项、列表次行     |
+| `--text-body`    | 14px | 表单与面板正文       |
+
+动效通常为 150–200ms（`--motion-fast` / `--motion-base` / `--motion-exit`）；`prefers-reduced-motion` 下必须降级。浮层进入用真实 opacity/translate，禁止依赖未实现的 `animate-in` 空类名。
+
+## Typography（正文）
+
+实现：`src/styles/markdown-prose.css` + 本地字体 `src/assets/fonts/`。
+
+| 角色        | Token / 字体                                  | 说明                      |
+| ----------- | --------------------------------------------- | ------------------------- |
+| Chrome / UI | `--font-sans` · Inter                         | 标题栏、按钮、设置        |
+| 正文        | `--font-prose` · **Noto Sans SC**（本地打包） | 编辑器与 AI 对话 Markdown |
+| 文档标题    | `--font-title` · Inter（lining nums）         | 与 chrome 同族，数字稳定  |
+| 等宽        | `--font-mono` · JetBrains Mono                | 代码                      |
+
+正文规则：
+
+- 编辑态 `text-align: start`（不强制两端对齐）
+- 行宽 `max-width: var(--prose-measure)`（canvas 必须消费该 token）
+- 外链 `--prose-link`（primary + 实线下划线）；wiki `--prose-wiki`（brand + 虚线下划线）
+- Callout：`tip` → brand；`warning` → `--warning`；`danger` → destructive
+- 亮/暗主题均需保证 code / callout / blockquote 可辨对比度
 
 ## 组件边界
 
-- `components/ui/`：shadcn/ui 基础原语与共享无业务组件。
+- `components/ui/`：shadcn/ui 基础原语与共享无业务组件（含 `Tooltip`、`SurfaceCard`）。
 - `components/editor/`：TipTap、编辑器命令、查找、媒体和 Markdown 往返体验。
-- `components/ai/`：助手、证据包、工具确认、消息与写作提案。
+- `components/ai/`：助手、工具确认、消息与写作提案。
 - `components/layout/`：窗口 Chrome、Rail、标题栏、Overlay 和全局布局。
 
-可复用控件应优先使用现有 `OverlayChrome`、`IrisSurfaceMenu`、`CommandListOption`、`Kbd`、`AiComposer`、`AiMessageBubble`、`SurfaceCard` 等原语，不能在业务组件重复实现。
+可复用控件应优先使用现有 `OverlayChrome`、`IrisSurfaceMenu`、`CommandListOption`、`Kbd`、`AiComposer`、`AiMessageBubble`、`SurfaceCard`、`Tooltip` 等原语，不能在业务组件重复实现。
 
 ## 交互规则
 
 - 主路径必须有可见入口或快捷键；纯 icon 控件必须有可访问名称和 tooltip。
-- `/` 菜单仅承载文档级命令；选区 AI 以右键和助手面板为主。
+- `/` 菜单仅承载文档级命令；选区 AI 以右键和助手面板为主。命令面板 UI 已退役；全局任务入口走 Overlay Family / 管理中心。
 - AI 写入必须显示目标笔记、范围与风险并要求确认；不得展示或复制原始模型思维链。
 - 统一 Run 的过程区属于 assistant 消息气泡而非正文：仅显示安全阶段、脱敏的工具生命周期和 provider 明确提供的 reasoning summary。生成期间默认展开；首个最终正文增量到达后自动折叠一次，之后完全尊重用户手动开关。历史会话默认折叠但可重新展开；复制、插入和导出永不包含过程区。
 - 过程区不得显示工具参数、搜索词、URL、笔记路径、工具原始输出、provider 内部对象或原始 reasoning channel。过程项使用受限高度滚动，完整展示已持久化的安全事件，并应使用可访问的展开控件。
-- AI 证据卡显示来源、摘录与引用，不能伪造“链接即证据”。
+- AI 活动状态须投影到 Composer 和/或 StatusBar；禁止只写不读的 activity hint。
 - 普通域 `@` 文件/文件夹与 `#` 标签在输入框和用户消息中只以内联名称呈现，使用 `--ai-mention` 浅绿色前景色；不得显示 `@`、方括号、胶囊、“引用”行，也不得添加底色、边框、圆角或图标。真实相对路径与类型仅用于安全 tooltip。
 - 标题栏、Rail 和 Tab 溢出应维持当前平台窗口行为；人工验收见 `docs/testing/`。
 
@@ -46,7 +97,7 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 Iris Rail 由持久品牌轨、Rail Segments Tab、Outline Rail、AI Conversation Workspace 与 Overlay Family 组成。品牌轨是唯一 Home 入口；Rail Segments Tab 只承载已打开工作区对象；Outline Rail 负责当前文档结构；AI Conversation Workspace 保持写作上下文、证据和工具确认；Overlay Family 负责搜索、图谱、设置、版本和管理中心等临时任务。
 
-TaskPlan 体验遵循 Markdown-first：助手对话先形成可读 Markdown 草稿；临时 tab 是高价值产物，用于承载结构化结果。过程 tab 只用于长任务进度，不替代最终笔记；引用胶囊显示短摘要、来源和可追溯证据，不展示原始敏感载荷。
+TaskPlan 体验遵循 Markdown-first：助手对话先形成可读 Markdown 草稿；临时 tab 是高价值产物，用于承载结构化结果。过程 tab 只用于长任务进度，不替代最终笔记；引用显示短摘要、来源和可追溯证据，不展示原始敏感载荷。
 
 ## 验收
 

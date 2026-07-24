@@ -19,7 +19,15 @@ import {
   openExternalHttpsUrl,
 } from "@/lib/ipc";
 import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
+import {
+  assistantChromeSnapshotsEqual,
+  buildAssistantChromeSnapshot,
+} from "@/lib/assistant-chrome";
 import { deriveDisplayRunState } from "@/lib/assistant-run-activity";
+import {
+  EMPTY_ASSISTANT_CHROME,
+  type AssistantChromeSnapshot,
+} from "@/types/assistant-chrome";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AssistantComposerDock } from "./AssistantComposerDock";
@@ -44,6 +52,7 @@ export function UnifiedAssistantPanel({
   modelOverride = null,
   onInsertToEditor,
   onOpenWebVerificationSettings,
+  onChromeChange,
 }: UnifiedAssistantPanelProps) {
   const { profile: promptProfile } = usePromptProfile();
   const assistantRun = useAssistantRun();
@@ -60,7 +69,7 @@ export function UnifiedAssistantPanel({
   const setInput = aiRuntime.setActiveDraft;
   const bubbleSelection = useAiBubbleSelection();
   const [streaming, setStreaming] = useState(false);
-  const [, setActivityHint] = useState<string | null>(null);
+  const [activityHint, setActivityHint] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [confirming, setConfirming] = useState(false);
@@ -74,7 +83,11 @@ export function UnifiedAssistantPanel({
   ] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
+  const chromeSnapshotRef = useRef<AssistantChromeSnapshot>(
+    EMPTY_ASSISTANT_CHROME,
+  );
 
+  // Conversation hook still accepts a clear callback; evidence-pack surfaces are gone.
   const clearTaskSurfaces = useCallback(() => undefined, []);
 
   const {
@@ -202,6 +215,31 @@ export function UnifiedAssistantPanel({
     setError: setLastError,
   });
 
+  const outputting = streaming || assistantRun.isBusy;
+  useEffect(() => {
+    if (!onChromeChange) return;
+    const snapshot = buildAssistantChromeSnapshot({
+      sessionTokenUsage: chromeSnapshotRef.current.sessionTokenUsage,
+      evidence: [],
+      activityHint,
+      streaming: outputting,
+      messages,
+      harnessPhaseLabel: null,
+    });
+    if (assistantChromeSnapshotsEqual(chromeSnapshotRef.current, snapshot)) {
+      return;
+    }
+    chromeSnapshotRef.current = snapshot;
+    onChromeChange(snapshot);
+  }, [activityHint, messages, onChromeChange, outputting]);
+
+  useEffect(() => {
+    return () => {
+      chromeSnapshotRef.current = EMPTY_ASSISTANT_CHROME;
+      onChromeChange?.(EMPTY_ASSISTANT_CHROME);
+    };
+  }, [onChromeChange]);
+
   const composerDisabled =
     streaming ||
     assistantRun.isBusy ||
@@ -326,7 +364,7 @@ export function UnifiedAssistantPanel({
           onReject={() => handleConfirmation("reject")}
         />
       ) : null}
-      {assistantRun.eventState?.provider ? (
+      {import.meta.env.DEV && assistantRun.eventState?.provider ? (
         <p
           className="border-b border-border/60 px-3 py-1 text-[11px] text-muted-foreground"
           data-testid="assistant-run-provider-diagnostic"

@@ -256,6 +256,7 @@ function App() {
     consumeEditorSelectionReference,
     editorSelectionReference,
     setAiPanelOpen,
+    setAssistantChrome,
     setWebSearch,
     setWebSearchProviderId,
     sendSelectionToAi,
@@ -896,6 +897,7 @@ function App() {
             onOpenWebVerificationSettings={() =>
               overlays.openManagementCenter("ai", "web-search")
             }
+            onChromeChange={setAssistantChrome}
           />
         }
         statusBar={

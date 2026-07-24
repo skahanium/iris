@@ -44,15 +44,15 @@ describe("chrome soft focus contract", () => {
     }
   });
 
-  it("keeps form fields on a stronger visible focus treatment", () => {
-    expect(read("src/components/ui/input.tsx")).toContain(
-      "focus-visible:ring-2 focus-visible:ring-primary",
+  it("unifies form fields onto iris-focus-soft with chrome controls", () => {
+    expect(read("src/components/ui/input.tsx")).toContain("iris-focus-soft");
+    expect(read("src/components/ui/textarea.tsx")).toContain("iris-focus-soft");
+    expect(read("src/components/ui/select.tsx")).toContain("iris-focus-soft");
+    expect(read("src/components/ui/input.tsx")).not.toMatch(
+      /focus-visible:ring-2[^"'\n]*ring-primary/,
     );
-    expect(read("src/components/ui/textarea.tsx")).toContain(
-      "focus-visible:ring-2 focus-visible:ring-ring",
-    );
-    expect(read("src/components/ui/select.tsx")).toContain(
-      "focus:ring-2 focus:ring-ring",
+    expect(read("src/components/ui/textarea.tsx")).not.toMatch(
+      /focus-visible:ring-2[^"'\n]*ring-ring/,
     );
   });
 });

@@ -131,10 +131,7 @@ export function RecycleBinBody({
                         </span>
                         <span aria-hidden>·</span>
                         <span
-                          className={cn(
-                            urgent &&
-                              "font-medium text-amber-600 dark:text-amber-500",
-                          )}
+                          className={cn(urgent && "font-medium text-warning")}
                         >
                           {recycleRetentionLabel(daysLeft)}
                         </span>

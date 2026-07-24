@@ -22,7 +22,7 @@ export function SurfaceCard({
     <Tag
       type={Tag === "button" ? "button" : undefined}
       className={cn(
-        "w-full rounded-lg border border-border/80 bg-surface-elevated p-2.5 text-left text-xs shadow-sm transition-[box-shadow,background-color,border-color] duration-base ease-iris-out motion-reduce:transition-none",
+        "w-full rounded-lg border border-border/80 bg-surface-elevated p-2.5 text-left text-xs transition-[background-color,border-color] duration-base ease-iris-out motion-reduce:transition-none",
         selected && "border-primary/40 ring-2 ring-primary/30",
         onClick && "cursor-pointer hover:bg-surface-inset/60",
         className,

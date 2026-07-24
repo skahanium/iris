@@ -1217,7 +1217,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
           与端点；模型由你手动填写，未添加模型时不会激活或展示任何模型。
         </p>
         {loadError ? (
-          <p className="mt-2 text-xs text-amber-600">
+          <p className="mt-2 text-xs text-warning">
             未能从后端读取配置：{loadError}
           </p>
         ) : null}
@@ -1396,7 +1396,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                       <p
                         className={
                           providerResult.ok
-                            ? "text-[11px] text-emerald-600"
+                            ? "text-[11px] text-success"
                             : "text-[11px] text-destructive"
                         }
                       >

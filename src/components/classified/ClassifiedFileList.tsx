@@ -489,7 +489,7 @@ export function ClassifiedFileList({
       <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-surface-inset/40 px-3 py-2">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-medium">
-            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            <span className="inline-flex h-2 w-2 rounded-full bg-success" />
             已解锁
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">

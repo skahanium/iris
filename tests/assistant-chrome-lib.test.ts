@@ -33,6 +33,19 @@ describe("assistant chrome helpers", () => {
 
     expect(snapshot.evidenceCount).toBe(2);
     expect(snapshot.webEvidenceCount).toBe(1);
+    expect(snapshot.toolActivityLabel).toBeNull();
+  });
+
+  it("forwards activityHint into toolActivityLabel", () => {
+    const snapshot = buildAssistantChromeSnapshot({
+      sessionTokenUsage: null,
+      evidence: [],
+      activityHint: "正在联网搜索…",
+      streaming: true,
+      messages: [],
+      harnessPhaseLabel: null,
+    });
+    expect(snapshot.toolActivityLabel).toBe("正在联网搜索…");
   });
 
   it("uses the pending tool display name when no stage hint exists", () => {

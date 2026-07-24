@@ -59,7 +59,7 @@ function StatusIndicator({
           "size-2 shrink-0 rounded-full transition-[background-color,box-shadow] duration-base ease-iris-out",
           active
             ? activeClass
-            : "bg-[hsl(var(--status-inactive)/0.42)] shadow-[inset_0_1px_0_hsl(0_0%_100%/0.12)]",
+            : "bg-status-inactive/42 shadow-[inset_0_1px_0_hsl(0_0%_100%/0.12)]",
         )}
         aria-hidden
       />
@@ -78,9 +78,9 @@ function StatusIndicator({
 function llmBallActiveClass(state: LlmConnectivityState): string {
   switch (state) {
     case "ready":
-      return "bg-[hsl(var(--status-llm-ready))] shadow-[0_0_0_1px_hsl(var(--status-llm-ready)/0.35)]";
+      return "bg-status-llm-ready shadow-[0_0_0_1px_hsl(var(--status-llm-ready)/0.35)]";
     case "error":
-      return "bg-[hsl(var(--status-llm-error))] shadow-[0_0_0_1px_hsl(var(--status-llm-error)/0.35)]";
+      return "bg-status-llm-error shadow-[0_0_0_1px_hsl(var(--status-llm-error)/0.35)]";
     default:
       return "";
   }
@@ -142,7 +142,7 @@ export const ConnectivityIndicators = memo(function ConnectivityIndicators({
           ariaChecked={webSearchActive}
           label="联网"
           active={webSearchActive}
-          activeClass="bg-[hsl(var(--status-web-search))] shadow-[0_0_0_1px_hsl(var(--status-web-search)/0.35)]"
+          activeClass="bg-status-web-search shadow-[0_0_0_1px_hsl(var(--status-web-search)/0.35)]"
           title={`联网搜索：${webDetail}`}
           ariaLabel={webSearchActive ? "关闭联网搜索" : "开启联网搜索"}
           disabled={!canToggleWebSearch}

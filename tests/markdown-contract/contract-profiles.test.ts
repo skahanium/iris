@@ -288,9 +288,10 @@ describe("profile: vault_preview", () => {
     expect(html).not.toContain("<script");
   });
 
-  it("includes Paper Ink styling", () => {
+  it("includes flat editor-aligned styling", () => {
     const html = renderAsProfile("# Title", "vault_preview");
-    expect(html).toContain("Noto Serif SC");
+    expect(html).toContain("Noto Sans SC");
+    expect(html).not.toContain("Noto Serif SC");
     expect(html).toContain("background:");
   });
 });

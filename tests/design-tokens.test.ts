@@ -62,9 +62,10 @@ describe("design tokens", () => {
   });
 
   it("defines Iris Rail semantic surface tokens and Tailwind mappings", () => {
-    expect(cssVariable("--knowledge-accent")).toBe("150 12% 54%");
+    expect(cssVariable("--brand")).toBe("150 12% 54%");
+    expect(cssVariable("--knowledge-accent")).toBe("var(--brand)");
     expect(cssVariable("--iris-rail-bg")).toBe("var(--surface-chrome)");
-    expect(cssVariable("--iris-rail-active")).toBe("150 12% 54%");
+    expect(cssVariable("--iris-rail-active")).toBe("var(--brand)");
     expect(cssVariable("--outline-rail-bg")).toBe("0 0% 12% / 0.88");
     expect(cssVariable("--ai-workspace-bg")).toBe("var(--panel)");
     expect(cssVariable("--overlay-task-header")).toBe(
@@ -73,6 +74,7 @@ describe("design tokens", () => {
     expect(tailwindConfigSource).toContain(
       'accent: "hsl(var(--knowledge-accent))"',
     );
+    expect(tailwindConfigSource).toContain('DEFAULT: "hsl(var(--brand))"');
     expect(tailwindConfigSource).toContain('bg: "hsl(var(--iris-rail-bg))"');
     expect(tailwindConfigSource).toContain('bg: "hsl(var(--outline-rail-bg))"');
     expect(tailwindConfigSource).toContain(
@@ -84,7 +86,8 @@ describe("design tokens", () => {
     expect(tailwindConfigSource).toContain(
       'scrim: "hsl(var(--overlay-scrim))"',
     );
-    expect(tailwindConfigSource).toContain('warning: "hsl(var(--warning))"');
+    expect(tailwindConfigSource).toContain("warning: {");
+    expect(tailwindConfigSource).toContain("success: {");
     expect(tailwindConfigSource).toContain(
       '"classified-accent": "hsl(var(--classified-accent))"',
     );

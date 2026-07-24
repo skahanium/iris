@@ -206,13 +206,14 @@ describe("legacy frontmatter title migration", () => {
 });
 
 describe("html page export (v0.3)", () => {
-  it("produces self-contained HTML with paper-ink styles", () => {
+  it("produces self-contained HTML with flat editor-aligned styles", () => {
     const page = markdownToHtmlPage("# Hello\n\nWorld.", "Test Note");
     expect(page).toContain("<!DOCTYPE html>");
     expect(page).toContain("<title>Test Note</title>");
     expect(page).toContain("<h1>Hello</h1>");
-    expect(page).toContain("Noto Serif SC");
-    expect(page).toContain("background: #fafaf9");
+    expect(page).toContain("Noto Sans SC");
+    expect(page).not.toContain("Noto Serif SC");
+    expect(page).toContain("background: #ffffff");
   });
 
   it("falls back to default title", () => {

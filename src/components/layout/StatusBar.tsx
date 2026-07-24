@@ -12,6 +12,7 @@ import {
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
+import { Tooltip } from "@/components/ui/tooltip";
 import type { DocumentPersistenceStatus } from "@/lib/document-persistence-coordinator";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type {
@@ -69,7 +70,7 @@ export const StatusBar = memo(function StatusBar({
   persistenceStatus = "clean",
   characterCount,
   readingMinutes,
-  aiStatus: _aiStatus,
+  aiStatus,
   editorZoom = 1,
   onEditorZoomIn,
   onEditorZoomOut,
@@ -99,7 +100,8 @@ export const StatusBar = memo(function StatusBar({
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
 
-  const rawStatusLine: string | null = null;
+  const rawStatusLine =
+    assistantChrome?.toolActivityLabel?.trim() || aiStatus.trim() || null;
   const safeStatusLine =
     rawStatusLine && isClassifiedStatusLine(rawStatusLine) ? "" : rawStatusLine;
   const statusTitle = [safeStatusLine].filter(Boolean).join(" · ") || undefined;
@@ -169,24 +171,28 @@ export const StatusBar = memo(function StatusBar({
             ·
           </span>
           <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              title="撤销 (⌘Z)"
-              className="iris-focus-soft flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
-              onClick={onUndo}
-              disabled={!canUndo}
-            >
-              <Undo2 className="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              title="重做 (⌘⇧Z)"
-              className="iris-focus-soft flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
-              onClick={onRedo}
-              disabled={!canRedo}
-            >
-              <Redo2 className="h-3.5 w-3.5" />
-            </button>
+            <Tooltip content="撤销 (⌘Z)">
+              <button
+                type="button"
+                aria-label="撤销"
+                className="iris-focus-soft flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
+                onClick={onUndo}
+                disabled={!canUndo}
+              >
+                <Undo2 className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
+            <Tooltip content="重做 (⌘⇧Z)">
+              <button
+                type="button"
+                aria-label="重做"
+                className="iris-focus-soft flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
+                onClick={onRedo}
+                disabled={!canRedo}
+              >
+                <Redo2 className="h-3.5 w-3.5" />
+              </button>
+            </Tooltip>
           </div>
         </>
       ) : null}
@@ -238,7 +244,7 @@ export const StatusBar = memo(function StatusBar({
               type="button"
               data-testid="status-bar-update-available"
               title="查看 Iris 更新"
-              className="iris-focus-soft inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm border border-[hsl(var(--status-llm-ready)/0.45)] bg-[hsl(var(--status-llm-ready)/0.10)] px-2 text-[11px] text-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-[hsl(var(--status-llm-ready)/0.16)] focus:outline-none active:scale-[0.98]"
+              className="iris-focus-soft hover:bg-status-llm-ready/16 inline-flex h-6 shrink-0 items-center gap-1.5 rounded-sm border border-status-llm-ready/45 bg-status-llm-ready/10 px-2 text-[11px] text-foreground transition-[background-color,color,transform] duration-base ease-iris-out focus:outline-none active:scale-[0.98]"
               onClick={onOpenUpdateCenter}
             >
               <DownloadCloud className="h-3.5 w-3.5" />

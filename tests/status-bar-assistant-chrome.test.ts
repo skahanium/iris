@@ -91,7 +91,7 @@ describe("status bar assistant chrome", () => {
     const bar = read("src/components/layout/StatusBar.tsx");
     expect(bar).toContain("assistantChrome");
     expect(bar).toContain("StatusBarTokenUsage");
-    expect(bar).not.toContain("assistantChrome?.toolActivityLabel");
+    expect(bar).toContain("assistantChrome?.toolActivityLabel");
   });
 
   it("StatusBar keeps the document title as a bounded location hint", () => {

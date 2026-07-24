@@ -102,7 +102,7 @@ export function AssistantRunCapabilityDegraded({
   return (
     <div
       aria-live="polite"
-      className="border-b border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-muted-foreground"
+      className="border-b border-warning/20 bg-warning-bg px-3 py-2 text-xs text-muted-foreground"
       data-testid="assistant-run-capability-degraded"
       role="status"
     >

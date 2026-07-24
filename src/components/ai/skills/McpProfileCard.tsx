@@ -611,7 +611,7 @@ export function McpProfileCard({
   };
 
   const statusClassName = enabled
-    ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+    ? "border-success/25 bg-success-bg text-success-foreground"
     : "border-border bg-muted/40 text-muted-foreground";
 
   return (
@@ -1020,7 +1020,7 @@ export function McpProfileCard({
             <p>这是当前运行使用的提供方。</p>
           ) : null}
           {diagnostics && diagnostics.isRuntimeSelected === false ? (
-            <p className="text-amber-700 dark:text-amber-400" role="status">
+            <p className="text-warning" role="status">
               警告：此提供方诊断通过，但当前运行时未选中它作为搜索提供方；AI
               对话将使用已选中的提供方。请在管理中心确认运行时选择。
             </p>

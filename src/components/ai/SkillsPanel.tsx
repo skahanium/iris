@@ -28,7 +28,8 @@ function scopeLabel(scope: string): SkillScope {
 }
 
 function sourceSummary(skill: SkillListEntryDto): string {
-  return `${scopeLabel(skill.scope)} · ${skill.file_path}`;
+  const scope = scopeLabel(skill.scope) === "vault" ? "当前库" : "全局";
+  return `${scope} · ${skill.file_path}`;
 }
 
 function confirmationState(skill: SkillListEntryDto): {
@@ -37,13 +38,13 @@ function confirmationState(skill: SkillListEntryDto): {
 } {
   if (skill.confirmation_status === "confirmed") {
     return {
-      label: "Confirmed",
-      detail: `confirmed hash: ${skill.confirmed_hash ?? "none"}`,
+      label: "已确认",
+      detail: `已确认哈希：${skill.confirmed_hash ?? "无"}`,
     };
   }
   return {
-    label: "Needs confirmation",
-    detail: "This prompt text must be confirmed before activation.",
+    label: "待确认",
+    detail: "启用前需确认此提示词内容。",
   };
 }
 
@@ -167,7 +168,7 @@ export function SkillsPanelBody({ open }: { open: boolean }) {
       </div>
       {items.length === 0 ? (
         <p className="rounded-md border border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground">
-          No prompt-only Skills.
+          暂无纯提示词 Skill。
         </p>
       ) : (
         items.map(renderSkillCard)
@@ -187,7 +188,7 @@ export function SkillsPanelBody({ open }: { open: boolean }) {
             <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
               className="h-8 pl-8 text-xs"
-              placeholder="Search Skills"
+              placeholder="搜索 Skills"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
@@ -197,10 +198,10 @@ export function SkillsPanelBody({ open }: { open: boolean }) {
             <div className="flex items-center justify-between gap-2">
               <div>
                 <p className="text-xs font-medium text-foreground">
-                  Create prompt-only Skill draft
+                  创建纯提示词 Skill 草稿
                 </p>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Drafts are written only after user confirmation.
+                  仅在用户确认后才会写入文件。
                 </p>
               </div>
               <Button
@@ -210,34 +211,34 @@ export function SkillsPanelBody({ open }: { open: boolean }) {
                 disabled={busy || !draftName.trim()}
                 onClick={() => void createDraft()}
               >
-                Draft
+                创建草稿
               </Button>
             </div>
             <div className="grid gap-2 md:grid-cols-2">
               <Input
                 value={draftName}
                 disabled={busy}
-                placeholder="Skill name"
+                placeholder="Skill 名称"
                 onChange={(event) => setDraftName(event.target.value)}
               />
               <Input
                 value={draftScopePattern}
                 disabled={busy}
-                placeholder="Scope pattern"
+                placeholder="作用域模式"
                 onChange={(event) => setDraftScopePattern(event.target.value)}
               />
             </div>
             <Input
               value={draftDescription}
               disabled={busy}
-              placeholder="Description"
+              placeholder="描述"
               onChange={(event) => setDraftDescription(event.target.value)}
             />
             <textarea
               value={draftBody}
               disabled={busy}
               rows={4}
-              placeholder="Prompt instructions"
+              placeholder="提示词说明"
               className="flex min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               onChange={(event) => setDraftBody(event.target.value)}
             />
@@ -248,7 +249,7 @@ export function SkillsPanelBody({ open }: { open: boolean }) {
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <p className="text-xs font-medium text-foreground">
-                    Draft confirmation
+                    确认草稿
                   </p>
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {draft.targetPath} · {draft.contentHash}
@@ -261,7 +262,7 @@ export function SkillsPanelBody({ open }: { open: boolean }) {
                   disabled={busy}
                   onClick={() => void confirmDraft()}
                 >
-                  Confirm
+                  确认
                 </Button>
               </div>
               <pre className="max-h-64 overflow-auto rounded-md border border-border/60 bg-background p-2 text-[11px] leading-5 text-foreground">
@@ -272,8 +273,8 @@ export function SkillsPanelBody({ open }: { open: boolean }) {
 
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-          {renderGroup("Current vault", vault)}
-          {renderGroup("Global", global)}
+          {renderGroup("当前库", vault)}
+          {renderGroup("全局", global)}
         </div>
       </ScrollArea>
     </div>

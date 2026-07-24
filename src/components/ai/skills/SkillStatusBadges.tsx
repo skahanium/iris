@@ -25,7 +25,7 @@ export function SkillStatusBadges({ skill }: { skill: SkillListEntryDto }) {
       <span
         className={`rounded-full border px-2 py-0.5 text-[10px] ${
           runtime.needsAttention
-            ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/35 dark:text-amber-300"
+            ? "border-warning/30 bg-warning-bg text-warning-foreground"
             : "border-border/70 bg-background text-muted-foreground"
         }`}
       >
@@ -34,19 +34,19 @@ export function SkillStatusBadges({ skill }: { skill: SkillListEntryDto }) {
       <span
         className={`rounded-full border px-2 py-0.5 text-[10px] ${
           confirmation.needsAttention
-            ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/35 dark:text-amber-300"
+            ? "border-warning/30 bg-warning-bg text-warning-foreground"
             : "border-border/70 bg-background text-muted-foreground"
         }`}
       >
         {confirmation.label}
       </span>
       {legacy ? (
-        <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/35 dark:text-amber-300">
+        <span className="rounded-full border border-warning/30 bg-warning-bg px-2 py-0.5 text-[10px] text-warning-foreground">
           旧格式
         </span>
       ) : null}
       {invalid ? (
-        <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-[10px] text-red-700 dark:border-red-900/60 dark:bg-red-950/35 dark:text-red-300">
+        <span className="rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-[10px] text-destructive">
           需要修复
         </span>
       ) : null}

@@ -70,7 +70,7 @@ describe("IrisOverlay", () => {
     expect(dialog?.textContent).toContain("内容");
   });
 
-  it("closes when the scrim or Escape key is pressed", () => {
+  it("closes when the scrim is pressed or Escape reaches the dialog", () => {
     const onClose = vi.fn();
     renderOverlay(
       <IrisOverlay open title="知识图谱" size="graph" onClose={onClose}>
@@ -79,6 +79,7 @@ describe("IrisOverlay", () => {
     );
 
     const scrim = document.querySelector('[data-slot="iris-overlay-scrim"]');
+    const dialog = document.querySelector('[role="dialog"]');
 
     act(() => {
       scrim?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -86,7 +87,9 @@ describe("IrisOverlay", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
 
     act(() => {
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      dialog?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
     });
     expect(onClose).toHaveBeenCalledTimes(2);
   });

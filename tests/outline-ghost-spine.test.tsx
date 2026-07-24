@@ -145,7 +145,7 @@ describe("outline ghost spine", () => {
     expect(css).not.toContain("--outline-tick-top");
     expect(css).not.toContain("top: var(--outline-tick-top)");
   });
-  it("leaves the resident rail empty when body-only documents have no headings", () => {
+  it("shows an empty-state hint when body-only documents have no headings", () => {
     editor = new Editor({
       extensions: [StarterKit],
       content: "<p>Body text without headings.</p><p>Another paragraph.</p>",
@@ -159,8 +159,10 @@ describe("outline ghost spine", () => {
     expect(
       document.querySelectorAll('[data-testid="outline-ghost-item"]'),
     ).toHaveLength(0);
-    expect(document.querySelector(".outline-ghost-empty")).toBeNull();
-    expect(document.body.textContent).not.toContain("暂无章节");
+    expect(
+      document.querySelector('[data-testid="outline-ghost-empty"]'),
+    ).not.toBeNull();
+    expect(document.body.textContent).toContain("暂无章节");
   });
 
   it("marks the active section and jumps with keyboard navigation", () => {

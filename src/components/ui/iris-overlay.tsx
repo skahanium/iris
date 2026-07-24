@@ -1,6 +1,6 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import { useEffect, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import {
   irisOverlayPanelClass,
@@ -30,19 +30,6 @@ export function IrisOverlay({
   className,
   bodyClassName,
 }: IrisOverlayProps) {
-  useEffect(() => {
-    if (!open) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, onClose]);
-
   return (
     <DialogPrimitive.Root
       open={open}
@@ -51,7 +38,7 @@ export function IrisOverlay({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           data-slot="iris-overlay-scrim"
-          className="data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-overlay-scrim bg-overlay-scrim backdrop-blur-[2px] duration-fast ease-iris-out"
+          className="fixed inset-0 z-overlay-scrim bg-overlay-scrim backdrop-blur-[2px] duration-fast ease-iris-out data-[state=closed]:animate-iris-fade-out data-[state=open]:animate-iris-fade-in motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none"
           onClick={onClose}
         />
         <DialogPrimitive.Content

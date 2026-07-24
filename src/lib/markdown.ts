@@ -583,7 +583,7 @@ export function normalizeTurndownEscapes(markdown: string): string {
   return markdown.replace(/\\\[/g, "[").replace(/\\\]/g, "]");
 }
 
-/** Wrap HTML content in a self-contained page with paper-ink styles. */
+/** Wrap HTML content in a self-contained page aligned with Iris editor flat chrome. */
 export function markdownToHtmlPage(md: string, title?: string): string {
   const { body } = splitFrontmatter(md);
   const docTitle = title?.trim() || "Iris Note";
@@ -596,19 +596,20 @@ export function markdownToHtmlPage(md: string, title?: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${cleanTitle}</title>
 <style>
-  body { max-width: 42rem; margin: clamp(2rem, 6vh, 3rem) auto; padding: 0 clamp(1.25rem, 4vw, 2rem); font-family: "Noto Serif SC", "Source Han Serif SC", Georgia, serif; font-size: 1.0625rem; line-height: 1.65; letter-spacing: 0.012em; color: #1a1c20; background: #fafaf9; }
-  h1 { font-size: 1.75rem; margin: 2.5rem 0 1.25rem; line-height: 1.25; }
-  h2 { font-size: 1.375rem; margin: 2rem 0 1rem; line-height: 1.3; }
-  h3 { font-size: 1.125rem; margin: 1.5rem 0 0.75rem; }
-  p { margin-bottom: 1.15em; }
-  pre { background: #f0f1f3; color: #1a1c20; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; border: 1px solid #e4e6ea; }
-  code { background: #f0f1f3; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.88em; }
+  body { max-width: 42rem; margin: clamp(2rem, 6vh, 3rem) auto; padding: 0 clamp(1.25rem, 4vw, 2rem); font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", Inter, sans-serif; font-size: 1.0625rem; line-height: 1.75; letter-spacing: 0.01em; color: #1f1f1f; background: #ffffff; }
+  h1 { font-size: 1.625rem; font-weight: 700; margin: 1.75em 0 0.55em; line-height: 1.35; }
+  h2 { font-size: 1.375rem; font-weight: 600; margin: 1.75em 0 0.55em; line-height: 1.35; }
+  h3 { font-size: 1.1875rem; font-weight: 600; margin: 1.4em 0 0.55em; }
+  p { margin-bottom: 0.9em; }
+  pre { background: #f2f3f5; color: #1f1f1f; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; border: 1px solid #e5e5e5; }
+  code { background: #f2f3f5; padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.88em; font-family: "JetBrains Mono", ui-monospace, monospace; }
   pre code { background: none; padding: 0; }
-  blockquote { border-left: 3px solid #9a7b5a; padding-left: 1rem; color: #5c6068; margin: 1.25rem 0; }
+  blockquote { border-left: 3px solid #cfcfcf; padding-left: 1rem; color: #666666; margin: 1.25rem 0; }
   table { border-collapse: collapse; width: 100%; }
-  th, td { border: 1px solid #e4e6ea; padding: 0.5rem; text-align: left; }
-  a { color: #7a5c38; }
-  hr { border: none; border-top: 1px solid #e4e6ea; margin: 2.5rem 0; }
+  th, td { border: 1px solid #e5e5e5; padding: 0.5rem; text-align: left; }
+  a { color: #5c6b7a; }
+  a.wiki-link { color: #4a7a63; text-decoration-style: dotted; }
+  hr { border: none; border-top: 1px solid #e5e5e5; margin: 2.5rem 0; }
 </style>
 </head>
 <body>${bodyHtml}</body>

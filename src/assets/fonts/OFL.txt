@@ -6,3 +6,7 @@ Bundled fonts:
 Both font families are distributed under the SIL Open Font License 1.1.
 
 When refreshing these assets, verify the upstream license remains OFL-compatible before replacing files.
+
+Bundled fonts (continued):
+
+- Noto Sans SC chinese-simplified + latin woff2 files sourced from @fontsource/noto-sans-sc 5.2.8 (weights 400/500/600/700).

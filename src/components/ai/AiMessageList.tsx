@@ -386,7 +386,7 @@ export const AiMessageList = memo(function AiMessageList({
     if (row.type === "empty") {
       return (
         <p className="py-8 text-center text-xs text-muted-foreground">
-          输入问题开始对话。证据包在上方，处理过程会显示在回答气泡内。
+          输入问题开始对话。处理过程会显示在回答气泡内。
         </p>
       );
     }

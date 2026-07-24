@@ -117,7 +117,7 @@ export function IrisSurfaceMenuPanel({
       aria-label={ariaLabel}
       className={cn(
         "overflow-auto rounded-lg border border-border/60 bg-[hsl(var(--surface-elevated))] py-1 shadow-floating",
-        "motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-1 motion-safe:duration-150",
+        "motion-safe:animate-iris-enter motion-reduce:animate-none",
         className,
       )}
     >

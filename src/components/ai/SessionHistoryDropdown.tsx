@@ -23,12 +23,12 @@ import type {
 function formatRelativeTime(iso: string): string {
   const elapsed = Date.now() - new Date(iso).getTime();
   const minutes = Math.floor(elapsed / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} minutes ago`;
+  if (minutes < 1) return "刚刚";
+  if (minutes < 60) return `${minutes} 分钟前`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hours ago`;
+  if (hours < 24) return `${hours} 小时前`;
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days} days ago`;
+  if (days < 7) return `${days} 天前`;
   return new Date(iso).toLocaleDateString();
 }
 
@@ -127,7 +127,7 @@ export function SessionHistoryDropdown({
   const handleDelete = useCallback(
     async (session: AssistantSessionRef, event: React.MouseEvent) => {
       event.stopPropagation();
-      if (!window.confirm("Delete this conversation permanently?")) return;
+      if (!window.confirm("确定永久删除此对话？")) return;
       try {
         await assistantSessionDelete(session);
         setSessions((previous) =>
@@ -187,25 +187,25 @@ export function SessionHistoryDropdown({
       </Button>
       {open ? (
         <div
-          className="absolute right-0 top-full z-50 mt-1 w-72 rounded-md border border-border bg-popover shadow-md"
+          className="absolute right-0 top-full z-50 mt-1 w-72 rounded-md border border-border bg-popover shadow-floating"
           data-testid="session-history-popover"
         >
           <div className="border-b border-border/60 px-3 py-2">
             <p className="text-xs font-medium text-foreground">对话历史</p>
             <p className="text-[10px] text-muted-foreground">
-              Conversations in this security domain
+              当前安全域内的对话
             </p>
           </div>
           <div className="max-h-64 overflow-y-auto p-1">
             {loading ? (
               <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-                Loading...
+                加载中…
               </p>
             ) : error ? (
               <p className="px-2 py-2 text-xs text-destructive">{error}</p>
             ) : sessions.length === 0 ? (
               <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-                No saved conversations
+                暂无保存的对话
               </p>
             ) : (
               sessions.map((summary) => {
@@ -254,7 +254,7 @@ export function SessionHistoryDropdown({
                       )}
                       <p className="mt-0.5 text-[10px] text-muted-foreground">
                         {formatRelativeTime(summary.updatedAt)} ·{" "}
-                        {summary.messageCount} messages
+                        {summary.messageCount} 条消息
                       </p>
                     </div>
                     <div className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100">
@@ -263,7 +263,7 @@ export function SessionHistoryDropdown({
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6"
-                        title="Rename"
+                        title="重命名"
                         onClick={(event) => {
                           event.stopPropagation();
                           setEditingSession(summary.session);
@@ -277,7 +277,7 @@ export function SessionHistoryDropdown({
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6 text-destructive"
-                        title="Delete"
+                        title="删除"
                         onClick={(event) =>
                           void handleDelete(summary.session, event)
                         }

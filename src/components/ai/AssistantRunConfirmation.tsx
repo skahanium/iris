@@ -32,7 +32,7 @@ export function AssistantRunConfirmation({
 }: AssistantRunConfirmationProps) {
   return (
     <section
-      className="border-b border-amber-500/30 bg-amber-500/5 px-3 py-2"
+      className="border-b border-warning/30 bg-warning-bg px-3 py-2"
       data-testid="assistant-run-confirmation"
       aria-live="polite"
     >

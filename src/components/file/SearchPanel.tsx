@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
@@ -31,10 +31,13 @@ export function SearchPanel({
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const searchGenerationRef = useRef(0);
 
   useEffect(() => {
     if (open) return;
+    searchGenerationRef.current += 1;
     setHasSearched(false);
+    setLoading(false);
   }, [open]);
 
   useEffect(() => {
@@ -49,23 +52,31 @@ export function SearchPanel({
       setHasSearched(false);
       return;
     }
+    const generation = ++searchGenerationRef.current;
     setHasSearched(true);
     setLoading(true);
     setError(null);
     try {
       if (mode === "keyword") {
-        setKeywordHits(await searchKeyword(trimmedQuery, 20));
+        const hits = await searchKeyword(trimmedQuery, 20);
+        if (generation !== searchGenerationRef.current) return;
+        setKeywordHits(hits);
         setSemanticHits([]);
       } else {
-        setSemanticHits(await searchSemantic(trimmedQuery, 5));
+        const hits = await searchSemantic(trimmedQuery, 5);
+        if (generation !== searchGenerationRef.current) return;
+        setSemanticHits(hits);
         setKeywordHits([]);
       }
     } catch (e) {
+      if (generation !== searchGenerationRef.current) return;
       setError(e instanceof Error ? e.message : "搜索失败");
       setKeywordHits([]);
       setSemanticHits([]);
     } finally {
-      setLoading(false);
+      if (generation === searchGenerationRef.current) {
+        setLoading(false);
+      }
     }
   };
 

@@ -11,11 +11,19 @@ export default {
         foreground: "hsl(var(--foreground))",
         panel: "hsl(var(--panel))",
         card: "hsl(var(--card))",
-        border: "hsl(var(--border))",
+        border: {
+          DEFAULT: "hsl(var(--border))",
+          subtle: "hsl(var(--border-subtle))",
+          strong: "hsl(var(--border-strong))",
+        },
         input: "hsl(var(--input))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+        },
+        brand: {
+          DEFAULT: "hsl(var(--brand))",
+          foreground: "hsl(var(--brand-foreground))",
         },
         secondary: {
           DEFAULT: "hsl(var(--secondary))",
@@ -37,7 +45,16 @@ export default {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
         },
-        warning: "hsl(var(--warning))",
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          bg: "hsl(var(--warning-bg))",
+          foreground: "hsl(var(--warning-fg))",
+        },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          bg: "hsl(var(--success-bg))",
+          foreground: "hsl(var(--success-fg))",
+        },
         "classified-accent": "hsl(var(--classified-accent))",
         status: {
           "llm-ready": "hsl(var(--status-llm-ready))",
@@ -105,6 +122,7 @@ export default {
         md: "var(--radius-md)",
         lg: "var(--radius-lg)",
         xl: "var(--radius-xl)",
+        rail: "var(--radius-rail)",
         // Radius aliases intentionally cap oversized rounded utilities to Iris tokens.
         "2xl": "var(--radius-lg)",
         "3xl": "var(--radius-xl)",
@@ -112,6 +130,15 @@ export default {
       boxShadow: {
         overlay: "var(--shadow-overlay)",
         floating: "var(--shadow-floating)",
+        // Map default utilities to Iris floating so leftover shadow-sm/md stay on-token.
+        sm: "var(--shadow-floating)",
+        md: "var(--shadow-floating)",
+      },
+      fontSize: {
+        micro: ["var(--text-micro)", { lineHeight: "1.35" }],
+        caption: ["var(--text-caption)", { lineHeight: "1.4" }],
+        ui: ["var(--text-ui)", { lineHeight: "1.45" }],
+        body: ["var(--text-body)", { lineHeight: "1.5" }],
       },
       fontFamily: {
         sans: [
@@ -125,9 +152,9 @@ export default {
         ],
         prose: [
           '"Noto Sans SC"',
-          "Inter",
           '"PingFang SC"',
           '"Microsoft YaHei"',
+          "Inter",
           "sans-serif",
         ],
         title: [
@@ -142,12 +169,58 @@ export default {
         ],
         editor: [
           '"Noto Sans SC"',
-          "Inter",
           '"PingFang SC"',
           '"Microsoft YaHei"',
+          "Inter",
           "sans-serif",
         ],
         mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
+      },
+      keyframes: {
+        "iris-fade-in": {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
+        "iris-fade-out": {
+          from: { opacity: "1" },
+          to: { opacity: "0" },
+        },
+        "iris-zoom-in": {
+          from: { opacity: "0", transform: "scale(0.95)" },
+          to: { opacity: "1", transform: "scale(1)" },
+        },
+        "iris-zoom-out": {
+          from: { opacity: "1", transform: "scale(1)" },
+          to: { opacity: "0", transform: "scale(0.95)" },
+        },
+        "iris-slide-in-from-top": {
+          from: { transform: "translateY(-0.25rem)" },
+          to: { transform: "translateY(0)" },
+        },
+        "iris-slide-in-from-bottom": {
+          from: { transform: "translateY(0.25rem)" },
+          to: { transform: "translateY(0)" },
+        },
+        "iris-slide-in-from-left": {
+          from: { transform: "translateX(-0.25rem)" },
+          to: { transform: "translateX(0)" },
+        },
+        "iris-slide-in-from-right": {
+          from: { transform: "translateX(0.25rem)" },
+          to: { transform: "translateX(0)" },
+        },
+      },
+      animation: {
+        "iris-fade-in":
+          "iris-fade-in var(--motion-base) var(--motion-ease-out)",
+        "iris-fade-out": "iris-fade-out var(--motion-exit) var(--motion-ease)",
+        "iris-zoom-in":
+          "iris-zoom-in var(--motion-base) var(--motion-ease-out)",
+        "iris-zoom-out": "iris-zoom-out var(--motion-exit) var(--motion-ease)",
+        "iris-enter":
+          "iris-fade-in var(--motion-base) var(--motion-ease-out), iris-zoom-in var(--motion-base) var(--motion-ease-out)",
+        "iris-exit":
+          "iris-fade-out var(--motion-exit) var(--motion-ease), iris-zoom-out var(--motion-exit) var(--motion-ease)",
       },
       transitionDuration: {
         fast: "var(--motion-fast)",

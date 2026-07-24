@@ -271,13 +271,20 @@ function formatProcessDuration(durationMs: number | null | undefined): string {
 
 function RunningProcessDots() {
   const [count, setCount] = useState(1);
+  const reduceMotion =
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   useEffect(() => {
+    if (reduceMotion) {
+      setCount(3);
+      return;
+    }
     const timer = window.setInterval(() => {
       setCount((current) => (current % 3) + 1);
     }, 300);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [reduceMotion]);
 
   return (
     <span
@@ -336,6 +343,8 @@ function AssistantProcessTimeline({
         className="flex w-full min-w-0 items-center gap-1.5 text-left"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
+        aria-controls="assistant-process-timeline-list"
+        aria-label={open ? "折叠处理过程" : "展开处理过程"}
       >
         <ChevronDown
           className={cn(
@@ -353,7 +362,10 @@ function AssistantProcessTimeline({
         ) : null}
       </button>
       {open ? (
-        <ol className="mt-2 max-h-52 space-y-1.5 overflow-y-auto pl-5 pr-1">
+        <ol
+          id="assistant-process-timeline-list"
+          className="mt-2 max-h-52 space-y-1.5 overflow-y-auto pl-5 pr-1"
+        >
           {events.map((event) => {
             const duration = formatProcessDuration(event.durationMs);
             return (

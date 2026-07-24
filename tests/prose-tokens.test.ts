@@ -17,14 +17,21 @@ describe("prose polish v2 tokens", () => {
     expect(markdownProse).toContain('data-prose-surface="editor"');
     expect(markdownProse).toContain('data-prose-surface="conversation"');
     expect(markdownProse).toContain("--prose-size-chat: 15px");
-    expect(markdownProse).toContain("--prose-letter-spacing: 0");
+    expect(markdownProse).toContain("--prose-letter-spacing: 0.01em");
     expect(markdownProse).not.toContain("--prose-spacer-ratio");
     expect(markdownProse).not.toContain("letter-spacing: -");
-    expect(markdownProse).toContain("text-align: justify");
-    expect(markdownProse).toContain("text-justify: inter-character");
+    expect(markdownProse).toContain("text-align: start");
+    expect(markdownProse).not.toContain("text-align: justify");
+    expect(markdownProse).not.toContain("text-justify: inter-character");
     expect(markdownProse).toContain("line-break: loose");
     expect(markdownProse).not.toContain("text-align-last: justify");
     expect(markdownProse).not.toContain("text-justify: inter-ideograph");
+    expect(markdownProse).toContain("--prose-wiki: var(--brand)");
+    expect(markdownProse).toContain("--prose-measure: 42rem");
+    expect(globalsCss).toContain("max-width: var(--prose-measure)");
+    expect(globalsCss).toContain(
+      "noto-sans-sc-chinese-simplified-400-normal.woff2",
+    );
   });
 
   it("does not style editable spacer paragraphs in editor", () => {
@@ -34,12 +41,10 @@ describe("prose polish v2 tokens", () => {
 
   it("centers document title with stable sans title numerals", () => {
     expect(globalsCss).toContain("text-center font-bold");
-    expect(globalsCss).toContain(
-      "font-size: calc(2.25rem * var(--editor-zoom))",
-    );
+    expect(globalsCss).toContain("font-size: calc(2rem * var(--editor-zoom))");
     expect(globalsCss).toContain("font-family: var(--font-title)");
     expect(globalsCss).toContain("--font-title: var(--font-sans)");
-    expect(markdownProse).toContain("--font-title: var(--font-ui)");
+    expect(markdownProse).toContain("--font-title: var(--font-sans)");
     expect(globalsCss).toContain("font-variant-numeric: lining-nums");
     expect(globalsCss).toContain('"lnum" 1');
     expect(globalsCss).not.toContain("Noto Serif SC");

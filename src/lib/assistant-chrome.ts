@@ -41,14 +41,23 @@ export function resolveToolActivityLabel(options: {
   return null;
 }
 
-/** Builds chrome state from safe EvidenceRef metadata only. */
+/** Builds chrome state from safe EvidenceRef metadata and live activity. */
 export function buildAssistantChromeSnapshot(options: {
   sessionTokenUsage: AssistantChromeSnapshot["sessionTokenUsage"];
   evidence: EvidenceRef[];
+  activityHint?: string | null;
+  streaming?: boolean;
+  messages?: ChatLine[];
+  harnessPhaseLabel?: string | null;
 }): AssistantChromeSnapshot {
   return {
     sessionTokenUsage: options.sessionTokenUsage,
-    toolActivityLabel: null,
+    toolActivityLabel: resolveToolActivityLabel({
+      activityHint: options.activityHint ?? null,
+      streaming: options.streaming ?? false,
+      messages: options.messages ?? [],
+      harnessPhaseLabel: options.harnessPhaseLabel ?? null,
+    }),
     evidenceCount: options.evidence.length,
     webEvidenceCount: options.evidence.filter(
       (evidence) => evidence.sourceKind === "web",

@@ -25,18 +25,23 @@ describe("startup font loading contract", () => {
     expect(html).toContain(
       "/src/assets/fonts/jetbrains-mono-latin-400-normal.woff2",
     );
+    expect(html).toContain(
+      "/src/assets/fonts/noto-sans-sc-chinese-simplified-400-normal.woff2",
+    );
     expect(html).not.toContain("Noto+Sans+SC");
     expect(html).not.toContain("Noto+Serif+SC");
   });
 
-  it("declares local Inter and JetBrains Mono faces with system CJK fallback", () => {
+  it("declares local Inter, JetBrains Mono, and Noto Sans SC faces", () => {
     const css = read("src/styles/globals.css");
 
     expect(css).toContain("@font-face");
     expect(css).toContain('font-family: "Inter"');
     expect(css).toContain('font-family: "JetBrains Mono"');
+    expect(css).toContain('font-family: "Noto Sans SC"');
     expect(css).toContain("font-display: swap");
     expect(css).toContain("--font-sans");
+    expect(css).toContain("--font-prose");
     expect(css).toContain("PingFang SC");
     expect(css).toContain("Microsoft YaHei");
   });

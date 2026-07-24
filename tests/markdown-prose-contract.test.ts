@@ -33,10 +33,10 @@ describe("markdown prose CSS contract", () => {
       ".iris-markdown-content blockquote[data-callout-type] > p:first-child",
     );
     expect(proseCss).toContain("@apply text-sm font-semibold;");
-    expect(proseCss).toContain("@apply border-l-primary bg-primary/5;");
-    expect(proseCss).toContain("background: hsl(var(--primary) / 0.08);");
-    expect(proseCss).toContain("border-left-color: hsl(var(--destructive)");
-    expect(proseCss).toContain("@apply border-l-destructive bg-destructive/5;");
+    expect(proseCss).toContain("--callout-tip: var(--brand)");
+    expect(proseCss).toContain("--callout-warning: var(--warning)");
+    expect(proseCss).toContain("border-left-color: hsl(var(--callout-note))");
+    expect(proseCss).toContain("border-left-color: hsl(var(--callout-danger))");
     expect(proseCss).toContain("@apply border-l-muted-foreground bg-muted/30;");
   });
 
@@ -50,12 +50,13 @@ describe("markdown prose CSS contract", () => {
     );
   });
 
-  it("justifies only editor body prose blocks", () => {
+  it("left-aligns editor body prose blocks (no forced justify)", () => {
     const editorBodyRule = readRule(
       /\.iris-editor-body\s+\.ProseMirror\.iris-markdown-content\[data-prose-surface="editor"\]\s+> p,[\s\S]+?> blockquote\s*\{[\s\S]+?\}/,
     );
-    expect(editorBodyRule).toContain("text-align: justify;");
-    expect(editorBodyRule).toContain("text-justify: inter-character;");
+    expect(editorBodyRule).toContain("text-align: start;");
+    expect(editorBodyRule).not.toContain("text-align: justify;");
+    expect(editorBodyRule).not.toContain("text-justify");
     expect(editorBodyRule).toContain("line-break: loose;");
     expect(editorBodyRule).not.toContain("text-align-last");
 

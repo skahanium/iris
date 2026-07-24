@@ -54,7 +54,7 @@ export function StatusBarTokenUsage({
           role="dialog"
           aria-label="Token 用量明细"
           className={cn(
-            "absolute bottom-full right-0 z-50 mb-1 w-44 rounded-md border border-border bg-popover p-2 text-[10px] text-muted-foreground shadow-md",
+            "absolute bottom-full right-0 z-50 mb-1 w-44 rounded-md border border-border bg-popover p-2 text-[10px] text-muted-foreground shadow-floating",
           )}
         >
           <div className="grid grid-cols-2 gap-x-3 gap-y-1">
