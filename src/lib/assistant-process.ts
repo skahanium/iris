@@ -1,4 +1,8 @@
 import { toolDisplayName } from "@/lib/tool-display-names";
+import {
+  ANSWER_COMPLETE_PROCESS_ID,
+  ANSWER_COMPLETE_PROCESS_LABEL,
+} from "@/lib/assistant-presentation";
 import type { AssistantRunEvent } from "@/types/ai";
 
 /** A safe, presentation-only item rendered inside one assistant message. */
@@ -37,6 +41,8 @@ export function projectAssistantProcessEvents(
 ): AssistantProcessItem[] {
   const items: AssistantProcessItem[] = [];
   const toolIndexes = new Map<string, number>();
+  let answerTerminalAt: number | null = null;
+  let answerTerminalLabel: string | null = null;
 
   for (const event of events) {
     const createdAt = timestampMs(event.timestamp);
@@ -104,6 +110,18 @@ export function projectAssistantProcessEvents(
         });
         break;
       }
+      case "completed":
+        answerTerminalAt = createdAt;
+        answerTerminalLabel = ANSWER_COMPLETE_PROCESS_LABEL;
+        break;
+      case "failed":
+        answerTerminalAt = createdAt;
+        answerTerminalLabel = "答复失败";
+        break;
+      case "cancelled":
+        answerTerminalAt = createdAt;
+        answerTerminalLabel = "已取消";
+        break;
       default:
         break;
     }
@@ -123,6 +141,19 @@ export function projectAssistantProcessEvents(
       label: summary.text,
       status: "completed",
       createdAt: fallbackCreatedAt,
+    });
+  }
+
+  if (
+    answerTerminalLabel &&
+    !items.some((item) => item.id === ANSWER_COMPLETE_PROCESS_ID)
+  ) {
+    items.push({
+      id: ANSWER_COMPLETE_PROCESS_ID,
+      kind: "stage",
+      label: answerTerminalLabel,
+      status: "completed",
+      createdAt: answerTerminalAt ?? fallbackCreatedAt,
     });
   }
 

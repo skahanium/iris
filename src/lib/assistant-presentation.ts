@@ -5,6 +5,11 @@
  * presentation event may affect motion, but must never affect the final answer
  * reconstructed from `assistant_run_get`.
  */
+
+/** Shared with durable process projection so live + history collapse to the same label. */
+export const ANSWER_COMPLETE_PROCESS_ID = "stage:answer-complete";
+export const ANSWER_COMPLETE_PROCESS_LABEL = "答复完毕";
+
 export type AssistantPresentationPayload =
   | {
       kind: "process_started";
@@ -205,13 +210,29 @@ function applyEvent(
         answer: "",
         answerComplete: false,
       };
-    case "answer_complete":
+    case "answer_complete": {
+      const completedItems = completeAllRunning(state.processItems);
+      const alreadyDone = completedItems.some(
+        (item) => item.id === ANSWER_COMPLETE_PROCESS_ID,
+      );
       return {
         ...state,
         lastSeq: event.presentationSeq,
-        processItems: completeAllRunning(state.processItems),
+        processItems: alreadyDone
+          ? completedItems
+          : [
+              ...completedItems,
+              {
+                id: ANSWER_COMPLETE_PROCESS_ID,
+                kind: "stage",
+                label: ANSWER_COMPLETE_PROCESS_LABEL,
+                status: "completed",
+                elapsedMs: event.elapsedMs,
+              },
+            ],
         answerComplete: true,
       };
+    }
   }
 }
 

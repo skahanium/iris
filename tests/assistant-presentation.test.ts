@@ -88,11 +88,20 @@ describe("Assistant 实时展示事件", () => {
     expect(state.processItems[1]?.status).toBe("running");
   });
 
-  it("answer_complete 会结束仍在 running 的工具项", () => {
+  it("answer_complete 会结束仍在 running 的工具项，并追加答复完毕", () => {
     let state = createAssistantPresentationState(runId);
     state = reduceAssistantPresentationEvent(
       state,
       event(1, "process_started", {
+        kind: "process_started",
+        itemId: "stage:gen",
+        itemKind: "stage",
+        label: "正在生成答复",
+      }),
+    );
+    state = reduceAssistantPresentationEvent(
+      state,
+      event(2, "process_started", {
         kind: "process_started",
         itemId: "tool:web-1",
         itemKind: "tool",
@@ -101,8 +110,13 @@ describe("Assistant 实时展示事件", () => {
     );
     state = reduceAssistantPresentationEvent(
       state,
-      event(2, "answer_complete", { kind: "answer_complete" }),
+      event(3, "answer_complete", { kind: "answer_complete" }),
     );
-    expect(state.processItems[0]?.status).toBe("completed");
+    expect(state.processItems.map((item) => [item.label, item.status])).toEqual([
+      ["正在生成答复", "completed"],
+      ["联网搜索", "completed"],
+      ["答复完毕", "completed"],
+    ]);
+    expect(state.answerComplete).toBe(true);
   });
 });

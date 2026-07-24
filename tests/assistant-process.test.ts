@@ -207,6 +207,30 @@ describe("Assistant Run 处理过程投影", () => {
     ]);
   });
 
+  it("答复完成后在正在生成答复之下追加答复完毕", () => {
+    const items = projectAssistantProcessEvents([
+      event(1, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "正在生成答复",
+      }),
+      event(2, "completed", {
+        kind: "completed",
+        messageId: "msg-001",
+      }),
+    ]);
+
+    expect(items.map((item) => item.label)).toEqual([
+      "正在生成答复",
+      "答复完毕",
+    ]);
+    expect(items.at(-1)).toMatchObject({
+      id: "stage:answer-complete",
+      kind: "stage",
+      status: "completed",
+    });
+  });
+
   it("隐藏运行时只读内部工具，但仍合并展示联网搜索", () => {
     const items = projectAssistantProcessEvents([
       event(1, "tool_started", {
