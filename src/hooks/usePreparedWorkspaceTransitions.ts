@@ -59,6 +59,12 @@ export function usePreparedWorkspaceTransitions<
   workspaceEmpty,
 }: UsePreparedWorkspaceTransitionsOptions<OpenOptions>) {
   const startupAutoOpenDoneRef = useRef(false);
+  const startupAutoOpenInFlightRef = useRef(false);
+  const workspaceEmptyRef = useRef(workspaceEmpty);
+  const tabsLengthRef = useRef(tabs.length);
+
+  workspaceEmptyRef.current = workspaceEmpty;
+  tabsLengthRef.current = tabs.length;
 
   const prepared = usePreparedNoteOpener<OpenOptions>({
     openNote,
@@ -69,6 +75,7 @@ export function usePreparedWorkspaceTransitions<
 
   useEffect(() => {
     startupAutoOpenDoneRef.current = false;
+    startupAutoOpenInFlightRef.current = false;
     clearPreparedNotes();
   }, [clearPreparedNotes, vaultPath]);
 
@@ -105,42 +112,55 @@ export function usePreparedWorkspaceTransitions<
     const timer = window.setTimeout(() => {
       if (
         startupAutoOpenDoneRef.current ||
+        startupAutoOpenInFlightRef.current ||
         tabs.length > 0 ||
         !workspaceEmpty
       ) {
         return;
       }
-      startupAutoOpenDoneRef.current = true;
+
+      startupAutoOpenInFlightRef.current = true;
 
       void (async () => {
-        const snapshot = loadWorkspaceSessionSnapshot(vaultPath);
-        const openNotePaths =
-          snapshot?.openNotes.map((note) => note.path) ?? [];
-        let recentFiles: Awaited<ReturnType<typeof fileList>> = [];
         try {
-          recentFiles = await fileList();
-        } catch (error) {
-          console.warn("[Workspace] startup recent notes load failed:", error);
-          return;
+          const snapshot = loadWorkspaceSessionSnapshot(vaultPath);
+          const openNotePaths =
+            snapshot?.openNotes.map((note) => note.path) ?? [];
+          let recentFiles: Awaited<ReturnType<typeof fileList>> = [];
+          try {
+            recentFiles = await fileList();
+          } catch (error) {
+            console.warn(
+              "[Workspace] startup recent notes load failed:",
+              error,
+            );
+          }
+
+          const candidate = resolveStartupNote({
+            activePath: snapshot?.activePath ?? null,
+            openNotePaths,
+            recentPaths: recentFiles.map((file) => file.path),
+          });
+          if (!candidate) {
+            return;
+          }
+
+          if (!workspaceEmptyRef.current || tabsLengthRef.current > 0) {
+            return;
+          }
+
+          const titleHint =
+            snapshot?.openNotes.find((note) => note.path === candidate.path)
+              ?.title ??
+            recentFiles.find((file) => file.path === candidate.path)?.title;
+
+          await openPreparedNote(candidate.path, titleHint, {
+            source: "startup" as NoteOpenSource,
+          } as unknown as OpenOptions);
+        } finally {
+          startupAutoOpenDoneRef.current = true;
+          startupAutoOpenInFlightRef.current = false;
         }
-
-        const candidate = resolveStartupNote({
-          activePath: snapshot?.activePath ?? null,
-          openNotePaths,
-          recentPaths: recentFiles.map((file) => file.path),
-        });
-        if (!candidate) {
-          return;
-        }
-
-        const titleHint =
-          snapshot?.openNotes.find((note) => note.path === candidate.path)
-            ?.title ??
-          recentFiles.find((file) => file.path === candidate.path)?.title;
-
-        await openPreparedNote(candidate.path, titleHint, {
-          source: "startup" as NoteOpenSource,
-        } as unknown as OpenOptions);
       })();
     }, 0);
 

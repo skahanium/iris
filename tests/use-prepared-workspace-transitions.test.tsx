@@ -229,6 +229,37 @@ describe("usePreparedWorkspaceTransitions cold-start auto-open", () => {
     expect(openPreparedNote).toHaveBeenCalledTimes(1);
   });
 
+  it("opens snapshot activePath when fileList rejects", async () => {
+    saveWorkspaceSessionSnapshot("/vault", {
+      activePath: "notes/snapshot-only.md",
+      openNotes: [
+        {
+          path: "notes/snapshot-only.md",
+          title: "Snapshot Only",
+          isLocked: false,
+          lastActiveAt: 1,
+        },
+      ],
+    });
+    fileList.mockRejectedValue(new Error("ipc unavailable"));
+
+    act(() => {
+      root.render(<Harness vaultPath="/vault" workspaceEmpty />);
+    });
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(fileList).toHaveBeenCalledTimes(1);
+    expect(openPreparedNote).toHaveBeenCalledTimes(1);
+    expect(openPreparedNote).toHaveBeenCalledWith(
+      "notes/snapshot-only.md",
+      "Snapshot Only",
+      { source: "startup" },
+    );
+  });
+
   it("skips startup auto-open when tabs are already open", async () => {
     fileList.mockResolvedValue([
       {
