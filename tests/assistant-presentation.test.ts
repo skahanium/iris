@@ -112,11 +112,13 @@ describe("Assistant 实时展示事件", () => {
       state,
       event(3, "answer_complete", { kind: "answer_complete" }),
     );
-    expect(state.processItems.map((item) => [item.label, item.status])).toEqual([
-      ["正在生成答复", "completed"],
-      ["联网搜索", "completed"],
-      ["答复完毕", "completed"],
-    ]);
+    expect(state.processItems.map((item) => [item.label, item.status])).toEqual(
+      [
+        ["正在生成答复", "completed"],
+        ["联网搜索", "completed"],
+        ["答复完毕", "completed"],
+      ],
+    );
     expect(state.answerComplete).toBe(true);
   });
 });
