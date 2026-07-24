@@ -16,7 +16,7 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 | 角色           | Token                                       | 用途                                                     |
 | -------------- | ------------------------------------------- | -------------------------------------------------------- |
-| Brand          | `--brand`（= knowledge 绿系）               | wiki、rail 激活、overlay 选中、tip callout、知识相关强调 |
+| Brand          | `--brand`（= knowledge 绿系）               | wiki、rail 激活、overlay 选中、tip callout；肯定性主操作经 `Button variant="brand"`（空主面新建、发送等） |
 | Primary / Ring | `--primary`、`--ring`                       | chrome 焦点环、外链、通用控件 focus；非品牌点缀          |
 | Warning        | `--warning`、`--warning-bg`、`--warning-fg` | 非终态警示、warning callout；禁止业务层裸用 `amber-*`    |
 | Success        | `--success`、`--success-bg`、`--success-fg` | 就绪/成功徽章；禁止业务层裸用 `emerald-*`                |
@@ -52,7 +52,7 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 | `--text-ui`      | 13px | 菜单项、列表次行     |
 | `--text-body`    | 14px | 表单与面板正文       |
 
-动效通常为 150–200ms（`--motion-fast` / `--motion-base` / `--motion-exit`）；`prefers-reduced-motion` 下必须降级。浮层进入用真实 opacity/translate，禁止依赖未实现的 `animate-in` 空类名。
+动效通常为 150–200ms（`--motion-fast` / `--motion-base` / `--motion-exit`）；`prefers-reduced-motion` 下必须降级。浮层进场仅 opacity（见正文规则）；禁止依赖未实现的 `animate-in` 空类名。
 
 ## Typography（正文）
 
@@ -81,7 +81,11 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 - `components/ai/`：助手、工具确认、消息与写作提案。
 - `components/layout/`：窗口 Chrome、Rail、标题栏、Overlay 和全局布局。
 
-可复用控件应优先使用现有 `OverlayChrome`、`IrisSurfaceMenu`、`CommandListOption`、`Kbd`、`AiComposer`、`AiMessageBubble`、`SurfaceCard`、`Tooltip` 等原语，不能在业务组件重复实现。
+可复用控件应优先使用现有 `OverlayChrome`、`IrisSurfaceMenu`、`CommandListOption`、`Kbd`、`AiComposer`、`AiMessageBubble`、`SurfaceCard`、`Tooltip`、`WorkspaceEmpty` 等原语，不能在业务组件重复实现。
+
+空主面：无打开文档时渲染 `WorkspaceEmpty`（`vault` = 库空「新建第一篇」；`workspace` = 零 Tab「新建笔记」+ 可选「打开最近」）。禁止恢复四按钮欢迎工作台。肯定性填充按钮统一 `variant="brand"`，勿散落 `bg-[hsl(var(--brand))]`。
+
+AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 brand tint；过程区脚注感（`assistant-process-footnote`）；折叠摘要末项在 Run `completed` 后为「答复完毕」。
 
 ## 交互规则
 

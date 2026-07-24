@@ -64,7 +64,7 @@ export function useHomeRecentNotes({
       setCatalogFiles(catalog);
       setRecentNotes(catalog.slice(0, 5));
     } catch (error) {
-      console.warn("[Home] recent notes refresh failed:", error);
+      console.warn("[WorkspaceEmpty] catalog refresh failed:", error);
     }
   }, []);
 
