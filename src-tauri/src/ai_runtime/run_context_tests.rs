@@ -709,7 +709,15 @@ fn oversized_note_falls_back_to_exact_scope_retrieval_without_truncating_fulltex
     assert_eq!(context.materials.len(), 1);
     assert_eq!(context.materials[0].source_path, "notes/long.md");
     assert_eq!(context.materials[0].content, indexed_excerpt);
-    assert!(context.retrieval_scope.is_unrestricted());
+    assert!(
+        !context.retrieval_scope.is_unrestricted(),
+        "explicit @ notes constrain tool reads to authorized paths"
+    );
+    assert!(context
+        .retrieval_scope
+        .paths
+        .iter()
+        .any(|path| path == "notes/long.md"));
     assert_ne!(context.materials[0].content, body);
 }
 
@@ -842,7 +850,15 @@ fn oversized_note_fallback_prefers_a_later_current_chunk_that_matches_the_query(
     .expect("relevant exact-path chunk");
 
     assert_eq!(context.materials[0].content, relevant);
-    assert!(context.retrieval_scope.is_unrestricted());
+    assert!(
+        !context.retrieval_scope.is_unrestricted(),
+        "explicit @ notes constrain tool reads to authorized paths"
+    );
+    assert!(context
+        .retrieval_scope
+        .paths
+        .iter()
+        .any(|path| path == "notes/later-chunk.md"));
 }
 
 #[test]

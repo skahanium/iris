@@ -122,14 +122,16 @@ fn is_vault_read_tool(entry: &ToolCatalogEntry) -> bool {
 }
 
 fn is_default_read_tool(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> bool {
-    ctx.allow_implicit_vault
-        && entry.default_enabled_without_skill
-        && matches!(
-            entry.access_level,
-            ToolAccessLevel::ReadIndex
-                | ToolAccessLevel::ReadNoteSpan
-                | ToolAccessLevel::ReadProfile
-        )
+    if !entry.default_enabled_without_skill {
+        return false;
+    }
+    match entry.access_level {
+        // Runtime context tools (time / app / capabilities) stay available even
+        // when vault read/search is denied for the Run.
+        ToolAccessLevel::ReadProfile => true,
+        ToolAccessLevel::ReadIndex | ToolAccessLevel::ReadNoteSpan => ctx.allow_implicit_vault,
+        _ => false,
+    }
 }
 
 fn required_autonomy(entry: &ToolCatalogEntry) -> Option<AutonomyLevel> {
@@ -219,6 +221,10 @@ mod tests {
         assert_eq!(
             evaluate_tool("search_hybrid", &ctx),
             ToolPolicyVerdict::Denied(DenialReason::ImplicitVaultDenied)
+        );
+        assert_eq!(
+            evaluate_tool("system_time_now", &ctx),
+            ToolPolicyVerdict::AutoAllowed
         );
     }
 

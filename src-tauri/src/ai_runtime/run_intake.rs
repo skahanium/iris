@@ -966,8 +966,10 @@ pub(crate) fn needs_offline_vault_tool_loop(
     {
         return false;
     }
-    if is_local_transformation_request(message) && !looks_like_local_vault_dependency(message) {
-        return false;
+    // 「只用本地资料改写/翻译」uses「本地」as an offline constraint, not a vault
+    // read request. Stronger vault cues (笔记/授权/项目资料/…) still enter ToolLoop.
+    if is_local_transformation_request(message) {
+        return looks_like_strong_vault_dependency(message);
     }
     looks_like_local_vault_dependency(message)
 }
@@ -995,19 +997,21 @@ pub(crate) fn allow_implicit_vault_for_run(
     {
         return false;
     }
-    if is_local_transformation_request(user_message)
-        && !looks_like_local_vault_dependency(user_message)
-    {
-        return false;
+    if is_local_transformation_request(user_message) {
+        return looks_like_strong_vault_dependency(user_message);
     }
     looks_like_local_vault_dependency(user_message)
 }
 
 pub(crate) fn looks_like_local_vault_dependency(message: &str) -> bool {
+    contains_any(message, &["本地"]) || looks_like_strong_vault_dependency(message)
+}
+
+/// Vault-source cues stronger than a bare offline「本地」constraint.
+fn looks_like_strong_vault_dependency(message: &str) -> bool {
     contains_any(
         message,
         &[
-            "本地",
             "笔记",
             "授权",
             "材料",
