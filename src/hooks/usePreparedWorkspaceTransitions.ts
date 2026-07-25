@@ -137,6 +137,19 @@ export function usePreparedWorkspaceTransitions<
           const snapshot = loadWorkspaceSessionSnapshot(vaultPath);
           const openNotePaths =
             snapshot?.openNotes.map((note) => note.path) ?? [];
+
+          const candidate = resolveStartupNote({
+            activePath: snapshot?.activePath ?? null,
+            openNotePaths,
+          });
+          if (!candidate) {
+            return;
+          }
+
+          if (!workspaceEmptyRef.current || tabsLengthRef.current > 0) {
+            return;
+          }
+
           let recentFiles: Awaited<ReturnType<typeof fileList>> = [];
           try {
             recentFiles = await fileList();
@@ -145,19 +158,6 @@ export function usePreparedWorkspaceTransitions<
               "[Workspace] startup recent notes load failed:",
               error,
             );
-          }
-
-          const candidate = resolveStartupNote({
-            activePath: snapshot?.activePath ?? null,
-            openNotePaths,
-            recentPaths: recentFiles.map((file) => file.path),
-          });
-          if (!candidate) {
-            return;
-          }
-
-          if (!workspaceEmptyRef.current || tabsLengthRef.current > 0) {
-            return;
           }
 
           const titleHint =

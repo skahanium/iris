@@ -3,22 +3,25 @@ export interface StartupNoteCandidate {
   titleHint?: string;
 }
 
-/** Prefer snapshot.activePath if in openNotePaths or recentPaths; else first recentPaths entry. */
+/**
+ * Pick the note to restore on cold start from the last workspace session snapshot
+ * (`openNotes` / `activePath` only). When the user closed every tab before quit,
+ * `openNotePaths` is empty and this returns null — library recents are not auto-opened.
+ */
 export function resolveStartupNote(input: {
   activePath: string | null;
   openNotePaths: readonly string[];
-  recentPaths: readonly string[];
 }): StartupNoteCandidate | null {
-  const { activePath, openNotePaths, recentPaths } = input;
-  if (
-    activePath &&
-    (openNotePaths.includes(activePath) || recentPaths.includes(activePath))
-  ) {
-    return { path: activePath };
+  const { activePath, openNotePaths } = input;
+  if (openNotePaths.length === 0) {
+    return null;
   }
-  const firstRecent = recentPaths[0];
-  if (firstRecent) {
-    return { path: firstRecent };
+  const normalizedActive =
+    typeof activePath === "string" && activePath.length > 0
+      ? activePath
+      : null;
+  if (normalizedActive && openNotePaths.includes(normalizedActive)) {
+    return { path: normalizedActive };
   }
-  return null;
+  return { path: openNotePaths[0]! };
 }

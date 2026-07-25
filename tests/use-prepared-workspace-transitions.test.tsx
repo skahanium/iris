@@ -221,7 +221,44 @@ describe("usePreparedWorkspaceTransitions cold-start auto-open", () => {
     });
   });
 
+  it("does not auto-open library recents when the last session had no open tabs", async () => {
+    saveWorkspaceSessionSnapshot("/vault", {
+      activePath: null,
+      openNotes: [],
+    });
+    fileList.mockResolvedValue([
+      {
+        path: "notes/only.md",
+        title: "Only",
+        updatedAt: "2026-01-01T00:00:00Z",
+        isLocked: false,
+      },
+    ]);
+
+    act(() => {
+      root.render(<Harness vaultPath="/vault" workspaceEmpty tabs={[]} />);
+    });
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(fileList).not.toHaveBeenCalled();
+    expect(openPreparedNote).not.toHaveBeenCalled();
+  });
+
   it("does not auto-open again after the user returns to an empty workspace", async () => {
+    saveWorkspaceSessionSnapshot("/vault", {
+      activePath: "notes/only.md",
+      openNotes: [
+        {
+          path: "notes/only.md",
+          title: "Only",
+          isLocked: false,
+          lastActiveAt: 1,
+        },
+      ],
+    });
     fileList.mockResolvedValue([
       {
         path: "notes/only.md",
