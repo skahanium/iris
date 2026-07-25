@@ -934,9 +934,8 @@ describe("useAppPersistenceLifecycle", () => {
       fileWrite.mockRejectedValue(new Error("disk unavailable"));
 
       const flushPromise = api.flushAllOpenTabs();
-      const flushResult = expect(flushPromise).rejects.toThrow(
-        "disk unavailable",
-      );
+      const flushResult =
+        expect(flushPromise).rejects.toThrow("disk unavailable");
       await act(async () => {
         await vi.runAllTimersAsync();
       });
