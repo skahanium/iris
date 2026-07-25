@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,17 +35,19 @@ function Harness({
   tabs = [] as { path: string }[],
   vaultPath,
   workspaceEmpty = true,
+  setWorkspaceEmpty = vi.fn<(active: boolean) => void>(),
 }: {
   tabs?: { path: string }[];
   vaultPath: string | null;
   workspaceEmpty?: boolean;
+  setWorkspaceEmpty?: (active: boolean) => void;
 }) {
   usePreparedWorkspaceTransitions({
     activateTab: vi.fn(),
     classifiedVaultStatus: "locked",
     handleNewNote: vi.fn(async () => undefined),
     openNote: vi.fn(async () => undefined),
-    setWorkspaceEmpty: vi.fn(),
+    setWorkspaceEmpty,
     tabs,
     vaultPath,
     workspaceEmpty,
@@ -121,6 +124,36 @@ describe("usePreparedWorkspaceTransitions startup warmup", () => {
     expect(openPreparedNote).toHaveBeenCalledWith("notes/a.md", "A", {
       source: "startup",
     });
+  });
+
+  it("leaves the empty workspace after startup auto-open succeeds", async () => {
+    const setWorkspaceEmpty = vi.fn<(active: boolean) => void>();
+    saveWorkspaceSessionSnapshot("/vault", {
+      activePath: "notes/a.md",
+      openNotes: [
+        { path: "notes/a.md", title: "A", isLocked: false, lastActiveAt: 1 },
+      ],
+    });
+    fileList.mockResolvedValue([
+      {
+        path: "notes/a.md",
+        title: "A",
+        updatedAt: "2026-01-01T00:00:00Z",
+        isLocked: false,
+      },
+    ]);
+
+    act(() => {
+      root.render(
+        <Harness vaultPath="/vault" setWorkspaceEmpty={setWorkspaceEmpty} />,
+      );
+    });
+
+    await act(async () => {
+      await vi.runOnlyPendingTimersAsync();
+    });
+
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(false);
   });
 });
 
@@ -285,5 +318,16 @@ describe("usePreparedWorkspaceTransitions cold-start auto-open", () => {
     });
 
     expect(openPreparedNote).not.toHaveBeenCalled();
+  });
+});
+
+describe("usePreparedWorkspaceTransitions startup routing", () => {
+  it("auto-opens through openNoteLeavingHome so the workspace leaves empty state", () => {
+    const src = readFileSync(
+      "src/hooks/usePreparedWorkspaceTransitions.ts",
+      "utf8",
+    );
+    expect(src).toContain("await openNoteLeavingHome(candidate.path");
+    expect(src).not.toMatch(/await openPreparedNote\(candidate\.path/);
   });
 });

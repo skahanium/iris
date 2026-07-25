@@ -124,6 +124,18 @@ describe("status bar assistant chrome", () => {
     expect(app).toContain("resetSessionCharDelta");
   });
 
+  it("gates document status chrome on documentForegroundActive when workspace is empty", () => {
+    const app = read("src/App.impl.tsx");
+
+    expect(app).toContain("documentForegroundActive");
+    expect(app).toContain("statusBarShowsNoteChrome");
+    expect(app).toMatch(
+      /statusBarShowsNoteChrome\s*\?\s*editorStats\.characterCount/,
+    );
+    expect(app).toMatch(/statusBarShowsNoteChrome\s*\?\s*activePath/);
+    expect(app).toContain("setWorkspaceEmpty(false)");
+  });
+
   it("StatusBar does not expose the ordinary-user tool audit entry", () => {
     const bar = read("src/components/layout/StatusBar.tsx");
     expect(bar).not.toContain("status-bar-audit-link");

@@ -21,11 +21,11 @@ interface AppStatusBarSlotProps {
   sessionCharsRemoved?: number;
   aiStatus: string;
   assistantChrome: AssistantChromeSnapshot;
-  editorZoom: number;
-  onEditorZoomIn: () => void;
-  onEditorZoomOut: () => void;
-  onEditorZoomReset: () => void;
-  onEditorZoomChange: (zoom: number) => void;
+  editorZoom?: number;
+  onEditorZoomIn?: () => void;
+  onEditorZoomOut?: () => void;
+  onEditorZoomReset?: () => void;
+  onEditorZoomChange?: (zoom: number) => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;

@@ -73,6 +73,17 @@ export function usePreparedWorkspaceTransitions<
 
   const { clearPreparedNotes, openPreparedNote, warmNotePath } = prepared;
 
+  const transitions = useHomeWorkspaceTransitions<OpenOptions>({
+    activateTab,
+    cancelPendingDocumentOpen,
+    handleNewNote,
+    openNote: openPreparedNote,
+    openTabs: tabs,
+    setWorkspaceEmpty,
+  });
+
+  const { openNoteLeavingHome } = transitions;
+
   useEffect(() => {
     startupAutoOpenDoneRef.current = false;
     startupAutoOpenInFlightRef.current = false;
@@ -154,7 +165,7 @@ export function usePreparedWorkspaceTransitions<
               ?.title ??
             recentFiles.find((file) => file.path === candidate.path)?.title;
 
-          await openPreparedNote(candidate.path, titleHint, {
+          await openNoteLeavingHome(candidate.path, titleHint, {
             source: "startup" as NoteOpenSource,
           } as unknown as OpenOptions);
         } finally {
@@ -165,16 +176,7 @@ export function usePreparedWorkspaceTransitions<
     }, 0);
 
     return () => window.clearTimeout(timer);
-  }, [openPreparedNote, tabs.length, vaultPath, workspaceEmpty]);
-
-  const transitions = useHomeWorkspaceTransitions<OpenOptions>({
-    activateTab,
-    cancelPendingDocumentOpen,
-    handleNewNote,
-    openNote: openPreparedNote,
-    openTabs: tabs,
-    setWorkspaceEmpty,
-  });
+  }, [openNoteLeavingHome, tabs.length, vaultPath, workspaceEmpty]);
 
   return {
     ...prepared,

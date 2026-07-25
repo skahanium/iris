@@ -364,6 +364,18 @@ function App() {
     enterWorkspaceEmpty,
     tabs,
   });
+  const documentForegroundActive =
+    !workspaceEmpty && Boolean(activePath) && !activeMediaTab;
+
+  useEffect(() => {
+    if (workspaceEmpty || activeMediaTab || !activePath) {
+      return;
+    }
+    if (tabs.some((tab) => tab.path === activePath)) {
+      setWorkspaceEmpty(false);
+    }
+  }, [workspaceEmpty, activePath, activeMediaTab, setWorkspaceEmpty, tabs]);
+
   useEffect(() => {
     if (!activePath) {
       dirtyRef.current = false;
@@ -706,10 +718,10 @@ function App() {
   }, [activePath, editorContentTick]);
 
   useEffect(() => {
-    if (!activePath) {
+    if (!documentForegroundActive) {
       resetEditorStats();
     }
-  }, [activePath, resetEditorStats]);
+  }, [documentForegroundActive, resetEditorStats]);
 
   useEffect(() => {
     setActiveEditorSession(activeDocumentSessionId ?? null);
@@ -805,7 +817,13 @@ function App() {
   });
 
   const activeDocumentTitle =
-    activePath && displayTitleForChrome(activePath, noteTitle);
+    documentForegroundActive &&
+    activePath &&
+    displayTitleForChrome(activePath, noteTitle);
+  const statusBarShowsMediaChrome = Boolean(
+    activeMediaTab && !workspaceEmpty,
+  );
+  const statusBarShowsNoteChrome = documentForegroundActive;
   const {
     aiDomain,
     assistantRuntimeDocumentCandidates,
@@ -925,26 +943,46 @@ function App() {
         }
         statusBar={
           <AppStatusBarSlot
-            activePath={activeMediaTab ? null : activePath}
+            activePath={statusBarShowsNoteChrome ? activePath : null}
             activeDocumentTitle={
-              activeMediaTab ? activeMediaTab.title : activeDocumentTitle
+              statusBarShowsMediaChrome
+                ? activeMediaTab!.title
+                : activeDocumentTitle || null
             }
-            persistenceStatus={saveStatus}
-            characterCount={editorStats.characterCount}
-            readingMinutes={editorStats.readingMinutes}
-            sessionCharsAdded={editorStats.sessionCharsAdded}
-            sessionCharsRemoved={editorStats.sessionCharsRemoved}
+            persistenceStatus={
+              statusBarShowsNoteChrome ? saveStatus : undefined
+            }
+            characterCount={
+              statusBarShowsNoteChrome ? editorStats.characterCount : 0
+            }
+            readingMinutes={
+              statusBarShowsNoteChrome ? editorStats.readingMinutes : 0
+            }
+            sessionCharsAdded={
+              statusBarShowsNoteChrome ? editorStats.sessionCharsAdded : 0
+            }
+            sessionCharsRemoved={
+              statusBarShowsNoteChrome ? editorStats.sessionCharsRemoved : 0
+            }
             aiStatus={aiStatus}
             assistantChrome={assistantChrome}
-            editorZoom={editorZoom}
-            onEditorZoomIn={zoomIn}
-            onEditorZoomOut={zoomOut}
-            onEditorZoomReset={resetZoom}
-            onEditorZoomChange={setZoom}
+            editorZoom={statusBarShowsNoteChrome ? editorZoom : undefined}
+            onEditorZoomIn={statusBarShowsNoteChrome ? zoomIn : undefined}
+            onEditorZoomOut={statusBarShowsNoteChrome ? zoomOut : undefined}
+            onEditorZoomReset={statusBarShowsNoteChrome ? resetZoom : undefined}
+            onEditorZoomChange={statusBarShowsNoteChrome ? setZoom : undefined}
             onUndo={handleUndo}
             onRedo={handleRedo}
-            canUndo={canUndo && !isEditorPersistenceBlocked}
-            canRedo={canRedo && !isEditorPersistenceBlocked}
+            canUndo={
+              statusBarShowsNoteChrome &&
+              canUndo &&
+              !isEditorPersistenceBlocked
+            }
+            canRedo={
+              statusBarShowsNoteChrome &&
+              canRedo &&
+              !isEditorPersistenceBlocked
+            }
             webSearch={webSearch}
             webSearchAvailability={webSearchAvailability}
             onWebSearchChange={setWebSearch}
