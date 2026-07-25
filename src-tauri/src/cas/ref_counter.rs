@@ -16,24 +16,30 @@ impl RefCounter {
         Self { db }
     }
 
+    /// Increases reference count using an existing database connection (same transaction).
+    pub(crate) fn increment_on_conn(
+        conn: &rusqlite::Connection,
+        object_hash: &str,
+    ) -> AppResult<()> {
+        conn.execute(
+            "INSERT INTO cas_refs (object_hash, ref_count, object_type, size, created_at, last_accessed_at)
+             VALUES (?1, 1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(object_hash) DO UPDATE SET
+                 ref_count = ref_count + 1,
+                 last_accessed_at = excluded.last_accessed_at",
+            rusqlite::params![
+                object_hash,
+                "unknown",
+                0,
+                Utc::now().to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
     /// 增加引用计数
     pub fn increment(&self, object_hash: &str) -> AppResult<()> {
-        self.db.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO cas_refs (object_hash, ref_count, object_type, size, created_at, last_accessed_at)
-                 VALUES (?1, 1, ?2, ?3, ?4, ?4)
-                 ON CONFLICT(object_hash) DO UPDATE SET
-                     ref_count = ref_count + 1,
-                     last_accessed_at = excluded.last_accessed_at",
-                rusqlite::params![
-                    object_hash,
-                    "unknown",
-                    0,
-                    Utc::now().to_rfc3339(),
-                ],
-            )?;
-            Ok(())
-        })
+        self.db.with_conn(|conn| Self::increment_on_conn(conn, object_hash))
     }
 
     /// 减少引用计数

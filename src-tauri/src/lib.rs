@@ -155,6 +155,8 @@ pub fn run() {
             commands::classified::classified_setup,
             commands::classified::classified_unlock,
             commands::classified::classified_lock,
+            commands::classified::classified_ai_cache_clear,
+            commands::classified::classified_ai_retrieval_clear,
             commands::classified::classified_status,
             commands::classified::classified_files,
             commands::classified::classified_import,

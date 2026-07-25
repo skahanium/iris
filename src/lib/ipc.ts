@@ -42,7 +42,6 @@ export type {
   AssistantSessionSummary,
 } from "@/types/ai";
 import type {
-  AiCacheClearResult,
   AppUpdateInfo,
   AppUpdatePreflightResult,
   AppUpdateProgressEvent,
@@ -757,7 +756,7 @@ export async function corpusUpsert(entry: {
   name: string;
   pathPrefix: string;
   kind: string;
-  scenes: string[];
+  intents: string[];
 }): Promise<void> {
   return invoke("corpus_upsert", { entry });
 }
@@ -955,10 +954,6 @@ export async function promptProfilePresets(): Promise<
   { label: string; profile: PromptProfileDto }[]
 > {
   return invoke("prompt_profile_presets");
-}
-
-export async function aiCacheClear(): Promise<AiCacheClearResult> {
-  return invoke<AiCacheClearResult>("ai_cache_clear");
 }
 
 export async function assistantRunStart(

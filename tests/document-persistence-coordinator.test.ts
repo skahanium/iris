@@ -354,6 +354,154 @@ describe("DocumentPersistenceCoordinator", () => {
     );
   });
 
+  it("marks failed after exhausting save retries", async () => {
+    vi.useFakeTimers();
+    try {
+      const write = vi
+        .fn<
+          (
+            path: string,
+            markdown: string,
+          ) => Promise<DocumentPersistenceWriteResult>
+        >()
+        .mockRejectedValue(new Error("disk full"));
+      const coordinator = new DocumentPersistenceCoordinator({
+        saveRetryDelaysMs: [100, 200, 400],
+        write,
+      });
+
+      coordinator.load("note.md", "opened", 1);
+      coordinator.capture("note.md", "edited", "user_edit");
+      const commit = coordinator.commit("note.md");
+      const rejection = expect(commit).rejects.toThrow("disk full");
+
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(400);
+      await rejection;
+
+      expect(write).toHaveBeenCalledTimes(4);
+      expect(coordinator.get("note.md")).toMatchObject({
+        markdown: "edited",
+        status: "failed",
+        error: "disk full",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("logs debounced auto-save failures without discarding the dirty snapshot", async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const write = vi
+        .fn<
+          (
+            path: string,
+            markdown: string,
+          ) => Promise<DocumentPersistenceWriteResult>
+        >()
+        .mockRejectedValue(new Error("disk full"));
+      const coordinator = new DocumentPersistenceCoordinator({
+        delayMs: 50,
+        saveRetryDelaysMs: [10, 10, 10],
+        write,
+      });
+
+      coordinator.load("note.md", "opened", 1);
+      coordinator.capture("note.md", "edited", "user_edit");
+      await vi.advanceTimersByTimeAsync(50);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(10);
+      await vi.advanceTimersByTimeAsync(10);
+      await Promise.resolve();
+
+      expect(coordinator.get("note.md")).toMatchObject({
+        markdown: "edited",
+        status: "failed",
+      });
+      expect(warn).toHaveBeenCalledWith(
+        "[document-persistence] auto-save failed for note.md:",
+        "disk full",
+      );
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries failed writes with exponential backoff before marking failed", async () => {
+    vi.useFakeTimers();
+    try {
+      const write = vi
+        .fn<
+          (
+            path: string,
+            markdown: string,
+          ) => Promise<DocumentPersistenceWriteResult>
+        >()
+        .mockRejectedValueOnce(new Error("disk full"))
+        .mockRejectedValueOnce(new Error("disk full"))
+        .mockRejectedValueOnce(new Error("disk full"))
+        .mockResolvedValue(written);
+      const coordinator = new DocumentPersistenceCoordinator({
+        saveRetryDelaysMs: [100, 200, 400],
+        write,
+      });
+
+      coordinator.load("note.md", "opened", 1);
+      coordinator.capture("note.md", "edited", "user_edit");
+      const commit = coordinator.commit("note.md");
+
+      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(400);
+      await commit;
+
+      expect(write).toHaveBeenCalledTimes(4);
+      expect(coordinator.get("note.md")).toMatchObject({
+        markdown: "edited",
+        status: "saved",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("allows barrier to retry after a failed save attempt", async () => {
+    const write = vi
+      .fn<
+        (path: string, markdown: string) => Promise<DocumentPersistenceWriteResult>
+      >()
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockResolvedValue(written);
+    const coordinator = new DocumentPersistenceCoordinator({
+      saveRetryDelaysMs: [1, 1, 1],
+      write,
+    });
+
+    coordinator.load("note.md", "opened", 1);
+    coordinator.capture("note.md", "edited", "user_edit");
+
+    await expect(coordinator.barrier("note.md")).rejects.toThrow("disk full");
+    expect(coordinator.get("note.md")).toMatchObject({
+      status: "failed",
+      markdown: "edited",
+    });
+
+    await coordinator.barrier("note.md");
+    expect(coordinator.get("note.md")).toMatchObject({
+      status: "saved",
+      baselineMarkdown: "edited",
+    });
+    expect(write).toHaveBeenCalledTimes(5);
+  });
+
   it("cancels a scheduled debounce commit without discarding the dirty snapshot", async () => {
     vi.useFakeTimers();
     try {

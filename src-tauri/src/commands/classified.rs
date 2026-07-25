@@ -524,6 +524,23 @@ pub fn classified_lock(state: State<'_, Arc<AppState>>) -> AppResult<()> {
     classified_lock_inner(Some(state.inner()))
 }
 
+/// Clears classified AI thread caches (IPC wrapper for domain switches).
+#[tauri::command]
+pub fn classified_ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<()> {
+    crate::ai_runtime::classified_session::classified_ai_cache_clear()?;
+    if let Ok(mut ephemeral) = state.ai.classified_ephemeral.lock() {
+        ephemeral.clear();
+    }
+    Ok(())
+}
+
+/// Clears the in-memory classified retrieval chunk index.
+#[tauri::command]
+pub fn classified_ai_retrieval_clear() -> AppResult<()> {
+    crate::ai_runtime::classified_retrieval::clear_classified_index();
+    Ok(())
+}
+
 #[tauri::command]
 pub fn classified_status(state: State<'_, Arc<AppState>>) -> AppResult<String> {
     classified_status_inner(state.inner())

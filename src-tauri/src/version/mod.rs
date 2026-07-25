@@ -230,6 +230,43 @@ fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {
 const CAS_STORAGE_PREFIX: &str = "cas:";
 const CAS_DIFF_PREFIX: &str = "dif:";
 
+fn increment_cas_refs_for_storage_path(
+    conn: &rusqlite::Connection,
+    storage_path: &str,
+) -> AppResult<()> {
+    use crate::cas::ref_counter::RefCounter;
+
+    if let Some(cas_hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
+        RefCounter::increment_on_conn(conn, cas_hash)?;
+    } else if let Some(rest) = storage_path.strip_prefix(CAS_DIFF_PREFIX) {
+        if let Some((parent_hash, diff_hash)) = rest.split_once(':') {
+            RefCounter::increment_on_conn(conn, parent_hash)?;
+            RefCounter::increment_on_conn(conn, diff_hash)?;
+        }
+    }
+    Ok(())
+}
+
+fn in_immediate_transaction<T>(
+    conn: &rusqlite::Connection,
+    operation: impl FnOnce(&rusqlite::Connection) -> AppResult<T>,
+) -> AppResult<T> {
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    match operation(conn) {
+        Ok(value) => match conn.execute_batch("COMMIT") {
+            Ok(()) => Ok(value),
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(error.into())
+            }
+        },
+        Err(error) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
 fn cas_storage_path(content_hash: &str) -> String {
     format!("{CAS_STORAGE_PREFIX}{content_hash}")
 }
@@ -451,42 +488,30 @@ pub fn create_snapshot_outcome(
         .and_then(|p| read_version_content(state, &state.vault_path().ok()?, p).ok());
     let storage_path = write_version_blob(state, content, prev.as_deref())?;
 
-    if let Some(cas_hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
-        if let Err(e) = state.ref_counter().increment(cas_hash) {
-            tracing::warn!("CAS ref increment failed for {cas_hash}: {e}");
-        }
-    } else if let Some(rest) = storage_path.strip_prefix(CAS_DIFF_PREFIX) {
-        if let Some((parent_hash, diff_hash)) = rest.split_once(':') {
-            if let Err(e) = state.ref_counter().increment(parent_hash) {
-                tracing::warn!("CAS ref increment failed for parent {parent_hash}: {e}");
-            }
-            if let Err(e) = state.ref_counter().increment(diff_hash) {
-                tracing::warn!("CAS ref increment failed for diff {diff_hash}: {e}");
-            }
-        }
-    }
-
     let wc = character_count_excluding_whitespace(content);
     let created_at = now.to_rfc3339();
     let is_finalized = if params.is_finalized { 1 } else { 0 };
 
     let id = state.db.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO versions (file_id, version_no, label, content_hash, storage_path, word_count, is_finalized, kind, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-            rusqlite::params![
-                file_id,
-                &version_no,
-                params.label,
-                hash,
-                storage_path,
-                wc,
-                is_finalized,
-                params.kind.as_str(),
-                created_at,
-            ],
-        )?;
-        Ok(conn.last_insert_rowid())
+        in_immediate_transaction(conn, |conn| {
+            increment_cas_refs_for_storage_path(conn, &storage_path)?;
+            conn.execute(
+                "INSERT INTO versions (file_id, version_no, label, content_hash, storage_path, word_count, is_finalized, kind, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![
+                    file_id,
+                    &version_no,
+                    params.label,
+                    hash,
+                    storage_path,
+                    wc,
+                    is_finalized,
+                    params.kind.as_str(),
+                    created_at,
+                ],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
     })?;
 
     if params.kind == VersionKind::AutoIdle {

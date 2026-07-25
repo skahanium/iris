@@ -331,7 +331,7 @@ describe("VaultNavigator corpus assignment", () => {
       name: "policy",
       pathPrefix: "policy/",
       kind: "authority",
-      scenes: ["knowledge_lookup", "research_synthesis", "drafting_assist"],
+      intents: ["knowledge_lookup", "research_synthesis", "drafting_assist"],
     });
     expect(knowledgeReindex).toHaveBeenCalledOnce();
   });
@@ -343,7 +343,7 @@ describe("VaultNavigator corpus assignment", () => {
         name: "policy",
         pathPrefix: "policy/",
         kind: "exemplar",
-        scenes: ["exemplar_learning", "drafting_assist"],
+        intents: ["exemplar_learning", "drafting_assist"],
       },
     ]);
 
@@ -359,7 +359,7 @@ describe("VaultNavigator corpus assignment", () => {
       name: "policy",
       pathPrefix: "policy/",
       kind: "exemplar",
-      scenes: ["drafting_assist"],
+      intents: ["drafting_assist"],
     });
   });
 

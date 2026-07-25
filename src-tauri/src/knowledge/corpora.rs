@@ -23,7 +23,7 @@ pub struct CorpusEntry {
     pub path_prefix: String,
     #[serde(default = "default_kind")]
     pub kind: String,
-    #[serde(default)]
+    #[serde(default, alias = "scenes")]
     pub intents: Vec<String>,
 }
 
@@ -187,6 +187,20 @@ pub fn should_index_regulation_for_path(config: &CorpusConfig, path: &str) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_legacy_scenes_alias() {
+        let raw = r#"
+[[corpus]]
+id = "legacy"
+name = "Legacy"
+path_prefix = "legacy/"
+kind = "general"
+scenes = ["ask_notes", "drafting_assist"]
+"#;
+        let config: CorpusConfig = toml::from_str(raw).unwrap();
+        assert_eq!(config.corpus[0].intents, vec!["ask_notes", "drafting_assist"]);
+    }
 
     #[test]
     fn parses_example_toml() {

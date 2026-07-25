@@ -86,7 +86,7 @@ import {
 import {
   buildFolderPath,
   canonicalCorpusKind,
-  defaultScenesForKind,
+  defaultIntentsForKind,
   displayFolderPath,
   fileNameFromPath,
   fileParentPath,
@@ -856,7 +856,7 @@ export function VaultNavigatorBody({
         name,
         pathPrefix: prefix,
         kind,
-        scenes: defaultScenesForKind(kind),
+        intents: defaultIntentsForKind(kind),
       });
       await knowledgeReindex();
       setCorpora(await corpusList());

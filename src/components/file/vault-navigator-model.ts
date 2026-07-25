@@ -41,7 +41,7 @@ export function canonicalCorpusKind(kind: string): CorpusKind {
   }
 }
 
-export function defaultScenesForKind(kind: StoredCorpusKind): string[] {
+export function defaultIntentsForKind(kind: StoredCorpusKind): string[] {
   switch (canonicalCorpusKind(kind)) {
     case "authority":
       return ["knowledge_lookup", "research_synthesis", "drafting_assist"];

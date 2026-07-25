@@ -71,7 +71,7 @@ export interface CorpusListItem {
   name: string;
   pathPrefix: string;
   kind: string;
-  scenes: string[];
+  intents: string[];
 }
 
 export interface FileEntry {
@@ -476,17 +476,6 @@ export interface VersionSaveCompleteEvent {
 }
 
 // AI Runtime IPC types
-
-/** `ai_cache_clear` return value: cleared sessions, checkpoints, traces, and caches. */
-export interface AiCacheClearResult {
-  sessions_deleted: number;
-  aborted_tasks: number;
-  checkpoints_cleared: number;
-  deposits_deleted: number;
-  traces_deleted: number;
-  web_pages_cleared: number;
-  searches_cleared: number;
-}
 
 /** User profile entry returned by `profile_list` / `profile_get`. */
 export interface ProfileEntry {

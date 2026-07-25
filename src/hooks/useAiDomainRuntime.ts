@@ -2,7 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
 import type { AiDomain, AiDomainState } from "@/lib/ai-domain";
-import { classifiedAiCacheClear, classifiedAiRetrievalClear } from "@/lib/ipc";
+import {
+  assistantClassifiedContextClear,
+  classifiedAiCacheClear,
+} from "@/lib/ipc";
 
 export interface UseAiDomainRuntimeOptions {
   domainState: AiDomainState;
@@ -60,8 +63,16 @@ export function useAiDomainRuntime({
       classifiedStreamBufRef.current = "";
       classifiedPendingPatchesRef.current = [];
       classifiedWritingArtifactsRef.current = [];
-      void classifiedAiCacheClear();
-      void classifiedAiRetrievalClear();
+      void Promise.all([
+        classifiedAiCacheClear(),
+        assistantClassifiedContextClear(),
+      ]).catch((error: unknown) => {
+        console.warn(
+          "[classified-ai] backend volatile cleanup failed:",
+          reason,
+          error,
+        );
+      });
     },
     [abortClassifiedRequest],
   );

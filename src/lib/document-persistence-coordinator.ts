@@ -80,6 +80,7 @@ interface PathMigration {
 
 interface DocumentPersistenceCoordinatorOptions {
   delayMs?: number;
+  saveRetryDelaysMs?: readonly number[];
   write: (
     path: string,
     markdown: string,
@@ -118,12 +119,21 @@ function sourceAllowsIntentionalClear(
   );
 }
 
+const DEFAULT_SAVE_RETRY_DELAYS_MS = [1000, 2000, 4000] as const;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 /**
  * Serializes Markdown persistence per document path and prevents stale write
  * receipts from acknowledging a newer captured revision.
  */
 export class DocumentPersistenceCoordinator {
   private readonly delayMs: number;
+  private readonly saveRetryDelaysMs: readonly number[];
   private readonly records = new Map<string, DocumentRecord>();
   private readonly pathRedirects = new Map<string, string>();
   private readonly migrations = new Map<string, PathMigration>();
@@ -133,9 +143,11 @@ export class DocumentPersistenceCoordinator {
 
   constructor({
     delayMs = 1200,
+    saveRetryDelaysMs = DEFAULT_SAVE_RETRY_DELAYS_MS,
     write,
   }: DocumentPersistenceCoordinatorOptions) {
     this.delayMs = delayMs;
+    this.saveRetryDelaysMs = saveRetryDelaysMs;
     this.write = write;
   }
 
@@ -520,8 +532,24 @@ export class DocumentPersistenceCoordinator {
     this.cancelTimer(record);
     record.timer = setTimeout(() => {
       record.timer = null;
-      void this.commit(record.path).catch(() => undefined);
+      void this.runScheduledCommit(record);
     }, this.delayMs);
+  }
+
+  private async runScheduledCommit(record: DocumentRecord): Promise<void> {
+    const path = record.path;
+    try {
+      await this.commit(path);
+    } catch (error) {
+      const current = this.records.get(this.resolvePath(path));
+      if (!current || current.discarded || current !== record) {
+        return;
+      }
+      console.warn(
+        `[document-persistence] auto-save failed for ${path}:`,
+        errorMessage(error),
+      );
+    }
   }
 
   private cancelTimer(record: DocumentRecord): void {
@@ -535,38 +563,70 @@ export class DocumentPersistenceCoordinator {
     const markdown = record.markdown;
     const revision = record.revision;
     const source = record.source;
+    const maxAttempts = this.saveRetryDelaysMs.length + 1;
     record.status = "saving";
+    record.error = null;
     this.emit(record);
     const task = (async () => {
       try {
-        const result = await this.write(path, markdown);
-        if (
-          record.discarded ||
-          this.records.get(record.path) !== record ||
-          record.path !== path
-        ) {
-          return;
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (
+            record.discarded ||
+            this.records.get(record.path) !== record ||
+            record.path !== path
+          ) {
+            return;
+          }
+          if (record.revision !== revision) {
+            record.status = "dirty";
+            this.emit(record);
+            return;
+          }
+          try {
+            const result = await this.write(path, markdown);
+            if (
+              record.discarded ||
+              this.records.get(record.path) !== record ||
+              record.path !== path
+            ) {
+              return;
+            }
+            if (record.revision !== revision) {
+              record.status = "dirty";
+              this.emit(record);
+              return;
+            }
+            record.baselineMarkdown = markdown;
+            record.baselineRevision = revision;
+            record.baselineSource = source;
+            record.savedAt = Date.now();
+            record.indexDegraded = result.indexDegraded;
+            record.status = result.indexDegraded
+              ? "saved_index_degraded"
+              : "saved";
+            record.error = null;
+            this.emit(record);
+            return;
+          } catch (error) {
+            const retryDelay = this.saveRetryDelaysMs[attempt];
+            const canRetry = retryDelay !== undefined;
+            if (!canRetry) {
+              if (
+                !record.discarded &&
+                this.records.get(record.path) === record
+              ) {
+                record.status = "failed";
+                record.error = errorMessage(error);
+                this.emit(record);
+              }
+              throw error;
+            }
+            record.status = "saving";
+            record.error = `保存失败，${Math.round(retryDelay / 1000)} 秒后重试…`;
+            this.emit(record);
+            await sleep(retryDelay);
+          }
         }
-        if (record.revision !== revision) {
-          record.status = "dirty";
-          this.emit(record);
-          return;
-        }
-        record.baselineMarkdown = markdown;
-        record.baselineRevision = revision;
-        record.baselineSource = source;
-        record.savedAt = Date.now();
-        record.indexDegraded = result.indexDegraded;
-        record.status = result.indexDegraded ? "saved_index_degraded" : "saved";
-        record.error = null;
-        this.emit(record);
-      } catch (error) {
-        if (!record.discarded && this.records.get(record.path) === record) {
-          record.status = "failed";
-          record.error = errorMessage(error);
-          this.emit(record);
-        }
-        throw error;
       } finally {
         record.writeTask = null;
       }

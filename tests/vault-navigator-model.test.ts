@@ -3,26 +3,26 @@ import { describe, expect, it } from "vitest";
 import {
   availableMoveFolders,
   canonicalCorpusKind,
-  defaultScenesForKind,
+  defaultIntentsForKind,
   normalizeDocumentName,
   normalizeFolderPrefix,
   slugFromPath,
 } from "@/components/file/vault-navigator-model";
 
 describe("vault navigator model helpers", () => {
-  it("normalizes corpus ids and default scenes", () => {
+  it("normalizes corpus ids and default intents", () => {
     expect(slugFromPath("法规/2026/")).toBe("法规_2026");
-    expect(defaultScenesForKind("authority")).toEqual([
+    expect(defaultIntentsForKind("authority")).toEqual([
       "knowledge_lookup",
       "research_synthesis",
       "drafting_assist",
     ]);
-    expect(defaultScenesForKind("exemplar")).toEqual(["drafting_assist"]);
-    expect(defaultScenesForKind("reference")).toEqual([
+    expect(defaultIntentsForKind("exemplar")).toEqual(["drafting_assist"]);
+    expect(defaultIntentsForKind("reference")).toEqual([
       "knowledge_lookup",
       "research_synthesis",
     ]);
-    expect(defaultScenesForKind("lookup")).toEqual([
+    expect(defaultIntentsForKind("lookup")).toEqual([
       "knowledge_lookup",
       "research_synthesis",
     ]);
