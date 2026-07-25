@@ -600,11 +600,6 @@
     --titlebar-leading-inset: 0.5rem;
   }
 
-  html[data-iris-platform-macos]:not([data-iris-window-fullscreen])
-    div.iris-brand-rail {
-    margin-left: -0.375rem;
-  }
-
   [data-tauri-drag-region] {
     -webkit-app-region: drag;
     app-region: drag;
@@ -880,10 +875,6 @@
     ):focus-visible,
   .iris-focus-soft-within:focus-within {
     background: var(--iris-focus-soft-bg);
-  }
-  .iris-brand-rail {
-    background: transparent;
-    border-radius: 10px;
   }
 
   .iris-rail-tab {

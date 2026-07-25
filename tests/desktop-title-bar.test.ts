@@ -165,7 +165,7 @@ describe("desktop title bar", () => {
     expect(bar).toContain("headerNativeDragRegion");
     expect(bar).toContain("iris-titlebar-traffic-spacer");
     expect(bar).toContain("--titlebar-traffic-inset");
-    expect(bar).toContain("iris-brand-rail");
+    expect(bar).not.toContain("AppBrandZone");
     expect(bar).toContain('role="banner"');
 
     const platform = read("src/lib/platform-chrome.ts");
@@ -258,13 +258,12 @@ describe("desktop title bar", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
     const splashBranch = bar.slice(
       bar.indexOf("{isSplash ? ("),
-      bar.indexOf(") : (", bar.indexOf("{isSplash ? (")),
+      bar.indexOf(") : showTabStrip", bar.indexOf("{isSplash ? (")),
     );
 
-    expect(splashBranch).toContain("isMacDesktop");
-    expect(splashBranch).toContain("iris-titlebar-traffic-spacer");
-    expect(splashBranch).toContain("--titlebar-traffic-inset");
-    expect(splashBranch).toContain("AppBrandZone");
+    expect(splashBranch).not.toContain("AppBrandZone");
+    expect(splashBranch).toContain("min-w-0 flex-1");
+    expect(splashBranch).toContain("data-tauri-drag-region");
   });
 
   it("useMacOSWindowChromeSync handles fullscreen and chrome metrics IPC", () => {
@@ -281,34 +280,33 @@ describe("desktop title bar", () => {
     expect(hook).not.toContain("restoreMacOSWindowChrome");
   });
 
-  it("keeps the Iris brand rail vertically centered in the titlebar", () => {
+  it("keeps the titlebar vertically centered in document mode", () => {
     renderTitleBar();
 
     const titleBar = document.querySelector<HTMLElement>(
       '[data-testid="desktop-title-bar"]',
     );
-    const brandRail = document.querySelector<HTMLElement>(
-      '[data-testid="iris-brand-rail"]',
+    const tabRail = document.querySelector<HTMLElement>(
+      ".iris-titlebar-tab-rail",
     );
 
     expect(titleBar?.className).toContain("items-center");
     expect(titleBar?.className).not.toContain("items-stretch");
-    expect(brandRail?.className).toContain("h-8");
-    expect(brandRail?.className).not.toContain("-ml-1.5");
-    expect(brandRail?.className).not.toContain("h-full");
+    expect(tabRail).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="iris-brand-rail"]'),
+    ).toBeNull();
   });
-  it("DesktopTitleBar exposes Iris Rail brand rail and segment tab hooks", () => {
+  it("DesktopTitleBar exposes segment tab hooks without a document brand rail", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
     const css = read("src/styles/globals.css");
-    expect(bar).toContain('data-testid="iris-brand-rail"');
+    expect(bar).not.toContain('data-testid="iris-brand-rail"');
     expect(bar).toContain('data-testid="rail-segment-tab"');
     expect(bar).not.toContain('data-testid="home-segment"');
     expect(bar).not.toContain("iris-home-segment");
-    expect(bar).toContain("iris-brand-rail flex h-8");
-    expect(bar).not.toContain('isMacDesktop && "-ml-1.5"');
-    expect(bar).toContain("min-w-[6.75rem]");
-    expect(bar).not.toContain("iris-brand-rail flex h-full");
+    expect(bar).not.toContain("min-w-[6.75rem]");
     expect(bar).not.toContain("pointer-events-none");
+    expect(bar).toContain("iris-titlebar-tab-rail");
     expect(bar).toContain("data-tauri-drag-region");
     expect(bar).not.toContain(brandRailActiveClass);
     expect(bar).not.toContain(brandRailHandlerProp);
@@ -316,11 +314,10 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain(brandRailClickBinding);
     expect(bar).not.toContain('role="button"');
     expect(bar).toContain("iris-rail-tab--active");
-    expect(css).not.toContain(".iris-brand-rail:hover");
-    expect(css).toContain(".iris-brand-rail {");
+    expect(css).not.toContain(".iris-brand-rail");
   });
 
-  it("reserves a left safe-area for the brand rail on Windows and macOS fullscreen", () => {
+  it("reserves a left safe-area on Windows and macOS fullscreen", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
     const css = read("src/styles/globals.css");
 
@@ -333,9 +330,6 @@ describe("desktop title bar", () => {
     );
     expect(bar).toContain("pl-[var(--titlebar-leading-inset)]");
     expect(bar).not.toContain("-ml-1.5");
-    expect(css).toMatch(
-      /html\[data-iris-platform-macos\]:not\(\[data-iris-window-fullscreen\]\)\s+div\.iris-brand-rail\s*\{[^}]*margin-left:\s*-0\.375rem/,
-    );
   });
 
   it("compresses tabs instead of scrolling when the rail overflows", () => {
@@ -360,12 +354,10 @@ describe("desktop title bar", () => {
     expect(bar).toContain("更多笔记");
     expect(bar).toContain('data-testid="rail-new-note-button"');
 
-    const brandIndex = bar.indexOf('data-testid="iris-brand-rail"');
     const tabRailIndex = bar.indexOf("iris-titlebar-tab-rail");
     const newButtonIndex = bar.indexOf('data-testid="rail-new-note-button"');
 
-    expect(brandIndex).toBeGreaterThanOrEqual(0);
-    expect(tabRailIndex).toBeGreaterThan(brandIndex);
+    expect(tabRailIndex).toBeGreaterThanOrEqual(0);
     expect(newButtonIndex).toBeGreaterThan(tabRailIndex);
   });
 

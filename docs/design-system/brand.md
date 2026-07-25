@@ -35,7 +35,7 @@
 
 | 场景                    | 实现                                               |
 | ----------------------- | -------------------------------------------------- |
-| 顶栏、欢迎页            | `IrisMark` + 可选 Inter「Iris」文案                |
+| 应用窗口标题 / 任务栏   | Tauri `title`、托盘与 `icon.ico`（见下方生成命令） |
 | favicon / 托盘          | `public/brand/iris-mark.svg`、`iris-mark-tray.svg` |
 | Windows 任务栏 / 安装包 | `src-tauri/icons/icon.ico` ← `npm run icon:tauri`  |
 

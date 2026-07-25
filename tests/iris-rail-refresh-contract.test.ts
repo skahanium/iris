@@ -35,7 +35,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(design).toContain("Overlay Family");
   });
 
-  it("defines persistent static brand rail plus Rail Segments tabs", () => {
+  it("defines splash drag filler plus Rail Segments tabs in document mode", () => {
     const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
     const css = read("src/styles/globals.css");
     const app = read("src/App.tsx");
@@ -44,7 +44,9 @@ describe("Iris Rail complete interface contracts", () => {
     const platform = read("src/lib/platform-chrome.ts");
     const macos = read("src-tauri/tauri.macos.conf.json");
 
-    expect(titleBar).toContain('data-testid="iris-brand-rail"');
+    expect(titleBar).not.toContain('data-testid="iris-brand-rail"');
+    expect(titleBar).not.toContain("AppBrandZone");
+    expect(titleBar).toContain("{isSplash ? (");
     expect(titleBar).toContain('data-testid="rail-segment-tab"');
     expect(titleBar).not.toContain('data-testid="home-segment"');
     expect(titleBar).not.toContain("iris-home-segment");
@@ -53,11 +55,10 @@ describe("Iris Rail complete interface contracts", () => {
     expect(titleBar).not.toContain(brandRailActiveClass);
     expect(titleBar).not.toContain(brandRailClickBinding);
     expect(titleBar).not.toContain("pointer-events-none");
+    expect(titleBar).not.toContain("min-w-[6.75rem]");
+    expect(titleBar).toContain("iris-titlebar-tab-rail");
     expect(titleBar).toContain("data-tauri-drag-region");
-    expect(titleBar).toContain("iris-brand-rail flex h-8");
-    expect(titleBar).toContain("min-w-[6.75rem]");
-    expect(titleBar).not.toContain("iris-brand-rail flex h-full");
-    expect(css).not.toContain(".iris-brand-rail:hover");
+    expect(css).not.toContain(".iris-brand-rail");
     expect(app).toContain("workspaceEmpty");
     expect(workspaceEmpty).toContain('data-testid="workspace-empty"');
     expect(workspaceEmpty).toContain('data-testid="workspace-empty-new"');
