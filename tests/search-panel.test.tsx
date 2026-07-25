@@ -72,10 +72,9 @@ describe("SearchPanel", () => {
     expect(document.querySelector('[aria-label="全库搜索"]')).not.toBeNull();
 
     setQuery("hello");
-    const searchBtn = Array.from(document.querySelectorAll("button")).find(
-      (b) =>
-        b.textContent?.includes("搜索") || b.textContent?.includes("鎼滅储"),
-    );
+    const searchBtn = document.querySelector(
+      '[data-testid="search-panel-run"]',
+    ) as HTMLButtonElement | null;
     expect(searchBtn).toBeTruthy();
     await act(async () => {
       searchBtn?.click();
@@ -110,10 +109,9 @@ describe("SearchPanel", () => {
     renderPanel({ onOpen, onClose });
 
     setQuery("hello");
-    const searchBtn = Array.from(document.querySelectorAll("button")).find(
-      (b) =>
-        b.textContent?.includes("搜索") || b.textContent?.includes("鎼滅储"),
-    );
+    const searchBtn = document.querySelector(
+      '[data-testid="search-panel-run"]',
+    ) as HTMLButtonElement | null;
     expect(searchBtn).toBeTruthy();
     await act(async () => {
       searchBtn?.click();
@@ -139,20 +137,22 @@ describe("SearchPanel", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it("runs semantic search when semantic mode is selected", async () => {
+  it("runs semantic search when intelligent mode is selected", async () => {
     renderPanel();
     setQuery("ideas");
 
-    const semanticBtn = Array.from(document.querySelectorAll("button")).find(
-      (b) => b.textContent === "语义",
+    const smartBtn = Array.from(document.querySelectorAll("button")).find(
+      (b) => b.textContent === "智能",
     );
     await act(async () => {
-      semanticBtn?.click();
+      smartBtn?.click();
     });
 
-    const searchBtn = Array.from(document.querySelectorAll("button")).find(
-      (b) => b.textContent === "搜索",
-    );
+    const searchBtn = document.querySelector(
+      '[data-testid="search-panel-run"]',
+    ) as HTMLButtonElement | null;
+    expect(searchBtn).toBeTruthy();
+    expect(searchBtn?.getAttribute("disabled")).toBeNull();
     await act(async () => {
       searchBtn?.click();
     });

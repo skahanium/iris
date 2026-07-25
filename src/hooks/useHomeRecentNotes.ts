@@ -62,7 +62,7 @@ export function useHomeRecentNotes({
       }
       const catalog = dedupeByPath(files);
       setCatalogFiles(catalog);
-      setRecentNotes(catalog.slice(0, 5));
+      setRecentNotes(catalog.slice(0, 8));
     } catch (error) {
       console.warn("[WorkspaceEmpty] catalog refresh failed:", error);
     }

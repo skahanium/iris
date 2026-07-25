@@ -392,6 +392,82 @@ describe("useTabManager activateTab / openNote", () => {
     expect(apiRef.current!.activeFileLocked).toBe(true);
   });
 
+  it("openFile accepts prepared notes with null frontmatterYaml without crashing", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+    const prepared = {
+      bodyMarkdown: "plain body",
+      content: "plain body\n",
+      frontmatterYaml: null,
+      isLocked: false,
+      namespace: "normal" as const,
+      path: "plain.md",
+      signature: "sig-plain",
+      title: "plain",
+      traceKey: "normal:plain",
+    };
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    await openAndWait(apiRef, "plain.md", "plain", {
+      preparedNote: prepared,
+    });
+
+    expect(fileRead).not.toHaveBeenCalled();
+    expect(apiRef.current!.activePath).toBe("plain.md");
+    expect(apiRef.current!.markdown).toBe(prepared.content);
+    expect(apiRef.current!.frontmatterYamlRef.current).toBeNull();
+
+    await openAndWait(apiRef, "a.md", "A");
+    await act(async () => {
+      await apiRef.current!.activateTab("plain.md");
+    });
+
+    expect(apiRef.current!.activePath).toBe("plain.md");
+    expect(apiRef.current!.markdown).toBe(prepared.content);
+    expect(apiRef.current!.frontmatterYamlRef.current).toBeNull();
+  });
+
+  it("clears a previous open-error status after a successful open", async () => {
+    const onStatusChange = vi.fn();
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    function StatusHarness() {
+      const api = useTabManager({ onStatusChange });
+      apiRef.current = api;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(StatusHarness));
+    });
+
+    fileRead.mockRejectedValueOnce(new Error("disk missing"));
+    await act(async () => {
+      await expect(apiRef.current!.openFile("missing.md")).rejects.toThrow(
+        "disk missing",
+      );
+    });
+    expect(onStatusChange).toHaveBeenCalledWith(
+      expect.stringContaining("无法打开笔记"),
+    );
+
+    onStatusChange.mockClear();
+    fileRead.mockResolvedValueOnce({
+      content: "ok body\n",
+      isLocked: false,
+    });
+    await openAndWait(apiRef, "ok.md", "ok");
+
+    expect(onStatusChange).toHaveBeenCalledWith("");
+    expect(apiRef.current!.activePath).toBe("ok.md");
+  });
+
   it("emits a hot visible-commit trace when a prepared note becomes active", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,

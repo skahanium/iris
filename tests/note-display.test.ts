@@ -4,6 +4,8 @@ import {
   displayTitleForFileListItem,
   isInternalUntitledPath,
   mapLegacyPlaceholderStemToDisplay,
+  markdownToCardExcerpt,
+  noteCardPreviewText,
   resolveNoteDisplayTitle,
   UNNAMED_DOCUMENT_PREFIX,
 } from "@/lib/note-display";
@@ -71,5 +73,16 @@ describe("note-display", () => {
         title: "",
       }),
     ).toBe("早餐");
+  });
+
+  it("builds card excerpts from markdown body without title duplication", () => {
+    expect(
+      markdownToCardExcerpt(
+        "---\ntitle: ignore\n---\n\n# Heading\n\n第一段正文内容，用来预览。",
+      ),
+    ).toContain("第一段正文内容");
+    expect(markdownToCardExcerpt("")).toBe("");
+    expect(noteCardPreviewText("a.md")).toBeNull();
+    expect(noteCardPreviewText("notes/a.md")).toBe("notes");
   });
 });

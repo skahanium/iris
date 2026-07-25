@@ -14,7 +14,7 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 
 ### Wave 1 — 管道与真相（已交付）
 
-**Segment 1 验收（Home / 品牌轨 / 空主面）：** 冷启动有笔记时自动打开；关光 Tab 显示 WorkspaceEmpty 且不自动打开；库空显示 VaultEmpty（`workspace-empty` vault 模式）；Iris 品牌轨纯标识、不可点击；打开失败在空主面展示可读错误。人工清单见 [iris-rail-refresh-manual-checklist](./docs/testing/iris-rail-refresh-manual-checklist.md)。
+**Segment 1 验收（Home / 品牌轨 / 空主面）：** 冷启动有笔记时自动打开；关光 Tab 显示 WorkspaceEmpty（顶栏仅搜索/新建 + 最近卡片网格，无「继续写作」hero）且不自动打开；库空为 vault 模式；Iris 品牌轨纯标识、不可点击；打开失败在空主面展示可读错误。品牌色为冷调 sage（`--brand` hue ~108）。
 
 **Segment 2 验收（Agent 气泡 / Composer / 过程文案）：** 用户与助手气泡轻分层可辨；发送与主操作 CTA 使用 `variant="brand"`；过程区在最终正文开始流式输出后折叠，完成摘要为「答复完毕」；历史轮次可重新展开安全过程。人工清单见 [iris-rail-refresh-manual-checklist](./docs/testing/iris-rail-refresh-manual-checklist.md)。
 

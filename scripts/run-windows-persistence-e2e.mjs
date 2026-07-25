@@ -444,7 +444,7 @@ async function openPersistedNoteInApplication(sessionId) {
   }
   const openRecent = await waitForElement(
     sessionId,
-    '[data-testid="workspace-empty-open-recent"]',
+    '[data-testid="workspace-empty-recent-card"]',
   );
   await click(sessionId, openRecent);
 }

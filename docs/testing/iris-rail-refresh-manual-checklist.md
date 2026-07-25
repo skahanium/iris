@@ -9,8 +9,9 @@
 ## 空主面与冷启动（Segment 1）
 
 - [ ] 冷启动 / 选库后：有最近或会话快照笔记时自动打开，不出现欢迎工作台。
-- [ ] 关光最后一个笔记 Tab：主区为 `workspace-empty`（workspace 模式），不自动打开；可点「打开最近」或「新建笔记」。
-- [ ] 库完全为空：`workspace-empty` vault 模式，仅「新建第一篇」品牌绿主按钮。
+- [ ] 关光最后一个笔记 Tab：主区为 `workspace-empty`（workspace 模式），顶栏仅搜索 + 新建笔记 + 最近卡片（标题 + 正文预览 + 时间）；点卡片打开笔记。
+- [ ] 库完全为空：`workspace-empty` vault 模式，muted「还没有笔记」+ sage 描边「新建第一篇」+ 搜索（若有）；无「开始写作」hero 标题。
+- [ ] 全库搜索：关键词|智能分段在左，搜索 CTA 在右（brandOutline）；点击搜索不闪烁半透明；智能模式走语义检索。
 - [ ] 打开失败 / 超时时空主面展示可读错误（`role="status"`），不回到旧欢迎页。
 
 ## Rail Segments Tab

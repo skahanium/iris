@@ -153,6 +153,74 @@ describe("useHomeWorkspaceTransitions", () => {
     expect(setWorkspaceEmpty).not.toHaveBeenLastCalledWith(false);
   });
 
+  it("keeps the current editor when opening a second note fails while tabs remain", async () => {
+    const apiRef: {
+      current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
+    } = {
+      current: null,
+    };
+    const openNote = vi.fn(async () => {
+      throw new Error("null is not an object (evaluating 'parsed.yaml')");
+    });
+    const setWorkspaceEmpty = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          apiRef,
+          openNote,
+          openTabs: [{ path: "first.md" }],
+          setWorkspaceEmpty,
+        }),
+      );
+    });
+
+    await act(async () => {
+      await apiRef.current!.openNoteLeavingHome("second.md", "Second");
+    });
+
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(false);
+    expect(setWorkspaceEmpty).not.toHaveBeenCalledWith(true);
+    expect(apiRef.current!.pendingOpen).toMatchObject({
+      error: "null is not an object (evaluating 'parsed.yaml')",
+      path: "second.md",
+    });
+  });
+
+  it("returns to Home when opening fails with no remaining note tabs", async () => {
+    const apiRef: {
+      current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
+    } = {
+      current: null,
+    };
+    const openNote = vi.fn(async () => {
+      throw new Error("disk missing");
+    });
+    const setWorkspaceEmpty = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          apiRef,
+          openNote,
+          openTabs: [],
+          setWorkspaceEmpty,
+        }),
+      );
+    });
+
+    await act(async () => {
+      await apiRef.current!.openNoteLeavingHome("missing.md", "Missing");
+    });
+
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(false);
+    expect(setWorkspaceEmpty).toHaveBeenCalledWith(true);
+    expect(apiRef.current!.pendingOpen).toMatchObject({
+      error: "disk missing",
+      path: "missing.md",
+    });
+  });
+
   it("starts welcome new-note opens with disabled loading and passes the home sequence forward", async () => {
     const apiRef: {
       current: ReturnType<typeof useHomeWorkspaceTransitions> | null;

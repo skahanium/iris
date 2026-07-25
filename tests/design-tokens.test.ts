@@ -63,7 +63,7 @@ describe("design tokens", () => {
   });
 
   it("defines Iris Rail semantic surface tokens and Tailwind mappings", () => {
-    expect(cssVariable("--brand")).toBe("150 12% 54%");
+    expect(cssVariable("--brand")).toBe("108 12% 58%");
     expect(cssVariable("--knowledge-accent")).toBe("var(--brand)");
     expect(cssVariable("--iris-rail-bg")).toBe("var(--surface-chrome)");
     expect(cssVariable("--iris-rail-active")).toBe("var(--brand)");

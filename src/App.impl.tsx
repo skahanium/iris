@@ -873,6 +873,7 @@ function App() {
             vaultPath={vaultPath}
             warmPreparedNotes={warmPreparedNotes}
             openNotePaths={openNotePaths}
+            onOpenSearch={() => overlays.setSearchOpen(true)}
             zen={zen}
           />
         }

@@ -9,7 +9,6 @@ import { MediaWorkspaceView } from "@/components/layout/MediaWorkspaceView";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { WorkspaceEmpty } from "@/components/layout/WorkspaceEmpty";
-import { resolveStartupNote } from "@/lib/resolve-startup-note";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
@@ -135,6 +134,7 @@ interface AppEditorWorkspaceProps {
   vaultPath: string | null;
   warmPreparedNotes?: readonly PreparedNoteOpen[] | null;
   openNotePaths?: readonly string[];
+  onOpenSearch?: () => void;
   zen: boolean;
 }
 
@@ -236,32 +236,25 @@ export function AppEditorWorkspace({
   vaultPath,
   warmPreparedNotes,
   openNotePaths = activePath ? [activePath] : [],
+  onOpenSearch,
   zen,
 }: AppEditorWorkspaceProps) {
-  const { catalogPaths, recentNotes, vaultHasNotes } = useHomeRecentNotes({
+  const { recentNotes, vaultHasNotes } = useHomeRecentNotes({
     enabled: workspaceEmpty,
     onPrepare: onPrepareNote,
     vaultIndexEpoch,
     vaultPath,
   });
 
-  const handleOpenRecentFromEmpty = useCallback(() => {
-    const candidate = resolveStartupNote({
-      activePath: null,
-      openNotePaths,
-      recentPaths: catalogPaths,
-    });
-    if (!candidate) {
-      return;
-    }
-    const titleHint = recentNotes.find(
-      (file) => file.path === candidate.path,
-    )?.title;
-    void openNoteLeavingHome(candidate.path, titleHint, {
-      priority: "foreground",
-      source: "workspace_empty",
-    });
-  }, [catalogPaths, openNoteLeavingHome, openNotePaths, recentNotes]);
+  const handleOpenNoteFromEmpty = useCallback(
+    (file: FileListItem) => {
+      void openNoteLeavingHome(file.path, file.title, {
+        priority: "foreground",
+        source: "workspace_empty",
+      });
+    },
+    [openNoteLeavingHome],
+  );
 
   const effectiveNotePath = pendingNoteOpen?.path ?? activePath;
   const effectiveBodyMarkdown =
@@ -950,7 +943,9 @@ export function AppEditorWorkspace({
         <WorkspaceEmpty
           mode={vaultHasNotes ? "workspace" : "vault"}
           onNew={handleNewNoteLeavingHome}
-          onOpenRecent={vaultHasNotes ? handleOpenRecentFromEmpty : undefined}
+          recentNotes={recentNotes}
+          onOpenNote={handleOpenNoteFromEmpty}
+          onOpenSearch={onOpenSearch}
           errorMessage={pendingOpen?.error ?? null}
         />
       )}

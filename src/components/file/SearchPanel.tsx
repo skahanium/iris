@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/overlay-chrome";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { searchKeyword, searchSemantic } from "@/lib/ipc";
+import { cn } from "@/lib/utils";
 import type { KeywordHit, SemanticHit } from "@/types/ipc";
 
 interface SearchPanelProps {
@@ -16,6 +17,36 @@ interface SearchPanelProps {
   onClose: () => void;
   onOpen: (path: string) => void | Promise<void>;
   onPrepare?: (path: string, title?: string) => void;
+}
+
+function ModeSegment({
+  active,
+  label,
+  title,
+  onSelect,
+}: {
+  active: boolean;
+  label: string;
+  title?: string;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title ?? label}
+      aria-pressed={active}
+      className={cn(
+        "iris-focus-soft rounded-md px-3 py-1.5 text-xs font-medium transition-colors duration-fast",
+        active
+          ? "bg-[hsl(var(--brand)/0.12)] text-[hsl(var(--brand))]"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+      )}
+      onClick={onSelect}
+    >
+      {label}
+    </button>
+  );
 }
 
 export function SearchPanel({
@@ -32,10 +63,12 @@ export function SearchPanel({
   const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searchGenerationRef = useRef(0);
+  const busyRef = useRef(false);
 
   useEffect(() => {
     if (open) return;
     searchGenerationRef.current += 1;
+    busyRef.current = false;
     setHasSearched(false);
     setLoading(false);
   }, [open]);
@@ -52,6 +85,8 @@ export function SearchPanel({
       setHasSearched(false);
       return;
     }
+    if (busyRef.current) return;
+    busyRef.current = true;
     const generation = ++searchGenerationRef.current;
     setHasSearched(true);
     setLoading(true);
@@ -75,6 +110,7 @@ export function SearchPanel({
       setSemanticHits([]);
     } finally {
       if (generation === searchGenerationRef.current) {
+        busyRef.current = false;
         setLoading(false);
       }
     }
@@ -103,34 +139,40 @@ export function SearchPanel({
               onKeyDown={(e) => e.key === "Enter" && void runSearch()}
               onClose={onClose}
             />
-            <div className="task-overlay-filter flex flex-wrap items-center gap-2 px-3 py-2">
-              <Button
-                type="button"
-                size="sm"
-                variant={mode === "keyword" ? "default" : "outline"}
-                onClick={() => setMode("keyword")}
+            <div className="task-overlay-filter flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+              <div
+                role="group"
+                aria-label="检索模式"
+                className="flex items-center rounded-lg border border-border-subtle bg-surface-inset/40 p-0.5"
               >
-                关键词
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant={mode === "semantic" ? "default" : "outline"}
-                onClick={() => setMode("semantic")}
-              >
-                语义
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                disabled={loading}
-                onClick={() => void runSearch()}
-              >
-                {loading ? "搜索中…" : "搜索"}
-              </Button>
-              {error ? (
-                <p className="text-xs text-destructive">{error}</p>
-              ) : null}
+                <ModeSegment
+                  active={mode === "keyword"}
+                  label="关键词"
+                  onSelect={() => setMode("keyword")}
+                />
+                <ModeSegment
+                  active={mode === "semantic"}
+                  label="智能"
+                  title="按意思找相近笔记"
+                  onSelect={() => setMode("semantic")}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                {error ? (
+                  <p className="text-xs text-destructive">{error}</p>
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="brandOutline"
+                  data-testid="search-panel-run"
+                  aria-busy={loading}
+                  className="active:scale-100"
+                  onClick={() => void runSearch()}
+                >
+                  {loading ? "搜索中…" : "搜索"}
+                </Button>
+              </div>
             </div>
           </>
         }
@@ -153,7 +195,7 @@ export function SearchPanel({
             >
               <div className="font-medium text-foreground">未找到匹配结果</div>
               <div className="text-xs">
-                试试更具体的关键词，或切换语义搜索。
+                试试更具体的关键词，或切换智能搜索。
               </div>
             </div>
           ) : null}

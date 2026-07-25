@@ -61,8 +61,9 @@ describe("Iris Rail complete interface contracts", () => {
     expect(app).toContain("workspaceEmpty");
     expect(workspaceEmpty).toContain('data-testid="workspace-empty"');
     expect(workspaceEmpty).toContain('data-testid="workspace-empty-new"');
+    expect(workspaceEmpty).toContain('data-testid="workspace-empty-search"');
     expect(workspaceEmpty).toContain(
-      'data-testid="workspace-empty-open-recent"',
+      'data-testid="workspace-empty-recent-card"',
     );
     expect(appEditor).toContain("WorkspaceEmpty");
     expect(appEditor).not.toContain(legacyWelcomeComponent);

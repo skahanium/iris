@@ -76,7 +76,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     const workspaceEmpty = read("src/components/layout/WorkspaceEmpty.tsx");
 
     expect(workspaceEmpty).toContain(
-      'data-testid="workspace-empty-open-recent"',
+      'data-testid="workspace-empty-recent-card"',
     );
     expect(runner).toContain("openPersistedNoteInApplication");
     expect(runner).toContain('data-testid="workspace-empty"');

@@ -96,9 +96,10 @@ describe("useHomeRecentNotes", () => {
         "c.md",
         "d.md",
         "e.md",
+        "f.md",
       ]);
     });
-    expect(onPrepare).toHaveBeenCalledTimes(5);
+    expect(onPrepare).toHaveBeenCalledTimes(6);
   });
 
   it("keeps previous notes visible while the same vault refresh is pending or fails", async () => {

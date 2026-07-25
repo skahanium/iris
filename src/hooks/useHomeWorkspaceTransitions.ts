@@ -149,7 +149,12 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
         })
         .catch((error: unknown) => {
           clearOpenWatchdog();
-          setWorkspaceEmpty(true);
+          // Keep the current editor when other tabs remain; only return to the
+          // empty Home surface when this open left the workspace with no notes.
+          const hasRemainingTabs = openTabs.some((tab) => tab.path !== path);
+          if (!hasRemainingTabs) {
+            setWorkspaceEmpty(true);
+          }
           failHomeOpenLoading({
             message: error instanceof Error ? error.message : "无法打开笔记",
             pending,

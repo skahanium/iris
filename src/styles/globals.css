@@ -255,8 +255,8 @@
     --surface-elevated: 0 0% 14%;
     --surface-inset: 0 0% 16%;
 
-    --brand: 150 12% 54%;
-    --brand-foreground: 150 16% 78%;
+    --brand: 108 12% 58%;
+    --brand-foreground: 108 16% 16%;
     --knowledge-accent: var(--brand);
     --knowledge-accent-foreground: var(--brand-foreground);
     --prose-link: var(--primary);
@@ -339,8 +339,8 @@
     --surface-elevated: 0 0% 100%;
     --surface-inset: 0 0% 96%;
 
-    --brand: 150 10% 42%;
-    --brand-foreground: 150 16% 24%;
+    --brand: 108 14% 42%;
+    --brand-foreground: 108 18% 96%;
     --knowledge-accent: var(--brand);
     --knowledge-accent-foreground: var(--brand-foreground);
     --prose-link: var(--primary);

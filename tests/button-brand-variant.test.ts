@@ -9,8 +9,9 @@ const buttonSrc = readFileSync(
 );
 
 describe("Button brand variant", () => {
-  it("exposes brand variant bound to --brand tokens", () => {
+  it("exposes brand variants bound to --brand tokens", () => {
     expect(buttonSrc).toMatch(/brand:\s*"/);
+    expect(buttonSrc).toMatch(/brandOutline:\s*"/);
     expect(buttonSrc).toContain("--brand");
     expect(buttonSrc).toContain("--brand-foreground");
   });

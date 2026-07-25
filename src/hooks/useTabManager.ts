@@ -112,6 +112,31 @@ function namespaceForPath(path: string): "normal" | "classified" {
   return isClassifiedVaultPath(path) ? "classified" : "normal";
 }
 
+interface NoteParts {
+  bodyMarkdown: string;
+  frontmatterYaml: string | null;
+}
+
+/**
+ * Resolve body + YAML from a prepared open payload or raw markdown.
+ * `frontmatterYaml: null` is a valid "no frontmatter" value and must not be
+ * treated as missing (avoid `??` on nullable prepared fields).
+ */
+function resolveNoteParts(
+  preparedNote: PreparedNoteOpen | null,
+  content: string,
+  path: string,
+): NoteParts {
+  if (preparedNote) {
+    return {
+      bodyMarkdown: preparedNote.bodyMarkdown,
+      frontmatterYaml: preparedNote.frontmatterYaml,
+    };
+  }
+  const parsed = parseNoteForEditor(content, pathStem(path));
+  return { bodyMarkdown: parsed.bodyMd, frontmatterYaml: parsed.yaml };
+}
+
 export function useTabManager(options: UseTabManagerOptions = {}) {
   const { onStatusChange, onVaultIndexBump, persistBeforeLeave } = options;
   const persistBeforeLeaveRef = useRef(persistBeforeLeave);
@@ -316,12 +341,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       sequence: number;
       titleHint?: string;
     }): PendingNoteOpen => {
-      const parsed = preparedNote
-        ? null
-        : parseNoteForEditor(content, pathStem(path));
-      const bodyMarkdown = preparedNote?.bodyMarkdown ?? parsed!.bodyMd;
-      const frontmatterYaml = preparedNote?.frontmatterYaml ?? parsed!.yaml;
-      void preparedNote;
+      const { bodyMarkdown, frontmatterYaml } = resolveNoteParts(
+        preparedNote,
+        content,
+        path,
+      );
       void titleHint;
       const title = resolveNoteDisplayTitle({ path });
       const existingSessionId = tabsRef.current.find(
@@ -527,9 +551,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           if (options?.documentOpenToken) {
             options.onDocumentOpenTokenRetained?.();
           }
+          onStatusChange?.("");
           return;
         }
         applyCommittedNoteOpen(pending, discardedPreviousPath);
+        onStatusChange?.("");
       } catch (e) {
         if (openFileSeqRef.current !== seq || isSupersededError(e)) {
           throw e;

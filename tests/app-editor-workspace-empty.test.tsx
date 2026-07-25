@@ -4,9 +4,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const useHomeRecentNotes = vi.hoisted(() => vi.fn());
+const fileRead = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/useHomeRecentNotes", () => ({
   useHomeRecentNotes: (...args: unknown[]) => useHomeRecentNotes(...args),
+}));
+
+vi.mock("@/lib/ipc", () => ({
+  fileRead: (...args: unknown[]) => fileRead(...args),
+  documentOpenEnd: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/components/editor/TipTapEditor", () => ({
@@ -69,6 +75,7 @@ function baseProps() {
     },
     onOutlineOpenChange: vi.fn(),
     openNoteLeavingHome: vi.fn(),
+    onOpenSearch: vi.fn(),
     outlineOpen: false,
     pendingOpen: null,
     pendingNoteOpen: null,
@@ -89,6 +96,8 @@ describe("AppEditorWorkspace empty main surface", () => {
   let root: Root;
 
   beforeEach(() => {
+    fileRead.mockReset();
+    fileRead.mockResolvedValue({ content: "preview body", isLocked: false });
     useHomeRecentNotes.mockReturnValue({
       catalogPaths: [],
       recentNotes: [],
@@ -114,14 +123,21 @@ describe("AppEditorWorkspace empty main surface", () => {
     expect(surface).toBeTruthy();
     expect(surface?.getAttribute("data-mode")).toBe("vault");
     expect(
-      document.querySelector('[data-testid="workspace-empty-open-recent"]'),
+      document.querySelector('[data-testid="workspace-empty-recent-grid"]'),
     ).toBeNull();
   });
 
-  it("renders workspace empty with open-recent when the vault has notes", () => {
+  it("renders workspace empty with recent cards when the vault has notes", () => {
     useHomeRecentNotes.mockReturnValue({
       catalogPaths: ["notes/a.md"],
-      recentNotes: [{ path: "notes/a.md", title: "A" }],
+      recentNotes: [
+        {
+          path: "notes/a.md",
+          title: "A",
+          updatedAt: new Date().toISOString(),
+          isLocked: false,
+        },
+      ],
       vaultHasNotes: true,
       refreshRecent: vi.fn(),
     });
@@ -133,17 +149,27 @@ describe("AppEditorWorkspace empty main surface", () => {
     const surface = document.querySelector('[data-testid="workspace-empty"]');
     expect(surface?.getAttribute("data-mode")).toBe("workspace");
     expect(
-      document.querySelector('[data-testid="workspace-empty-open-recent"]'),
+      document.querySelector('[data-testid="workspace-empty-recent-card"]'),
     ).toBeTruthy();
   });
 
-  it("opens the resolved startup note when open-recent is clicked", async () => {
+  it("opens a note when a recent card is clicked", async () => {
     const openNoteLeavingHome = vi.fn(async () => undefined);
     useHomeRecentNotes.mockReturnValue({
       catalogPaths: ["notes/a.md", "notes/b.md"],
       recentNotes: [
-        { path: "notes/a.md", title: "A" },
-        { path: "notes/b.md", title: "B" },
+        {
+          path: "notes/a.md",
+          title: "A",
+          updatedAt: new Date().toISOString(),
+          isLocked: false,
+        },
+        {
+          path: "notes/b.md",
+          title: "B",
+          updatedAt: new Date().toISOString(),
+          isLocked: false,
+        },
       ],
       vaultHasNotes: true,
       refreshRecent: vi.fn(),
@@ -160,7 +186,7 @@ describe("AppEditorWorkspace empty main surface", () => {
 
     await userEvent.click(
       document.querySelector(
-        '[data-testid="workspace-empty-open-recent"]',
+        '[data-testid="workspace-empty-recent-card"]',
       ) as Element,
     );
 

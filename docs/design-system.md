@@ -6,7 +6,7 @@
 
 Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先，命令与 AI 是辅助层。避免纸墨/信纸视觉、紫色渐变、聊天主屏化、第三方主题和插件换肤。
 
-气质：**冷灰 N 壳层 + 低饱和知识绿品牌点**。灰蓝仅作 chrome focus/ring；知识交互（wiki、rail 激活、overlay 选中）统一走品牌绿。
+气质：**冷灰 N 壳层 + 低饱和冷调鼠尾草绿品牌点**（`--brand` / `--knowledge-accent`，hue ~108）。灰蓝仅作 chrome focus/ring；知识交互（wiki、rail 激活、overlay 选中）统一走品牌绿。
 
 ## Token 与实现位置
 
@@ -14,13 +14,13 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 ### 品牌色层级
 
-| 角色           | Token                                       | 用途                                                     |
-| -------------- | ------------------------------------------- | -------------------------------------------------------- |
-| Brand          | `--brand`（= knowledge 绿系）               | wiki、rail 激活、overlay 选中、tip callout；肯定性主操作经 `Button variant="brand"`（空主面新建、发送等） |
-| Primary / Ring | `--primary`、`--ring`                       | chrome 焦点环、外链、通用控件 focus；非品牌点缀          |
-| Warning        | `--warning`、`--warning-bg`、`--warning-fg` | 非终态警示、warning callout；禁止业务层裸用 `amber-*`    |
-| Success        | `--success`、`--success-bg`、`--success-fg` | 就绪/成功徽章；禁止业务层裸用 `emerald-*`                |
-| Destructive    | `--destructive`                             | 终态错误与危险操作                                       |
+| 角色           | Token                                       | 用途                                                                                                                                       |
+| -------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Brand          | `--brand`（= knowledge 冷调 sage 绿系）     | wiki、rail 激活、overlay 选中、tip callout；肯定性主操作经 `Button variant="brand"`（发送等）或空主面 `variant="brandOutline"`（新建笔记） |
+| Primary / Ring | `--primary`、`--ring`                       | chrome 焦点环、外链、通用控件 focus；非品牌点缀                                                                                            |
+| Warning        | `--warning`、`--warning-bg`、`--warning-fg` | 非终态警示、warning callout；禁止业务层裸用 `amber-*`                                                                                      |
+| Success        | `--success`、`--success-bg`、`--success-fg` | 就绪/成功徽章；禁止业务层裸用 `emerald-*`                                                                                                  |
+| Destructive    | `--destructive`                             | 终态错误与危险操作                                                                                                                         |
 
 ### 表面与边框
 
@@ -83,7 +83,9 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 可复用控件应优先使用现有 `OverlayChrome`、`IrisSurfaceMenu`、`CommandListOption`、`Kbd`、`AiComposer`、`AiMessageBubble`、`SurfaceCard`、`Tooltip`、`WorkspaceEmpty` 等原语，不能在业务组件重复实现。
 
-空主面：无打开文档时渲染 `WorkspaceEmpty`（`vault` = 库空「新建第一篇」；`workspace` = 零 Tab「新建笔记」+ 可选「打开最近」）。禁止恢复四按钮欢迎工作台。肯定性填充按钮统一 `variant="brand"`，勿散落 `bg-[hsl(var(--brand))]`。
+空主面：无打开文档时渲染 `WorkspaceEmpty`（顶栏仅右侧搜索 + `brandOutline` 新建；`workspace` 最近笔记卡片：标题 + `fileRead` 派生正文预览 `line-clamp-2` + 相对时间；`vault` 仅 muted「还没有笔记」）。禁止恢复四按钮欢迎工作台与「继续写作」hero 标题。空主面新建用 `variant="brandOutline"`；其余肯定性填充按钮（如发送）用 `variant="brand"`，勿散落 `bg-[hsl(var(--brand))]`。
+
+全库搜索 Overlay：检索模式（关键词 | 智能）为左侧低调分段，选中用弱 brand tint，禁止 `variant="default"` 灰蓝实心 pill；执行「搜索」在右侧用 `brandOutline`。加载态用 `aria-busy` 与文案「搜索中…」，禁止 `disabled`+opacity 闪烁。「智能」即语义向量检索（`searchSemantic`）。
 
 AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 brand tint；过程区脚注感（`assistant-process-footnote`）；折叠摘要末项在 Run `completed` 后为「答复完毕」。
 

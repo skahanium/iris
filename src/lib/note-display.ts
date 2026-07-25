@@ -1,4 +1,5 @@
 import type { FileListItem } from "@/types/ipc";
+import { splitFrontmatter } from "@/lib/frontmatter";
 
 /** Default display name for notes without a user title. */
 export const UNNAMED_DOCUMENT_PREFIX = "未命名文档";
@@ -90,6 +91,44 @@ export function displayTitleForChrome(
     return UNNAMED_DOCUMENT_PREFIX;
   }
   return editingTitle.trim();
+}
+
+/**
+ * Optional folder caption under a workspace-empty card title.
+ * Returns the parent directory path when present; root-level notes return null
+ * so the UI never duplicates the title as a fake preview.
+ */
+export function noteCardPreviewText(path: string): string | null {
+  const normalized = path.replace(/\\/g, "/");
+  const slash = normalized.lastIndexOf("/");
+  if (slash <= 0) {
+    return null;
+  }
+  return normalized.slice(0, slash);
+}
+
+const CARD_EXCERPT_MAX = 120;
+
+/**
+ * Plain-text body excerpt for recent-note cards (not a title duplicate).
+ * Strips YAML frontmatter and light markdown chrome, then truncates.
+ */
+export function markdownToCardExcerpt(
+  markdown: string,
+  maxChars = CARD_EXCERPT_MAX,
+): string {
+  const { body } = splitFrontmatter(markdown);
+  const plain = body
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/!\[[^\]]*]\([^)]*\)/g, "")
+    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
+    .replace(/`{1,3}[^`]*`{1,3}/g, "")
+    .replace(/[*_~>]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!plain) return "";
+  if (plain.length <= maxChars) return plain;
+  return `${plain.slice(0, maxChars).trimEnd()}…`;
 }
 
 /** Subtitle for lists: hide internal machine paths. */
