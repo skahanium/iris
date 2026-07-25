@@ -473,7 +473,10 @@ describe("DocumentPersistenceCoordinator", () => {
   it("allows barrier to retry after a failed save attempt", async () => {
     const write = vi
       .fn<
-        (path: string, markdown: string) => Promise<DocumentPersistenceWriteResult>
+        (
+          path: string,
+          markdown: string,
+        ) => Promise<DocumentPersistenceWriteResult>
       >()
       .mockRejectedValueOnce(new Error("disk full"))
       .mockRejectedValueOnce(new Error("disk full"))

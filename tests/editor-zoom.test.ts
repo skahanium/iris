@@ -38,10 +38,12 @@ describe("editor-zoom", () => {
 
     expect(editor).toContain("--editor-zoom");
     expect(editor).not.toContain("fontSize:");
-    expect(css).toContain("font-size: calc(2.25rem * var(--editor-zoom))");
+    expect(css).toContain("font-size: calc(2rem * var(--editor-zoom))");
     expect(prose).toContain(
       "font-size: calc(var(--prose-size-editor) * var(--editor-zoom))",
     );
-    expect(prose).toContain("font-size: calc(1.875rem * var(--editor-zoom))");
+    expect(prose).toContain(
+      "font-size: calc(var(--prose-h1) * var(--editor-zoom))",
+    );
   });
 });

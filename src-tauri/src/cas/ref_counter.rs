@@ -39,7 +39,8 @@ impl RefCounter {
 
     /// 增加引用计数
     pub fn increment(&self, object_hash: &str) -> AppResult<()> {
-        self.db.with_conn(|conn| Self::increment_on_conn(conn, object_hash))
+        self.db
+            .with_conn(|conn| Self::increment_on_conn(conn, object_hash))
     }
 
     /// 减少引用计数

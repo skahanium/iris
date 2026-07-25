@@ -17,9 +17,7 @@ export function resolveStartupNote(input: {
     return null;
   }
   const normalizedActive =
-    typeof activePath === "string" && activePath.length > 0
-      ? activePath
-      : null;
+    typeof activePath === "string" && activePath.length > 0 ? activePath : null;
   if (normalizedActive && openNotePaths.includes(normalizedActive)) {
     return { path: normalizedActive };
   }

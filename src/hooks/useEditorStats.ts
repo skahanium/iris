@@ -41,10 +41,13 @@ export function useEditorStats() {
   const sessionBaselineCharCountRef = useRef(new Map<string, number>());
   const activeSessionIdRef = useRef<string | null>(null);
 
-  const displayFromAccum = useCallback((sessionId: string): SessionCharDelta => {
-    const accum = sessionAccumRef.current.get(sessionId) ?? emptyDelta();
-    return clampSessionCharDeltaForDisplay(accum);
-  }, []);
+  const displayFromAccum = useCallback(
+    (sessionId: string): SessionCharDelta => {
+      const accum = sessionAccumRef.current.get(sessionId) ?? emptyDelta();
+      return clampSessionCharDeltaForDisplay(accum);
+    },
+    [],
+  );
 
   const sessionDisplayDelta = useCallback(
     (sessionId: string, characterCount: number): SessionCharDelta => {

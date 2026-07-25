@@ -269,74 +269,74 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
           data-tauri-drag-region={customWindowControls ? true : undefined}
         />
       ) : showTabStrip ? (
-            <>
+        <>
+          <div
+            ref={railRef}
+            className="iris-titlebar-tab-rail flex min-w-0 flex-1 items-center gap-1 overflow-x-hidden px-2"
+            data-tauri-drag-region={customWindowControls ? true : undefined}
+          >
+            {visibleTabs.map(renderTabSegment)}
+            {overflow ? (
               <div
-                ref={railRef}
-                className="iris-titlebar-tab-rail flex min-w-0 flex-1 items-center gap-1 overflow-x-hidden px-2"
-                data-tauri-drag-region={customWindowControls ? true : undefined}
+                ref={moreWrapRef}
+                className="relative shrink-0"
+                data-tauri-drag-region-exclude
               >
-                {visibleTabs.map(renderTabSegment)}
-                {overflow ? (
-                  <div
-                    ref={moreWrapRef}
-                    className="relative shrink-0"
-                    data-tauri-drag-region-exclude
-                  >
-                    <button
-                      type="button"
-                      data-tauri-drag-region-exclude
-                      className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
-                      aria-label="更多笔记"
-                      aria-expanded={moreOpen}
-                      onMouseDown={(event) => event.stopPropagation()}
-                      onClick={() => setMoreOpen((value) => !value)}
-                    >
-                      <MoreHorizontal className="h-4 w-4" />
-                    </button>
-                    {moreOpen ? (
-                      <div
-                        className="absolute right-0 top-full z-50 mt-1 min-w-[12rem]"
-                        data-testid="rail-overflow-menu"
-                      >
-                        <IrisSurfaceMenuPanel aria-label="更多笔记">
-                          {overflowTabs.map((tab) => (
-                            <IrisSurfaceMenuItem
-                              key={tab.path}
-                              id={tab.path}
-                              label={tab.title}
-                              active={activePath === tab.path}
-                              onSelect={() => {
-                                onSelect(tab.path);
-                                setMoreOpen(false);
-                              }}
-                            />
-                          ))}
-                        </IrisSurfaceMenuPanel>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
                 <button
                   type="button"
-                  data-testid="rail-new-note-button"
                   data-tauri-drag-region-exclude
-                  className="iris-focus-soft inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
-                  aria-label="新建笔记"
-                  onMouseDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                  onClick={onNew}
+                  className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
+                  aria-label="更多笔记"
+                  aria-expanded={moreOpen}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={() => setMoreOpen((value) => !value)}
                 >
-                  <Plus className="h-4 w-4" />
+                  <MoreHorizontal className="h-4 w-4" />
                 </button>
+                {moreOpen ? (
+                  <div
+                    className="absolute right-0 top-full z-50 mt-1 min-w-[12rem]"
+                    data-testid="rail-overflow-menu"
+                  >
+                    <IrisSurfaceMenuPanel aria-label="更多笔记">
+                      {overflowTabs.map((tab) => (
+                        <IrisSurfaceMenuItem
+                          key={tab.path}
+                          id={tab.path}
+                          label={tab.title}
+                          active={activePath === tab.path}
+                          onSelect={() => {
+                            onSelect(tab.path);
+                            setMoreOpen(false);
+                          }}
+                        />
+                      ))}
+                    </IrisSurfaceMenuPanel>
+                  </div>
+                ) : null}
               </div>
-            </>
-          ) : (
-            <div
-              className="min-w-0 flex-1"
-              data-tauri-drag-region={customWindowControls ? true : undefined}
-            />
-          )}
+            ) : null}
+            <button
+              type="button"
+              data-testid="rail-new-note-button"
+              data-tauri-drag-region-exclude
+              className="iris-focus-soft inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
+              aria-label="新建笔记"
+              onMouseDown={(event) => {
+                event.stopPropagation();
+              }}
+              onClick={onNew}
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          </div>
+        </>
+      ) : (
+        <div
+          className="min-w-0 flex-1"
+          data-tauri-drag-region={customWindowControls ? true : undefined}
+        />
+      )}
 
       {customWindowControls ? (
         <div className="absolute inset-y-0 right-0 z-30 flex">

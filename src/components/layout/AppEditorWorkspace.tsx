@@ -129,7 +129,10 @@ interface AppEditorWorkspaceProps {
   setFindReplaceMode: Dispatch<SetStateAction<"find" | "replace">>;
   setFindReplaceOpen: (open: boolean) => void;
   updateEditorStats: (stats: EditorStatsUpdate) => void;
-  resetSessionCharDelta?: (sessionId: string, baselineCharacterCount?: number) => void;
+  resetSessionCharDelta?: (
+    sessionId: string,
+    baselineCharacterCount?: number,
+  ) => void;
   applySessionCharDelta?: (sessionId: string, delta: SessionCharDelta) => void;
   vaultIndexEpoch: number;
   vaultPath: string | null;

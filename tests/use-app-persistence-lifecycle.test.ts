@@ -902,73 +902,82 @@ describe("useAppPersistenceLifecycle", () => {
   });
 
   it("releases the capture freeze after a close barrier write failure", async () => {
+    vi.useFakeTimers();
     const persistBeforeLeaveRef = {
       current: async () => null,
     } as React.MutableRefObject<PersistBeforeLeave>;
     let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+    const loadedMarkdown = '---\ntitle: "Note"\n---\n\nFirst close attempt.';
+    const dirtyMarkdown =
+      '---\ntitle: "Note"\n---\n\nFirst close attempt that needs saving.';
     const retryMarkdown =
       '---\ntitle: "Note"\n---\n\nRetry after the failed close barrier.';
 
-    await act(async () => {
-      root.render(
-        createElement(Harness, {
-          editorContentTick: 1,
-          editorReady: true,
-          markdown: '---\ntitle: "Note"\n---\n\nFirst close attempt.',
-          onReady: (next) => {
-            api = next;
-          },
-          persistBeforeLeaveRef,
-        }),
+    try {
+      await act(async () => {
+        root.render(
+          createElement(Harness, {
+            editorContentTick: 1,
+            editorReady: true,
+            markdown: loadedMarkdown,
+            liveMarkdown: dirtyMarkdown,
+            onReady: (next) => {
+              api = next;
+            },
+            persistBeforeLeaveRef,
+          }),
+        );
+      });
+      await act(async () => {
+        api.notifyDirty("note.md");
+      });
+      fileWrite.mockRejectedValue(new Error("disk unavailable"));
+
+      const flushPromise = api.flushAllOpenTabs();
+      const flushResult = expect(flushPromise).rejects.toThrow(
+        "disk unavailable",
       );
-    });
+      await act(async () => {
+        await vi.runAllTimersAsync();
+      });
+      await flushResult;
 
-    await act(async () => {
-      root.render(
-        createElement(Harness, {
-          editorContentTick: 1,
-          editorReady: true,
-          markdown:
-            '---\ntitle: "Note"\n---\n\nFirst close attempt that needs saving.',
-          onReady: (next) => {
-            api = next;
-          },
-          persistBeforeLeaveRef,
-        }),
-      );
-    });
-    await act(async () => {
-      api.notifyDirty("note.md");
-    });
-    fileWrite.mockRejectedValueOnce(new Error("disk unavailable"));
+      expect(api.isPersistenceBarrierActive).toBe(false);
 
-    await act(async () => {
-      await expect(api.flushAllOpenTabs()).rejects.toThrow("disk unavailable");
-    });
+      fileWrite.mockReset();
+      fileWrite.mockResolvedValue({
+        id: 1,
+        path: "note.md",
+        title: "Note",
+        updated_at: "",
+        word_count: 6,
+      });
 
-    expect(api.isPersistenceBarrierActive).toBe(false);
+      await act(async () => {
+        root.render(
+          createElement(Harness, {
+            editorContentTick: 2,
+            editorReady: true,
+            markdown: retryMarkdown,
+            liveMarkdown: retryMarkdown,
+            onReady: (next) => {
+              api = next;
+            },
+            persistBeforeLeaveRef,
+          }),
+        );
+      });
+      await act(async () => {
+        api.notifyDirty("note.md");
+      });
+      await act(async () => {
+        await api.flushAllOpenTabs();
+      });
 
-    await act(async () => {
-      root.render(
-        createElement(Harness, {
-          editorContentTick: 1,
-          editorReady: true,
-          markdown: retryMarkdown,
-          onReady: (next) => {
-            api = next;
-          },
-          persistBeforeLeaveRef,
-        }),
-      );
-    });
-    await act(async () => {
-      api.notifyDirty("note.md");
-    });
-    await act(async () => {
-      await api.flushAllOpenTabs();
-    });
-
-    expect(fileWrite).toHaveBeenLastCalledWith("note.md", retryMarkdown);
+      expect(fileWrite).toHaveBeenLastCalledWith("note.md", retryMarkdown);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects close persistence when a dirty remount has no recoverable snapshot", async () => {

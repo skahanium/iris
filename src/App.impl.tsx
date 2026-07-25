@@ -236,8 +236,9 @@ function App() {
           remainingNoteCount: tabs.length,
         });
       }
-      const sessionId = tabsRef.current.find((tab) => tab.path === path)
-        ?.documentSessionId;
+      const sessionId = tabsRef.current.find(
+        (tab) => tab.path === path,
+      )?.documentSessionId;
       return closeTab(path).then((result) => {
         if (result.closed && sessionId) {
           clearSessionCharDelta(sessionId);
@@ -820,9 +821,7 @@ function App() {
     documentForegroundActive &&
     activePath &&
     displayTitleForChrome(activePath, noteTitle);
-  const statusBarShowsMediaChrome = Boolean(
-    activeMediaTab && !workspaceEmpty,
-  );
+  const statusBarShowsMediaChrome = Boolean(activeMediaTab && !workspaceEmpty);
   const statusBarShowsNoteChrome = documentForegroundActive;
   const {
     aiDomain,
@@ -974,14 +973,10 @@ function App() {
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={
-              statusBarShowsNoteChrome &&
-              canUndo &&
-              !isEditorPersistenceBlocked
+              statusBarShowsNoteChrome && canUndo && !isEditorPersistenceBlocked
             }
             canRedo={
-              statusBarShowsNoteChrome &&
-              canRedo &&
-              !isEditorPersistenceBlocked
+              statusBarShowsNoteChrome && canRedo && !isEditorPersistenceBlocked
             }
             webSearch={webSearch}
             webSearchAvailability={webSearchAvailability}

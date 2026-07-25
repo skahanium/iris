@@ -199,7 +199,10 @@ kind = "general"
 scenes = ["ask_notes", "drafting_assist"]
 "#;
         let config: CorpusConfig = toml::from_str(raw).unwrap();
-        assert_eq!(config.corpus[0].intents, vec!["ask_notes", "drafting_assist"]);
+        assert_eq!(
+            config.corpus[0].intents,
+            vec!["ask_notes", "drafting_assist"]
+        );
     }
 
     #[test]

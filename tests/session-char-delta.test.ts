@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  sessionCharDeltaFromTransaction,
-} from "@/lib/session-char-delta";
+import { sessionCharDeltaFromTransaction } from "@/lib/session-char-delta";
 
 import { createProductionEditorFromBody } from "./helpers/tiptap-serialize-harness";
 
@@ -26,7 +24,10 @@ describe("sessionCharDeltaFromTransaction", () => {
 
     const editor = createProductionEditorFromBody(baseline);
     try {
-      const atEnd = editor.state.tr.insertText(insert, editor.state.doc.content.size);
+      const atEnd = editor.state.tr.insertText(
+        insert,
+        editor.state.doc.content.size,
+      );
       const endDelta = sessionCharDeltaFromTransaction(atEnd);
 
       const midPos = 6;
