@@ -17,6 +17,8 @@ interface AppStatusBarSlotProps {
   persistenceStatus?: DocumentPersistenceStatus;
   characterCount: number;
   readingMinutes: number;
+  sessionCharsAdded?: number;
+  sessionCharsRemoved?: number;
   aiStatus: string;
   assistantChrome: AssistantChromeSnapshot;
   editorZoom: number;
@@ -51,6 +53,8 @@ export function AppStatusBarSlot({
   persistenceStatus,
   characterCount,
   readingMinutes,
+  sessionCharsAdded,
+  sessionCharsRemoved,
   aiStatus,
   assistantChrome,
   editorZoom,
@@ -111,6 +115,8 @@ export function AppStatusBarSlot({
       persistenceStatus={persistenceStatus}
       characterCount={characterCount}
       readingMinutes={readingMinutes}
+      sessionCharsAdded={sessionCharsAdded}
+      sessionCharsRemoved={sessionCharsRemoved}
       aiStatus={aiStatus}
       assistantChrome={assistantChrome}
       editorZoom={editorZoom}

@@ -58,6 +58,10 @@ import {
   characterCountExcludingWhitespace,
   readingMinutes,
 } from "@/lib/reading-time";
+import {
+  sessionCharDeltaFromTransaction,
+  type SessionCharDelta,
+} from "@/lib/session-char-delta";
 
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
@@ -144,6 +148,11 @@ interface TipTapEditorProps {
     readingMinutes: number;
   }) => void;
 
+  /** Resets session +/- when clean body content is applied (visible surface). */
+  onSessionCharDeltaReset?: (baselineCharacterCount: number) => void;
+
+  onSessionCharDelta?: (delta: SessionCharDelta) => void;
+
   onInlineAiRetry?: (editor: Editor) => void;
 
   onInlineAiDismiss?: (editor: Editor) => void;
@@ -173,6 +182,9 @@ interface TipTapEditorProps {
   ) => void;
 
   locked?: boolean;
+
+  /** When true, refresh status-bar stats (e.g. tab became visible). */
+  statsReportingActive?: boolean;
 
   /** Synchronously guards imperative mutations while departure persistence holds a lease. */
   mutationBlocked?: () => boolean;
@@ -213,6 +225,10 @@ function TipTapEditorInner({
 
   onBodyStatsChange,
 
+  onSessionCharDeltaReset,
+
+  onSessionCharDelta,
+
   onInlineAiRetry,
 
   onInlineAiDismiss,
@@ -234,6 +250,7 @@ function TipTapEditorInner({
   onBodyContextMenu,
 
   locked = false,
+  statsReportingActive = true,
   mutationBlocked = () => false,
   lockToggleDisabled = false,
 
@@ -264,6 +281,12 @@ function TipTapEditorInner({
   const onBodyStatsChangeRef = useRef(onBodyStatsChange);
 
   onBodyStatsChangeRef.current = onBodyStatsChange;
+
+  const onSessionCharDeltaResetRef = useRef(onSessionCharDeltaReset);
+  onSessionCharDeltaResetRef.current = onSessionCharDeltaReset;
+
+  const onSessionCharDeltaRef = useRef(onSessionCharDelta);
+  onSessionCharDeltaRef.current = onSessionCharDelta;
 
   const editorRef = useRef<Editor | null>(null);
   const [linkEditor, setLinkEditor] = useState<{
@@ -307,40 +330,65 @@ function TipTapEditorInner({
   contentCacheNamespaceRef.current = contentCacheNamespace;
 
   const bodyStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statsReportingActiveRef = useRef(statsReportingActive);
+  statsReportingActiveRef.current = statsReportingActive;
+  const bodyDirtySinceOpenRef = useRef(false);
 
   const htmlCacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const flushBodyStats = useCallback((editor: Editor) => {
-    if (bodyStatsTimerRef.current) {
-      clearTimeout(bodyStatsTimerRef.current);
-
-      bodyStatsTimerRef.current = null;
-    }
-
-    const text = editor.state.doc.textContent;
-
-    onBodyStatsChangeRef.current?.({
-      characterCount: characterCountExcludingWhitespace(text),
-
-      readingMinutes: readingMinutes(text),
-    });
+  const shouldReportBodyStats = useCallback(() => {
+    return statsReportingActiveRef.current;
   }, []);
 
-  const scheduleBodyStats = useCallback((editor: Editor) => {
-    if (bodyStatsTimerRef.current) clearTimeout(bodyStatsTimerRef.current);
+  const baselineCharacterCount = useCallback((editor: Editor) => {
+    return characterCountExcludingWhitespace(editor.state.doc.textContent);
+  }, []);
 
-    bodyStatsTimerRef.current = setTimeout(() => {
-      bodyStatsTimerRef.current = null;
+  const publishSessionCharDeltaReset = useCallback(
+    (editor: Editor) => {
+      if (!shouldReportBodyStats() || bodyDirtySinceOpenRef.current) return;
+      onSessionCharDeltaResetRef.current?.(baselineCharacterCount(editor));
+    },
+    [baselineCharacterCount, shouldReportBodyStats],
+  );
 
+  const emitQuickBodyStats = useCallback(
+    (editor: Editor) => {
+      if (editor.isDestroyed || !shouldReportBodyStats()) return;
       const text = editor.state.doc.textContent;
-
       onBodyStatsChangeRef.current?.({
         characterCount: characterCountExcludingWhitespace(text),
-
         readingMinutes: readingMinutes(text),
       });
-    }, BODY_STATS_DEBOUNCE_MS);
-  }, []);
+    },
+    [shouldReportBodyStats],
+  );
+
+  const flushBodyStats = useCallback(
+    (editor: Editor) => {
+      if (!shouldReportBodyStats()) return;
+      if (bodyStatsTimerRef.current) {
+        clearTimeout(bodyStatsTimerRef.current);
+        bodyStatsTimerRef.current = null;
+      }
+
+      emitQuickBodyStats(editor);
+    },
+    [emitQuickBodyStats, shouldReportBodyStats],
+  );
+
+  const scheduleBodyStats = useCallback(
+    (editor: Editor) => {
+      if (!shouldReportBodyStats()) return;
+      if (bodyStatsTimerRef.current) clearTimeout(bodyStatsTimerRef.current);
+
+      bodyStatsTimerRef.current = setTimeout(() => {
+        bodyStatsTimerRef.current = null;
+        emitQuickBodyStats(editor);
+      }, BODY_STATS_DEBOUNCE_MS);
+    },
+    [emitQuickBodyStats, shouldReportBodyStats],
+  );
 
   const extensions = useMemo(
     () => [
@@ -583,9 +631,17 @@ function TipTapEditorInner({
         if (transaction.getMeta(AI_STREAM_TRANSIENT_TRANSACTION_META)) return;
         if (transaction.getMeta("preventUpdate")) return;
         if (!transaction.docChanged) return;
+        bodyDirtySinceOpenRef.current = true;
         onDirtyRef.current?.();
 
         scheduleBodyStats(updatedEditor);
+
+        if (shouldReportBodyStats()) {
+          const delta = sessionCharDeltaFromTransaction(transaction);
+          if (delta.added !== 0 || delta.removed !== 0) {
+            onSessionCharDeltaRef.current?.(delta);
+          }
+        }
 
         const key = contentCacheKeyRef.current;
         const namespace = contentCacheNamespaceRef.current;
@@ -638,6 +694,7 @@ function TipTapEditorInner({
     const cancelFrame =
       window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
     const generation = ++firstFrameGenerationRef.current;
+    bodyDirtySinceOpenRef.current = false;
 
     resetEditorContentBaseline(editor, content, {
       parseOptions: EDITOR_PARSE_OPTIONS,
@@ -646,6 +703,7 @@ function TipTapEditorInner({
     baselineAppliedRef.current = true;
     contentReadyRef.current = true;
     onContentReadyRef.current?.(editor);
+    publishSessionCharDeltaReset(editor);
     flushBodyStats(editor);
 
     firstFrameId = requestFrame(() => {
@@ -661,7 +719,12 @@ function TipTapEditorInner({
       if (firstFrameId !== null) cancelFrame(firstFrameId);
       if (secondFrameId !== null) cancelFrame(secondFrameId);
     };
-  }, [editor, flushBodyStats, parsedContentRevision]);
+  }, [
+    editor,
+    flushBodyStats,
+    parsedContentRevision,
+    publishSessionCharDeltaReset,
+  ]);
 
   useEffect(() => {
     if (
@@ -767,16 +830,31 @@ function TipTapEditorInner({
 
     onEditorReadyRef.current?.(editor);
 
-    flushBodyStats(editor);
+    if (statsReportingActiveRef.current) {
+      flushBodyStats(editor);
+    }
 
     return () => {
-      flushBodyStats(editor);
+      if (statsReportingActiveRef.current) {
+        flushBodyStats(editor);
+      }
 
       editorRef.current = null;
 
       onEditorReadyRef.current?.(null);
     };
   }, [editor, flushBodyStats]);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed || !statsReportingActive) return;
+    publishSessionCharDeltaReset(editor);
+    flushBodyStats(editor);
+  }, [
+    editor,
+    flushBodyStats,
+    publishSessionCharDeltaReset,
+    statsReportingActive,
+  ]);
 
   useEffect(() => {
     return () => {

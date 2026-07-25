@@ -30,6 +30,8 @@ interface StatusBarProps {
   persistenceStatus?: DocumentPersistenceStatus;
   characterCount: number;
   readingMinutes: number;
+  sessionCharsAdded?: number;
+  sessionCharsRemoved?: number;
   aiStatus: string;
   editorZoom?: number;
   onEditorZoomIn?: () => void;
@@ -70,6 +72,8 @@ export const StatusBar = memo(function StatusBar({
   persistenceStatus = "clean",
   characterCount,
   readingMinutes,
+  sessionCharsAdded = 0,
+  sessionCharsRemoved = 0,
   aiStatus,
   editorZoom = 1,
   onEditorZoomIn,
@@ -126,6 +130,9 @@ export const StatusBar = memo(function StatusBar({
           ? "保存失败"
           : "已保存";
 
+  const showSessionCharDelta =
+    Boolean(path) && sessionCharsAdded + sessionCharsRemoved > 0;
+
   return (
     <footer
       data-testid="status-bar"
@@ -144,6 +151,29 @@ export const StatusBar = memo(function StatusBar({
       <span className="shrink-0 tabular-nums">
         {characterCount.toLocaleString()} 字
       </span>
+      {showSessionCharDelta ? (
+        <>
+          <span className="shrink-0 text-muted-foreground/60" aria-hidden>
+            ·
+          </span>
+          <span
+            className="inline-flex shrink-0 items-center gap-1 tabular-nums"
+            data-testid="status-bar-session-char-delta"
+            aria-label={`相对打开时新增 ${sessionCharsAdded} 字，删除 ${sessionCharsRemoved} 字`}
+          >
+            {sessionCharsAdded > 0 ? (
+              <span className="text-status-llm-ready/75">
+                +{sessionCharsAdded.toLocaleString()}
+              </span>
+            ) : null}
+            {sessionCharsRemoved > 0 ? (
+              <span className="text-[hsl(var(--status-llm-error)/0.72)]">
+                −{sessionCharsRemoved.toLocaleString()}
+              </span>
+            ) : null}
+          </span>
+        </>
+      ) : null}
       <span className="shrink-0 text-muted-foreground/60" aria-hidden>
         ·
       </span>

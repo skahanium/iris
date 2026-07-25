@@ -12,6 +12,8 @@ import { WorkspaceEmpty } from "@/components/layout/WorkspaceEmpty";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
+import type { EditorStatsUpdate } from "@/hooks/useEditorStats";
+import type { SessionCharDelta } from "@/lib/session-char-delta";
 import { documentOpenEnd } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { MediaTab } from "@/hooks/useMediaTabs";
@@ -126,10 +128,9 @@ interface AppEditorWorkspaceProps {
   runEditorActionById: (actionId: string) => void;
   setFindReplaceMode: Dispatch<SetStateAction<"find" | "replace">>;
   setFindReplaceOpen: (open: boolean) => void;
-  updateEditorStats: (stats: {
-    characterCount: number;
-    readingMinutes: number;
-  }) => void;
+  updateEditorStats: (stats: EditorStatsUpdate) => void;
+  resetSessionCharDelta?: (sessionId: string, baselineCharacterCount?: number) => void;
+  applySessionCharDelta?: (sessionId: string, delta: SessionCharDelta) => void;
   vaultIndexEpoch: number;
   vaultPath: string | null;
   warmPreparedNotes?: readonly PreparedNoteOpen[] | null;
@@ -232,6 +233,8 @@ export function AppEditorWorkspace({
   setFindReplaceMode,
   setFindReplaceOpen,
   updateEditorStats,
+  resetSessionCharDelta = () => undefined,
+  applySessionCharDelta = () => undefined,
   vaultIndexEpoch,
   vaultPath,
   warmPreparedNotes,
@@ -835,6 +838,7 @@ export function AppEditorWorkspace({
                 return showTitle ? editorTitleSlot : null;
               })()}
               locked={snapshot.activeFileLocked}
+              statsReportingActive={isVisible}
               mutationBlocked={isMutationBlocked}
               lockToggleDisabled={persistenceBarrierActive}
               setLocked={
@@ -859,6 +863,15 @@ export function AppEditorWorkspace({
                 );
               }}
               onBodyStatsChange={updateEditorStats}
+              onSessionCharDeltaReset={(baselineCharacterCount) =>
+                resetSessionCharDelta?.(
+                  snapshot.documentSessionId,
+                  baselineCharacterCount,
+                )
+              }
+              onSessionCharDelta={(delta) =>
+                applySessionCharDelta?.(snapshot.documentSessionId, delta)
+              }
               onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
               onInlineAiDismiss={(ed) => inlineAi.dismiss(ed)}
               onInlineAiAccept={() => inlineAi.finish()}
@@ -895,6 +908,8 @@ export function AppEditorWorkspace({
       persistenceBarrierActive,
       runEditorActionById,
       updateEditorStats,
+      resetSessionCharDelta,
+      applySessionCharDelta,
       vaultPath,
       zen,
     ],

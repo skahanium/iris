@@ -113,7 +113,15 @@ function App() {
   const [conflictState, setConflictState] = useState<ConflictState | null>(
     null,
   );
-  const { editorStats, updateEditorStats, resetEditorStats } = useEditorStats();
+  const {
+    editorStats,
+    updateEditorStats,
+    resetEditorStats,
+    resetSessionCharDelta,
+    applySessionCharDelta,
+    setActiveEditorSession,
+    clearSessionCharDelta,
+  } = useEditorStats();
   // With no restored tab the workspace is empty, not an editor fallback.
   // Keeping this true also lets the empty workspace read the recovered catalog.
   const [workspaceEmpty, setWorkspaceEmpty] = useState(true);
@@ -228,9 +236,22 @@ function App() {
           remainingNoteCount: tabs.length,
         });
       }
-      return closeTab(path);
+      const sessionId = tabsRef.current.find((tab) => tab.path === path)
+        ?.documentSessionId;
+      return closeTab(path).then((result) => {
+        if (result.closed && sessionId) {
+          clearSessionCharDelta(sessionId);
+        }
+        return result;
+      });
     },
-    [activePathRef, closeTab, rejectDepartureInteraction, tabs],
+    [
+      activePathRef,
+      clearSessionCharDelta,
+      closeTab,
+      rejectDepartureInteraction,
+      tabs.length,
+    ],
   );
   const guardedOpenNote = useCallback(
     async (...args: Parameters<typeof openNote>): Promise<void> => {
@@ -690,6 +711,10 @@ function App() {
     }
   }, [activePath, resetEditorStats]);
 
+  useEffect(() => {
+    setActiveEditorSession(activeDocumentSessionId ?? null);
+  }, [activeDocumentSessionId, setActiveEditorSession]);
+
   const handleTitleBlur = useCallback(
     (committedTitle: string) => {
       onTitleBlur(committedTitle);
@@ -869,6 +894,8 @@ function App() {
             setFindReplaceMode={setFindReplaceMode}
             setFindReplaceOpen={setFindReplaceOpen}
             updateEditorStats={updateEditorStats}
+            resetSessionCharDelta={resetSessionCharDelta}
+            applySessionCharDelta={applySessionCharDelta}
             vaultIndexEpoch={vaultIndexEpoch}
             vaultPath={vaultPath}
             warmPreparedNotes={warmPreparedNotes}
@@ -905,6 +932,8 @@ function App() {
             persistenceStatus={saveStatus}
             characterCount={editorStats.characterCount}
             readingMinutes={editorStats.readingMinutes}
+            sessionCharsAdded={editorStats.sessionCharsAdded}
+            sessionCharsRemoved={editorStats.sessionCharsRemoved}
             aiStatus={aiStatus}
             assistantChrome={assistantChrome}
             editorZoom={editorZoom}

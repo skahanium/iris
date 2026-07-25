@@ -103,6 +103,27 @@ describe("status bar assistant chrome", () => {
     expect(bar).toContain('className="shrink-0 tabular-nums"');
   });
 
+  it("StatusBar shows session char delta beside word count when changes exist", () => {
+    const bar = read("src/components/layout/StatusBar.tsx");
+    const slot = read("src/components/layout/AppStatusBarSlot.tsx");
+    const app = read("src/App.impl.tsx");
+
+    expect(bar).toContain("status-bar-session-char-delta");
+    expect(bar).toContain("sessionCharsAdded");
+    expect(bar).toContain("showSessionCharDelta");
+    expect(bar).toContain("相对打开时新增");
+    expect(slot).toContain("sessionCharsAdded");
+    expect(read("src/components/layout/AppEditorWorkspace.tsx")).toContain(
+      "applySessionCharDelta",
+    );
+    expect(read("src/components/layout/AppEditorWorkspace.tsx")).toContain(
+      "resetSessionCharDelta",
+    );
+    expect(app).toContain("sessionCharsAdded");
+    expect(app).toContain("applySessionCharDelta");
+    expect(app).toContain("resetSessionCharDelta");
+  });
+
   it("StatusBar does not expose the ordinary-user tool audit entry", () => {
     const bar = read("src/components/layout/StatusBar.tsx");
     expect(bar).not.toContain("status-bar-audit-link");
