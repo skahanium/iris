@@ -8,6 +8,13 @@ Iris 是桌面端、单用户、本地优先的 Markdown 笔记应用。长期�
 
 Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安装平台，也不提供 MCP、资源、工作区、脚本或依赖安装能力。
 
+## v1.2.15 — macOS 更新与状态继承（进行中）
+
+- macOS 已安装的 `Iris.app` 将运行时状态、缓存、临时目录、Skills 与更新缓存置于 Tauri Application Support 目录，不再写入应用包内部，确保更新安装临时目录不妨碍替换 `.app`。
+- 从 v1.2.12/v1.2.13 首次升级到本版本必须按手工清单进行安全迁移：退出应用、备份旧目标目录、完整复制旧运行时目录后再通过 DMG 替换应用；不得承诺旧二进制可以完成应用内升级。
+- 迁移后的 LLM/MCP 配置与加密凭据状态、人格设置、Vault 选择、Agent 会话及应用状态应保留；后续版本可恢复 macOS 应用内更新。Markdown vault 不迁移、不修改，始终保留为用户的权威文件。
+- 统一 Agent Run 将在 assistant 气泡内提供可恢复的安全过程流：阶段、工具生命周期与 provider 明示 reasoning summary 在最终正文开始流式输出时折叠，普通会话历史可重新查看；不展示或保存原始思维链、工具参数与原始输出。
+
 ## v1.2.16 — UI 气质升级（Wave 1 已交付，Wave 2 待办）
 
 冷灰壳层 + 知识绿品牌点的受控刷新；不恢复纸墨/紫渐变，不换编辑器栈。分两波交付，不阻塞 v1.2.15 过程流验收。规范见 [docs/design-system.md](./docs/design-system.md)。
@@ -30,13 +37,6 @@ Wave 1 另已覆盖：语义 token（`--brand`、边框三级、warning/success 
 - 真实浮层 enter/exit 动效（挂 `--motion-*`）；统一焦点环；过程指示尊重 `prefers-reduced-motion`。
 - AI 冷加载 skeleton；Tooltip 原语；Overlay/搜索请求 AbortController。
 - 人工清单与「命令面板已退役」事实同步；Segment 4 壳层亮/暗抽检结案（见 [iris-rail-refresh-manual-checklist](./docs/testing/iris-rail-refresh-manual-checklist.md)）。
-
-## v1.2.15 — macOS 更新与状态继承（进行中）
-
-- macOS 已安装的 `Iris.app` 将运行时状态、缓存、临时目录、Skills 与更新缓存置于 Tauri Application Support 目录，不再写入应用包内部，确保更新安装临时目录不妨碍替换 `.app`。
-- 从 v1.2.12/v1.2.13 首次升级到本版本必须按手工清单进行安全迁移：退出应用、备份旧目标目录、完整复制旧运行时目录后再通过 DMG 替换应用；不得承诺旧二进制可以完成应用内升级。
-- 迁移后的 LLM/MCP 配置与加密凭据状态、人格设置、Vault 选择、Agent 会话及应用状态应保留；后续版本可恢复 macOS 应用内更新。Markdown vault 不迁移、不修改，始终保留为用户的权威文件。
-- 统一 Agent Run 将在 assistant 气泡内提供可恢复的安全过程流：阶段、工具生命周期与 provider 明示 reasoning summary 在最终正文开始流式输出时折叠，普通会话历史可重新查看；不展示或保存原始思维链、工具参数与原始输出。
 
 ## v1.2.13 — 科学按需联网与韧性降级
 
