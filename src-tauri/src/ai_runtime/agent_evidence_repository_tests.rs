@@ -31,7 +31,7 @@ fn setup_run() -> (Database, i64, String) {
             envelope: ExecutionEnvelope {
                 effect: Effect::Answer,
                 context: ContextMode::ExplicitReferences,
-                freshness: Freshness::Online,
+                freshness: Freshness::WebPreferred,
                 web_reason: WebDecisionReason::LegacyUnknown,
                 effort: Effort::ToolLoop,
                 security_domain: SecurityDomain::Normal,

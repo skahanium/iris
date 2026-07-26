@@ -366,7 +366,7 @@ export function McpProfilesPanel({
       label: detailProvider.name || "MCP 联网证据提供方",
       detail: `${mcpListTransportShortLabel(detailProvider.transportKind)} · ${mcpListMappingShortLabel(detailProvider.mappingStatus)}`,
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by provider fields, not object identity
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by provider fields, not object identity
   }, [
     detailProvider?.id,
     detailProvider?.mappingStatus,

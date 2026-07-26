@@ -62,6 +62,12 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         false
     }
 
+    /// Whether a final model answer is invalid until this executor has
+    /// registered usable Web evidence for the Run.
+    fn requires_web_evidence(&self) -> bool {
+        false
+    }
+
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
     /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
@@ -91,10 +97,20 @@ impl Default for AgentToolLoop {
 }
 
 impl AgentToolLoop {
+    /// Build a bounded loop for a nested harness operation. Zero is never a
+    /// meaningful limit: clamp it to one so callers fail deterministically
+    /// after a real bounded attempt instead of silently doing no work.
+    pub(crate) fn with_limits(max_model_turns: u32, max_tool_calls: u32) -> Self {
+        Self {
+            max_model_turns: max_model_turns.clamp(1, MAX_MODEL_TURNS),
+            max_tool_calls: max_tool_calls.clamp(1, MAX_TOOL_CALLS),
+        }
+    }
+
     /// Run model turns until a non-empty final answer is received or a bound is reached.
     pub(crate) async fn execute(
         &self,
-        provider: &impl ToolLoopProvider,
+        provider: &(impl ToolLoopProvider + ?Sized),
         executor: &impl ToolLoopExecutor,
         run_id: &str,
         messages: Vec<LlmMessage>,
@@ -110,7 +126,7 @@ impl AgentToolLoop {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_with_eval_telemetry(
         &self,
-        provider: &impl ToolLoopProvider,
+        provider: &(impl ToolLoopProvider + ?Sized),
         executor: &impl ToolLoopExecutor,
         run_id: &str,
         messages: Vec<LlmMessage>,
@@ -133,7 +149,7 @@ impl AgentToolLoop {
     #[allow(clippy::too_many_arguments)]
     async fn execute_internal(
         &self,
-        provider: &impl ToolLoopProvider,
+        provider: &(impl ToolLoopProvider + ?Sized),
         executor: &impl ToolLoopExecutor,
         run_id: &str,
         mut messages: Vec<LlmMessage>,
@@ -150,6 +166,7 @@ impl AgentToolLoop {
         let mut fingerprints = HashMap::<String, u32>::new();
 
         while model_turns < self.max_model_turns {
+            ensure_run_not_cancelled(run_id)?;
             model_turns += 1;
             let model_started_at = std::time::Instant::now();
             let response = provider
@@ -160,6 +177,9 @@ impl AgentToolLoop {
             }
 
             if response.tool_calls.is_empty() {
+                if executor.requires_web_evidence() && !executor.has_web_evidence() {
+                    return Err(AppError::msg("agent_run_web_evidence_required"));
+                }
                 let content = response.content.unwrap_or_default();
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
@@ -183,6 +203,7 @@ impl AgentToolLoop {
             observer.on_tools_starting()?;
             messages.push(assistant_tool_message(&response));
             for call in &response.tool_calls {
+                ensure_run_not_cancelled(run_id)?;
                 tool_calls += 1;
                 let result = if !allowed_tools.contains(call.function.name.as_str()) {
                     rejected_result(call, "tool_not_in_run_surface")
@@ -217,6 +238,14 @@ impl AgentToolLoop {
             );
         }
         Err(AppError::msg("agent_run_tool_loop_limit"))
+    }
+}
+
+fn ensure_run_not_cancelled(run_id: &str) -> AppResult<()> {
+    if crate::ai_runtime::model_gateway::is_abort_requested(run_id) {
+        Err(AppError::msg("agent_run_cancelled"))
+    } else {
+        Ok(())
     }
 }
 

@@ -44,7 +44,12 @@ export function useAssistantRunTranscript({
   const webCitationsHydratedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!run || run.state !== "completed" || !session || session.domain !== "normal") {
+    if (
+      !run ||
+      run.state !== "completed" ||
+      !session ||
+      session.domain !== "normal"
+    ) {
       return;
     }
     const runId = run.runId;

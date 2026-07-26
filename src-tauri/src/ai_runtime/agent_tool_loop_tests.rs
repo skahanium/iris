@@ -52,6 +52,22 @@ struct RecordingExecutor {
 
 struct FailingWebExecutor;
 struct LargeResultExecutor;
+struct RequiredWebExecutor;
+
+impl ToolLoopExecutor for RequiredWebExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("a required Web Run must not finalize before a call") })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+}
 
 impl ToolLoopExecutor for LargeResultExecutor {
     fn execute<'a>(
@@ -284,6 +300,68 @@ async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
 
     assert_eq!(outcome.content, "stable knowledge answer");
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn web_required_rejects_a_final_answer_without_registered_evidence() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: Some("unverified answer".into()),
+            tool_calls: Vec::new(),
+            usage: Default::default(),
+            finish_reason: "stop".into(),
+            reasoning_content: None,
+            continuation: None,
+        }])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    let error = AgentToolLoop::default()
+        .execute(
+            &provider,
+            &RequiredWebExecutor,
+            "run-required-web",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect_err("web-required must not silently finalize");
+    assert_eq!(error.to_string(), "agent_run_web_evidence_required");
+}
+
+#[tokio::test]
+async fn cancelled_run_never_starts_a_model_or_tool_turn() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::new()),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+    crate::ai_runtime::model_gateway::request_abort("run-cancelled-loop");
+    let result = AgentToolLoop::default()
+        .execute(
+            &provider,
+            &executor,
+            "run-cancelled-loop",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await;
+    crate::ai_runtime::model_gateway::clear_abort("run-cancelled-loop");
+
+    assert_eq!(
+        result.expect_err("cancelled loop must stop").to_string(),
+        "agent_run_cancelled"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 

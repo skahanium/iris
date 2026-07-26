@@ -38,11 +38,14 @@ chrono = { version = "0.4", features = ["serde"] }
 notify = "8"
 notify-debouncer-full = "0.6"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "system-proxy", "socks"] }
-rmcp = { version = "2.2.0", default-features = false, features = ["client", "reqwest", "transport-child-process", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "2.2.0", default-features = false, features = ["client", "reqwest", "transport-async-rw", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 http = "1"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
 webpki-roots = "0.26"
 futures-util = "0.3"
+# Required by the bounded Streamable HTTP adapter below. This exact version is
+# already resolved transitively by rmcp; MIT OR Apache-2.0 is AGPL-compatible.
+sse-stream = "0.2.4"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 walkdir = "2"

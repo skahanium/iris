@@ -49,17 +49,18 @@ pub(crate) enum ContextMode {
 
 /// Whether a Run may use Web capabilities.
 ///
-/// Binary model (exclusion-based): Offline forbids `web_search`; Online registers it
-/// and lets the answering model decide whether to call it. Historical wire values
-/// `web_preferred` and `web_required` deserialize as [`Freshness::Online`].
+/// Explicit Web contract. `WebRequired` means the Run cannot produce a final
+/// answer until usable Web evidence has entered the evidence ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Freshness {
     /// Web access is forbidden; `web_search` is not registered.
     Offline,
-    /// Web access is permitted; `web_search` is registered for model-driven use.
-    #[serde(alias = "web_preferred", alias = "web_required")]
-    Online,
+    /// Web is available to the model but local completion remains valid.
+    #[serde(alias = "online")]
+    WebPreferred,
+    /// Web evidence is mandatory before finalization.
+    WebRequired,
 }
 
 /// Stable explanation for the deterministic Web decision attached to a Run.
@@ -429,7 +430,7 @@ pub struct PendingConfirmationSummary {
     /// Safe effect category projected from the immutable change plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) effect: Option<Effect>,
-    /// Counted and redacted change targets; never source paths or arguments.
+    /// Bounded, normalized change targets and no raw tool arguments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) targets: Option<Vec<ConfirmationTargetSummary>>,
     /// RFC 3339 expiry of the immutable approval window.
@@ -437,13 +438,13 @@ pub struct PendingConfirmationSummary {
     pub(crate) expires_at: Option<String>,
 }
 
-/// Redacted target metadata shown before approving a frozen change plan.
+/// Bounded target metadata shown before approving a frozen change plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ConfirmationTargetSummary {
-    /// Broad target kind, never a source path.
+    /// Broad target kind.
     pub(crate) kind: String,
-    /// Ordinal-only display label that contains no user data.
+    /// Normalized target identity so the user can approve the actual scope.
     pub(crate) label: String,
     /// Maximum risk class of the planned effect.
     pub(crate) risk: RiskClass,

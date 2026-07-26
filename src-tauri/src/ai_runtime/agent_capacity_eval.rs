@@ -9495,8 +9495,9 @@ impl McpTransportContract {
         let (discovery, proof) = probe
             .into_discovery()
             .map_err(|_| EvalContractError::new("mcp_transport_discovery_invalid"))?;
-        if discovery.protocol_version != crate::ai_runtime::mcp_host_runtime::MCP_PROTOCOL_VERSION
-            || !safe_label(&discovery.server_name)
+        if !crate::ai_runtime::mcp_host_runtime::is_supported_mcp_protocol_version(
+            &discovery.protocol_version,
+        ) || !safe_label(&discovery.server_name)
         {
             return Err(EvalContractError::new("mcp_transport_discovery_invalid"));
         }

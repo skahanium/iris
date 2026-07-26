@@ -43,7 +43,7 @@ pub fn support_status_for_capability(raw: &str) -> SkillCapabilitySupportStatus 
 pub fn fallback_guidance(raw: &str, status: SkillCapabilitySupportStatus) -> String {
     match status {
         SkillCapabilitySupportStatus::Supported => {
-            "This capability maps to an Iris tool and can be considered by ToolPolicy.".into()
+            "This capability maps to an Iris tool and is evaluated against the immutable Run capability snapshot.".into()
         }
         SkillCapabilitySupportStatus::SupportedWithConfirmation => {
             "This capability maps to an Iris tool, but execution requires user confirmation.".into()

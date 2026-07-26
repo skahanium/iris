@@ -33,7 +33,7 @@ describe("AI harness architecture contracts", () => {
   it("keeps MCP tools/list diagnostic and out of the model tool surface", () => {
     const host = read("src-tauri/src/ai_runtime/mcp_host_runtime.rs");
     const diagnostics = read("src-tauri/src/commands/ai_commands.rs");
-    const policy = read("src-tauri/src/ai_runtime/tool_policy.rs");
+    const catalog = read("src-tauri/src/ai_runtime/tool_catalog/capability.rs");
     const resolver = read("src-tauri/src/ai_runtime/capability_resolver.rs");
     const executor = read("src-tauri/src/ai_runtime/tool_executor.rs");
 
@@ -48,15 +48,13 @@ describe("AI harness architecture contracts", () => {
       "mcp_runtime_capability_call",
       "mcp_runtime_profile_upsert",
     ]) {
-      expect(policy).not.toContain(`name: "${rawTool}"`);
+      expect(catalog).not.toContain(`"${rawTool}" =>`);
       expect(executor).not.toContain(`name: "${rawTool}"`);
       expect(resolver).not.toContain(`"${rawTool}" =>`);
     }
 
-    expect(policy).toContain(
-      'const META_SKILL_TOOLS: &[&str] = &["skills_list"]',
-    );
-    expect(policy).not.toContain("tools/list result");
+    expect(catalog).toContain('"skills_list" => &["skills.read"]');
+    expect(catalog).not.toContain("tools/list result");
   });
 
   it("does not define cross-session prompt response caching", () => {

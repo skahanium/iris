@@ -63,8 +63,7 @@ interface AiMessageBubbleProps {
   webCitations?: WebCitationEntry[];
 }
 
-const proseConversation =
-  "iris-markdown-content select-text";
+const proseConversation = "iris-markdown-content select-text";
 
 const STREAMING_SYNC_FALLBACK_CHAR_LIMIT = 40_000;
 

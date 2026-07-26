@@ -268,9 +268,7 @@ export const proseMarked = new Marked({
       const titleAttr = title ? ` title="${title}"` : "";
       const footnote = isNumericFootnoteLinkText(text);
       const wrapCitation = (inner: string) =>
-        footnote
-          ? `<sup class="ai-citation-wrap">${inner}</sup>`
-          : inner;
+        footnote ? `<sup class="ai-citation-wrap">${inner}</sup>` : inner;
       const footnoteAria = footnote
         ? ` aria-label="引用来源 ${text.trim()}"`
         : "";

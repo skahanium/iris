@@ -9,6 +9,8 @@
 - 文档权限继承、deny 优先和 Session grant 到期。
 - 资料角色解析及 unknown 安全降级。
 - Tool effect、Schema、变更计划 hash 和参数再验证。
+- 授权快照规范化、Run/Session 归属、重复持久化幂等与策略漂移 fail-closed。
+- 精确 capability → 工具面：patch capability 不得泄露 memory/schedule/vault/fs/Git 工具。
 - Skill 激活、组合、预算和缓存失效。
 - Provider/MCP 错误分类和 failover 决定。
 - Evidence hash、stale、citation map 和截断。
@@ -81,6 +83,9 @@
 - 在 authority、exemplar、Web、MCP 输出中放置工具越权和 system override 文本，确认 capability 不变。
 - 在 tool args 中测试 `../`、绝对路径、符号链接、大小写变体和 `.classified` 越界。
 - 修改预览生成后改变目标文档 hash，确认 apply 为零。
+- Apply 缺少显式目标、模型替换目标路径、或 `apply_change = deny` 时，确认后写盘均为零。
+- 取消注入到 Markdown 生成快照前、快照后和写盘前，确认磁盘正文与版本历史均不产生新提交。
+- 对 `read` / `send_to_model` deny 的文档，监控显式材料组装、`read_note` 与模型 payload，确认正文读取和送模均为零。
 - 测试过期、撤销和错误 Session grant。
 - 涉密 Run 执行期间监控普通 DB、日志、事件和 Web/MCP mock，确认无敏感写入或调用。
 - 检索日志、错误和 checkpoint，确认无 API Key、Token、正文和完整 prompt。
@@ -89,12 +94,34 @@
 
 - Provider 连接失败、429、5xx、401、context too long 和中途断流。
 - MCP 进程退出、超时、错误 Schema 和超大结果。
+- 取消落在模型轮前、工具轮前、确认前与最终落库前的竞态组合。
 - 数据库 busy、磁盘写失败和终态事务回滚。
 - 应用在 awaiting_confirmation、tool running、verifying 时关闭。
 - 重复 start/control、事件丢失和乱序。
 - 文档在检索后、确认前和写回前发生变化。
 
 每种故障必须定义稳定终态、用户可见文案、是否可重试、是否允许 failover，以及是否保存 checkpoint。
+
+## 5.1 承压测试矩阵
+
+每次发布前在本地双端 mock 下执行下表的几何阶梯（`1/2/4/8/16`），并把
+峰值 RSS、p50/p95、拒绝数、重复初始化数和终态一致性写入匿名评测报告：
+
+| 轴                   | 阶梯         | 必须保持的合同                                                                                                      |
+| -------------------- | ------------ | ------------------------------------------------------------------------------------------------------------------- |
+| 并发 Run             | 1–16         | 每个 Run 独立快照、事件序号和取消状态                                                                               |
+| 单 Run 工具回合      | 1–24         | 超额工具调用被拒绝且不落副作用                                                                                      |
+| MCP 同 profile 并发  | 1–16         | 单初始化、受限 session 数、无无界等待                                                                               |
+| MCP 输入帧/HTTP body | 64 KiB–2 MiB | stdio 行帧、HTTP Content-Length 与 chunked body 都在 JSON/SSE 反序列化前拒绝；进程/连接可回收                       |
+| 联网权限注入         | 1–16         | 关闭联网开关生成、未含 `web.*` 的 envelope 对后来附加的 `web.search`/`web.fetch` 一律拒绝，Native/MCP dispatch 为零 |
+| Skill 候选数         | 1–128        | 仅索引查询；最多主+辅两个技能，不扫描文件系统                                                                       |
+| 取消竞态             | 1–16         | 不开始新的模型/工具/子 Run；提交前二次检查，终态只为 cancelled                                                      |
+| 文档策略冲突         | 1–64         | deny 文档不读/不送模/不写；其余上下文可继续                                                                         |
+| 写入目标替换         | 1–32         | 目标、hash、确认计划三者任一不一致即零写入                                                                          |
+
+对每一轴交叉至少覆盖：offline、web_required、Apply+confirmation、显式引用、
+Skills 启用、MCP 不可用六类终态组合。任何副作用越权、内存无界增长、同 key
+重复 session 初始化或 cancelled 被改写为 failed 都是发布阻断。
 
 ## 6. 迁移验证
 

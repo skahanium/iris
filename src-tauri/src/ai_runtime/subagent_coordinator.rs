@@ -197,6 +197,39 @@ pub struct SubagentReport {
 pub struct SubAgentCoordinator;
 
 impl SubAgentCoordinator {
+    /// Restrict a child Run to the read/Web vocabulary that may safely execute
+    /// under its parent Run. Child Runs never receive mutation tools or harness
+    /// controls, so depth cannot grow beyond one and every durable effect stays
+    /// on the parent confirmation path.
+    pub(crate) fn child_tool_surface(parent_tools: &[String]) -> Vec<String> {
+        const CHILD_SAFE_TOOLS: &[&str] = &[
+            "search_hybrid",
+            "search_semantic",
+            "search_keyword",
+            "get_regulation",
+            "get_context_packets",
+            "system_time_now",
+            "app_context_read",
+            "capabilities_read",
+            "web_search",
+            "read_note",
+            "list_vault",
+            "get_outline",
+            "get_backlinks",
+            "get_block_links",
+            "vault_version_list",
+            "git_read_status",
+            "git_read_diff",
+            "git_read_log",
+            "doc_extract_citations",
+        ];
+        parent_tools
+            .iter()
+            .filter(|tool| CHILD_SAFE_TOOLS.contains(&tool.as_str()))
+            .cloned()
+            .collect()
+    }
+
     pub fn plan(specs: &[SubAgentTaskSpec]) -> CoordinationPlan {
         let mut conflicts = Vec::new();
         for (left_index, left) in specs.iter().enumerate() {
@@ -350,5 +383,19 @@ mod tests {
         );
 
         assert!(spec.allowed_tools.is_empty());
+    }
+
+    #[test]
+    fn child_tool_surface_never_contains_mutation_or_recursive_harness_controls() {
+        let tools = SubAgentCoordinator::child_tool_surface(&[
+            "read_note".to_string(),
+            "web_search".to_string(),
+            "memory_write".to_string(),
+            "insert_text_at_cursor".to_string(),
+            "spawn_subagent".to_string(),
+            "conclude_reasoning".to_string(),
+        ]);
+
+        assert_eq!(tools, vec!["read_note", "web_search"]);
     }
 }

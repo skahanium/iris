@@ -7,29 +7,66 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, Mutex as StdMutex, Weak};
 use std::time::{Duration, Instant};
 
+use futures_util::{stream::BoxStream, StreamExt};
 use rmcp::{
-    model::{CallToolRequestParams, ClientInfo, Tool},
+    model::{CallToolRequestParams, ClientInfo, ClientJsonRpcMessage, ServerJsonRpcMessage, Tool},
     service::RunningService,
     transport::{
-        streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
-        TokioChildProcess,
+        async_rw::AsyncRwTransport,
+        streamable_http_client::{
+            StreamableHttpClient, StreamableHttpClientTransportConfig, StreamableHttpError,
+            StreamableHttpPostResponse,
+        },
+        StreamableHttpClientTransport, Transport,
     },
     RoleClient, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use tokio::io::AsyncReadExt;
-use tokio::process::Command;
+use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
-pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
+/// MCP protocol releases that Iris has explicitly exercised at the host
+/// boundary. A peer's initialize response is accepted only when it negotiated
+/// one of these releases; this is deliberately not a "latest" comparison.
+pub const SUPPORTED_MCP_PROTOCOL_VERSIONS: [&str; 2] = ["2025-06-18", "2025-11-25"];
+
+/// Return whether the protocol version negotiated during MCP initialization is
+/// one of the releases supported by this host runtime.
+pub fn is_supported_mcp_protocol_version(version: &str) -> bool {
+    SUPPORTED_MCP_PROTOCOL_VERSIONS.contains(&version)
+}
+
+fn validate_negotiated_mcp_protocol_version(version: &str) -> AppResult<()> {
+    if is_supported_mcp_protocol_version(version) {
+        return Ok(());
+    }
+
+    Err(runtime_error(
+        McpRuntimeFailureKind::InvalidResponse,
+        "MCP server negotiated an unsupported protocol version",
+    ))
+}
+
+fn validate_connected_mcp_protocol(
+    client: &RunningService<RoleClient, ClientInfo>,
+) -> AppResult<()> {
+    let peer_info = client.peer_info().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::InvalidResponse,
+            "MCP server did not return initialize metadata",
+        )
+    })?;
+    validate_negotiated_mcp_protocol_version(&peer_info.protocol_version.to_string())
+}
 
 #[derive(Debug, Clone)]
 pub struct McpStdioLaunch {
@@ -77,6 +114,96 @@ pub struct McpHostRuntimeOptions {
 }
 
 pub const DEFAULT_STDIO_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+/// Bound retained stdio children across providers. Active calls temporarily
+/// remove their entry from this cache, so the cap only governs idle reuse.
+pub const MAX_STDIO_SESSION_POOL_SIZE: usize = 8;
+
+/// Reject an over-limit newline-delimited JSON-RPC frame before the downstream
+/// transport can retain or deserialize it.
+struct CappedFrameReader<R> {
+    inner: R,
+    max_frame_bytes: usize,
+    frame_bytes: usize,
+}
+
+impl<R> CappedFrameReader<R> {
+    fn new(inner: R, max_frame_bytes: usize) -> Self {
+        Self {
+            inner,
+            max_frame_bytes,
+            frame_bytes: 0,
+        }
+    }
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for CappedFrameReader<R> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let remaining = buf.remaining();
+        if remaining == 0 {
+            return std::task::Poll::Ready(Ok(()));
+        }
+        // Read at most one byte beyond the current frame limit. The byte is
+        // staged in `limited` and committed to `buf` only after validation;
+        // therefore an over-limit frame is never observable by the JSON-RPC
+        // decoder that sits behind this transport.
+        let read_limit = remaining.min(
+            self.max_frame_bytes
+                .saturating_sub(self.frame_bytes)
+                .saturating_add(1),
+        );
+        let initialized = buf.initialize_unfilled_to(read_limit);
+        let mut limited = ReadBuf::new(&mut initialized[..read_limit]);
+        match std::pin::Pin::new(&mut self.inner).poll_read(cx, &mut limited) {
+            std::task::Poll::Ready(Ok(())) => {
+                let bytes_read = limited.filled().len();
+                for byte in limited.filled() {
+                    if *byte == b'\n' {
+                        self.frame_bytes = 0;
+                    } else {
+                        self.frame_bytes = self.frame_bytes.saturating_add(1);
+                        if self.frame_bytes > self.max_frame_bytes {
+                            return std::task::Poll::Ready(Err(std::io::Error::other(
+                                "MCP stdout frame exceeds configured cap",
+                            )));
+                        }
+                    }
+                }
+                buf.advance(bytes_read);
+                std::task::Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
+    }
+}
+
+struct BoundedStdioTransport {
+    child: Child,
+    transport: AsyncRwTransport<RoleClient, CappedFrameReader<ChildStdout>, ChildStdin>,
+}
+
+impl Transport<RoleClient> for BoundedStdioTransport {
+    type Error = std::io::Error;
+    fn send(
+        &mut self,
+        item: rmcp::service::TxJsonRpcMessage<RoleClient>,
+    ) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send + 'static {
+        self.transport.send(item)
+    }
+    fn receive(
+        &mut self,
+    ) -> impl std::future::Future<Output = Option<rmcp::service::RxJsonRpcMessage<RoleClient>>> + Send
+    {
+        self.transport.receive()
+    }
+    fn close(&mut self) -> impl std::future::Future<Output = Result<(), Self::Error>> + Send {
+        let result = self.child.start_kill();
+        async move { result }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -253,9 +380,21 @@ fn rmcp_headers(
         .collect()
 }
 
-fn rmcp_client_error() -> AppError {
+fn rmcp_client_error(error: impl std::fmt::Display) -> AppError {
     // Do not surface SDK transport strings: a remote error may echo credentials
-    // or provider content. The typed runtime boundary records only this safe code.
+    // or provider content. The typed runtime boundary records only safe codes.
+    // The two locally generated cap markers are the sole exception: retaining
+    // their category is needed so the broker can apply deterministic overload
+    // handling without exposing a remote payload.
+    let message = error.to_string();
+    if message.contains("MCP stdout frame exceeds configured cap")
+        || message.contains("MCP HTTP response exceeds configured cap")
+    {
+        return runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP response exceeded configured cap",
+        );
+    }
     runtime_error(
         McpRuntimeFailureKind::Unavailable,
         "official MCP client request failed",
@@ -273,6 +412,7 @@ fn rmcp_tool_call_arguments(
     })
 }
 fn http_host_is_localhost_or_loopback(host: &str) -> bool {
+    let host = http_host_without_ipv6_brackets(host);
     host.eq_ignore_ascii_case("localhost")
         || host
             .parse::<IpAddr>()
@@ -280,25 +420,46 @@ fn http_host_is_localhost_or_loopback(host: &str) -> bool {
             .unwrap_or(false)
 }
 
-fn http_host_is_private_or_metadata(host: &str) -> bool {
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    if host == "169.254.169.254" || host.eq_ignore_ascii_case("metadata.google.internal") {
-        return true;
-    }
-    let Ok(ip) = host.parse::<IpAddr>() else {
-        return false;
+/// `Url::host_str()` preserves brackets around IPv6 literals. Normalize that
+/// presentation detail before applying the IP safety policy.
+fn http_host_without_ipv6_brackets(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
+fn ip_is_private_or_metadata(ip: IpAddr) -> bool {
+    let ipv4_is_private_or_metadata = |ip: std::net::Ipv4Addr| {
+        ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
     };
     match ip {
-        IpAddr::V4(ip) => {
-            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
-        }
+        IpAddr::V4(ip) => ipv4_is_private_or_metadata(ip),
         IpAddr::V6(ip) => {
+            // `::ffff:127.0.0.1` and friends are IPv4 endpoints encoded as
+            // IPv6 literals. Treat their embedded IPv4 address under exactly
+            // the same deny rules; otherwise they bypass the loopback/private
+            // host guard before the MCP client opens a connection.
+            if let Some(ipv4) = ip.to_ipv4() {
+                return ipv4_is_private_or_metadata(ipv4);
+            }
             let first_segment = ip.segments()[0];
-            ip.is_loopback() || ip.is_unspecified() || (first_segment & 0xfe00) == 0xfc00
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unicast_link_local()
+                || (first_segment & 0xfe00) == 0xfc00
         }
     }
+}
+
+fn http_host_is_private_or_metadata(host: &str) -> bool {
+    let host = http_host_without_ipv6_brackets(host);
+    host.eq_ignore_ascii_case("localhost")
+        || host == "169.254.169.254"
+        || host.eq_ignore_ascii_case("metadata.google.internal")
+        || host
+            .parse::<IpAddr>()
+            .map(ip_is_private_or_metadata)
+            .unwrap_or(false)
 }
 
 fn http_url_contains_secret(parsed: &reqwest::Url) -> bool {
@@ -360,6 +521,310 @@ fn validate_mcp_http_runtime_url(url: &str, allow_localhost_dev: bool) -> AppRes
         McpRuntimeFailureKind::NetworkDenied,
         "MCP HTTP transport requires HTTPS unless localhost dev mode is explicitly enabled",
     ))
+}
+
+/// The public RMCP HTTP-client seam lets Iris apply one response-size policy
+/// to both JSON and SSE replies without forking the MCP protocol transport.
+/// A server-declared oversized response is rejected before its body is read;
+/// chunked bodies are counted before every chunk reaches the SSE or JSON
+/// decoder.
+#[derive(Debug, thiserror::Error)]
+enum BoundedMcpHttpClientError {
+    #[error("MCP HTTP request failed")]
+    Request(#[from] reqwest::Error),
+    #[error("MCP HTTP response exceeds configured cap")]
+    ResponseTooLarge,
+}
+
+#[derive(Clone)]
+struct BoundedMcpHttpClient {
+    client: reqwest::Client,
+    max_response_bytes: usize,
+}
+
+impl BoundedMcpHttpClient {
+    fn reject_declared_oversize(
+        &self,
+        response: &reqwest::Response,
+    ) -> Result<(), BoundedMcpHttpClientError> {
+        if response
+            .content_length()
+            .is_some_and(|length| length > self.max_response_bytes as u64)
+        {
+            return Err(BoundedMcpHttpClientError::ResponseTooLarge);
+        }
+        Ok(())
+    }
+
+    async fn read_body_under_cap(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<Vec<u8>, BoundedMcpHttpClientError> {
+        self.reject_declared_oversize(&response)?;
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk?;
+            if chunk.len() > self.max_response_bytes.saturating_sub(body.len()) {
+                return Err(BoundedMcpHttpClientError::ResponseTooLarge);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(body)
+    }
+
+    fn capped_sse_stream(
+        &self,
+        response: reqwest::Response,
+    ) -> Result<
+        BoxStream<'static, Result<sse_stream::Sse, sse_stream::Error>>,
+        BoundedMcpHttpClientError,
+    > {
+        self.reject_declared_oversize(&response)?;
+        let max_response_bytes = self.max_response_bytes;
+        let mut received_bytes = 0_usize;
+        let stream = response.bytes_stream().map(move |chunk| {
+            let chunk = chunk.map_err(BoundedMcpHttpClientError::from)?;
+            if chunk.len() > max_response_bytes.saturating_sub(received_bytes) {
+                return Err(BoundedMcpHttpClientError::ResponseTooLarge);
+            }
+            received_bytes += chunk.len();
+            Ok(chunk)
+        });
+        Ok(sse_stream::SseStream::from_bytes_stream(stream).boxed())
+    }
+
+    fn apply_headers(
+        mut request: reqwest::RequestBuilder,
+        auth_header: Option<String>,
+        custom_headers: std::collections::HashMap<http::HeaderName, http::HeaderValue>,
+    ) -> reqwest::RequestBuilder {
+        if let Some(auth_header) = auth_header {
+            request = request.bearer_auth(auth_header);
+        }
+        for (name, value) in custom_headers {
+            request = request.header(name, value);
+        }
+        request
+    }
+
+    fn response_content_type(response: &reqwest::Response) -> Option<String> {
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .map(|value| String::from_utf8_lossy(value.as_bytes()).to_string())
+    }
+}
+
+impl StreamableHttpClient for BoundedMcpHttpClient {
+    type Error = BoundedMcpHttpClientError;
+
+    async fn get_stream(
+        &self,
+        uri: std::sync::Arc<str>,
+        session_id: std::sync::Arc<str>,
+        last_event_id: Option<String>,
+        auth_header: Option<String>,
+        custom_headers: std::collections::HashMap<http::HeaderName, http::HeaderValue>,
+    ) -> Result<
+        BoxStream<'static, Result<sse_stream::Sse, sse_stream::Error>>,
+        StreamableHttpError<Self::Error>,
+    > {
+        let mut request = self
+            .client
+            .get(uri.as_ref())
+            .header(
+                reqwest::header::ACCEPT,
+                "text/event-stream, application/json",
+            )
+            .header("Mcp-Session-Id", session_id.as_ref());
+        if let Some(last_event_id) = last_event_id {
+            request = request.header("Last-Event-Id", last_event_id);
+        }
+        let response = Self::apply_headers(request, auth_header, custom_headers)
+            .send()
+            .await
+            .map_err(|error| StreamableHttpError::Client(error.into()))?
+            .error_for_status()
+            .map_err(|error| StreamableHttpError::Client(error.into()))?;
+        let content_type = Self::response_content_type(&response);
+        match content_type.as_deref() {
+            Some(value)
+                if value.starts_with("text/event-stream")
+                    || value.starts_with("application/json") =>
+            {
+                self.capped_sse_stream(response)
+                    .map_err(StreamableHttpError::Client)
+            }
+            _ => Err(StreamableHttpError::UnexpectedContentType(content_type)),
+        }
+    }
+
+    async fn delete_session(
+        &self,
+        uri: std::sync::Arc<str>,
+        session_id: std::sync::Arc<str>,
+        auth_header: Option<String>,
+        custom_headers: std::collections::HashMap<http::HeaderName, http::HeaderValue>,
+    ) -> Result<(), StreamableHttpError<Self::Error>> {
+        let response = Self::apply_headers(
+            self.client
+                .delete(uri.as_ref())
+                .header("Mcp-Session-Id", session_id.as_ref()),
+            auth_header,
+            custom_headers,
+        )
+        .send()
+        .await
+        .map_err(|error| StreamableHttpError::Client(error.into()))?;
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            return Ok(());
+        }
+        response
+            .error_for_status()
+            .map_err(|error| StreamableHttpError::Client(error.into()))?;
+        Ok(())
+    }
+
+    async fn post_message(
+        &self,
+        uri: std::sync::Arc<str>,
+        message: ClientJsonRpcMessage,
+        session_id: Option<std::sync::Arc<str>>,
+        auth_header: Option<String>,
+        custom_headers: std::collections::HashMap<http::HeaderName, http::HeaderValue>,
+    ) -> Result<StreamableHttpPostResponse, StreamableHttpError<Self::Error>> {
+        let session_was_attached = session_id.is_some();
+        let mut request = self.client.post(uri.as_ref()).header(
+            reqwest::header::ACCEPT,
+            "text/event-stream, application/json",
+        );
+        if let Some(session_id) = session_id {
+            request = request.header("Mcp-Session-Id", session_id.as_ref());
+        }
+        let response = Self::apply_headers(request, auth_header, custom_headers)
+            .json(&message)
+            .send()
+            .await
+            .map_err(|error| StreamableHttpError::Client(error.into()))?;
+        let status = response.status();
+        if matches!(
+            status,
+            reqwest::StatusCode::ACCEPTED | reqwest::StatusCode::NO_CONTENT
+        ) {
+            return Ok(StreamableHttpPostResponse::Accepted);
+        }
+        if status == reqwest::StatusCode::NOT_FOUND && session_was_attached {
+            return Err(StreamableHttpError::SessionExpired);
+        }
+        let content_type = Self::response_content_type(&response);
+        let session_id = response
+            .headers()
+            .get("Mcp-Session-Id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        if !status.is_success() {
+            let body = self
+                .read_body_under_cap(response)
+                .await
+                .map_err(StreamableHttpError::Client)?;
+            if content_type
+                .as_deref()
+                .is_some_and(|value| value.starts_with("application/json"))
+            {
+                if let Ok(message @ ServerJsonRpcMessage::Error(_)) = serde_json::from_slice(&body)
+                {
+                    return Ok(StreamableHttpPostResponse::Json(message, session_id));
+                }
+            }
+            return Err(StreamableHttpError::UnexpectedServerResponse(
+                "MCP HTTP server rejected the request".into(),
+            ));
+        }
+        match content_type.as_deref() {
+            Some(value) if value.starts_with("text/event-stream") => self
+                .capped_sse_stream(response)
+                .map(|stream| StreamableHttpPostResponse::Sse(stream, session_id))
+                .map_err(StreamableHttpError::Client),
+            Some(value) if value.starts_with("application/json") => {
+                let body = self
+                    .read_body_under_cap(response)
+                    .await
+                    .map_err(StreamableHttpError::Client)?;
+                match serde_json::from_slice::<ServerJsonRpcMessage>(&body) {
+                    Ok(message) => Ok(StreamableHttpPostResponse::Json(message, session_id)),
+                    Err(_) => Ok(StreamableHttpPostResponse::Accepted),
+                }
+            }
+            _ => Err(StreamableHttpError::UnexpectedContentType(content_type)),
+        }
+    }
+}
+
+/// Resolve a remote MCP hostname once, reject non-public targets, and pin the
+/// resulting addresses into the reqwest client. This prevents a later DNS
+/// rebinding lookup from turning an already-approved hostname into a private
+/// or metadata endpoint. Redirects are disabled because each redirect target
+/// would otherwise need the same validation and pinning treatment.
+async fn pinned_mcp_http_client(launch: &McpHttpLaunch) -> AppResult<reqwest::Client> {
+    let parsed = validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
+    let host = parsed.host_str().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::NetworkDenied,
+            "MCP HTTP URL has no host",
+        )
+    })?;
+    let port = parsed.port_or_known_default().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::NetworkDenied,
+            "MCP HTTP URL has no port",
+        )
+    })?;
+    let mut builder = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(launch.request_timeout)
+        .timeout(launch.request_timeout);
+    if host.parse::<IpAddr>().is_err() {
+        let addresses = tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|_| {
+                runtime_error(
+                    McpRuntimeFailureKind::NetworkDenied,
+                    "MCP DNS lookup failed",
+                )
+            })?
+            .collect::<Vec<_>>();
+        if addresses.is_empty()
+            || addresses
+                .iter()
+                .any(|address| ip_is_private_or_metadata(address.ip()))
+        {
+            return Err(runtime_error(
+                McpRuntimeFailureKind::NetworkDenied,
+                "MCP DNS resolved to a denied network address",
+            ));
+        }
+        builder = builder.resolve_to_addrs(host, &addresses);
+    }
+    builder.build().map_err(|_| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "MCP HTTP client initialization failed",
+        )
+    })
+}
+
+async fn bounded_mcp_http_client(launch: &McpHttpLaunch) -> AppResult<BoundedMcpHttpClient> {
+    if launch.max_response_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP HTTP response cap must be greater than zero",
+        ));
+    }
+    Ok(BoundedMcpHttpClient {
+        client: pinned_mcp_http_client(launch).await?,
+        max_response_bytes: launch.max_response_bytes,
+    })
 }
 
 fn ensure_json_value_under_cap(value: &serde_json::Value, max_bytes: usize) -> AppResult<()> {
@@ -793,7 +1258,6 @@ where
 }
 
 async fn discover_http_tools_with_rmcp(launch: McpHttpLaunch) -> AppResult<McpStdioDiscovery> {
-    validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
     if launch.max_response_bytes == 0 {
         return Err(runtime_error(
             McpRuntimeFailureKind::OutputTooLarge,
@@ -803,31 +1267,33 @@ async fn discover_http_tools_with_rmcp(launch: McpHttpLaunch) -> AppResult<McpSt
 
     let config = StreamableHttpClientTransportConfig::with_uri(launch.url.clone())
         .custom_headers(rmcp_headers(&launch.headers)?);
-    let transport = StreamableHttpClientTransport::from_config(config);
+    let transport =
+        StreamableHttpClientTransport::with_client(bounded_mcp_http_client(&launch).await?, config);
     let run = async move {
         let client = rmcp_client_info()
             .serve(transport)
             .await
-            .map_err(|_| rmcp_client_error())?;
-        let peer_info = client.peer_info();
-        let tools = client
-            .list_all_tools()
-            .await
-            .map_err(|_| rmcp_client_error())?;
-        let _ = client.cancel().await;
-        let peer_info = peer_info.ok_or_else(|| {
+            .map_err(rmcp_client_error)?;
+        let peer_info = client.peer_info().ok_or_else(|| {
             runtime_error(
                 McpRuntimeFailureKind::InvalidResponse,
                 "MCP server did not return initialize metadata",
             )
         })?;
+        let protocol_version = peer_info.protocol_version.to_string();
+        if let Err(error) = validate_negotiated_mcp_protocol_version(&protocol_version) {
+            let _ = client.cancel().await;
+            return Err(error);
+        }
+        let tools = client.list_all_tools().await.map_err(rmcp_client_error)?;
+        let _ = client.cancel().await;
         let tools = tools
             .into_iter()
             .map(mcp_tool_definition_from_rmcp)
             .collect::<Vec<_>>();
         ensure_json_value_under_cap(&serde_json::to_value(&tools)?, launch.max_response_bytes)?;
         Ok::<_, AppError>(McpStdioDiscovery {
-            protocol_version: peer_info.protocol_version.to_string(),
+            protocol_version,
             server_name: peer_info.server_info.name.clone(),
             server_version: Some(peer_info.server_info.version.clone()),
             tools,
@@ -848,7 +1314,6 @@ async fn call_http_tool_with_rmcp(
     tool_name: String,
     arguments: serde_json::Value,
 ) -> AppResult<serde_json::Value> {
-    validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
     if launch.max_response_bytes == 0 {
         return Err(runtime_error(
             McpRuntimeFailureKind::OutputTooLarge,
@@ -858,17 +1323,19 @@ async fn call_http_tool_with_rmcp(
 
     let config = StreamableHttpClientTransportConfig::with_uri(launch.url.clone())
         .custom_headers(rmcp_headers(&launch.headers)?);
-    let transport = StreamableHttpClientTransport::from_config(config);
+    let transport =
+        StreamableHttpClientTransport::with_client(bounded_mcp_http_client(&launch).await?, config);
     let arguments = rmcp_tool_call_arguments(arguments)?;
     let run = async move {
         let client = rmcp_client_info()
             .serve(transport)
             .await
-            .map_err(|_| rmcp_client_error())?;
+            .map_err(rmcp_client_error)?;
+        validate_connected_mcp_protocol(&client)?;
         let result = client
             .call_tool(CallToolRequestParams::new(tool_name).with_arguments(arguments))
             .await
-            .map_err(|_| rmcp_client_error())?;
+            .map_err(rmcp_client_error)?;
         let _ = client.cancel().await;
         let result = serde_json::to_value(result)?;
         ensure_json_value_under_cap(&result, launch.max_response_bytes)?;
@@ -914,7 +1381,17 @@ fn spawn_rmcp_stdio_transport(
     env: Vec<(String, String)>,
     cwd: Option<PathBuf>,
     max_stderr_bytes: usize,
-) -> AppResult<(TokioChildProcess, Option<tokio::task::JoinHandle<String>>)> {
+    max_stdout_line_bytes: usize,
+) -> AppResult<(
+    BoundedStdioTransport,
+    Option<tokio::task::JoinHandle<String>>,
+)> {
+    if max_stdout_line_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP stdout cap must be greater than zero",
+        ));
+    }
     let mut command = Command::new(command_path);
     command.args(args);
     if let Some(cwd) = cwd {
@@ -925,15 +1402,35 @@ fn spawn_rmcp_stdio_transport(
     command.env_clear();
     command.envs(env);
     command.kill_on_drop(true);
-    let (transport, stderr) = TokioChildProcess::builder(command)
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|_| {
-            runtime_error(
-                McpRuntimeFailureKind::Unavailable,
-                "failed to start official MCP stdio process",
-            )
-        })?;
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|_| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "failed to start official MCP stdio process",
+        )
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "MCP stdout pipe unavailable",
+        )
+    })?;
+    let stdin = child.stdin.take().ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "MCP stdin pipe unavailable",
+        )
+    })?;
+    let stderr = child.stderr.take();
+    let transport = BoundedStdioTransport {
+        child,
+        transport: AsyncRwTransport::new(
+            CappedFrameReader::new(stdout, max_stdout_line_bytes),
+            stdin,
+        ),
+    };
     let stderr_task = stderr.map(|stderr| tokio::spawn(drain_stderr(stderr, max_stderr_bytes)));
     Ok((transport, stderr_task))
 }
@@ -979,6 +1476,7 @@ async fn discover_stdio_tools_with_rmcp_attempt(
         env,
         launch.cwd,
         launch.max_stderr_bytes,
+        launch.max_stdout_line_bytes,
     ) {
         Ok(transport) => transport,
         Err(error) => return (Err(error), false),
@@ -987,26 +1485,27 @@ async fn discover_stdio_tools_with_rmcp_attempt(
         let client = rmcp_client_info()
             .serve(transport)
             .await
-            .map_err(|_| rmcp_client_error())?;
-        let peer_info = client.peer_info();
-        let tools = client
-            .list_all_tools()
-            .await
-            .map_err(|_| rmcp_client_error())?;
-        let _ = client.cancel().await;
-        let peer_info = peer_info.ok_or_else(|| {
+            .map_err(rmcp_client_error)?;
+        let peer_info = client.peer_info().ok_or_else(|| {
             runtime_error(
                 McpRuntimeFailureKind::InvalidResponse,
                 "MCP server did not return initialize metadata",
             )
         })?;
+        let protocol_version = peer_info.protocol_version.to_string();
+        if let Err(error) = validate_negotiated_mcp_protocol_version(&protocol_version) {
+            let _ = client.cancel().await;
+            return Err(error);
+        }
+        let tools = client.list_all_tools().await.map_err(rmcp_client_error)?;
+        let _ = client.cancel().await;
         let tools = tools
             .into_iter()
             .map(mcp_tool_definition_from_rmcp)
             .collect::<Vec<_>>();
         ensure_json_value_under_cap(&serde_json::to_value(&tools)?, max_response_bytes)?;
         Ok::<_, AppError>(McpStdioDiscovery {
-            protocol_version: peer_info.protocol_version.to_string(),
+            protocol_version,
             server_name: peer_info.server_info.name.clone(),
             server_version: Some(peer_info.server_info.version.clone()),
             tools,
@@ -1047,6 +1546,7 @@ async fn call_stdio_tool_with_rmcp(
         launch.env,
         launch.cwd,
         launch.max_stderr_bytes,
+        launch.max_stdout_line_bytes,
     )?;
     let tool_name = launch.tool_name;
     let arguments = rmcp_tool_call_arguments(launch.arguments)?;
@@ -1054,11 +1554,12 @@ async fn call_stdio_tool_with_rmcp(
         let client = rmcp_client_info()
             .serve(transport)
             .await
-            .map_err(|_| rmcp_client_error())?;
+            .map_err(rmcp_client_error)?;
+        validate_connected_mcp_protocol(&client)?;
         let result = client
             .call_tool(CallToolRequestParams::new(tool_name).with_arguments(arguments))
             .await
-            .map_err(|_| rmcp_client_error())?;
+            .map_err(rmcp_client_error)?;
         let _ = client.cancel().await;
         let result = serde_json::to_value(result)?;
         ensure_json_value_under_cap(&result, max_response_bytes)?;
@@ -1095,6 +1596,28 @@ struct McpStdioSession {
 static STDIO_SESSION_POOL: LazyLock<Mutex<HashMap<String, McpStdioSession>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Per-launch gates prevent concurrent first calls for the same profile from
+/// spawning duplicate children. Weak entries make the registry self-cleaning
+/// once the final caller releases its gate.
+static STDIO_PROFILE_GATES: LazyLock<StdMutex<HashMap<String, Weak<Mutex<()>>>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+fn stdio_profile_gate(fingerprint: &str) -> Arc<Mutex<()>> {
+    let mut gates = STDIO_PROFILE_GATES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    gates.retain(|_, gate| gate.strong_count() > 0);
+    gates
+        .entry(fingerprint.to_string())
+        .or_default()
+        .upgrade()
+        .unwrap_or_else(|| {
+            let gate = Arc::new(Mutex::new(()));
+            gates.insert(fingerprint.to_string(), Arc::downgrade(&gate));
+            gate
+        })
+}
+
 fn stdio_session_fingerprint(command: &Path, args: &[String], cwd: Option<&Path>) -> String {
     let mut hasher = sha2::Sha256::new();
     hasher.update(command.to_string_lossy().as_bytes());
@@ -1124,9 +1647,16 @@ async fn spawn_stdio_session(
     cwd: Option<PathBuf>,
     request_timeout: Duration,
     max_stderr_bytes: usize,
+    max_stdout_line_bytes: usize,
 ) -> AppResult<McpStdioSession> {
-    let (transport, stderr_task) =
-        spawn_rmcp_stdio_transport(command, args, env, cwd, max_stderr_bytes)?;
+    let (transport, stderr_task) = spawn_rmcp_stdio_transport(
+        command,
+        args,
+        env,
+        cwd,
+        max_stderr_bytes,
+        max_stdout_line_bytes,
+    )?;
     // Detach the stderr drain: the task keeps the pipe clear for the child's
     // lifetime and completes naturally when the process exits. We never need
     // to await its summary for pooled calls (stderr diagnostics are most
@@ -1136,7 +1666,7 @@ async fn spawn_stdio_session(
         rmcp_client_info()
             .serve(transport)
             .await
-            .map_err(|_| rmcp_client_error())
+            .map_err(rmcp_client_error)
     };
     let client = match timeout(request_timeout, init).await {
         Ok(Ok(client)) => client,
@@ -1148,6 +1678,7 @@ async fn spawn_stdio_session(
             ));
         }
     };
+    validate_connected_mcp_protocol(&client)?;
     Ok(McpStdioSession {
         client,
         last_used: Instant::now(),
@@ -1171,6 +1702,43 @@ where
         }
     }
     expired
+}
+
+/// Return least-recently-used session keys that must be evicted before the
+/// idle pool exceeds its configured capacity. The key tie-breaker makes the
+/// result deterministic for tests and avoids retaining arbitrary providers.
+fn stdio_session_pool_eviction_keys<'a, I>(entries: I, capacity: usize) -> Vec<String>
+where
+    I: IntoIterator<Item = (&'a String, Instant)>,
+{
+    let mut entries = entries
+        .into_iter()
+        .map(|(key, last_used)| (key.clone(), last_used))
+        .collect::<Vec<_>>();
+    let excess = entries.len().saturating_sub(capacity);
+    if excess == 0 {
+        return Vec::new();
+    }
+    entries.sort_by(|(left_key, left_used), (right_key, right_used)| {
+        left_used
+            .cmp(right_used)
+            .then_with(|| left_key.cmp(right_key))
+    });
+    entries
+        .into_iter()
+        .take(excess)
+        .map(|(key, _)| key)
+        .collect()
+}
+
+fn enforce_stdio_session_pool_capacity(pool: &mut HashMap<String, McpStdioSession>) {
+    let keys = stdio_session_pool_eviction_keys(
+        pool.iter().map(|(key, session)| (key, session.last_used)),
+        MAX_STDIO_SESSION_POOL_SIZE,
+    );
+    for key in keys {
+        pool.remove(&key);
+    }
 }
 
 /// Remove and drop idle sessions from the pool. Dropping a `McpStdioSession`
@@ -1199,8 +1767,10 @@ async fn sweep_expired_stdio_sessions(
 /// reaper drops idle stdio sessions every 60s. Spawning lazily (rather than
 /// from Tauri's synchronous `setup` hook) guarantees we are inside the Tokio
 /// runtime context that `tokio::spawn` requires.
+#[cfg(not(test))]
 static STDIO_SESSION_POOL_REAPER_GUARD: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 
+#[cfg(not(test))]
 fn ensure_stdio_session_pool_reaper() {
     STDIO_SESSION_POOL_REAPER_GUARD.get_or_init(|| {
         tokio::spawn(async move {
@@ -1214,6 +1784,12 @@ fn ensure_stdio_session_pool_reaper() {
         });
     });
 }
+
+// Unit tests exercise expiry and bounded-pool behavior deterministically; a
+// forever background task would keep their shared Tokio runtime alive after
+// assertions finish and turn a green suite into a hung test process.
+#[cfg(test)]
+fn ensure_stdio_session_pool_reaper() {}
 
 /// Pooled stdio tool call: reuse a live session if one exists for this launch
 /// fingerprint, otherwise spawn a fresh one. On success the session is returned
@@ -1239,6 +1815,8 @@ async fn call_stdio_tool_pooled(
     let max_response_bytes = launch.max_stdout_line_bytes;
     let fingerprint =
         stdio_session_fingerprint(&launch.command, &launch.args, launch.cwd.as_deref());
+    let profile_gate = stdio_profile_gate(&fingerprint);
+    let _profile_guard = profile_gate.lock().await;
     let tool_name = launch.tool_name.clone();
     let arguments = rmcp_tool_call_arguments(launch.arguments)?;
 
@@ -1260,6 +1838,7 @@ async fn call_stdio_tool_pooled(
                 launch.cwd,
                 request_timeout,
                 launch.max_stderr_bytes,
+                launch.max_stdout_line_bytes,
             )
             .await?
         }
@@ -1270,7 +1849,7 @@ async fn call_stdio_tool_pooled(
             .client
             .call_tool(CallToolRequestParams::new(tool_name).with_arguments(arguments))
             .await
-            .map_err(|_| rmcp_client_error())?;
+            .map_err(rmcp_client_error)?;
         let result = serde_json::to_value(result)?;
         ensure_json_value_under_cap(&result, max_response_bytes)?;
         Ok::<_, AppError>(result)
@@ -1289,6 +1868,7 @@ async fn call_stdio_tool_pooled(
         if keep {
             session.last_used = Instant::now();
             pool.insert(fingerprint, session);
+            enforce_stdio_session_pool_capacity(&mut pool);
         }
         // else: drop session -> cancel -> kill_on_drop terminates the child
     }
@@ -1592,6 +2172,89 @@ fn observe_provider_discovery_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::{io::AsyncWriteExt, net::TcpListener};
+
+    async fn one_shot_http_response(
+        body: &'static str,
+        headers: &'static str,
+    ) -> reqwest::Response {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local MCP HTTP test peer");
+        let address = listener.local_addr().expect("read local test peer address");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept test HTTP client");
+            let response =
+                format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{headers}\r\n{body}");
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write test HTTP response");
+        });
+        reqwest::Client::new()
+            .get(format!("http://{address}/mcp"))
+            .send()
+            .await
+            .expect("receive test HTTP response")
+    }
+
+    #[tokio::test]
+    async fn capped_frame_reader_rejects_an_oversized_frame_before_parsing() {
+        let source = std::io::Cursor::new(b"12345\n".to_vec());
+        let mut reader = CappedFrameReader::new(source, 4);
+        let mut output = Vec::new();
+
+        let error = reader.read_to_end(&mut output).await.unwrap_err();
+
+        assert!(error.to_string().contains("frame exceeds configured cap"));
+    }
+
+    #[tokio::test]
+    async fn capped_frame_reader_resets_its_limit_after_each_newline() {
+        let source = std::io::Cursor::new(b"1234\n5678\n".to_vec());
+        let mut reader = CappedFrameReader::new(source, 4);
+        let mut output = Vec::new();
+
+        reader.read_to_end(&mut output).await.unwrap();
+
+        assert_eq!(output, b"1234\n5678\n");
+    }
+
+    #[tokio::test]
+    async fn bounded_http_reader_rejects_declared_oversize_before_body_accumulation() {
+        let response = one_shot_http_response("12345", "Content-Length: 5\r\n").await;
+        let client = BoundedMcpHttpClient {
+            client: reqwest::Client::new(),
+            max_response_bytes: 4,
+        };
+
+        let error = client.read_body_under_cap(response).await.unwrap_err();
+
+        assert!(matches!(error, BoundedMcpHttpClientError::ResponseTooLarge));
+    }
+
+    #[tokio::test]
+    async fn bounded_http_reader_rejects_chunked_oversize_before_json_parsing() {
+        let response =
+            one_shot_http_response("5\r\n12345\r\n0\r\n\r\n", "Transfer-Encoding: chunked\r\n")
+                .await;
+        let client = BoundedMcpHttpClient {
+            client: reqwest::Client::new(),
+            max_response_bytes: 4,
+        };
+
+        let error = client.read_body_under_cap(response).await.unwrap_err();
+
+        assert!(matches!(error, BoundedMcpHttpClientError::ResponseTooLarge));
+    }
+
+    #[test]
+    fn local_transport_cap_keeps_the_safe_output_too_large_category() {
+        let error = rmcp_client_error("MCP HTTP response exceeds configured cap");
+
+        assert!(error.to_string().starts_with("output_too_large:"));
+    }
+
     fn missing_test_credential(_service: &str) -> AppResult<String> {
         Err(AppError::msg("missing test credential"))
     }
@@ -1636,6 +2299,30 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("private, loopback, or metadata"), "{err}");
+    }
+
+    #[test]
+    fn http_runtime_url_blocks_ipv4_mapped_loopback_hosts_outside_dev_mode() {
+        let err = validate_mcp_http_runtime_url("https://[::ffff:127.0.0.1]:9000/mcp", false)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("private, loopback, or metadata"), "{err}");
+    }
+
+    #[test]
+    fn mcp_dns_pinning_rejects_private_results_before_transport_start() {
+        assert!(ip_is_private_or_metadata(
+            "10.0.0.8".parse().expect("private IP")
+        ));
+        assert!(ip_is_private_or_metadata(
+            "::ffff:169.254.169.254"
+                .parse()
+                .expect("mapped metadata IP")
+        ));
+        assert!(!ip_is_private_or_metadata(
+            "1.1.1.1".parse().expect("public IP")
+        ));
     }
 
     #[test]
@@ -1863,6 +2550,24 @@ mod tests {
     }
 
     #[test]
+    fn negotiated_protocol_version_accepts_only_the_supported_releases() {
+        assert!(super::is_supported_mcp_protocol_version("2025-06-18"));
+        assert!(super::is_supported_mcp_protocol_version("2025-11-25"));
+        assert!(super::validate_negotiated_mcp_protocol_version("2025-06-18").is_ok());
+        assert!(super::validate_negotiated_mcp_protocol_version("2025-11-25").is_ok());
+
+        assert!(!super::is_supported_mcp_protocol_version("2025-03-26"));
+        assert!(!super::is_supported_mcp_protocol_version("2026-01-01"));
+        assert!(!super::is_supported_mcp_protocol_version("not-a-version"));
+        assert!(
+            super::validate_negotiated_mcp_protocol_version("2025-03-26")
+                .unwrap_err()
+                .to_string()
+                .starts_with("invalid_response:")
+        );
+    }
+
+    #[test]
     fn diagnostic_discovery_observation_does_not_persist_runtime_or_health() {
         let db = Database::open_in_memory().unwrap();
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
@@ -1963,5 +2668,29 @@ mod tests {
         let keys =
             expired_stdio_session_keys(entries.iter().map(|(k, t)| (k, *t)), now, idle_timeout);
         assert_eq!(keys, vec!["beta".to_string()]);
+    }
+
+    #[test]
+    fn stdio_session_pool_capacity_evicts_the_oldest_sessions_deterministically() {
+        let now = Instant::now();
+        let entries = [
+            ("oldest".to_string(), now - Duration::from_secs(30)),
+            ("middle".to_string(), now - Duration::from_secs(20)),
+            ("newest".to_string(), now - Duration::from_secs(10)),
+        ];
+
+        let evicted =
+            stdio_session_pool_eviction_keys(entries.iter().map(|(key, used)| (key, *used)), 2);
+        assert_eq!(evicted, vec!["oldest".to_string()]);
+    }
+
+    #[test]
+    fn same_stdio_fingerprint_reuses_one_initialization_gate() {
+        let first = stdio_profile_gate("same-profile");
+        let second = stdio_profile_gate("same-profile");
+        let other = stdio_profile_gate("other-profile");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert!(!Arc::ptr_eq(&first, &other));
     }
 }

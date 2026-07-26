@@ -38,7 +38,7 @@ apply_change
 
 ### 显式引用
 
-`@` 只表达用户希望把资料纳入本轮，不提升资料本身的权限。被 `@` 的文档若禁止 read 或 send_to_model，Harness 必须说明原因并继续处理其余可用上下文。
+`@` 只表达用户希望把资料纳入本轮，不提升资料本身的权限。被 `@` 的文档若禁止 read 或 send_to_model，Context Assemble 在读取正文前剔除它，并继续处理其余可用上下文；调用方只能用不含路径和正文的安全状态说明缺失。`read_note`、outline、backlink 和 block-link 工具在打开文件前也必须复核 `read`；`list_vault` 只可返回 `discover` 允许的项目。
 
 ## 3. 遵循等级与指令信任分离
 
@@ -78,6 +78,8 @@ lookup     = 查阅资料
 - 计划哈希和到期时间。
 
 确认后只能执行计划哈希完全一致的操作。目标、基准、参数、diff 或文件集合变化时，旧确认失效并重新展示。
+
+对于 `Apply`，Intake 必须有一个与本轮显式引用/选区一致的目标；缺少目标直接拒绝。冻结计划、调度上下文和最终 Markdown 提交都必须把模型参数中的路径与该精确目标比较。任何不一致均为零写入；`apply_change = deny` 同样不可由确认覆盖。
 
 ### 始终逐次确认
 
@@ -141,5 +143,8 @@ revocation state
 - editor active note 从不参与权限范围推导。
 - write preview 与实际 dispatch 参数不一致时执行为零。
 - 网络关闭时所有 Native/MCP Web dispatch 为零。
+- Web Toggle 是 Web capability 的唯一开关：只有 Intake 可把开关状态写入 Execution Envelope 的 `web.*` capability；`freshness`、Skill、提示词、ChildRun 和 MCP 健康状态均不得增加它。Policy Engine 必须拒绝任何不在该 immutable envelope 中、由后来调用方重传或附加的 `web.*` capability；`freshness` 仅表达证据义务，绝不充当第二授权开关。
+- 取消到达后，新的模型/工具/ChildRun 调度为零；写工具在生成快照和实际写盘前必须再次检查取消标记。
+- `read`/`send_to_model`/`apply_change` deny 在正文读取、送模和提交三个边界均为零。
 - 涉密域所有普通数据库证据写入为零。
 - 恶意证据内容不能新增工具、扩大范围或改变确认结果。

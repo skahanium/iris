@@ -20,7 +20,7 @@ use crate::ai_runtime::run_engine::{
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::ai_runtime::tool_executor::ToolRegistry;
-use crate::ai_runtime::tool_policy::ToolPolicyContext;
+use crate::ai_types::{AgentIntent, MessageContent, SkillActivationPlanSummary};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -86,6 +86,24 @@ async fn execute_normal_run_internal(
         Ok(true) => {}
         Ok(false) | Err(_) => return,
     }
+    let authorized_capabilities = match crate::ai_runtime::agent_run_repository::AgentRunRepository::persist_authorization_snapshot(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+        &policy.allowed_capabilities,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            let _ = RunEngine::fail_before_dispatch_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                SafeRunErrorCode::PermissionDenied,
+                sink,
+            );
+            return;
+        }
+    };
     let context = match crate::ai_runtime::run_context::RunContextAssembler::assemble(
         &db,
         vault.as_deref(),
@@ -122,7 +140,8 @@ async fn execute_normal_run_internal(
             return;
         }
     };
-    // Online registers web_search for model-driven use; no deterministic prefetch.
+    // The immutable capability snapshot determines whether web_search enters the model surface;
+    // no deterministic prefetch broadens it.
     let execution = dispatch_normal_run_after_context(
         &state,
         app_handle,
@@ -131,6 +150,8 @@ async fn execute_normal_run_internal(
         &context,
         &domain_plan,
         &evidence_ids,
+        &authorized_capabilities,
+        vault.as_deref(),
         sink,
         telemetry,
     )
@@ -182,6 +203,112 @@ fn evaluate_normal_run_policy(
     Ok(engine.evaluate_run(request))
 }
 
+/// The immutable prompt-only Skill selection for a single normal Run.
+///
+/// The registry is populated when a vault is selected or a user explicitly
+/// refreshes Skills. This function deliberately has no filesystem fallback:
+/// scanning an untrusted vault while executing a Run would make the run
+/// boundary nondeterministic and would bypass the confirmed cache.
+struct CachedSkillActivation {
+    plan: Option<SkillActivationPlanSummary>,
+    prompt_overlay: String,
+}
+
+fn build_cached_skill_activation(
+    state: &AppState,
+    vault: Option<&std::path::Path>,
+    context: &crate::ai_runtime::run_context::RunContext,
+    authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
+) -> AppResult<CachedSkillActivation> {
+    let Some(vault) = vault else {
+        return Ok(CachedSkillActivation {
+            plan: None,
+            prompt_overlay: String::new(),
+        });
+    };
+    // A cache miss is deliberately safe-empty rather than a filesystem
+    // fallback or a Run failure. Vault activation/explicit refresh populates
+    // the registry; a transient cache lifecycle gap may only suppress optional
+    // prompt-only Skills, never change the Run's tool authority or availability.
+    let skills = state.cached_skills_for_vault(vault)?.unwrap_or_default();
+    let index = crate::ai_runtime::skills::load_activation_index(&state.db)?;
+    let source_hints = context
+        .materials
+        .iter()
+        .map(|material| material.source_path.clone())
+        .chain(
+            context
+                .local_retrieval_packets
+                .iter()
+                .filter_map(|packet| packet.source_path.clone()),
+        )
+        .collect::<Vec<_>>();
+    let intent = skill_intent_for_run(context, authorized_capabilities);
+    let plan = crate::ai_runtime::skills::build_skill_activation_plan_for_task(
+        &skills,
+        intent,
+        &context.user_message,
+        &source_hints,
+        (!index.is_empty()).then_some(&index),
+    );
+    let selected = crate::ai_runtime::skills::activated_skills_from_plan(&plan, &skills);
+    if selected.is_empty() {
+        return Ok(CachedSkillActivation {
+            plan: None,
+            prompt_overlay: String::new(),
+        });
+    }
+    Ok(CachedSkillActivation {
+        plan: Some(plan),
+        prompt_overlay: crate::ai_runtime::skills::inject_selected_skills_into_prompt(
+            vault, &selected,
+        ),
+    })
+}
+
+fn skill_intent_for_run(
+    context: &crate::ai_runtime::run_context::RunContext,
+    authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
+) -> AgentIntent {
+    use crate::ai_runtime::run_contract::Effect;
+
+    match context.envelope.effect {
+        Effect::Draft | Effect::Apply => AgentIntent::Write,
+        // The policy snapshot is the only source from which Skills can infer
+        // that Web research is available. Freshness is a completion
+        // requirement, never an implicit capability grant.
+        Effect::Answer
+            if authorized_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "web.search") =>
+        {
+            AgentIntent::Research
+        }
+        Effect::Answer
+            if !context.materials.is_empty() || !context.retrieval_scope.is_unrestricted() =>
+        {
+            AgentIntent::AskNotes
+        }
+        Effect::Answer => AgentIntent::Chat,
+    }
+}
+
+fn append_skill_overlay_to_system_message(
+    messages: &mut [crate::ai_runtime::LlmMessage],
+    overlay: &str,
+) {
+    if overlay.is_empty() {
+        return;
+    }
+    let Some(system) = messages.first_mut() else {
+        return;
+    };
+    if let MessageContent::Text(content) = &mut system.content {
+        content.push_str("\n\n");
+        content.push_str(overlay);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_normal_run_after_context(
     state: &Arc<AppState>,
@@ -191,10 +318,15 @@ async fn dispatch_normal_run_after_context(
     context: &crate::ai_runtime::run_context::RunContext,
     domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
     registered_evidence_ids: &[i64],
+    authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
+    vault: Option<&std::path::Path>,
     sink: &impl RunEventSink,
     telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
 ) -> AppResult<()> {
-    let messages = context.messages_with_domain_plan(domain_plan);
+    let active_skills =
+        build_cached_skill_activation(state, vault, context, authorized_capabilities)?;
+    let mut messages = context.messages_with_domain_plan(domain_plan);
+    append_skill_overlay_to_system_message(&mut messages, &active_skills.prompt_overlay);
     let routing_prompt = context.prompt_with_domain_plan(domain_plan);
     let mut evidence_ids = registered_evidence_ids.to_vec();
     evidence_ids.sort_unstable();
@@ -205,32 +337,32 @@ async fn dispatch_normal_run_after_context(
         web_reason = ?context.envelope.web_reason,
         web_execution = match context.envelope.freshness {
             Freshness::Offline => "skipped",
-            Freshness::Online => "model_decides",
+            Freshness::WebPreferred => "model_decides",
+            Freshness::WebRequired => "evidence_required",
         },
         "Run Web decision"
     );
 
-    // Online always enters the tool loop when effort is ToolLoop/Durable; the model
-    // decides whether to call web_search. Search failure emits CapabilityDegraded.
+    // ToolLoop/Durable Runs receive only the snapshot-authorized surface. The model may call
+    // web_search when authorized; search failure emits CapabilityDegraded.
     let needs_follow_up_tools =
         matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable);
     if needs_follow_up_tools {
-        let tool_policy = ToolPolicyContext {
-            autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
-            web_search_enabled: context.envelope.freshness != Freshness::Offline,
-            allow_writes: context.envelope.effort == Effort::Durable,
-            allow_research: context.envelope.freshness != Freshness::Offline,
-            allow_skill_management: false,
-            allow_implicit_vault: crate::ai_runtime::run_intake::allow_implicit_vault_for_run(
-                context.envelope.security_domain,
-                &context.user_message,
-                !context.materials.is_empty() || !context.retrieval_scope.is_unrestricted(),
-            ),
-        };
+        let required_web_provider_snapshot = authorized_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == "web.search")
+            .then(|| {
+                crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)
+            })
+            .transpose()
+            .ok()
+            .flatten();
         let registry = ToolRegistry::new();
         let tools = ToolRegistry::constrain_for_explicit_references(
-            registry
-                .tools_for_policy_surface(&tool_policy, context.envelope.effort != Effort::Durable),
+            registry.tools_for_authorized_capabilities(
+                authorized_capabilities,
+                context.envelope.effort != Effort::Durable,
+            ),
             context.envelope.context,
             &context.retrieval_scope,
         );
@@ -273,10 +405,12 @@ async fn dispatch_normal_run_after_context(
             app_handle,
             accepted,
             context,
-            tool_policy,
+            authorized_capabilities.to_vec(),
             sink,
-            None,
-        );
+            required_web_provider_snapshot,
+        )
+        .with_skill_activation_plan(active_skills.plan.clone())
+        .with_child_run_provider(&provider);
         return if let Some(telemetry) = telemetry {
             RunEngine::execute_tool_loop_with_eval_telemetry(
                 db,

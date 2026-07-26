@@ -41,6 +41,9 @@ pub struct WebEvidenceBrokerInput {
     /// the broker fails closed if that provider changes before a request.
     pub provider_snapshot:
         Option<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
+    /// Distinguishes a deliberately frozen absence from legacy callers that
+    /// have not yet supplied a Run-local provider decision.
+    pub provider_selection_frozen: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -137,6 +140,7 @@ async fn collect_web_evidence_with_queries(
             planned_queries,
             input.max_search_results,
             input.provider_snapshot.as_ref(),
+            input.provider_selection_frozen,
         )
         .await
         {
@@ -416,9 +420,13 @@ fn search_provider_candidates(
     provider_snapshot: Option<
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
+    provider_selection_frozen: bool,
 ) -> AppResult<Vec<SearchProviderCandidate>> {
     let provider = match provider_snapshot {
         Some(snapshot) => snapshot.clone(),
+        None if provider_selection_frozen => {
+            return Err(AppError::msg("web_search_provider_missing"));
+        }
         None => crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)?,
     };
     Ok(vec![SearchProviderCandidate::Mcp(provider.id)])
@@ -431,9 +439,16 @@ async fn collect_planned_query_fetches(
     provider_snapshot: Option<
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
+    provider_selection_frozen: bool,
 ) -> Vec<Result<SearchProviderFetch, String>> {
     let futures = planned_queries.iter().map(|query| {
-        collect_search_provider_fetches(db, query, max_search_results, provider_snapshot)
+        collect_search_provider_fetches(
+            db,
+            query,
+            max_search_results,
+            provider_snapshot,
+            provider_selection_frozen,
+        )
     });
     flatten_planned_query_fetch_results(join_all(futures).await)
 }
@@ -451,11 +466,13 @@ async fn collect_search_provider_fetches(
     provider_snapshot: Option<
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
+    provider_selection_frozen: bool,
 ) -> Vec<Result<SearchProviderFetch, String>> {
-    let candidates = match search_provider_candidates(db, provider_snapshot) {
-        Ok(candidates) => candidates,
-        Err(error) => return vec![Err(error.to_string())],
-    };
+    let candidates =
+        match search_provider_candidates(db, provider_snapshot, provider_selection_frozen) {
+            Ok(candidates) => candidates,
+            Err(error) => return vec![Err(error.to_string())],
+        };
     let futures = candidates.into_iter().map(|candidate| async move {
         match candidate {
             SearchProviderCandidate::Mcp(provider_id) => {
@@ -1921,6 +1938,7 @@ mod tests {
                 max_search_results: 5,
                 max_fetches: 0,
                 provider_snapshot: None,
+                provider_selection_frozen: false,
             },
         )
         .await
@@ -2119,9 +2137,19 @@ mod tests {
     fn search_provider_candidates_require_mcp_provider() {
         let db = Database::open_in_memory().unwrap();
 
-        let err = search_provider_candidates(&db, None).unwrap_err();
+        let err = search_provider_candidates(&db, None, false).unwrap_err();
 
         assert!(err.to_string().contains("web_search_provider_missing"));
+    }
+
+    #[test]
+    fn frozen_absent_search_provider_never_reselects_mid_run() {
+        let db = Database::open_in_memory().unwrap();
+
+        let error = search_provider_candidates(&db, None, true)
+            .expect_err("a frozen absence must not dynamically select a later provider");
+
+        assert_eq!(error.to_string(), "web_search_provider_missing");
     }
 
     #[test]
@@ -2209,7 +2237,7 @@ mod tests {
         )
         .unwrap();
 
-        let candidates = search_provider_candidates(&db, None).unwrap();
+        let candidates = search_provider_candidates(&db, None, false).unwrap();
 
         assert_eq!(
             candidates,
@@ -2236,7 +2264,7 @@ mod tests {
         )
         .unwrap();
 
-        let candidates = search_provider_candidates(&db, None).unwrap();
+        let candidates = search_provider_candidates(&db, None, false).unwrap();
 
         assert_eq!(
             candidates,

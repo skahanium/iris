@@ -1162,7 +1162,7 @@ fn mcp_transport_contract_rejects_manual_discovery_and_deserialization() {
         McpCapabilityContract::from_mappings(Some(r#"{"tool":"search","queryArg":"query"}"#), None)
             .unwrap();
     let manual_discovery = McpStdioDiscovery {
-        protocol_version: super::mcp_host_runtime::MCP_PROTOCOL_VERSION.into(),
+        protocol_version: "2025-06-18".into(),
         server_name: "iris-contract-mcp".into(),
         server_version: None,
         tools: vec![McpToolDefinition {
@@ -1185,6 +1185,22 @@ fn mcp_transport_contract_rejects_manual_discovery_and_deserialization() {
         r#"{"validationLevel":"contract_verified"}"#
     )
     .is_err());
+}
+
+#[test]
+fn mcp_evaluation_contract_uses_the_host_negotiated_protocol_allowlist() {
+    assert!(super::mcp_host_runtime::is_supported_mcp_protocol_version(
+        "2025-06-18"
+    ));
+    assert!(super::mcp_host_runtime::is_supported_mcp_protocol_version(
+        "2025-11-25"
+    ));
+    assert!(!super::mcp_host_runtime::is_supported_mcp_protocol_version(
+        "2025-03-26"
+    ));
+    assert!(!super::mcp_host_runtime::is_supported_mcp_protocol_version(
+        "2026-01-01"
+    ));
 }
 
 #[tokio::test]

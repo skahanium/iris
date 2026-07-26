@@ -8,7 +8,7 @@ use tauri::{AppHandle, State};
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent, AssistantRunGetRequest,
     AssistantRunGetResponse, AssistantRunRetryRequest, AssistantRunStartRequest,
-    AssistantSessionRef, Effect, Effort, Freshness, SecurityDomain,
+    AssistantSessionRef, Effect, Effort, SecurityDomain,
 };
 use crate::ai_runtime::run_engine::{
     ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink,
@@ -16,7 +16,6 @@ use crate::ai_runtime::run_engine::{
 };
 use crate::ai_runtime::run_intake::{NormalRunControlOutcome, RunIntake};
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
-use crate::ai_runtime::tool_policy::ToolPolicyContext;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 /// List request for the unified, domain-routed conversation history API.
@@ -567,7 +566,18 @@ fn spawn_confirmed_change_execution(
                 return;
             }
         };
-        let _ = policy;
+        let authorized_capabilities = match crate::ai_runtime::agent_run_repository::AgentRunRepository::persist_authorization_snapshot(
+            &db,
+            &session.session_key,
+            &run_id,
+            &policy.allowed_capabilities,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                fail();
+                return;
+            }
+        };
         let context = match crate::ai_runtime::run_context::RunContextAssembler::assemble(
             &db,
             vault.as_deref(),
@@ -593,24 +603,12 @@ fn spawn_confirmed_change_execution(
             state: crate::ai_runtime::run_contract::RunState::Running,
             state_version: 0,
         };
-        let tool_policy = ToolPolicyContext {
-            autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
-            web_search_enabled: context.envelope.freshness != Freshness::Offline,
-            allow_writes: true,
-            allow_research: context.envelope.freshness != Freshness::Offline,
-            allow_skill_management: false,
-            allow_implicit_vault: crate::ai_runtime::run_intake::allow_implicit_vault_for_run(
-                context.envelope.security_domain,
-                &context.user_message,
-                !context.materials.is_empty() || !context.retrieval_scope.is_unrestricted(),
-            ),
-        };
         let executor = NormalRunToolExecutor::new(
             &state,
             Some(app_handle.clone()),
             &accepted,
             &context,
-            tool_policy,
+            authorized_capabilities,
             &sink,
             None,
         );

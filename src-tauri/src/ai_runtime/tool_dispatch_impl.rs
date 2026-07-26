@@ -45,6 +45,7 @@ pub fn is_exposable_tool(name: &str) -> bool {
     crate::ai_runtime::tool_catalog::catalog_find(name).is_some_and(|entry| {
         entry.implementation
             == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable
+            || entry.name == "spawn_subagent"
     })
 }
 
@@ -135,6 +136,7 @@ async fn dispatch_tool_inner(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
+    ctx.ensure_run_active()?;
     match tool_name {
         "search_hybrid" | "search_semantic" | "search_keyword" => {
             search_impl::hybrid_search(state, tool_name, args, ctx).await

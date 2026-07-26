@@ -1,8 +1,9 @@
 //! Bounded model-driven Web evidence for normal-domain Runs.
 //!
 //! This module owns the `web_search` tool path used by `NormalRunToolExecutor`: policy/audit
-//! gates, bounded evidence registration, and deferred `CapabilityDegraded` emission when Online
-//! search fails without usable evidence. Offline Runs never enable the tool.
+//! gates, bounded evidence registration, and deferred `CapabilityDegraded` emission when an
+//! authorized Web search fails without usable evidence. Runs without `web.search` never enable
+//! the tool.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -14,10 +15,12 @@ use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
-use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
+use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
+use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, RunEventPayload, RunEventType, SafeRunErrorCode, WebEvidenceFailureReason,
+    AssistantRunAccepted, CapabilityId, Freshness, RunEventPayload, RunEventType, SafeRunErrorCode,
+    WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::tool_audit::record_web_query_taint_witness;
@@ -27,8 +30,8 @@ use crate::ai_runtime::tool_execution_pipeline::{
     audit_dispatched_tool, audit_tool_confirmation_requested, evaluate_tool_execution,
     ToolExecutionGate,
 };
-use crate::ai_runtime::tool_policy::ToolPolicyContext;
-use crate::ai_runtime::ToolCallResult;
+use crate::ai_runtime::tool_executor::ToolRegistry;
+use crate::ai_runtime::{LlmMessage, MessageRole, ToolCallResult};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -114,7 +117,11 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     app_handle: Option<tauri::AppHandle>,
     accepted: &'a AssistantRunAccepted,
     context: &'a RunContext,
-    policy_ctx: ToolPolicyContext,
+    authorized_capabilities: Vec<CapabilityId>,
+    /// The exact cached Skill plan selected before this Run entered the model.
+    /// It is inherited by ChildRuns only as a scope restriction; Skill bodies
+    /// never become tools or a second authorization path.
+    skill_activation_plan: Option<crate::ai_types::SkillActivationPlanSummary>,
     sink: &'a dyn RunEventSink,
     retrieval_scope: crate::ai_runtime::retrieval_scope::RetrievalScope,
     cold_start_packets: Vec<crate::ai_runtime::ContextPacket>,
@@ -126,6 +133,11 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     web_degradation_emitted: Mutex<bool>,
     required_web_provider_snapshot:
         Option<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
+    /// The parent Run's provider, used only for a bounded depth-one ChildRun.
+    /// The ChildRun retains the parent Run identity and persistence boundary.
+    child_run_provider: Option<&'a dyn ToolLoopProvider>,
+    /// Audit depth of this executor. Only `0` may launch a ChildRun.
+    subagent_depth: u32,
 }
 
 impl<'a> NormalRunToolExecutor<'a> {
@@ -135,7 +147,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         app_handle: Option<tauri::AppHandle>,
         accepted: &'a AssistantRunAccepted,
         context: &'a RunContext,
-        policy_ctx: ToolPolicyContext,
+        authorized_capabilities: Vec<CapabilityId>,
         sink: &'a dyn RunEventSink,
         required_web_provider_snapshot: Option<
             crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
@@ -146,7 +158,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             app_handle,
             accepted,
             context,
-            policy_ctx,
+            authorized_capabilities,
+            skill_activation_plan: None,
             sink,
             retrieval_scope: context.retrieval_scope.clone(),
             cold_start_packets: context.local_retrieval_packets.clone(),
@@ -157,7 +170,33 @@ impl<'a> NormalRunToolExecutor<'a> {
             web_budget: RunWebBudget::default(),
             web_degradation_emitted: Mutex::new(false),
             required_web_provider_snapshot,
+            child_run_provider: None,
+            subagent_depth: 0,
         }
+    }
+
+    /// Enable real ChildRun execution with the same provider route selected for
+    /// the parent Run. Keeping this as a builder leaves confirmation replay and
+    /// other non-model executor callers without an accidental child capability.
+    pub(crate) fn with_child_run_provider(mut self, provider: &'a dyn ToolLoopProvider) -> Self {
+        self.child_run_provider = Some(provider);
+        self
+    }
+
+    /// Bind the prompt-only Skill plan selected from the in-memory vault cache.
+    /// The executor passes it only to the normal dispatch context so existing
+    /// retrieval-scope checks can enforce confirmed Skill scope rules.
+    pub(crate) fn with_skill_activation_plan(
+        mut self,
+        plan: Option<crate::ai_types::SkillActivationPlanSummary>,
+    ) -> Self {
+        self.skill_activation_plan = plan;
+        self
+    }
+
+    fn at_subagent_depth(mut self, depth: u32) -> Self {
+        self.subagent_depth = depth;
+        self
     }
 
     async fn execute_web_search(
@@ -208,10 +247,11 @@ impl<'a> NormalRunToolExecutor<'a> {
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.to_owned(),
             urls,
-            enabled: self.policy_ctx.web_search_enabled,
+            enabled: self.has_capability("web.search"),
             max_search_results: remaining,
             max_fetches: 0,
             provider_snapshot: self.required_web_provider_snapshot.clone(),
+            provider_selection_frozen: true,
         };
         let budget_started = self.web_budget.started()?;
         let call_started = Instant::now();
@@ -414,7 +454,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             run_step: 1,
             entry,
             args,
-            policy_ctx: &self.policy_ctx,
+            authorized_capabilities: &self.authorized_capabilities,
             skill_id: None,
             subagent_depth: 0,
         };
@@ -451,14 +491,17 @@ impl<'a> NormalRunToolExecutor<'a> {
         let dispatch_context = ToolDispatchContext {
             note_path: None,
             file_id: None,
-            web_search_enabled: self.policy_ctx.web_search_enabled,
+            run_id: Some(&self.accepted.run_id),
+            write_target_path: self.context.write_target_path.as_deref(),
+            document_policy: Some(&self.context.document_policy),
+            web_search_enabled: self.has_capability("web.search"),
             max_web_fetches: 5,
             cold_start_packets: &self.cold_start_packets,
             retrieval_scope: &self.retrieval_scope,
             runtime_documents: &self.runtime_documents,
             app_handle: self.app_handle.clone(),
             attachment_count: 0,
-            skill_activation_plan: None,
+            skill_activation_plan: self.skill_activation_plan.as_ref(),
         };
         dispatch_tool_with_retry(self.state.as_ref(), &dispatch_context, tool_name, args).await
     }
@@ -549,9 +592,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 run_step: step,
                 entry,
                 args: &args,
-                policy_ctx: &self.policy_ctx,
+                authorized_capabilities: &self.authorized_capabilities,
                 skill_id: None,
-                subagent_depth: 0,
+                subagent_depth: self.subagent_depth,
             };
             let gate_outcome = match evaluate_tool_execution(&self.state.db, gate) {
                 Ok(outcome) => outcome,
@@ -569,6 +612,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             };
             let result = if let Some(result) = gate_outcome.tool_result {
                 result
+            } else if call.function.name == "spawn_subagent" {
+                if self.subagent_depth != 0 {
+                    failed_tool_call(&call.function.name, "subagent_depth_exceeded")
+                } else {
+                    self.execute_child_run(run_id, call, &args).await?
+                }
             } else if entry.requires_confirmation {
                 self.request_change_confirmation(
                     call,
@@ -638,6 +687,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         !self.evidence_ids().is_empty()
     }
 
+    fn requires_web_evidence(&self) -> bool {
+        self.context.envelope.freshness == Freshness::WebRequired
+    }
+
     fn emit_deferred_web_degradation_if_needed(
         &self,
         db: &Database,
@@ -648,6 +701,166 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 }
 
 impl NormalRunToolExecutor<'_> {
+    /// Execute one bounded ChildRun inside the parent Run's provider, policy,
+    /// evidence and audit boundary. There is intentionally no child task table
+    /// or child lifecycle: only the parent Run may persist an effect or ask the
+    /// user for confirmation.
+    async fn execute_child_run(
+        &self,
+        run_id: &str,
+        call: &crate::ai_runtime::ToolCall,
+        args: &serde_json::Value,
+    ) -> AppResult<ToolCallResult> {
+        let started = Instant::now();
+        let Some(provider) = self.child_run_provider else {
+            return Ok(failed_tool_call(
+                &call.function.name,
+                "child_run_provider_unavailable",
+            ));
+        };
+
+        let registry = ToolRegistry::new();
+        let parent_surface = ToolRegistry::constrain_for_explicit_references(
+            registry.tools_for_authorized_capabilities(&self.authorized_capabilities, true),
+            self.context.envelope.context,
+            &self.context.retrieval_scope,
+        );
+        let inherited_tool_names = parent_surface
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
+        let inherited_tool_names =
+            crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::child_tool_surface(
+                &inherited_tool_names,
+            );
+        let spec = crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::from_tool_call(
+            run_id,
+            call,
+            self.context
+                .materials
+                .first()
+                .map(|material| material.source_path.as_str()),
+            self.evidence_ids()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+            inherited_tool_names,
+            Some(2_000),
+        );
+        if spec.resource_locks.iter().any(|lock| {
+            lock.access == crate::ai_runtime::subagent_coordinator::ResourceAccess::Write
+        }) {
+            let report = crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                &spec,
+                "child_run_write_lock_forbidden",
+            );
+            return Ok(child_report_tool_result(
+                &call.function.name,
+                report,
+                0,
+                started.elapsed(),
+            ));
+        }
+        if spec.allowed_tools.is_empty() {
+            let report = crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                &spec,
+                "child_run_no_safe_authorized_tools",
+            );
+            return Ok(child_report_tool_result(
+                &call.function.name,
+                report,
+                0,
+                started.elapsed(),
+            ));
+        }
+        let tools = parent_surface
+            .into_iter()
+            .filter(|tool| spec.allowed_tools.contains(&tool.name))
+            .collect::<Vec<_>>();
+        let max_rounds = args
+            .get("max_rounds")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(2)
+            .clamp(1, 2);
+        let messages = vec![
+            LlmMessage {
+                role: MessageRole::System,
+                content: format!(
+                    "你是父级 Agent 的受限子任务执行者，角色为 {}。只可使用列出的只读或联网工具；禁止修改数据、创建确认、调用 spawn_subagent，最后给出可供父级核验的简明结论。",
+                    spec.role
+                )
+                .into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+            LlmMessage {
+                role: MessageRole::User,
+                content: spec.task.clone().into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        ];
+        let child_executor = NormalRunToolExecutor::new(
+            self.state,
+            self.app_handle.clone(),
+            self.accepted,
+            self.context,
+            self.authorized_capabilities.clone(),
+            self.sink,
+            self.required_web_provider_snapshot.clone(),
+        )
+        .with_skill_activation_plan(self.skill_activation_plan.clone())
+        .at_subagent_depth(1);
+        let mut observer = ChildRunStreamObserver;
+        let outcome = AgentToolLoop::with_limits(max_rounds, 6)
+            .execute(
+                provider,
+                &child_executor,
+                run_id,
+                messages,
+                tools,
+                &mut observer,
+            )
+            .await;
+        let result = match outcome {
+            Ok(outcome) => {
+                let citation_valid = !child_executor.evidence_ids().is_empty()
+                    || !spec.input_evidence_ids.is_empty();
+                let report =
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
+                        &spec,
+                        outcome.content,
+                        citation_valid,
+                        outcome.model_turns,
+                    );
+                child_report_tool_result(
+                    &call.function.name,
+                    report,
+                    outcome.model_turns,
+                    started.elapsed(),
+                )
+            }
+            Err(error) => {
+                let report =
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                        &spec,
+                        sanitize_child_run_error(&error),
+                    );
+                child_report_tool_result(&call.function.name, report, 0, started.elapsed())
+            }
+        };
+        Ok(result)
+    }
+
+    fn has_capability(&self, required: &str) -> bool {
+        self.authorized_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == required)
+    }
+
     /// Emit `capability_degraded` once after a successful tool loop when Web attempts
     /// failed and no usable Web evidence was registered for this Run.
     /// Returns `true` when the event was emitted on this call.
@@ -783,6 +996,48 @@ fn rollback_summary(tool_name: &str) -> String {
             "可通过应用设置撤销或更新".to_string()
         }
         _ => "可通过版本历史或后续编辑撤销".to_string(),
+    }
+}
+
+/// Child streaming is intentionally not forwarded as parent visible output.
+/// Only the normalized report returns to the parent model transcript.
+struct ChildRunStreamObserver;
+
+impl StreamEventObserver for ChildRunStreamObserver {
+    fn observe(&mut self, _event: &StreamEvent, _token_index: u32) -> AppResult<()> {
+        Ok(())
+    }
+}
+
+fn child_report_tool_result(
+    tool_name: &str,
+    report: crate::ai_runtime::subagent_coordinator::SubagentReport,
+    harness_rounds: u32,
+    duration: Duration,
+) -> ToolCallResult {
+    let success = report.errors.is_empty();
+    let error = (!success).then(|| "child_run_failed".to_string());
+    ToolCallResult {
+        tool_name: tool_name.to_string(),
+        success,
+        output: serde_json::json!({
+            "content": report.summary,
+            "citation_valid": report.errors.is_empty(),
+            "harness_rounds": harness_rounds,
+            "subagent_report": report,
+        }),
+        duration_ms: bounded_duration_ms(duration),
+        tokens_used: None,
+        error,
+    }
+}
+
+fn sanitize_child_run_error(error: &AppError) -> &'static str {
+    match error.to_string().as_str() {
+        "agent_run_cancelled" => "child_run_cancelled",
+        "agent_run_tool_loop_limit" => "child_run_limit_exceeded",
+        "agent_run_web_evidence_required" => "child_run_web_evidence_required",
+        _ => "child_run_failed",
     }
 }
 
@@ -1245,17 +1500,32 @@ fn web_output_has_usable_evidence(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+    use std::future::Future;
+    use std::pin::Pin;
     use std::sync::Mutex;
 
-    use super::{emit_deferred_web_degradation, DeferredWebDegradationInput, RunWebBudget};
-    use crate::ai_runtime::run_contract::{
-        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, SafeRunErrorCode,
-        SecurityDomain,
+    use super::{
+        emit_deferred_web_degradation, DeferredWebDegradationInput, NormalRunToolExecutor,
+        RunWebBudget,
     };
-    use crate::ai_runtime::run_engine::RunEventSink;
+    use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+    use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
+    use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
+    use crate::ai_runtime::run_context::RunContextAssembler;
+    use crate::ai_runtime::run_contract::{
+        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId,
+        RunEventPayload, RunEventType, RunState, SafeRunErrorCode, SecurityDomain,
+    };
+    use crate::ai_runtime::run_engine::{RunEngine, RunEventSink};
     use crate::ai_runtime::run_intake::RunIntake;
+    use crate::ai_runtime::skills::SkillScopeRule;
+    use crate::ai_runtime::{FunctionCall, LlmMessage, ToolCall, ToolSpec};
+    use crate::ai_types::{SkillActivationItemSummary, SkillActivationPlanSummary};
+    use crate::app::AppState;
     use crate::error::AppResult;
     use crate::storage::db::Database;
+    use std::sync::Arc;
 
     #[derive(Default)]
     struct RecordingSink {
@@ -1269,6 +1539,33 @@ mod tests {
                 .expect("recording sink lock")
                 .push(serde_json::to_value(event)?);
             Ok(())
+        }
+    }
+
+    struct ScriptedChildProvider {
+        responses: Mutex<VecDeque<GatewayResponse>>,
+        tool_surfaces: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl ToolLoopProvider for ScriptedChildProvider {
+        fn answer_turn<'a>(
+            &'a self,
+            _run_id: &'a str,
+            _messages: &'a [LlmMessage],
+            tools: &'a [ToolSpec],
+            _observer: &'a mut dyn StreamEventObserver,
+        ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>> {
+            self.tool_surfaces
+                .lock()
+                .expect("tool surfaces")
+                .push(tools.iter().map(|tool| tool.name.clone()).collect());
+            Box::pin(async move {
+                self.responses
+                    .lock()
+                    .expect("responses")
+                    .pop_front()
+                    .ok_or_else(|| crate::error::AppError::msg("missing child response"))
+            })
         }
     }
 
@@ -1293,6 +1590,200 @@ mod tests {
 
     fn web_failure() -> super::WebFailure {
         super::WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
+    }
+
+    #[tokio::test]
+    async fn child_run_executes_a_real_bounded_model_tool_loop_with_no_write_or_recursion() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
+        let mut start = request();
+        start.web_enabled = false;
+        start.turn.message = "请委派一个子任务读取时间。".to_string();
+        let accepted = RunIntake::start(&state.db, start).expect("accepted");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试 ChildRun".to_string(),
+                },
+            },
+        )
+        .expect("running");
+        let provider = ScriptedChildProvider {
+            responses: Mutex::new(VecDeque::from([
+                GatewayResponse {
+                    content: None,
+                    tool_calls: vec![ToolCall {
+                        id: "child-time".to_string(),
+                        call_type: "function".to_string(),
+                        function: FunctionCall {
+                            name: "system_time_now".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                    }],
+                    usage: Default::default(),
+                    finish_reason: "tool_calls".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                },
+                GatewayResponse {
+                    content: Some("子任务已读取当前时间。".to_string()),
+                    tool_calls: Vec::new(),
+                    usage: Default::default(),
+                    finish_reason: "stop".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                },
+            ])),
+            tool_surfaces: Mutex::new(Vec::new()),
+        };
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![
+                CapabilityId::new("runtime.read"),
+                CapabilityId::new("harness.child_run"),
+                CapabilityId::new("memory.write"),
+            ],
+            &sink,
+            None,
+        )
+        .with_child_run_provider(&provider);
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "parent-spawn",
+                    "spawn_subagent",
+                    r#"{"task":"请联网读取当前时间","allowed_tools":["system_time_now","memory_write","spawn_subagent"]}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("child execution result");
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            result.output["subagent_report"]["summary"],
+            "子任务已读取当前时间。"
+        );
+        let surfaces = provider.tool_surfaces.lock().expect("surfaces");
+        assert_eq!(
+            surfaces.len(),
+            2,
+            "child must make a real continuation turn"
+        );
+        assert!(surfaces[0].contains(&"system_time_now".to_string()));
+        assert!(!surfaces[0].contains(&"web_search".to_string()));
+        assert!(!surfaces[0].contains(&"memory_write".to_string()));
+        assert!(!surfaces[0].contains(&"spawn_subagent".to_string()));
+        let child_depth = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT subagent_depth FROM tool_audit WHERE run_id = ?1 AND tool_name = 'system_time_now'",
+                    [&accepted.run_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("child audit");
+        assert_eq!(child_depth, 1);
+    }
+
+    #[tokio::test]
+    async fn child_run_rejects_a_declared_write_lock_before_calling_the_model() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
+        let mut start = request();
+        start.web_enabled = false;
+        start.turn.message = "请委派子任务。".to_string();
+        let accepted = RunIntake::start(&state.db, start).expect("accepted");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试 ChildRun".to_string(),
+                },
+            },
+        )
+        .expect("running");
+        let provider = ScriptedChildProvider {
+            responses: Mutex::new(VecDeque::new()),
+            tool_surfaces: Mutex::new(Vec::new()),
+        };
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![
+                CapabilityId::new("runtime.read"),
+                CapabilityId::new("harness.child_run"),
+            ],
+            &sink,
+            None,
+        )
+        .with_child_run_provider(&provider);
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "parent-spawn-write-lock",
+                    "spawn_subagent",
+                    r#"{"task":"写入","resource_locks":[{"resource_id":"note.md","access":"write"}]}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("bounded child result");
+
+        assert!(!result.success);
+        assert_eq!(
+            result.output["subagent_report"]["errors"][0],
+            "child_run_write_lock_forbidden"
+        );
+        assert!(provider.tool_surfaces.lock().expect("surfaces").is_empty());
     }
 
     fn capability_degraded_count(events: &[serde_json::Value]) -> usize {
@@ -1407,5 +1898,67 @@ mod tests {
 
         let events = sink.events.lock().expect("events");
         assert_eq!(capability_degraded_count(&events), 0);
+    }
+
+    #[tokio::test]
+    async fn cached_skill_plan_reaches_dispatch_scope_guard() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        std::fs::write(vault.join("allowed.md"), "allowed").expect("allowed note");
+        std::fs::write(vault.join("blocked.md"), "blocked").expect("blocked note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let plan = SkillActivationPlanSummary {
+            activated_skills: vec![SkillActivationItemSummary {
+                name: "bounded-skill".into(),
+                scope: "Vault".into(),
+                scope_rules: vec![SkillScopeRule {
+                    kind: "path".into(),
+                    pattern: "allowed.md".into(),
+                }],
+                score: 1.0,
+                match_reason: "test".into(),
+                injected_sections: vec!["skill_overlay".into()],
+                degraded_reasons: vec![],
+                requested_tools: vec![],
+                confirmation_required_tools: vec![],
+                blocked_capabilities: vec![],
+            }],
+            requested_tools: vec![],
+            confirmation_required_tools: vec![],
+            blocked_capabilities: vec![],
+            skill_overlay_summary: "one skill".into(),
+            degraded: false,
+        };
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("note.read")],
+            &sink,
+            None,
+        )
+        .with_skill_activation_plan(Some(plan));
+
+        let result = executor
+            .dispatch_non_web_tool("read_note", &serde_json::json!({"path": "blocked.md"}))
+            .await;
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("outside the confirmed Skill scope"));
     }
 }

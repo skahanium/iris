@@ -39,7 +39,9 @@ describe("citation markdown rendering", () => {
 
   it("repairs escaped citation links before markdown rendering", () => {
     const escaped = "[\\\\[citation:2\\\\]](#iris-cite-citation%3A2)";
-    const output = renderAiMarkdownToHtml(repairOverEscapedCitationLinks(escaped));
+    const output = renderAiMarkdownToHtml(
+      repairOverEscapedCitationLinks(escaped),
+    );
     expect(output).toContain("ai-citation-wrap");
   });
 

@@ -47,7 +47,10 @@ pub async fn skills_list(
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<Vec<crate::ai_runtime::skills::SkillListEntry>> {
     let vault = state.vault_path()?;
-    crate::ai_runtime::skills::list_skills(&state.db, &vault)
+    // Listing is an explicit user refresh boundary. Normal Runs never invoke
+    // this scan; they consume the resulting in-memory per-vault registry.
+    let skills = state.refresh_skills_for_vault(&vault)?;
+    Ok(crate::ai_runtime::skills::skill_list_entries(skills))
 }
 
 #[derive(Debug, Serialize)]
@@ -815,12 +818,13 @@ pub async fn skills_confirm(
         ));
     }
     let vault = state.vault_path()?;
-    crate::ai_runtime::skills::write_confirmed_skill_content(
+    let entry = crate::ai_runtime::skills::write_confirmed_skill_content(
         &vault,
         Path::new(&draft.target_path),
         crate::ai_runtime::skills::SkillScope::Vault,
         &draft.markdown,
     )?;
+    state.upsert_cached_skill_for_vault(&vault, entry)?;
     Ok(())
 }
 

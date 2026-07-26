@@ -82,7 +82,6 @@ pub mod tool_effects;
 pub mod tool_execution_pipeline;
 pub mod tool_executor;
 pub mod tool_fallback;
-pub mod tool_policy;
 pub mod trace;
 pub mod web_evidence_broker;
 pub mod writing_state;

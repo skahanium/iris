@@ -2298,6 +2298,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "sqlite-vec",
+ "sse-stream",
  "system-configuration",
  "tauri",
  "tauri-build",

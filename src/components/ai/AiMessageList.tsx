@@ -11,7 +11,12 @@ import {
   restoreChatLineContent,
   type AiPayloadRef,
 } from "@/lib/ai-payload-store";
-import type { ContentPart, DisplayMention, ToolCallInfo, WebCitationEntry } from "@/types/ai";
+import type {
+  ContentPart,
+  DisplayMention,
+  ToolCallInfo,
+  WebCitationEntry,
+} from "@/types/ai";
 import type { AssistantProcessItem } from "@/lib/assistant-process";
 
 export interface ImageAttachment {

@@ -65,6 +65,9 @@ mod tests {
         let ctx = ToolDispatchContext {
             note_path: Some("notes/test.md"),
             file_id: Some(7),
+            run_id: None,
+            write_target_path: None,
+            document_policy: None,
             web_search_enabled: true,
             max_web_fetches: 3,
             cold_start_packets: &[],

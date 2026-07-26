@@ -169,6 +169,13 @@ created_at / updated_at / completed_at
 
 保存 run_id、event_seq、state_version、event_type、安全 payload 和时间戳；`(run_id, event_seq)` 唯一。
 
+### `agent_run_authorizations`
+
+`run_id PRIMARY KEY`、规范化 `allowed_capabilities_json`、内容 hash 与创建时间。
+该表是普通域 Run 的不可变授权快照；重试 Run 创建新快照，原 Run 不得被
+覆盖。迁移 `056_agent_run_authorization_snapshots` 与 down 脚本必须随 Harness
+变更一起验证。
+
 ### `session_evidence`
 
 在现有账本上增加 origin_run_id、资料角色、stale 状态和仅供 Web 引用的 bounded excerpt。普通本地正文不复制。

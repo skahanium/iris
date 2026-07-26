@@ -25,6 +25,10 @@ pub(super) async fn skills_list_tool(
 ) -> AppResult<serde_json::Value> {
     let _ = ctx;
     let vault = state.vault_path()?;
-    let entries = crate::ai_runtime::skills::list_skills(&state.db, &vault)?;
+    // Tool dispatch is inside a Run and must not scan a user-controlled
+    // directory. The cache is populated at vault activation and explicit UI
+    // refresh/confirmation boundaries.
+    let skills = state.cached_skills_for_vault(&vault)?.unwrap_or_default();
+    let entries = crate::ai_runtime::skills::skill_list_entries(skills);
     Ok(serde_json::to_value(&entries).unwrap_or_default())
 }

@@ -14,6 +14,10 @@ pub(super) async fn read_note(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_document_capability(
+        path,
+        crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
+    )?;
     ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
@@ -53,7 +57,14 @@ pub(super) async fn list_vault(
         let mut items = Vec::new();
         for row in rows {
             let (path, title) = row?;
-            if ctx.retrieval_scope.allows_path(conn, &path)? {
+            if ctx
+                .ensure_document_capability(
+                    &path,
+                    crate::ai_runtime::policy_decision_engine::DocumentCapability::Discover,
+                )
+                .is_ok()
+                && ctx.retrieval_scope.allows_path(conn, &path)?
+            {
                 items.push(serde_json::json!({ "path": path, "title": title }));
                 if items.len() == limit {
                     break;
@@ -73,6 +84,10 @@ pub(super) async fn get_outline(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_document_capability(
+        path,
+        crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
+    )?;
     ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
@@ -104,6 +119,10 @@ pub(super) async fn get_backlinks(
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_document_capability(
+        path,
+        crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
+    )?;
     ctx.ensure_retrieval_scope_allows_path(&state.db, path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
@@ -152,6 +171,10 @@ pub(super) async fn get_block_links(
     let note_path = args["note_path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing note_path"))?;
+    ctx.ensure_document_capability(
+        note_path,
+        crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
+    )?;
     ctx.ensure_retrieval_scope_allows_path(&state.db, note_path)?;
     ctx.ensure_active_skill_scope_allows_path(&state.db, note_path)?;
     let vault: &Path = &state.vault_path()?;

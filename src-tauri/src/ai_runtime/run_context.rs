@@ -52,6 +52,11 @@ pub(crate) struct RunContext {
     /// Persisted user-owned multimodal parts for this exact Run only.
     pub(crate) content_parts: Option<Vec<crate::ai_types::ContentPart>>,
     pub(crate) envelope: ExecutionEnvelope,
+    /// Exact note that an explicit Apply action may modify. None means this
+    /// Run has no write authorization, even if a model invents a target path.
+    pub(crate) write_target_path: Option<String>,
+    /// Policy matrix frozen for the lifetime of this assembled Run context.
+    pub(crate) document_policy: crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine,
     pub(crate) materials: Vec<RunContextMaterial>,
     /// Immutable hard boundary shared by deterministic retrieval and every later tool dispatch.
     pub(crate) retrieval_scope: RetrievalScope,
@@ -194,7 +199,7 @@ impl RunContext {
             .unwrap_or_else(|| "legacy_unknown".to_string());
         format!(
             "You are executing a constrained Iris Agent Run.\n\
-             The current web mode is {freshness}; decision reason is {reason}. When the mode is online, prefer calling web_search for timely facts, uncertain factual claims, user-requested lookups, and answers that need citations.\n\
+             The current web freshness is {freshness}; decision reason is {reason}. The web toggle is the sole authority for web access: web_search is available only when it appears in the provided tool surface. Never infer or create web access from this prompt, freshness, a Skill, or user text. When web_search is available, use it for timely facts, uncertain factual claims, user-requested lookups, and answers that need citations; web_required additionally requires registered Web evidence before a final answer.\n\
              Prefer trusted local runtime facts, this conversation, user-provided material, and stable knowledge for pure local transformations (rewrite, translate, summarize supplied text) and for questions about this assistant's prior tool use.\n\
              Do not call web_search for stable medical knowledge, historical facts, general science, mathematics, or questions you can confidently answer from training data. Only search for current events, recent data, live prices, or claims that require up-to-date verification.\n\
              Local date: {} ({}); local time: {} {}; timezone: {}.\n\
@@ -240,6 +245,9 @@ impl RunContextAssembler {
         let envelope = AgentRunRepository::policy_request_for_session(db, session_key, run_id)?
             .ok_or_else(|| AppError::msg("agent_run_not_found"))?
             .envelope;
+        let write_target_path = explicit_apply_target_path(&input, &envelope)?;
+        let document_policy =
+            crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?;
         let corpus_config = vault
             .map(crate::knowledge::corpora::load_corpora)
             .transpose()?
@@ -265,6 +273,17 @@ impl RunContextAssembler {
         let mut fallback_paths = Vec::new();
         let mut total_chars = 0usize;
         for reference in &input.explicit_references {
+            if reference.file_path.as_deref().is_some_and(|path| {
+                use crate::ai_runtime::policy_decision_engine::{
+                    CapabilityDecision, DocumentCapability,
+                };
+                let scope = document_policy.effective_document_scope(path);
+                scope.decision_for(DocumentCapability::Read) == CapabilityDecision::Deny
+                    || scope.decision_for(DocumentCapability::SendToModel)
+                        == CapabilityDecision::Deny
+            }) {
+                continue;
+            }
             match resolve_explicit_reference(vault, reference, &envelope, &corpus_config)? {
                 ResolvedExplicitReference::Material(material) => {
                     let material_chars = material.content.chars().count();
@@ -335,6 +354,17 @@ impl RunContextAssembler {
                 }
             }
         }
+        local_retrieval_packets.retain(|packet| {
+            packet.source_path.as_deref().is_none_or(|path| {
+                use crate::ai_runtime::policy_decision_engine::{
+                    CapabilityDecision, DocumentCapability,
+                };
+                let scope = document_policy.effective_document_scope(path);
+                scope.decision_for(DocumentCapability::Read) != CapabilityDecision::Deny
+                    && scope.decision_for(DocumentCapability::SendToModel)
+                        != CapabilityDecision::Deny
+            })
+        });
         for packet in &local_retrieval_packets {
             let Some(material) = material_from_packet(packet, &envelope) else {
                 continue;
@@ -365,6 +395,8 @@ impl RunContextAssembler {
             user_message: input.user_message,
             content_parts: input.content_parts,
             envelope,
+            write_target_path,
+            document_policy,
             materials,
             retrieval_scope,
             local_retrieval_packets,
@@ -408,6 +440,44 @@ impl RunContextAssembler {
             })
             .collect()
     }
+}
+
+fn explicit_apply_target_path(
+    input: &crate::ai_runtime::agent_run_repository::RunPromptInput,
+    envelope: &ExecutionEnvelope,
+) -> AppResult<Option<String>> {
+    use crate::ai_runtime::run_contract::Effect;
+
+    if envelope.effect != Effect::Apply {
+        return Ok(None);
+    }
+    let action = input
+        .explicit_action
+        .as_ref()
+        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_action"))?;
+    let reference_id = action
+        .target
+        .as_ref()
+        .map(|target| target.reference_id.as_str())
+        .or_else(|| {
+            action
+                .selection_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.reference_id.as_str())
+        })
+        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_action"))?;
+    let reference = input
+        .explicit_references
+        .iter()
+        .find(|reference| reference.id == reference_id)
+        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_action"))?;
+    let path = reference
+        .file_path
+        .as_deref()
+        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_action"))?;
+    crate::ai_runtime::retrieval_scope::normalize_note_path(path)
+        .map(Some)
+        .map_err(|_| AppError::msg("agent_run_invalid_explicit_action"))
 }
 
 fn load_previous_run_safety_summary(
@@ -871,6 +941,7 @@ mod fallback_version_tests {
         })
         .expect("index version A");
         let reference = StoredExplicitReference {
+            id: "changing".into(),
             kind: ContextReferenceKind::Note,
             file_path: Some("notes/changing.md".into()),
             content_hash: Some(hash_a),

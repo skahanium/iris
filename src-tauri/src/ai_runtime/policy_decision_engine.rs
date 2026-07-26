@@ -209,7 +209,7 @@ pub(crate) struct MaterialRoleResolution {
 ///
 /// This type intentionally has no database, dispatcher, or legacy scene dependency.
 #[derive(Debug, Clone)]
-pub(crate) struct PolicyDecisionEngine {
+pub struct PolicyDecisionEngine {
     vault_default: DocumentPolicy,
     folder_policies: BTreeMap<String, DocumentPolicy>,
     document_policies: BTreeMap<String, DocumentPolicy>,
@@ -273,9 +273,7 @@ impl PolicyDecisionEngine {
     /// scene, user content, or a tool response. A caller must re-evaluate the
     /// same immutable request immediately before any future capability dispatch.
     pub(crate) fn evaluate_run(&self, request: RunPolicyRequest) -> RunPolicyDecision {
-        use crate::ai_runtime::run_contract::{
-            Effect, Freshness, SafeRunErrorCode, SecurityDomain,
-        };
+        use crate::ai_runtime::run_contract::{Effect, SafeRunErrorCode, SecurityDomain};
 
         let mut requested = request.envelope.required_capabilities.clone();
         for capability in request.requested_capabilities {
@@ -297,14 +295,29 @@ impl PolicyDecisionEngine {
                     || name.starts_with("mcp.")
                     || name.starts_with("vault.")
                     || name.starts_with("evidence."));
-            let denied_by_freshness =
-                request.envelope.freshness == Freshness::Offline && name.starts_with("web.");
+            // Only Intake may translate the user's Web toggle into an
+            // envelope-level `web.*` capability. Freshness describes the
+            // evidence obligation and can be Offline for a local-only task
+            // even while the user has Web enabled, so it is not an
+            // authorization switch. A later caller, Skill, ChildRun, or MCP
+            // provider cannot inject a Web capability absent from the
+            // immutable Intake envelope.
+            let denied_by_web_capability_injection = name.starts_with("web.")
+                && !request
+                    .envelope
+                    .required_capabilities
+                    .iter()
+                    .any(|allowed| allowed == capability);
             let denied_by_effect = match request.envelope.effect {
                 Effect::Answer => name.starts_with("note."),
                 Effect::Draft => name == "note.apply_patch",
                 Effect::Apply => false,
             };
-            if denied_by_domain || denied_by_freshness || denied_by_effect || reference_denied {
+            if denied_by_domain
+                || denied_by_web_capability_injection
+                || denied_by_effect
+                || reference_denied
+            {
                 denied.push(capability.clone());
             }
         }
@@ -554,17 +567,20 @@ mod tests {
     }
 
     #[test]
-    fn run_policy_denies_web_when_offline_or_classified() {
+    fn run_policy_rejects_web_capability_injection_after_intake_and_denies_classified() {
         use crate::ai_runtime::run_contract::{CapabilityId, Freshness, SecurityDomain};
 
         let engine = PolicyDecisionEngine::new(DocumentPolicy::allow_all());
         let offline = engine.evaluate_run(RunPolicyRequest {
             envelope: run_envelope(SecurityDomain::Normal, Freshness::Offline),
             explicit_reference_paths: Vec::new(),
-            requested_capabilities: vec![CapabilityId::new("web.search")],
+            requested_capabilities: vec![
+                CapabilityId::new("web.search"),
+                CapabilityId::new("web.fetch"),
+            ],
         });
         let classified = engine.evaluate_run(RunPolicyRequest {
-            envelope: run_envelope(SecurityDomain::Classified, Freshness::Online),
+            envelope: run_envelope(SecurityDomain::Classified, Freshness::WebPreferred),
             explicit_reference_paths: Vec::new(),
             requested_capabilities: vec![CapabilityId::new("web.search")],
         });
@@ -578,7 +594,37 @@ mod tests {
             Some(crate::ai_runtime::run_contract::SafeRunErrorCode::PermissionDenied)
         );
         assert!(offline.allowed_capabilities.is_empty());
+        assert_eq!(
+            offline.denied_capabilities,
+            vec![
+                CapabilityId::new("web.search"),
+                CapabilityId::new("web.fetch")
+            ]
+        );
         assert!(classified.allowed_capabilities.is_empty());
+    }
+
+    #[test]
+    fn run_policy_treats_the_intake_envelope_not_freshness_as_web_authority() {
+        use crate::ai_runtime::run_contract::{CapabilityId, Freshness, SecurityDomain};
+
+        let engine = PolicyDecisionEngine::new(DocumentPolicy::allow_all());
+        let mut envelope = run_envelope(SecurityDomain::Normal, Freshness::Offline);
+        envelope
+            .required_capabilities
+            .push(CapabilityId::new("web.search"));
+
+        let decision = engine.evaluate_run(RunPolicyRequest {
+            envelope,
+            explicit_reference_paths: Vec::new(),
+            requested_capabilities: Vec::new(),
+        });
+
+        assert_eq!(decision.denial_code, None);
+        assert_eq!(
+            decision.allowed_capabilities,
+            vec![CapabilityId::new("web.search")]
+        );
     }
 
     #[test]

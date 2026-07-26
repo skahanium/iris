@@ -5,22 +5,10 @@
 //! 2. Formatting tool specs for LLM function-calling
 //! 3. Routing confirmed tool calls to Rust command handlers
 
+use crate::ai_runtime::run_contract::CapabilityId;
 use crate::ai_runtime::tool_catalog::{ToolImplementationStatus, TOOL_CATALOG};
 use crate::ai_runtime::tool_dispatch::is_exposable_tool;
-use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext, ToolPolicyVerdict};
-use crate::ai_runtime::{AutonomyLevel, ToolSpec};
-
-/// Filters applied when building the tool surface for LLM / IPC listing.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct ToolSurfaceFilter {
-    pub web_search_enabled: bool,
-    pub allow_writes: bool,
-    pub allow_research: bool,
-    pub allow_skill_management: bool,
-    pub allow_implicit_vault: bool,
-    /// When true, only tools that do not require user confirmation are returned.
-    pub only_auto: bool,
-}
+use crate::ai_runtime::ToolSpec;
 
 // Tool Registry
 
@@ -36,43 +24,27 @@ impl ToolRegistry {
         }
     }
 
-    /// Catalog view before policy filtering.
-    ///
-    /// Availability is decided by ToolPolicy.
+    /// Catalog view before immutable Run authorization filtering.
     pub fn catalog_entries(&self) -> Vec<&ToolSpec> {
         self.tools.iter().collect()
     }
 
-    /// Tools exposed to a Run executor from explicit capabilities only.
-    pub fn tools_for_surface(&self, filter: ToolSurfaceFilter) -> Vec<ToolSpec> {
-        let ctx = ToolPolicyContext {
-            autonomy_level: AutonomyLevel::L2,
-            web_search_enabled: filter.web_search_enabled,
-            allow_writes: filter.allow_writes,
-            allow_research: filter.allow_research,
-            allow_skill_management: filter.allow_skill_management,
-            allow_implicit_vault: filter.allow_implicit_vault,
-        };
-        self.tools_for_policy_surface(&ctx, filter.only_auto)
-    }
-
-    /// Tools exposed to the model after evaluating the full ToolPolicy.
-    pub fn tools_for_policy_surface(
+    /// Tools exposed by the immutable Run authorization snapshot. A tool is
+    /// available only when its exact catalog capability is present; broad
+    /// access levels and execution effort never widen this surface.
+    pub(crate) fn tools_for_authorized_capabilities(
         &self,
-        ctx: &ToolPolicyContext,
+        capabilities: &[CapabilityId],
         only_auto: bool,
     ) -> Vec<ToolSpec> {
         self.tools
             .iter()
-            .filter(|t| is_exposable_tool(&t.name))
-            .filter(|t| {
-                let verdict = tool_policy::evaluate_tool(&t.name, ctx);
-                match verdict {
-                    ToolPolicyVerdict::AutoAllowed => true,
-                    ToolPolicyVerdict::RequiresConfirmation => !only_auto,
-                    ToolPolicyVerdict::Denied(_) => false,
-                }
+            .filter(|tool| is_exposable_tool(&tool.name))
+            .filter(|tool| {
+                crate::ai_runtime::tool_catalog::catalog_find(&tool.name)
+                    .is_some_and(|entry| entry.is_authorized_by(capabilities))
             })
+            .filter(|tool| !only_auto || !tool.requires_confirmation)
             .cloned()
             .collect()
     }
@@ -94,6 +66,7 @@ impl ToolRegistry {
             "get_context_packets",
             "get_backlinks",
             "web_search",
+            "spawn_subagent",
         ];
         tools
             .into_iter()
@@ -119,24 +92,6 @@ impl ToolRegistry {
         self.find(tool_name)
             .map(|t| t.requires_confirmation)
             .unwrap_or(true)
-    }
-
-    /// Check tool permission using the new policy engine (Phase 2).
-    ///
-    /// Returns `Ok(())` if the tool is allowed (auto or confirmation-required),
-    /// and `Err(...)` if it's denied by the policy.
-    pub fn check_tool_policy(
-        &self,
-        tool_name: &str,
-        ctx: &ToolPolicyContext,
-    ) -> Result<(), ToolPolicyDeniedError> {
-        match tool_policy::evaluate_tool(tool_name, ctx) {
-            ToolPolicyVerdict::AutoAllowed | ToolPolicyVerdict::RequiresConfirmation => Ok(()),
-            ToolPolicyVerdict::Denied(reason) => Err(ToolPolicyDeniedError {
-                tool: tool_name.to_string(),
-                reason,
-            }),
-        }
     }
 
     // private
@@ -165,19 +120,12 @@ impl Default for ToolRegistry {
     }
 }
 
-/// Error from the new policy engine (Phase 2).
-#[derive(Debug, Clone, thiserror::Error)]
-#[error("tool '{tool}' denied by policy: {reason:?}")]
-pub struct ToolPolicyDeniedError {
-    pub tool: String,
-    pub reason: DenialReason,
-}
-
 // 鈹€鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_runtime::run_contract::CapabilityId;
 
     #[test]
     fn catalog_entries_are_policy_neutral() {
@@ -189,45 +137,60 @@ mod tests {
     #[test]
     fn explicit_run_capabilities_control_write_exposure() {
         let registry = ToolRegistry::new();
-        let read_only = registry.tools_for_surface(ToolSurfaceFilter::default());
+        let read_only =
+            registry.tools_for_authorized_capabilities(&[CapabilityId::new("runtime.read")], false);
         assert!(!read_only
             .iter()
             .any(|tool| tool.name == "insert_text_at_cursor"));
 
-        let writable = registry.tools_for_surface(ToolSurfaceFilter {
-            allow_writes: true,
-            ..ToolSurfaceFilter::default()
-        });
+        let writable = registry
+            .tools_for_authorized_capabilities(&[CapabilityId::new("note.apply_patch")], false);
         assert!(writable
             .iter()
             .any(|tool| tool.name == "insert_text_at_cursor"));
     }
 
     #[test]
-    fn harness_only_controls_are_never_exposed_to_the_model() {
+    fn run_capability_contract_exposes_only_the_requested_patch_tools() {
         let registry = ToolRegistry::new();
-        let surface = registry.tools_for_surface(ToolSurfaceFilter {
-            web_search_enabled: true,
-            allow_writes: true,
-            allow_research: true,
-            allow_skill_management: true,
-            allow_implicit_vault: true,
-            only_auto: false,
-        });
+        let surface = registry
+            .tools_for_authorized_capabilities(&[CapabilityId::new("note.apply_patch")], false);
+        let names: Vec<_> = surface.iter().map(|tool| tool.name.as_str()).collect();
 
-        assert!(!surface.iter().any(|tool| tool.name == "spawn_subagent"));
+        assert!(names.contains(&"insert_text_at_cursor"));
+        assert!(names.contains(&"replace_selection"));
+        assert!(!names.contains(&"memory_write"));
+        assert!(!names.contains(&"scheduled_task_create"));
+        assert!(!names.contains(&"vault_create_note"));
+        assert!(!names.contains(&"fs_export"));
+    }
+
+    #[test]
+    fn child_run_control_is_exposed_only_when_its_exact_capability_is_authorized() {
+        let registry = ToolRegistry::new();
+        let surface = registry.tools_for_authorized_capabilities(
+            &[
+                CapabilityId::new("harness.child_run"),
+                CapabilityId::new("harness.conclude"),
+            ],
+            false,
+        );
+
+        assert!(surface.iter().any(|tool| tool.name == "spawn_subagent"));
         assert!(!surface.iter().any(|tool| tool.name == "conclude_reasoning"));
     }
 
     #[test]
     fn explicit_references_without_vault_scope_hide_search_and_list_tools() {
         let registry = ToolRegistry::new();
-        let surface = registry.tools_for_surface(ToolSurfaceFilter {
-            web_search_enabled: true,
-            allow_research: true,
-            allow_implicit_vault: true,
-            ..ToolSurfaceFilter::default()
-        });
+        let surface = registry.tools_for_authorized_capabilities(
+            &[
+                CapabilityId::new("vault.read"),
+                CapabilityId::new("web.search"),
+                CapabilityId::new("context.read"),
+            ],
+            false,
+        );
         let constrained = ToolRegistry::constrain_for_explicit_references(
             surface,
             crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,
@@ -244,14 +207,29 @@ mod tests {
     }
 
     #[test]
+    fn explicit_references_keep_the_depth_one_child_control_when_authorized() {
+        let registry = ToolRegistry::new();
+        let surface = registry.tools_for_authorized_capabilities(
+            &[
+                CapabilityId::new("vault.read"),
+                CapabilityId::new("harness.child_run"),
+            ],
+            false,
+        );
+        let constrained = ToolRegistry::constrain_for_explicit_references(
+            surface,
+            crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,
+            &crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+        );
+
+        assert!(constrained.iter().any(|tool| tool.name == "spawn_subagent"));
+    }
+
+    #[test]
     fn folder_scope_keeps_full_retrieval_tool_surface() {
         let registry = ToolRegistry::new();
-        let surface = registry.tools_for_surface(ToolSurfaceFilter {
-            web_search_enabled: true,
-            allow_research: true,
-            allow_implicit_vault: true,
-            ..ToolSurfaceFilter::default()
-        });
+        let surface =
+            registry.tools_for_authorized_capabilities(&[CapabilityId::new("vault.read")], false);
         let scoped = ToolRegistry::constrain_for_explicit_references(
             surface,
             crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,

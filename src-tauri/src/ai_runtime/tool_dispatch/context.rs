@@ -5,6 +5,16 @@ use crate::storage::db::Database;
 pub struct ToolDispatchContext<'a> {
     pub note_path: Option<&'a str>,
     pub file_id: Option<i64>,
+    /// Owning Run. When present, every dispatch and irreversible commit must
+    /// stop after the user cancels that Run.
+    pub run_id: Option<&'a str>,
+    /// Exact note selected by the user's explicit Apply action for this Run.
+    /// Model-generated target arguments may never widen this boundary.
+    pub write_target_path: Option<&'a str>,
+    /// Immutable per-Run document policy evaluated before content can cross a
+    /// tool boundary. `None` is reserved for isolated unit tests only.
+    pub document_policy:
+        Option<&'a crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine>,
     pub web_search_enabled: bool,
     pub max_web_fetches: usize,
     pub cold_start_packets: &'a [ContextPacket],
@@ -16,6 +26,49 @@ pub struct ToolDispatchContext<'a> {
 }
 
 impl<'a> ToolDispatchContext<'a> {
+    pub(crate) fn ensure_run_active(&self) -> AppResult<()> {
+        if self
+            .run_id
+            .is_some_and(crate::ai_runtime::model_gateway::is_abort_requested)
+        {
+            return Err(AppError::msg("agent_run_cancelled"));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_write_target_matches(&self, path: &str) -> AppResult<()> {
+        let Some(expected) = self.write_target_path else {
+            return Ok(());
+        };
+        let expected = crate::ai_runtime::retrieval_scope::normalize_note_path(expected)
+            .map_err(|_| AppError::msg("agent_run_write_target_violation"))?;
+        let actual = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
+            .map_err(|_| AppError::msg("agent_run_write_target_violation"))?;
+        if actual == expected {
+            Ok(())
+        } else {
+            Err(AppError::msg("agent_run_write_target_violation"))
+        }
+    }
+
+    pub(crate) fn ensure_document_capability(
+        &self,
+        path: &str,
+        capability: crate::ai_runtime::policy_decision_engine::DocumentCapability,
+    ) -> AppResult<()> {
+        use crate::ai_runtime::policy_decision_engine::CapabilityDecision;
+
+        if self.document_policy.is_some_and(|policy| {
+            policy
+                .effective_document_scope(path)
+                .decision_for(capability)
+                == CapabilityDecision::Deny
+        }) {
+            return Err(AppError::msg("agent_run_document_policy_denied"));
+        }
+        Ok(())
+    }
+
     pub(crate) fn ensure_retrieval_scope_allows_path(
         &self,
         db: &Database,

@@ -39,6 +39,7 @@ impl RunIntake {
         validate_start_request(request)?;
         let message = request.turn.message.to_ascii_lowercase();
         let directive_text = strip_quoted_segments(&message);
+        let child_run_requested = needs_child_run(&directive_text);
         let local_only = contains_any(
             &directive_text,
             &[
@@ -101,6 +102,7 @@ impl RunIntake {
             _ if freshness != Freshness::Offline
                 || has_images
                 || has_retrieval_scope(request)
+                || child_run_requested
                 || needs_offline_vault_tool_loop(request, &message) =>
             {
                 Effort::ToolLoop
@@ -131,7 +133,15 @@ impl RunIntake {
             MaterialNeed::Web => 3,
         });
         material_needs.dedup();
-        let mut required_capabilities = vec![CapabilityId::new("model.text")];
+        // The envelope is the only source of capabilities that may reach a
+        // model-visible tool surface. Keep these concrete and auditable rather
+        // than deriving permissions later from effort or access-level enums.
+        let mut required_capabilities = vec![
+            CapabilityId::new("model.text"),
+            // Trusted runtime facts are always locally available; exposing
+            // them in a ToolLoop never grants filesystem or network access.
+            CapabilityId::new("runtime.read"),
+        ];
         if has_images {
             required_capabilities.push(CapabilityId::new("model.vision"));
         }
@@ -139,6 +149,25 @@ impl RunIntake {
             Effect::Draft => required_capabilities.push(CapabilityId::new("note.propose_patch")),
             Effect::Apply => required_capabilities.push(CapabilityId::new("note.apply_patch")),
             Effect::Answer => {}
+        }
+        if matches!(effort, Effort::ToolLoop | Effort::Durable) {
+            required_capabilities.push(CapabilityId::new("context.read"));
+            if allow_implicit_vault_for_run(
+                request.security_domain,
+                &message,
+                !request.turn.explicit_references.is_empty() || has_retrieval_scope(request),
+            ) {
+                required_capabilities.push(CapabilityId::new("vault.read"));
+            }
+        }
+        // The user-controlled Web toggle is the sole authority that can add
+        // Web capability. Freshness only describes evidence obligation; it
+        // must never be a second permission switch.
+        if request.web_enabled && request.security_domain == SecurityDomain::Normal && !local_only {
+            required_capabilities.push(CapabilityId::new("web.search"));
+        }
+        if child_run_requested {
+            required_capabilities.push(CapabilityId::new("harness.child_run"));
         }
         let mut explicit_constraints = Vec::new();
         if local_only {
@@ -505,6 +534,12 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
     let Some(action) = request.explicit_action.as_ref() else {
         return Ok(());
     };
+    if action.effect == Effect::Apply
+        && action.target.is_none()
+        && action.selection_snapshot.is_none()
+    {
+        return Err(AppError::msg("agent_run_invalid_request"));
+    }
     let valid_reference = |id: &str, hash: &str| {
         request.turn.explicit_references.iter().any(|reference| {
             reference.id == id
@@ -561,6 +596,34 @@ fn resolve_normal_session(
         None => NormalSessionRepository::create(db),
     }
 }
+/// Return whether the user explicitly requested delegated or parallel work.
+/// ChildRun is intentionally opt-in at intake: a normal ToolLoop must not gain
+/// an extra model invocation merely because it happens to have read tools.
+fn needs_child_run(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "spawn subagent",
+            "spawn_subagent",
+            "subagent",
+            "sub-agent",
+            "child task",
+            "child run",
+            "delegate",
+            "delegat",
+            "parallel",
+            "multi-agent",
+            "子任务",
+            "子 agent",
+            "子agent",
+            "委派",
+            "分工",
+            "并行",
+            "交叉验证",
+        ],
+    )
+}
+
 fn contains_any(message: &str, markers: &[&str]) -> bool {
     markers.iter().any(|marker| message.contains(marker))
 }
@@ -571,10 +634,7 @@ struct WebIntentDecision {
     reason: WebDecisionReason,
 }
 
-/// Exclusion-based Web classifier: default Online; only explicit exclusions force Offline.
-///
-/// Unlike the former three-way intent resolver, this never invents a "maybe search"
-/// grey zone. Online always registers `web_search` for model-driven use.
+/// Exclusion-first Web classifier with explicit preferred/required outcomes.
 struct ExclusionClassifier;
 
 impl ExclusionClassifier {
@@ -617,21 +677,21 @@ impl ExclusionClassifier {
             }
         }
 
-        // Online with a more specific reason when detectable (transparency only;
-        // behavior is identical for every Online reason).
+        // Volatile or explicitly requested external facts require evidence;
+        // general questions may use Web but can still answer from local knowledge.
         if contains_any(directive_text, &["http://", "https://"]) {
-            return online(WebDecisionReason::ExplicitUrl);
+            return required(WebDecisionReason::ExplicitUrl);
         }
         if explicit_web {
-            return online(WebDecisionReason::ExplicitWebRequest);
+            return required(WebDecisionReason::ExplicitWebRequest);
         }
         if is_high_stakes_current_request(directive_text) {
-            return online(WebDecisionReason::HighStakesCurrentFact);
+            return required(WebDecisionReason::HighStakesCurrentFact);
         }
         if is_volatile_external_request(directive_text) {
-            return online(WebDecisionReason::VolatileExternalFact);
+            return required(WebDecisionReason::VolatileExternalFact);
         }
-        online(WebDecisionReason::DefaultOnline)
+        preferred(WebDecisionReason::DefaultOnline)
     }
 }
 
@@ -687,9 +747,16 @@ fn offline(reason: WebDecisionReason) -> WebIntentDecision {
     }
 }
 
-fn online(reason: WebDecisionReason) -> WebIntentDecision {
+fn preferred(reason: WebDecisionReason) -> WebIntentDecision {
     WebIntentDecision {
-        freshness: Freshness::Online,
+        freshness: Freshness::WebPreferred,
+        reason,
+    }
+}
+
+fn required(reason: WebDecisionReason) -> WebIntentDecision {
+    WebIntentDecision {
+        freshness: Freshness::WebRequired,
         reason,
     }
 }

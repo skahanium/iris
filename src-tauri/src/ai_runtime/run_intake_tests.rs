@@ -66,6 +66,23 @@ fn intake_rejects_actions_that_do_not_bind_to_the_explicit_reference() {
 }
 
 #[test]
+fn intake_rejects_apply_without_an_explicit_document_target() {
+    let mut invalid = request();
+    invalid.explicit_action = Some(ExplicitAction {
+        effect: Effect::Apply,
+        target: None,
+        selection_snapshot: None,
+    });
+
+    assert_eq!(
+        RunIntake::resolve_envelope(&invalid)
+            .expect_err("an Apply Run must bind to a document or selection")
+            .to_string(),
+        "agent_run_invalid_request"
+    );
+}
+
+#[test]
 fn intake_rejects_a_classified_context_capability_in_normal_domain() {
     let mut invalid = request();
     invalid.classified_context_ref = Some("opaque-classified-context".into());
@@ -1050,7 +1067,7 @@ fn event_state_version(event: &super::run_contract::AssistantRunEvent) -> u64 {
 }
 
 #[test]
-fn web_enabled_pure_rewrite_remains_direct_without_tool_loop() {
+fn web_enabled_pure_rewrite_remains_direct_while_the_toggle_owns_web_authority() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message =
@@ -1060,7 +1077,7 @@ fn web_enabled_pure_rewrite_remains_direct_without_tool_loop() {
 
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.effort, Effort::Direct);
-    assert!(!envelope
+    assert!(envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
@@ -1117,32 +1134,59 @@ fn allow_implicit_vault_decision_table_covers_work_creative_and_scoped_cases() {
 }
 
 #[test]
-fn web_enabled_external_question_is_online_without_forced_web_capability() {
+fn web_enabled_external_question_persists_the_web_capability_contract() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "最近世界杯战况如何？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
     assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
-    assert!(!envelope
+    assert!(envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
 }
 
 #[test]
-fn web_enabled_general_question_is_online_by_default_without_keywords() {
+fn web_toggle_is_the_only_authority_that_grants_web_search() {
+    let mut disabled = request();
+    disabled.web_enabled = false;
+    disabled.turn.message = "请联网检索并核实今天的市场消息。".to_string();
+
+    let disabled_envelope = RunIntake::resolve_envelope(&disabled).expect("resolve disabled");
+    assert_eq!(disabled_envelope.freshness, Freshness::Offline);
+    assert_eq!(
+        disabled_envelope.web_reason,
+        WebDecisionReason::UserDisabled
+    );
+    assert!(!disabled_envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+
+    let mut enabled = disabled;
+    enabled.web_enabled = true;
+    let enabled_envelope = RunIntake::resolve_envelope(&enabled).expect("resolve enabled");
+    assert_eq!(enabled_envelope.freshness, Freshness::WebRequired);
+    assert!(enabled_envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn web_enabled_general_question_persists_the_web_capability_contract() {
     let mut request = request();
     request.web_enabled = true;
     request.turn.message = "量子力学的核心概念是什么？".to_string();
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(envelope.web_reason, WebDecisionReason::DefaultOnline);
-    assert!(!envelope
+    assert!(envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
@@ -1174,7 +1218,7 @@ fn explicit_file_reference_answer_keeps_tool_loop_when_online() {
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
     assert_eq!(envelope.context, ContextMode::ExplicitReferences);
-    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.freshness, Freshness::WebPreferred);
     assert_eq!(envelope.effort, Effort::ToolLoop);
 }
 
@@ -1328,7 +1372,7 @@ fn transformation_word_does_not_hide_an_unbound_current_facts_request() {
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
     assert_eq!(envelope.web_reason, WebDecisionReason::VolatileExternalFact);
 }
 
@@ -1355,10 +1399,29 @@ fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
 
     assert_eq!(envelope.freshness, Freshness::Offline);
     assert_eq!(envelope.effort, Effort::Direct);
-    assert!(!envelope
+    assert!(envelope
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn explicit_subagent_request_adds_only_the_child_run_capability() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "请把调研拆成两个子任务并行交叉验证。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "harness.child_run"));
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "harness.conclude"));
 }
 
 #[test]
@@ -1369,7 +1432,7 @@ fn explicit_web_instruction_overrides_the_local_transformation_shortcut() {
 
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
-    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
 }
 
 #[test]

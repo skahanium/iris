@@ -34,6 +34,23 @@ pub(super) fn markdown_write_patch_apply(
             args,
         ));
     }
+    if let Err(error) = ctx.ensure_write_target_matches(&target_path) {
+        return Ok(markdown_write_not_applied(
+            tool_name,
+            &error.to_string(),
+            args,
+        ));
+    }
+    if let Err(error) = ctx.ensure_document_capability(
+        &target_path,
+        crate::ai_runtime::policy_decision_engine::DocumentCapability::ApplyChange,
+    ) {
+        return Ok(markdown_write_not_applied(
+            tool_name,
+            &error.to_string(),
+            args,
+        ));
+    }
     if let Err(error) = ctx.ensure_active_skill_scope_allows_path(&state.db, &target_path) {
         return Ok(markdown_write_not_applied(
             tool_name,
@@ -144,12 +161,16 @@ pub(super) fn markdown_write_patch_apply(
         })?;
         state.embedding_scheduler().notify_index_committed();
     }
+    // A cancellation can arrive while this tool was validating and preparing
+    // the patch. Re-check immediately before any durable side effect.
+    ctx.ensure_run_active()?;
     crate::version::create_snapshot(
         state,
         &target_path,
         &current,
         crate::version::SnapshotParams::manual(),
     )?;
+    ctx.ensure_run_active()?;
     let receipt = match NoteWriteService::write(state, &target_path, &applied) {
         Ok(receipt) => receipt,
         Err(error) if error.to_string().contains("note_locked") => {

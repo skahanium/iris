@@ -1008,7 +1008,7 @@ export function LlmRoutingSection({
     });
 
     return providers.sort((a, b) => a.name.localeCompare(b.name));
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- derived from data, routing, providerName only
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- derived from data, routing, providerName only
   }, [data, providerName, routing]);
 
   useEffect(() => {

@@ -230,9 +230,16 @@ pub fn skill_content_hash_for_path(path: &Path) -> AppResult<String> {
 
 /// Build the skills list with computed validation/dependency info.
 pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
-    let skills = scan_all(vault)?;
+    Ok(skill_list_entries(scan_all(vault)?))
+}
+
+/// Build list DTOs from an already-loaded registry without touching the filesystem.
+///
+/// Normal Runs use this only through the per-vault cache in `AppState`; scanning
+/// remains an explicit UI/maintenance operation.
+pub fn skill_list_entries(skills: Vec<SkillEntry>) -> Vec<SkillListEntry> {
     let installed_names: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
-    Ok(skills
+    skills
         .into_iter()
         .map(|skill| {
             let missing_deps = skill.missing_dependencies(&installed_names);
@@ -263,5 +270,5 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
                 last_resource_status: None,
             }
         })
-        .collect())
+        .collect()
 }

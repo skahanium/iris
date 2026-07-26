@@ -6,8 +6,9 @@
 
 use crate::ai_runtime::run_contract::{
     transition_to, AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse,
-    AssistantRunSnapshot, AssistantSessionRef, ConfirmationTargetSummary, Effect,
-    ExecutionEnvelope, RiskClass, RunEventPayload, RunEventType, RunState, SecurityDomain,
+    AssistantRunSnapshot, AssistantSessionRef, CapabilityId, ConfirmationTargetSummary, Effect,
+    ExecutionEnvelope, ExplicitAction, RiskClass, RunEventPayload, RunEventType, RunState,
+    SecurityDomain,
 };
 use crate::ai_types::{
     ContentPart, ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan,
@@ -829,7 +830,7 @@ impl AgentRunRepository {
                         plan_hash: plan.plan_hash().to_string(),
                         summary: summary.to_string(),
                         effect: Some(Effect::Apply),
-                        targets: Some(redacted_confirmation_targets(plan.relative_paths())),
+                        targets: Some(confirmation_targets(plan.relative_paths())),
                         expires_at: chrono::DateTime::from_timestamp_millis(
                             plan.expires_at_unix_ms(),
                         )
@@ -1314,6 +1315,85 @@ impl AgentRunRepository {
             ))
         })
     }
+
+    /// Persist the policy-approved capability set exactly once for a Run.
+    /// Repeated dispatch attempts must match byte-for-byte after canonical
+    /// sorting; a changed policy result is fail-closed rather than silently
+    /// widening an already accepted Run.
+    pub(crate) fn persist_authorization_snapshot(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+        capabilities: &[CapabilityId],
+    ) -> AppResult<Vec<CapabilityId>> {
+        let canonical = canonical_capabilities(capabilities);
+        let canonical_json = serde_json::to_string(&canonical)?;
+        let authorization_hash = crate::cas::hash::content_hash_str(&canonical_json);
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let owned: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM agent_runs r
+                     JOIN sessions s ON s.id = r.session_id
+                     WHERE r.run_id = ?1 AND s.session_key = ?2",
+                    rusqlite::params![run_id, session_key],
+                    |row| row.get(0),
+                )?;
+                if owned != 1 {
+                    return Err(AppError::msg("agent_run_not_found"));
+                }
+                let existing = conn
+                    .query_row(
+                        "SELECT allowed_capabilities_json
+                         FROM agent_run_authorizations WHERE run_id = ?1",
+                        [run_id],
+                        |row| row.get::<_, String>(0),
+                    )
+                    .optional()?;
+                if let Some(existing) = existing {
+                    if existing != canonical_json {
+                        return Err(AppError::msg("agent_run_authorization_conflict"));
+                    }
+                    return serde_json::from_str(&existing).map_err(AppError::from);
+                }
+                conn.execute(
+                    "INSERT INTO agent_run_authorizations
+                     (run_id, allowed_capabilities_json, authorization_hash, created_at)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![
+                        run_id,
+                        canonical_json,
+                        authorization_hash,
+                        chrono::Utc::now().to_rfc3339(),
+                    ],
+                )?;
+                Ok(canonical)
+            })
+        })
+    }
+
+    /// Read one immutable authorization snapshot only through its owning
+    /// normal-domain session.
+    #[cfg(test)]
+    pub(crate) fn authorization_snapshot_for_session(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+    ) -> AppResult<Option<Vec<CapabilityId>>> {
+        db.with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT a.allowed_capabilities_json
+                 FROM agent_run_authorizations a
+                 JOIN agent_runs r ON r.run_id = a.run_id
+                 JOIN sessions s ON s.id = r.session_id
+                 WHERE a.run_id = ?1 AND s.session_key = ?2",
+                rusqlite::params![run_id, session_key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .map(|json| serde_json::from_str(&json).map_err(AppError::from))
+            .transpose()
+        })
+    }
     /// Read persisted user message and explicit-reference metadata for one normal Run.
     pub(crate) fn prompt_input_for_session(
         db: &Database,
@@ -1324,7 +1404,7 @@ impl AgentRunRepository {
             let stored = conn
                 .query_row(
                     "SELECT r.session_id, m.seq, m.content, m.content_parts,
-                            m.explicit_references_json, m.context_scope_json
+                            m.explicit_references_json, m.context_scope_json, r.explicit_action_json
                      FROM agent_runs r
                      JOIN sessions s ON s.id = r.session_id
                      JOIN session_messages m ON m.session_id = r.session_id AND m.turn_id = r.turn_id
@@ -1338,11 +1418,12 @@ impl AgentRunRepository {
                             row.get::<_, Option<String>>(3)?,
                             row.get::<_, String>(4)?,
                             row.get::<_, String>(5)?,
+                            row.get::<_, Option<String>>(6)?,
                         ))
                     },
                 )
                 .optional()?;
-            let Some((session_id, message_seq_first, message, content_parts_json, references_json, context_scope_json)) = stored else {
+            let Some((session_id, message_seq_first, message, content_parts_json, references_json, context_scope_json, explicit_action_json)) = stored else {
                 return Ok(None);
             };
             let explicit_references = serde_json::from_str(&references_json)
@@ -1357,6 +1438,10 @@ impl AgentRunRepository {
                 explicit_references,
                 retrieval_scope: serde_json::from_str(&context_scope_json)
                     .map_err(|_| AppError::msg("agent_run_invalid_retrieval_scope"))?,
+                explicit_action: explicit_action_json
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()
+                    .map_err(|_| AppError::msg("agent_run_invalid_request"))?,
             }))
         })
     }
@@ -1374,6 +1459,7 @@ impl AgentRunRepository {
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct StoredExplicitReference {
+    pub(crate) id: String,
     pub(crate) kind: ContextReferenceKind,
     pub(crate) file_path: Option<String>,
     pub(crate) content_hash: Option<String>,
@@ -1391,6 +1477,7 @@ pub(crate) struct RunPromptInput {
     pub(crate) content_parts: Option<Vec<ContentPart>>,
     pub(crate) explicit_references: Vec<StoredExplicitReference>,
     pub(crate) retrieval_scope: crate::ai_runtime::retrieval_scope::ContextScopeDto,
+    pub(crate) explicit_action: Option<ExplicitAction>,
 }
 
 #[derive(Serialize)]
@@ -1443,6 +1530,13 @@ fn in_immediate_transaction<T>(
             Err(error)
         }
     }
+}
+
+fn canonical_capabilities(capabilities: &[CapabilityId]) -> Vec<CapabilityId> {
+    let mut canonical = capabilities.to_vec();
+    canonical.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    canonical.dedup_by(|left, right| left.as_str() == right.as_str());
+    canonical
 }
 
 fn ensure_normal_session(conn: &Connection, session_id: i64, session_key: &str) -> AppResult<()> {
@@ -1507,11 +1601,10 @@ fn pending_confirmation_summary(
     }
 }
 
-fn redacted_confirmation_targets(paths: &[String]) -> Vec<ConfirmationTargetSummary> {
+fn confirmation_targets(paths: &[String]) -> Vec<ConfirmationTargetSummary> {
     paths
         .iter()
-        .enumerate()
-        .map(|(index, path)| ConfirmationTargetSummary {
+        .map(|path| ConfirmationTargetSummary {
             kind: if path.starts_with("application://") {
                 "other".to_string()
             } else if path.ends_with(".md") {
@@ -1519,10 +1612,22 @@ fn redacted_confirmation_targets(paths: &[String]) -> Vec<ConfirmationTargetSumm
             } else {
                 "file".to_string()
             },
-            label: format!("目标 {}", index + 1),
+            label: bounded_confirmation_target_label(path),
             risk: RiskClass::BoundedWrite,
         })
         .collect()
+}
+
+fn bounded_confirmation_target_label(path: &str) -> String {
+    const MAX_LABEL_CHARS: usize = 240;
+    let normalized = path.trim().replace('\\', "/");
+    let mut chars = normalized.chars();
+    let prefix = chars.by_ref().take(MAX_LABEL_CHARS).collect::<String>();
+    if chars.next().is_some() {
+        format!("{prefix}…")
+    } else {
+        prefix
+    }
 }
 
 fn accepted_for_client_request(

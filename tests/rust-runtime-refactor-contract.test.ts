@@ -89,7 +89,8 @@ describe("Rust Agent Run runtime module contract", () => {
       expect(parent).toContain(`skills/${module}.rs`);
     }
     expect(activation).toContain("rank_skills_for_task");
-    expect(activation).toContain("active_skills_for_task_prompt");
+    expect(activation).toContain("build_skill_activation_plan_for_task");
+    expect(activation).toContain("activated_skills_from_plan");
     expect(activation).not.toContain("rank_skills_for_scene");
     expect(activation).not.toContain("active_skills_for_prompt");
     expect(frontmatter).toContain("parse_frontmatter");
