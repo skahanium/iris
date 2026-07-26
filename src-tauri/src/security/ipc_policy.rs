@@ -12,6 +12,7 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "llm_base_url",
     "llm_usage_last",
     "follow_system_proxy",
+    "cjk_punctuation_enabled",
 ];
 
 /// Validate credential service id before local encrypted credential access.
@@ -133,6 +134,7 @@ mod tests {
         validate_settings_key("theme").unwrap();
         validate_settings_key("web_search_enabled").unwrap();
         validate_settings_key("follow_system_proxy").unwrap();
+        validate_settings_key("cjk_punctuation_enabled").unwrap();
     }
 
     #[test]

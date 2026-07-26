@@ -102,6 +102,8 @@ export interface SettingsMap {
   auto_version_idle_minutes: number;
   /** Follow OS system proxy / HTTP(S)_PROXY for HTTPS exits (updates, LLM, fetch). */
   follow_system_proxy: boolean;
+  /** Auto-convert ASCII punctuation to full-width CJK punctuation in CJK context. */
+  cjk_punctuation_enabled: boolean;
 }
 
 export async function settingsGet<K extends keyof SettingsMap>(

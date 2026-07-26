@@ -121,6 +121,10 @@ interface AppOverlaysProps {
     proxyStatusLabel: string;
     setFollowSystemProxy: (enabled: boolean) => void;
   };
+  cjkPunctuationSettings: {
+    cjkPunctuationEnabled: boolean;
+    setCjkPunctuationEnabled: (enabled: boolean) => void;
+  };
   bumpVaultIndex: () => void;
   classifiedIdleDeadline: number | null;
   classifiedOpen: boolean;
@@ -199,6 +203,7 @@ export function AppOverlays({
   restoreVersion,
   autoVersionSettings,
   followSystemProxySettings,
+  cjkPunctuationSettings,
   bumpVaultIndex,
   classifiedIdleDeadline,
   classifiedOpen,
@@ -373,6 +378,10 @@ export function AppOverlays({
             proxyStatusLabel={followSystemProxySettings.proxyStatusLabel}
             onFollowSystemProxyChange={
               followSystemProxySettings.setFollowSystemProxy
+            }
+            cjkPunctuationEnabled={cjkPunctuationSettings.cjkPunctuationEnabled}
+            onCjkPunctuationChange={
+              cjkPunctuationSettings.setCjkPunctuationEnabled
             }
             embeddingStatus={embeddingStatus}
             embeddingStatusLoading={embeddingStatusLoading}

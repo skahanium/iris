@@ -22,7 +22,13 @@ import {
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { SkillsPanelBody } from "@/components/ai/SkillsPanel";
@@ -94,6 +100,8 @@ interface ManagementCenterPanelProps {
   followSystemProxy: boolean;
   proxyStatusLabel: string;
   onFollowSystemProxyChange: (enabled: boolean) => void;
+  cjkPunctuationEnabled: boolean;
+  onCjkPunctuationChange: (enabled: boolean) => void;
   embeddingStatus: EmbeddingIndexStatus | null;
   embeddingStatusLoading: boolean;
   onSetEmbeddingPaused: (paused: boolean) => Promise<void>;
@@ -414,6 +422,8 @@ export function ManagementCenterPanel({
   followSystemProxy,
   proxyStatusLabel,
   onFollowSystemProxyChange,
+  cjkPunctuationEnabled,
+  onCjkPunctuationChange,
   embeddingStatus,
   embeddingStatusLoading,
   onSetEmbeddingPaused,
@@ -832,6 +842,19 @@ export function ManagementCenterPanel({
           title="直接保存"
           detail="Cmd/Ctrl+S 只保存当前 Markdown 内容；自动版本追踪是额外安全网。"
         />
+      </PanelSection>
+
+      <PanelSection title="编辑">
+        <SettingRow
+          title="中文标点自动转换"
+          detail="在中文上下文中把英文标点（. , : ; ! ? ( ) 及引号）自动转为全角（。 ， ： ； ！ ？ （ ） “ ” ‘ ’）；代码块、URL、英文段落与 markdown 触发符不受影响。"
+        >
+          <SwitchControl
+            checked={cjkPunctuationEnabled}
+            label="中文标点自动转换"
+            onCheckedChange={onCjkPunctuationChange}
+          />
+        </SettingRow>
       </PanelSection>
     </SectionShell>
   );

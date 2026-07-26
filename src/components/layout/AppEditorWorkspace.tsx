@@ -140,6 +140,7 @@ interface AppEditorWorkspaceProps {
   openNotePaths?: readonly string[];
   onOpenSearch?: () => void;
   zen: boolean;
+  cjkPunctuationEnabled?: boolean;
 }
 
 function displayTitleFromPath(path: string): string {
@@ -244,6 +245,7 @@ export function AppEditorWorkspace({
   openNotePaths = activePath ? [activePath] : [],
   onOpenSearch,
   zen,
+  cjkPunctuationEnabled = true,
 }: AppEditorWorkspaceProps) {
   const { recentNotes, vaultHasNotes } = useHomeRecentNotes({
     enabled: workspaceEmpty,
@@ -834,6 +836,7 @@ export function AppEditorWorkspace({
               zen={zen}
               zoom={editorZoom}
               mediaLoading="visible"
+              cjkPunctuationEnabled={cjkPunctuationEnabled}
               titleSlot={(() => {
                 const showTitle =
                   record.identityKey === currentSurfaceIdentity &&
@@ -915,6 +918,7 @@ export function AppEditorWorkspace({
       applySessionCharDelta,
       vaultPath,
       zen,
+      cjkPunctuationEnabled,
     ],
   );
 
