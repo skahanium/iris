@@ -542,7 +542,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             display_name: "MiMo-V2.5-Pro",
             context_window: 128_000,
             max_output: 8_192,
-            supports_tools: false,
+            supports_tools: true,
             supports_thinking: true,
             supports_vision: true,
             supports_streaming: true,
@@ -556,7 +556,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             display_name: "MiMo-V2.5-Pro-UltraSpeed",
             context_window: 128_000,
             max_output: 8_192,
-            supports_tools: false,
+            supports_tools: true,
             supports_thinking: true,
             supports_vision: true,
             supports_streaming: true,
@@ -570,7 +570,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             display_name: "MiMo-V2.5",
             context_window: 128_000,
             max_output: 8_192,
-            supports_tools: false,
+            supports_tools: true,
             supports_thinking: true,
             supports_vision: true,
             supports_streaming: true,
@@ -863,6 +863,34 @@ mod tests {
         assert!(ids.contains(&"MiMo-V2.5-TTS-VoiceDesign"));
         assert!(!ids.contains(&"mimo-vl-7b-experimental"));
         assert_eq!(fallback_model("mimo").id, "MiMo-V2.5-Pro");
+    }
+
+    #[test]
+    fn openai_compatible_chat_models_support_tools() {
+        for model in catalog_for_settings() {
+            if model.endpoint_family != EndpointFamily::OpenAiCompatibleChatCompletions {
+                continue;
+            }
+            assert!(
+                model.supports_tools,
+                "{} should support tools (chat completions entry)",
+                model.id
+            );
+        }
+    }
+
+    #[test]
+    fn responses_reserved_models_do_not_support_tools() {
+        for model in catalog_for_settings() {
+            if model.endpoint_family != EndpointFamily::ResponsesReserved {
+                continue;
+            }
+            assert!(
+                !model.supports_tools,
+                "{} must not advertise tools (non-chat endpoint)",
+                model.id
+            );
+        }
     }
 
     #[test]
