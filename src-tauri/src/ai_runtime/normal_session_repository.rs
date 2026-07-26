@@ -145,9 +145,10 @@ impl NormalSessionRepository {
                         turn_id: row.get(6)?,
                         context_scope: parse_json_value_or_empty_array(row.get(7)?),
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
-                        web_citations: crate::ai_runtime::citation_linkify::parse_web_citation_entries(
-                            row.get::<_, Option<String>>(9)?.as_deref(),
-                        ),
+                        web_citations:
+                            crate::ai_runtime::citation_linkify::parse_web_citation_entries(
+                                row.get::<_, Option<String>>(9)?.as_deref(),
+                            ),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -225,9 +226,10 @@ impl NormalSessionRepository {
                         turn_id: row.get(6)?,
                         context_scope: parse_json_value_or_empty_array(row.get(7)?),
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
-                        web_citations: crate::ai_runtime::citation_linkify::parse_web_citation_entries(
-                            row.get::<_, Option<String>>(9)?.as_deref(),
-                        ),
+                        web_citations:
+                            crate::ai_runtime::citation_linkify::parse_web_citation_entries(
+                                row.get::<_, Option<String>>(9)?.as_deref(),
+                            ),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;

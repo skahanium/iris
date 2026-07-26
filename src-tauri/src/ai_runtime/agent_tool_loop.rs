@@ -63,13 +63,14 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
     }
 
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
+    /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
     fn emit_deferred_web_degradation_if_needed(
         &self,
         _db: &Database,
         _sink: &dyn RunEventSink,
-    ) -> AppResult<()> {
-        Ok(())
+    ) -> AppResult<bool> {
+        Ok(false)
     }
 }
 

@@ -28,9 +28,8 @@ use super::agent_capacity_eval::{
     LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate, LlmProtocolDouble,
     McpCapabilityContract, McpOperation, McpTransportContract, McpTransportFailureContract,
     ObservedSource, PressureDimension, ProtocolContractOutcome, ProtocolValidationLevel,
-    RequiredFact, ScenarioLanguage, SourceKind, StableLevelObservation,
-    VerdictReason, TruncationOutcome,
-    WebAnswerContamination, WebState,
+    RequiredFact, ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
+    VerdictReason, WebAnswerContamination, WebState,
 };
 
 #[test]

@@ -908,11 +908,7 @@ mod tests {
 
     #[test]
     fn mimo_chat_models_do_not_advertise_vision() {
-        for model_id in [
-            "MiMo-V2.5-Pro",
-            "MiMo-V2.5-Pro-UltraSpeed",
-            "mimo-v2.5",
-        ] {
+        for model_id in ["MiMo-V2.5-Pro", "MiMo-V2.5-Pro-UltraSpeed", "mimo-v2.5"] {
             let model = find_model(model_id)
                 .unwrap_or_else(|| panic!("model {model_id} not found in catalog"));
             assert!(

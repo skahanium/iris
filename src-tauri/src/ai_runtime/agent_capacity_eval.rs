@@ -708,10 +708,7 @@ pub(crate) fn evaluate_case(
             .allowed_sources
             .iter()
             .all(|source_id| source_kinds.get(source_id.as_str()) == Some(&SourceKind::Web));
-        if offline_web
-            && web_only
-            && degradation_or_clarification.status == CheckStatus::Pass
-        {
+        if offline_web && web_only && degradation_or_clarification.status == CheckStatus::Pass {
             return false;
         }
         if online_web
@@ -1434,9 +1431,9 @@ fn validate_observation(
                 return Err(EvalContractError::new("observation_fact_support_duplicate"));
             }
             if !fact.allowed_sources.contains(source_id)
-                || (!observed_source_ids.contains(source_id.as_str())
-                    && !(online_degraded_without_web
-                        && sources.get(source_id.as_str()) == Some(&SourceKind::Web)))
+                || !(observed_source_ids.contains(source_id.as_str())
+                    || online_degraded_without_web
+                        && sources.get(source_id.as_str()) == Some(&SourceKind::Web))
             {
                 return Err(EvalContractError::new("observation_fact_support_invalid"));
             }
@@ -7846,7 +7843,10 @@ pub(crate) async fn run_security_track() -> Result<Vec<SecurityCaseResult>, Eval
             domain: SecurityTrackDomain::OnlineWebDegradation,
             witness: SecurityExecutionEvidence::HeadlessOnlineWebDegradationDisclosed,
             passed: completed(&online_web_disclosed)
-                && online_web_disclosed.summary.runtime_evidence.degradation_observed
+                && online_web_disclosed
+                    .summary
+                    .runtime_evidence
+                    .degradation_observed
                 && online_web_disclosed
                     .summary
                     .verdict
@@ -7860,7 +7860,10 @@ pub(crate) async fn run_security_track() -> Result<Vec<SecurityCaseResult>, Eval
             domain: SecurityTrackDomain::OnlineWebDegradation,
             witness: SecurityExecutionEvidence::HeadlessOnlineWebDegradationFabricationBlocked,
             passed: completed(&online_web_fabrication)
-                && online_web_fabrication.summary.runtime_evidence.degradation_observed
+                && online_web_fabrication
+                    .summary
+                    .runtime_evidence
+                    .degradation_observed
                 && online_web_fabrication
                     .summary
                     .verdict

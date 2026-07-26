@@ -1946,7 +1946,7 @@ impl RunEngine {
         )? {
             return Ok(());
         }
-        executor.emit_deferred_web_degradation_if_needed(db, sink)?;
+        let web_degraded = executor.emit_deferred_web_degradation_if_needed(db, sink)?;
         if !observer.emitted_generating_answer_stage() {
             if let Err(error) = observer.emit_generating_answer_stage_if_needed() {
                 if settle_cancelled_run_with_partial(
@@ -1991,7 +1991,8 @@ impl RunEngine {
                 );
             }
         }
-        if let Err(error) = apply_required_web_degradation_notice(db, session, run_id, &mut content)
+        if let Err(error) =
+            apply_required_web_degradation_notice(db, session, run_id, &mut content, web_degraded)
         {
             return fail_finalization_with_sink(
                 db,
@@ -2232,7 +2233,8 @@ impl RunEngine {
                 );
             }
         }
-        if let Err(error) = apply_required_web_degradation_notice(db, session, run_id, &mut content)
+        if let Err(error) =
+            apply_required_web_degradation_notice(db, session, run_id, &mut content, false)
         {
             return fail_finalization_with_sink(
                 db,
@@ -2284,14 +2286,21 @@ impl RunEngine {
     }
 }
 
+/// Prepend an inline disclosure blockquote when Web search degraded without usable evidence.
+/// The `capability_degraded` event is still emitted separately for diagnostics/eval; this
+/// function only rewrites the persisted answer body so the user sees the notice inline
+/// instead of a separate banner.
 fn apply_required_web_degradation_notice(
     _db: &Database,
     _session: &AssistantSessionRef,
     _run_id: &str,
-    _content: &mut String,
+    content: &mut String,
+    web_degraded: bool,
 ) -> AppResult<()> {
-    // Historical WebRequired runs appended a forced notice into model output.
-    // Online emits CapabilityDegraded and continues without rewriting the answer here.
+    if !web_degraded || content.trim().is_empty() {
+        return Ok(());
+    }
+    *content = format!("> 联网搜索未取得结果，以下为离线回答。\n\n{content}");
     Ok(())
 }
 
@@ -2483,8 +2492,7 @@ fn emit_run_terminal(
     evidence_ids: Vec<i64>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
-    let citation_map = match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids)
-    {
+    let citation_map = match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
         Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(&cites),
         Err(error) => {
             tracing::warn!(
@@ -2754,5 +2762,54 @@ pub(crate) fn gateway_request_for_messages(
         reasoning,
         continuation: None,
         skip_stub_ids: vec![],
+    }
+}
+
+#[cfg(test)]
+mod apply_notice_tests {
+    use super::apply_required_web_degradation_notice;
+    use crate::ai_runtime::run_contract::AssistantSessionRef;
+    use crate::storage::db::Database;
+
+    fn dummy_session() -> AssistantSessionRef {
+        use crate::ai_runtime::run_contract::SecurityDomain;
+        AssistantSessionRef {
+            domain: SecurityDomain::Normal,
+            session_key: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn prepends_notice_when_web_degraded_and_content_nonempty() {
+        let db = Database::open_in_memory().expect("database");
+        let session = dummy_session();
+        let mut content = "这是模型回答。".to_string();
+        apply_required_web_degradation_notice(&db, &session, "run-1", &mut content, true)
+            .expect("notice apply");
+        assert!(
+            content.starts_with("> 联网搜索未取得结果，以下为离线回答。"),
+            "content should start with notice blockquote, got: {content}"
+        );
+        assert!(content.contains("这是模型回答。"));
+    }
+
+    #[test]
+    fn does_not_inject_when_not_degraded() {
+        let db = Database::open_in_memory().expect("database");
+        let session = dummy_session();
+        let mut content = "这是模型回答。".to_string();
+        apply_required_web_degradation_notice(&db, &session, "run-1", &mut content, false)
+            .expect("notice apply");
+        assert_eq!(content, "这是模型回答。");
+    }
+
+    #[test]
+    fn does_not_inject_when_content_empty() {
+        let db = Database::open_in_memory().expect("database");
+        let session = dummy_session();
+        let mut content = "   ".to_string();
+        apply_required_web_degradation_notice(&db, &session, "run-1", &mut content, true)
+            .expect("notice apply");
+        assert_eq!(content, "   ");
     }
 }

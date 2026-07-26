@@ -638,7 +638,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         &self,
         db: &Database,
         sink: &dyn RunEventSink,
-    ) -> AppResult<()> {
+    ) -> AppResult<bool> {
         NormalRunToolExecutor::emit_deferred_web_degradation_if_needed(self, db, sink)
     }
 }
@@ -646,11 +646,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 impl NormalRunToolExecutor<'_> {
     /// Emit `capability_degraded` once after a successful tool loop when Web attempts
     /// failed and no usable Web evidence was registered for this Run.
+    /// Returns `true` when the event was emitted on this call.
     pub(crate) fn emit_deferred_web_degradation_if_needed(
         &self,
         db: &Database,
         sink: &dyn RunEventSink,
-    ) -> AppResult<()> {
+    ) -> AppResult<bool> {
         emit_deferred_web_degradation(
             DeferredWebDegradationInput {
                 db,
@@ -1002,12 +1003,12 @@ struct DeferredWebDegradationInput<'a> {
 fn emit_deferred_web_degradation(
     input: DeferredWebDegradationInput<'_>,
     mark_emitted: &mut dyn FnMut() -> AppResult<bool>,
-) -> AppResult<()> {
+) -> AppResult<bool> {
     let Some(failure) = input.web_failure else {
-        return Ok(());
+        return Ok(false);
     };
     if input.has_web_evidence {
-        return Ok(());
+        return Ok(false);
     }
     if mark_emitted()? {
         append_capability_degraded(
@@ -1017,8 +1018,10 @@ fn emit_deferred_web_degradation(
             failure,
             input.attempt_count,
         )?;
+        Ok(true)
+    } else {
+        Ok(false)
     }
-    Ok(())
 }
 
 fn append_capability_degraded(
@@ -1312,7 +1315,7 @@ mod tests {
         let sink = RecordingSink::default();
         let mut emitted = false;
 
-        emit_deferred_web_degradation(
+        let emitted_now = emit_deferred_web_degradation(
             DeferredWebDegradationInput {
                 db: &db,
                 accepted: &accepted,
@@ -1330,6 +1333,7 @@ mod tests {
             },
         )
         .expect("emit deferred degradation");
+        assert!(emitted_now);
 
         let events = sink.events.lock().expect("events");
         assert_eq!(capability_degraded_count(&events), 1);
@@ -1339,7 +1343,7 @@ mod tests {
             SafeRunErrorCode::WebProviderTimeout.as_str()
         );
 
-        emit_deferred_web_degradation(
+        let second = emit_deferred_web_degradation(
             DeferredWebDegradationInput {
                 db: &db,
                 accepted: &accepted,
@@ -1351,6 +1355,7 @@ mod tests {
             &mut || Ok(false),
         )
         .expect("second emit is idempotent");
+        assert!(!second);
         assert_eq!(capability_degraded_count(&events), 1);
     }
 

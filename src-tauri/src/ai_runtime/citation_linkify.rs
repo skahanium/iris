@@ -304,11 +304,7 @@ pub(crate) fn parse_web_citation_entries(raw: Option<&str>) -> Vec<WebCitationEn
         if index <= 0 || !url.starts_with("https://") {
             continue;
         }
-        out.push(WebCitationEntry {
-            index,
-            title,
-            url,
-        });
+        out.push(WebCitationEntry { index, title, url });
     }
     out.sort_by_key(|entry| entry.index);
     out
