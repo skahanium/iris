@@ -96,6 +96,8 @@ AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 bra
 - 进入供应商详情时同步更新 overlay 的 `managementCenterProviderId`，以支持深链恢复与面板内导航一致。
 - 供应商列表行使用 `rounded-lg border-border/65 bg-background/55` 与 `Button asChild variant="ghost"` 包裹整行可点区域；钻取入口用右侧 `ChevronRight`，勿用裸「配置」文案。状态点：`bg-success`（就绪/Key 已配置/映射完整）、`bg-amber-500`（待完善）、`bg-muted-foreground/60`（未启用）；须配 `aria-label`。
 - AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
+- 二级/三级详情页顶栏采用「左侧弱化返回按钮（`rounded-full` + `border-border-subtle` + `text-muted-foreground` + `aria-label="返回 X"`）+ 跨行居中标题/副标题」结构；返回按钮与主标题视觉分层，不再左对齐混排。
+- 进入 MCP 第三级（`managementCenterProviderId` 非空）时，二级「联网搜索」PanelSection（当前搜索提供方、联网已开启）整体隐藏，仅保留 `McpProfilesPanel` 详情；返回列表时恢复。
 
 ## 交互规则
 
