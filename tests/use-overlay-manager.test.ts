@@ -53,14 +53,25 @@ describe("useOverlayManager state transitions", () => {
       activeOverlay: "managementCenter",
       managementCenterSection: "ai",
       managementCenterDetail: "skills",
+      managementCenterProviderId: null,
     });
 
-    state = openManagementCenterState(state, "notes", "file-sheet");
+    state = openManagementCenterState(state, "ai", "models", "mimo");
+
+    expect(state).toEqual({
+      activeOverlay: "managementCenter",
+      managementCenterSection: "ai",
+      managementCenterDetail: "models",
+      managementCenterProviderId: "mimo",
+    });
+
+    state = openManagementCenterState(state, "notes", "file-sheet", null);
 
     expect(state).toEqual({
       activeOverlay: "managementCenter",
       managementCenterSection: "notes",
       managementCenterDetail: "file-sheet",
+      managementCenterProviderId: null,
     });
 
     state = openOverlayState(state, "quickOpen");
@@ -69,6 +80,7 @@ describe("useOverlayManager state transitions", () => {
       activeOverlay: "quickOpen",
       managementCenterSection: "overview",
       managementCenterDetail: null,
+      managementCenterProviderId: null,
     });
   });
 });

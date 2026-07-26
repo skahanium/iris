@@ -36,6 +36,8 @@ export interface OverlayState {
   activeOverlay: OverlayId | null;
   managementCenterSection?: ManagementCenterSection;
   managementCenterDetail?: ManagementCenterDetail;
+  /** LLM provider id or MCP web-evidence provider id while in AI detail sub-pages. */
+  managementCenterProviderId?: string | null;
 }
 
 export function openOverlayState(
@@ -46,6 +48,7 @@ export function openOverlayState(
     activeOverlay: id,
     managementCenterSection: "overview",
     managementCenterDetail: null,
+    managementCenterProviderId: null,
   };
 }
 
@@ -53,11 +56,13 @@ export function openManagementCenterState(
   _state: OverlayState,
   section: ManagementCenterSection = "overview",
   detail: ManagementCenterDetail = null,
+  providerId: string | null = null,
 ): OverlayState {
   return {
     activeOverlay: "managementCenter",
     managementCenterSection: section,
     managementCenterDetail: detail,
+    managementCenterProviderId: providerId,
   };
 }
 
@@ -70,6 +75,7 @@ export function closeOverlayState(
     activeOverlay: null,
     managementCenterSection: "overview",
     managementCenterDetail: null,
+    managementCenterProviderId: null,
   };
 }
 
@@ -86,11 +92,13 @@ export function useOverlayManager() {
     activeOverlay: null,
     managementCenterSection: "overview",
     managementCenterDetail: null,
+    managementCenterProviderId: null,
   });
   const {
     activeOverlay,
     managementCenterSection = "overview",
     managementCenterDetail = null,
+    managementCenterProviderId = null,
   } = overlayState;
 
   const updateOverlay = useCallback(
@@ -114,10 +122,21 @@ export function useOverlayManager() {
     (
       section: ManagementCenterSection = "overview",
       detail: ManagementCenterDetail = null,
+      providerId: string | null = null,
     ) =>
       updateOverlay((state) =>
-        openManagementCenterState(state, section, detail),
+        openManagementCenterState(state, section, detail, providerId),
       ),
+    [updateOverlay],
+  );
+
+  const setManagementCenterProviderId = useCallback(
+    (providerId: string | null) => {
+      updateOverlay((state) => ({
+        ...state,
+        managementCenterProviderId: providerId,
+      }));
+    },
     [updateOverlay],
   );
 
@@ -153,6 +172,8 @@ export function useOverlayManager() {
     isOverlayOpen: (id: OverlayId) => activeOverlay === id,
     managementCenterSection,
     managementCenterDetail,
+    managementCenterProviderId,
+    setManagementCenterProviderId,
     quickOpen,
     setQuickOpen: (open: boolean) => setOverlayOpen("quickOpen", open),
     fileSheet,

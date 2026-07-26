@@ -79,6 +79,26 @@ function button(host: HTMLElement, text: string): HTMLButtonElement {
   return result;
 }
 
+async function openMcpAdvanced(host: HTMLElement) {
+  await act(async () => {
+    host
+      .querySelector('[data-testid="mcp-provider-advanced-trigger"]')
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await flush();
+}
+
+async function openFirstMcpProviderDetail(host: HTMLElement) {
+  const card = host.querySelector('[data-testid="mcp-provider-card"]');
+  if (!card) {
+    throw new Error("missing MCP provider list card");
+  }
+  await act(async () => {
+    (card as HTMLButtonElement).click();
+  });
+  await flush();
+}
+
 describe("McpProfilesPanel 实时诊断", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -131,6 +151,9 @@ describe("McpProfilesPanel 实时诊断", () => {
     expect(ipcMocks.webEvidenceProviderDiagnostics).not.toHaveBeenCalled();
     expect(host.textContent).not.toContain("实时可用性");
     expect(host.textContent).not.toContain("测试连接");
+
+    await openFirstMcpProviderDetail(host);
+
     expect(
       Array.from(host.querySelectorAll("button")).filter(
         (item) => item.textContent?.trim() === "实时诊断",
@@ -163,6 +186,7 @@ describe("McpProfilesPanel 实时诊断", () => {
       root.render(<McpProfilesPanel open />);
     });
     await flush();
+    await openFirstMcpProviderDetail(host);
 
     const runDiagnostics = async () => {
       await act(async () => {
@@ -188,6 +212,12 @@ describe("McpProfilesPanel 实时诊断", () => {
 
     await runDiagnostics();
     await act(async () => {
+      host
+        .querySelector('[data-testid="mcp-provider-advanced-trigger"]')
+        ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+    await act(async () => {
       button(host, "添加凭据引用").click();
     });
     expect(host.textContent).not.toContain("实时可用性");
@@ -208,6 +238,7 @@ describe("McpProfilesPanel 实时诊断", () => {
       root.render(<McpProfilesPanel open />);
     });
     await flush();
+    await openFirstMcpProviderDetail(host);
 
     await act(async () => {
       button(host, "实时诊断").click();
@@ -228,6 +259,8 @@ describe("McpProfilesPanel 实时诊断", () => {
       root.render(<McpProfilesPanel open />);
     });
     await flush();
+    await openFirstMcpProviderDetail(host);
+    await openMcpAdvanced(host);
 
     await act(async () => {
       button(host, "清除 Key").click();
@@ -245,9 +278,10 @@ describe("McpProfilesPanel 实时诊断", () => {
       root.render(<McpProfilesPanel open />);
     });
     await flush();
+    await openFirstMcpProviderDetail(host);
 
     const input = host.querySelector<HTMLInputElement>(
-      'input[type="password"]',
+      '[data-testid="mcp-provider-basic-key"] input[type="password"]',
     );
     if (!input) throw new Error("missing API Key input");
     await act(async () => {

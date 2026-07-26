@@ -11,6 +11,7 @@ export type CommandPaletteAction =
       type: "openManagementCenter";
       section: ManagementCenterSection;
       detail?: ManagementCenterDetail;
+      providerId?: string | null;
     }
   | { type: "openClassifiedPanel" }
   | { type: "openFindReplace"; mode: "find" | "replace" }

@@ -1,6 +1,12 @@
 ﻿import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronLeft } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -38,6 +44,9 @@ interface McpProfileCardProps {
   credentialConfiguredByService?: Record<string, boolean>;
   saving?: boolean;
   persisted?: boolean;
+  surface?: "list" | "detail";
+  onSelect?: () => void;
+  onBack?: () => void;
   onSave: (
     input: WebEvidenceProviderInput,
     credentialSaves: McpCredentialSave[],
@@ -397,6 +406,9 @@ export function McpProfileCard({
   credentialConfiguredByService,
   saving = false,
   persisted = true,
+  surface = "detail",
+  onSelect,
+  onBack,
   onSave,
   onToggle,
   onDelete,
@@ -614,8 +626,49 @@ export function McpProfileCard({
     ? "border-success/25 bg-success-bg text-success-foreground"
     : "border-border bg-muted/40 text-muted-foreground";
 
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const listPresetLabel =
+    findMcpProviderPreset(presetIdFromProvider(provider))?.label ?? "自定义";
+
+  if (surface === "list") {
+    return (
+      <button
+        type="button"
+        data-testid="mcp-provider-card"
+        className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/65 bg-background/55 p-3 text-left transition-colors hover:bg-muted/30"
+        onClick={onSelect}
+      >
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-foreground">
+            {provider.name || "MCP 联网证据提供方"}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {listPresetLabel} · {enabled ? "已启用" : "未启用"}
+          </p>
+        </div>
+        <span className="shrink-0 text-[11px] text-muted-foreground">配置</span>
+      </button>
+    );
+  }
+
   return (
-    <article className="space-y-4 rounded-lg border border-border/65 bg-background/55 p-4">
+    <article
+      data-testid="mcp-provider-detail"
+      className="space-y-4 rounded-lg border border-border/65 bg-background/55 p-4"
+    >
+      {onBack ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-testid="mcp-provider-detail-back"
+          className="h-8 gap-1.5"
+          onClick={onBack}
+        >
+          <ChevronLeft className="h-4 w-4" />
+          联网与证据
+        </Button>
+      ) : null}
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -688,7 +741,7 @@ export function McpProfileCard({
         </label>
       </section>
 
-      <div className="grid gap-3 md:grid-cols-2">
+      <div className="max-w-xl">
         <label className="space-y-1 text-xs font-medium text-foreground">
           提供方名称
           <Input
@@ -701,306 +754,374 @@ export function McpProfileCard({
             }}
           />
         </label>
-        <label className="space-y-1 text-xs font-medium text-foreground">
-          连接方式
-          <Select
-            value={transportKind}
-            disabled={saving}
-            onValueChange={(value) => {
-              onConfigurationChanged();
-              setTransportKind(editableTransportKind(value));
-            }}
-          >
-            <SelectTrigger className="h-9 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="https">HTTPS 服务</SelectItem>
-              <SelectItem value="stdio">本地命令 (stdio)</SelectItem>
-            </SelectContent>
-          </Select>
-        </label>
       </div>
 
-      {transportKind === "stdio" ? (
-        <section className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
-            <label className="space-y-1 text-xs font-medium text-foreground">
-              stdio 启动命令
+      {credentialRows.length > 0 ? (
+        <section className="space-y-2" data-testid="mcp-provider-basic-key">
+          <p className="text-xs font-medium text-foreground">API Key</p>
+          {credentialRows.map((row) => (
+            <label
+              key={row.id}
+              className="block space-y-1 text-xs text-muted-foreground"
+            >
+              {row.label ?? row.name ?? "API Key"}
               <Input
-                value={stdioConfig.command}
+                type="password"
+                value={row.secretValue}
                 disabled={saving}
                 spellCheck={false}
-                placeholder="例如：npx"
+                placeholder={row.placeholder ?? "仅填原始 Key，不含 Bearer"}
+                onChange={(event) =>
+                  updateCredentialRow(row.id, {
+                    secretValue: event.target.value,
+                  })
+                }
+              />
+            </label>
+          ))}
+          <p className="text-[11px] text-muted-foreground">
+            凭据状态：{credentialState}
+          </p>
+        </section>
+      ) : null}
+
+      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <CollapsibleTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1.5 text-xs text-muted-foreground"
+            data-testid="mcp-provider-advanced-trigger"
+          >
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 transition-transform duration-fast",
+                advancedOpen && "rotate-180",
+              )}
+            />
+            高级设置
+          </Button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-4 border-t border-border-subtle pt-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="space-y-1 text-xs font-medium text-foreground">
+              连接方式
+              <Select
+                value={transportKind}
+                disabled={saving}
+                onValueChange={(value) => {
+                  onConfigurationChanged();
+                  setTransportKind(editableTransportKind(value));
+                }}
+              >
+                <SelectTrigger className="h-9 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="https">HTTPS 服务</SelectItem>
+                  <SelectItem value="stdio">本地命令 (stdio)</SelectItem>
+                </SelectContent>
+              </Select>
+            </label>
+          </div>
+
+          {transportKind === "stdio" ? (
+            <section className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                <label className="space-y-1 text-xs font-medium text-foreground">
+                  stdio 启动命令
+                  <Input
+                    value={stdioConfig.command}
+                    disabled={saving}
+                    spellCheck={false}
+                    placeholder="例如：npx"
+                    onChange={(event) => {
+                      onConfigurationChanged();
+                      setStdioConfig((current) => ({
+                        ...current,
+                        command: event.target.value,
+                      }));
+                    }}
+                  />
+                </label>
+                <label className="space-y-1 text-xs font-medium text-foreground">
+                  启动参数
+                  <Textarea
+                    value={stdioConfig.argsText}
+                    disabled={saving}
+                    rows={3}
+                    spellCheck={false}
+                    placeholder={"每行一个参数，例如：\n-y\nmcp-searxng"}
+                    onChange={(event) => {
+                      onConfigurationChanged();
+                      setStdioConfig((current) => ({
+                        ...current,
+                        argsText: event.target.value,
+                      }));
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="space-y-2 rounded-md border border-border/60 bg-surface-inset/25 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-foreground">
+                    非敏感环境变量
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={saving}
+                    onClick={addPlainEnvRow}
+                  >
+                    添加环境变量
+                  </Button>
+                </div>
+                {stdioConfig.envRows.length > 0 ? (
+                  <div className="space-y-2">
+                    {stdioConfig.envRows.map((row) => (
+                      <div
+                        key={row.id}
+                        className="grid gap-2 md:grid-cols-[minmax(0,0.7fr)_minmax(0,1fr)_auto]"
+                      >
+                        <Input
+                          value={row.name}
+                          disabled={saving}
+                          spellCheck={false}
+                          placeholder={row.label ?? "变量名，例如 SEARXNG_URL"}
+                          onChange={(event) =>
+                            updatePlainEnvRow(row.id, {
+                              name: event.target.value,
+                            })
+                          }
+                        />
+                        <Input
+                          value={row.value}
+                          disabled={saving}
+                          spellCheck={false}
+                          placeholder={row.placeholder ?? "变量值"}
+                          onChange={(event) =>
+                            updatePlainEnvRow(row.id, {
+                              value: event.target.value,
+                            })
+                          }
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={saving}
+                          onClick={() => removePlainEnvRow(row.id)}
+                        >
+                          移除
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+              <label className="space-y-1 text-xs font-medium text-foreground">
+                HTTPS 服务地址
+                <Input
+                  value={httpsConfig.url}
+                  disabled={saving}
+                  spellCheck={false}
+                  placeholder="https://api.anysearch.com/mcp"
+                  onChange={(event) => {
+                    onConfigurationChanged();
+                    setHttpsConfig((current) => ({
+                      ...current,
+                      url: event.target.value,
+                    }));
+                  }}
+                />
+              </label>
+              <label className="flex items-center gap-2 self-end rounded-md border border-border/65 bg-card px-3 py-2 text-xs font-medium text-foreground">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border accent-primary"
+                  checked={httpsConfig.allowLocalhostDev}
+                  disabled={saving}
+                  onChange={(event) => {
+                    onConfigurationChanged();
+                    setHttpsConfig((current) => ({
+                      ...current,
+                      allowLocalhostDev: event.target.checked,
+                    }));
+                  }}
+                />
+                允许连接本机开发服务
+              </label>
+            </div>
+          )}
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="space-y-1 text-xs font-medium text-foreground">
+              搜索工具映射
+              <Input
+                value={searchTool}
+                disabled={saving}
+                spellCheck={false}
+                placeholder="例如：search"
                 onChange={(event) => {
                   onConfigurationChanged();
-                  setStdioConfig((current) => ({
-                    ...current,
-                    command: event.target.value,
-                  }));
+                  setSearchTool(event.target.value);
                 }}
               />
             </label>
             <label className="space-y-1 text-xs font-medium text-foreground">
-              启动参数
-              <Textarea
-                value={stdioConfig.argsText}
+              网页读取工具映射
+              <Input
+                value={fetchTool}
                 disabled={saving}
-                rows={3}
                 spellCheck={false}
-                placeholder={"每行一个参数，例如：\n-y\nmcp-searxng"}
+                placeholder="例如：extract"
                 onChange={(event) => {
                   onConfigurationChanged();
-                  setStdioConfig((current) => ({
-                    ...current,
-                    argsText: event.target.value,
-                  }));
+                  setFetchTool(event.target.value);
                 }}
               />
             </label>
           </div>
-          <div className="space-y-2 rounded-md border border-border/60 bg-surface-inset/25 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-medium text-foreground">
-                非敏感环境变量
-              </p>
+
+          <section className="space-y-2 rounded-md border border-border/60 bg-surface-inset/25 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-foreground">
+                  系统凭据引用
+                </p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  API Key 只写入本地加密凭据；Provider
+                  配置只保存引用名、请求头/环境变量名和 Bearer 方案。当前状态：
+                  {credentialState}。厂商控制台「Last Used」不一定统计
+                  MCP，不能单独作为是否带 Key 的依据。
+                </p>
+              </div>
               <Button
                 type="button"
                 size="sm"
                 variant="outline"
                 disabled={saving}
-                onClick={addPlainEnvRow}
+                onClick={addCredentialRow}
               >
-                添加环境变量
+                添加凭据引用
               </Button>
             </div>
-            {stdioConfig.envRows.length > 0 ? (
+
+            {credentialRows.length > 0 ? (
               <div className="space-y-2">
-                {stdioConfig.envRows.map((row) => (
+                {credentialRows.map((row) => (
                   <div
                     key={row.id}
-                    className="grid gap-2 md:grid-cols-[minmax(0,0.7fr)_minmax(0,1fr)_auto]"
+                    className="grid gap-2 md:grid-cols-[110px_minmax(0,0.7fr)_minmax(0,0.9fr)_minmax(0,1fr)_auto_auto]"
                   >
+                    <Select
+                      value={row.target}
+                      disabled={saving}
+                      onValueChange={(value) =>
+                        updateCredentialRow(row.id, {
+                          target: value === "env" ? "env" : "header",
+                        })
+                      }
+                    >
+                      <SelectTrigger className="h-9 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="header">请求头</SelectItem>
+                        <SelectItem value="env">环境变量</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Input
                       value={row.name}
                       disabled={saving}
                       spellCheck={false}
-                      placeholder={row.label ?? "变量名，例如 SEARXNG_URL"}
+                      placeholder={
+                        row.target === "header"
+                          ? "Authorization"
+                          : "BRAVE_API_KEY"
+                      }
                       onChange={(event) =>
-                        updatePlainEnvRow(row.id, { name: event.target.value })
+                        updateCredentialRow(row.id, {
+                          name: event.target.value,
+                        })
                       }
                     />
                     <Input
-                      value={row.value}
+                      value={row.ref}
                       disabled={saving}
                       spellCheck={false}
-                      placeholder={row.placeholder ?? "变量值"}
+                      placeholder="iris.mcp.anysearch"
                       onChange={(event) =>
-                        updatePlainEnvRow(row.id, { value: event.target.value })
+                        updateCredentialRow(row.id, { ref: event.target.value })
+                      }
+                    />
+                    <Input
+                      type="password"
+                      value={row.secretValue}
+                      disabled={saving}
+                      spellCheck={false}
+                      placeholder={
+                        row.placeholder ??
+                        `${row.label ?? "API Key"}${row.optional ? "（可选）" : ""}；仅填原始 Key，不含 Bearer`
+                      }
+                      onChange={(event) =>
+                        updateCredentialRow(row.id, {
+                          secretValue: event.target.value,
+                        })
                       }
                     />
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
+                      disabled={
+                        saving || !persisted || row.ref.trim().length === 0
+                      }
+                      title={
+                        !persisted
+                          ? "请先保存提供方，再清除已保存 Key"
+                          : undefined
+                      }
+                      onClick={() => {
+                        setCredentialError(null);
+                        void onClearCredential(row.ref.trim());
+                        updateCredentialRow(row.id, { secretValue: "" });
+                      }}
+                    >
+                      清除 Key
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
                       disabled={saving}
-                      onClick={() => removePlainEnvRow(row.id)}
+                      onClick={() => removeCredentialRow(row.id)}
                     >
                       移除
                     </Button>
                   </div>
                 ))}
               </div>
-            ) : null}
-          </div>
-        </section>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
-          <label className="space-y-1 text-xs font-medium text-foreground">
-            HTTPS 服务地址
-            <Input
-              value={httpsConfig.url}
-              disabled={saving}
-              spellCheck={false}
-              placeholder="https://api.anysearch.com/mcp"
-              onChange={(event) => {
-                onConfigurationChanged();
-                setHttpsConfig((current) => ({
-                  ...current,
-                  url: event.target.value,
-                }));
-              }}
-            />
-          </label>
-          <label className="flex items-center gap-2 self-end rounded-md border border-border/65 bg-card px-3 py-2 text-xs font-medium text-foreground">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-border accent-primary"
-              checked={httpsConfig.allowLocalhostDev}
-              disabled={saving}
-              onChange={(event) => {
-                onConfigurationChanged();
-                setHttpsConfig((current) => ({
-                  ...current,
-                  allowLocalhostDev: event.target.checked,
-                }));
-              }}
-            />
-            允许连接本机开发服务
-          </label>
-        </div>
-      )}
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                当前预设不需要 API Key；如服务侧要求鉴权，可添加请求头或环境变量
+                凭据引用。
+              </p>
+            )}
+          </section>
+        </CollapsibleContent>
+      </Collapsible>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <label className="space-y-1 text-xs font-medium text-foreground">
-          搜索工具映射
-          <Input
-            value={searchTool}
-            disabled={saving}
-            spellCheck={false}
-            placeholder="例如：search"
-            onChange={(event) => {
-              onConfigurationChanged();
-              setSearchTool(event.target.value);
-            }}
-          />
-        </label>
-        <label className="space-y-1 text-xs font-medium text-foreground">
-          网页读取工具映射
-          <Input
-            value={fetchTool}
-            disabled={saving}
-            spellCheck={false}
-            placeholder="例如：extract"
-            onChange={(event) => {
-              onConfigurationChanged();
-              setFetchTool(event.target.value);
-            }}
-          />
-        </label>
-      </div>
-
-      <section className="space-y-2 rounded-md border border-border/60 bg-surface-inset/25 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-xs font-medium text-foreground">系统凭据引用</p>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              API Key 只写入本地加密凭据；Provider
-              配置只保存引用名、请求头/环境变量名和 Bearer 方案。当前状态：
-              {credentialState}。厂商控制台「Last Used」不一定统计
-              MCP，不能单独作为是否带 Key 的依据。
-            </p>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={saving}
-            onClick={addCredentialRow}
-          >
-            添加凭据引用
-          </Button>
-        </div>
-
-        {credentialRows.length > 0 ? (
-          <div className="space-y-2">
-            {credentialRows.map((row) => (
-              <div
-                key={row.id}
-                className="grid gap-2 md:grid-cols-[110px_minmax(0,0.7fr)_minmax(0,0.9fr)_minmax(0,1fr)_auto_auto]"
-              >
-                <Select
-                  value={row.target}
-                  disabled={saving}
-                  onValueChange={(value) =>
-                    updateCredentialRow(row.id, {
-                      target: value === "env" ? "env" : "header",
-                    })
-                  }
-                >
-                  <SelectTrigger className="h-9 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="header">请求头</SelectItem>
-                    <SelectItem value="env">环境变量</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Input
-                  value={row.name}
-                  disabled={saving}
-                  spellCheck={false}
-                  placeholder={
-                    row.target === "header" ? "Authorization" : "BRAVE_API_KEY"
-                  }
-                  onChange={(event) =>
-                    updateCredentialRow(row.id, { name: event.target.value })
-                  }
-                />
-                <Input
-                  value={row.ref}
-                  disabled={saving}
-                  spellCheck={false}
-                  placeholder="iris.mcp.anysearch"
-                  onChange={(event) =>
-                    updateCredentialRow(row.id, { ref: event.target.value })
-                  }
-                />
-                <Input
-                  type="password"
-                  value={row.secretValue}
-                  disabled={saving}
-                  spellCheck={false}
-                  placeholder={
-                    row.placeholder ??
-                    `${row.label ?? "API Key"}${row.optional ? "（可选）" : ""}；仅填原始 Key，不含 Bearer`
-                  }
-                  onChange={(event) =>
-                    updateCredentialRow(row.id, {
-                      secretValue: event.target.value,
-                    })
-                  }
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={saving || !persisted || row.ref.trim().length === 0}
-                  title={
-                    !persisted ? "请先保存提供方，再清除已保存 Key" : undefined
-                  }
-                  onClick={() => {
-                    setCredentialError(null);
-                    void onClearCredential(row.ref.trim());
-                    updateCredentialRow(row.id, { secretValue: "" });
-                  }}
-                >
-                  清除 Key
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={saving}
-                  onClick={() => removeCredentialRow(row.id)}
-                >
-                  移除
-                </Button>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">
-            当前预设不需要 API Key；如服务侧要求鉴权，可添加请求头或环境变量
-            凭据引用。
-          </p>
-        )}
-        {credentialError ? (
-          <p role="alert" className="text-xs text-destructive">
-            {credentialError}
-          </p>
-        ) : null}
-      </section>
+      {credentialError ? (
+        <p role="alert" className="text-xs text-destructive">
+          {credentialError}
+        </p>
+      ) : null}
 
       {!persisted ? (
         <p className="text-xs text-muted-foreground">

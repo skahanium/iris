@@ -158,7 +158,11 @@ describe("production TrustedHTML crash regression", () => {
     await act(async () => {
       root.render(
         <ErrorBoundary>
-          <LlmRoutingSection open />
+          <LlmRoutingSection
+            open
+            selectedProviderId={null}
+            onSelectedProviderIdChange={() => undefined}
+          />
         </ErrorBoundary>,
       );
     });

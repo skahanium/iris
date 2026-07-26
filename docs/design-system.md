@@ -89,6 +89,12 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 brand tint；过程区脚注感（`assistant-process-footnote`）；折叠摘要末项在 Run `completed` 后为「答复完毕」。
 
+## 管理中心子页与高级折叠
+
+- LLM / MCP 供应商配置采用三级导航：AI 子页列表 → 供应商卡片 → 详情子页；详情顶栏使用 `ChevronLeft` 返回上一级，不引入 URL 路由。
+- 详情页默认只展示连接凭据与核心操作（LLM 模型列表、MCP 预设与 API Key）；端点、映射、凭据引用等放入「高级设置」`Collapsible`，默认收起，分隔线使用 `border-border-subtle`。
+- 进入供应商详情时同步更新 overlay 的 `managementCenterProviderId`，以支持深链恢复与面板内导航一致。
+
 ## 交互规则
 
 - 主路径必须有可见入口或快捷键；纯 icon 控件必须有可访问名称和 tooltip。

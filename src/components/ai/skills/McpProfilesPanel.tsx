@@ -18,10 +18,13 @@ import {
 } from "@/lib/ipc";
 
 import { McpProfileCard, type McpCredentialSave } from "./McpProfileCard";
+import { McpProviderDetail } from "./McpProviderDetail";
 import type { McpProviderPreset } from "./mcpProviderPresets";
 
 interface McpProfilesPanelProps {
   open: boolean;
+  selectedProviderId?: string | null;
+  onSelectedProviderIdChange?: (providerId: string | null) => void;
   onProvidersChanged?: () => void;
 }
 
@@ -166,6 +169,8 @@ function createDraftSummary(
 
 export function McpProfilesPanel({
   open,
+  selectedProviderId = null,
+  onSelectedProviderIdChange,
   onProvidersChanged,
 }: McpProfilesPanelProps) {
   const [providers, setProviders] = useState<WebEvidenceProviderSummary[]>([]);
@@ -176,7 +181,19 @@ export function McpProfilesPanel({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [localSelectedProviderId, setLocalSelectedProviderId] = useState<
+    string | null
+  >(selectedProviderId ?? null);
   const diagnosticsEpochRef = useRef(0);
+
+  useEffect(() => {
+    setLocalSelectedProviderId(selectedProviderId ?? null);
+  }, [selectedProviderId]);
+
+  const setSelectedProvider = (providerId: string | null) => {
+    setLocalSelectedProviderId(providerId);
+    onSelectedProviderIdChange?.(providerId);
+  };
 
   const invalidateDiagnostics = useCallback(() => {
     diagnosticsEpochRef.current += 1;
@@ -249,8 +266,10 @@ export function McpProfilesPanel({
         await credentialSet(credential.service, credential.value);
       }
       await webEvidenceProviderUpsert(input);
+      const savedId = input.id;
       setDraft(null);
       await load();
+      setSelectedProvider(savedId);
       onProvidersChanged?.();
       setMessage(
         credentialSaves.length > 0
@@ -328,6 +347,12 @@ export function McpProfilesPanel({
     }
   };
 
+  const activeDetailId = localSelectedProviderId ?? (draft ? draft.id : null);
+  const detailProvider =
+    draft && draft.id === activeDetailId
+      ? draft
+      : mcpProviders.find((item) => item.id === activeDetailId);
+
   if (!isTauri()) {
     return <></>;
   }
@@ -353,7 +378,9 @@ export function McpProfilesPanel({
             disabled={loading || saving}
             onClick={() => {
               invalidateDiagnostics();
-              setDraft(createDraftSummary());
+              const nextDraft = createDraftSummary();
+              setDraft(nextDraft);
+              setSelectedProvider(nextDraft.id);
             }}
           >
             添加 MCP 提供方
@@ -361,41 +388,69 @@ export function McpProfilesPanel({
         </div>
       </header>
 
-      {draft ? (
-        <McpProfileCard
-          provider={draft}
-          diagnostics={diagnostics[draft.id]}
+      {detailProvider ? (
+        <McpProviderDetail
+          provider={detailProvider}
+          diagnostics={diagnostics[detailProvider.id]}
           credentialConfiguredByService={credentialConfiguredByService}
           saving={saving}
-          persisted={false}
+          persisted={!(draft && draft.id === detailProvider.id)}
+          onBack={() => {
+            setDraft(null);
+            setSelectedProvider(null);
+          }}
           onSave={saveProvider}
           onToggle={(enabled) => {
-            invalidateDiagnostics();
-            setDraft((current) =>
-              current ? { ...current, enabled } : current,
-            );
+            if (draft && draft.id === detailProvider.id) {
+              invalidateDiagnostics();
+              setDraft((current) =>
+                current ? { ...current, enabled } : current,
+              );
+              return;
+            }
+            void toggleProvider(detailProvider.id, enabled);
           }}
           onDelete={() => {
-            invalidateDiagnostics();
-            setDraft(null);
+            if (draft && draft.id === detailProvider.id) {
+              invalidateDiagnostics();
+              setDraft(null);
+              setSelectedProvider(null);
+              return;
+            }
+            void deleteProvider(detailProvider.id).then(() =>
+              setSelectedProvider(null),
+            );
           }}
-          onClearCredential={() => {
-            setMessage("草稿尚未保存，没有可清除的 API Key。");
-          }}
-          onDiagnostics={() => {
-            setMessage("请先保存 MCP 提供方，再执行实时诊断。");
-          }}
+          onClearCredential={clearCredential}
+          onDiagnostics={() => void runDiagnostics(detailProvider.id)}
           onConfigurationChanged={invalidateDiagnostics}
         />
+      ) : activeDetailId ? (
+        <div className="space-y-2 rounded-md border border-border/55 bg-background/60 p-3 text-xs text-muted-foreground">
+          <p>找不到该 MCP 提供方，可能已被删除。</p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7"
+            onClick={() => {
+              setDraft(null);
+              setSelectedProvider(null);
+            }}
+          >
+            返回列表
+          </Button>
+        </div>
       ) : null}
 
-      {mcpProviders.length > 0 ? (
+      {!activeDetailId && mcpProviders.length > 0 ? (
         <div className="space-y-3">
           {mcpProviders.map((provider) => (
             <McpProfileCard
               key={provider.id}
               provider={provider}
-              diagnostics={diagnostics[provider.id]}
+              surface="list"
+              onSelect={() => setSelectedProvider(provider.id)}
               credentialConfiguredByService={credentialConfiguredByService}
               saving={saving}
               onSave={saveProvider}
@@ -407,7 +462,7 @@ export function McpProfilesPanel({
             />
           ))}
         </div>
-      ) : !draft ? (
+      ) : !activeDetailId && !draft ? (
         <p className="rounded-md border border-dashed border-border/70 px-3 py-3 text-xs text-muted-foreground">
           还没有配置 MCP 提供方。点击添加 MCP 提供方后，可选择预设或自定义服务。
         </p>

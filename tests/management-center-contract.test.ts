@@ -161,6 +161,10 @@ describe("management center contract", () => {
     expect(mcpPanel.toLowerCase()).not.toContain(removedDdg);
     expect(mcpPanel).not.toContain("原生托底");
     expect(mcpPanel).toContain("当前选择");
+    expect(center).toContain("onManagementCenterProviderIdChange");
+    expect(center).toContain("managementCenterProviderId");
+    expect(mcpPanel).toContain("McpProviderDetail");
+    expect(mcpPanel).toContain("selectedProviderId");
     expect(mcpPanel).toContain("McpProfileCard");
     expect(mcpPanel).not.toContain("MCP_PROVIDER_PRESETS.map");
     expect(mcpPanel).not.toContain("setDraft(createDraftSummary(preset))");
@@ -203,7 +207,9 @@ describe("management center contract", () => {
     expect(mcpCard).toContain("快速预设");
     expect(mcpCard).toContain("自定义 MCP 服务");
 
-    expect(mcpPanel).toContain("persisted={false}");
+    expect(mcpPanel).toContain(
+      "persisted={!(draft && draft.id === detailProvider.id)}",
+    );
     expect(mcpCard).not.toContain("测试连接");
     expect(mcpCard).not.toContain("测试后");
 

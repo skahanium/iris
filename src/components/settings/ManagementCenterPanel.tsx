@@ -58,6 +58,8 @@ interface ManagementCenterPanelProps {
   onClose: () => void;
   section: ManagementCenterSection;
   detail: ManagementCenterDetail;
+  managementCenterProviderId: string | null;
+  onManagementCenterProviderIdChange: (providerId: string | null) => void;
   webSearch: boolean;
   webSearchAvailability: WebSearchAvailability;
   webSearchProviderId: string | null;
@@ -380,6 +382,8 @@ export function ManagementCenterPanel({
   onClose,
   section,
   detail,
+  managementCenterProviderId,
+  onManagementCenterProviderIdChange,
   webSearch,
   webSearchAvailability,
   webSearchProviderId,
@@ -461,6 +465,11 @@ export function ManagementCenterPanel({
     );
   }, [detail, open, section]);
 
+  const llmSelectedProviderId =
+    activeAiDetail === "models" ? managementCenterProviderId : null;
+  const mcpSelectedProviderId =
+    activeAiDetail === "web-search" ? managementCenterProviderId : null;
+
   const activeMeta = useMemo(
     () =>
       MANAGEMENT_SECTIONS.find((item) => item.id === activeSection) ??
@@ -496,6 +505,7 @@ export function ManagementCenterPanel({
     setActiveSection("ai");
     setActiveAiDetail(detail);
     setActiveNotesDetail(null);
+    onManagementCenterProviderIdChange(null);
   };
 
   const openNotesDetail = (nextDetail: NotesManagementDetail) => {
@@ -1025,7 +1035,10 @@ export function ManagementCenterPanel({
             size="sm"
             data-testid="management-detail-back"
             className="h-8 gap-1.5"
-            onClick={() => setActiveAiDetail(null)}
+            onClick={() => {
+              setActiveAiDetail(null);
+              onManagementCenterProviderIdChange(null);
+            }}
           >
             <ChevronLeft className="h-4 w-4" />
             AI
@@ -1038,7 +1051,13 @@ export function ManagementCenterPanel({
           </div>
         </header>
 
-        {detail === "models" ? <LlmRoutingSection open={open} /> : null}
+        {detail === "models" ? (
+          <LlmRoutingSection
+            open={open}
+            selectedProviderId={llmSelectedProviderId}
+            onSelectedProviderIdChange={onManagementCenterProviderIdChange}
+          />
+        ) : null}
         {detail === "web-search" ? (
           <div className="space-y-5">
             <PanelSection title="联网搜索">
@@ -1086,6 +1105,8 @@ export function ManagementCenterPanel({
             </PanelSection>
             <McpProfilesPanel
               open={open}
+              selectedProviderId={mcpSelectedProviderId}
+              onSelectedProviderIdChange={onManagementCenterProviderIdChange}
               onProvidersChanged={onRefreshWebSearchProviders}
             />
           </div>
