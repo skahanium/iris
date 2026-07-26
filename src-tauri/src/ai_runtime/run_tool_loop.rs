@@ -40,7 +40,11 @@ const MAX_WEB_EVIDENCE_PER_RUN: usize = 8;
 pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 5;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
 /// Model-requested follow-up searches retain their own bounded interaction budget.
-const MODEL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(10);
+const MODEL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(20);
+/// Minimum remaining budget required before retrying a failed web search attempt.
+/// Spawning a fresh MCP stdio process commonly takes 3-5s; retrying with less
+/// than this budget just burns time before the outer timeout fires.
+const MIN_RETRY_BUDGET: Duration = Duration::from_secs(5);
 /// Internal control-flow signal: the Run was durably moved to confirmation,
 /// so the model loop must stop without terminalizing it.
 pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
@@ -250,7 +254,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             };
             if attempt_count < 2
                 && failure.retryable
-                && budget_started.elapsed() + Duration::from_millis(250)
+                && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
                     < MODEL_WEB_EVIDENCE_DEADLINE
             {
                 tokio::time::sleep(Duration::from_millis(250)).await;

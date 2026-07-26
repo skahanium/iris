@@ -491,7 +491,7 @@ async fn collect_mcp_search_provider_fetch(
         &mapping_json,
         query,
         max_search_results,
-        Duration::from_secs(10),
+        Duration::from_secs(15),
         true,
     )
     .await;
