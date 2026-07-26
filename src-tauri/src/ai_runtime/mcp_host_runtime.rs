@@ -1195,17 +1195,23 @@ async fn sweep_expired_stdio_sessions(
     }
 }
 
-/// Spawn the background reaper that drops idle stdio sessions every 60s. Safe
-/// to call once from app setup; the returned handle is intentionally detached.
-pub fn spawn_stdio_session_pool_cleanup_task() {
-    tokio::spawn(async move {
-        let interval = Duration::from_secs(60);
-        let idle_timeout = DEFAULT_STDIO_SESSION_IDLE_TIMEOUT;
-        loop {
-            tokio::time::sleep(interval).await;
-            let mut pool = STDIO_SESSION_POOL.lock().await;
-            sweep_expired_stdio_sessions(&mut pool, idle_timeout).await;
-        }
+/// Lazily spawn the background reaper the first time the pool is used. The
+/// reaper drops idle stdio sessions every 60s. Spawning lazily (rather than
+/// from Tauri's synchronous `setup` hook) guarantees we are inside the Tokio
+/// runtime context that `tokio::spawn` requires.
+static STDIO_SESSION_POOL_REAPER_GUARD: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+fn ensure_stdio_session_pool_reaper() {
+    STDIO_SESSION_POOL_REAPER_GUARD.get_or_init(|| {
+        tokio::spawn(async move {
+            let interval = Duration::from_secs(60);
+            let idle_timeout = DEFAULT_STDIO_SESSION_IDLE_TIMEOUT;
+            loop {
+                tokio::time::sleep(interval).await;
+                let mut pool = STDIO_SESSION_POOL.lock().await;
+                sweep_expired_stdio_sessions(&mut pool, idle_timeout).await;
+            }
+        });
     });
 }
 
@@ -1222,6 +1228,7 @@ async fn call_stdio_tool_pooled(
     launch: McpStdioToolCallLaunch,
     idle_timeout: Duration,
 ) -> AppResult<(serde_json::Value, Option<String>)> {
+    ensure_stdio_session_pool_reaper();
     if launch.max_stdout_line_bytes == 0 {
         return Err(runtime_error(
             McpRuntimeFailureKind::OutputTooLarge,

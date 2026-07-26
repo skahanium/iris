@@ -111,10 +111,6 @@ pub fn run() {
             let _ = crate::version::version_cleanup(&state);
             let _ = crate::recycle::purge_expired(&state);
 
-            // Reap idle MCP stdio sessions every 60s so reused search processes
-            // do not linger indefinitely between runs.
-            crate::ai_runtime::mcp_host_runtime::spawn_stdio_session_pool_cleanup_task();
-
             if let Ok(vault) = state.vault_path() {
                 commands::file::allow_vault_assets_in_asset_protocol(app.handle(), &vault);
                 let _ = state.restart_file_watcher(app.handle().clone());
