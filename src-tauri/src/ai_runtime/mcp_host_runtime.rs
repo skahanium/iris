@@ -3,23 +3,27 @@
 //! This module owns MCP protocol execution. Registry modules store metadata;
 //! this runtime performs bounded stdio handshakes and discovery.
 
+use std::collections::HashMap;
 use std::net::IpAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 use rmcp::{
     model::{CallToolRequestParams, ClientInfo, Tool},
+    service::RunningService,
     transport::{
         streamable_http_client::StreamableHttpClientTransportConfig, StreamableHttpClientTransport,
         TokioChildProcess,
     },
-    ServiceExt,
+    RoleClient, ServiceExt,
 };
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 use crate::error::{AppError, AppResult};
@@ -1071,6 +1075,219 @@ async fn call_stdio_tool_with_rmcp(
     result.map(|result| (result, stderr_summary))
 }
 
+/// A live MCP stdio client retained between calls so subsequent searches skip
+/// the 3-5s process spawn + RMCP handshake cost.
+///
+/// The `RunningService` owns the child transport; dropping it cancels the
+/// service loop and, via `kill_on_drop`, terminates the child process. The
+/// stderr drain task is detached on spawn (its `JoinHandle` is dropped), so it
+/// keeps the stderr pipe clear for the lifetime of the child without needing
+/// to be stored here.
+struct McpStdioSession {
+    client: RunningService<RoleClient, ClientInfo>,
+    last_used: Instant,
+}
+
+/// Global pool keyed by a launch fingerprint (command + args + cwd). Env is
+/// intentionally excluded because stdio providers are launched with a cleared
+/// environment and no provider-defined env (`StoredStdioProvider.env` is always
+/// empty), so the fingerprint uniquely identifies a reusable process.
+static STDIO_SESSION_POOL: LazyLock<Mutex<HashMap<String, McpStdioSession>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn stdio_session_fingerprint(command: &Path, args: &[String], cwd: Option<&Path>) -> String {
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(command.to_string_lossy().as_bytes());
+    hasher.update(b"\0");
+    for arg in args {
+        hasher.update(arg.as_bytes());
+        hasher.update(b"\0");
+    }
+    if let Some(cwd) = cwd {
+        hasher.update(cwd.to_string_lossy().as_bytes());
+    }
+    hasher.update(b"\0");
+    hex::encode(&hasher.finalize()[..16])
+}
+
+fn stdio_session_is_alive(client: &RunningService<RoleClient, ClientInfo>) -> bool {
+    !client.is_closed() && !client.is_transport_closed()
+}
+
+/// Spawn a fresh stdio child, complete the RMCP initialize handshake, and
+/// return the resulting session. The caller is responsible for inserting it
+/// into the pool (or dropping it on failure).
+async fn spawn_stdio_session(
+    command: PathBuf,
+    args: Vec<String>,
+    env: Vec<(String, String)>,
+    cwd: Option<PathBuf>,
+    request_timeout: Duration,
+    max_stderr_bytes: usize,
+) -> AppResult<McpStdioSession> {
+    let (transport, stderr_task) =
+        spawn_rmcp_stdio_transport(command, args, env, cwd, max_stderr_bytes)?;
+    // Detach the stderr drain: the task keeps the pipe clear for the child's
+    // lifetime and completes naturally when the process exits. We never need
+    // to await its summary for pooled calls (stderr diagnostics are most
+    // useful for diagnosing the spawn failures the pool avoids).
+    drop(stderr_task);
+    let init = async move {
+        rmcp_client_info()
+            .serve(transport)
+            .await
+            .map_err(|_| rmcp_client_error())
+    };
+    let client = match timeout(request_timeout, init).await {
+        Ok(Ok(client)) => client,
+        Ok(Err(error)) => return Err(error),
+        Err(_) => {
+            return Err(runtime_error(
+                McpRuntimeFailureKind::Timeout,
+                "MCP stdio session initialization timed out",
+            ));
+        }
+    };
+    Ok(McpStdioSession {
+        client,
+        last_used: Instant::now(),
+    })
+}
+
+/// Return the pool keys whose sessions have exceeded `idle_timeout`. Pure
+/// (side-effect free) so it can be unit-tested without a live `RunningService`.
+fn expired_stdio_session_keys<'a, I>(
+    entries: I,
+    now: Instant,
+    idle_timeout: Duration,
+) -> Vec<String>
+where
+    I: IntoIterator<Item = (&'a String, Instant)>,
+{
+    let mut expired = Vec::new();
+    for (key, last_used) in entries {
+        if now.duration_since(last_used) > idle_timeout {
+            expired.push(key.clone());
+        }
+    }
+    expired
+}
+
+/// Remove and drop idle sessions from the pool. Dropping a `McpStdioSession`
+/// cancels its `RunningService` (the Drop guard fires the cancellation token)
+/// and `kill_on_drop` terminates the child process.
+async fn sweep_expired_stdio_sessions(
+    pool: &mut HashMap<String, McpStdioSession>,
+    idle_timeout: Duration,
+) {
+    let now = Instant::now();
+    let last_used_pairs: Vec<(String, Instant)> = pool
+        .iter()
+        .map(|(key, session)| (key.clone(), session.last_used))
+        .collect();
+    let expired = expired_stdio_session_keys(
+        last_used_pairs.iter().map(|(key, ts)| (key, *ts)),
+        now,
+        idle_timeout,
+    );
+    for key in expired {
+        pool.remove(&key);
+    }
+}
+
+/// Spawn the background reaper that drops idle stdio sessions every 60s. Safe
+/// to call once from app setup; the returned handle is intentionally detached.
+pub fn spawn_stdio_session_pool_cleanup_task() {
+    tokio::spawn(async move {
+        let interval = Duration::from_secs(60);
+        let idle_timeout = DEFAULT_STDIO_SESSION_IDLE_TIMEOUT;
+        loop {
+            tokio::time::sleep(interval).await;
+            let mut pool = STDIO_SESSION_POOL.lock().await;
+            sweep_expired_stdio_sessions(&mut pool, idle_timeout).await;
+        }
+    });
+}
+
+/// Pooled stdio tool call: reuse a live session if one exists for this launch
+/// fingerprint, otherwise spawn a fresh one. On success the session is returned
+/// to the pool for the next call; on failure (or if the transport closed during
+/// the call) the session is dropped so the next caller spawns a fresh process.
+///
+/// Pooled calls do not surface per-call stderr: the background drain keeps the
+/// stderr pipe clear for the lifetime of the session, and stderr diagnostics
+/// are most useful for diagnosing the spawn failures that the pooled path
+/// avoids. Spawn failures here still return the underlying error.
+async fn call_stdio_tool_pooled(
+    launch: McpStdioToolCallLaunch,
+    idle_timeout: Duration,
+) -> AppResult<(serde_json::Value, Option<String>)> {
+    if launch.max_stdout_line_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP stdout cap must be greater than zero",
+        ));
+    }
+    let request_timeout = launch.request_timeout;
+    let max_response_bytes = launch.max_stdout_line_bytes;
+    let fingerprint =
+        stdio_session_fingerprint(&launch.command, &launch.args, launch.cwd.as_deref());
+    let tool_name = launch.tool_name.clone();
+    let arguments = rmcp_tool_call_arguments(launch.arguments)?;
+
+    // Opportunistic sweep + reuse. Holding the pool lock only for the lookup
+    // keeps concurrent callers to different providers unblocked.
+    let reused = {
+        let mut pool = STDIO_SESSION_POOL.lock().await;
+        sweep_expired_stdio_sessions(&mut pool, idle_timeout).await;
+        pool.remove(&fingerprint)
+            .filter(|session| stdio_session_is_alive(&session.client))
+    };
+    let mut session = match reused {
+        Some(session) => session,
+        None => {
+            spawn_stdio_session(
+                launch.command,
+                launch.args,
+                launch.env,
+                launch.cwd,
+                request_timeout,
+                launch.max_stderr_bytes,
+            )
+            .await?
+        }
+    };
+
+    let call_run = async {
+        let result = session
+            .client
+            .call_tool(CallToolRequestParams::new(tool_name).with_arguments(arguments))
+            .await
+            .map_err(|_| rmcp_client_error())?;
+        let result = serde_json::to_value(result)?;
+        ensure_json_value_under_cap(&result, max_response_bytes)?;
+        Ok::<_, AppError>(result)
+    };
+    let result = match timeout(request_timeout, call_run).await {
+        Ok(result) => result,
+        Err(_) => Err(runtime_error(
+            McpRuntimeFailureKind::Timeout,
+            "MCP stdio tool call timed out",
+        )),
+    };
+
+    let keep = result.is_ok() && stdio_session_is_alive(&session.client);
+    {
+        let mut pool = STDIO_SESSION_POOL.lock().await;
+        if keep {
+            session.last_used = Instant::now();
+            pool.insert(fingerprint, session);
+        }
+        // else: drop session -> cancel -> kill_on_drop terminates the child
+    }
+    result.map(|result| (result, None))
+}
+
 pub async fn call_provider_stdio_tool(
     db: &Database,
     provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
@@ -1084,7 +1301,7 @@ pub async fn call_provider_stdio_tool(
         ));
     }
     let loaded_provider = load_stdio_provider(db, &provider.profile_id)?;
-    let (result, stderr_summary) = call_stdio_tool_with_rmcp(McpStdioToolCallLaunch {
+    let launch = McpStdioToolCallLaunch {
         command: loaded_provider.command,
         args: loaded_provider.args,
         env: loaded_provider.env,
@@ -1094,8 +1311,12 @@ pub async fn call_provider_stdio_tool(
         max_stderr_bytes: options.max_stderr_bytes,
         tool_name: provider.tool_name.clone(),
         arguments,
-    })
-    .await?;
+    };
+    let (result, stderr_summary) = if options.stdio_session_pool {
+        call_stdio_tool_pooled(launch, options.stdio_session_idle_timeout).await?
+    } else {
+        call_stdio_tool_with_rmcp(launch).await?
+    };
     Ok(McpToolCallResult {
         provider_id: provider.profile_id.clone(),
         tool_name: provider.tool_name.clone(),
@@ -1691,5 +1912,49 @@ mod tests {
             .unwrap()
             .is_none()
         );
+    }
+
+    #[test]
+    fn stdio_session_fingerprint_is_deterministic_and_distinguishes_launches() {
+        let cmd = PathBuf::from("/bin/sh");
+        let args = vec!["fixture.sh".to_string(), "search-only".to_string()];
+        let cwd: Option<&Path> = None;
+
+        let a = stdio_session_fingerprint(&cmd, &args, cwd);
+        let b = stdio_session_fingerprint(&cmd, &args, cwd);
+        assert_eq!(a, b, "same launch must produce the same fingerprint");
+
+        let different_args = vec!["fixture.sh".to_string(), "search-fetch".to_string()];
+        let c = stdio_session_fingerprint(&cmd, &different_args, cwd);
+        assert_ne!(a, c, "different args must produce a different fingerprint");
+
+        let other_cmd = PathBuf::from("/usr/bin/env");
+        let d = stdio_session_fingerprint(&other_cmd, &args, cwd);
+        assert_ne!(
+            a, d,
+            "different command must produce a different fingerprint"
+        );
+
+        let with_cwd = stdio_session_fingerprint(&cmd, &args, Some(Path::new("/tmp")));
+        assert_ne!(a, with_cwd, "cwd must participate in the fingerprint");
+    }
+
+    #[test]
+    fn expired_stdio_session_keys_collects_only_idle_entries() {
+        let now = Instant::now();
+        let idle_timeout = Duration::from_secs(300);
+
+        let fresh = now - Duration::from_secs(10);
+        let idle = now - Duration::from_secs(400);
+        let boundary = now - idle_timeout; // exactly idle_timeout ago: not expired (strict >)
+
+        let entries = [
+            ("alpha".to_string(), fresh),
+            ("beta".to_string(), idle),
+            ("gamma".to_string(), boundary),
+        ];
+        let keys =
+            expired_stdio_session_keys(entries.iter().map(|(k, t)| (k, *t)), now, idle_timeout);
+        assert_eq!(keys, vec!["beta".to_string()]);
     }
 }
