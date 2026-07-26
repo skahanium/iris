@@ -13,7 +13,6 @@ interface McpProviderDetailProps {
   credentialConfiguredByService?: Record<string, boolean>;
   saving?: boolean;
   persisted?: boolean;
-  onBack: () => void;
   onSave: (
     input: WebEvidenceProviderInput,
     credentialSaves: McpCredentialSave[],
@@ -26,6 +25,5 @@ interface McpProviderDetailProps {
 }
 
 export function McpProviderDetail(props: McpProviderDetailProps) {
-  const { onBack, ...rest } = props;
-  return <McpProfileCard {...rest} surface="detail" onBack={onBack} />;
+  return <McpProfileCard {...props} surface="detail" />;
 }

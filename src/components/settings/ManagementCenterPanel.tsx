@@ -22,7 +22,7 @@ import {
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { SkillsPanelBody } from "@/components/ai/SkillsPanel";
@@ -51,6 +51,7 @@ import type {
 import type { ConnectivityStatus } from "@/types/llm";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
+import type { ManagementProviderChrome } from "./managementProviderChrome";
 import { PersonaSettingsBody } from "./PersonaSettingsPanel";
 
 interface ManagementCenterPanelProps {
@@ -429,6 +430,27 @@ export function ManagementCenterPanel({
     useState<AiManagementDetail | null>(null);
   const [activeNotesDetail, setActiveNotesDetail] =
     useState<NotesManagementDetail | null>(null);
+  const [providerChrome, setProviderChrome] =
+    useState<ManagementProviderChrome | null>(null);
+
+  const handleProviderChromeChange = useCallback(
+    (chrome: ManagementProviderChrome | null) => {
+      setProviderChrome((previous) => {
+        if (chrome === null) {
+          return previous === null ? previous : null;
+        }
+        if (
+          previous !== null &&
+          previous.label === chrome.label &&
+          previous.detail === chrome.detail
+        ) {
+          return previous;
+        }
+        return chrome;
+      });
+    },
+    [],
+  );
   const status = connectivityStatus;
   const [embeddingActionMessage, setEmbeddingActionMessage] = useState<
     string | null
@@ -464,6 +486,12 @@ export function ManagementCenterPanel({
       section === "notes" && isNotesManagementDetail(detail) ? detail : null,
     );
   }, [detail, open, section]);
+
+  useEffect(() => {
+    if (!managementCenterProviderId) {
+      setProviderChrome(null);
+    }
+  }, [managementCenterProviderId]);
 
   const llmSelectedProviderId =
     activeAiDetail === "models" ? managementCenterProviderId : null;
@@ -505,6 +533,7 @@ export function ManagementCenterPanel({
     setActiveSection("ai");
     setActiveAiDetail(detail);
     setActiveNotesDetail(null);
+    setProviderChrome(null);
     onManagementCenterProviderIdChange(null);
   };
 
@@ -1026,9 +1055,21 @@ export function ManagementCenterPanel({
 
   const renderAiDetail = (detail: AiManagementDetail) => {
     const meta = AI_DETAIL_META[detail];
+    const providerDetailActive =
+      (detail === "models" && Boolean(llmSelectedProviderId)) ||
+      (detail === "web-search" && Boolean(mcpSelectedProviderId));
+    const headerTitle = providerChrome?.label ?? meta.label;
+    const headerDetail = providerChrome?.detail ?? meta.detail;
+    const backLabel = providerDetailActive ? meta.label : "AI";
+
     return (
       <section data-testid="management-ai-detail" className="space-y-5">
-        <header className="flex items-start gap-3 border-b border-border/60 pb-3">
+        <header
+          className="flex items-start gap-3 border-b border-border/60 pb-3"
+          data-management-provider-detail={
+            providerDetailActive ? "true" : undefined
+          }
+        >
           <Button
             type="button"
             variant="ghost"
@@ -1036,18 +1077,24 @@ export function ManagementCenterPanel({
             data-testid="management-detail-back"
             className="h-8 gap-1.5"
             onClick={() => {
+              if (providerDetailActive) {
+                onManagementCenterProviderIdChange(null);
+                setProviderChrome(null);
+                return;
+              }
               setActiveAiDetail(null);
               onManagementCenterProviderIdChange(null);
+              setProviderChrome(null);
             }}
           >
             <ChevronLeft className="h-4 w-4" />
-            AI
+            {backLabel}
           </Button>
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-foreground">
-              {meta.label}
+              {headerTitle}
             </h3>
-            <p className="mt-1 text-xs text-muted-foreground">{meta.detail}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{headerDetail}</p>
           </div>
         </header>
 
@@ -1056,6 +1103,7 @@ export function ManagementCenterPanel({
             open={open}
             selectedProviderId={llmSelectedProviderId}
             onSelectedProviderIdChange={onManagementCenterProviderIdChange}
+            onProviderChromeChange={handleProviderChromeChange}
           />
         ) : null}
         {detail === "web-search" ? (
@@ -1108,6 +1156,7 @@ export function ManagementCenterPanel({
               selectedProviderId={mcpSelectedProviderId}
               onSelectedProviderIdChange={onManagementCenterProviderIdChange}
               onProvidersChanged={onRefreshWebSearchProviders}
+              onProviderChromeChange={handleProviderChromeChange}
             />
           </div>
         ) : null}

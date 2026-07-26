@@ -1,5 +1,5 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronLeft } from "lucide-react";
+import { ChevronDown, ChevronRight, Globe2, Terminal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -31,6 +31,14 @@ import {
   type McpProviderPreset,
   type McpTransportKind,
 } from "./mcpProviderPresets";
+import {
+  MCP_PROVIDER_LIST_CARD_CLASS,
+  mcpListDotAriaLabel,
+  mcpListDotClassName,
+  mcpListDotTone,
+  mcpListMappingShortLabel,
+  mcpListTransportShortLabel,
+} from "./mcpProviderListUi";
 
 export interface McpCredentialSave {
   service: string;
@@ -46,7 +54,6 @@ interface McpProfileCardProps {
   persisted?: boolean;
   surface?: "list" | "detail";
   onSelect?: () => void;
-  onBack?: () => void;
   onSave: (
     input: WebEvidenceProviderInput,
     credentialSaves: McpCredentialSave[],
@@ -408,7 +415,6 @@ export function McpProfileCard({
   persisted = true,
   surface = "detail",
   onSelect,
-  onBack,
   onSave,
   onToggle,
   onDelete,
@@ -627,27 +633,55 @@ export function McpProfileCard({
     : "border-border bg-muted/40 text-muted-foreground";
 
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const listPresetLabel =
-    findMcpProviderPreset(presetIdFromProvider(provider))?.label ?? "自定义";
+  const listTransportKind = provider.transportKind as McpTransportKind;
+  const listDotTone = mcpListDotTone(provider);
 
   if (surface === "list") {
+    const TransportIcon = listTransportKind === "stdio" ? Terminal : Globe2;
     return (
-      <button
-        type="button"
-        data-testid="mcp-provider-card"
-        className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/65 bg-background/55 p-3 text-left transition-colors hover:bg-muted/30"
-        onClick={onSelect}
+      <Button
+        asChild
+        variant="ghost"
+        size="sm"
+        className="h-auto w-full p-0 font-normal hover:bg-transparent"
       >
-        <div className="min-w-0">
-          <p className="truncate text-sm font-medium text-foreground">
-            {provider.name || "MCP 联网证据提供方"}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {listPresetLabel} · {enabled ? "已启用" : "未启用"}
-          </p>
-        </div>
-        <span className="shrink-0 text-[11px] text-muted-foreground">配置</span>
-      </button>
+        <button
+          type="button"
+          data-testid="mcp-provider-card"
+          className={MCP_PROVIDER_LIST_CARD_CLASS}
+          onClick={onSelect}
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-inset/40">
+            <TransportIcon
+              className="h-4 w-4 text-muted-foreground"
+              aria-hidden
+            />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <span
+                className={cn(
+                  "inline-flex h-2 w-2 shrink-0 rounded-full",
+                  mcpListDotClassName(listDotTone),
+                )}
+                aria-label={mcpListDotAriaLabel(provider)}
+              />
+              <p className="truncate text-sm font-medium text-foreground">
+                {provider.name || "MCP 联网证据提供方"}
+              </p>
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {mcpListTransportShortLabel(listTransportKind)}
+              {" · "}
+              {mcpListMappingShortLabel(provider.mappingStatus)}
+            </p>
+          </div>
+          <ChevronRight
+            className="h-4 w-4 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+        </button>
+      </Button>
     );
   }
 
@@ -656,19 +690,6 @@ export function McpProfileCard({
       data-testid="mcp-provider-detail"
       className="space-y-4 rounded-lg border border-border/65 bg-background/55 p-4"
     >
-      {onBack ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-testid="mcp-provider-detail-back"
-          className="h-8 gap-1.5"
-          onClick={onBack}
-        >
-          <ChevronLeft className="h-4 w-4" />
-          联网与证据
-        </Button>
-      ) : null}
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">

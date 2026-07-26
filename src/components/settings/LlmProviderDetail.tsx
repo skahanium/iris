@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -77,7 +77,6 @@ export interface LlmProviderDetailProps {
     reasoningSummary: string,
   ) => string;
   reasoningSummaryForModel: (modelId: string) => string;
-  onBack: () => void;
   onKeyInput: (value: string) => void;
   onSaveKey: () => void;
   onClearKey: () => void;
@@ -108,7 +107,6 @@ export function LlmProviderDetail({
   testResults,
   modelSummary,
   reasoningSummaryForModel,
-  onBack,
   onKeyInput,
   onSaveKey,
   onClearKey,
@@ -130,28 +128,6 @@ export function LlmProviderDetail({
       data-testid="llm-provider-detail"
       data-provider-id={provider.id}
     >
-      <header className="flex items-start gap-3 border-b border-border-subtle pb-3">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          data-testid="llm-provider-detail-back"
-          className="h-8 gap-1.5"
-          onClick={onBack}
-        >
-          <ChevronLeft className="h-4 w-4" />
-          模型与供应商
-        </Button>
-        <div className="min-w-0">
-          <h4 className="text-sm font-semibold text-foreground">
-            {provider.name}
-          </h4>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {providerModels.length} 个已启用模型
-          </p>
-        </div>
-      </header>
-
       <section className="space-y-3 rounded-md border border-border/55 bg-background/60 p-3">
         <p className="text-xs font-medium text-foreground">连接与凭据</p>
         <div className="flex flex-wrap items-center gap-2">

@@ -16,9 +16,16 @@ describe("管理中心供应商子页", () => {
 
     expect(center).toContain("managementCenterProviderId");
     expect(center).toContain("onManagementCenterProviderIdChange");
+    expect(center).toContain("onProviderChromeChange");
+    expect(center).toContain("data-management-provider-detail");
     expect(llm).toContain("LlmProviderDetail");
-    expect(llmDetail).toContain("llm-provider-detail-back");
+    expect(llm).toContain("LlmProviderListCard");
+    expect(llm).not.toContain(
+      '<h3 className="text-sm font-medium">模型与供应商</h3>',
+    );
+    expect(llmDetail).not.toContain("llm-provider-detail-back");
     expect(mcpPanel).toContain("selectedProviderId");
+    expect(mcpPanel).toContain("onProviderChromeChange");
     expect(mcpDetail).toContain("McpProviderDetail");
     expect(mcpDetail).toContain('surface="detail"');
   });
@@ -28,5 +35,8 @@ describe("管理中心供应商子页", () => {
     expect(card).toContain("mcp-provider-advanced-trigger");
     expect(card).toContain("mcp-provider-basic-key");
     expect(card).toContain('surface === "list"');
+    expect(card).toContain("ChevronRight");
+    expect(card).toContain("mcpListDotTone");
+    expect(card).not.toContain("mcp-provider-detail-back");
   });
 });

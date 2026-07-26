@@ -19,13 +19,19 @@ import {
 
 import { McpProfileCard, type McpCredentialSave } from "./McpProfileCard";
 import { McpProviderDetail } from "./McpProviderDetail";
+import {
+  mcpListMappingShortLabel,
+  mcpListTransportShortLabel,
+} from "./mcpProviderListUi";
 import type { McpProviderPreset } from "./mcpProviderPresets";
+import type { ManagementProviderChrome } from "@/components/settings/managementProviderChrome";
 
 interface McpProfilesPanelProps {
   open: boolean;
   selectedProviderId?: string | null;
   onSelectedProviderIdChange?: (providerId: string | null) => void;
   onProvidersChanged?: () => void;
+  onProviderChromeChange?: (chrome: ManagementProviderChrome | null) => void;
 }
 
 type DiagnosticsByProvider = Record<string, WebEvidenceProviderDiagnostics>;
@@ -172,6 +178,7 @@ export function McpProfilesPanel({
   selectedProviderId = null,
   onSelectedProviderIdChange,
   onProvidersChanged,
+  onProviderChromeChange,
 }: McpProfilesPanelProps) {
   const [providers, setProviders] = useState<WebEvidenceProviderSummary[]>([]);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsByProvider>({});
@@ -353,6 +360,32 @@ export function McpProfilesPanel({
       ? draft
       : mcpProviders.find((item) => item.id === activeDetailId);
 
+  const providerChromePayload = useMemo((): ManagementProviderChrome | null => {
+    if (!detailProvider) return null;
+    return {
+      label: detailProvider.name || "MCP 联网证据提供方",
+      detail: `${mcpListTransportShortLabel(detailProvider.transportKind)} · ${mcpListMappingShortLabel(detailProvider.mappingStatus)}`,
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by provider fields, not object identity
+  }, [
+    detailProvider?.id,
+    detailProvider?.mappingStatus,
+    detailProvider?.name,
+    detailProvider?.transportKind,
+  ]);
+
+  useEffect(() => {
+    if (!onProviderChromeChange || !open || !providerChromePayload) {
+      return;
+    }
+    onProviderChromeChange(providerChromePayload);
+  }, [onProviderChromeChange, open, providerChromePayload]);
+
+  useEffect(() => {
+    if (!onProviderChromeChange) return;
+    return () => onProviderChromeChange(null);
+  }, [onProviderChromeChange]);
+
   if (!isTauri()) {
     return <></>;
   }
@@ -362,15 +395,12 @@ export function McpProfilesPanel({
       data-testid="mcp-provider-panel"
       className="space-y-3 border-t border-border/60 pt-4"
     >
-      <header className="space-y-3">
+      {!detailProvider ? (
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-medium">MCP 联网证据提供方</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              将 MCP 显式接入 web.search / web.fetch；联网搜索只使用当前选择的
-              MCP 提供方。
-            </p>
-          </div>
+          <p className="max-w-xl text-xs text-muted-foreground">
+            将 MCP 显式接入 web.search / web.fetch；联网搜索只使用当前选择的 MCP
+            提供方。
+          </p>
           <Button
             type="button"
             size="sm"
@@ -386,7 +416,7 @@ export function McpProfilesPanel({
             添加 MCP 提供方
           </Button>
         </div>
-      </header>
+      ) : null}
 
       {detailProvider ? (
         <McpProviderDetail
@@ -395,10 +425,6 @@ export function McpProfilesPanel({
           credentialConfiguredByService={credentialConfiguredByService}
           saving={saving}
           persisted={!(draft && draft.id === detailProvider.id)}
-          onBack={() => {
-            setDraft(null);
-            setSelectedProvider(null);
-          }}
           onSave={saveProvider}
           onToggle={(enabled) => {
             if (draft && draft.id === detailProvider.id) {

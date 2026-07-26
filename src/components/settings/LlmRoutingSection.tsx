@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,7 @@ import {
 import builtinLlmProviders from "../../../config/llm-builtin-providers.json";
 
 import { LlmProviderDetail } from "./LlmProviderDetail";
+import { LlmProviderListCard } from "./LlmProviderListCard";
 import type {
   LlmEnabledProviderModel,
   LlmVisibleProvider,
@@ -96,10 +97,13 @@ const UNSUPPORTED_REASONING_CAPABILITY: ReasoningUiCapability = {
   source: "unknown",
 };
 
+import type { ManagementProviderChrome } from "./managementProviderChrome";
+
 interface LlmRoutingSectionProps {
   open: boolean;
   selectedProviderId: string | null;
   onSelectedProviderIdChange: (providerId: string | null) => void;
+  onProviderChromeChange?: (chrome: ManagementProviderChrome | null) => void;
 }
 
 type VisibleProvider = LlmVisibleProvider;
@@ -445,6 +449,7 @@ export function LlmRoutingSection({
   open,
   selectedProviderId,
   onSelectedProviderIdChange,
+  onProviderChromeChange,
 }: LlmRoutingSectionProps) {
   const [data, setData] = useState<LlmConfigGetResponse | null>(null);
   const [routing, setRouting] = useState<LlmRoutingConfig | null>(null);
@@ -986,7 +991,8 @@ export function LlmRoutingSection({
     });
   };
 
-  const visibleProviders = (() => {
+  // providerInfo / enabledModelIdsForProvider close over data+routing; providerName is stable.
+  const visibleProviders = useMemo(() => {
     if (!routing || !data) return [];
     const configuredProviderIds = Object.keys(routing.providers);
     const providers = configuredProviderIds.map((providerId) => {
@@ -1002,7 +1008,8 @@ export function LlmRoutingSection({
     });
 
     return providers.sort((a, b) => a.name.localeCompare(b.name));
-  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- derived from data, routing, providerName only
+  }, [data, providerName, routing]);
 
   useEffect(() => {
     if (!selectedProviderId || visibleProviders.length === 0) return;
@@ -1013,6 +1020,30 @@ export function LlmRoutingSection({
     }
     onSelectedProviderIdChange(null);
   }, [onSelectedProviderIdChange, selectedProviderId, visibleProviders]);
+
+  const providerChromePayload = useMemo((): ManagementProviderChrome | null => {
+    if (!selectedProviderId) return null;
+    const provider = visibleProviders.find(
+      (item) => item.id === selectedProviderId,
+    );
+    if (!provider) return null;
+    return {
+      label: provider.name,
+      detail: `${provider.enabledModels.length} 个已启用模型`,
+    };
+  }, [selectedProviderId, visibleProviders]);
+
+  useEffect(() => {
+    if (!onProviderChromeChange || !open || !providerChromePayload) {
+      return;
+    }
+    onProviderChromeChange(providerChromePayload);
+  }, [onProviderChromeChange, open, providerChromePayload]);
+
+  useEffect(() => {
+    if (!onProviderChromeChange) return;
+    return () => onProviderChromeChange(null);
+  }, [onProviderChromeChange]);
 
   const enabledModelReferences = visibleProviders.flatMap((provider) =>
     provider.enabledModels.map((modelId) => ({
@@ -1222,176 +1253,162 @@ export function LlmRoutingSection({
 
   return (
     <div className="space-y-5" data-section="ai-connection">
-      <div>
-        <h3 className="text-sm font-medium">模型与供应商</h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">
+      {loadError ? (
+        <p className="text-xs text-warning">未能从后端读取配置：{loadError}</p>
+      ) : null}
+      {keysLoading ? (
+        <p className="text-[10px] text-muted-foreground">正在检查已配置凭据…</p>
+      ) : null}
+
+      {!selectedProviderId ? (
+        <p className="text-xs text-muted-foreground">
           供应商只保存 API
           与端点；模型由你手动填写，未添加模型时不会激活或展示任何模型。
         </p>
-        {loadError ? (
-          <p className="mt-2 text-xs text-warning">
-            未能从后端读取配置：{loadError}
-          </p>
-        ) : null}
-        {keysLoading ? (
-          <p className="mt-1 text-[10px] text-muted-foreground">
-            正在检查已配置凭据…
-          </p>
-        ) : null}
-      </div>
+      ) : null}
 
       <section className="space-y-2" data-section="llm-providers">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">
-            供应商配置
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs"
-            onClick={() => setWizardOpen((value) => !value)}
-          >
-            添加供应商
-          </Button>
-        </div>
+        {!selectedProviderId ? (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                供应商配置
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => setWizardOpen((value) => !value)}
+              >
+                添加供应商
+              </Button>
+            </div>
 
-        {wizardOpen ? (
-          <AddModelWizard
-            providers={data.providers}
-            keyConfigured={keyConfigured}
-            keyInputsRef={keyInputsRef}
-            keySaving={keySaving}
-            onKeyInput={(id, value) => {
-              keyInputsRef.current[id] = value;
-              setKeyInputTouch((n) => n + 1);
-            }}
-            onSaveKey={(id) => void saveKey(id)}
-            onCreateCustom={ensureCustomProvider}
-            onBaseUrl={(id, url) => updateProviderBaseUrl(id, url)}
-            onLabel={(id, label) =>
-              updateProviderOverride(id, { label: label.trim() || null })
-            }
-            onClose={() => setWizardOpen(false)}
-          />
-        ) : null}
-
-        {visibleProviders.length === 0 ? (
-          <p className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
-            暂无已配置供应商。点击“添加供应商”保存 Key 或配置本地端点。
-          </p>
-        ) : selectedProviderId ? (
-          (() => {
-            const provider = visibleProviders.find(
-              (item) => item.id === selectedProviderId,
-            );
-            if (!provider) {
-              return (
-                <div className="space-y-2 rounded-md border border-border/55 bg-background/60 p-3 text-xs text-muted-foreground">
-                  <p>找不到该供应商，可能已被删除。</p>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="h-7"
-                    onClick={() => onSelectedProviderIdChange(null)}
-                  >
-                    返回列表
-                  </Button>
-                </div>
-              );
-            }
-            const override = routing.providers[provider.id];
-            const providerModels = enabledModelsForProvider(provider.id);
-            const providerResult = providerResults[provider.id];
-            const requiresBaseUrl = providerRequiresBaseUrl(provider.id);
-            return (
-              <LlmProviderDetail
-                provider={provider}
-                override={override}
-                providerModels={providerModels}
-                providerResult={providerResult}
-                requiresBaseUrl={requiresBaseUrl}
-                baseUrl={baseUrlForProvider(provider.id)}
-                keyInput={keyInputsRef.current?.[provider.id] ?? ""}
-                keyConfigured={Boolean(keyConfigured[provider.id])}
-                keySaving={keySaving === provider.id}
-                testing={testing}
-                refreshingProvider={refreshingProvider}
-                newModelInput={newModelInputs[provider.id] ?? ""}
-                testResults={testResults}
-                modelSummary={modelCapabilitySummary}
-                reasoningSummaryForModel={(modelId) =>
-                  reasoningCapabilitySummary(
-                    reasoningCapabilityForModel(provider.id, modelId),
-                  )
-                }
-                onBack={() => onSelectedProviderIdChange(null)}
-                onKeyInput={(value) => {
-                  keyInputsRef.current[provider.id] = value;
+            {wizardOpen ? (
+              <AddModelWizard
+                providers={data.providers}
+                keyConfigured={keyConfigured}
+                keyInputsRef={keyInputsRef}
+                keySaving={keySaving}
+                onKeyInput={(id, value) => {
+                  keyInputsRef.current[id] = value;
                   setKeyInputTouch((n) => n + 1);
                 }}
-                onSaveKey={() => void saveKey(provider.id)}
-                onClearKey={() => void clearKey(provider.id)}
-                onTestProvider={() => void testProvider(provider)}
-                onRefreshModels={() => void refreshProviderModels(provider)}
-                onDeleteProvider={() => void deleteProvider(provider)}
-                onBaseUrlChange={(url) =>
-                  updateProviderBaseUrl(provider.id, url)
+                onSaveKey={(id) => void saveKey(id)}
+                onCreateCustom={ensureCustomProvider}
+                onBaseUrl={(id, url) => updateProviderBaseUrl(id, url)}
+                onLabel={(id, label) =>
+                  updateProviderOverride(id, { label: label.trim() || null })
                 }
-                onLabelChange={(label) =>
-                  updateProviderOverride(provider.id, {
-                    label: label || null,
-                  })
-                }
-                onNewModelInputChange={(value) =>
-                  setNewModelInputs((prev) => ({
-                    ...prev,
-                    [provider.id]: value,
-                  }))
-                }
-                onAddModel={() => addProviderModel(provider.id)}
-                onValidateModel={(model) =>
-                  void validateProviderModel(provider, model)
-                }
-                onRemoveModel={(modelId) =>
-                  removeProviderModel(provider.id, modelId)
-                }
+                onClose={() => setWizardOpen(false)}
               />
-            );
-          })()
-        ) : (
-          <div className="space-y-2">
-            {visibleProviders.map((provider) => {
-              const providerModels = enabledModelsForProvider(provider.id);
-              return (
-                <button
-                  key={provider.id}
-                  type="button"
-                  data-testid="llm-provider-card"
-                  className="flex w-full items-center justify-between gap-3 rounded-md border border-border/55 bg-background/60 p-3 text-left transition-colors hover:bg-muted/30"
-                  onClick={() => onSelectedProviderIdChange(provider.id)}
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium text-foreground">
-                      {provider.name}
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-muted-foreground">
-                      {providerModels.length} 个已启用模型
-                      {" · "}
-                      {keyConfigured[provider.id]
-                        ? "Key 已配置"
-                        : "需要配置 Key"}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-[11px] text-muted-foreground">
-                    配置
-                  </span>
-                </button>
+            ) : null}
+
+            {visibleProviders.length === 0 ? (
+              <p className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
+                暂无已配置供应商。点击“添加供应商”保存 Key 或配置本地端点。
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {visibleProviders.map((provider) => {
+                  const providerModels = enabledModelsForProvider(provider.id);
+                  return (
+                    <LlmProviderListCard
+                      key={provider.id}
+                      providerId={provider.id}
+                      providerName={provider.name}
+                      providerModels={providerModels}
+                      keyConfigured={Boolean(keyConfigured[provider.id])}
+                      onSelect={() => onSelectedProviderIdChange(provider.id)}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : null}
+
+        {selectedProviderId
+          ? (() => {
+              const provider = visibleProviders.find(
+                (item) => item.id === selectedProviderId,
               );
-            })}
-          </div>
-        )}
+              if (!provider) {
+                return (
+                  <div className="space-y-2 rounded-md border border-border/55 bg-background/60 p-3 text-xs text-muted-foreground">
+                    <p>找不到该供应商，可能已被删除。</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      onClick={() => onSelectedProviderIdChange(null)}
+                    >
+                      返回列表
+                    </Button>
+                  </div>
+                );
+              }
+              const override = routing.providers[provider.id];
+              const providerModels = enabledModelsForProvider(provider.id);
+              const providerResult = providerResults[provider.id];
+              const requiresBaseUrl = providerRequiresBaseUrl(provider.id);
+              return (
+                <LlmProviderDetail
+                  provider={provider}
+                  override={override}
+                  providerModels={providerModels}
+                  providerResult={providerResult}
+                  requiresBaseUrl={requiresBaseUrl}
+                  baseUrl={baseUrlForProvider(provider.id)}
+                  keyInput={keyInputsRef.current?.[provider.id] ?? ""}
+                  keyConfigured={Boolean(keyConfigured[provider.id])}
+                  keySaving={keySaving === provider.id}
+                  testing={testing}
+                  refreshingProvider={refreshingProvider}
+                  newModelInput={newModelInputs[provider.id] ?? ""}
+                  testResults={testResults}
+                  modelSummary={modelCapabilitySummary}
+                  reasoningSummaryForModel={(modelId) =>
+                    reasoningCapabilitySummary(
+                      reasoningCapabilityForModel(provider.id, modelId),
+                    )
+                  }
+                  onKeyInput={(value) => {
+                    keyInputsRef.current[provider.id] = value;
+                    setKeyInputTouch((n) => n + 1);
+                  }}
+                  onSaveKey={() => void saveKey(provider.id)}
+                  onClearKey={() => void clearKey(provider.id)}
+                  onTestProvider={() => void testProvider(provider)}
+                  onRefreshModels={() => void refreshProviderModels(provider)}
+                  onDeleteProvider={() => void deleteProvider(provider)}
+                  onBaseUrlChange={(url) =>
+                    updateProviderBaseUrl(provider.id, url)
+                  }
+                  onLabelChange={(label) =>
+                    updateProviderOverride(provider.id, {
+                      label: label || null,
+                    })
+                  }
+                  onNewModelInputChange={(value) =>
+                    setNewModelInputs((prev) => ({
+                      ...prev,
+                      [provider.id]: value,
+                    }))
+                  }
+                  onAddModel={() => addProviderModel(provider.id)}
+                  onValidateModel={(model) =>
+                    void validateProviderModel(provider, model)
+                  }
+                  onRemoveModel={(modelId) =>
+                    removeProviderModel(provider.id, modelId)
+                  }
+                />
+              );
+            })()
+          : null}
       </section>
 
       {!selectedProviderId ? (

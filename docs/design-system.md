@@ -94,6 +94,8 @@ AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 bra
 - LLM / MCP 供应商配置采用三级导航：AI 子页列表 → 供应商卡片 → 详情子页；详情顶栏使用 `ChevronLeft` 返回上一级，不引入 URL 路由。
 - 详情页默认只展示连接凭据与核心操作（LLM 模型列表、MCP 预设与 API Key）；端点、映射、凭据引用等放入「高级设置」`Collapsible`，默认收起，分隔线使用 `border-border-subtle`。
 - 进入供应商详情时同步更新 overlay 的 `managementCenterProviderId`，以支持深链恢复与面板内导航一致。
+- 供应商列表行使用 `rounded-lg border-border/65 bg-background/55` 与 `Button asChild variant="ghost"` 包裹整行可点区域；钻取入口用右侧 `ChevronRight`，勿用裸「配置」文案。状态点：`bg-success`（就绪/Key 已配置/映射完整）、`bg-amber-500`（待完善）、`bg-muted-foreground/60`（未启用）；须配 `aria-label`。
+- AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
 
 ## 交互规则
 

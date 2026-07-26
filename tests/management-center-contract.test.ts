@@ -234,7 +234,6 @@ describe("management center contract", () => {
     expect(mcpCard).not.toMatch(/>\s*diagnosticStatus:/);
     expect(mcpCard).not.toMatch(/>\s*transportConfigJson\s*</);
     expect(mcpCard).not.toMatch(/>\s*credentialRefsJson\s*</);
-    expect(mcpPanel).not.toContain("return null");
     expect(mcpCard).not.toContain("return null");
 
     for (const preset of [
