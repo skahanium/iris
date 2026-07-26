@@ -37,6 +37,7 @@ pub(crate) struct NormalSessionMessage {
     pub(crate) turn_id: Option<String>,
     pub(crate) context_scope: serde_json::Value,
     pub(crate) display_mentions: Vec<serde_json::Value>,
+    pub(crate) web_citations: Vec<crate::ai_types::WebCitationEntry>,
     pub(crate) created_at: String,
 }
 
@@ -124,7 +125,7 @@ impl NormalSessionRepository {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
                 "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
-                        context_scope_json, display_mentions_json
+                        context_scope_json, display_mentions_json, citation_map_json
                  FROM session_messages
                  WHERE session_id = ?1
                  ORDER BY seq DESC
@@ -144,6 +145,9 @@ impl NormalSessionRepository {
                         turn_id: row.get(6)?,
                         context_scope: parse_json_value_or_empty_array(row.get(7)?),
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
+                        web_citations: crate::ai_runtime::citation_linkify::parse_web_citation_entries(
+                            row.get::<_, Option<String>>(9)?.as_deref(),
+                        ),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -161,7 +165,7 @@ impl NormalSessionRepository {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
                 "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
-                        context_scope_json, display_mentions_json
+                        context_scope_json, display_mentions_json, citation_map_json
                  FROM session_messages
                  WHERE session_id = ?1
                  ORDER BY seq DESC
@@ -180,6 +184,9 @@ impl NormalSessionRepository {
                     turn_id: row.get(6)?,
                     context_scope: parse_json_value_or_empty_array(row.get(7)?),
                     display_mentions: parse_json_array_or_empty(row.get(8)?),
+                    web_citations: crate::ai_runtime::citation_linkify::parse_web_citation_entries(
+                        row.get::<_, Option<String>>(9)?.as_deref(),
+                    ),
                 })
             })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -198,7 +205,7 @@ impl NormalSessionRepository {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
                 "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
-                        context_scope_json, display_mentions_json
+                        context_scope_json, display_mentions_json, citation_map_json
                  FROM session_messages
                  WHERE session_id = ?1 AND seq < ?2 AND role IN ('user', 'assistant')
                  ORDER BY seq DESC
@@ -218,6 +225,9 @@ impl NormalSessionRepository {
                         turn_id: row.get(6)?,
                         context_scope: parse_json_value_or_empty_array(row.get(7)?),
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
+                        web_citations: crate::ai_runtime::citation_linkify::parse_web_citation_entries(
+                            row.get::<_, Option<String>>(9)?.as_deref(),
+                        ),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;

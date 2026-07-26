@@ -50,6 +50,9 @@ function toChatLines(messages: AssistantSessionMessage[]): ChatLine[] {
     ...(message.displayMentions.length > 0
       ? { displayMentions: message.displayMentions }
       : {}),
+    ...(message.webCitations && message.webCitations.length > 0
+      ? { webCitations: message.webCitations }
+      : {}),
     seq: message.seq,
     created_at: message.createdAt,
   }));

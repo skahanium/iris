@@ -89,6 +89,12 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 brand tint；过程区脚注感（`assistant-process-footnote`）；折叠摘要末项在 Run `completed` 后为「答复完毕」。
 
+### Web 引用（联网来源）
+
+- **行内**：仅显示数字上标徽章（`sup.ai-citation-wrap` + `a.ai-citation`），字号 `--text-caption`，浅底、`--ai-citation` 前景，**无下划线**；与正文 `--prose-link` 外链区分。模型仍可输出 `[N]` / `[citation:N]`，渲染层统一为徽章。
+- **文末**：助手消息正文下方固定 **「来源」** 区块（`AssistantCitationFooter`），列出本次消息 `citation_map` 中、且在正文被引用过的 HTTPS 来源：`序号 · 标题`（可点击打开系统浏览器）。不展示 snippet、搜索词或工具参数。
+- **可访问性**：行内 `aria-label="引用来源 N"`；来源链接 `rel="noopener noreferrer"`。若模型在文末重复手写来源列表，产品展示以底部「来源」为准。
+
 ## 管理中心子页与高级折叠
 
 - LLM / MCP 供应商配置采用三级导航：AI 子页列表 → 供应商卡片 → 详情子页；详情顶栏使用 `ChevronLeft` 返回上一级，不引入 URL 路由。

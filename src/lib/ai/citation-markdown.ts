@@ -30,6 +30,19 @@ export function normalizeCitationLabel(label: string): string {
   return Array.from(label, (ch) => SUPERSCRIPT_DIGIT[ch] ?? ch).join("");
 }
 
+/** Visible footnote digit for inline badges (no brackets or citation: prefix). */
+export function formatCitationDisplayLabel(label: string): string {
+  const normalized = normalizeCitationLabel(label.trim());
+  if (normalized.startsWith("citation:")) {
+    return normalized.slice("citation:".length);
+  }
+  const prefixed = normalized.match(/^[CTFAWL](\d+)$/i);
+  if (prefixed) {
+    return prefixed[1] ?? normalized;
+  }
+  return normalized;
+}
+
 export function encodeCitationRef(label: string): string {
   return encodeURIComponent(normalizeCitationLabel(label));
 }
@@ -50,7 +63,8 @@ export function citationHrefForLabel(label: string): string {
 /** Markdown link with a clean `[label]` visible text (no double-escaped brackets). */
 export function citationMarkdownLink(label: string): string {
   const normalized = normalizeCitationLabel(label);
-  return `[${normalized}](${citationHrefForLabel(normalized)})`;
+  const display = formatCitationDisplayLabel(normalized);
+  return `[${display}](${citationHrefForLabel(normalized)})`;
 }
 
 /** Repair over-escaped citation links before markdown rendering. */
@@ -93,10 +107,9 @@ const BARE_CITATION_IN_TEXT =
 function citationHtmlAnchor(label: string): string {
   const normalized = normalizeCitationLabel(label);
   const href = citationHrefForLabel(normalized);
-  const display = normalized.startsWith("citation:")
-    ? `[${normalized}]`
-    : `[${normalized}]`;
-  return `<a href="${href}" class="ai-citation" data-cite-ref="${encodeCitationRef(normalized)}">${display}</a>`;
+  const display = formatCitationDisplayLabel(normalized);
+  const aria = `引用来源 ${display}`;
+  return `<sup class="ai-citation-wrap"><a href="${href}" class="ai-citation" data-cite-ref="${encodeCitationRef(normalized)}" aria-label="${aria}">${display}</a></sup>`;
 }
 
 function linkifyCitationsInTextSegment(text: string): string {

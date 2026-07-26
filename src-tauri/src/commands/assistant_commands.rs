@@ -100,6 +100,8 @@ pub struct AssistantSessionMessage {
     pub explicit_references: Vec<serde_json::Value>,
     pub context_scope: serde_json::Value,
     pub display_mentions: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub web_citations: Vec<crate::ai_types::WebCitationEntry>,
     pub created_at: String,
 }
 
@@ -193,6 +195,7 @@ pub async fn assistant_session_load(
                         explicit_references: Vec::new(),
                         context_scope: item.context_scope,
                         display_mentions: item.display_mentions,
+                        web_citations: item.web_citations,
                         created_at: item.created_at,
                     }
                 })

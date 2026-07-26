@@ -1,5 +1,8 @@
 //! Pure helpers that turn bare web footnotes into Markdown HTTPS links.
 
+use crate::ai_types::WebCitationEntry;
+use serde_json::Value;
+
 /// One web evidence row used to rewrite model footnotes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WebCitationLink {
@@ -254,6 +257,63 @@ fn display_title(cite: &WebCitationLink) -> &str {
     }
 }
 
+/// Build the persisted `citation_map_json` payload for one assistant message.
+pub(crate) fn web_citation_map_json(cites: &[WebCitationLink]) -> Value {
+    let web = cites
+        .iter()
+        .map(|cite| {
+            serde_json::json!({
+                "index": cite.index,
+                "title": cite.title,
+                "url": cite.url,
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({ "web": web })
+}
+
+/// Parse persisted `citation_map_json` into safe UI entries (HTTPS only).
+pub(crate) fn parse_web_citation_entries(raw: Option<&str>) -> Vec<WebCitationEntry> {
+    let Some(raw) = raw.filter(|value| !value.trim().is_empty()) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return Vec::new();
+    };
+    let Some(items) = value.get("web").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        let index = object.get("index").and_then(Value::as_i64).unwrap_or(0);
+        let title = object
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let url = object
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if index <= 0 || !url.starts_with("https://") {
+            continue;
+        }
+        out.push(WebCitationEntry {
+            index,
+            title,
+            url,
+        });
+    }
+    out.sort_by_key(|entry| entry.index);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +363,16 @@ mod tests {
         let input = "据报道 [1] 市场上涨。";
         let output = linkify_web_citations(input, &sample_cites());
         assert!(output.contains("[1](https://www.euronews.com/a)"));
+    }
+
+    #[test]
+    fn web_citation_map_json_and_parse_round_trip() {
+        let cites = sample_cites();
+        let json = web_citation_map_json(&cites);
+        let raw = json.to_string();
+        let parsed = parse_web_citation_entries(Some(raw.as_str()));
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].index, 1);
+        assert!(parsed[0].url.starts_with("https://"));
     }
 }

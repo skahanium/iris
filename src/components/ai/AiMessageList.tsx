@@ -11,7 +11,7 @@ import {
   restoreChatLineContent,
   type AiPayloadRef,
 } from "@/lib/ai-payload-store";
-import type { ContentPart, DisplayMention, ToolCallInfo } from "@/types/ai";
+import type { ContentPart, DisplayMention, ToolCallInfo, WebCitationEntry } from "@/types/ai";
 import type { AssistantProcessItem } from "@/lib/assistant-process";
 
 export interface ImageAttachment {
@@ -42,6 +42,7 @@ export interface ChatLine {
   toolCalls?: ToolCallInfo[];
   /** Safe Run progress rendered separately from answer content. */
   processItems?: AssistantProcessItem[];
+  webCitations?: WebCitationEntry[];
   /** Local-only playback state; durable Run completion must not cancel it. */
   presentationStreaming?: boolean;
 }
@@ -446,6 +447,7 @@ export const AiMessageList = memo(function AiMessageList({
               selected={isSelected}
               createdAt={m.created_at}
               onCitationClick={onCitationClick}
+              webCitations={m.webCitations}
             />
           </div>
         </div>

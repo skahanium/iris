@@ -2483,6 +2483,17 @@ fn emit_run_terminal(
     evidence_ids: Vec<i64>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
+    let citation_map = match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids)
+    {
+        Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(&cites),
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "web citation map skipped after evidence lookup failure"
+            );
+            serde_json::json!({ "web": [] })
+        }
+    };
     if let Err(error) = AgentRunRepository::finalize(
         db,
         FinalizeRunInput {
@@ -2490,7 +2501,7 @@ fn emit_run_terminal(
             state_version,
             content,
             evidence_ids,
-            citation_map: serde_json::json!({}),
+            citation_map,
         },
     ) {
         return fail_finalization_with_sink(

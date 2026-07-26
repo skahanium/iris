@@ -49,7 +49,6 @@ export function MarkdownRenderable({
         className={cn(
           "ai-message-body iris-markdown-content select-text",
           streaming && "contain-layout",
-          "[&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover",
           className,
         )}
         data-prose-surface="conversation"

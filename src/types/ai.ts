@@ -195,6 +195,12 @@ export interface AssistantSessionSummary {
   updatedAt: string;
 }
 
+export interface WebCitationEntry {
+  index: number;
+  title: string;
+  url: string;
+}
+
 export interface AssistantSessionMessage {
   seq: number;
   role: string;
@@ -210,6 +216,7 @@ export interface AssistantSessionMessage {
   explicitReferences: unknown[];
   contextScope: ContextScope | [];
   displayMentions: DisplayMention[];
+  webCitations?: WebCitationEntry[];
   createdAt: string;
 }
 

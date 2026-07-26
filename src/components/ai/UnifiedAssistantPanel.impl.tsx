@@ -170,6 +170,7 @@ export function UnifiedAssistantPanel({
   useAssistantRunTranscript({
     run: assistantRun.eventState,
     presentation: assistantRun.presentationState,
+    session: runSession,
     messages,
     setMessages,
     setStreaming,

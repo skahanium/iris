@@ -403,6 +403,15 @@ pub enum WebSourceRank {
     Unknown,
 }
 
+/// Persisted HTTPS citation metadata for assistant message rendering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebCitationEntry {
+    pub index: i64,
+    pub title: String,
+    pub url: String,
+}
+
 /// 网页证据扩展元数据（仅 `source_type = web` 时填充）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebEvidenceMeta {
