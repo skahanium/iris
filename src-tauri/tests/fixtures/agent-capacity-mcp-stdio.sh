@@ -42,13 +42,17 @@ while IFS= read -r line; do
           printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"fetch-result"}],"isError":false}}\n' "$id"
           ;;
         *)
-          claims=''
-          ordinal=1
-          while [ "$ordinal" -le 48 ]; do
-            claims="$claims fact-web-$ordinal=value-$ordinal"
-            ordinal=$((ordinal + 1))
-          done
-          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\"}],\"isError\":false}}"
+          if [ "$mode" = "search-empty" ]; then
+            printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"no parseable web evidence\"}],\"isError\":false}}"
+          else
+            claims=''
+            ordinal=1
+            while [ "$ordinal" -le 48 ]; do
+              claims="$claims fact-web-$ordinal=value-$ordinal"
+              ordinal=$((ordinal + 1))
+            done
+            printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\"}],\"isError\":false}}"
+          fi
           ;;
       esac
       ;;

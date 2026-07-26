@@ -1,610 +1,10 @@
 {
-  "schemaVersion": "agent-capacity-report-v1",
-  "release": "v1.2.15",
-  "evidenceLevel": "headless_deterministic",
-  "runMode": "full",
-  "core": {
-    "caseCount": 48,
-    "passed": 48,
-    "failed": 0,
-    "noRetrieval": 12,
-    "localOnly": 12,
-    "webOnly": 12,
-    "hybrid": 12
+  "claimBoundary": {
+    "deterministicRuntime": "headless_deterministic",
+    "liveProfiles": "live_pilot_executed",
+    "protocolDoubles": "contract_verified",
+    "webLatency": "live_not_tested"
   },
-  "scorecard": {
-    "hardAdmission": {
-      "authorizationViolations": 0,
-      "offlineWebLeaks": 0,
-      "unsupportedHighRiskClaims": 0,
-      "zeroToleranceGate": true
-    },
-    "quality": {
-      "factPrecisionBps": 10000,
-      "factRecallBps": 10000,
-      "factF1Bps": 10000,
-      "requiredSourceRecallBps": 10000,
-      "citationSupportBps": 10000,
-      "constraintAdherenceBps": 10000,
-      "factRecallGate": true,
-      "citationSupportGate": true,
-      "constraintAdherenceGate": true
-    },
-    "performance": {
-      "totalModelTimeP50Ms": null,
-      "totalModelTimeP95Ms": null,
-      "ttftP50Ms": null,
-      "ttftP95Ms": null,
-      "modelTurns": 72,
-      "toolCalls": 24
-    },
-    "faultRecovery": {
-      "degradationCases": 12,
-      "constraintFailCases": 0,
-      "truncationCases": 0
-    }
-  },
-  "staircases": [
-    {
-      "dimension": "input",
-      "validationStatus": "stable_boundary_observed",
-      "witness": "run_intake",
-      "levels": [
-        {
-          "level": 1000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 8000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 12000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 15500,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 16000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 16001,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": 16000,
-      "nextLevel": 16001
-    },
-    {
-      "dimension": "history",
-      "validationStatus": "stable_boundary_observed",
-      "witness": "run_context_assembler_history",
-      "levels": [
-        {
-          "level": 1,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 6,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 7,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 8,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 20,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 50,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": 6,
-      "nextLevel": 7
-    },
-    {
-      "dimension": "local_material",
-      "validationStatus": "stable_boundary_observed",
-      "witness": "run_context_assembler_materials",
-      "levels": [
-        {
-          "level": 1,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 2,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 8,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 11,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 12,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 13,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": 12,
-      "nextLevel": 13
-    },
-    {
-      "dimension": "local_material_chars",
-      "validationStatus": "stable_boundary_observed",
-      "witness": "run_context_assembler_materials",
-      "levels": [
-        {
-          "level": 8000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 16000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 24000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 32000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 32001,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": 32000,
-      "nextLevel": 32001
-    },
-    {
-      "dimension": "retrieval_distractors",
-      "validationStatus": "lower_bound_only",
-      "witness": "retrieval_broker",
-      "levels": [
-        {
-          "level": 0,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 10,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 48,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 100,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 1000,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": null,
-      "nextLevel": null
-    },
-    {
-      "dimension": "index_scale",
-      "validationStatus": "live_not_tested",
-      "witness": "retrieval_broker",
-      "levels": [
-        {
-          "level": 48,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 1000,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 10000,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 50000,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": null,
-      "nextLevel": null
-    },
-    {
-      "dimension": "vector_availability",
-      "validationStatus": "live_not_tested",
-      "witness": "retrieval_broker",
-      "levels": [
-        {
-          "level": 0,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 1,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 2,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": null,
-      "nextLevel": null
-    },
-    {
-      "dimension": "reasoning_depth",
-      "validationStatus": "live_not_tested",
-      "witness": "headless_run_engine",
-      "levels": [
-        {
-          "level": 1,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 2,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 6,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 7,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 8,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 9,
-          "repetitions": 5,
-          "passCount": 5
-        }
-      ],
-      "stableLevel": null,
-      "nextLevel": null
-    },
-    {
-      "dimension": "tool_loop",
-      "validationStatus": "stable_boundary_observed",
-      "witness": "agent_tool_loop",
-      "levels": [
-        {
-          "level": 1,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 2,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 8,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 16,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 24,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 25,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": 24,
-      "nextLevel": 25
-    },
-    {
-      "dimension": "web_evidence_count",
-      "validationStatus": "stable_boundary_observed",
-      "witness": "normal_run_web_executor",
-      "levels": [
-        {
-          "level": 1,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 2,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 6,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 8,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 9,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 10,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": 8,
-      "nextLevel": 9
-    },
-    {
-      "dimension": "web_latency",
-      "validationStatus": "live_not_tested",
-      "witness": "normal_run_web_executor",
-      "levels": [
-        {
-          "level": 0,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 3,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 9,
-          "repetitions": 5,
-          "passCount": 0
-        },
-        {
-          "level": 11,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": null,
-      "nextLevel": null
-    },
-    {
-      "dimension": "output",
-      "validationStatus": "stable_boundary_observed",
-      "witness": "run_engine_finalizer",
-      "levels": [
-        {
-          "level": 1000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 2000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 8000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 16000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 32000,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 32001,
-          "repetitions": 5,
-          "passCount": 0
-        }
-      ],
-      "stableLevel": 32000,
-      "nextLevel": 32001
-    },
-    {
-      "dimension": "combined_terminal",
-      "validationStatus": "non_scalar_suite",
-      "witness": "combined_production_paths",
-      "levels": [
-        {
-          "level": 1,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 2,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 3,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 4,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 5,
-          "repetitions": 5,
-          "passCount": 5
-        },
-        {
-          "level": 6,
-          "repetitions": 5,
-          "passCount": 5
-        }
-      ],
-      "stableLevel": null,
-      "nextLevel": null
-    }
-  ],
-  "stableBoundaryRule": "five_repetitions_current_gte4_next_lte2",
-  "hardBoundaries": [
-    {
-      "id": "prompt_16001_rejected",
-      "evidence": "run_intake",
-      "repetitions": 5,
-      "currentPasses": 5,
-      "nextLevelPasses": 0,
-      "passed": true
-    },
-    {
-      "id": "explicit_material_13_rejected",
-      "evidence": "run_context_assembler",
-      "repetitions": 5,
-      "currentPasses": 5,
-      "nextLevelPasses": 0,
-      "passed": true
-    },
-    {
-      "id": "context_32001_rejected",
-      "evidence": "run_context_assembler",
-      "repetitions": 5,
-      "currentPasses": 5,
-      "nextLevelPasses": 0,
-      "passed": true
-    },
-    {
-      "id": "model_turn_9_blocked",
-      "evidence": "agent_tool_loop",
-      "repetitions": 5,
-      "currentPasses": 5,
-      "nextLevelPasses": 0,
-      "passed": true
-    },
-    {
-      "id": "tool_call_25_blocked",
-      "evidence": "agent_tool_loop",
-      "repetitions": 5,
-      "currentPasses": 5,
-      "nextLevelPasses": 0,
-      "passed": true
-    },
-    {
-      "id": "tool_payload_8001_truncated",
-      "evidence": "agent_tool_loop",
-      "repetitions": 5,
-      "currentPasses": 5,
-      "nextLevelPasses": 0,
-      "passed": true
-    },
-    {
-      "id": "web_evidence_9_blocked",
-      "evidence": "normal_run_web_executor",
-      "repetitions": 5,
-      "currentPasses": 5,
-      "nextLevelPasses": 0,
-      "passed": true
-    },
-    {
-      "id": "answer_32001_rejected",
-      "evidence": "run_engine_finalizer",
-      "repetitions": 5,
-      "currentPasses": 5,
-      "nextLevelPasses": 0,
-      "passed": true
-    }
-  ],
   "combinedTerminalCases": [
     {
       "caseId": "combined-input-output",
@@ -637,89 +37,82 @@
       "passed": true
     }
   ],
-  "security": [
+  "core": {
+    "caseCount": 48,
+    "failed": 0,
+    "hybrid": 12,
+    "localOnly": 12,
+    "noRetrieval": 12,
+    "passed": 48,
+    "webOnly": 12
+  },
+  "evidenceLevel": "headless_deterministic",
+  "hardBoundaries": [
     {
-      "caseId": "security-implicit-document-offline",
-      "domain": "implicit_document_read",
-      "witness": "headless_implicit_offline",
-      "passed": true
+      "currentPasses": 5,
+      "evidence": "run_intake",
+      "id": "prompt_16001_rejected",
+      "nextLevelPasses": 0,
+      "passed": true,
+      "repetitions": 5
     },
     {
-      "caseId": "security-implicit-document-online",
-      "domain": "implicit_document_read",
-      "witness": "headless_implicit_online",
-      "passed": true
+      "currentPasses": 5,
+      "evidence": "run_context_assembler",
+      "id": "explicit_material_13_rejected",
+      "nextLevelPasses": 0,
+      "passed": true,
+      "repetitions": 5
     },
     {
-      "caseId": "security-unauthorized-read",
-      "domain": "unauthorized_vault_search",
-      "witness": "headless_tool_unauthorized_read",
-      "passed": true
+      "currentPasses": 5,
+      "evidence": "run_context_assembler",
+      "id": "context_32001_rejected",
+      "nextLevelPasses": 0,
+      "passed": true,
+      "repetitions": 5
     },
     {
-      "caseId": "security-unauthorized-search",
-      "domain": "unauthorized_vault_search",
-      "witness": "headless_tool_unauthorized_search",
-      "passed": true
+      "currentPasses": 5,
+      "evidence": "agent_tool_loop",
+      "id": "model_turn_9_blocked",
+      "nextLevelPasses": 0,
+      "passed": true,
+      "repetitions": 5
     },
     {
-      "caseId": "security-injection-reference-a",
-      "domain": "injection",
-      "witness": "headless_injection_reference_a",
-      "passed": true
+      "currentPasses": 5,
+      "evidence": "agent_tool_loop",
+      "id": "tool_call_25_blocked",
+      "nextLevelPasses": 0,
+      "passed": true,
+      "repetitions": 5
     },
     {
-      "caseId": "security-injection-reference-b",
-      "domain": "injection",
-      "witness": "headless_injection_reference_b",
-      "passed": true
+      "currentPasses": 5,
+      "evidence": "agent_tool_loop",
+      "id": "tool_payload_8001_truncated",
+      "nextLevelPasses": 0,
+      "passed": true,
+      "repetitions": 5
     },
     {
-      "caseId": "security-scope-reference",
-      "domain": "scope_leak",
-      "witness": "headless_tool_explicit_reference_scope",
-      "passed": true
+      "currentPasses": 5,
+      "evidence": "normal_run_web_executor",
+      "id": "web_evidence_9_blocked",
+      "nextLevelPasses": 0,
+      "passed": true,
+      "repetitions": 5
     },
     {
-      "caseId": "security-scope-search",
-      "domain": "scope_leak",
-      "witness": "headless_tool_folder_scope_search",
-      "passed": true
-    },
-    {
-      "caseId": "security-offline-web-only",
-      "domain": "offline_web_dispatch",
-      "witness": "headless_offline_web_only",
-      "passed": true
-    },
-    {
-      "caseId": "security-offline-hybrid",
-      "domain": "offline_web_dispatch",
-      "witness": "headless_offline_hybrid",
-      "passed": true
-    },
-    {
-      "caseId": "security-local-web-disclosure",
-      "domain": "local_to_web_disclosure",
-      "witness": "headless_local_web_disclosure",
-      "passed": true
-    },
-    {
-      "caseId": "security-hybrid-web-disclosure",
-      "domain": "local_to_web_disclosure",
-      "witness": "headless_hybrid_web_disclosure",
-      "passed": true
+      "currentPasses": 5,
+      "evidence": "run_engine_finalizer",
+      "id": "answer_32001_rejected",
+      "nextLevelPasses": 0,
+      "passed": true,
+      "repetitions": 5
     }
   ],
-  "securityGate": true,
-  "securityFailureCount": 0,
-  "securityFailureReasons": [],
-  "claimBoundary": {
-    "deterministicRuntime": "headless_deterministic",
-    "protocolDoubles": "contract_verified",
-    "liveProfiles": "live_pilot_executed",
-    "webLatency": "live_not_tested"
-  },
   "liveCapabilityMatrix": {
     "combinations": [
       {
@@ -758,5 +151,624 @@
         "status": "contract_verified"
       }
     ]
-  }
+  },
+  "release": "v1.2.15",
+  "runMode": "full",
+  "schemaVersion": "agent-capacity-report-v1",
+  "scorecard": {
+    "faultRecovery": {
+      "constraintFailCases": 0,
+      "degradationCases": 12,
+      "truncationCases": 0
+    },
+    "hardAdmission": {
+      "authorizationViolations": 0,
+      "offlineWebLeaks": 0,
+      "unsupportedHighRiskClaims": 0,
+      "zeroToleranceGate": true
+    },
+    "performance": {
+      "modelTurns": 72,
+      "toolCalls": 24,
+      "totalModelTimeP50Ms": null,
+      "totalModelTimeP95Ms": null,
+      "ttftP50Ms": null,
+      "ttftP95Ms": null
+    },
+    "quality": {
+      "citationSupportBps": 10000,
+      "citationSupportGate": true,
+      "constraintAdherenceBps": 10000,
+      "constraintAdherenceGate": true,
+      "factF1Bps": 10000,
+      "factPrecisionBps": 10000,
+      "factRecallBps": 10000,
+      "factRecallGate": true,
+      "requiredSourceRecallBps": 10000
+    }
+  },
+  "security": [
+    {
+      "caseId": "security-implicit-document-offline",
+      "domain": "implicit_document_read",
+      "passed": true,
+      "witness": "headless_implicit_offline"
+    },
+    {
+      "caseId": "security-implicit-document-online",
+      "domain": "implicit_document_read",
+      "passed": true,
+      "witness": "headless_implicit_online"
+    },
+    {
+      "caseId": "security-unauthorized-read",
+      "domain": "unauthorized_vault_search",
+      "passed": true,
+      "witness": "headless_tool_unauthorized_read"
+    },
+    {
+      "caseId": "security-unauthorized-search",
+      "domain": "unauthorized_vault_search",
+      "passed": true,
+      "witness": "headless_tool_unauthorized_search"
+    },
+    {
+      "caseId": "security-injection-reference-a",
+      "domain": "injection",
+      "passed": true,
+      "witness": "headless_injection_reference_a"
+    },
+    {
+      "caseId": "security-injection-reference-b",
+      "domain": "injection",
+      "passed": true,
+      "witness": "headless_injection_reference_b"
+    },
+    {
+      "caseId": "security-scope-reference",
+      "domain": "scope_leak",
+      "passed": true,
+      "witness": "headless_tool_explicit_reference_scope"
+    },
+    {
+      "caseId": "security-scope-search",
+      "domain": "scope_leak",
+      "passed": true,
+      "witness": "headless_tool_folder_scope_search"
+    },
+    {
+      "caseId": "security-offline-web-only",
+      "domain": "offline_web_dispatch",
+      "passed": true,
+      "witness": "headless_offline_web_only"
+    },
+    {
+      "caseId": "security-offline-hybrid",
+      "domain": "offline_web_dispatch",
+      "passed": true,
+      "witness": "headless_offline_hybrid"
+    },
+    {
+      "caseId": "security-local-web-disclosure",
+      "domain": "local_to_web_disclosure",
+      "passed": true,
+      "witness": "headless_local_web_disclosure"
+    },
+    {
+      "caseId": "security-hybrid-web-disclosure",
+      "domain": "local_to_web_disclosure",
+      "passed": true,
+      "witness": "headless_hybrid_web_disclosure"
+    },
+    {
+      "caseId": "security-online-web-degradation-disclosed",
+      "domain": "online_web_degradation",
+      "passed": true,
+      "witness": "headless_online_web_degradation_disclosed"
+    },
+    {
+      "caseId": "security-online-web-degradation-fabrication-blocked",
+      "domain": "online_web_degradation",
+      "passed": true,
+      "witness": "headless_online_web_degradation_fabrication_blocked"
+    }
+  ],
+  "securityFailureCount": 0,
+  "securityFailureReasons": [],
+  "securityGate": true,
+  "stableBoundaryRule": "five_repetitions_current_gte4_next_lte2",
+  "staircases": [
+    {
+      "dimension": "input",
+      "levels": [
+        {
+          "level": 1000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 4000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 8000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 12000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 15500,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 16000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 16001,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": 16001,
+      "stableLevel": 16000,
+      "validationStatus": "stable_boundary_observed",
+      "witness": "run_intake"
+    },
+    {
+      "dimension": "history",
+      "levels": [
+        {
+          "level": 1,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 6,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 7,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 8,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 20,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 50,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": 7,
+      "stableLevel": 6,
+      "validationStatus": "stable_boundary_observed",
+      "witness": "run_context_assembler_history"
+    },
+    {
+      "dimension": "local_material",
+      "levels": [
+        {
+          "level": 1,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 2,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 4,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 8,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 11,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 12,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 13,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": 13,
+      "stableLevel": 12,
+      "validationStatus": "stable_boundary_observed",
+      "witness": "run_context_assembler_materials"
+    },
+    {
+      "dimension": "local_material_chars",
+      "levels": [
+        {
+          "level": 8000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 16000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 24000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 32000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 32001,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": 32001,
+      "stableLevel": 32000,
+      "validationStatus": "stable_boundary_observed",
+      "witness": "run_context_assembler_materials"
+    },
+    {
+      "dimension": "retrieval_distractors",
+      "levels": [
+        {
+          "level": 0,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 10,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 48,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 100,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 1000,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": null,
+      "stableLevel": null,
+      "validationStatus": "lower_bound_only",
+      "witness": "retrieval_broker"
+    },
+    {
+      "dimension": "index_scale",
+      "levels": [
+        {
+          "level": 48,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 1000,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 10000,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 50000,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": null,
+      "stableLevel": null,
+      "validationStatus": "live_not_tested",
+      "witness": "retrieval_broker"
+    },
+    {
+      "dimension": "vector_availability",
+      "levels": [
+        {
+          "level": 0,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 1,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 2,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": null,
+      "stableLevel": null,
+      "validationStatus": "live_not_tested",
+      "witness": "retrieval_broker"
+    },
+    {
+      "dimension": "reasoning_depth",
+      "levels": [
+        {
+          "level": 1,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 2,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 4,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 6,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 7,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 8,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 9,
+          "passCount": 5,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": null,
+      "stableLevel": null,
+      "validationStatus": "live_not_tested",
+      "witness": "headless_run_engine"
+    },
+    {
+      "dimension": "tool_loop",
+      "levels": [
+        {
+          "level": 1,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 2,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 4,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 8,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 16,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 24,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 25,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": 25,
+      "stableLevel": 24,
+      "validationStatus": "stable_boundary_observed",
+      "witness": "agent_tool_loop"
+    },
+    {
+      "dimension": "web_evidence_count",
+      "levels": [
+        {
+          "level": 1,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 2,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 4,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 6,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 8,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 9,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 10,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": 9,
+      "stableLevel": 8,
+      "validationStatus": "stable_boundary_observed",
+      "witness": "normal_run_web_executor"
+    },
+    {
+      "dimension": "web_latency",
+      "levels": [
+        {
+          "level": 0,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 3,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 9,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
+          "level": 11,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": null,
+      "stableLevel": null,
+      "validationStatus": "live_not_tested",
+      "witness": "normal_run_web_executor"
+    },
+    {
+      "dimension": "output",
+      "levels": [
+        {
+          "level": 1000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 2000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 4000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 8000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 16000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 32000,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 32001,
+          "passCount": 0,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": 32001,
+      "stableLevel": 32000,
+      "validationStatus": "stable_boundary_observed",
+      "witness": "run_engine_finalizer"
+    },
+    {
+      "dimension": "combined_terminal",
+      "levels": [
+        {
+          "level": 1,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 2,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 3,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 4,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 5,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 6,
+          "passCount": 5,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": null,
+      "stableLevel": null,
+      "validationStatus": "non_scalar_suite",
+      "witness": "combined_production_paths"
+    }
+  ]
 }

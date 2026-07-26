@@ -30,7 +30,7 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 `web_required` 在模型前做一次受预算约束的预取；`web_preferred` 不预取。搜索、一次瞬态重试和页面抓取共享 10 秒总预算，重试等待 250ms。鉴权、策略拒绝、Schema 错误和输出越界不重试；熔断打开时立即降级。页面正文抓取失败不会抹掉已取得的搜索摘要。
 
-联网失败返回结构化工具结果并产生非终态 `capability_degraded` 事件，Run 继续到 `completed`。`web_preferred` 可回答稳定知识并标明未核实内容；`web_required` 无证据时由后端追加固定透明声明，禁止当前事实和伪引用。诊断仅记录联网模式、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。
+联网失败返回结构化工具结果并产生非终态 `capability_degraded` 事件，Run 继续到 `completed`。`web_preferred` 可回答稳定知识并标明未核实内容；`web_required` 无证据时由后端追加固定透明声明，禁止当前事实和伪引用。诊断仅记录联网模式、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。偶发降级与 MCP/harness/LLM 分流步骤见 [ops/web-capability-degradation.md](./ops/web-capability-degradation.md)；可执行 `npm run diagnose:web-degradation` 读取本地 `agent_run_events`。
 
 助手只通过 `web_search` 语义入口请求外网证据。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider：前者失败返回“没有已启用模型满足当前任务所需能力”，后者返回“未配置可用的联网证据提供方”，不会误报模型服务故障。普通证据详情只展示引用、标题、安全 URL/域名、摘录和冲突说明；provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
 

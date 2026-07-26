@@ -41,7 +41,8 @@
     "hygiene:gitignore-check": "node scripts/hygiene-gitignore-check.mjs",
     "version:set": "node scripts/set-version.mjs",
     "version:check": "node scripts/set-version.mjs --check",
-    "docs:check": "node scripts/docs-facts-check.mjs"
+    "docs:check": "node scripts/docs-facts-check.mjs",
+    "diagnose:web-degradation": "node scripts/diagnose-web-capability-degradation.mjs"
   },
   "dependencies": {
     "@radix-ui/react-collapsible": "^1.1.20",
