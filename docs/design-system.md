@@ -107,6 +107,7 @@ AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 bra
 - AI 活动状态须投影到 Composer 和/或 StatusBar；禁止只写不读的 activity hint。
 - 普通域 `@` 文件/文件夹与 `#` 标签在输入框和用户消息中只以内联名称呈现，使用 `--ai-mention` 浅绿色前景色；不得显示 `@`、方括号、胶囊、“引用”行，也不得添加底色、边框、圆角或图标。真实相对路径与类型仅用于安全 tooltip。
 - 标题栏、Rail 和 Tab 溢出应维持当前平台窗口行为；人工验收见 `docs/testing/`。
+- 顶栏底色与编辑区同源（`bg-background`），不使用 `surface-chrome`，避免与编辑区形成灰带；活动 Tab 用 inset rim light（顶/左高光）+ 底部内阴影呈现玻璃质感，inactive Tab 保持透明。Tab 固定宽度 `9rem`（溢出压缩至 `4.5rem`），不随标题长度变化。
 
 ## Iris Rail 完整刷新设计
 
