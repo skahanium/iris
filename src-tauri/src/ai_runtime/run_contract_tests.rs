@@ -13,6 +13,7 @@ fn direct_answer_envelope() -> ExecutionEnvelope {
         context: ContextMode::Conversation,
         freshness: Freshness::Offline,
         web_reason: WebDecisionReason::LegacyUnknown,
+        verification_requirement: crate::ai_runtime::run_contract::VerificationRequirement::None,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,
@@ -294,6 +295,7 @@ fn execution_envelope_uses_the_same_camel_case_wire_fields_as_typescript() {
             "context": "conversation",
             "freshness": "offline",
             "webReason": "legacy_unknown",
+            "verificationRequirement": "none",
             "effort": "direct",
             "securityDomain": "normal",
             "risk": "read_only",
@@ -323,6 +325,10 @@ fn historical_envelope_without_web_reason_deserializes_safely() {
 
     assert_eq!(envelope.freshness, Freshness::WebRequired);
     assert_eq!(envelope.web_reason, WebDecisionReason::LegacyUnknown);
+    assert_eq!(
+        envelope.verification_requirement,
+        super::run_contract::VerificationRequirement::None
+    );
 }
 
 #[test]

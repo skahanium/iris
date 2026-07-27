@@ -185,13 +185,20 @@ pub fn record_failure(provider_id: &str) {
     }
 }
 
+/// Clear one provider's process-local circuit state for an isolated test
+/// fixture. Production code must never use this escape hatch.
+#[cfg(test)]
+pub(crate) fn reset_for_tests(provider_id: &str) {
+    let mut map = CIRCUITS.lock().unwrap_or_else(|e| e.into_inner());
+    map.remove(provider_id);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn reset_circuit(provider: &str) {
-        let mut map = CIRCUITS.lock().unwrap_or_else(|e| e.into_inner());
-        map.remove(provider);
+        super::reset_for_tests(provider);
     }
 
     #[test]

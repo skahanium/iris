@@ -185,6 +185,17 @@ fn initial_run_search_queries(query: &str) -> Vec<String> {
 }
 
 pub fn web_evidence_items_to_packets(query: &str, items: &[WebEvidenceItem]) -> Vec<ContextPacket> {
+    web_evidence_items_to_packets_with_excerpt_limit(query, items, WEB_PACKET_EXCERPT_MAX_CHARS)
+}
+
+/// Convert selected evidence into model packets with one caller-owned excerpt
+/// limit. Strict Run packing uses this to guarantee the persisted excerpt and
+/// model-visible excerpt are byte-for-byte identical after normalization.
+pub fn web_evidence_items_to_packets_with_excerpt_limit(
+    query: &str,
+    items: &[WebEvidenceItem],
+    excerpt_limit: usize,
+) -> Vec<ContextPacket> {
     let fetched_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     items
         .iter()
@@ -203,7 +214,7 @@ pub fn web_evidence_items_to_packets(query: &str, items: &[WebEvidenceItem]) -> 
                     .fetched_excerpt
                     .clone()
                     .unwrap_or_else(|| item.snippet.clone()),
-                WEB_PACKET_EXCERPT_MAX_CHARS,
+                excerpt_limit,
             ),
             retrieval_reason: "web_evidence_broker".into(),
             score: 0.7,
@@ -593,7 +604,11 @@ async fn call_mcp_search_provider(
             max_stdout_line_bytes: 64 * 1024,
             max_stderr_bytes: 4 * 1024,
             cwd: None,
-            stdio_session_pool: true,
+            // Each unit test owns a short-lived Tokio runtime. Retaining an
+            // RMCP service in the process-wide pool past that runtime would
+            // leave a stale transport for a later test to reuse. Production
+            // runs in one long-lived runtime and retain pooling normally.
+            stdio_session_pool: !cfg!(test),
             stdio_session_idle_timeout:
                 crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         },
@@ -1670,7 +1685,9 @@ async fn collect_mcp_page_fetch(
             max_stdout_line_bytes: 128 * 1024,
             max_stderr_bytes: 4 * 1024,
             cwd: None,
-            stdio_session_pool: true,
+            // See the search path above: never pool a test-owned stdio child
+            // across independent Tokio test runtimes.
+            stdio_session_pool: !cfg!(test),
             stdio_session_idle_timeout:
                 crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         },

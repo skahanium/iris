@@ -97,6 +97,8 @@ export function useAssistantRun() {
   const earlyPresentationRef = useRef(
     new Map<string, AssistantPresentationEvent[]>(),
   );
+  const pendingPresentationEventsRef = useRef<AssistantPresentationEvent[]>([]);
+  const presentationFrameRef = useRef<number | null>(null);
   const resyncingRef = useRef(new Set<string>());
   const answerCompleteResyncRef = useRef<string | null>(null);
 
@@ -186,6 +188,26 @@ export function useAssistantRun() {
     };
   }, [reduceLiveEvent]);
 
+  const flushPresentationEvents = useCallback(() => {
+    presentationFrameRef.current = null;
+    const events = pendingPresentationEventsRef.current.splice(0);
+    if (events.length === 0) return;
+    setPresentationState((previous) => {
+      if (!previous) return previous;
+      return events.reduce((state, event) => {
+        if (state.runId !== event.runId) return state;
+        return reduceAssistantPresentationEvent(state, event);
+      }, previous);
+    });
+  }, []);
+
+  const schedulePresentationFlush = useCallback(() => {
+    if (presentationFrameRef.current !== null) return;
+    presentationFrameRef.current = window.requestAnimationFrame(
+      flushPresentationEvents,
+    );
+  }, [flushPresentationEvents]);
+
   const reducePresentationEvent = useCallback(
     (event: AssistantPresentationEvent) => {
       if (activeRunIdRef.current !== event.runId) {
@@ -193,12 +215,18 @@ export function useAssistantRun() {
         earlyPresentationRef.current.set(event.runId, [...buffered, event]);
         return;
       }
-      setPresentationState((previous) => {
-        if (!previous || previous.runId !== event.runId) return previous;
-        return reduceAssistantPresentationEvent(previous, event);
-      });
+      pendingPresentationEventsRef.current.push(event);
+      if (event.type === "answer_complete") {
+        if (presentationFrameRef.current !== null) {
+          window.cancelAnimationFrame(presentationFrameRef.current);
+          presentationFrameRef.current = null;
+        }
+        flushPresentationEvents();
+      } else {
+        schedulePresentationFlush();
+      }
     },
-    [],
+    [flushPresentationEvents, schedulePresentationFlush],
   );
 
   useEffect(() => {
@@ -213,6 +241,11 @@ export function useAssistantRun() {
     return () => {
       disposed = true;
       unlisten?.();
+      if (presentationFrameRef.current !== null) {
+        window.cancelAnimationFrame(presentationFrameRef.current);
+        presentationFrameRef.current = null;
+      }
+      pendingPresentationEventsRef.current = [];
     };
   }, [reducePresentationEvent]);
 

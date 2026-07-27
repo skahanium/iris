@@ -146,6 +146,8 @@ const MIGRATION_056_UP: &str =
     include_str!("../../migrations/056_agent_run_authorization_snapshots.sql");
 const MIGRATION_056_DOWN: &str =
     include_str!("../../migrations/056_agent_run_authorization_snapshots.down.sql");
+const MIGRATION_057_UP: &str = include_str!("../../migrations/057_agent_run_evidence.sql");
+const MIGRATION_057_DOWN: &str = include_str!("../../migrations/057_agent_run_evidence.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -613,6 +615,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_056_UP,
         false,
     )?;
+    apply_migration(conn, "057_agent_run_evidence", MIGRATION_057_UP, false)?;
 
     Ok(())
 }
@@ -624,6 +627,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "057_agent_run_evidence", MIGRATION_057_DOWN);
     rollback_migration(
         conn,
         "056_agent_run_authorization_snapshots",

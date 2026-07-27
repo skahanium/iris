@@ -15,12 +15,14 @@ use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
-use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
+use crate::ai_runtime::agent_tool_loop::{
+    AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
+};
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, CapabilityId, Freshness, RunEventPayload, RunEventType, SafeRunErrorCode,
-    WebEvidenceFailureReason,
+    AssistantRunAccepted, CapabilityId, RunEventPayload, RunEventType, SafeRunErrorCode,
+    WebDecisionReason, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::tool_audit::record_web_query_taint_witness;
@@ -32,6 +34,7 @@ use crate::ai_runtime::tool_execution_pipeline::{
 };
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCallResult};
+use crate::ai_types::WebSourceRank;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -127,6 +130,8 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     cold_start_packets: Vec<crate::ai_runtime::ContextPacket>,
     runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot>,
     evidence_ids: Mutex<Vec<i64>>,
+    web_evidence_domains: Mutex<BTreeSet<String>>,
+    web_evidence_has_official_source: Mutex<bool>,
     web_failure: Mutex<Option<WebFailure>>,
     web_attempt_count: Mutex<u32>,
     web_budget: RunWebBudget,
@@ -165,6 +170,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             cold_start_packets: context.local_retrieval_packets.clone(),
             runtime_documents: Vec::new(),
             evidence_ids: Mutex::new(Vec::new()),
+            web_evidence_domains: Mutex::new(BTreeSet::new()),
+            web_evidence_has_official_source: Mutex::new(false),
             web_failure: Mutex::new(None),
             web_attempt_count: Mutex::new(0),
             web_budget: RunWebBudget::default(),
@@ -255,30 +262,31 @@ impl<'a> NormalRunToolExecutor<'a> {
         };
         let budget_started = self.web_budget.started()?;
         let call_started = Instant::now();
-        let output = loop {
-            let Some(attempt_count) = self.reserve_web_attempt()? else {
-                let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
-                self.set_web_failure(Some(failure))?;
-                return Ok(failed_web_tool_call(
-                    failure,
-                    self.web_attempt_count(),
-                    call_started.elapsed(),
-                    remaining_model_web_budget_ms(budget_started.elapsed()),
-                ));
-            };
-            let remaining_time =
-                MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
-            if remaining_time.is_zero() {
-                let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
-                self.set_web_failure(Some(failure))?;
-                return Ok(failed_web_tool_call(
-                    failure,
-                    attempt_count,
-                    call_started.elapsed(),
-                    remaining_model_web_budget_ms(budget_started.elapsed()),
-                ));
-            }
-            let failure = match tokio::time::timeout(
+        let output =
+            loop {
+                let Some(attempt_count) = self.reserve_web_attempt()? else {
+                    let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
+                    self.set_web_failure(Some(failure))?;
+                    return Ok(failed_web_tool_call(
+                        failure,
+                        self.web_attempt_count(),
+                        call_started.elapsed(),
+                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                    ));
+                };
+                let remaining_time =
+                    MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
+                if remaining_time.is_zero() {
+                    let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
+                    self.set_web_failure(Some(failure))?;
+                    return Ok(failed_web_tool_call(
+                        failure,
+                        attempt_count,
+                        call_started.elapsed(),
+                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                    ));
+                }
+                let failure = match tokio::time::timeout(
                 remaining_time,
                 crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
                     &self.state.db,
@@ -287,38 +295,51 @@ impl<'a> NormalRunToolExecutor<'a> {
             )
             .await
             {
+                Ok(Ok(output)) if output.items.iter().any(|item| item.conflict_group.is_some()) => {
+                    WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+                }
                 Ok(Ok(output)) if web_output_has_usable_evidence(&output) => break output,
                 Ok(Ok(output)) => classify_web_evidence_output_failure(&output),
                 Ok(Err(error)) => classify_web_failure(&error),
                 Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
             };
-            if attempt_count < 2
-                && failure.retryable
-                && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
-                    < MODEL_WEB_EVIDENCE_DEADLINE
-            {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                continue;
-            }
-            self.set_web_failure(Some(failure))?;
-            return Ok(failed_web_tool_call(
-                failure,
-                attempt_count,
-                call_started.elapsed(),
-                remaining_model_web_budget_ms(budget_started.elapsed()),
-            ));
-        };
-        let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets(
-            query,
-            &output.items,
-        );
+                if attempt_count < 2
+                    && failure.retryable
+                    && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
+                        < MODEL_WEB_EVIDENCE_DEADLINE
+                {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
+                self.set_web_failure(Some(failure))?;
+                return Ok(failed_web_tool_call(
+                    failure,
+                    attempt_count,
+                    call_started.elapsed(),
+                    remaining_model_web_budget_ms(budget_started.elapsed()),
+                ));
+            };
+        let packed_items =
+            match pack_web_evidence_for_model(query, &output.items, remaining, &output.usage) {
+                Ok(items) if !items.is_empty() => items,
+                Ok(_) | Err(_) => {
+                    let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
+                    self.set_web_failure(Some(failure))?;
+                    return Ok(failed_web_tool_call(
+                        failure,
+                        self.web_attempt_count(),
+                        call_started.elapsed(),
+                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                    ));
+                }
+            };
         let evidence_ids = register_model_web_evidence(
             &self.state.db,
             self.accepted,
             self.context,
             self.sink,
             state_version,
-            &output.items,
+            &packed_items,
             remaining,
         )?;
         if evidence_ids.is_empty() {
@@ -336,6 +357,12 @@ impl<'a> NormalRunToolExecutor<'a> {
             .lock()
             .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?
             .extend(evidence_ids.iter().copied());
+        self.record_web_evidence_quality(&packed_items)?;
+        let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
+            query,
+            &packed_items,
+            MAX_WEB_EXCERPT_CHARS,
+        );
         Ok(ToolCallResult {
             tool_name: WEB_TOOL_NAME.to_string(),
             success: true,
@@ -684,11 +711,39 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn has_web_evidence(&self) -> bool {
-        !self.evidence_ids().is_empty()
+        // This vector is populated only after this executor's successful
+        // `web_search` call has persisted a Run-level evidence association.
+        // It deliberately cannot be satisfied by session history or a prior
+        // Run's citations.
+        if self.evidence_ids().is_empty() {
+            return false;
+        }
+        if !self.requires_corroborated_web_evidence() {
+            return true;
+        }
+        let has_official = self
+            .web_evidence_has_official_source
+            .lock()
+            .map(|value| *value)
+            .unwrap_or(false);
+        let independent_domains = self
+            .web_evidence_domains
+            .lock()
+            .map(|domains| domains.len())
+            .unwrap_or(0);
+        corroborated_source_threshold_met(has_official, independent_domains)
     }
 
     fn requires_web_evidence(&self) -> bool {
-        self.context.envelope.freshness == Freshness::WebRequired
+        // A ChildRun produces an internal tool result, never the parent Run's
+        // final factual answer. Requiring the parent's Web proof here would
+        // reject trusted runtime operations (for example system_time_now)
+        // before the parent can continue. The depth-zero parent still owns the
+        // terminal gate and cannot complete an external factual response
+        // without current-run Web evidence.
+        self.subagent_depth == 0
+            && self.context.envelope.verification_requirement
+                == crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb
     }
 
     fn emit_deferred_web_degradation_if_needed(
@@ -701,6 +756,40 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
 }
 
 impl NormalRunToolExecutor<'_> {
+    fn requires_corroborated_web_evidence(&self) -> bool {
+        matches!(
+            self.context.envelope.web_reason,
+            WebDecisionReason::VolatileExternalFact | WebDecisionReason::HighStakesCurrentFact
+        )
+    }
+
+    fn record_web_evidence_quality(
+        &self,
+        items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    ) -> AppResult<()> {
+        let mut domains = self
+            .web_evidence_domains
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_evidence_lock_failed"))?;
+        let mut has_official = self
+            .web_evidence_has_official_source
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_evidence_lock_failed"))?;
+        for item in items {
+            if item.failure_reason.is_none()
+                && item.url.starts_with("https://")
+                && item.canonical_url.starts_with("https://")
+                && bounded_page_evidence(item).is_some()
+            {
+                if !item.domain.trim().is_empty() {
+                    domains.insert(item.domain.to_ascii_lowercase());
+                }
+                *has_official |= item.source_rank == WebSourceRank::Official;
+            }
+        }
+        Ok(())
+    }
+
     /// Execute one bounded ChildRun inside the parent Run's provider, policy,
     /// evidence and audit boundary. There is intentionally no child task table
     /// or child lifecycle: only the parent Run may persist an effect or ask the
@@ -891,6 +980,23 @@ impl NormalRunToolExecutor<'_> {
 
     fn web_failure(&self) -> Option<WebFailure> {
         self.web_failure.lock().ok().and_then(|failure| *failure)
+    }
+
+    /// Return the sanitized state of the deterministic evidence stage. This
+    /// crosses the service boundary only as stable UI/event fields; raw search
+    /// errors remain inside the executor.
+    pub(crate) fn web_verification_failure_details(
+        &self,
+    ) -> (SafeRunErrorCode, WebEvidenceFailureReason, bool, u32) {
+        let failure = self
+            .web_failure()
+            .unwrap_or_else(|| WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false));
+        (
+            failure.code,
+            failure.reason,
+            failure.retryable,
+            self.web_attempt_count().max(1),
+        )
     }
 
     fn reserve_web_attempt(&self) -> AppResult<Option<u32>> {
@@ -1330,6 +1436,112 @@ struct BoundedWebItem {
     conflict_group: Option<String>,
 }
 
+/// Select and normalize the exact Web evidence that may reach a model. The
+/// same normalized values are later written to the evidence ledger, which
+/// prevents a session record from claiming support that the model never saw.
+fn pack_web_evidence_for_model(
+    query: &str,
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    limit: usize,
+    usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
+) -> AppResult<Vec<crate::ai_runtime::web_evidence_broker::WebEvidenceItem>> {
+    let mut packed = items
+        .iter()
+        .filter(|item| item.failure_reason.is_none())
+        .filter(|item| {
+            item.url.starts_with("https://") && item.canonical_url.starts_with("https://")
+        })
+        .filter_map(|item| {
+            let bounded = bounded_page_evidence(item)?;
+            let mut item = item.clone();
+            item.title = truncate_web_field(&bounded.title, 256);
+            item.url = truncate_web_field(&bounded.url, 512);
+            item.canonical_url = truncate_web_field(&bounded.canonical_url, 512);
+            item.domain = truncate_web_field(&bounded.domain, 255);
+            item.provider_id = truncate_web_field(&bounded.provider_id, 128);
+            item.provider_kind = truncate_web_field(&bounded.provider_kind, 128);
+            item.raw_result_hash = truncate_web_field(&bounded.raw_result_hash, 128);
+            item.extraction_method = truncate_web_field(&bounded.extraction_method, 128);
+            item.snippet = bounded.excerpt.clone();
+            item.fetched_excerpt = Some(bounded.excerpt);
+            Some(item)
+        })
+        .take(limit)
+        .collect::<Vec<_>>();
+
+    // The final evidence ids are decimal SQLite identifiers. Reserve their
+    // worst-case serialized footprint before persistence, then compact the
+    // longest excerpts until the *actual JSON shape* fits. Never leave a
+    // later generic string truncation to corrupt the JSON packet.
+    let placeholder_ids = vec!["9223372036854775807"; packed.len()];
+    while !packed.is_empty()
+        && serialized_web_tool_payload_chars(query, &packed, &placeholder_ids, usage)
+            > MAX_WEB_TOOL_RESULT_CHARS
+    {
+        let Some((index, length)) = packed
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                item.fetched_excerpt
+                    .as_ref()
+                    .map(|excerpt| (index, excerpt.chars().count()))
+            })
+            .max_by_key(|(_, length)| *length)
+        else {
+            break;
+        };
+        if length <= 64 {
+            return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
+        }
+        let next_length = length.saturating_sub(256).max(64);
+        let excerpt = packed[index].fetched_excerpt.as_deref().unwrap_or_default();
+        let compact = truncate_web_field(excerpt, next_length);
+        packed[index].snippet = compact.clone();
+        packed[index].fetched_excerpt = Some(compact);
+    }
+    if packed.is_empty()
+        || serialized_web_tool_payload_chars(query, &packed, &placeholder_ids, usage)
+            > MAX_WEB_TOOL_RESULT_CHARS
+    {
+        return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
+    }
+    Ok(packed)
+}
+
+fn serialized_web_tool_payload_chars(
+    query: &str,
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    evidence_ids: &[&str],
+    usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
+) -> usize {
+    let packets =
+        crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
+            query,
+            items,
+            MAX_WEB_EXCERPT_CHARS,
+        );
+    serde_json::to_string(&serde_json::json!({
+        "success": true,
+        "output": {
+            "results": packets,
+            "evidenceIds": evidence_ids,
+            "count": evidence_ids.len(),
+            "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
+            // Reserve the largest possible decimal representation because the
+            // remaining budget is produced after the packer has run.
+            "remainingBudgetMs": u64::MAX,
+            "webUsage": usage,
+        },
+        "error": serde_json::Value::Null,
+    }))
+    .map(|value| value.chars().count())
+    .unwrap_or(usize::MAX)
+}
+
+fn truncate_web_field(value: &str, limit: usize) -> String {
+    value.chars().take(limit).collect()
+}
+
 fn bounded_page_evidence(
     item: &crate::ai_runtime::web_evidence_broker::WebEvidenceItem,
 ) -> Option<BoundedWebItem> {
@@ -1498,6 +1710,10 @@ fn web_output_has_usable_evidence(
     })
 }
 
+fn corroborated_source_threshold_met(has_official: bool, independent_domains: usize) -> bool {
+    has_official || independent_domains >= 2
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
@@ -1506,8 +1722,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        emit_deferred_web_degradation, DeferredWebDegradationInput, NormalRunToolExecutor,
-        RunWebBudget,
+        corroborated_source_threshold_met, emit_deferred_web_degradation,
+        DeferredWebDegradationInput, NormalRunToolExecutor, RunWebBudget,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -1683,7 +1899,11 @@ mod tests {
             .await
             .expect("child execution result");
 
-        assert!(result.success, "{:?}", result.error);
+        assert!(
+            result.success,
+            "error: {:?}, report: {}",
+            result.error, result.output
+        );
         assert_eq!(
             result.output["subagent_report"]["summary"],
             "子任务已读取当前时间。"
@@ -1801,6 +2021,13 @@ mod tests {
         let second = budget.started().expect("second budget start");
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn high_risk_web_facts_require_official_or_two_independent_domains() {
+        assert!(corroborated_source_threshold_met(true, 1));
+        assert!(corroborated_source_threshold_met(false, 2));
+        assert!(!corroborated_source_threshold_met(false, 1));
     }
 
     #[test]

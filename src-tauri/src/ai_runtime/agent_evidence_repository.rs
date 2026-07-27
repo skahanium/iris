@@ -125,13 +125,14 @@ impl AgentEvidenceRepository {
                 ensure_normal_run_ownership(conn, input.session_id, &input.run_id)?;
                 ensure_reference_message(conn, input.session_id, input.message_seq_first)?;
                 let packet_key = local_packet_key(&input);
-                if let Some(existing) = find_registered(conn, input.session_id, &packet_key)? {
-                    return reactivate_and_return(conn, existing);
-                }
-                let citation = next_citation(conn, input.session_id)?;
-                let now = chrono::Utc::now().to_rfc3339();
-                conn.execute(
-                    "INSERT INTO session_evidence
+                let registered =
+                    if let Some(existing) = find_registered(conn, input.session_id, &packet_key)? {
+                        reactivate_and_return(conn, existing)?
+                    } else {
+                        let citation = next_citation(conn, input.session_id)?;
+                        let now = chrono::Utc::now().to_rfc3339();
+                        conn.execute(
+                            "INSERT INTO session_evidence
                      (session_id, citation_index, citation_label, packet_key, message_seq_first,
                       source_type, title, source_path, source_span_start, source_span_end,
                       heading_path, content_hash, retrieval_reason, score, origin_run_id,
@@ -140,26 +141,29 @@ impl AgentEvidenceRepository {
                              'local', ?6, ?7, ?8, ?9,
                              ?10, ?11, ?12, ?13, ?14,
                              ?15, 0, ?16)",
-                    params![
-                        input.session_id,
-                        citation.index,
-                        citation.label,
-                        packet_key,
-                        input.message_seq_first,
-                        input.title,
-                        input.source_path,
-                        input.source_span_start,
-                        input.source_span_end,
-                        input.heading_path,
-                        input.content_hash,
-                        input.retrieval_reason,
-                        input.score,
-                        input.run_id,
-                        material_role_wire(input.material_role),
-                        now,
-                    ],
-                )?;
-                registered_by_id(conn, conn.last_insert_rowid())
+                            params![
+                                input.session_id,
+                                citation.index,
+                                citation.label,
+                                packet_key,
+                                input.message_seq_first,
+                                input.title,
+                                input.source_path,
+                                input.source_span_start,
+                                input.source_span_end,
+                                input.heading_path,
+                                input.content_hash,
+                                input.retrieval_reason,
+                                input.score,
+                                input.run_id,
+                                material_role_wire(input.material_role),
+                                now,
+                            ],
+                        )?;
+                        registered_by_id(conn, conn.last_insert_rowid())?
+                    };
+                record_run_evidence_use(conn, &input.run_id, registered.evidence_id, "context")?;
+                Ok(registered)
             })
         })
     }
@@ -175,13 +179,14 @@ impl AgentEvidenceRepository {
                 ensure_normal_run_ownership(conn, input.session_id, &input.run_id)?;
                 ensure_reference_message(conn, input.session_id, input.message_seq_first)?;
                 let packet_key = web_packet_key(&input);
-                if let Some(existing) = find_registered(conn, input.session_id, &packet_key)? {
-                    return reactivate_and_return(conn, existing);
-                }
-                let citation = next_citation(conn, input.session_id)?;
-                let now = chrono::Utc::now().to_rfc3339();
-                conn.execute(
-                    "INSERT INTO session_evidence
+                let registered =
+                    if let Some(existing) = find_registered(conn, input.session_id, &packet_key)? {
+                        reactivate_and_return(conn, existing)?
+                    } else {
+                        let citation = next_citation(conn, input.session_id)?;
+                        let now = chrono::Utc::now().to_rfc3339();
+                        conn.execute(
+                            "INSERT INTO session_evidence
                      (session_id, citation_index, citation_label, packet_key, message_seq_first,
                       source_type, title, retrieval_reason, score, url, normalized_url, domain,
                       retrieved_at, source_rank, failure_reason, provider_id, provider_kind,
@@ -192,33 +197,36 @@ impl AgentEvidenceRepository {
                              ?12, ?13, ?14, ?15, ?16,
                              ?17, ?18, ?19, ?20,
                              ?21, 0, ?22, ?23)",
-                    params![
-                        input.session_id,
-                        citation.index,
-                        citation.label,
-                        packet_key,
-                        input.message_seq_first,
-                        input.title,
-                        input.retrieval_reason,
-                        input.score,
-                        input.url,
-                        input.normalized_url,
-                        input.domain,
-                        input.retrieved_at,
-                        input.source_rank,
-                        input.failure_reason,
-                        input.provider_id,
-                        input.provider_kind,
-                        input.raw_result_hash,
-                        input.extraction_method,
-                        input.conflict_group,
-                        input.run_id,
-                        material_role_wire(input.material_role),
-                        input.bounded_excerpt,
-                        now,
-                    ],
-                )?;
-                registered_by_id(conn, conn.last_insert_rowid())
+                            params![
+                                input.session_id,
+                                citation.index,
+                                citation.label,
+                                packet_key,
+                                input.message_seq_first,
+                                input.title,
+                                input.retrieval_reason,
+                                input.score,
+                                input.url,
+                                input.normalized_url,
+                                input.domain,
+                                input.retrieved_at,
+                                input.source_rank,
+                                input.failure_reason,
+                                input.provider_id,
+                                input.provider_kind,
+                                input.raw_result_hash,
+                                input.extraction_method,
+                                input.conflict_group,
+                                input.run_id,
+                                material_role_wire(input.material_role),
+                                input.bounded_excerpt,
+                                now,
+                            ],
+                        )?;
+                        registered_by_id(conn, conn.last_insert_rowid())?
+                    };
+                record_run_evidence_use(conn, &input.run_id, registered.evidence_id, "web_search")?;
+                Ok(registered)
             })
         })
     }
@@ -263,6 +271,76 @@ impl AgentEvidenceRepository {
             }
             out.sort_by_key(|cite| cite.index);
             Ok(out)
+        })
+    }
+
+    /// Load the exact Web evidence selected by one Run, using stable Run-local
+    /// labels rather than session-global citation numbering. A follow-up Run
+    /// may reuse a session evidence row, but it always receives a new W1..Wn
+    /// projection for its own answer contract.
+    pub(crate) fn list_current_run_web_citation_links(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Vec<crate::ai_runtime::citation_linkify::WebCitationLink>> {
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT evidence.title, evidence.url
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'web_search'
+                   AND evidence.source_type = 'web'
+                   AND evidence.retired_at IS NULL
+                   AND evidence.url LIKE 'https://%'
+                 ORDER BY run_evidence.registered_at ASC, evidence.id ASC",
+            )?;
+            let rows = statement
+                .query_map([run_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows
+                .into_iter()
+                .enumerate()
+                .map(|(offset, (title, url))| {
+                    let index = i64::try_from(offset + 1).unwrap_or(i64::MAX);
+                    crate::ai_runtime::citation_linkify::WebCitationLink {
+                        index,
+                        label: format!("[W{index}]"),
+                        title,
+                        url,
+                    }
+                })
+                .collect())
+        })
+    }
+
+    /// Check that the exact Run, rather than merely its session, successfully
+    /// registered HTTPS Web evidence through the `web_search` capability.
+    pub(crate) fn has_current_run_web_evidence(
+        db: &Database,
+        run_id: &str,
+        evidence_ids: &[i64],
+    ) -> AppResult<bool> {
+        if evidence_ids.is_empty() {
+            return Ok(false);
+        }
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT EXISTS(
+                     SELECT 1
+                     FROM agent_run_evidence run_evidence
+                     JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                     WHERE run_evidence.run_id = ?1
+                       AND run_evidence.registration_source = 'web_search'
+                       AND evidence.source_type = 'web'
+                       AND evidence.retired_at IS NULL
+                       AND evidence.url LIKE 'https://%'
+                 )",
+            )?;
+            statement
+                .query_row([run_id], |row| row.get(0))
+                .map_err(Into::into)
         })
     }
 }
@@ -311,6 +389,26 @@ fn ensure_normal_run_ownership(conn: &Connection, session_id: i64, run_id: &str)
     } else {
         Err(AppError::msg("agent_evidence_run_not_found"))
     }
+}
+
+fn record_run_evidence_use(
+    conn: &Connection,
+    run_id: &str,
+    evidence_id: i64,
+    registration_source: &str,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO agent_run_evidence (run_id, evidence_id, registration_source, registered_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(run_id, evidence_id, registration_source) DO NOTHING",
+        params![
+            run_id,
+            evidence_id,
+            registration_source,
+            chrono::Utc::now().to_rfc3339(),
+        ],
+    )?;
+    Ok(())
 }
 
 fn ensure_reference_message(

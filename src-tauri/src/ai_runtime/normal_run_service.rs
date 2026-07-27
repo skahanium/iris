@@ -7,19 +7,23 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::AppHandle;
 
+use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, Effort, Freshness, Modality, SafeRunErrorCode,
+    AssistantRunAccepted, Effort, Freshness, Modality, SafeRunErrorCode, VerificationRequirement,
+    WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingDirectAnswerProvider, FailoverStreamingToolLoopProvider, RunEngine,
-    RunEventSink,
+    RunEventSink, WebVerificationFailure,
 };
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::ai_runtime::tool_executor::ToolRegistry;
+use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall};
 use crate::ai_types::{AgentIntent, MessageContent, SkillActivationPlanSummary};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -123,6 +127,20 @@ async fn execute_normal_run_internal(
         }
     };
     let domain_plan = context.domain_plan();
+    // Never route an external-fact Run to a direct model answer when Web is
+    // unavailable. This is a safety denial, not a degraded offline answer.
+    if context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb
+        && context.envelope.freshness == Freshness::Offline
+    {
+        let _ = RunEngine::fail_before_dispatch_with_sink(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            SafeRunErrorCode::WebVerificationRequired,
+            sink,
+        );
+        return;
+    }
     let evidence_ids = match crate::ai_runtime::run_context::RunContextAssembler::register_evidence(
         &db,
         &accepted.run_id,
@@ -140,8 +158,9 @@ async fn execute_normal_run_internal(
             return;
         }
     };
-    // The immutable capability snapshot determines whether web_search enters the model surface;
-    // no deterministic prefetch broadens it.
+    // The immutable capability snapshot still determines Web authority. Strict
+    // factual Runs consume that authority in the deterministic prefetch below;
+    // non-strict Runs may expose it to the model tool surface.
     let execution = dispatch_normal_run_after_context(
         &state,
         app_handle,
@@ -343,6 +362,24 @@ async fn dispatch_normal_run_after_context(
         "Run Web decision"
     );
 
+    if context.envelope.verification_requirement == VerificationRequirement::CurrentRunWeb {
+        return dispatch_required_web_verified_run(
+            state,
+            app_handle,
+            db,
+            accepted,
+            context,
+            domain_plan,
+            &mut messages,
+            &evidence_ids,
+            authorized_capabilities,
+            active_skills.plan,
+            sink,
+            telemetry,
+        )
+        .await;
+    }
+
     // ToolLoop/Durable Runs receive only the snapshot-authorized surface. The model may call
     // web_search when authorized; search failure emits CapabilityDegraded.
     let needs_follow_up_tools =
@@ -500,6 +537,250 @@ async fn dispatch_normal_run_after_context(
             sink,
         )
         .await
+    }
+}
+
+/// Execute a strict external-fact Run as one deterministic evidence fetch
+/// followed by one tool-free model turn. The model never decides whether the
+/// first required Web search happens.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_required_web_verified_run(
+    state: &Arc<AppState>,
+    app_handle: Option<AppHandle>,
+    db: &Database,
+    accepted: &AssistantRunAccepted,
+    context: &crate::ai_runtime::run_context::RunContext,
+    domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
+    messages: &mut Vec<LlmMessage>,
+    registered_evidence_ids: &[i64],
+    authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
+    skill_plan: Option<SkillActivationPlanSummary>,
+    sink: &impl RunEventSink,
+    telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+) -> AppResult<()> {
+    // A required Web Run must bind one concrete provider before any work starts.
+    // Do not turn a resolver failure into `None`: a frozen empty selection is
+    // indistinguishable from a later provider outage and previously produced a
+    // misleading generic result after the tool stage had already begun.
+    let provider_snapshot =
+        match crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                let _ = RunEngine::fail_web_verification_with_sink(
+                    db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    WebVerificationFailure {
+                        code: SafeRunErrorCode::WebProviderUnavailable,
+                        reason: WebEvidenceFailureReason::ProviderUnavailable,
+                        retryable: false,
+                        attempt_count: 0,
+                        duration_bucket: "not_started",
+                    },
+                    sink,
+                );
+                return Err(AppError::msg(
+                    SafeRunErrorCode::WebProviderUnavailable.as_str(),
+                ));
+            }
+        };
+    let executor = NormalRunToolExecutor::new(
+        state,
+        app_handle,
+        accepted,
+        context,
+        authorized_capabilities.to_vec(),
+        sink,
+        Some(provider_snapshot),
+    )
+    .with_skill_activation_plan(skill_plan);
+    let query = required_web_query(context);
+    let first_prefetch = crate::ai_runtime::agent_tool_loop::ToolLoopExecutor::execute(
+        &executor,
+        &accepted.run_id,
+        &ToolCall::new(
+            "required-web-evidence",
+            "web_search",
+            serde_json::json!({ "query": query }).to_string(),
+        ),
+        1,
+    )
+    .await;
+    let first_prefetch = match first_prefetch {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = RunEngine::fail_web_verification_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                WebVerificationFailure {
+                    code: SafeRunErrorCode::WebEvidenceInvalid,
+                    reason: WebEvidenceFailureReason::Unknown,
+                    retryable: false,
+                    attempt_count: 1,
+                    duration_bucket: "not_started",
+                },
+                sink,
+            );
+            return Err(AppError::msg(SafeRunErrorCode::WebEvidenceInvalid.as_str()));
+        }
+    };
+    let mut evidence_results = vec![first_prefetch
+        .output
+        .get("results")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]))];
+    let prefetch_succeeded = first_prefetch.success;
+    if prefetch_succeeded && !executor.has_web_evidence() {
+        let supplement = crate::ai_runtime::agent_tool_loop::ToolLoopExecutor::execute(
+            &executor,
+            &accepted.run_id,
+            &ToolCall::new(
+                "required-web-evidence-supplement",
+                "web_search",
+                serde_json::json!({ "query": supplementary_web_query(&query) }).to_string(),
+            ),
+            2,
+        )
+        .await;
+        if let Ok(result) = supplement {
+            evidence_results.push(
+                result
+                    .output
+                    .get("results")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!([])),
+            );
+        }
+    }
+    if !prefetch_succeeded || !executor.has_web_evidence() {
+        let (code, failure_reason, retryable, attempt_count) =
+            executor.web_verification_failure_details();
+        let _ = RunEngine::fail_web_verification_with_sink(
+            db,
+            &accepted.session,
+            &accepted.run_id,
+            WebVerificationFailure {
+                code,
+                reason: failure_reason,
+                retryable,
+                attempt_count,
+                duration_bucket: strict_web_duration_bucket(Duration::from_millis(
+                    first_prefetch.duration_ms,
+                )),
+            },
+            sink,
+        );
+        return Err(AppError::msg(code.as_str()));
+    }
+
+    let evidence_json = serde_json::to_string(&evidence_results).map_err(AppError::from)?;
+    messages.insert(
+        1,
+        LlmMessage {
+            role: MessageRole::System,
+            content: format!(
+                "## CurrentRunVerifiedWebEvidence\nOnly the following Run-local Web evidence may support external factual conclusions. Cite its [Wn] labels; do not use historical assistant claims or invent sources.\n{evidence_json}"
+            )
+            .into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        },
+    );
+    let serialized_messages = serde_json::to_string(messages).map_err(AppError::from)?;
+    let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+        endpoint_family: None,
+        streaming: true,
+        tools: false,
+        vision: context.envelope.modalities.contains(&Modality::Image),
+        reasoning: false,
+        min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(
+            &serialized_messages,
+        ),
+        min_output_budget_tokens: 512,
+        security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
+    };
+    let route = resolve_normal_route(
+        db,
+        accepted,
+        context,
+        requirements.min_input_budget_tokens,
+        requirements.vision,
+        false,
+        sink,
+    )?;
+    let provider =
+        FailoverStreamingToolLoopProvider::new(route, requirements, db, &accepted.session, sink);
+    #[cfg(test)]
+    let provider = if let Some(client) = state.test_streaming_client() {
+        provider.with_test_streaming_client(client)
+    } else {
+        provider
+    };
+    if let Some(telemetry) = telemetry {
+        RunEngine::execute_tool_loop_with_eval_telemetry(
+            db,
+            &accepted.session,
+            &accepted.run_id,
+            messages.clone(),
+            Vec::new(),
+            registered_evidence_ids,
+            Some(domain_plan),
+            &provider,
+            &executor,
+            sink,
+            telemetry,
+        )
+        .await
+    } else {
+        RunEngine::execute_tool_loop_with_sink(
+            db,
+            &accepted.session,
+            &accepted.run_id,
+            messages.clone(),
+            Vec::new(),
+            registered_evidence_ids,
+            Some(domain_plan),
+            &provider,
+            &executor,
+            sink,
+        )
+        .await
+    }
+}
+
+fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> String {
+    let prior_user = context
+        .recent_messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .map(|message| message.content.trim())
+        .filter(|message| !message.is_empty())
+        .map(|message| message.chars().take(240).collect::<String>());
+    prior_user
+        .map(|previous| format!("{previous}\n{current}", current = context.user_message))
+        .unwrap_or_else(|| context.user_message.clone())
+}
+
+fn supplementary_web_query(query: &str) -> String {
+    format!(
+        "{query}\nFind an independent authoritative or corroborating HTTPS source for the factual claims in this request."
+    )
+}
+
+fn strict_web_duration_bucket(duration: Duration) -> &'static str {
+    if duration.is_zero() {
+        "not_started"
+    } else if duration < Duration::from_secs(1) {
+        "under_1s"
+    } else if duration < Duration::from_secs(3) {
+        "1s_to_3s"
+    } else if duration < Duration::from_secs(20) {
+        "3s_to_20s"
+    } else {
+        "budget_exhausted"
     }
 }
 

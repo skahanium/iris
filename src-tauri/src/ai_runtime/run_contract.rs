@@ -63,6 +63,20 @@ pub(crate) enum Freshness {
     WebRequired,
 }
 
+/// Evidence that must be bound to the current Run before it may state an
+/// external fact. This is intentionally separate from `Freshness`: Web access
+/// is an authorization decision, while verification is an answer-safety rule.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum VerificationRequirement {
+    /// The Run may complete without external evidence.
+    #[default]
+    None,
+    /// A successful `web_search` in this exact Run must register usable HTTPS
+    /// evidence before a final answer is accepted.
+    CurrentRunWeb,
+}
+
 /// Stable explanation for the deterministic Web decision attached to a Run.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -83,7 +97,6 @@ pub(crate) enum WebDecisionReason {
     /// The request transforms only supplied or authorized text.
     LocalTransformation,
     /// The request is creative and has no explicit external-fact requirement.
-    /// Retained for historical envelopes; ExclusionClassifier no longer emits this.
     CreativeGeneration,
     /// The user explicitly instructed the assistant to search or verify online.
     ExplicitWebRequest,
@@ -91,6 +104,8 @@ pub(crate) enum WebDecisionReason {
     ExplicitUrl,
     /// The answer depends on volatile external facts.
     VolatileExternalFact,
+    /// Strict online verification is required for an external factual request.
+    StrictExternalFact,
     /// A current medical, legal, financial, or compliance fact has elevated stakes.
     HighStakesCurrentFact,
     /// Web is available by default after exclusion checks; the model decides whether to search.
@@ -180,6 +195,9 @@ pub(crate) struct ExecutionEnvelope {
     /// Deterministic, content-safe explanation for the Web freshness decision.
     #[serde(default)]
     pub(crate) web_reason: WebDecisionReason,
+    /// Evidence that must be available before this Run can state an external fact.
+    #[serde(default)]
+    pub(crate) verification_requirement: VerificationRequirement,
     /// Allowed execution depth.
     pub(crate) effort: Effort,
     /// Physical security domain.
@@ -1105,6 +1123,9 @@ pub(crate) enum SafeRunErrorCode {
     /// The Web evidence provider returned no safely parseable evidence.
     #[serde(rename = "agent_run_web_evidence_invalid")]
     WebEvidenceInvalid,
+    /// The request needs Web verification, but the Run is not authorized to search.
+    #[serde(rename = "agent_run_web_verification_required")]
+    WebVerificationRequired,
     /// A required persistence operation failed safely.
     #[serde(rename = "agent_run_persistence_failed")]
     PersistenceFailed,
@@ -1150,6 +1171,7 @@ impl SafeRunErrorCode {
             Self::WebProviderAuthFailed => "agent_run_web_provider_auth_failed",
             Self::WebProviderFailed => "agent_run_web_provider_failed",
             Self::WebEvidenceInvalid => "agent_run_web_evidence_invalid",
+            Self::WebVerificationRequired => "agent_run_web_verification_required",
             Self::PersistenceFailed => "agent_run_persistence_failed",
             Self::Cancelled => "agent_run_cancelled",
             Self::ClassifiedContextRequired => "agent_run_classified_context_required",

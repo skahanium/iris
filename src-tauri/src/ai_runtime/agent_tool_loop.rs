@@ -18,6 +18,10 @@ const MAX_MODEL_TURNS: u32 = 8;
 const MAX_TOOL_CALLS: u32 = 24;
 const MAX_REPEAT_CALLS: u32 = 2;
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
+/// Web evidence is deliberately allowed a larger envelope than generic tool
+/// output. Eight compact evidence excerpts need materially more room than a
+/// normal tool response, but the budget remains bounded per tool turn.
+pub(crate) const MAX_WEB_TOOL_RESULT_CHARS: usize = 32_000;
 
 /// Result of a fully bounded model/tool exchange.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,8 +272,34 @@ fn tool_result_message(call: &ToolCall, result: &ToolCallResult) -> (LlmMessage,
     let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| {
         "{\"success\":false,\"error\":\"tool_result_serialization_failed\"}".into()
     });
-    let truncated = serialized.chars().count() > MAX_TOOL_RESULT_CHARS;
-    let content = truncate_chars(&serialized, MAX_TOOL_RESULT_CHARS);
+    let budget = tool_result_char_budget(&call.function.name);
+    let truncated = serialized.chars().count() > budget;
+    // Web evidence is a structured protocol packet, not prose. Slicing it
+    // would turn a capacity problem into malformed JSON and let the model
+    // reason over a partial, unverifiable result. The normal Web executor
+    // packs its output below this limit; this branch is a fail-closed guard
+    // for every other executor (including harness implementations).
+    if truncated && call.function.name == "web_search" {
+        let overflow = serde_json::json!({
+            "success": false,
+            "output": serde_json::Value::Null,
+            "error": "web_evidence_pack_overflow",
+        });
+        let content = serde_json::to_string(&overflow).unwrap_or_else(|_| {
+            "{\"success\":false,\"error\":\"web_evidence_pack_overflow\"}".into()
+        });
+        return (
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: content.into(),
+                tool_call_id: Some(call.id.clone()),
+                tool_calls: None,
+                reasoning_content: None,
+            },
+            false,
+        );
+    }
+    let content = truncate_chars(&serialized, budget);
     (
         LlmMessage {
             role: MessageRole::Tool,
@@ -280,6 +310,14 @@ fn tool_result_message(call: &ToolCall, result: &ToolCallResult) -> (LlmMessage,
         },
         truncated,
     )
+}
+
+fn tool_result_char_budget(tool_name: &str) -> usize {
+    if tool_name == "web_search" {
+        MAX_WEB_TOOL_RESULT_CHARS
+    } else {
+        MAX_TOOL_RESULT_CHARS
+    }
 }
 
 fn valid_call_arguments(call: &ToolCall) -> bool {

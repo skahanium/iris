@@ -34,8 +34,10 @@ const mockListenAssistantRunPresentation = vi.mocked(
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 let runApi: ReturnType<typeof useAssistantRun> | null = null;
+let probeRenderCount = 0;
 
 function Probe() {
+  probeRenderCount += 1;
   runApi = useAssistantRun();
   return null;
 }
@@ -65,6 +67,7 @@ afterEach(() => {
   root = null;
   host = null;
   runApi = null;
+  probeRenderCount = 0;
   mockAssistantRunControl.mockReset();
   mockAssistantRunGet.mockReset();
   mockAssistantRunRetry.mockReset();
@@ -541,5 +544,106 @@ describe("useAssistantRun", () => {
     expect(["accepted", "preparing", "running", "verifying"]).toContain(
       runApi?.runState,
     );
+  });
+
+  it("batches streaming deltas into one animation-frame render and flushes completion immediately", async () => {
+    let emitPresentation:
+      | ((
+          event: Parameters<
+            Parameters<typeof listenAssistantRunPresentation>[0]
+          >[0],
+        ) => void)
+      | null = null;
+    const frameCallbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const requestFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        const frame = nextFrame;
+        nextFrame += 1;
+        frameCallbacks.set(frame, callback);
+        return frame;
+      });
+    const cancelFrame = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((frame) => {
+        frameCallbacks.delete(frame);
+      });
+    mockAssistantRunStart.mockResolvedValue({
+      runId: "run-batched-stream",
+      turnId: "turn-batched-stream",
+      session: { domain: "normal", sessionKey: "session-batched-stream" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    mockAssistantRunGet.mockResolvedValue(null);
+    mockListenAssistantRunEvent.mockResolvedValue(() => undefined);
+    mockListenAssistantRunPresentation.mockImplementation(async (handler) => {
+      emitPresentation = handler;
+      return () => undefined;
+    });
+    mountProbe();
+
+    try {
+      await act(async () => {
+        await runApi?.start({
+          ...request(),
+          clientRequestId: "client-run-batched-stream",
+        });
+      });
+      const rendersBeforeDeltas = probeRenderCount;
+
+      act(() => {
+        for (const [presentationSeq, delta] of [
+          [1, "one "],
+          [2, "two "],
+          [3, "three"],
+        ] as const) {
+          emitPresentation?.({
+            runId: "run-batched-stream",
+            presentationSeq,
+            elapsedMs: presentationSeq * 10,
+            type: "answer_delta",
+            payload: { kind: "answer_delta", delta },
+          });
+        }
+      });
+
+      expect(requestFrame).toHaveBeenCalledTimes(1);
+      expect(probeRenderCount).toBe(rendersBeforeDeltas);
+      expect(runApi?.presentationState?.answer).toBe("");
+
+      act(() => {
+        frameCallbacks.get(1)?.(16);
+      });
+      expect(runApi?.presentationState?.answer).toBe("one two three");
+      expect(probeRenderCount).toBe(rendersBeforeDeltas + 1);
+
+      act(() => {
+        emitPresentation?.({
+          runId: "run-batched-stream",
+          presentationSeq: 4,
+          elapsedMs: 40,
+          type: "answer_delta",
+          payload: { kind: "answer_delta", delta: " done" },
+        });
+        emitPresentation?.({
+          runId: "run-batched-stream",
+          presentationSeq: 5,
+          elapsedMs: 50,
+          type: "answer_complete",
+          payload: { kind: "answer_complete" },
+        });
+      });
+
+      expect(cancelFrame).toHaveBeenCalledWith(2);
+      expect(runApi?.presentationState).toMatchObject({
+        answer: "one two three done",
+        answerComplete: true,
+      });
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+    }
   });
 });

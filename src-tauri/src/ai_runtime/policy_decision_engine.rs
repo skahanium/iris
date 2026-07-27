@@ -556,6 +556,8 @@ mod tests {
             context: crate::ai_runtime::run_contract::ContextMode::None,
             freshness,
             web_reason: crate::ai_runtime::run_contract::WebDecisionReason::LegacyUnknown,
+            verification_requirement:
+                crate::ai_runtime::run_contract::VerificationRequirement::None,
             effort: crate::ai_runtime::run_contract::Effort::Direct,
             security_domain,
             risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,

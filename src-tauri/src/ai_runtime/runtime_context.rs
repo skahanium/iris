@@ -192,6 +192,9 @@ pub fn build_runtime_context_prompt(
     block.push_str(
         "\n本区块是可信的本机运行时事实。回答当前日期、时间、星期、应用能力、当前笔记或附件状态时优先使用它；只有外部世界事实才需要联网搜索。\n",
     );
+    block.push_str(
+        "\nVerification rule: local time is only a temporal reference. Historical assistant messages, summaries, and old citations are unverified claims, never current evidence. For an external factual answer, use evidence registered by this Run's web_search; never invent a source or claim that an earlier search verified it.\n",
+    );
     block
 }
 

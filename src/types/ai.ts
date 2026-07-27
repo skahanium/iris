@@ -120,6 +120,7 @@ export type WebDecisionReason =
   | "explicit_web_request"
   | "explicit_url"
   | "volatile_external_fact"
+  | "strict_external_fact"
   | "high_stakes_current_fact"
   | "default_online"
   /** Historical alias for default_online. */
@@ -155,6 +156,7 @@ export type RiskClass =
   | "external_side_effect";
 export type Modality = "text" | "image";
 export type MaterialNeed = "exemplar" | "authority" | "reference" | "web";
+export type VerificationRequirement = "none" | "current_run_web";
 export type CapabilityId = string;
 
 export interface ExplicitConstraint {
@@ -167,6 +169,7 @@ export interface ExecutionEnvelope {
   context: ContextMode;
   freshness: Freshness;
   webReason: WebDecisionReason;
+  verificationRequirement: VerificationRequirement;
   effort: Effort;
   securityDomain: SecurityDomain;
   risk: RiskClass;
@@ -371,6 +374,7 @@ export type AssistantRunErrorCode =
   | "agent_run_web_provider_auth_failed"
   | "agent_run_web_provider_failed"
   | "agent_run_web_evidence_invalid"
+  | "agent_run_web_verification_required"
   | "agent_run_cancelled"
   | "agent_run_classified_context_required"
   | "agent_run_classified_context_expired"

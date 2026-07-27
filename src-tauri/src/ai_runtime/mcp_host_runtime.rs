@@ -1400,6 +1400,18 @@ fn spawn_rmcp_stdio_transport(
     // An MCP process receives only explicitly permitted configuration. In
     // particular it never inherits an LLM provider key from Iris itself.
     command.env_clear();
+    // `env_clear` is intentional, but a few Windows-native executables cannot
+    // initialize without the OS runtime location variables.  Keep this list
+    // deliberately tiny and platform-owned: it does not include PATH, user
+    // profile locations, or any caller-provided configuration/credential.
+    // Provider configuration is applied afterwards so the launch contract
+    // remains explicit on every platform.
+    #[cfg(windows)]
+    for name in ["SystemRoot", "WINDIR", "ComSpec"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
     command.envs(env);
     command.kill_on_drop(true);
     command.stdin(Stdio::piped());
@@ -2172,7 +2184,10 @@ fn observe_provider_discovery_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{io::AsyncWriteExt, net::TcpListener};
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+    };
 
     async fn one_shot_http_response(
         body: &'static str,
@@ -2184,14 +2199,40 @@ mod tests {
         let address = listener.local_addr().expect("read local test peer address");
         tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept test HTTP client");
+            // On Windows, dropping a socket that still has unread request
+            // bytes can turn the peer close into a TCP RST. Drain the small,
+            // test-owned request head before sending our synthetic response
+            // so the response is observed deterministically under parallel
+            // test load.
+            let mut received = Vec::with_capacity(512);
+            let mut chunk = [0_u8; 512];
+            while received.len() < 4 * 1024 {
+                let count = socket
+                    .read(&mut chunk)
+                    .await
+                    .expect("read test HTTP request");
+                if count == 0 {
+                    return;
+                }
+                received.extend_from_slice(&chunk[..count]);
+                if received.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
             let response =
                 format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{headers}\r\n{body}");
             socket
                 .write_all(response.as_bytes())
                 .await
                 .expect("write test HTTP response");
+            socket.shutdown().await.expect("close test HTTP response");
         });
-        reqwest::Client::new()
+        // The peer is a test-owned loopback listener. Avoid inheriting a
+        // process-wide proxy preference that unrelated tests may exercise.
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build direct loopback test client")
             .get(format!("http://{address}/mcp"))
             .send()
             .await
@@ -2224,7 +2265,13 @@ mod tests {
     async fn bounded_http_reader_rejects_declared_oversize_before_body_accumulation() {
         let response = one_shot_http_response("12345", "Content-Length: 5\r\n").await;
         let client = BoundedMcpHttpClient {
-            client: reqwest::Client::new(),
+            // This test owns a loopback peer. Build a direct client so a
+            // concurrent test that exercises the process-wide proxy setting
+            // cannot route its assertion through a user's system proxy.
+            client: reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("build direct loopback test client"),
             max_response_bytes: 4,
         };
 
@@ -2239,7 +2286,10 @@ mod tests {
             one_shot_http_response("5\r\n12345\r\n0\r\n\r\n", "Transfer-Encoding: chunked\r\n")
                 .await;
         let client = BoundedMcpHttpClient {
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("build direct loopback test client"),
             max_response_bytes: 4,
         };
 
@@ -2525,7 +2575,7 @@ mod tests {
     }
 
     #[test]
-    fn stdio_child_environment_contains_only_explicit_values() {
+    fn stdio_child_environment_helper_does_not_inherit_host_values() {
         let host = vec![
             ("PATH".to_string(), "/usr/local/bin:/usr/bin".to_string()),
             ("HOME".to_string(), "/Users/iris".to_string()),
@@ -2538,9 +2588,10 @@ mod tests {
 
         let env = build_stdio_child_env(host, &provider);
 
-        // The process launcher calls env_clear; this helper is retained for
-        // deterministic session-key tests only and must not be used to inherit
-        // the host process environment.
+        // The process launcher calls env_clear and then, on Windows only,
+        // restores a fixed OS-runtime allowlist. This helper remains useful
+        // for ensuring provider configuration itself never inherits arbitrary
+        // host values such as PATH, HOME, or API_KEY.
         let explicit = build_stdio_child_env(Vec::new(), &provider);
         assert!(!explicit.contains_key("PATH"));
         assert!(!explicit.contains_key("HOME"));

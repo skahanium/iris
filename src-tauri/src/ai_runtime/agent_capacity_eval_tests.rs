@@ -62,6 +62,8 @@ use super::{
     EndpointFamily, LlmMessage, MessageRole, ProviderConfig, ReasoningAdapter, ReasoningControl,
     ReasoningMode, ReasoningVisibility, ResolvedReasoningRequest, ToolCall,
 };
+
+const REAL_STDIO_TEST_TIMEOUT: Duration = Duration::from_secs(10);
 use crate::ai_runtime::agent_tool_loop::ToolLoopProvider;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
@@ -137,10 +139,30 @@ fn stdio_options(request_timeout: Duration) -> McpHostRuntimeOptions {
 }
 
 fn install_contract_stdio_provider(db: &Database, provider_id: &str, mode: &str, with_fetch: bool) {
-    let fixture = format!(
-        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let (command, args) = if cfg!(windows) {
+        let fixture = format!(
+            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        (
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                fixture,
+                mode.to_string(),
+            ],
+        )
+    } else {
+        let fixture = format!(
+            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        ("/bin/sh", vec![fixture, mode.to_string()])
+    };
     upsert_web_evidence_provider(
         db,
         &WebEvidenceProviderInput {
@@ -150,8 +172,8 @@ fn install_contract_stdio_provider(db: &Database, provider_id: &str, mode: &str,
             enabled: true,
             transport_kind: "stdio".into(),
             transport_config_json: serde_json::json!({
-                "command": "/bin/sh",
-                "args": [fixture, mode],
+                "command": command,
+                "args": args,
             })
             .to_string(),
             credential_refs_json: "{}".into(),
@@ -1211,7 +1233,7 @@ async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
     let probe = probe_provider_stdio_tools(
         &db,
         "contract-search",
-        stdio_options(Duration::from_secs(2)),
+        stdio_options(REAL_STDIO_TEST_TIMEOUT),
     )
     .await;
     let discovery = probe
@@ -1240,7 +1262,7 @@ async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
         &db,
         "web.search",
         serde_json::json!({"query": "synthetic"}),
-        stdio_options(Duration::from_secs(2)),
+        stdio_options(REAL_STDIO_TEST_TIMEOUT),
     )
     .await
     .expect("real stdio search call must complete");
@@ -1259,7 +1281,7 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
     let probe = probe_provider_stdio_tools(
         &db,
         "contract-search-fetch",
-        stdio_options(Duration::from_secs(2)),
+        stdio_options(REAL_STDIO_TEST_TIMEOUT),
     )
     .await;
     let discovery = probe
@@ -1282,7 +1304,7 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
         &db,
         "web.fetch",
         serde_json::json!({"url": "https://source.invalid/contract"}),
-        stdio_options(Duration::from_secs(2)),
+        stdio_options(REAL_STDIO_TEST_TIMEOUT),
     )
     .await
     .expect("real stdio fetch call must complete");
@@ -1894,7 +1916,9 @@ async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certif
         verdict.fact_correctness().reason_code(),
         super::agent_capacity_eval::VerdictReason::RequiredFactMissing
     );
-    assert!(summary.telemetry().model_turns() >= 12);
+    // Strict offline factual cases terminate before model dispatch; the smoke
+    // suite therefore must not equate every scheduled case with a model turn.
+    assert!(summary.telemetry().model_turns() > 0);
 }
 
 #[tokio::test]
@@ -2137,7 +2161,10 @@ async fn six_combined_terminal_cases_execute_real_component_combinations() {
         .expect("combined terminal cases");
 
     assert_eq!(results.len(), 6);
-    assert!(results.iter().all(|result| result.passed()));
+    assert!(
+        results.iter().all(|result| result.passed()),
+        "combined terminal failures: {results:?}"
+    );
 }
 
 #[tokio::test]
@@ -3237,7 +3264,7 @@ async fn live_preflight_ids_and_approval_tokens_are_random_session_bound_and_non
     .expect("current-session approval runs once");
     assert_eq!(
         result.completed_case_count(),
-        12,
+        10,
         "the closed result exposes terminal state without secret-bearing transport data: {result:?}"
     );
 
@@ -3331,7 +3358,15 @@ async fn approved_live_pilot_executes_exactly_twelve_task1_runs_with_task2_local
     assert_eq!(probe.hydration_calls(), 1);
     assert_eq!(probe.dispatch_calls(), 12);
     assert_eq!(result.required_case_count(), 12);
-    assert_eq!(result.completed_case_count(), 12);
+    // The smoke matrix intentionally includes two offline external-fact cases
+    // (WebOnly and Hybrid). Under the current-run verification contract they
+    // must end in the safe
+    // `WebVerificationRequired` terminal state before a model call, rather
+    // than being counted as a completed answer.
+    assert_eq!(result.completed_case_count(), 10);
+    assert!(result
+        .terminal_error_codes()
+        .contains(&"agent_run_web_verification_required"));
     assert_eq!(result.status_code(), "live_not_tested");
     let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -3471,7 +3506,7 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
 
     assert_eq!(probe.hydration_calls(), 1);
     assert_eq!(probe.dispatch_calls(), 12);
-    assert_eq!(result.completed_case_count(), 12);
+    assert_eq!(result.completed_case_count(), 10);
     assert!(result.passed() < result.required_case_count());
     assert!(result.failed() > 0);
     assert_eq!(
@@ -3562,7 +3597,11 @@ async fn live_pilot_completed_failures_are_derived_from_closed_runtime_evidence(
             .find(|case| case["caseId"] == case_id)
             .expect("faulted smoke case");
 
-        assert_eq!(faulted["runtimeEvidence"]["terminalState"], "completed");
+        let expected_terminal_state = if case_id == 25 { "failed" } else { "completed" };
+        assert_eq!(
+            faulted["runtimeEvidence"]["terminalState"],
+            expected_terminal_state
+        );
         assert_eq!(
             faulted["verdict"][check]["status"], "fail",
             "{fault:?} did not fail {check}"

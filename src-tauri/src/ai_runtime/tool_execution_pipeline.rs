@@ -184,6 +184,8 @@ mod tests {
                     context: ContextMode::None,
                     freshness: Freshness::WebPreferred,
                     web_reason: WebDecisionReason::DefaultOnline,
+                    verification_requirement:
+                        crate::ai_runtime::run_contract::VerificationRequirement::None,
                     effort: Effort::ToolLoop,
                     security_domain: SecurityDomain::Normal,
                     risk: RiskClass::ReadOnly,

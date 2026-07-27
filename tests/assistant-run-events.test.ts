@@ -121,6 +121,7 @@ describe("Assistant Run 前端合同", () => {
       context: "explicit_references",
       freshness: "online",
       webReason: "explicit_web_request",
+      verificationRequirement: "current_run_web",
       effort: "tool_loop",
       securityDomain: "normal",
       risk: "read_only",

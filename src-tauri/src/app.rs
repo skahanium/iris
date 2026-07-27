@@ -685,9 +685,10 @@ mod document_open_state_tests {
         state.set_vault(vault.clone()).unwrap();
 
         let skill_path = vault.join(".iris/skills/cached-skill/SKILL.md");
+        let skill_target = std::path::PathBuf::from("cached-skill/SKILL.md");
         let entry = crate::ai_runtime::skills::write_confirmed_skill_content(
             &vault,
-            &skill_path,
+            &skill_target,
             crate::ai_runtime::skills::SkillScope::Vault,
             "---\nname: cached-skill\ndescription: Cached run instructions\n---\n\nUse cached instructions.",
         )

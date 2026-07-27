@@ -33,6 +33,8 @@ fn setup_run() -> (Database, i64, String) {
                 context: ContextMode::ExplicitReferences,
                 freshness: Freshness::WebPreferred,
                 web_reason: WebDecisionReason::LegacyUnknown,
+                verification_requirement:
+                    crate::ai_runtime::run_contract::VerificationRequirement::None,
                 effort: Effort::ToolLoop,
                 security_domain: SecurityDomain::Normal,
                 risk: RiskClass::ReadOnly,
@@ -141,6 +143,23 @@ fn web_evidence_persists_only_a_bounded_excerpt_and_returns_a_safe_reference() {
         Ok(())
     })
     .expect("bounded Web excerpt");
+    assert!(AgentEvidenceRepository::has_current_run_web_evidence(
+        &db,
+        "evidence-run",
+        &[evidence.evidence_id]
+    )
+    .expect("current run Web evidence"));
+    assert!(!AgentEvidenceRepository::has_current_run_web_evidence(
+        &db,
+        "another-run",
+        &[evidence.evidence_id]
+    )
+    .expect("a different Run cannot reuse evidence"));
+    let links = AgentEvidenceRepository::list_current_run_web_citation_links(&db, "evidence-run")
+        .expect("Run-local citation links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].label, "[W1]");
+    assert_eq!(links[0].url, "https://example.test/rules");
 }
 
 #[test]

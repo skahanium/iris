@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use super::agent_capacity_eval::{
     spawn_llm_protocol_double, EvaluationTelemetryTap, HttpResponseScript,
@@ -67,10 +68,30 @@ fn web_tool_loop_request() -> AssistantRunStartRequest {
 }
 
 fn install_headless_contract_mcp(state: &AppState) {
-    let fixture = format!(
-        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let (command, args) = if cfg!(windows) {
+        let fixture = format!(
+            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        (
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                fixture,
+                "search-only".to_string(),
+            ],
+        )
+    } else {
+        let fixture = format!(
+            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        ("/bin/sh", vec![fixture, "search-only".to_string()])
+    };
     upsert_web_evidence_provider(
         &state.db,
         &WebEvidenceProviderInput {
@@ -80,8 +101,8 @@ fn install_headless_contract_mcp(state: &AppState) {
             enabled: true,
             transport_kind: "stdio".into(),
             transport_config_json: serde_json::json!({
-                "command": "/bin/sh",
-                "args": [fixture, "search-only"],
+                "command": command,
+                "args": args,
             })
             .to_string(),
             credential_refs_json: "{}".into(),
@@ -106,6 +127,13 @@ async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
         .expect("run snapshot")
         .expect("persisted run");
     assert_eq!(response.run.state, RunState::Failed);
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: super::run_contract::SafeRunErrorCode::WebVerificationRequired,
+            ..
+        })
+    ));
     let event_types = sink
         .events
         .lock()
@@ -131,9 +159,10 @@ async fn normal_run_injects_cached_confirmed_skill_after_source_file_is_removed(
     let state = AppState::new(directory.path().join("data")).expect("application state");
     state.set_vault(vault.clone()).expect("activate vault");
     let skill_path = vault.join(".iris/skills/run-skill/SKILL.md");
+    let skill_target = std::path::PathBuf::from("run-skill/SKILL.md");
     let skill = crate::ai_runtime::skills::write_confirmed_skill_content(
         &vault,
-        &skill_path,
+        &skill_target,
         crate::ai_runtime::skills::SkillScope::Vault,
         "---\nname: run-skill\ndescription: run-skill applies a confirmed response style\n---\n\nAlways include the marker SKILL-RUN-CACHED.",
     )
@@ -167,7 +196,8 @@ async fn normal_run_injects_cached_confirmed_skill_after_source_file_is_removed(
     let sink = RecordingSink::default();
     let mut request = direct_request();
     request.client_request_id = "cached-skill-production-run".into();
-    request.turn.message = "请按 run-skill 回答".into();
+    request.turn.message =
+        "Summarize the authorized local project material using run-skill.".into();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
 
     execute_normal_run(
@@ -267,7 +297,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -348,14 +378,9 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
-    let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"service-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
-        ),
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"服务链路已核实。\"}}]}\n\ndata: [DONE]\n\n",
-        ),
-    ])
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"服务链路已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+    )])
     .await
     .expect("local LLM boundary");
     let mut routing = LlmRoutingConfig::default();
@@ -378,14 +403,39 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
     let sink = RecordingSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, web_tool_loop_request(), &sink)
         .expect("accepted web tool-loop run");
-    execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink),
+    )
+    .await
+    .expect("strict service path must finish within its bounded evidence budget");
 
-    let calls = llm.finish().await.expect("LLM double completion");
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
         .expect("completed run");
-    assert_eq!(calls.len(), 2, "service must complete a tool continuation");
-    assert_eq!(response.run.state, RunState::Completed);
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "terminal events: {:?}",
+        response
+            .events
+            .iter()
+            .map(AssistantRunEvent::payload)
+            .collect::<Vec<_>>()
+    );
+
+    let calls = tokio::time::timeout(Duration::from_secs(2), llm.finish())
+        .await
+        .expect("strict service path must reach the one model turn")
+        .expect("LLM double completion");
+    assert_eq!(
+        calls.len(),
+        1,
+        "strict Web service path uses one model turn"
+    );
+    assert!(calls[0].body["tools"]
+        .as_array()
+        .is_none_or(|tools| tools.is_empty()));
     assert!(response
         .events
         .iter()
@@ -497,8 +547,9 @@ async fn evaluation_headless_entry_observes_the_real_normal_service_direct_path(
     crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
     state.set_test_streaming_client(reqwest::Client::new());
     let sink = RecordingSink::default();
-    let accepted =
-        RunIntake::start_with_sink(&state.db, direct_request(), &sink).expect("accepted run");
+    let mut request = direct_request();
+    request.turn.message = "hello".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
     let telemetry = EvaluationTelemetryTap::default();
 
     execute_normal_run_with_eval_telemetry(

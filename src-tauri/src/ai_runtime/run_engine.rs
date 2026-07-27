@@ -1,6 +1,6 @@
 //! Minimal scene-free direct-answer Run Engine.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
@@ -19,6 +19,7 @@ use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, PresentationProcessKind, PresentationProcessStatus, RunEventPayload,
     RunEventType, RunPresentationEvent, RunPresentationPayload, RunState, SafeRunErrorCode,
+    WebEvidenceFailureReason,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -45,6 +46,18 @@ pub(crate) trait StreamingDirectAnswerProvider: Send + Sync {
                 + 'a,
         >,
     >;
+}
+
+/// Sanitized terminal metadata for a deterministic Web verification stage.
+///
+/// This deliberately contains no query, URL, provider payload, or credential.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WebVerificationFailure {
+    pub(crate) code: SafeRunErrorCode,
+    pub(crate) reason: WebEvidenceFailureReason,
+    pub(crate) retryable: bool,
+    pub(crate) attempt_count: u32,
+    pub(crate) duration_bucket: &'static str,
 }
 
 /// Model Gateway adapter for a single, tool-free streaming direct answer.
@@ -1372,6 +1385,55 @@ impl RunEngine {
         sink.emit(&failed)
     }
 
+    /// Persist the structured strict-Web failure before terminalizing the Run.
+    /// This is used when deterministic evidence acquisition completed its own
+    /// bounded attempts but could not produce evidence safe for a factual
+    /// answer. The UI can therefore offer a real retry instead of presenting a
+    /// generic model failure.
+    pub(crate) fn fail_web_verification_with_sink(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        failure: WebVerificationFailure,
+        sink: &impl RunEventSink,
+    ) -> AppResult<()> {
+        let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
+            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        if snapshot.run.state.is_terminal() {
+            return Ok(());
+        }
+        let verification = AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: run_id.to_string(),
+                state_version: snapshot.run.state_version,
+                event_type: RunEventType::WebVerificationFailed,
+                payload: RunEventPayload::WebVerificationFailed {
+                    code: failure.code,
+                    failure_reason: failure.reason,
+                    retryable: failure.retryable,
+                    attempt_count: failure.attempt_count.max(1),
+                    duration_bucket: failure.duration_bucket.to_string(),
+                    diagnostic_id: run_id.to_string(),
+                },
+            },
+        )?;
+        sink.emit(&verification)?;
+        let failed = AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: run_id.to_string(),
+                state_version: verification.state_version(),
+                event_type: RunEventType::Failed,
+                payload: RunEventPayload::Failed {
+                    code: failure.code,
+                    message: safe_failure_message(failure.code).to_string(),
+                },
+            },
+        )?;
+        sink.emit(&failed)
+    }
+
     /// Move an accepted Run into the visible Preparing stage before heavy context work.
     pub(crate) fn mark_preparing_with_sink(
         db: &Database,
@@ -2029,7 +2091,53 @@ impl RunEngine {
                 );
             }
         };
-        content = linkify_final_web_citations(db, &final_evidence_ids, content);
+        let citation_evidence_ids = if executor.requires_web_evidence() {
+            executor.evidence_ids()
+        } else {
+            final_evidence_ids.clone()
+        };
+        if executor.requires_web_evidence() {
+            if !AgentEvidenceRepository::has_current_run_web_evidence(
+                db,
+                run_id,
+                &citation_evidence_ids,
+            )? {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::EvidenceInvalid,
+                        "agent_run_web_evidence_required",
+                    ),
+                );
+            }
+            let citations =
+                AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id)?;
+            validate_current_run_citation_markers(&content, &citations)?;
+            content = linkify_web_citations(&content, &citations);
+        } else {
+            content = linkify_final_web_citations(db, &citation_evidence_ids, content);
+        }
+        if executor.requires_web_evidence() {
+            if let Err(error) =
+                validate_current_run_citation_links(db, &citation_evidence_ids, &content)
+            {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::EvidenceInvalid,
+                        error.to_string(),
+                    ),
+                );
+            }
+        }
         if settle_cancelled_run_with_partial(
             db,
             session,
@@ -2318,6 +2426,80 @@ fn linkify_final_web_citations(db: &Database, evidence_ids: &[i64], content: Str
     }
 }
 
+/// Reject model-authored Web links that are not registered by this exact Run.
+///
+/// The UI citation map is derived from the ledger, but a model can still emit
+/// arbitrary Markdown links in its prose. A strict factual Run must not finish
+/// with a URL that was not supplied by its own `web_search` evidence.
+fn validate_current_run_citation_links(
+    db: &Database,
+    evidence_ids: &[i64],
+    content: &str,
+) -> AppResult<()> {
+    let allowed_urls = AgentEvidenceRepository::list_web_citation_links(db, evidence_ids)?
+        .into_iter()
+        .map(|citation| citation.url)
+        .collect::<HashSet<_>>();
+    if allowed_urls.is_empty() {
+        return Err(AppError::msg("agent_run_web_evidence_required"));
+    }
+    validate_web_urls_against_allowed(content, &allowed_urls)
+}
+
+fn validate_current_run_citation_markers(
+    content: &str,
+    citations: &[crate::ai_runtime::citation_linkify::WebCitationLink],
+) -> AppResult<()> {
+    if citations.is_empty() {
+        return Err(AppError::msg("agent_run_web_evidence_required"));
+    }
+    let mut found = false;
+    let mut remainder = content;
+    while let Some(start) = remainder.find("[W") {
+        let candidate = &remainder[start + 2..];
+        let Some(end) = candidate.find(']') else {
+            return Err(AppError::msg("agent_run_unverified_web_citation"));
+        };
+        let index = candidate[..end]
+            .parse::<i64>()
+            .map_err(|_| AppError::msg("agent_run_unverified_web_citation"))?;
+        if !citations.iter().any(|citation| citation.index == index) {
+            return Err(AppError::msg("agent_run_unverified_web_citation"));
+        }
+        found = true;
+        remainder = &candidate[end + 1..];
+    }
+    if found {
+        Ok(())
+    } else {
+        Err(AppError::msg("agent_run_unverified_web_citation"))
+    }
+}
+
+fn validate_web_urls_against_allowed(
+    content: &str,
+    allowed_urls: &HashSet<String>,
+) -> AppResult<()> {
+    if content.contains("http://") {
+        return Err(AppError::msg("agent_run_unverified_web_citation"));
+    }
+    let mut remainder = content;
+    while let Some(offset) = remainder.find("https://") {
+        let candidate = &remainder[offset..];
+        let end = candidate
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, ')' | ']' | '>')
+            })
+            .unwrap_or(candidate.len());
+        let url = candidate[..end].trim_end_matches(['.', ',', ';', ':']);
+        if !allowed_urls.contains(url) {
+            return Err(AppError::msg("agent_run_unverified_web_citation"));
+        }
+        remainder = &candidate[end..];
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessage {
     crate::ai_runtime::LlmMessage {
@@ -2577,7 +2759,12 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
             "联网 API Key 无效，请在联网配置中重新输入原始 Key"
         }
         SafeRunErrorCode::WebProviderFailed => "联网证据服务暂时不可用，请稍后重试",
-        SafeRunErrorCode::WebEvidenceInvalid => "联网证据服务未返回可用结果，请稍后重试",
+        SafeRunErrorCode::WebEvidenceInvalid => {
+            "联网证据未返回可核验结果，不能给出事实结论，请稍后重试"
+        }
+        SafeRunErrorCode::WebVerificationRequired => {
+            "该请求需要联网核验；当前未开启联网，不能给出事实结论"
+        }
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
         SafeRunErrorCode::ToolLoopLimit => "模型调用工具次数过多，请基于已附资料缩小问题后重试",
         SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
@@ -2767,7 +2954,9 @@ pub(crate) fn gateway_request_for_messages(
 
 #[cfg(test)]
 mod apply_notice_tests {
-    use super::apply_required_web_degradation_notice;
+    use std::collections::HashSet;
+
+    use super::{apply_required_web_degradation_notice, validate_web_urls_against_allowed};
     use crate::ai_runtime::run_contract::AssistantSessionRef;
     use crate::storage::db::Database;
 
@@ -2811,5 +3000,26 @@ mod apply_notice_tests {
         apply_required_web_degradation_notice(&db, &session, "run-1", &mut content, true)
             .expect("notice apply");
         assert_eq!(content, "   ");
+    }
+
+    #[test]
+    fn strict_web_answer_rejects_a_model_invented_source_url() {
+        let allowed = HashSet::from(["https://official.example/result".to_string()]);
+        let error = validate_web_urls_against_allowed(
+            "See [invented source](https://invented.example/result).",
+            &allowed,
+        )
+        .expect_err("invented source must fail finalization");
+        assert_eq!(error.to_string(), "agent_run_unverified_web_citation");
+    }
+
+    #[test]
+    fn strict_web_answer_accepts_only_its_registered_source_url() {
+        let allowed = HashSet::from(["https://official.example/result".to_string()]);
+        validate_web_urls_against_allowed(
+            "See [official source](https://official.example/result).",
+            &allowed,
+        )
+        .expect("registered source must be accepted");
     }
 }

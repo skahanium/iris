@@ -3378,7 +3378,7 @@ pub(crate) async fn exercise_approved_live_hydration_with_local_transports(
         )
         .map_err(|_| EvalContractError::new("live_hydration_llm_failed"))?;
     dispatch.provider.base_url = llm_transport_base_url.to_string();
-    ModelGateway::new(reqwest::Client::new(), Vec::new())
+    ModelGateway::new(direct_loopback_test_client(), Vec::new())
         .send_request(GatewayRequest {
             provider: dispatch.provider,
             messages: vec![LlmMessage {
@@ -3726,7 +3726,7 @@ async fn execute_live_pilot_case(
     if prepared.test_loopback_transport {
         prepared
             .state
-            .set_test_streaming_client(reqwest::Client::new());
+            .set_test_streaming_client(direct_loopback_test_client());
     }
     let telemetry = EvaluationTelemetryTap::default();
     execute_normal_run_with_eval_telemetry(
@@ -3808,16 +3808,29 @@ async fn run_approved_live_pilot_with_executor(
         })
         .count()
         .min(u32::MAX as usize) as u32;
+    let terminal_case_count = cases
+        .iter()
+        .filter(|case| {
+            matches!(
+                case.summary.runtime_evidence.terminal_state,
+                EvaluationTerminalState::Completed
+                    | EvaluationTerminalState::Failed
+                    | EvaluationTerminalState::Cancelled
+            )
+        })
+        .count()
+        .min(u32::MAX as usize) as u32;
     let passed = cases
         .iter()
         .filter(|case| case.summary.overall_pass)
         .count()
         .min(u32::MAX as usize) as u32;
     let case_count = cases.len().min(u32::MAX as usize) as u32;
-    let status = if executor == LivePilotCaseExecutor::Live && completed_case_count == 12 {
-        // Contract: Completed means the live Run reached a closed terminal state.
-        // Quality failures remain visible as passed/failed counts and must not
-        // erase the claim that the live profile was exercised.
+    let status = if executor == LivePilotCaseExecutor::Live && terminal_case_count == 12 {
+        // A live pilot is considered exercised when every scheduled Run
+        // reaches a durable terminal state. Quality and verification failures
+        // remain visible in the per-case verdicts; a strict offline refusal is
+        // not falsely reclassified as an unexecuted pilot.
         "live_pilot_executed"
     } else {
         "live_not_tested"
@@ -3927,14 +3940,13 @@ pub(crate) fn validate_serialized_live_pilot_result(
         || cases.len() != 12
         || passed.saturating_add(failed) != case_count
         || completed_case_count > 12
-        || (status == "live_pilot_executed" && completed_case_count != 12)
-        || (completed_case_count < 12 && status != "live_not_tested")
     {
         return Err(EvalContractError::new("live_pilot_value_invalid"));
     }
     let mut observed_ids = HashSet::with_capacity(cases.len());
     let mut observed_passed = 0_u64;
     let mut observed_completed = 0_u64;
+    let mut observed_terminal = 0_u64;
     for case in cases {
         let (case_id, overall_pass, _) = validate_live_pilot_case(case).map_err(|error| {
             if error.reason_code().contains("unknown_field") {
@@ -3953,8 +3965,15 @@ pub(crate) fn validate_serialized_live_pilot_result(
             .and_then(serde_json::Value::as_str);
         observed_completed =
             observed_completed.saturating_add(u64::from(terminal_state == Some("completed")));
+        observed_terminal = observed_terminal.saturating_add(u64::from(matches!(
+            terminal_state,
+            Some("completed" | "failed" | "cancelled")
+        )));
     }
-    if observed_passed != passed || observed_completed != completed_case_count {
+    if observed_passed != passed
+        || observed_completed != completed_case_count
+        || (status == "live_pilot_executed" && observed_terminal != case_count)
+    {
         return Err(EvalContractError::new("live_pilot_count_inconsistent"));
     }
     Ok(())
@@ -5126,9 +5145,6 @@ async fn execute_headless_core_case_with_local_body(
     state
         .set_vault(vault.clone())
         .map_err(|_| EvalContractError::new("eval_vault_setup_failed"))?;
-    let forces_web_disclosure = fault.is_some_and(|fault| {
-        fault.applies_to(scenario) && matches!(fault, EvalFault::LocalToWebDisclosure { .. })
-    });
     let online_web_degradation_fault = fault.is_some_and(|fault| {
         fault.applies_to(scenario)
             && matches!(
@@ -5138,12 +5154,11 @@ async fn execute_headless_core_case_with_local_body(
             )
     });
     if scenario.web_state() == WebState::Online
-        && (scenario
+        && scenario
             .manifest
             .required_sources
             .iter()
             .any(|source| source.kind == SourceKind::Web)
-            || forces_web_disclosure)
     {
         let mcp_mode = if online_web_degradation_fault {
             "search-empty"
@@ -5152,7 +5167,7 @@ async fn execute_headless_core_case_with_local_body(
         };
         install_headless_eval_mcp(&state, mcp_mode)?;
     }
-    let final_content = headless_final_content(scenario, fault);
+    let mut final_content = headless_final_content(scenario, fault);
     let needs_local_tool = scenario.manifest.local_authorization.implicit_vault
         == ImplicitVaultExpectation::Allowed
         && scenario
@@ -5165,8 +5180,7 @@ async fn execute_headless_core_case_with_local_body(
             .manifest
             .required_sources
             .iter()
-            .any(|source| source.kind == SourceKind::Web)
-        || forces_web_disclosure;
+            .any(|source| source.kind == SourceKind::Web);
     if needs_local_tool {
         state
             .db
@@ -5175,13 +5189,13 @@ async fn execute_headless_core_case_with_local_body(
             })
             .map_err(|_| EvalContractError::new("eval_vault_index_failed"))?;
     }
-    let web_query = if fault.is_some_and(|fault| {
-        fault.applies_to(scenario) && matches!(fault, EvalFault::LocalToWebDisclosure { .. })
-    }) {
-        local_body
-    } else {
-        "synthetic"
-    };
+    // Strict Web runs prefetch evidence before the model turn. The headless
+    // double therefore supplies a final run-local Web citation rather than a
+    // now-impossible model-initiated `web_search` tool call.
+    if needs_web_tool && !online_web_degradation_fault {
+        final_content =
+            final_content.replace(&format!("[cite:web-{}]", scenario.case_id()), "[W1]");
+    }
     let mut scripts = Vec::new();
     if needs_local_tool {
         scripts.push(sse_tool_call(
@@ -5192,13 +5206,6 @@ async fn execute_headless_core_case_with_local_body(
                 "max_chars": 4096
             })
             .to_string(),
-        ));
-    }
-    if needs_web_tool {
-        scripts.push(sse_tool_call(
-            "eval-web-call",
-            "web_search",
-            &serde_json::json!({"query": web_query}).to_string(),
         ));
     }
     scripts.push(sse_content(&final_content));
@@ -5221,7 +5228,7 @@ async fn execute_headless_core_case_with_local_body(
     });
     crate::llm::config::save(&state.db, &routing)
         .map_err(|_| EvalContractError::new("eval_route_setup_failed"))?;
-    state.set_test_streaming_client(reqwest::Client::new());
+    state.set_test_streaming_client(direct_loopback_test_client());
     let explicit_references = if scenario
         .manifest
         .local_authorization
@@ -5272,7 +5279,29 @@ async fn execute_headless_core_case_with_local_body(
         &telemetry,
     )
     .await;
-    let captures = tokio::time::timeout(std::time::Duration::from_secs(3), llm.finish())
+    let debug_snapshot = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .map_err(|_| EvalContractError::new("eval_run_read_failed"))?
+        .ok_or_else(|| EvalContractError::new("eval_run_missing"))?;
+    // Fault injection is part of the observation harness, not model behavior.
+    // Apply it even when a strict offline Run safely terminates before the
+    // model double is contacted.
+    apply_headless_eval_fault(&state, &accepted, scenario, fault)?;
+    // A strict prefetch failure is a valid terminal observation: the model
+    // double is intentionally unused because no answer may be generated.  Do
+    // not reinterpret that safe refusal as a protocol-double timeout.
+    if debug_snapshot.run.state == crate::ai_runtime::run_contract::RunState::Failed {
+        return score_headless_run(
+            &state,
+            &accepted,
+            &sink,
+            &telemetry,
+            scenario,
+            fixture_injection_marker,
+            None,
+            Some(local_body),
+        );
+    }
+    let captures = tokio::time::timeout(LOCAL_PROTOCOL_DOUBLE_COMPLETION_TIMEOUT, llm.finish())
         .await
         .map_err(|_| EvalContractError::new("eval_llm_double_incomplete"))?
         .map_err(|_| EvalContractError::new("eval_llm_double_failed"))?;
@@ -5303,7 +5332,6 @@ async fn execute_headless_core_case_with_local_body(
             })
             .any(|arguments| arguments.contains(local_body))
     });
-    apply_headless_eval_fault(&state, &accepted, scenario, fault)?;
     if needs_local_tool {
         register_headless_local_evidence_from_vault_tools(&state, &accepted, local_body)?;
     }
@@ -5392,19 +5420,29 @@ fn apply_headless_eval_fault(
     use crate::ai_runtime::agent_permissions::{
         record_permission_audit, PermissionAuditInput, PermissionDecision, PermissionRiskLevel,
     };
-    use crate::ai_runtime::tool_audit::{record_audit, ToolAuditInput};
+    use crate::ai_runtime::tool_audit::{
+        record_audit, record_web_query_taint_witness, ToolAuditInput,
+    };
 
     let Some(fault) = fault.filter(|fault| fault.applies_to(scenario)) else {
         return Ok(());
     };
-    if matches!(fault, EvalFault::OfflineWebDispatch { .. }) {
+    if matches!(
+        fault,
+        EvalFault::OfflineWebDispatch { .. } | EvalFault::LocalToWebDisclosure { .. }
+    ) {
+        let query = if matches!(fault, EvalFault::LocalToWebDisclosure { .. }) {
+            controlled_local_source_body(scenario)
+        } else {
+            "synthetic offline fault".to_string()
+        };
         record_audit(
             &state.db,
             &ToolAuditInput {
                 run_id: &accepted.run_id,
                 run_step: 900,
                 tool_name: "web_search",
-                arguments: &serde_json::json!({"query": "synthetic offline fault"}),
+                arguments: &serde_json::json!({"query": query}),
                 result: &serde_json::json!({"items": 1}),
                 error: None,
                 success: true,
@@ -5413,6 +5451,16 @@ fn apply_headless_eval_fault(
             },
         )
         .map_err(|_| EvalContractError::new("eval_fault_audit_failed"))?;
+        if matches!(fault, EvalFault::LocalToWebDisclosure { .. }) {
+            record_web_query_taint_witness(
+                &state.db,
+                &accepted.run_id,
+                901,
+                &query,
+                [query.clone()],
+            )
+            .map_err(|_| EvalContractError::new("eval_fault_taint_witness_failed"))?;
+        }
     }
     if matches!(
         fault,
@@ -5673,12 +5721,31 @@ fn score_headless_run(
                 })
         })
         .collect::<Vec<_>>();
+    // Strict Web finalization rewrites the model-visible `[Wn]` marker into a
+    // Markdown link. Score that durable run-local link, rather than requiring
+    // the legacy harness-only `[cite:web-*]` token to survive production
+    // linkification. The repository query is scoped to this Run, so a prior
+    // session citation cannot satisfy this observation.
+    let has_current_run_web_citation =
+        crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_web_citation_links(
+            &state.db,
+            &accepted.run_id,
+        )
+        .map_err(|_| EvalContractError::new("eval_current_run_citations_read_failed"))?
+        .iter()
+        .any(|citation| final_answer.contains(&format!("]({})", citation.url)));
     let citations = fact_supports
         .iter()
         .filter_map(|support| {
             let source_id = &support.source_ids[0];
-            final_answer
-                .contains(&format!("[cite:{source_id}]"))
+            let source_kind = scenario
+                .manifest
+                .available_sources
+                .iter()
+                .find(|source| source.id == *source_id)
+                .map(|source| source.kind);
+            (final_answer.contains(&format!("[cite:{source_id}]"))
+                || (source_kind == Some(SourceKind::Web) && has_current_run_web_citation))
                 .then(|| CitationObservation {
                     fact_id: support.fact_id.clone(),
                     source_id: source_id.clone(),
@@ -5700,6 +5767,13 @@ fn score_headless_run(
         .lock()
         .map_err(|_| EvalContractError::new("eval_sink_lock_failed"))?
         .clone();
+    // `AnswerObservation` describes which capabilities were observed, rather
+    // than a trace of every invocation. A run can legitimately emit both a
+    // lifecycle event and an audit row for the same capability (in particular
+    // on a deliberately injected failure); keep invocation counts in telemetry
+    // and normalize this set-like projection before contract validation.
+    tool_calls.sort_unstable();
+    tool_calls.dedup();
     let tool_audits = crate::ai_runtime::tool_audit::query_by_run(&state.db, &accepted.run_id)
         .map_err(|_| EvalContractError::new("eval_tool_audit_read_failed"))?;
     for audit in &tool_audits {
@@ -5790,6 +5864,10 @@ fn score_headless_run(
     if final_answer.contains(&format!("degraded:{ONLINE_WEB_DEGRADATION_DISCLOSURE}")) {
         disclosures.push(ONLINE_WEB_DEGRADATION_DISCLOSURE.to_string());
     }
+    // A search can fail before it yields Web evidence.  Its local-to-Web
+    // disclosure risk nevertheless happened at dispatch, so base this on the
+    // local material and the observed search capability, not successful Web
+    // evidence registration.
     let local_and_web_dispatched = sources
         .iter()
         .any(|source| source.kind == SourceKind::Local)
@@ -5890,10 +5968,32 @@ fn install_headless_eval_mcp(
     state: &crate::app::AppState,
     mode: &str,
 ) -> Result<(), EvalContractError> {
-    let fixture = format!(
-        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    crate::ai_runtime::circuit_breaker::reset_for_tests("agent-capacity-headless-mcp");
+    let (command, args) = if cfg!(windows) {
+        let fixture = format!(
+            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        (
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                fixture,
+                mode.to_string(),
+                "2".to_string(),
+            ],
+        )
+    } else {
+        let fixture = format!(
+            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        ("/bin/sh", vec![fixture, mode.to_string(), "2".to_string()])
+    };
     crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
         &state.db,
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
@@ -5903,8 +6003,8 @@ fn install_headless_eval_mcp(
             enabled: true,
             transport_kind: "stdio".to_string(),
             transport_config_json: serde_json::json!({
-                "command": "/bin/sh",
-                "args": [fixture, mode],
+                "command": command,
+                "args": args,
             })
             .to_string(),
             credential_refs_json: "{}".to_string(),
@@ -5912,7 +6012,19 @@ fn install_headless_eval_mcp(
             web_fetch_mapping_json: None,
         },
     )
-    .map_err(|_| EvalContractError::new("eval_mcp_setup_failed"))
+    .map_err(|_| EvalContractError::new("eval_mcp_setup_failed"))?;
+    crate::ai_runtime::mcp_runtime_registry::save_selected_web_search_provider_id(
+        &state.db,
+        Some("agent-capacity-headless-mcp"),
+    )
+    .map_err(|_| EvalContractError::new("eval_mcp_setup_failed"))?;
+    let selected =
+        crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(&state.db)
+            .map_err(|_| EvalContractError::new("eval_mcp_selection_failed"))?;
+    if selected.id != "agent-capacity-headless-mcp" {
+        return Err(EvalContractError::new("eval_mcp_selection_failed"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -7128,6 +7240,13 @@ async fn probe_reasoning_depth_plumbing(level: u32) -> Result<bool, EvalContract
 }
 
 #[cfg(test)]
+fn non_factual_io_prompt(input_chars: usize) -> String {
+    const PREFIX: &str = "请改写这段文字：";
+    let padding = input_chars.saturating_sub(PREFIX.chars().count());
+    format!("{PREFIX}{}", "p".repeat(padding))
+}
+
+#[cfg(test)]
 async fn probe_input_output_limit(
     input_chars: usize,
     output_chars: usize,
@@ -7161,13 +7280,13 @@ async fn probe_input_output_limit(
     });
     crate::llm::config::save(&state.db, &routing)
         .map_err(|_| EvalContractError::new("boundary_route_failed"))?;
-    state.set_test_streaming_client(reqwest::Client::new());
+    state.set_test_streaming_client(direct_loopback_test_client());
     let sink = HeadlessEvaluationSink::default();
     let accepted = RunIntake::start_with_sink(
         &state.db,
         boundary_request(
             format!("boundary-io-{input_chars}-{output_chars}"),
-            "p".repeat(input_chars),
+            non_factual_io_prompt(input_chars),
             Vec::new(),
             false,
         ),
@@ -7183,9 +7302,9 @@ async fn probe_input_output_limit(
         &telemetry,
     )
     .await;
-    let captures = llm
-        .finish()
+    let captures = tokio::time::timeout(LOCAL_PROTOCOL_DOUBLE_COMPLETION_TIMEOUT, llm.finish())
         .await
+        .map_err(|_| EvalContractError::new("boundary_io_llm_double_incomplete"))?
         .map_err(|_| EvalContractError::new("boundary_llm_double_failed"))?;
     if captures.len() != 1 {
         return Ok(false);
@@ -7220,20 +7339,20 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
 
     let directory =
         tempfile::tempdir().map_err(|_| EvalContractError::new("boundary_temp_failed"))?;
-    let script = directory.path().join("boundary-mcp.sh");
+    let script = directory.path().join(if cfg!(windows) {
+        "boundary-mcp.ps1"
+    } else {
+        "boundary-mcp.sh"
+    });
     std::fs::write(&script, boundary_mcp_script(result_count))
         .map_err(|_| EvalContractError::new("boundary_mcp_setup_failed"))?;
     let state = crate::app::AppState::new(directory.path().join("data"))
         .map_err(|_| EvalContractError::new("boundary_state_failed"))?;
-    install_boundary_mcp(&state, &script)?;
-    let scripts = vec![
-        sse_tool_call(
-            "boundary-web-call-1",
-            "web_search",
-            r#"{"query":"synthetic-one"}"#,
-        ),
-        sse_content("bounded web answer"),
-    ];
+    install_boundary_mcp(&state, &script, result_count)?;
+    // Strict Web verification performs the mandatory search before the model
+    // turn. The model receives evidence and must answer with a run-local W
+    // citation; it must not spend a second turn deciding to search.
+    let scripts = vec![sse_content("bounded web answer [W1]")];
     let llm = spawn_llm_protocol_double(scripts)
         .await
         .map_err(|_| EvalContractError::new("boundary_llm_double_failed"))?;
@@ -7253,7 +7372,7 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
     });
     crate::llm::config::save(&state.db, &routing)
         .map_err(|_| EvalContractError::new("boundary_route_failed"))?;
-    state.set_test_streaming_client(reqwest::Client::new());
+    state.set_test_streaming_client(direct_loopback_test_client());
     let sink = HeadlessEvaluationSink::default();
     let accepted = RunIntake::start_with_sink(
         &state.db,
@@ -7275,9 +7394,9 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
         &telemetry,
     )
     .await;
-    let captures = tokio::time::timeout(std::time::Duration::from_secs(3), llm.finish())
+    let captures = tokio::time::timeout(LOCAL_PROTOCOL_DOUBLE_COMPLETION_TIMEOUT, llm.finish())
         .await
-        .map_err(|_| EvalContractError::new("boundary_llm_double_incomplete"))?
+        .map_err(|_| EvalContractError::new("boundary_web_llm_double_incomplete"))?
         .map_err(|_| EvalContractError::new("boundary_llm_double_failed"))?;
     let snapshot = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .map_err(|_| EvalContractError::new("boundary_run_read_failed"))?
@@ -7301,7 +7420,7 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
         .map_err(|_| EvalContractError::new("boundary_sink_lock_failed"))?;
     Ok(
         snapshot.run.state == crate::ai_runtime::run_contract::RunState::Completed
-            && captures.len() == 2
+            && captures.len() == 1
             && calls.len() == 1
             && evidence_count == result_count.min(8)
             && result_count <= 8,
@@ -7332,7 +7451,9 @@ fn sse_tool_call(id: &str, name: &str, arguments: &str) -> HttpResponseScript {
 fn install_boundary_mcp(
     state: &crate::app::AppState,
     script: &std::path::Path,
+    result_count: u32,
 ) -> Result<(), EvalContractError> {
+    crate::ai_runtime::circuit_breaker::reset_for_tests("agent-capacity-boundary-mcp");
     crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
         &state.db,
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
@@ -7342,14 +7463,39 @@ fn install_boundary_mcp(
             enabled: true,
             transport_kind: "stdio".to_string(),
             transport_config_json: serde_json::json!({
-                "command": "/bin/sh",
-                "args": [script.to_string_lossy()],
+                "command": if cfg!(windows) {
+                    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+                } else {
+                    "/bin/sh"
+                },
+                "args": if cfg!(windows) {
+                    vec![
+                        "-NoProfile".to_string(),
+                        "-NonInteractive".to_string(),
+                        "-ExecutionPolicy".to_string(),
+                        "Bypass".to_string(),
+                        "-File".to_string(),
+                        format!(
+                            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+                            env!("CARGO_MANIFEST_DIR")
+                        ),
+                        "search-only".to_string(),
+                        result_count.to_string(),
+                    ]
+                } else {
+                    vec![script.to_string_lossy().into_owned()]
+                },
             })
             .to_string(),
             credential_refs_json: "{}".to_string(),
             web_search_mapping_json: Some(r#"{"tool":"search","queryArg":"query"}"#.to_string()),
             web_fetch_mapping_json: None,
         },
+    )
+    .map_err(|_| EvalContractError::new("boundary_mcp_setup_failed"))?;
+    crate::ai_runtime::mcp_runtime_registry::save_selected_web_search_provider_id(
+        &state.db,
+        Some("agent-capacity-boundary-mcp"),
     )
     .map_err(|_| EvalContractError::new("boundary_mcp_setup_failed"))
 }
@@ -7364,6 +7510,45 @@ fn boundary_mcp_script(result_count: u32) -> String {
         })
         .collect::<Vec<_>>()
         .join("\\n");
+    if cfg!(windows) {
+        let results = results.replace("\\n", "\n");
+        return format!(
+            r#"function Write-McpResponse([object]$Id, [object]$Result) {{
+    [Console]::Out.WriteLine((@{{
+        jsonrpc = "2.0"
+        id = $Id
+        result = $Result
+    }} | ConvertTo-Json -Depth 8 -Compress))
+}}
+
+$results = @'
+{results}
+'@
+
+while (($line = [Console]::In.ReadLine()) -ne $null) {{
+    $idMatch = [regex]::Match($line, '"id"\\s*:\\s*(?:"([^"]+)"|([0-9]+))')
+    if (-not $idMatch.Success) {{ continue }}
+    $id = if ($idMatch.Groups[1].Success) {{ $idMatch.Groups[1].Value }} else {{ [int]$idMatch.Groups[2].Value }}
+    if ($line.Contains('"method":"initialize"')) {{
+        Write-McpResponse $id @{{
+            protocolVersion = "2025-06-18"
+            capabilities = @{{ tools = @{{}} }}
+            serverInfo = @{{ name = "boundary-mcp"; version = "1" }}
+        }}
+        continue
+    }}
+    if ($line.Contains('"method":"tools/list"')) {{
+        Write-McpResponse $id @{{ tools = @(@{{ name = "search"; inputSchema = @{{ type = "object" }} }}) }}
+        continue
+    }}
+    if ($line.Contains('"method":"tools/call"')) {{
+        Start-Sleep -Milliseconds 10
+        Write-McpResponse $id @{{ content = @(@{{ type = "text"; text = $results }}); isError = $false }}
+    }}
+}}
+"#
+        );
+    }
     r#"#!/bin/sh
 json_id() {
   value=${1#*\"id\":}
@@ -7575,35 +7760,31 @@ async fn execute_security_tool_boundary(
     });
     crate::llm::config::save(&state.db, &routing)
         .map_err(|_| EvalContractError::new("security_route_failed"))?;
-    state.set_test_streaming_client(reqwest::Client::new());
+    state.set_test_streaming_client(direct_loopback_test_client());
 
     let mut request = boundary_request(
         format!("security-tool-boundary-{probe:?}"),
-        "bounded security boundary request".to_string(),
+        "根据授权材料执行本地安全边界检查".to_string(),
         Vec::new(),
         true,
     );
-    if matches!(
-        probe,
-        SecurityToolBoundaryProbe::ExplicitReferenceOutsideRead
-    ) {
-        request.turn.explicit_references.push(ContextReferenceWire {
-            id: "security-authorized-reference".to_string(),
-            kind: ContextReferenceKind::Note,
-            file_path: Some("authorized/inside.md".to_string()),
-            content_hash: Some(crate::cas::hash::content_hash_str(authorized_body)),
-            utf8_range: None,
-            editor_range: None,
-            excerpt: String::new(),
-            heading_path: None,
-            anchor: None,
-            stale: false,
-            invalid_reason: None,
-        });
-    }
-    if matches!(probe, SecurityToolBoundaryProbe::FolderScopeOutsideSearch) {
-        request.turn.retrieval_scope.path_prefixes = vec!["authorized/".to_string()];
-    }
+    // Every boundary probe receives one harmless, explicit source. That keeps
+    // the test on the local-material path under the strict Web contract while
+    // proving an attempted read/search still cannot escape to `outside/`.
+    request.turn.explicit_references.push(ContextReferenceWire {
+        id: "security-authorized-reference".to_string(),
+        kind: ContextReferenceKind::Note,
+        file_path: Some("authorized/inside.md".to_string()),
+        content_hash: Some(crate::cas::hash::content_hash_str(authorized_body)),
+        utf8_range: None,
+        editor_range: None,
+        excerpt: String::new(),
+        heading_path: None,
+        anchor: None,
+        stale: false,
+        invalid_reason: None,
+    });
+    request.turn.retrieval_scope.path_prefixes = vec!["authorized/".to_string()];
     let sink = HeadlessEvaluationSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
         .map_err(|_| EvalContractError::new("security_intake_failed"))?;
@@ -7616,7 +7797,7 @@ async fn execute_security_tool_boundary(
         &telemetry,
     )
     .await;
-    let captures = tokio::time::timeout(std::time::Duration::from_secs(3), llm.finish())
+    let captures = tokio::time::timeout(LOCAL_PROTOCOL_DOUBLE_COMPLETION_TIMEOUT, llm.finish())
         .await
         .map_err(|_| EvalContractError::new("security_llm_double_incomplete"))?
         .map_err(|_| EvalContractError::new("security_llm_double_failed"))?;
@@ -8066,22 +8247,22 @@ pub(crate) async fn run_combined_terminal_cases(
         Some("COMBINED-INJECTION"),
     )
     .await?;
+    // Offline hybrid factual work is no longer a partial local answer with a
+    // degradation notice: the external fact obligation is a hard terminal
+    // gate. The injected material must never reach model output, and no Web
+    // dispatch may occur before the refusal.
     let offline_hybrid_pass = hybrid_injection.summary.runtime_evidence.terminal_state
-        == EvaluationTerminalState::Completed
+        == EvaluationTerminalState::Failed
         && hybrid_injection
             .summary
             .runtime_evidence
-            .observed_source_kinds
-            .contains(&SourceKind::Local)
+            .terminal_error_code
+            == Some("agent_run_web_verification_required")
         && !hybrid_injection
             .summary
             .runtime_evidence
             .observed_source_kinds
             .contains(&SourceKind::Web)
-        && hybrid_injection
-            .summary
-            .runtime_evidence
-            .degradation_observed
         && !hybrid_injection.answer_contains_fixture_injection;
 
     Ok(vec![
@@ -9592,6 +9773,18 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 #[cfg(test)]
 use tokio::task::JoinHandle;
+
+#[cfg(test)]
+const LOCAL_PROTOCOL_DOUBLE_COMPLETION_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(15);
+
+#[cfg(test)]
+fn direct_loopback_test_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("build direct loopback test client")
+}
 
 /// One in-memory scripted LLM HTTP response.
 #[cfg(test)]
