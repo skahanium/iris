@@ -101,6 +101,8 @@ pub struct AssistantSessionMessage {
     pub display_mentions: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub web_citations: Vec<crate::ai_types::WebCitationEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub citation_binding: Option<crate::ai_types::CitationBinding>,
     pub created_at: String,
 }
 
@@ -183,6 +185,13 @@ pub async fn assistant_session_load(
                         process.map(|value| value.run_id.as_str()),
                         item.web_citations,
                     );
+                    let citation_binding = item.citation_binding.or_else(|| {
+                        (!web_citations.is_empty()).then_some(crate::ai_types::CitationBinding {
+                            mode: crate::ai_types::CitationBindingMode::SourceGroupFallback,
+                            referenced_indices: Vec::new(),
+                            fallback_reason: Some("legacy_binding_unavailable".to_string()),
+                        })
+                    });
                     AssistantSessionMessage {
                         seq: item.seq,
                         role: item.role,
@@ -200,6 +209,7 @@ pub async fn assistant_session_load(
                         context_scope: item.context_scope,
                         display_mentions: item.display_mentions,
                         web_citations,
+                        citation_binding,
                         created_at: item.created_at,
                     }
                 })

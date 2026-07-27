@@ -34,6 +34,12 @@ describe("referencedCitationIndices", () => {
 });
 
 describe("filterReferencedWebCitations", () => {
+  it("shows every verified source for an answer-level source group", () => {
+    expect(
+      filterReferencedWebCitations(entries, "没有行内格式", false),
+    ).toEqual(entries);
+  });
+
   it("shows only Run-local sources referenced by a follow-up answer", () => {
     const entries = [
       { index: 1, title: "follow-up source 1", url: "https://example.test/1" },

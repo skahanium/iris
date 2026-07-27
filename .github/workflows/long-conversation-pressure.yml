@@ -42,7 +42,7 @@ jobs:
 
       - name: Run deterministic strict Web conversation pressure test
         working-directory: src-tauri
-        run: cargo test strict_web_multi_turn_pressure_keeps_run_local_sources_and_bounded_repairs
+        run: cargo test strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_calls
 
       - name: Run cancellation and retraction lifecycle pressure test
         working-directory: src-tauri

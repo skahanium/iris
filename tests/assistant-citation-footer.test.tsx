@@ -43,4 +43,26 @@ describe("AssistantCitationFooter", () => {
     expect(screen.getByText("Coach news")).toBeInTheDocument();
     expect(screen.queryByText("Unused")).not.toBeInTheDocument();
   });
+
+  it("uses a neutral verified-source group when a provider omitted markers", () => {
+    render(
+      <AssistantCitationFooter
+        content="模型回答没有行内引用格式。"
+        binding={{
+          mode: "source_group_fallback",
+          referencedIndices: [],
+          fallbackReason: "missing_marker",
+        }}
+        entries={[
+          { index: 1, title: "Verified one", url: "https://example.com/one" },
+          { index: 2, title: "Verified two", url: "https://example.com/two" },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("本轮已核验证据")).toBeInTheDocument();
+    expect(screen.getByText("Verified one")).toBeInTheDocument();
+    expect(screen.getByText("Verified two")).toBeInTheDocument();
+    expect(screen.getByText(/未提供可精确绑定/)).toBeInTheDocument();
+  });
 });

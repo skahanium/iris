@@ -27,7 +27,11 @@ import { cn } from "@/lib/utils";
 import { useStreamingContent } from "@/hooks/useStreamingContent";
 import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
 import type { AssistantProcessItem } from "@/lib/assistant-process";
-import type { DisplayMention, WebCitationEntry } from "@/types/ai";
+import type {
+  CitationBinding,
+  DisplayMention,
+  WebCitationEntry,
+} from "@/types/ai";
 import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
 import { resolveWebCitationUrl } from "@/lib/ai/citation-display";
 import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
@@ -61,6 +65,7 @@ interface AiMessageBubbleProps {
 
   /** Safe persisted web citations for footer + inline resolve. */
   webCitations?: WebCitationEntry[];
+  citationBinding?: CitationBinding;
 }
 
 const proseConversation = "iris-markdown-content select-text";
@@ -398,6 +403,7 @@ const AssistantBody = memo(function AssistantBody({
 
   onCitationClick,
   webCitations = [],
+  citationBinding,
 }: {
   content: string;
 
@@ -405,6 +411,7 @@ const AssistantBody = memo(function AssistantBody({
 
   onCitationClick?: (ref: string) => void;
   webCitations?: WebCitationEntry[];
+  citationBinding?: CitationBinding;
 }) {
   const renderable = useMemo(
     () => createRenderableAssistantContent(content, { streaming }),
@@ -522,7 +529,7 @@ const AssistantBody = memo(function AssistantBody({
         onCitationClick(resolved);
         return;
       }
-      if (isExternalHttpsHref(ref)) {
+      if (webCitations.length === 0 && isExternalHttpsHref(ref)) {
         onCitationClick(ref);
       }
     },
@@ -548,7 +555,7 @@ const AssistantBody = memo(function AssistantBody({
       if (external instanceof HTMLAnchorElement) {
         e.preventDefault();
         e.stopPropagation();
-        onCitationClick(external.href);
+        if (webCitations.length === 0) onCitationClick(external.href);
         return;
       }
 
@@ -576,7 +583,7 @@ const AssistantBody = memo(function AssistantBody({
       }
     },
 
-    [handleCodeCopy, onCitationClick, openCitation],
+    [handleCodeCopy, onCitationClick, openCitation, webCitations.length],
   );
 
   return (
@@ -597,6 +604,7 @@ const AssistantBody = memo(function AssistantBody({
         <AssistantCitationFooter
           content={content}
           entries={webCitations}
+          binding={citationBinding}
           onOpenUrl={
             onCitationClick
               ? (url) => {
@@ -635,6 +643,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
   processItems = [],
   webCitations = [],
+  citationBinding,
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
 
@@ -736,6 +745,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
             streaming={streaming}
             onCitationClick={onCitationClick}
             webCitations={webCitations}
+            citationBinding={citationBinding}
           />
         </MarkdownErrorBoundary>
       ) : null}

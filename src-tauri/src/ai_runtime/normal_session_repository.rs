@@ -38,6 +38,7 @@ pub(crate) struct NormalSessionMessage {
     pub(crate) context_scope: serde_json::Value,
     pub(crate) display_mentions: Vec<serde_json::Value>,
     pub(crate) web_citations: Vec<crate::ai_types::WebCitationEntry>,
+    pub(crate) citation_binding: Option<crate::ai_types::CitationBinding>,
     pub(crate) created_at: String,
 }
 
@@ -149,6 +150,10 @@ impl NormalSessionRepository {
                             crate::ai_runtime::citation_linkify::parse_web_citation_entries(
                                 row.get::<_, Option<String>>(9)?.as_deref(),
                             ),
+                        citation_binding:
+                            crate::ai_runtime::citation_linkify::parse_web_citation_binding(
+                                row.get::<_, Option<String>>(9)?.as_deref(),
+                            ),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -188,6 +193,10 @@ impl NormalSessionRepository {
                     web_citations: crate::ai_runtime::citation_linkify::parse_web_citation_entries(
                         row.get::<_, Option<String>>(9)?.as_deref(),
                     ),
+                    citation_binding:
+                        crate::ai_runtime::citation_linkify::parse_web_citation_binding(
+                            row.get::<_, Option<String>>(9)?.as_deref(),
+                        ),
                 })
             })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -228,6 +237,10 @@ impl NormalSessionRepository {
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
                         web_citations:
                             crate::ai_runtime::citation_linkify::parse_web_citation_entries(
+                                row.get::<_, Option<String>>(9)?.as_deref(),
+                            ),
+                        citation_binding:
+                            crate::ai_runtime::citation_linkify::parse_web_citation_binding(
                                 row.get::<_, Option<String>>(9)?.as_deref(),
                             ),
                     })

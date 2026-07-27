@@ -14,9 +14,7 @@ use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunEventInput, FinalizeRunInput,
 };
 use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
-use crate::ai_runtime::citation_linkify::{
-    canonicalize_current_run_citation_markers, linkify_web_citations,
-};
+use crate::ai_runtime::citation_linkify::{bind_current_run_citations, linkify_web_citations};
 use crate::ai_runtime::conversation_memory::ConversationMemory;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
@@ -25,6 +23,7 @@ use crate::ai_runtime::run_contract::{
     RunEventType, RunPresentationEvent, RunPresentationPayload, RunState, SafeRunErrorCode,
     WebEvidenceFailureReason,
 };
+use crate::ai_types::CitationBinding;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -1648,6 +1647,7 @@ impl RunEngine {
             running.state_version(),
             answer,
             Vec::new(),
+            None,
             sink,
         )
     }
@@ -1949,7 +1949,6 @@ impl RunEngine {
                 true,
             )
         };
-        let citation_repair_context = messages.clone();
         let outcome = if let Some(telemetry) = telemetry {
             AgentToolLoop::default()
                 .execute_with_eval_telemetry(
@@ -2101,6 +2100,7 @@ impl RunEngine {
         } else {
             final_evidence_ids.clone()
         };
+        let mut citation_binding = None;
         if executor.requires_web_evidence() {
             if !AgentEvidenceRepository::has_current_run_web_evidence(
                 db,
@@ -2136,52 +2136,16 @@ impl RunEngine {
                         );
                     }
                 };
-            let canonicalized = canonicalize_current_run_citation_markers(&content, &citations);
-            content = match canonicalized {
-                Ok(candidate)
-                    if validate_current_run_citation_markers(&candidate, &citations).is_ok() =>
-                {
-                    candidate
-                }
-                _ => match repair_current_run_citations(
-                    provider,
-                    run_id,
-                    citation_repair_context,
-                    &content,
-                    &citations,
-                    &mut observer,
-                )
-                .await
-                {
-                    Ok(content) => content,
-                    Err(_) => {
-                        return fail_finalization_with_sink(
-                            db,
-                            run_id,
-                            running_state_version,
-                            sink,
-                            RunFinalizationFailure::new(
-                                RunFinalizationStage::EvidenceValidation,
-                                SafeRunErrorCode::CitationRepairFailed,
-                                "current_run_citation_repair_failed",
-                            ),
-                        );
-                    }
-                },
-            };
-            if validate_current_run_citation_markers(&content, &citations).is_err() {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    RunFinalizationFailure::new(
-                        RunFinalizationStage::EvidenceValidation,
-                        SafeRunErrorCode::EvidenceInvalid,
-                        "current_run_citation_marker_invalid",
-                    ),
-                );
-            }
+            let outcome = bind_current_run_citations(&content, &citations);
+            tracing::info!(
+                run_id = %run_id,
+                binding_mode = ?outcome.binding.mode,
+                fallback_reason = ?outcome.binding.fallback_reason,
+                referenced_count = outcome.binding.referenced_indices.len(),
+                "current Run citation binding resolved"
+            );
+            content = outcome.content;
+            citation_binding = Some(outcome.binding);
         } else {
             content = linkify_final_web_citations(db, &citation_evidence_ids, content);
         }
@@ -2221,6 +2185,7 @@ impl RunEngine {
             running_state_version,
             content,
             final_evidence_ids,
+            citation_binding,
             sink,
         )
     }
@@ -2453,6 +2418,7 @@ impl RunEngine {
             running_state_version,
             content,
             evidence_ids.to_vec(),
+            None,
             sink,
         )
     }
@@ -2508,117 +2474,6 @@ fn validate_current_run_citation_links(
         return Err(AppError::msg("agent_run_web_evidence_required"));
     }
     validate_web_urls_against_allowed(content, &allowed_urls)
-}
-
-fn validate_current_run_citation_markers(
-    content: &str,
-    citations: &[crate::ai_runtime::citation_linkify::WebCitationLink],
-) -> AppResult<()> {
-    if citations.is_empty() {
-        return Err(AppError::msg("agent_run_web_evidence_required"));
-    }
-    let mut found = false;
-    let mut remainder = content;
-    while let Some(start) = remainder.find("[W") {
-        let candidate = &remainder[start + 2..];
-        let Some(end) = candidate.find(']') else {
-            return Err(AppError::msg("agent_run_unverified_web_citation"));
-        };
-        let index = candidate[..end]
-            .parse::<i64>()
-            .map_err(|_| AppError::msg("agent_run_unverified_web_citation"))?;
-        if !citations.iter().any(|citation| citation.index == index) {
-            return Err(AppError::msg("agent_run_unverified_web_citation"));
-        }
-        found = true;
-        remainder = &candidate[end + 1..];
-    }
-    if found {
-        Ok(())
-    } else {
-        Err(AppError::msg("agent_run_unverified_web_citation"))
-    }
-}
-
-/// Perform one bounded, tool-free citation correction without allowing the
-/// model to change the answer's prose. The original evidence-bearing context
-/// is replayed, but the returned body is accepted only when it differs by
-/// canonical `[Wn]` markers and references the exact current Run evidence.
-async fn repair_current_run_citations(
-    provider: &impl ToolLoopProvider,
-    run_id: &str,
-    mut context: Vec<crate::ai_runtime::LlmMessage>,
-    original: &str,
-    citations: &[crate::ai_runtime::citation_linkify::WebCitationLink],
-    observer: &mut AgentRunStreamObserver<'_>,
-) -> AppResult<String> {
-    if citations.is_empty() {
-        return Err(AppError::msg("agent_run_web_evidence_required"));
-    }
-    observer.reset_provisional_answer_if_any();
-    observer.enable_deferred_visible_deltas();
-    context.push(crate::ai_runtime::LlmMessage {
-        role: crate::ai_runtime::MessageRole::Assistant,
-        content: original.to_string().into(),
-        tool_call_id: None,
-        tool_calls: None,
-        reasoning_content: None,
-    });
-    let labels = citations
-        .iter()
-        .map(|citation| format!("[W{}]", citation.index))
-        .collect::<Vec<_>>()
-        .join(", ");
-    context.push(crate::ai_runtime::LlmMessage {
-        role: crate::ai_runtime::MessageRole::User,
-        content: format!(
-            "只修正上一条回答中的引用标记。逐字保留原有正文、标题、列表和结论；不得新增、删除或改写任何非引用字符。仅在已有文本中加入或替换为这些允许的标记：{labels}。不要解释，不要调用工具，只输出修正后的完整回答。"
-        )
-        .into(),
-        tool_call_id: None,
-        tool_calls: None,
-        reasoning_content: None,
-    });
-    let response = provider
-        .answer_turn(run_id, &context, &[], observer)
-        .await?;
-    if !response.tool_calls.is_empty() {
-        return Err(AppError::msg("agent_run_citation_repair_requested_tool"));
-    }
-    let repaired = response
-        .content
-        .filter(|content| !content.trim().is_empty())
-        .ok_or_else(|| AppError::msg("agent_run_citation_repair_empty"))?;
-    let repaired = validated_final_model_answer(&repaired)
-        .map_err(|_| AppError::msg("agent_run_citation_repair_invalid_output"))?;
-    let repaired = canonicalize_current_run_citation_markers(&repaired, citations)
-        .map_err(|_| AppError::msg("agent_run_citation_repair_unknown_marker"))?;
-    validate_current_run_citation_markers(&repaired, citations)?;
-    if citationless_current_run_prose(original) != citationless_current_run_prose(&repaired) {
-        return Err(AppError::msg("agent_run_citation_repair_changed_prose"));
-    }
-    Ok(repaired)
-}
-
-fn citationless_current_run_prose(content: &str) -> String {
-    let chars = content.chars().collect::<Vec<_>>();
-    let mut out = String::with_capacity(content.len());
-    let mut cursor = 0;
-    while cursor < chars.len() {
-        if chars[cursor] == '[' && cursor + 3 < chars.len() && chars[cursor + 1] == 'W' {
-            let mut end = cursor + 2;
-            while end < chars.len() && chars[end].is_ascii_digit() {
-                end += 1;
-            }
-            if end > cursor + 2 && end < chars.len() && chars[end] == ']' {
-                cursor = end + 1;
-                continue;
-            }
-        }
-        out.push(chars[cursor]);
-        cursor += 1;
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn validate_web_urls_against_allowed(
@@ -2810,6 +2665,7 @@ fn flush_validated_stream_or_fail(
 
 /// Shared Direct/ToolLoop terminal contract:
 /// AnswerComplete (via flush) → durable `completed` emit → clear abort handle.
+#[allow(clippy::too_many_arguments)]
 fn emit_run_terminal(
     db: &Database,
     session: &AssistantSessionRef,
@@ -2817,15 +2673,22 @@ fn emit_run_terminal(
     state_version: u64,
     content: String,
     evidence_ids: Vec<i64>,
+    citation_binding: Option<CitationBinding>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     let citation_map =
         match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
             Ok(cites) if !cites.is_empty() => {
-                crate::ai_runtime::citation_linkify::web_citation_map_json(&cites)
+                crate::ai_runtime::citation_linkify::web_citation_map_json(
+                    &cites,
+                    citation_binding.as_ref(),
+                )
             }
             Ok(_) => match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
-                Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(&cites),
+                Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(
+                    &cites,
+                    citation_binding.as_ref(),
+                ),
                 Err(error) => {
                     tracing::warn!(
                         error = %error,
@@ -2909,6 +2772,7 @@ fn emit_run_terminal(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finalize_and_emit_with_sink(
     db: &Database,
     session: &AssistantSessionRef,
@@ -2916,6 +2780,7 @@ fn finalize_and_emit_with_sink(
     state_version: u64,
     content: String,
     evidence_ids: Vec<i64>,
+    citation_binding: Option<CitationBinding>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     emit_run_terminal(
@@ -2925,6 +2790,7 @@ fn finalize_and_emit_with_sink(
         state_version,
         content,
         evidence_ids,
+        citation_binding,
         sink,
     )
 }
@@ -2955,9 +2821,6 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
         SafeRunErrorCode::OutputTooLong => "模型回答超过本次运行上限，请缩小问题范围后重试",
         SafeRunErrorCode::EvidenceInvalid => "回答与所附证据无法安全关联，请重新附带资料后重试",
-        SafeRunErrorCode::CitationRepairFailed => {
-            "引用格式自动校正未成功；未生成未经核验的答复，请重试"
-        }
         SafeRunErrorCode::EventDeliveryFailed => "回答状态未能送达界面，请重新打开会话查看结果",
         SafeRunErrorCode::InvalidExplicitReference => "引用材料无效，请重新附带后重试",
         SafeRunErrorCode::ExplicitReferenceChanged => "引用材料已发生变化，请重新附带后重试",

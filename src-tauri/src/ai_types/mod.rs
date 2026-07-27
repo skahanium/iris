@@ -412,6 +412,27 @@ pub struct WebCitationEntry {
     pub url: String,
 }
 
+/// Safe rendering contract that states how one answer is associated with its
+/// already-verified Web evidence. It never contains source bodies or prompts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationBindingMode {
+    Exact,
+    Normalized,
+    SourceGroupFallback,
+}
+
+/// Persisted citation-binding projection for one assistant answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CitationBinding {
+    pub mode: CitationBindingMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub referenced_indices: Vec<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback_reason: Option<String>,
+}
+
 /// 网页证据扩展元数据（仅 `source_type = web` 时填充）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebEvidenceMeta {

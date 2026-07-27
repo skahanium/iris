@@ -1,6 +1,6 @@
 //! Pure helpers that turn bare web footnotes into Markdown HTTPS links.
 
-use crate::ai_types::WebCitationEntry;
+use crate::ai_types::{CitationBinding, CitationBindingMode, WebCitationEntry};
 use serde_json::Value;
 
 /// One web evidence row used to rewrite model footnotes.
@@ -16,27 +16,27 @@ pub(crate) struct WebCitationLink {
     pub(crate) url: String,
 }
 
-/// Bounded outcome of normalizing a model-authored current-Run citation marker.
-/// The caller deliberately receives no model text or source URL on failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CurrentRunCitationError {
-    /// The answer referenced a citation number not supplied to this Run.
-    UnknownMarker,
+/// Deterministic binding outcome for a strict-Web answer. Formatting variance
+/// is absorbed locally; only the absence of usable evidence remains terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CitationBindingOutcome {
+    pub(crate) content: String,
+    pub(crate) binding: CitationBinding,
 }
 
-/// Convert model citation aliases to the canonical current-Run `[Wn]` form.
-///
-/// Different providers commonly emit numeric, `citation:n`, lower-case, or
-/// Unicode superscript markers even when the prompt asked for `[Wn]`. This
-/// helper accepts only aliases that resolve to the exact Run-local evidence
-/// set; an out-of-range numeric marker remains a fail-closed error.
-pub(crate) fn canonicalize_current_run_citation_markers(
+/// Normalize model markers into the current Run projection without asking a
+/// model to rewrite prose. Unknown numeric markers are removed from the body
+/// and the verified answer falls back to an answer-level source group.
+pub(crate) fn bind_current_run_citations(
     content: &str,
     cites: &[WebCitationLink],
-) -> Result<String, CurrentRunCitationError> {
+) -> CitationBindingOutcome {
     let chars = content.chars().collect::<Vec<_>>();
     let mut normalized = String::with_capacity(content.len());
     let mut cursor = 0;
+    let mut referenced_indices = Vec::new();
+    let mut normalized_marker = false;
+    let mut fallback_reason = None;
 
     while cursor < chars.len() {
         if chars[cursor] != '[' {
@@ -53,23 +53,52 @@ pub(crate) fn canonicalize_current_run_citation_markers(
             cursor += 1;
             continue;
         }
-
-        let label = chars[cursor + 1..end].iter().collect::<String>();
-        let label = normalize_marker_label(&label);
-        if let Some(index) = parse_marker_index(&label) {
-            if !cites.iter().any(|cite| cite.index == index) {
-                return Err(CurrentRunCitationError::UnknownMarker);
+        let original_label = chars[cursor + 1..end].iter().collect::<String>();
+        let label = normalize_marker_label(&original_label);
+        match parse_marker_index(&label) {
+            Some(index) if cites.iter().any(|cite| cite.index == index) => {
+                if original_label != format!("W{index}") {
+                    normalized_marker = true;
+                }
+                if !referenced_indices.contains(&index) {
+                    referenced_indices.push(index);
+                }
+                normalized.push_str(&format!("[W{index}]"));
             }
-            normalized.push_str(&format!("[W{index}]"));
-        } else {
-            normalized.push('[');
-            normalized.push_str(&label);
-            normalized.push(']');
+            Some(_) => {
+                fallback_reason = Some("unknown_marker".to_string());
+                normalized.push_str("[来源待确认]");
+            }
+            None => {
+                normalized.push('[');
+                normalized.push_str(&original_label);
+                normalized.push(']');
+            }
         }
         cursor = end + 1;
     }
 
-    Ok(normalized)
+    let binding = if fallback_reason.is_some() || referenced_indices.is_empty() {
+        CitationBinding {
+            mode: CitationBindingMode::SourceGroupFallback,
+            referenced_indices: Vec::new(),
+            fallback_reason: fallback_reason.or_else(|| Some("missing_marker".to_string())),
+        }
+    } else {
+        CitationBinding {
+            mode: if normalized_marker {
+                CitationBindingMode::Normalized
+            } else {
+                CitationBindingMode::Exact
+            },
+            referenced_indices,
+            fallback_reason: None,
+        }
+    };
+    CitationBindingOutcome {
+        content: normalized,
+        binding,
+    }
 }
 
 /// Rewrite bare footnote markers / source lines into clickable Markdown links.
@@ -451,7 +480,10 @@ fn display_title(cite: &WebCitationLink) -> &str {
 }
 
 /// Build the persisted `citation_map_json` payload for one assistant message.
-pub(crate) fn web_citation_map_json(cites: &[WebCitationLink]) -> Value {
+pub(crate) fn web_citation_map_json(
+    cites: &[WebCitationLink],
+    binding: Option<&CitationBinding>,
+) -> Value {
     let web = cites
         .iter()
         .map(|cite| {
@@ -462,7 +494,21 @@ pub(crate) fn web_citation_map_json(cites: &[WebCitationLink]) -> Value {
             })
         })
         .collect::<Vec<_>>();
-    serde_json::json!({ "web": web })
+    let mut map = serde_json::json!({ "web": web });
+    if let Some(binding) = binding {
+        map["binding"] = serde_json::to_value(binding).unwrap_or(serde_json::Value::Null);
+    }
+    map
+}
+
+/// Parse an optional safe binding projection from persisted citation metadata.
+pub(crate) fn parse_web_citation_binding(raw: Option<&str>) -> Option<CitationBinding> {
+    let raw = raw.filter(|value| !value.trim().is_empty())?;
+    serde_json::from_str::<Value>(raw)
+        .ok()?
+        .get("binding")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
 }
 
 /// Parse persisted `citation_map_json` into safe UI entries (HTTPS only).
@@ -557,12 +603,21 @@ mod tests {
     #[test]
     fn web_citation_map_json_and_parse_round_trip() {
         let cites = sample_cites();
-        let json = web_citation_map_json(&cites);
+        let binding = CitationBinding {
+            mode: CitationBindingMode::Normalized,
+            referenced_indices: vec![1, 3],
+            fallback_reason: None,
+        };
+        let json = web_citation_map_json(&cites, Some(&binding));
         let raw = json.to_string();
         let parsed = parse_web_citation_entries(Some(raw.as_str()));
         assert_eq!(parsed.len(), 3);
         assert_eq!(parsed[0].index, 1);
         assert!(parsed[0].url.starts_with("https://"));
+        assert_eq!(
+            parse_web_citation_binding(Some(raw.as_str())),
+            Some(binding)
+        );
     }
 
     #[test]
@@ -608,21 +663,36 @@ mod tests {
     }
 
     #[test]
-    fn canonicalizes_model_citation_aliases_to_current_run_markers() {
-        let normalized = canonicalize_current_run_citation_markers(
-            "证据 [1]、[citation:2]、[¹] 与 [w3]。",
-            &sample_cites(),
-        )
-        .expect("known aliases normalize");
+    fn binds_known_marker_variants_without_another_model_call() {
+        let outcome =
+            bind_current_run_citations("证据 [1]、[citation:2]、[¹] 与 [w3]。", &sample_cites());
 
-        assert_eq!(normalized, "证据 [W1]、[W2]、[W1] 与 [W3]。");
+        assert_eq!(outcome.content, "证据 [W1]、[W2]、[W1] 与 [W3]。");
+        assert_eq!(outcome.binding.mode, CitationBindingMode::Normalized);
+        assert_eq!(outcome.binding.referenced_indices, vec![1, 2, 3]);
     }
 
     #[test]
-    fn rejects_out_of_range_current_run_marker() {
-        let error = canonicalize_current_run_citation_markers("证据 [W4]。", &sample_cites())
-            .expect_err("unknown current-run citation must remain fail-closed");
+    fn binds_missing_or_unknown_marker_as_a_verified_source_group() {
+        let missing = bind_current_run_citations("没有行内标记。", &sample_cites());
+        assert_eq!(
+            missing.binding.mode,
+            CitationBindingMode::SourceGroupFallback
+        );
+        assert_eq!(
+            missing.binding.fallback_reason.as_deref(),
+            Some("missing_marker")
+        );
 
-        assert_eq!(error, CurrentRunCitationError::UnknownMarker);
+        let unknown = bind_current_run_citations("错误标记 [W4]。", &sample_cites());
+        assert_eq!(unknown.content, "错误标记 [来源待确认]。");
+        assert_eq!(
+            unknown.binding.mode,
+            CitationBindingMode::SourceGroupFallback
+        );
+        assert_eq!(
+            unknown.binding.fallback_reason.as_deref(),
+            Some("unknown_marker")
+        );
     }
 }

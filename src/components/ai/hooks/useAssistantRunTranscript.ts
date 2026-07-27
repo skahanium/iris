@@ -72,7 +72,11 @@ export function useAssistantRunTranscript({
         setMessages((previous) =>
           previous.map((message) =>
             message.role === "assistant" && message.runId === runId
-              ? { ...message, webCitations: persisted.webCitations }
+              ? {
+                  ...message,
+                  webCitations: persisted.webCitations,
+                  citationBinding: persisted.citationBinding,
+                }
               : message,
           ),
         );

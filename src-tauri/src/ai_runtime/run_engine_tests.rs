@@ -598,7 +598,7 @@ fn multi_turn_pressure_keeps_recent_context_bounded_and_memory_disjoint() {
 }
 
 #[tokio::test]
-async fn strict_web_multi_turn_pressure_keeps_run_local_sources_and_bounded_repairs() {
+async fn strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_calls() {
     for repetition in 0..20 {
         let db = Database::open_in_memory().expect("database");
         let sink = RecordingSink::default();
@@ -637,24 +637,14 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_sources_and_bounded_repa
             )
             .expect("register strict-web pressure evidence");
             let responses = if turn % 5 == 0 {
-                vec![
-                    crate::ai_runtime::model_gateway::GatewayResponse {
-                        content: Some(format!("第 {turn} 轮结论。")),
-                        tool_calls: vec![],
-                        usage: Default::default(),
-                        finish_reason: "stop".to_string(),
-                        reasoning_content: None,
-                        continuation: None,
-                    },
-                    crate::ai_runtime::model_gateway::GatewayResponse {
-                        content: Some(format!("第 {turn} 轮结论。[citation:1]")),
-                        tool_calls: vec![],
-                        usage: Default::default(),
-                        finish_reason: "stop".to_string(),
-                        reasoning_content: None,
-                        continuation: None,
-                    },
-                ]
+                vec![crate::ai_runtime::model_gateway::GatewayResponse {
+                    content: Some(format!("第 {turn} 轮结论。")),
+                    tool_calls: vec![],
+                    usage: Default::default(),
+                    finish_reason: "stop".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                }]
             } else {
                 let marker = match turn % 3 {
                     0 => "[W1]",
@@ -712,9 +702,14 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_sources_and_bounded_repa
                     .map_err(Into::into)
                 })
                 .expect("strict-web pressure persisted answer");
-            assert!(content.ends_with("[W1]"));
             assert!(citation_map.contains("\"index\":1"));
             assert!(!citation_map.contains("\"index\":2"));
+            if turn % 5 == 0 {
+                assert_eq!(content, format!("第 {turn} 轮结论。"));
+                assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+            } else {
+                assert!(content.ends_with("[W1]"));
+            }
         }
     }
 }
@@ -1999,7 +1994,7 @@ async fn invalid_evidence_never_leaves_stream_delta_or_assistant_body_in_sqlite(
 
     assert_eq!(
         error.to_string(),
-        SafeRunErrorCode::CitationRepairFailed.as_str()
+        SafeRunErrorCode::EvidenceInvalid.as_str()
     );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
@@ -2235,7 +2230,7 @@ async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
     assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         error.to_string(),
-        SafeRunErrorCode::CitationRepairFailed.as_str()
+        SafeRunErrorCode::EvidenceInvalid.as_str()
     );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
@@ -2250,7 +2245,7 @@ async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
 }
 
 #[tokio::test]
-async fn strict_web_answer_without_current_run_marker_fails_as_evidence_invalid() {
+async fn strict_web_answer_without_current_run_marker_completes_with_a_source_group() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -2295,7 +2290,7 @@ async fn strict_web_answer_without_current_run_marker_fails_as_evidence_invalid(
     };
     let sink = RecordingSink::default();
 
-    let error = RunEngine::execute_tool_loop_with_sink(
+    RunEngine::execute_tool_loop_with_sink(
         &db,
         &accepted.session,
         &accepted.run_id,
@@ -2314,22 +2309,24 @@ async fn strict_web_answer_without_current_run_marker_fails_as_evidence_invalid(
         &sink,
     )
     .await
-    .expect_err("missing current-run marker must fail finalization");
-
-    assert_eq!(
-        error.to_string(),
-        SafeRunErrorCode::CitationRepairFailed.as_str()
-    );
+    .expect("missing current-run marker must degrade to the verified source group");
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
-    assert_eq!(replay.run.state, RunState::Failed);
+    assert_eq!(replay.run.state, RunState::Completed);
     assert_eq!(terminal_event_count(&replay.events), 1);
-    assert!(replay.run.final_message_id.is_none());
-    assert!(replay
-        .events
-        .iter()
-        .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
+    let citation_map: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT citation_map_json FROM session_messages
+                 WHERE session_id = 1 AND role = 'assistant'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted source-group answer");
+    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
 }
 
 #[tokio::test]
@@ -2415,7 +2412,7 @@ async fn strict_web_answer_persists_canonical_current_run_marker_and_citation_ma
 }
 
 #[tokio::test]
-async fn strict_web_repairs_one_missing_citation_turn_without_changing_prose() {
+async fn strict_web_missing_marker_completes_with_a_verified_source_group() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -2453,14 +2450,6 @@ async fn strict_web_repairs_one_missing_citation_turn_without_changing_prose() {
                 reasoning_content: None,
                 continuation: None,
             },
-            crate::ai_runtime::model_gateway::GatewayResponse {
-                content: Some("结论来自当前轮证据。[1]".to_string()),
-                tool_calls: vec![],
-                usage: Default::default(),
-                finish_reason: "stop".to_string(),
-                reasoning_content: None,
-                continuation: None,
-            },
         ])),
     };
     let sink = RecordingSink::default();
@@ -2486,19 +2475,20 @@ async fn strict_web_repairs_one_missing_citation_turn_without_changing_prose() {
         &sink,
     )
     .await
-    .expect("one citation repair completes");
+    .expect("source-group fallback completes");
 
-    let content: String = db
+    let (content, citation_map): (String, String) = db
         .with_read_conn(|conn| {
             conn.query_row(
-                "SELECT content FROM session_messages WHERE session_id = 1 AND role = 'assistant'",
+                "SELECT content, citation_map_json FROM session_messages WHERE session_id = 1 AND role = 'assistant'",
                 [],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(Into::into)
         })
-        .expect("repaired answer persisted");
-    assert_eq!(content, "结论来自当前轮证据。[W1]");
+        .expect("source-group answer persisted");
+    assert_eq!(content, "结论来自当前轮证据。");
+    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
 }
 
 #[tokio::test]
@@ -2660,7 +2650,7 @@ async fn strict_web_follow_up_persists_run_local_citation_map() {
 }
 
 #[tokio::test]
-async fn failed_strict_web_turn_does_not_block_the_next_turn_in_the_same_session() {
+async fn source_group_strict_web_turn_does_not_block_the_next_turn_in_the_same_session() {
     let db = Database::open_in_memory().expect("database");
     let failed = RunIntake::start(&db, request()).expect("accepted strict-web turn");
     let evidence = AgentEvidenceRepository::register_web(
@@ -2701,7 +2691,7 @@ async fn failed_strict_web_turn_does_not_block_the_next_turn_in_the_same_session
         ])),
     };
     let sink = RecordingSink::default();
-    let error = RunEngine::execute_tool_loop_with_sink(
+    RunEngine::execute_tool_loop_with_sink(
         &db,
         &failed.session,
         &failed.run_id,
@@ -2722,11 +2712,7 @@ async fn failed_strict_web_turn_does_not_block_the_next_turn_in_the_same_session
         &sink,
     )
     .await
-    .expect_err("invalid strict-web citation fails");
-    assert_eq!(
-        error.to_string(),
-        SafeRunErrorCode::CitationRepairFailed.as_str()
-    );
+    .expect("strict-web source group completes");
 
     let mut retry = request();
     retry.client_request_id = "turn-after-strict-web-failure".to_string();

@@ -13,6 +13,7 @@ import {
 } from "@/lib/ai-payload-store";
 import type {
   ContentPart,
+  CitationBinding,
   DisplayMention,
   ToolCallInfo,
   WebCitationEntry,
@@ -48,6 +49,7 @@ export interface ChatLine {
   /** Safe Run progress rendered separately from answer content. */
   processItems?: AssistantProcessItem[];
   webCitations?: WebCitationEntry[];
+  citationBinding?: CitationBinding;
   /** Local-only playback state; durable Run completion must not cancel it. */
   presentationStreaming?: boolean;
 }
@@ -453,6 +455,7 @@ export const AiMessageList = memo(function AiMessageList({
               createdAt={m.created_at}
               onCitationClick={onCitationClick}
               webCitations={m.webCitations}
+              citationBinding={m.citationBinding}
             />
           </div>
         </div>

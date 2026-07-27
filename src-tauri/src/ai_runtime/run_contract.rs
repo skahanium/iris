@@ -1066,9 +1066,6 @@ pub(crate) enum SafeRunErrorCode {
     /// Final evidence ownership or citation association was invalid.
     #[serde(rename = "agent_run_evidence_invalid")]
     EvidenceInvalid,
-    /// A bounded citation-only repair could not restore a valid current-Run marker.
-    #[serde(rename = "agent_run_citation_repair_failed")]
-    CitationRepairFailed,
     /// A committed Run event could not be delivered to the active renderer.
     #[serde(rename = "agent_run_event_delivery_failed")]
     EventDeliveryFailed,
@@ -1155,7 +1152,6 @@ impl SafeRunErrorCode {
             Self::EmptyOutput => "agent_run_empty_output",
             Self::OutputTooLong => "agent_run_output_too_long",
             Self::EvidenceInvalid => "agent_run_evidence_invalid",
-            Self::CitationRepairFailed => "agent_run_citation_repair_failed",
             Self::EventDeliveryFailed => "agent_run_event_delivery_failed",
             Self::InvalidExplicitReference => "agent_run_invalid_explicit_reference",
             Self::ExplicitReferenceChanged => "agent_run_explicit_reference_changed",
