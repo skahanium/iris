@@ -1949,6 +1949,7 @@ fn validate_core_matrix(scenarios: &[CoreScenario]) -> Result<(), EvalContractEr
 pub(crate) enum PressureDimension {
     Input,
     History,
+    ConversationTurns,
     LocalMaterial,
     LocalMaterialChars,
     RetrievalDistractors,
@@ -1992,6 +1993,10 @@ pub(crate) fn generate_pressure_staircases() -> Result<Vec<PressureStaircase>, E
         PressureStaircase {
             dimension: PressureDimension::History,
             levels: vec![1, 6, 7, 8, 20, 50],
+        },
+        PressureStaircase {
+            dimension: PressureDimension::ConversationTurns,
+            levels: vec![1, 20, 50, 100],
         },
         PressureStaircase {
             dimension: PressureDimension::LocalMaterial,
@@ -6370,6 +6375,11 @@ pub(crate) async fn execute_pressure_staircases(
         .copied()
         .map(|level| repeat_pressure_level(level, probe_history_level))
         .collect::<Result<Vec<_>, _>>()?;
+    let mut conversation_turns = Vec::new();
+    for level in &schedule(PressureDimension::ConversationTurns)?.levels {
+        conversation_turns
+            .push(repeat_pressure_level_async(*level, probe_conversation_turn_level).await?);
+    }
     let materials = schedule(PressureDimension::LocalMaterial)?
         .levels
         .iter()
@@ -6498,6 +6508,12 @@ pub(crate) async fn execute_pressure_staircases(
             PressureValidationStatus::StableBoundaryObserved,
             PressureExecutionWitness::RunContextAssemblerHistory,
             history,
+        )?,
+        aggregate_pressure_execution(
+            PressureDimension::ConversationTurns,
+            PressureValidationStatus::LowerBoundOnly,
+            PressureExecutionWitness::HeadlessRunEngine,
+            conversation_turns,
         )?,
         aggregate_pressure_execution(
             PressureDimension::LocalMaterial,
@@ -6654,6 +6670,90 @@ fn probe_history_level(level: u32) -> Result<bool, EvalContractError> {
     )
     .map_err(|_| EvalContractError::new("boundary_context_failed"))?;
     Ok(context.recent_messages.len() == level as usize)
+}
+
+#[cfg(test)]
+struct CapacityConversationProvider;
+
+#[cfg(test)]
+impl crate::ai_runtime::run_engine::DirectAnswerProvider for CapacityConversationProvider {
+    fn answer(&self, _run_id: &str, _message: &str) -> crate::error::AppResult<String> {
+        Ok("确定性多轮压力答复".to_string())
+    }
+}
+
+#[cfg(test)]
+async fn probe_conversation_turn_level(level: u32) -> Result<bool, EvalContractError> {
+    let db = crate::storage::db::Database::open_in_memory()
+        .map_err(|_| EvalContractError::new("conversation_pressure_database_failed"))?;
+    let provider = CapacityConversationProvider;
+    let mut session = None;
+    for turn in 1..=level {
+        let mut request = boundary_request(
+            format!("conversation-pressure-{level}-{turn}"),
+            format!("conversation-turn-{turn}"),
+            Vec::new(),
+            false,
+        );
+        request.session = session.clone();
+        let accepted = crate::ai_runtime::run_intake::RunIntake::start(&db, request)
+            .map_err(|_| EvalContractError::new("conversation_pressure_intake_failed"))?;
+        crate::ai_runtime::run_engine::RunEngine::execute_direct(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            &provider,
+        )
+        .map_err(|_| EvalContractError::new("conversation_pressure_run_failed"))?;
+        let replay =
+            crate::ai_runtime::run_intake::RunIntake::get(&db, &accepted.session, &accepted.run_id)
+                .map_err(|_| EvalContractError::new("conversation_pressure_replay_failed"))?
+                .ok_or_else(|| EvalContractError::new("conversation_pressure_run_missing"))?;
+        if replay.run.state != crate::ai_runtime::run_contract::RunState::Completed
+            || replay
+                .events
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event.payload(),
+                        crate::ai_runtime::run_contract::RunEventPayload::Completed { .. }
+                            | crate::ai_runtime::run_contract::RunEventPayload::Failed { .. }
+                            | crate::ai_runtime::run_contract::RunEventPayload::Cancelled { .. }
+                    )
+                })
+                .count()
+                != 1
+        {
+            return Ok(false);
+        }
+        session = Some(accepted.session);
+    }
+    let session = session.ok_or_else(|| EvalContractError::new("conversation_pressure_empty"))?;
+    let mut probe = boundary_request(
+        format!("conversation-pressure-probe-{level}"),
+        "conversation-context-probe".to_string(),
+        Vec::new(),
+        false,
+    );
+    probe.session = Some(session.clone());
+    let probe = crate::ai_runtime::run_intake::RunIntake::start(&db, probe)
+        .map_err(|_| EvalContractError::new("conversation_pressure_probe_failed"))?;
+    let context = crate::ai_runtime::run_context::RunContextAssembler::assemble(
+        &db,
+        None,
+        &session.session_key,
+        &probe.run_id,
+    )
+    .map_err(|_| EvalContractError::new("conversation_pressure_context_failed"))?;
+    let expected_recent = usize::try_from(level.saturating_mul(2).min(6)).unwrap_or(usize::MAX);
+    let memory_disjoint = level <= 3
+        || context.conversation_memory.as_ref().is_some_and(|memory| {
+            context
+                .recent_messages
+                .first()
+                .is_some_and(|message| memory.seq_end < message.seq)
+        });
+    Ok(context.recent_messages.len() == expected_recent && memory_disjoint)
 }
 
 #[cfg(test)]

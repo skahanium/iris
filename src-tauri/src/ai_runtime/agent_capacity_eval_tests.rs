@@ -1968,6 +1968,7 @@ fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_c
         std::collections::HashSet::from([
             PressureDimension::Input,
             PressureDimension::History,
+            PressureDimension::ConversationTurns,
             PressureDimension::LocalMaterial,
             PressureDimension::LocalMaterialChars,
             PressureDimension::RetrievalDistractors,
@@ -2197,7 +2198,7 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         .await
         .expect("execute pressure staircases");
 
-    assert_eq!(executions.len(), 13);
+    assert_eq!(executions.len(), 14);
     for execution in &executions {
         assert!(execution.has_runtime_witness());
         assert!(execution
@@ -2233,6 +2234,14 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
             .iter()
             .find(|execution| execution.dimension() == PressureDimension::RetrievalDistractors)
             .expect("retrieval distractors")
+            .validation_status_code(),
+        "lower_bound_only"
+    );
+    assert_eq!(
+        executions
+            .iter()
+            .find(|execution| execution.dimension() == PressureDimension::ConversationTurns)
+            .expect("conversation turns")
             .validation_status_code(),
         "lower_bound_only"
     );
@@ -4025,6 +4034,10 @@ fn pressure_plan_includes_user_spec_refined_axes_and_live_not_tested_schedules()
     assert!(by_dimension(PressureDimension::Input).contains(&15_500));
     assert!(by_dimension(PressureDimension::History).contains(&20));
     assert!(by_dimension(PressureDimension::History).contains(&50));
+    assert_eq!(
+        by_dimension(PressureDimension::ConversationTurns),
+        vec![1, 20, 50, 100]
+    );
     assert_eq!(
         by_dimension(PressureDimension::RetrievalDistractors),
         vec![0, 10, 48, 100, 1_000]

@@ -6,8 +6,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
+use super::conversation_memory::ConversationMemory;
 use super::domain_executor::{AuthorizedDomainMaterial, DomainExecutor, DomainMaterialRole};
+use super::normal_session_repository::NormalSessionRepository;
 use super::policy_decision_engine::RunPolicyDecision;
+use super::run_context::RunContextAssembler;
 use super::run_contract::CapabilityId;
 use super::run_contract::{
     AssistantRunStartRequest, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
@@ -19,7 +22,7 @@ use super::run_engine::{
 };
 use super::run_intake::RunIntake;
 use crate::ai_runtime::agent_evidence_repository::{
-    AgentEvidenceRepository, LocalEvidenceInput, MaterialRole,
+    AgentEvidenceRepository, LocalEvidenceInput, MaterialRole, WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
 use crate::ai_runtime::model_gateway::{
@@ -225,6 +228,10 @@ struct SuccessfulToolLoopExecutor {
     evidence_ids: Vec<i64>,
 }
 
+struct StrictWebEvidenceExecutor {
+    evidence_ids: Vec<i64>,
+}
+
 struct UnusedToolLoopExecutor;
 
 impl StreamingDirectAnswerProvider for MetaAnalysisStreamingProvider {
@@ -389,6 +396,29 @@ impl ToolLoopExecutor for SuccessfulToolLoopExecutor {
     }
 }
 
+impl ToolLoopExecutor for StrictWebEvidenceExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { Err(AppError::msg("unused_strict_web_executor")) })
+    }
+
+    fn evidence_ids(&self) -> Vec<i64> {
+        self.evidence_ids.clone()
+    }
+
+    fn has_web_evidence(&self) -> bool {
+        true
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+}
+
 fn scripted_tool_loop_provider(final_content: String) -> ScriptedToolLoopProvider {
     ScriptedToolLoopProvider {
         responses: std::sync::Mutex::new(VecDeque::from([
@@ -478,6 +508,312 @@ fn direct_engine_calls_provider_once_and_finalizes_one_run() {
     );
     assert_eq!(emitted[0]["type"], "stage_changed");
     assert_eq!(emitted[2]["type"], "completed");
+}
+
+#[test]
+fn completed_runs_refresh_conversation_memory_without_changing_terminal_state() {
+    let db = Database::open_in_memory().expect("database");
+    let sink = RecordingSink::default();
+    let first = RunIntake::start(&db, request()).expect("first accepted");
+    let session = first.session.clone();
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some("已完成答复".to_string()),
+    };
+    RunEngine::execute_direct_with_sink(&db, &session, &first.run_id, &provider, &sink)
+        .expect("first completed");
+
+    for index in 2..=4 {
+        let mut next = request();
+        next.client_request_id = format!("memory-refresh-{index}");
+        next.session = Some(session.clone());
+        next.turn.message = format!("第 {index} 轮用户消息");
+        let accepted = RunIntake::start(&db, next).expect("next accepted");
+        RunEngine::execute_direct_with_sink(&db, &session, &accepted.run_id, &provider, &sink)
+            .expect("next completed");
+    }
+
+    let normal = NormalSessionRepository::get(&db, &session.session_key)
+        .expect("session lookup")
+        .expect("session exists");
+    let memory = ConversationMemory::latest_for_session(&db, normal.session_id)
+        .expect("memory lookup")
+        .expect("memory refreshed after the fourth completed turn");
+    assert_eq!(memory.seq_end, 2);
+}
+
+#[test]
+fn multi_turn_pressure_keeps_recent_context_bounded_and_memory_disjoint() {
+    for turns in [1_u32, 20, 50, 100] {
+        for repetition in 0..5 {
+            let db = Database::open_in_memory().expect("database");
+            let sink = RecordingSink::default();
+            let provider = MockProvider {
+                calls: Cell::new(0),
+                response: Some("确定性压力答复".to_string()),
+            };
+            let mut session = None;
+            let mut seen_runs = std::collections::HashSet::new();
+            for turn in 1..=turns {
+                let mut next = request();
+                next.client_request_id = format!("pressure-{turns}-{repetition}-{turn}");
+                next.session = session.clone();
+                next.turn.message = format!("goal: 第 {turn} 轮压力测试");
+                let accepted = RunIntake::start(&db, next).expect("accepted pressure turn");
+                assert!(seen_runs.insert(accepted.run_id.clone()));
+                session = Some(accepted.session.clone());
+                RunEngine::execute_direct_with_sink(
+                    &db,
+                    &accepted.session,
+                    &accepted.run_id,
+                    &provider,
+                    &sink,
+                )
+                .expect("completed pressure turn");
+                let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+                    .expect("replay")
+                    .expect("run");
+                assert_eq!(replay.run.state, RunState::Completed);
+                assert_eq!(terminal_event_count(&replay.events), 1);
+            }
+
+            let session = session.expect("pressure session");
+            let mut pending = request();
+            pending.client_request_id = format!("pressure-context-{turns}-{repetition}");
+            pending.session = Some(session.clone());
+            let pending = RunIntake::start(&db, pending).expect("accepted context probe");
+            let context =
+                RunContextAssembler::assemble(&db, None, &session.session_key, &pending.run_id)
+                    .expect("assemble bounded pressure context");
+            assert_eq!(context.recent_messages.len(), (turns * 2).min(6) as usize);
+            if turns > 3 {
+                let memory = context.conversation_memory.expect("long history memory");
+                assert!(
+                    memory.seq_end < context.recent_messages.first().expect("recent").seq,
+                    "summary and recent history must remain disjoint"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn strict_web_multi_turn_pressure_keeps_run_local_sources_and_bounded_repairs() {
+    for repetition in 0..20 {
+        let db = Database::open_in_memory().expect("database");
+        let sink = RecordingSink::default();
+        let mut session = None;
+
+        for turn in 1..=30_i64 {
+            let mut next = request();
+            next.client_request_id = format!("strict-web-pressure-{repetition}-{turn}");
+            next.session = session.clone();
+            next.turn.message = format!("第 {turn} 轮严格联网问题");
+            let accepted = RunIntake::start(&db, next).expect("accepted strict-web pressure turn");
+            session = Some(accepted.session.clone());
+            let evidence = AgentEvidenceRepository::register_web(
+                &db,
+                WebEvidenceInput {
+                    session_id: 1,
+                    run_id: accepted.run_id.clone(),
+                    message_seq_first: turn * 2 - 1,
+                    material_role: MaterialRole::Reference,
+                    title: format!("第 {turn} 轮来源"),
+                    url: format!("https://example.test/pressure/{turn}"),
+                    normalized_url: format!("https://example.test/pressure/{turn}"),
+                    domain: "example.test".to_string(),
+                    retrieved_at: "2026-07-27T00:00:00Z".to_string(),
+                    provider_id: "test-web".to_string(),
+                    provider_kind: "https".to_string(),
+                    raw_result_hash: format!("pressure-source-{turn}"),
+                    extraction_method: "test".to_string(),
+                    bounded_excerpt: format!("第 {turn} 轮当前证据。"),
+                    retrieval_reason: Some("pressure".to_string()),
+                    score: None,
+                    source_rank: Some(1),
+                    conflict_group: None,
+                    failure_reason: None,
+                },
+            )
+            .expect("register strict-web pressure evidence");
+            let responses = if turn % 5 == 0 {
+                vec![
+                    crate::ai_runtime::model_gateway::GatewayResponse {
+                        content: Some(format!("第 {turn} 轮结论。")),
+                        tool_calls: vec![],
+                        usage: Default::default(),
+                        finish_reason: "stop".to_string(),
+                        reasoning_content: None,
+                        continuation: None,
+                    },
+                    crate::ai_runtime::model_gateway::GatewayResponse {
+                        content: Some(format!("第 {turn} 轮结论。[citation:1]")),
+                        tool_calls: vec![],
+                        usage: Default::default(),
+                        finish_reason: "stop".to_string(),
+                        reasoning_content: None,
+                        continuation: None,
+                    },
+                ]
+            } else {
+                let marker = match turn % 3 {
+                    0 => "[W1]",
+                    1 => "[1]",
+                    _ => "[¹]",
+                };
+                vec![crate::ai_runtime::model_gateway::GatewayResponse {
+                    content: Some(format!("第 {turn} 轮结论。{marker}")),
+                    tool_calls: vec![],
+                    usage: Default::default(),
+                    finish_reason: "stop".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                }]
+            };
+            let provider = ScriptedToolLoopProvider {
+                responses: std::sync::Mutex::new(VecDeque::from(responses)),
+            };
+            RunEngine::execute_tool_loop_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                vec![crate::ai_runtime::LlmMessage {
+                    role: MessageRole::User,
+                    content: format!("第 {turn} 轮严格联网问题").into(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                    reasoning_content: None,
+                }],
+                vec![],
+                &[evidence.evidence_id],
+                None,
+                &provider,
+                &StrictWebEvidenceExecutor {
+                    evidence_ids: vec![evidence.evidence_id],
+                },
+                &sink,
+            )
+            .await
+            .expect("strict-web pressure turn completes");
+
+            let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+                .expect("strict-web pressure replay")
+                .expect("strict-web pressure run");
+            assert_eq!(replay.run.state, RunState::Completed);
+            assert_eq!(terminal_event_count(&replay.events), 1);
+            let (content, citation_map): (String, String) = db
+                .with_read_conn(|conn| {
+                    conn.query_row(
+                        "SELECT content, citation_map_json FROM session_messages
+                     WHERE session_id = 1 AND turn_id = ?1 AND role = 'assistant'",
+                        [replay.run.turn_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .map_err(Into::into)
+                })
+                .expect("strict-web pressure persisted answer");
+            assert!(content.ends_with("[W1]"));
+            assert!(citation_map.contains("\"index\":1"));
+            assert!(!citation_map.contains("\"index\":2"));
+        }
+    }
+}
+
+#[test]
+fn long_conversation_cancel_retract_and_resume_keeps_context_and_terminals_consistent() {
+    let db = Database::open_in_memory().expect("database");
+    let sink = RecordingSink::default();
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some("确定性恢复答复".to_string()),
+    };
+    let mut session = None;
+    for turn in 1..=8 {
+        let mut next = request();
+        next.client_request_id = format!("mixed-lifecycle-{turn}");
+        next.session = session.clone();
+        next.turn.message = format!("保留的第 {turn} 轮");
+        let accepted = RunIntake::start(&db, next).expect("accept retained turn");
+        session = Some(accepted.session.clone());
+        RunEngine::execute_direct_with_sink(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            &provider,
+            &sink,
+        )
+        .expect("complete retained turn");
+        let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+            .expect("replay retained turn")
+            .expect("retained turn exists");
+        assert_eq!(replay.run.state, RunState::Completed);
+        assert_eq!(terminal_event_count(&replay.events), 1);
+    }
+
+    let session = session.expect("long conversation session");
+    let mut cancelled_request = request();
+    cancelled_request.client_request_id = "mixed-lifecycle-cancel".to_string();
+    cancelled_request.session = Some(session.clone());
+    cancelled_request.turn.message = "必须撤回的取消问题".to_string();
+    let cancelled = RunIntake::start(&db, cancelled_request).expect("accept cancelled turn");
+    RunIntake::control(
+        &db,
+        super::run_contract::AssistantRunControlRequest {
+            session: cancelled.session.clone(),
+            run_id: cancelled.run_id.clone(),
+            expected_state_version: 0,
+            action: super::run_contract::RunControlAction::Cancel,
+        },
+    )
+    .expect("cancel long-conversation turn");
+    let cancelled_replay = RunIntake::get(&db, &cancelled.session, &cancelled.run_id)
+        .expect("replay cancelled turn")
+        .expect("cancelled turn exists");
+    assert_eq!(cancelled_replay.run.state, RunState::Cancelled);
+    assert_eq!(terminal_event_count(&cancelled_replay.events), 1);
+
+    let mut resumed_request = request();
+    resumed_request.client_request_id = "mixed-lifecycle-resume-before-retract".to_string();
+    resumed_request.session = Some(session.clone());
+    resumed_request.turn.message = "撤回前的后续问题".to_string();
+    let resumed = RunIntake::start(&db, resumed_request).expect("accept resumed turn");
+    RunEngine::execute_direct_with_sink(&db, &resumed.session, &resumed.run_id, &provider, &sink)
+        .expect("complete resumed turn");
+
+    assert_eq!(
+        NormalSessionRepository::retract(&db, &session.session_key, 17)
+            .expect("retract cancelled suffix"),
+        3
+    );
+    let mut after_retract_request = request();
+    after_retract_request.client_request_id = "mixed-lifecycle-after-retract".to_string();
+    after_retract_request.session = Some(session.clone());
+    after_retract_request.turn.message = "撤回后的后续问题".to_string();
+    let after_retract =
+        RunIntake::start(&db, after_retract_request).expect("accept post-retract turn");
+    let context =
+        RunContextAssembler::assemble(&db, None, &session.session_key, &after_retract.run_id)
+            .expect("assemble post-retract context");
+    assert!(context.recent_messages.iter().all(
+        |message| !message.content.contains("必须撤回") && !message.content.contains("撤回前")
+    ));
+    let memory = context
+        .conversation_memory
+        .expect("long retained history memory");
+    assert!(memory.seq_end < context.recent_messages.first().expect("recent").seq);
+    RunEngine::execute_direct_with_sink(
+        &db,
+        &after_retract.session,
+        &after_retract.run_id,
+        &provider,
+        &sink,
+    )
+    .expect("complete post-retract turn");
+    let replay = RunIntake::get(&db, &after_retract.session, &after_retract.run_id)
+        .expect("replay post-retract")
+        .expect("post-retract turn exists");
+    assert_eq!(replay.run.state, RunState::Completed);
+    assert_eq!(terminal_event_count(&replay.events), 1);
 }
 
 #[test]
@@ -1663,7 +1999,7 @@ async fn invalid_evidence_never_leaves_stream_delta_or_assistant_body_in_sqlite(
 
     assert_eq!(
         error.to_string(),
-        SafeRunErrorCode::EvidenceInvalid.as_str()
+        SafeRunErrorCode::CitationRepairFailed.as_str()
     );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
@@ -1899,7 +2235,7 @@ async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
     assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
     assert_eq!(
         error.to_string(),
-        SafeRunErrorCode::EvidenceInvalid.as_str()
+        SafeRunErrorCode::CitationRepairFailed.as_str()
     );
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
@@ -1911,6 +2247,506 @@ async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
         .events
         .iter()
         .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
+}
+
+#[tokio::test]
+async fn strict_web_answer_without_current_run_marker_fails_as_evidence_invalid() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let evidence = AgentEvidenceRepository::register_web(
+        &db,
+        WebEvidenceInput {
+            session_id: 1,
+            run_id: accepted.run_id.clone(),
+            message_seq_first: 1,
+            material_role: MaterialRole::Reference,
+            title: "当前轮官方来源".to_string(),
+            url: "https://example.test/current-run".to_string(),
+            normalized_url: "https://example.test/current-run".to_string(),
+            domain: "example.test".to_string(),
+            retrieved_at: "2026-07-27T00:00:00Z".to_string(),
+            provider_id: "test-web".to_string(),
+            provider_kind: "https".to_string(),
+            raw_result_hash: "current-run-source".to_string(),
+            extraction_method: "test".to_string(),
+            bounded_excerpt: "当前轮证据摘录。".to_string(),
+            retrieval_reason: Some("test".to_string()),
+            score: None,
+            source_rank: Some(1),
+            conflict_group: None,
+            failure_reason: None,
+        },
+    )
+    .expect("register current-run web evidence");
+    let provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("缺少本轮引用的答复。".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    let executor = StrictWebEvidenceExecutor {
+        evidence_ids: vec![evidence.evidence_id],
+    };
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "请给出当前事实".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![],
+        &[evidence.evidence_id],
+        None,
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect_err("missing current-run marker must fail finalization");
+
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::CitationRepairFailed.as_str()
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert_eq!(terminal_event_count(&replay.events), 1);
+    assert!(replay.run.final_message_id.is_none());
+    assert!(replay
+        .events
+        .iter()
+        .all(|event| { serde_json::to_value(event).expect("event")["type"] != "content_delta" }));
+}
+
+#[tokio::test]
+async fn strict_web_answer_persists_canonical_current_run_marker_and_citation_map() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let evidence = AgentEvidenceRepository::register_web(
+        &db,
+        WebEvidenceInput {
+            session_id: 1,
+            run_id: accepted.run_id.clone(),
+            message_seq_first: 1,
+            material_role: MaterialRole::Reference,
+            title: "当前轮官方来源".to_string(),
+            url: "https://example.test/current-run".to_string(),
+            normalized_url: "https://example.test/current-run".to_string(),
+            domain: "example.test".to_string(),
+            retrieved_at: "2026-07-27T00:00:00Z".to_string(),
+            provider_id: "test-web".to_string(),
+            provider_kind: "https".to_string(),
+            raw_result_hash: "current-run-source".to_string(),
+            extraction_method: "test".to_string(),
+            bounded_excerpt: "当前轮证据摘录。".to_string(),
+            retrieval_reason: Some("test".to_string()),
+            score: None,
+            source_rank: Some(1),
+            conflict_group: None,
+            failure_reason: None,
+        },
+    )
+    .expect("register current-run web evidence");
+    let provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("已由当前轮证据核验。[W1]".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    let executor = StrictWebEvidenceExecutor {
+        evidence_ids: vec![evidence.evidence_id],
+    };
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "请给出当前事实".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![],
+        &[evidence.evidence_id],
+        None,
+        &provider,
+        &executor,
+        &sink,
+    )
+    .await
+    .expect("valid current-run citation completes");
+
+    let (content, citation_map): (String, String) = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT content, citation_map_json FROM session_messages
+                 WHERE session_id = ?1 AND role = 'assistant'",
+                [1],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted strict-web answer");
+    assert_eq!(content, "已由当前轮证据核验。[W1]");
+    assert!(citation_map.contains("https://example.test/current-run"));
+}
+
+#[tokio::test]
+async fn strict_web_repairs_one_missing_citation_turn_without_changing_prose() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let evidence = AgentEvidenceRepository::register_web(
+        &db,
+        WebEvidenceInput {
+            session_id: 1,
+            run_id: accepted.run_id.clone(),
+            message_seq_first: 1,
+            material_role: MaterialRole::Reference,
+            title: "当前轮来源".to_string(),
+            url: "https://example.test/repair".to_string(),
+            normalized_url: "https://example.test/repair".to_string(),
+            domain: "example.test".to_string(),
+            retrieved_at: "2026-07-27T00:00:00Z".to_string(),
+            provider_id: "test-web".to_string(),
+            provider_kind: "https".to_string(),
+            raw_result_hash: "repair-source".to_string(),
+            extraction_method: "test".to_string(),
+            bounded_excerpt: "当前轮证据摘录。".to_string(),
+            retrieval_reason: Some("test".to_string()),
+            score: None,
+            source_rank: Some(1),
+            conflict_group: None,
+            failure_reason: None,
+        },
+    )
+    .expect("register evidence");
+    let provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("结论来自当前轮证据。".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("结论来自当前轮证据。[1]".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "请给出当前事实".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![],
+        &[evidence.evidence_id],
+        None,
+        &provider,
+        &StrictWebEvidenceExecutor {
+            evidence_ids: vec![evidence.evidence_id],
+        },
+        &sink,
+    )
+    .await
+    .expect("one citation repair completes");
+
+    let content: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT content FROM session_messages WHERE session_id = 1 AND role = 'assistant'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("repaired answer persisted");
+    assert_eq!(content, "结论来自当前轮证据。[W1]");
+}
+
+#[tokio::test]
+async fn strict_web_follow_up_persists_run_local_citation_map() {
+    let db = Database::open_in_memory().expect("database");
+    let first = RunIntake::start(&db, request()).expect("first accepted");
+    let first_evidence = AgentEvidenceRepository::register_web(
+        &db,
+        WebEvidenceInput {
+            session_id: 1,
+            run_id: first.run_id.clone(),
+            message_seq_first: 1,
+            material_role: MaterialRole::Reference,
+            title: "首轮来源".to_string(),
+            url: "https://example.test/first".to_string(),
+            normalized_url: "https://example.test/first".to_string(),
+            domain: "example.test".to_string(),
+            retrieved_at: "2026-07-27T00:00:00Z".to_string(),
+            provider_id: "test-web".to_string(),
+            provider_kind: "https".to_string(),
+            raw_result_hash: "first-source".to_string(),
+            extraction_method: "test".to_string(),
+            bounded_excerpt: "首轮证据。".to_string(),
+            retrieval_reason: Some("test".to_string()),
+            score: None,
+            source_rank: Some(1),
+            conflict_group: None,
+            failure_reason: None,
+        },
+    )
+    .expect("register first evidence");
+    let sink = RecordingSink::default();
+    let first_provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("首轮回答。[W1]".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &first.session,
+        &first.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "首轮问题".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![],
+        &[first_evidence.evidence_id],
+        None,
+        &first_provider,
+        &StrictWebEvidenceExecutor {
+            evidence_ids: vec![first_evidence.evidence_id],
+        },
+        &sink,
+    )
+    .await
+    .expect("first strict web answer completes");
+
+    let mut follow_up_request = request();
+    follow_up_request.client_request_id = "strict-web-follow-up".to_string();
+    follow_up_request.session = Some(first.session.clone());
+    follow_up_request.turn.message = "第二轮问题".to_string();
+    let follow_up = RunIntake::start(&db, follow_up_request).expect("follow-up accepted");
+    let follow_up_evidence = AgentEvidenceRepository::register_web(
+        &db,
+        WebEvidenceInput {
+            session_id: 1,
+            run_id: follow_up.run_id.clone(),
+            message_seq_first: 3,
+            material_role: MaterialRole::Reference,
+            title: "第二轮来源".to_string(),
+            url: "https://example.test/follow-up".to_string(),
+            normalized_url: "https://example.test/follow-up".to_string(),
+            domain: "example.test".to_string(),
+            retrieved_at: "2026-07-27T00:01:00Z".to_string(),
+            provider_id: "test-web".to_string(),
+            provider_kind: "https".to_string(),
+            raw_result_hash: "follow-up-source".to_string(),
+            extraction_method: "test".to_string(),
+            bounded_excerpt: "第二轮证据。".to_string(),
+            retrieval_reason: Some("test".to_string()),
+            score: None,
+            source_rank: Some(1),
+            conflict_group: None,
+            failure_reason: None,
+        },
+    )
+    .expect("register follow-up evidence");
+    let follow_up_provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("第二轮回答。[W1]".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    let follow_up_context =
+        RunContextAssembler::assemble(&db, None, &follow_up.session.session_key, &follow_up.run_id)
+            .expect("assemble follow-up context with prior strict-web answer");
+    let follow_up_messages =
+        follow_up_context.messages_with_domain_plan(&follow_up_context.domain_plan());
+    let historical_answer = follow_up_messages
+        .iter()
+        .find(|message| message.content.text_content().contains("首轮回答"))
+        .expect("follow-up includes prior assistant answer");
+    assert!(historical_answer
+        .content
+        .text_content()
+        .contains("[历史来源 1]"));
+    assert!(!historical_answer.content.text_content().contains("[W1]"));
+    assert!(!historical_answer
+        .content
+        .text_content()
+        .contains("https://"));
+    RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &follow_up.session,
+        &follow_up.run_id,
+        follow_up_messages,
+        vec![],
+        &[follow_up_evidence.evidence_id],
+        None,
+        &follow_up_provider,
+        &StrictWebEvidenceExecutor {
+            evidence_ids: vec![follow_up_evidence.evidence_id],
+        },
+        &sink,
+    )
+    .await
+    .expect("follow-up strict web answer completes");
+
+    let (content, citation_map): (String, String) = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT content, citation_map_json FROM session_messages
+                 WHERE session_id = 1 AND role = 'assistant' ORDER BY seq DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(Into::into)
+        })
+        .expect("follow-up persisted");
+    assert_eq!(content, "第二轮回答。[W1]");
+    assert!(citation_map.contains("\"index\":1"));
+    assert!(!citation_map.contains("\"index\":2"));
+}
+
+#[tokio::test]
+async fn failed_strict_web_turn_does_not_block_the_next_turn_in_the_same_session() {
+    let db = Database::open_in_memory().expect("database");
+    let failed = RunIntake::start(&db, request()).expect("accepted strict-web turn");
+    let evidence = AgentEvidenceRepository::register_web(
+        &db,
+        WebEvidenceInput {
+            session_id: 1,
+            run_id: failed.run_id.clone(),
+            message_seq_first: 1,
+            material_role: MaterialRole::Reference,
+            title: "当前轮来源".to_string(),
+            url: "https://example.test/failed-turn".to_string(),
+            normalized_url: "https://example.test/failed-turn".to_string(),
+            domain: "example.test".to_string(),
+            retrieved_at: "2026-07-27T00:00:00Z".to_string(),
+            provider_id: "test-web".to_string(),
+            provider_kind: "https".to_string(),
+            raw_result_hash: "failed-turn-source".to_string(),
+            extraction_method: "test".to_string(),
+            bounded_excerpt: "当前轮证据摘录。".to_string(),
+            retrieval_reason: Some("test".to_string()),
+            score: None,
+            source_rank: Some(1),
+            conflict_group: None,
+            failure_reason: None,
+        },
+    )
+    .expect("register strict-web evidence");
+    let invalid_provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("遗漏当前轮引用。".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    let sink = RecordingSink::default();
+    let error = RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &failed.session,
+        &failed.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "严格联网问题".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![],
+        &[evidence.evidence_id],
+        None,
+        &invalid_provider,
+        &StrictWebEvidenceExecutor {
+            evidence_ids: vec![evidence.evidence_id],
+        },
+        &sink,
+    )
+    .await
+    .expect_err("invalid strict-web citation fails");
+    assert_eq!(
+        error.to_string(),
+        SafeRunErrorCode::CitationRepairFailed.as_str()
+    );
+
+    let mut retry = request();
+    retry.client_request_id = "turn-after-strict-web-failure".to_string();
+    retry.session = Some(failed.session.clone());
+    retry.turn.message = "请继续处理另一个问题".to_string();
+    let retry = RunIntake::start(&db, retry).expect("accept next turn");
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some("后续轮次正常完成。".to_string()),
+    };
+    RunEngine::execute_direct_with_sink(&db, &retry.session, &retry.run_id, &provider, &sink)
+        .expect("next turn completes");
+    assert_eq!(
+        RunIntake::get(&db, &retry.session, &retry.run_id)
+            .expect("next replay")
+            .expect("next run")
+            .run
+            .state,
+        RunState::Completed
+    );
 }
 
 #[tokio::test]

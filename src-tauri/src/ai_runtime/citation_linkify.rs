@@ -16,6 +16,62 @@ pub(crate) struct WebCitationLink {
     pub(crate) url: String,
 }
 
+/// Bounded outcome of normalizing a model-authored current-Run citation marker.
+/// The caller deliberately receives no model text or source URL on failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CurrentRunCitationError {
+    /// The answer referenced a citation number not supplied to this Run.
+    UnknownMarker,
+}
+
+/// Convert model citation aliases to the canonical current-Run `[Wn]` form.
+///
+/// Different providers commonly emit numeric, `citation:n`, lower-case, or
+/// Unicode superscript markers even when the prompt asked for `[Wn]`. This
+/// helper accepts only aliases that resolve to the exact Run-local evidence
+/// set; an out-of-range numeric marker remains a fail-closed error.
+pub(crate) fn canonicalize_current_run_citation_markers(
+    content: &str,
+    cites: &[WebCitationLink],
+) -> Result<String, CurrentRunCitationError> {
+    let chars = content.chars().collect::<Vec<_>>();
+    let mut normalized = String::with_capacity(content.len());
+    let mut cursor = 0;
+
+    while cursor < chars.len() {
+        if chars[cursor] != '[' {
+            normalized.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+        let mut end = cursor + 1;
+        while end < chars.len() && chars[end] != ']' {
+            end += 1;
+        }
+        if end == chars.len() {
+            normalized.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+
+        let label = chars[cursor + 1..end].iter().collect::<String>();
+        let label = normalize_marker_label(&label);
+        if let Some(index) = parse_marker_index(&label) {
+            if !cites.iter().any(|cite| cite.index == index) {
+                return Err(CurrentRunCitationError::UnknownMarker);
+            }
+            normalized.push_str(&format!("[W{index}]"));
+        } else {
+            normalized.push('[');
+            normalized.push_str(&label);
+            normalized.push(']');
+        }
+        cursor = end + 1;
+    }
+
+    Ok(normalized)
+}
+
 /// Rewrite bare footnote markers / source lines into clickable Markdown links.
 ///
 /// Models often emit Unicode superscript footnotes without URLs. When the Run
@@ -29,6 +85,143 @@ pub(crate) fn linkify_web_citations(content: &str, cites: &[WebCitationLink]) ->
     let normalized = normalize_superscript_brackets(content);
     let with_lists = linkify_source_list_lines(&normalized, cites);
     linkify_inline_markers(&with_lists, cites)
+}
+
+/// Remove prior Run web-citation syntax before an assistant answer is reused as
+/// model history. The persisted answer and its UI citation map stay unchanged;
+/// only the provider-facing copy loses historical URLs and `[Wn]` labels so a
+/// later strict-Web Run cannot mistake them for current-Run evidence.
+pub(crate) fn sanitize_web_citations_for_model_history(
+    content: &str,
+    citations: &[WebCitationEntry],
+) -> String {
+    if content.trim().is_empty() {
+        return content.to_string();
+    }
+
+    let sanitized = sanitize_markdown_http_links(content, citations);
+    let sanitized = sanitize_bare_http_urls(&sanitized);
+    let sanitized = citations.iter().fold(sanitized, |history, citation| {
+        history.replace(
+            &format!("[W{}]", citation.index),
+            &historical_marker(citation.index),
+        )
+    });
+    sanitize_unknown_current_run_markers(&sanitized)
+}
+
+fn sanitize_markdown_http_links(content: &str, citations: &[WebCitationEntry]) -> String {
+    let mut sanitized = String::with_capacity(content.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = content[cursor..].find('[') {
+        let start = cursor + relative_start;
+        sanitized.push_str(&content[cursor..start]);
+        let Some(relative_close) = content[start..].find(']') else {
+            sanitized.push_str(&content[start..]);
+            cursor = content.len();
+            break;
+        };
+        let close = start + relative_close;
+        let label = &content[start + 1..close];
+        let link_start = close + 1;
+        if content[link_start..].starts_with('(') {
+            let url_start = link_start + 1;
+            if let Some(end) = markdown_link_end(content, url_start) {
+                let url = &content[url_start..end];
+                if url.starts_with("https://") || url.starts_with("http://") {
+                    if let Some(citation) = citations.iter().find(|citation| {
+                        citation.url == url
+                            && parse_marker_index(label)
+                                .is_some_and(|index| index == citation.index)
+                    }) {
+                        sanitized.push_str(&historical_marker(citation.index));
+                    } else {
+                        sanitized.push_str(&format!("[历史链接: {}]", label.trim()));
+                    }
+                    cursor = end + 1;
+                    continue;
+                }
+            }
+        }
+        sanitized.push('[');
+        cursor = start + 1;
+    }
+    sanitized.push_str(&content[cursor..]);
+    sanitized
+}
+
+fn markdown_link_end(content: &str, url_start: usize) -> Option<usize> {
+    let mut depth = 1_u32;
+    for (offset, character) in content[url_start..].char_indices() {
+        match character {
+            '(' => depth = depth.saturating_add(1),
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(url_start + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn sanitize_bare_http_urls(content: &str) -> String {
+    let mut sanitized = String::with_capacity(content.len());
+    let mut cursor = 0;
+    loop {
+        let https = content[cursor..]
+            .find("https://")
+            .map(|offset| cursor + offset);
+        let http = content[cursor..]
+            .find("http://")
+            .map(|offset| cursor + offset);
+        let Some(start) = [https, http].into_iter().flatten().min() else {
+            break;
+        };
+        sanitized.push_str(&content[cursor..start]);
+        let end = content[start..]
+            .find(|character: char| {
+                character.is_whitespace()
+                    || matches!(character, ')' | ']' | '>' | '。' | '，' | '；')
+            })
+            .map(|offset| start + offset)
+            .unwrap_or(content.len());
+        sanitized.push_str("[历史链接]");
+        cursor = end;
+    }
+    sanitized.push_str(&content[cursor..]);
+    sanitized
+}
+
+fn sanitize_unknown_current_run_markers(content: &str) -> String {
+    let mut sanitized = String::with_capacity(content.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = content[cursor..].find("[W") {
+        let start = cursor + relative_start;
+        sanitized.push_str(&content[cursor..start]);
+        let candidate = &content[start + 2..];
+        let Some(end) = candidate.find(']') else {
+            sanitized.push_str(&content[start..]);
+            return sanitized;
+        };
+        if !candidate[..end].is_empty()
+            && candidate[..end].bytes().all(|byte| byte.is_ascii_digit())
+        {
+            sanitized.push_str("[历史来源]");
+            cursor = start + 2 + end + 1;
+        } else {
+            sanitized.push_str("[W");
+            cursor = start + 2;
+        }
+    }
+    sanitized.push_str(&content[cursor..]);
+    sanitized
+}
+
+fn historical_marker(index: i64) -> String {
+    format!("[历史来源 {index}]")
 }
 
 fn normalize_superscript_brackets(content: &str) -> String {
@@ -370,5 +563,66 @@ mod tests {
         assert_eq!(parsed.len(), 3);
         assert_eq!(parsed[0].index, 1);
         assert!(parsed[0].url.starts_with("https://"));
+    }
+
+    #[test]
+    fn sanitizes_persisted_web_markdown_for_model_history() {
+        let citations = vec![WebCitationEntry {
+            index: 1,
+            title: "Euronews".to_string(),
+            url: "https://www.euronews.com/a".to_string(),
+        }];
+
+        let sanitized = sanitize_web_citations_for_model_history(
+            "历史结论见 [1](https://www.euronews.com/a)。",
+            &citations,
+        );
+
+        assert_eq!(sanitized, "历史结论见 [历史来源 1]。");
+    }
+
+    #[test]
+    fn sanitizes_canonical_current_run_markers_for_model_history() {
+        let citations = vec![WebCitationEntry {
+            index: 1,
+            title: "Euronews".to_string(),
+            url: "https://www.euronews.com/a".to_string(),
+        }];
+
+        let sanitized = sanitize_web_citations_for_model_history("历史结论见 [W1]。", &citations);
+
+        assert_eq!(sanitized, "历史结论见 [历史来源 1]。");
+    }
+
+    #[test]
+    fn sanitizes_unknown_markers_and_all_historical_urls_without_a_citation_map() {
+        let input =
+            "历史称 [W9]；见 [文档](https://user.example/a_(b)) 和 https://user.example/raw。";
+
+        let sanitized = sanitize_web_citations_for_model_history(input, &[]);
+
+        assert!(!sanitized.contains("[W9]"));
+        assert!(!sanitized.contains("https://"));
+        assert!(sanitized.contains("[历史来源]"));
+        assert!(sanitized.contains("[历史链接: 文档]"));
+    }
+
+    #[test]
+    fn canonicalizes_model_citation_aliases_to_current_run_markers() {
+        let normalized = canonicalize_current_run_citation_markers(
+            "证据 [1]、[citation:2]、[¹] 与 [w3]。",
+            &sample_cites(),
+        )
+        .expect("known aliases normalize");
+
+        assert_eq!(normalized, "证据 [W1]、[W2]、[W1] 与 [W3]。");
+    }
+
+    #[test]
+    fn rejects_out_of_range_current_run_marker() {
+        let error = canonicalize_current_run_citation_markers("证据 [W4]。", &sample_cites())
+            .expect_err("unknown current-run citation must remain fail-closed");
+
+        assert_eq!(error, CurrentRunCitationError::UnknownMarker);
     }
 }

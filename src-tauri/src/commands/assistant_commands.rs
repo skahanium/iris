@@ -178,6 +178,11 @@ pub async fn assistant_session_load(
                         .then_some(item.turn_id.as_deref())
                         .flatten()
                         .and_then(|turn_id| process_by_turn.get(turn_id));
+                    let web_citations = historical_web_citations_for_run(
+                        &state.db,
+                        process.map(|value| value.run_id.as_str()),
+                        item.web_citations,
+                    );
                     AssistantSessionMessage {
                         seq: item.seq,
                         role: item.role,
@@ -194,7 +199,7 @@ pub async fn assistant_session_load(
                         explicit_references: Vec::new(),
                         context_scope: item.context_scope,
                         display_mentions: item.display_mentions,
-                        web_citations: item.web_citations,
+                        web_citations,
                         created_at: item.created_at,
                     }
                 })
@@ -204,6 +209,31 @@ pub async fn assistant_session_load(
             let _ = request;
             Err(AppError::msg("agent_run_classified_history_disabled"))
         }
+    }
+}
+
+/// Rebuild an assistant turn's Web citations from the immutable Run ledger when
+/// available. This makes old sessions written with session-global indices
+/// render against the same Run-local `[Wn]` projection as the answer body,
+/// without mutating existing SQLite rows.
+fn historical_web_citations_for_run(
+    db: &crate::storage::db::Database,
+    run_id: Option<&str>,
+    persisted: Vec<crate::ai_types::WebCitationEntry>,
+) -> Vec<crate::ai_types::WebCitationEntry> {
+    let Some(run_id) = run_id else {
+        return persisted;
+    };
+    match crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
+        Ok(run_local) if !run_local.is_empty() => run_local
+            .into_iter()
+            .map(|citation| crate::ai_types::WebCitationEntry {
+                index: citation.index,
+                title: citation.title,
+                url: citation.url,
+            })
+            .collect(),
+        Ok(_) | Err(_) => persisted,
     }
 }
 

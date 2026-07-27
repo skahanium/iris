@@ -751,17 +751,69 @@ async fn dispatch_required_web_verified_run(
 }
 
 fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> String {
-    let prior_user = context
+    let prior_users_newest_first = context
         .recent_messages
         .iter()
         .rev()
-        .find(|message| message.role == "user")
-        .map(|message| message.content.trim())
-        .filter(|message| !message.is_empty())
-        .map(|message| message.chars().take(240).collect::<String>());
-    prior_user
-        .map(|previous| format!("{previous}\n{current}", current = context.user_message))
-        .unwrap_or_else(|| context.user_message.clone())
+        .filter(|message| message.role == "user")
+        .map(|message| message.content.clone())
+        .collect::<Vec<_>>();
+    required_web_query_from_user_history(&context.user_message, &prior_users_newest_first)
+}
+
+/// Build a compact search query without blindly concatenating every adjacent
+/// user turn. Retries need the prior substantive subject; independent new
+/// questions must not inherit noise such as "你再试试".
+pub(crate) fn required_web_query_from_user_history(
+    current: &str,
+    prior_users_newest_first: &[String],
+) -> String {
+    const MAX_CURRENT_CHARS: usize = 240;
+    const MAX_QUERY_CHARS: usize = 360;
+    let current = current
+        .trim()
+        .chars()
+        .take(MAX_CURRENT_CHARS)
+        .collect::<String>();
+    if current.is_empty() {
+        return current;
+    }
+    let prior = prior_users_newest_first
+        .iter()
+        .map(|message| message.trim())
+        .find(|message| !message.is_empty() && !is_web_retry_instruction(message))
+        .map(|message| message.chars().take(MAX_CURRENT_CHARS).collect::<String>());
+    let query = match (
+        is_web_retry_instruction(&current) || is_context_dependent_web_follow_up(&current),
+        prior,
+    ) {
+        (true, Some(prior)) => format!("{prior}\n{current}"),
+        _ => current,
+    };
+    query.chars().take(MAX_QUERY_CHARS).collect()
+}
+
+fn is_web_retry_instruction(message: &str) -> bool {
+    let normalized = message
+        .chars()
+        .filter(|character| {
+            !character.is_whitespace() && !matches!(character, '?' | '？' | '。' | '！' | '!')
+        })
+        .collect::<String>()
+        .to_ascii_lowercase();
+    matches!(
+        normalized.as_str(),
+        "你再试试" | "再试试" | "重试" | "继续" | "继续回答" | "retry" | "tryagain" | "continue"
+    )
+}
+
+fn is_context_dependent_web_follow_up(message: &str) -> bool {
+    let compact = message.trim();
+    compact.chars().count() <= 48
+        && (compact.contains(['这', '那', '它', '此', '该'])
+            || compact.to_ascii_lowercase().contains("this")
+            || compact.to_ascii_lowercase().contains("that")
+            || compact.to_ascii_lowercase().contains(" it "))
 }
 
 fn supplementary_web_query(query: &str) -> String {

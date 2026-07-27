@@ -121,7 +121,7 @@ export function SessionHistoryDropdown({
     async (summary: AssistantSessionSummary) => {
       try {
         const [messages, activeRun] = await Promise.all([
-          assistantSessionLoad({ session: summary.session }),
+          assistantSessionLoad({ session: summary.session, limit: 240 }),
           assistantRunGet({ session: summary.session }),
         ]);
         onSelectSession(summary.session, toChatLines(messages), activeRun);

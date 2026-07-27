@@ -8,7 +8,10 @@ use super::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
 use super::agent_tool_loop::ToolLoopExecutor;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::ModelGateway;
-use super::normal_run_service::{execute_normal_run, execute_normal_run_with_eval_telemetry};
+use super::normal_run_service::{
+    execute_normal_run, execute_normal_run_with_eval_telemetry,
+    required_web_query_from_user_history,
+};
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
@@ -65,6 +68,35 @@ fn web_tool_loop_request() -> AssistantRunStartRequest {
     request.turn.message = "请联网核实 synthetic 的最新状态".into();
     request.web_enabled = true;
     request
+}
+
+#[test]
+fn required_web_query_avoids_polluting_a_new_question_with_retry_chatter() {
+    let history = vec![
+        "你再试试?".to_string(),
+        "这不会是 OpenAI 自导自演的吧？".to_string(),
+    ];
+
+    assert_eq!(
+        required_web_query_from_user_history(
+            "为什么我总觉得 OpenAI 和 Anthropic 的负责人表演欲望都严重过头？",
+            &history,
+        ),
+        "为什么我总觉得 OpenAI 和 Anthropic 的负责人表演欲望都严重过头？"
+    );
+}
+
+#[test]
+fn required_web_query_uses_last_substantive_turn_for_a_retry_instruction() {
+    let history = vec![
+        "你再试试?".to_string(),
+        "详细讲一下 OpenAI AI 智能体越狱事件".to_string(),
+    ];
+
+    assert_eq!(
+        required_web_query_from_user_history("你再试试?", &history),
+        "详细讲一下 OpenAI AI 智能体越狱事件\n你再试试?"
+    );
 }
 
 fn install_headless_contract_mcp(state: &AppState) {

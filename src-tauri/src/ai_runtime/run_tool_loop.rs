@@ -247,7 +247,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "web_evidence_budget_exhausted",
             ));
         }
-        // Model web calls share MODEL_WEB_EVIDENCE_DEADLINE (10s). MCP search alone
+        // Model web calls share MODEL_WEB_EVIDENCE_DEADLINE (20s). MCP search alone
         // commonly takes ~4s; scheduling deep page fetches (WEB_FETCH_TURN_BUDGET=8s)
         // after that exceeds the outer timeout and discards already-usable search
         // snippets. Prefer registering search snippets first.
@@ -255,7 +255,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             query: query.to_owned(),
             urls,
             enabled: self.has_capability("web.search"),
-            max_search_results: remaining,
+            max_search_results: web_search_result_limit(remaining, 1),
             max_fetches: 0,
             provider_snapshot: self.required_web_provider_snapshot.clone(),
             provider_selection_frozen: true,
@@ -286,11 +286,14 @@ impl<'a> NormalRunToolExecutor<'a> {
                         remaining_model_web_budget_ms(budget_started.elapsed()),
                     ));
                 }
+                let mut attempt_input = broker_input.clone();
+                attempt_input.max_search_results =
+                    web_search_result_limit(remaining, attempt_count);
                 let failure = match tokio::time::timeout(
                 remaining_time,
                 crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
                     &self.state.db,
-                    broker_input.clone(),
+                    attempt_input,
                 ),
             )
             .await
@@ -303,8 +306,10 @@ impl<'a> NormalRunToolExecutor<'a> {
                 Ok(Err(error)) => classify_web_failure(&error),
                 Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
             };
+                let adaptive_oversize_retry =
+                    failure.reason == WebEvidenceFailureReason::ProviderOutputTooLarge;
                 if attempt_count < 2
-                    && failure.retryable
+                    && (failure.retryable || adaptive_oversize_retry)
                     && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
                         < MODEL_WEB_EVIDENCE_DEADLINE
                 {
@@ -587,6 +592,21 @@ impl<'a> NormalRunToolExecutor<'a> {
             tokens_used: None,
             error: None,
         })
+    }
+}
+
+/// Select the provider-facing result count for one bounded Web attempt.
+///
+/// The Run may ultimately register up to eight evidence rows, but an MCP
+/// provider must never be asked for that many raw search bodies in one strict
+/// prefetch. A response that exceeds the host cap gets exactly one smaller
+/// retry; this preserves the cap rather than hiding an unbounded payload.
+fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
+    let first_attempt = remaining.clamp(1, INITIAL_WEB_SEARCH_RESULTS);
+    if attempt_count >= 2 {
+        first_attempt.min(2)
+    } else {
+        first_attempt
     }
 }
 
@@ -1722,7 +1742,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        corroborated_source_threshold_met, emit_deferred_web_degradation,
+        corroborated_source_threshold_met, emit_deferred_web_degradation, web_search_result_limit,
         DeferredWebDegradationInput, NormalRunToolExecutor, RunWebBudget,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
@@ -2021,6 +2041,14 @@ mod tests {
         let second = budget.started().expect("second budget start");
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn strict_web_search_retries_an_oversize_provider_with_two_results() {
+        assert_eq!(web_search_result_limit(8, 1), 5);
+        assert_eq!(web_search_result_limit(8, 2), 2);
+        assert_eq!(web_search_result_limit(1, 1), 1);
+        assert_eq!(web_search_result_limit(1, 2), 1);
     }
 
     #[test]

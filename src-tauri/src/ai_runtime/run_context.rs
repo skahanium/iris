@@ -13,6 +13,7 @@ use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, LocalEvidenceInput, MaterialRole,
 };
 use crate::ai_runtime::agent_run_repository::{AgentRunRepository, StoredExplicitReference};
+use crate::ai_runtime::citation_linkify::sanitize_web_citations_for_model_history;
 use crate::ai_runtime::conversation_memory::ConversationMemory;
 use crate::ai_runtime::domain_executor::{
     AuthorizedDomainMaterial, DomainExecutionPlan, DomainExecutor, DomainMaterialRole,
@@ -169,9 +170,14 @@ impl RunContext {
                 "assistant" => crate::ai_runtime::MessageRole::Assistant,
                 _ => return None,
             };
+            let content = if message.role == "assistant" {
+                sanitize_web_citations_for_model_history(&message.content, &message.web_citations)
+            } else {
+                message.content.clone()
+            };
             Some(crate::ai_runtime::LlmMessage {
                 role,
-                content: crate::ai_types::MessageContent::Text(message.content.clone()),
+                content: crate::ai_types::MessageContent::Text(content),
                 tool_call_id: None,
                 tool_calls: None,
                 reasoning_content: None,

@@ -282,12 +282,16 @@ impl NormalSessionRepository {
         }
         let session = Self::get(db, session_key)?
             .ok_or_else(|| AppError::msg("assistant session not found"))?;
-        db.with_conn(|conn| {
+        let deleted = db.with_conn(|conn| {
             let deleted = conn.execute(
                 "DELETE FROM session_messages WHERE session_id = ?1 AND seq >= ?2",
                 rusqlite::params![session.session_id, from_seq],
             )?;
             if deleted > 0 {
+                conn.execute(
+                    "DELETE FROM conversation_summaries WHERE session_id = ?1",
+                    [session.session_id],
+                )?;
                 conn.execute(
                     "UPDATE session_evidence
                      SET retired_at = ?1
@@ -304,7 +308,22 @@ impl NormalSessionRepository {
                 )?;
             }
             Ok(deleted as u32)
-        })
+        })?;
+        if deleted > 0
+            && crate::ai_runtime::conversation_memory::ConversationMemory::refresh_for_session(
+                db,
+                session.session_id,
+                Default::default(),
+            )
+            .is_err()
+        {
+            tracing::warn!(
+                session_key,
+                reason = "conversation_memory_refresh_after_retract_failed",
+                "conversation memory refresh skipped after retract"
+            );
+        }
+        Ok(deleted)
     }
 }
 

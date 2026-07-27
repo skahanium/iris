@@ -10,8 +10,8 @@ use crate::cas::hash::content_hash_str;
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
-const DEFAULT_MINIMUM_MESSAGES: usize = 20;
-const DEFAULT_RECENT_MESSAGE_LIMIT: usize = 4;
+const DEFAULT_MINIMUM_MESSAGES: usize = 7;
+const DEFAULT_RECENT_MESSAGE_LIMIT: usize = 6;
 const SUMMARY_LIMIT: usize = 220;
 
 /// Policy knobs for deciding when and how much dialogue to summarize.
@@ -62,14 +62,14 @@ impl ConversationMemory {
         policy: ConversationMemoryPolicy,
     ) -> AppResult<Option<Self>> {
         let messages = load_messages(db, session_id)?;
-        let minimum = policy.minimum_messages.max(1);
+        let recent_limit = policy.recent_message_limit.max(1);
+        let minimum = policy.minimum_messages.max(recent_limit + 1);
         if messages.len() < minimum {
+            clear_for_session(db, session_id)?;
             return Ok(None);
         }
 
-        let recent_limit = policy
-            .recent_message_limit
-            .min(messages.len().saturating_sub(1));
+        let recent_limit = recent_limit.min(messages.len().saturating_sub(1));
         let summary_end_index = messages.len().saturating_sub(recent_limit + 1);
         let summarized = &messages[..=summary_end_index];
         let seq_start = summarized.first().map(|msg| msg.seq).unwrap_or(1);
@@ -313,6 +313,16 @@ fn upsert_memory(db: &Database, draft: MemoryDraft) -> AppResult<()> {
     })
 }
 
+fn clear_for_session(db: &Database, session_id: i64) -> AppResult<()> {
+    db.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM conversation_summaries WHERE session_id = ?1",
+            [session_id],
+        )?;
+        Ok(())
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SummaryFallback {
     Goal,
@@ -326,7 +336,11 @@ fn extract_summary(
     fallback_label: &str,
     fallback: SummaryFallback,
 ) -> String {
-    for message in messages {
+    for message in messages
+        .iter()
+        .rev()
+        .filter(|message| message.role == "user")
+    {
         for marker in markers {
             if let Some(summary) = extract_after_marker(&message.content, marker) {
                 return bounded_summary(&summary);
@@ -349,7 +363,12 @@ fn extract_by_hints(
 ) -> Option<String> {
     messages
         .iter()
-        .find(|msg| !msg.content.trim().is_empty() && contains_any_hint(&msg.content, hints))
+        .rev()
+        .find(|msg| {
+            msg.role == "user"
+                && !msg.content.trim().is_empty()
+                && contains_any_hint(&msg.content, hints)
+        })
         .map(|msg| bounded_summary(&format!("{fallback_label}: {}", msg.content.trim())))
 }
 
@@ -425,7 +444,9 @@ fn redact_sensitive(text: &str) -> String {
 
 #[cfg(test)]
 mod memory_extraction_tests {
-    use super::{extract_summary, MemoryMessage, SummaryFallback};
+    use super::{extract_summary, ConversationMemory, MemoryMessage, SummaryFallback};
+    use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
+    use crate::storage::db::Database;
 
     fn msg(seq: i64, role: &str, content: &str) -> MemoryMessage {
         MemoryMessage {
@@ -441,7 +462,7 @@ mod memory_extraction_tests {
         let messages = vec![
             msg(1, "user", "I want a careful harness repair plan."),
             msg(2, "user", "Please avoid placeholder fixes."),
-            msg(3, "assistant", "We decided to keep the privacy boundary."),
+            msg(3, "user", "decision: Keep the privacy boundary."),
             msg(4, "user", "Next check frontend recovery."),
         ];
 
@@ -493,5 +514,40 @@ mod memory_extraction_tests {
         );
 
         assert_eq!(preference, "\u{672a}\u{8bb0}\u{5f55}");
+    }
+
+    #[test]
+    fn refresh_keeps_summary_and_recent_window_disjoint_at_seven_messages() {
+        let db = Database::open_in_memory().expect("database");
+        let session = NormalSessionRepository::create(&db).expect("session");
+        db.with_conn(|conn| {
+            for seq in 1..=7 {
+                conn.execute(
+                    "INSERT INTO session_messages
+                     (session_id, seq, role, content, created_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![
+                        session.session_id,
+                        seq,
+                        if seq % 2 == 0 { "assistant" } else { "user" },
+                        format!("message-{seq}"),
+                        format!("2026-07-27T00:00:0{seq}Z"),
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed conversation");
+
+        let memory =
+            ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+                .expect("refresh")
+                .expect("seven messages require memory");
+        let recent = NormalSessionRepository::recent_messages(&db, session.session_id, 6)
+            .expect("recent history");
+
+        assert_eq!((memory.seq_start, memory.seq_end), (1, 1));
+        assert_eq!(recent.first().expect("recent").seq, 2);
+        assert!(memory.seq_end < recent.first().expect("recent").seq);
     }
 }

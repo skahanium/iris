@@ -1592,6 +1592,71 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
 }
 
 #[test]
+fn provider_history_sanitizes_prior_web_citations_without_changing_answer_text() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, turn_id, citation_map_json, created_at)
+             VALUES (?1, 1, 'user', '首轮提问', 'history-turn', NULL, ?2)",
+            rusqlite::params![session.session_id, "2026-07-27T00:00:00Z"],
+        )?;
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, turn_id, citation_map_json, created_at)
+             VALUES (?1, 2, 'assistant', ?2, 'history-turn', ?3, ?4)",
+            rusqlite::params![
+                session.session_id,
+                "历史结论见 [1](https://example.test/first)。",
+                r#"{"web":[{"index":1,"title":"首轮来源","url":"https://example.test/first"}]}"#,
+                "2026-07-27T00:00:01Z",
+            ],
+        )?;
+        Ok(())
+    })
+    .expect("seed historical web answer");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "history-sanitization-current".into(),
+            run_id: "history-sanitization-current".into(),
+            turn_id: "history-sanitization-current".into(),
+            message: "第二轮追问".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::Conversation,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accept current run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        None,
+        &session.session_key,
+        "history-sanitization-current",
+    )
+    .expect("assemble context");
+    let messages = context.messages_with_domain_plan(&context.domain_plan());
+    let history = messages
+        .iter()
+        .find(|message| message.content.text_content().contains("历史结论见"))
+        .expect("assistant history");
+
+    assert_eq!(history.content.text_content(), "历史结论见 [历史来源 1]。");
+    assert!(!history.content.text_content().contains("https://"));
+    assert!(!history.content.text_content().contains("[W1]"));
+}
+
+#[test]
 fn previous_run_safety_does_not_treat_local_evidence_as_web_success() {
     let db = Database::open_in_memory().expect("database");
     let session = NormalSessionRepository::create(&db).expect("session");

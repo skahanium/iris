@@ -351,6 +351,7 @@ export type AssistantRunErrorCode =
   | "agent_run_empty_output"
   | "agent_run_output_too_long"
   | "agent_run_evidence_invalid"
+  | "agent_run_citation_repair_failed"
   | "agent_run_event_delivery_failed"
   | "agent_run_invalid_explicit_reference"
   | "agent_run_explicit_reference_changed"

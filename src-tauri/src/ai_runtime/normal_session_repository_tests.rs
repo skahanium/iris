@@ -1,3 +1,4 @@
+use super::conversation_memory::ConversationMemory;
 use super::normal_session_repository::NormalSessionRepository;
 use crate::storage::db::Database;
 
@@ -111,6 +112,37 @@ fn normal_session_history_uses_only_opaque_keys() {
 }
 
 #[test]
+fn normal_session_history_loads_the_latest_240_messages_in_chronological_order() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("create session");
+    db.with_conn(|conn| {
+        for seq in 1..=260_i64 {
+            conn.execute(
+                "INSERT INTO session_messages (session_id, seq, role, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    session.session_id,
+                    seq,
+                    if seq % 2 == 0 { "assistant" } else { "user" },
+                    format!("message-{seq}"),
+                    format!("2026-07-27T00:{:02}:00Z", seq % 60),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("seed long conversation");
+
+    let messages = NormalSessionRepository::load_messages(&db, &session.session_key, 240)
+        .expect("load bounded long conversation");
+
+    assert_eq!(messages.len(), 240);
+    assert_eq!(messages.first().expect("first").seq, 21);
+    assert_eq!(messages.last().expect("last").seq, 260);
+    assert!(messages.windows(2).all(|pair| pair[0].seq < pair[1].seq));
+}
+
+#[test]
 fn normal_session_history_restores_new_turn_metadata_and_defaults_legacy_rows_to_arrays() {
     let db = Database::open_in_memory().expect("database");
     let created = NormalSessionRepository::create(&db).expect("create session");
@@ -143,4 +175,41 @@ fn normal_session_history_restores_new_turn_metadata_and_defaults_legacy_rows_to
     assert!(messages[0].display_mentions.is_empty());
     assert_eq!(messages[1].context_scope["paths"][0], "notes/roadmap.md");
     assert_eq!(messages[1].display_mentions[0]["label"], "路线图");
+}
+
+#[test]
+fn retract_clears_conversation_memory_when_remaining_history_fits_the_recent_window() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    db.with_conn(|conn| {
+        for seq in 1..=7 {
+            conn.execute(
+                "INSERT INTO session_messages (session_id, seq, role, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    session.session_id,
+                    seq,
+                    if seq % 2 == 0 { "assistant" } else { "user" },
+                    format!("message-{seq}"),
+                    format!("2026-07-27T00:00:0{seq}Z"),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("seed conversation");
+    ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+        .expect("refresh")
+        .expect("memory exists");
+
+    assert_eq!(
+        NormalSessionRepository::retract(&db, &session.session_key, 7).expect("retract"),
+        1
+    );
+    assert!(
+        ConversationMemory::latest_for_session(&db, session.session_id)
+            .expect("memory lookup")
+            .is_none(),
+        "retracted content must not remain in a summary"
+    );
 }
