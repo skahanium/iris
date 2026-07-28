@@ -1475,9 +1475,12 @@ fn transient_retry_contract_advances_once_without_claiming_vendor_validation() {
         .expect("retryable failure advances");
 
     assert_eq!(next.provider_id, "secondary");
-    assert!(router
-        .next_candidate_after(&selected, 0, ProviderFailure::Unauthorized)
-        .is_none());
+    assert_eq!(
+        router
+            .next_candidate_after(&selected, 0, ProviderFailure::Unauthorized)
+            .map(|candidate| candidate.provider_id.as_str()),
+        Some("secondary")
+    );
 }
 
 #[tokio::test]

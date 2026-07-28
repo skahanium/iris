@@ -33,8 +33,15 @@ pub struct LlmRoutingConfig {
     pub updated_at: Option<String>,
     #[serde(default)]
     pub providers: std::collections::HashMap<String, ProviderOverride>,
-    /// Explicit first choice in the global enabled-model pool.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Ordered global enabled-model pool. The first entry is primary and the
+    /// next two eligible entries are its bounded failover candidates.
+    #[serde(default)]
+    pub candidate_order: Vec<ModelReference>,
+    /// Legacy v5 preference accepted only while deserializing old settings.
+    ///
+    /// Schema v6 never persists this field; callers must use
+    /// [`Self::candidate_order`] for new configuration.
+    #[serde(default, skip_serializing)]
     pub default_model: Option<ModelReference>,
 }
 
@@ -64,13 +71,14 @@ mod model_pool_tests {
 
         LlmRoutingConfig::migrate(&mut value).unwrap();
 
-        assert_eq!(value["defaultModel"]["modelId"], "a");
+        assert_eq!(value["candidateOrder"][0]["modelId"], "a");
         assert_eq!(
             value["providers"]["deepseek"]["enabledModels"],
             serde_json::json!(["a", "b"])
         );
         assert!(value.get("slots").is_none());
         assert!(value.get("slotFailover").is_none());
+        assert!(value.get("defaultModel").is_none());
     }
 
     #[test]
@@ -225,6 +233,124 @@ mod model_pool_tests {
             ReasoningAdapter::OpenAiResponses
         );
         assert_eq!(resolved.resolved.reasoning.mode, ReasoningMode::Medium);
+    }
+
+    #[test]
+    fn migration_v5_promotes_default_then_stable_enabled_models_to_candidate_order() {
+        let mut value = serde_json::json!({
+            "schemaVersion": 5,
+            "providers": {
+                "openai": { "enabledModels": ["gpt-4o-mini", "gpt-5"] },
+                "deepseek": { "enabledModels": ["deepseek-v4-pro"] }
+            },
+            "defaultModel": { "providerId": "openai", "modelId": "gpt-5" }
+        });
+
+        LlmRoutingConfig::migrate(&mut value).expect("v5 migration");
+
+        assert_eq!(value["schemaVersion"], 6);
+        assert_eq!(
+            value["candidateOrder"],
+            serde_json::json!([
+                { "providerId": "openai", "modelId": "gpt-5" },
+                { "providerId": "deepseek", "modelId": "deepseek-v4-pro" },
+                { "providerId": "openai", "modelId": "gpt-4o-mini" }
+            ])
+        );
+        assert!(value.get("defaultModel").is_none());
+    }
+
+    #[test]
+    fn candidate_order_is_capability_filtered_and_limited_to_three_candidates() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            ProviderOverride {
+                enabled_models: Some(vec!["deepseek-v4-flash".into(), "deepseek-v4-pro".into()]),
+                ..Default::default()
+            },
+        );
+        routing.providers.insert(
+            "openai".into(),
+            ProviderOverride {
+                enabled_models: Some(vec!["gpt-4o-mini".into(), "gpt-5".into()]),
+                ..Default::default()
+            },
+        );
+        routing.candidate_order = vec![
+            ModelReference {
+                provider_id: "openai".into(),
+                model_id: "gpt-5".into(),
+            },
+            ModelReference {
+                provider_id: "deepseek".into(),
+                model_id: "deepseek-v4-pro".into(),
+            },
+            ModelReference {
+                provider_id: "openai".into(),
+                model_id: "gpt-4o-mini".into(),
+            },
+            ModelReference {
+                provider_id: "deepseek".into(),
+                model_id: "deepseek-v4-flash".into(),
+            },
+        ];
+
+        let pool = resolve_model_pool_from_config(&routing, requirements()).expect("pool");
+
+        assert_eq!(pool.resolved.model, "gpt-5");
+        assert_eq!(pool.failover_candidates.len(), 2);
+        assert_eq!(pool.failover_candidates[0].model, "deepseek-v4-pro");
+        assert_eq!(pool.failover_candidates[1].model, "gpt-4o-mini");
+    }
+
+    #[test]
+    fn explicit_model_override_is_resolved_even_when_it_falls_after_the_failover_cap() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            ProviderOverride {
+                enabled_models: Some(vec!["deepseek-v4-flash".into(), "deepseek-v4-pro".into()]),
+                ..Default::default()
+            },
+        );
+        routing.providers.insert(
+            "openai".into(),
+            ProviderOverride {
+                enabled_models: Some(vec!["gpt-4o-mini".into(), "gpt-5".into()]),
+                ..Default::default()
+            },
+        );
+        routing.candidate_order = vec![
+            ModelReference {
+                provider_id: "deepseek".into(),
+                model_id: "deepseek-v4-flash".into(),
+            },
+            ModelReference {
+                provider_id: "deepseek".into(),
+                model_id: "deepseek-v4-pro".into(),
+            },
+            ModelReference {
+                provider_id: "openai".into(),
+                model_id: "gpt-4o-mini".into(),
+            },
+            ModelReference {
+                provider_id: "openai".into(),
+                model_id: "gpt-5".into(),
+            },
+        ];
+
+        let override_route = resolve_model_override_from_config(
+            &routing,
+            &ModelReference {
+                provider_id: "openai".into(),
+                model_id: "gpt-5".into(),
+            },
+            requirements(),
+        )
+        .expect("override route");
+
+        assert_eq!(override_route.model, "gpt-5");
     }
 }
 
@@ -388,7 +514,7 @@ impl Default for LlmRoutingConfig {
 
 impl LlmRoutingConfig {
     /// 当前 schema 版本
-    const CURRENT_SCHEMA_VERSION: u32 = 5;
+    const CURRENT_SCHEMA_VERSION: u32 = 6;
 
     /// 迁移旧版本配置（就地修改传入的 JSON Value）
     pub fn migrate(config: &mut serde_json::Value) -> AppResult<()> {
@@ -399,7 +525,70 @@ impl LlmRoutingConfig {
             config["schemaVersion"] = serde_json::json!(5);
         }
 
+        if schema_version < 6 {
+            migrate_default_model_to_candidate_order(config);
+            config["schemaVersion"] = serde_json::json!(6);
+        }
+
         Ok(())
+    }
+}
+
+fn migrate_default_model_to_candidate_order(config: &mut serde_json::Value) {
+    let mut order = Vec::new();
+    if let Some(default) = config
+        .get("defaultModel")
+        .or_else(|| config.get("default_model"))
+        .and_then(route_to_model_reference)
+    {
+        order.push(default);
+    }
+
+    let mut enabled = Vec::new();
+    if let Some(providers) = config
+        .get("providers")
+        .and_then(serde_json::Value::as_object)
+    {
+        for (provider_id, provider) in providers {
+            let Some(models) = provider
+                .get("enabledModels")
+                .or_else(|| provider.get("enabled_models"))
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for model in models {
+                let Some(model_id) = model
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                else {
+                    continue;
+                };
+                enabled.push(serde_json::json!({
+                    "providerId": provider_id,
+                    "modelId": model_id,
+                }));
+            }
+        }
+    }
+    enabled.sort_by(|left, right| {
+        left["providerId"]
+            .as_str()
+            .cmp(&right["providerId"].as_str())
+            .then_with(|| left["modelId"].as_str().cmp(&right["modelId"].as_str()))
+    });
+    order.extend(enabled);
+    let mut deduplicated = Vec::new();
+    for reference in order {
+        if !deduplicated.iter().any(|existing| existing == &reference) {
+            deduplicated.push(reference);
+        }
+    }
+    config["candidateOrder"] = serde_json::Value::Array(deduplicated);
+    if let Some(object) = config.as_object_mut() {
+        object.remove("defaultModel");
+        object.remove("default_model");
     }
 }
 
@@ -489,7 +678,12 @@ fn route_to_model_reference(route: &serde_json::Value) -> Option<serde_json::Val
         .or_else(|| route.get("provider_id"))?
         .as_str()?
         .trim();
-    let model_id = route.get("model")?.as_str()?.trim();
+    let model_id = route
+        .get("model")
+        .or_else(|| route.get("modelId"))
+        .or_else(|| route.get("model_id"))?
+        .as_str()?
+        .trim();
     if provider_id.is_empty() || model_id.is_empty() {
         return None;
     }
@@ -504,6 +698,7 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         providers: std::collections::HashMap::new(),
+        candidate_order: Vec::new(),
         default_model: None,
     }
 }
@@ -682,19 +877,27 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
             provider.base_url = None;
         }
     }
-    if config.default_model.as_ref().is_some_and(|model| {
-        !config
-            .providers
-            .get(&model.provider_id)
-            .and_then(|provider| provider.enabled_models.as_ref())
-            .is_some_and(|models| models.iter().any(|id| id == &model.model_id))
-    }) {
-        config.default_model = None;
+    let enabled = enabled_model_references(config);
+    let mut order = if config.candidate_order.is_empty() {
+        config.default_model.iter().cloned().collect()
+    } else {
+        std::mem::take(&mut config.candidate_order)
+    };
+    order.retain(|candidate| enabled.contains(candidate));
+    for candidate in enabled {
+        if !order.contains(&candidate) {
+            order.push(candidate);
+        }
     }
+    config.candidate_order = order;
+    config.default_model = None;
 }
 
 pub fn save(db: &Database, config: &LlmRoutingConfig) -> AppResult<()> {
-    let json = serde_json::to_string(config)?;
+    let mut canonical = config.clone();
+    canonical.schema_version = LlmRoutingConfig::CURRENT_SCHEMA_VERSION;
+    sanitize_routing(&mut canonical);
+    let json = serde_json::to_string(&canonical)?;
     db.with_conn(|conn| {
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)
@@ -768,6 +971,22 @@ pub fn resolve_model_pool_for_requirements_without_secret(
     resolve_model_pool_with_registry(&routing, requirements, &registry)
 }
 
+/// Resolve one explicit, enabled model override without applying the bounded
+/// primary/backup candidate cap. The caller owns the no-failover policy.
+pub fn resolve_model_override_for_requirements_without_secret(
+    db: &Database,
+    model: &ModelReference,
+    requirements: ModelPoolRequirements,
+) -> AppResult<ResolvedLlmConfig> {
+    let routing = load(db)?;
+    model_registry::clear_invalid_vision_validations(db)?;
+    let registry = model_registry::entries_from_builtin_and_routing(
+        &routing,
+        model_registry::list_registry_entries(db)?,
+    );
+    resolve_model_override_with_registry(&routing, model, requirements, &registry)
+}
+
 #[cfg(test)]
 fn resolve_model_pool_from_config(
     routing: &LlmRoutingConfig,
@@ -776,18 +995,37 @@ fn resolve_model_pool_from_config(
     resolve_model_pool_with_registry(routing, requirements, &[])
 }
 
+#[cfg(test)]
+fn resolve_model_override_from_config(
+    routing: &LlmRoutingConfig,
+    model: &ModelReference,
+    requirements: ModelPoolRequirements,
+) -> AppResult<ResolvedLlmConfig> {
+    resolve_model_override_with_registry(routing, model, requirements, &[])
+}
+
+fn resolve_model_override_with_registry(
+    routing: &LlmRoutingConfig,
+    model: &ModelReference,
+    requirements: ModelPoolRequirements,
+    registry: &[ModelRegistryEntry],
+) -> AppResult<ResolvedLlmConfig> {
+    if !enabled_model_references(routing).contains(model) {
+        return Err(AppError::msg("agent_run_no_capable_model"));
+    }
+    let resolved = resolve_model_reference(routing, model, registry)?;
+    if !resolved_satisfies_requirements(&resolved, requirements) {
+        return Err(AppError::msg("agent_run_no_capable_model"));
+    }
+    Ok(resolved)
+}
+
 fn resolve_model_pool_with_registry(
     routing: &LlmRoutingConfig,
     requirements: ModelPoolRequirements,
     registry: &[ModelRegistryEntry],
 ) -> AppResult<ResolvedModelPool> {
-    let mut references = enabled_model_references(routing);
-    if let Some(default) = routing.default_model.as_ref() {
-        if let Some(index) = references.iter().position(|reference| reference == default) {
-            let default = references.remove(index);
-            references.insert(0, default);
-        }
-    }
+    let references = ordered_enabled_model_references(routing);
 
     let mut candidates = Vec::new();
     for reference in references {
@@ -804,8 +1042,25 @@ fn resolve_model_pool_with_registry(
     };
     Ok(ResolvedModelPool {
         resolved,
-        failover_candidates: candidates.into_iter().skip(1).collect(),
+        failover_candidates: candidates.into_iter().skip(1).take(2).collect(),
     })
+}
+
+fn ordered_enabled_model_references(routing: &LlmRoutingConfig) -> Vec<ModelReference> {
+    let enabled = enabled_model_references(routing);
+    let mut ordered = if routing.candidate_order.is_empty() {
+        routing.default_model.iter().cloned().collect()
+    } else {
+        routing.candidate_order.clone()
+    };
+    ordered.retain(|reference| enabled.contains(reference));
+    ordered.dedup();
+    for reference in enabled {
+        if !ordered.contains(&reference) {
+            ordered.push(reference);
+        }
+    }
+    ordered
 }
 
 fn enabled_model_references(routing: &LlmRoutingConfig) -> Vec<ModelReference> {

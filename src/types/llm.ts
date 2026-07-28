@@ -73,6 +73,9 @@ export interface LlmRoutingConfig {
   version: number;
   schemaVersion?: number;
   providers: Record<string, ProviderOverride>;
+  /** Primary-to-fallback order for every enabled model. */
+  candidateOrder: ModelReference[];
+  /** Read-only compatibility for settings written before schema v6. */
   defaultModel?: ModelReference | null;
 }
 
@@ -158,7 +161,8 @@ export interface LlmConfigTestResult {
 /** 鐎广垺鍩涚粩顖氭礀闁偓姒涙顓婚敍鍦汸C 娑撳秴褰查悽銊﹀灗鐟欙絾鐎芥径杈Е閺冭绱?*/
 export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
   version: 1,
-  schemaVersion: 5,
+  schemaVersion: 6,
   providers: {},
+  candidateOrder: [],
   defaultModel: null,
 };

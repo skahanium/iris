@@ -203,12 +203,12 @@ fn delete_provider_inner(
     }
 
     if routing
-        .default_model
-        .as_ref()
-        .is_some_and(|model| model.provider_id == provider_id)
+        .candidate_order
+        .iter()
+        .any(|model| model.provider_id == provider_id)
     {
         return Err(AppError::msg(
-            "provider is the current default model provider; choose another default model first",
+            "provider is present in the ordered model pool; remove or reorder its models first",
         ));
     }
 
@@ -666,8 +666,12 @@ async fn probe_chat_minimal(
     Err(AppError::msg(format!("HTTP {status}: {text}")))
 }
 fn validate_routing(routing: &LlmRoutingConfig) -> AppResult<()> {
-    if let Some(default_model) = routing.default_model.as_ref() {
-        validate_route(&default_model.provider_id, &default_model.model_id, routing)?;
+    let mut seen = std::collections::HashSet::new();
+    for candidate in &routing.candidate_order {
+        validate_route(&candidate.provider_id, &candidate.model_id, routing)?;
+        if !seen.insert((&candidate.provider_id, &candidate.model_id)) {
+            return Err(AppError::msg("模型候选顺序中不能重复同一模型"));
+        }
     }
     for id in routing.providers.keys() {
         if !is_allowed_provider(id) {

@@ -70,6 +70,13 @@ impl DirectProviderRoute {
         let candidates = std::iter::once(route.resolved)
             .chain(route.failover_candidates)
             .map(provider_candidate_from_resolved)
+            .filter(|candidate| {
+                let key = crate::ai_runtime::circuit_breaker::llm_circuit_key(
+                    &candidate.provider_id,
+                    &candidate.model,
+                );
+                crate::ai_runtime::circuit_breaker::inspect_readiness(&key).request_allowed
+            })
             .collect();
 
         Ok(Self {
@@ -175,15 +182,15 @@ impl DirectProviderRoute {
             })
     }
 
-    /// Return the selected generic candidate's safe provider identifier.
-    pub(crate) fn selected_provider_id_for_requirements(
+    /// Return stable, non-secret identity for one selected candidate.
+    pub(crate) fn selected_provider_model_for_requirements(
         &self,
         requirements: ProviderRequirements,
         selected_index: usize,
-    ) -> Option<&str> {
+    ) -> Option<(&str, &str)> {
         self.select_streaming_for_requirements(requirements)
             .get(selected_index)
-            .map(|candidate| candidate.provider_id.as_str())
+            .map(|candidate| (candidate.provider_id.as_str(), candidate.model.as_str()))
     }
 }
 
@@ -295,7 +302,48 @@ mod tests {
                 0,
                 ProviderFailure::Unauthorized,
             ),
-            None
+            Some(1)
         );
+    }
+
+    #[test]
+    fn authentication_failure_skips_remaining_models_from_the_same_provider() {
+        let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+            resolved: resolved("provider-a", "model-primary"),
+            failover_candidates: vec![
+                resolved("provider-a", "model-secondary"),
+                resolved("provider-b", "model-backup"),
+            ],
+        })
+        .expect("pool route");
+
+        assert_eq!(
+            route.next_selected_index_after_for_requirements(
+                requirements(),
+                0,
+                ProviderFailure::Unauthorized,
+            ),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn open_llm_model_circuit_is_skipped_when_the_run_route_is_frozen() {
+        let key =
+            crate::ai_runtime::circuit_breaker::llm_circuit_key("circuit-primary", "model-primary");
+        crate::ai_runtime::circuit_breaker::reset_for_tests(&key);
+        crate::ai_runtime::circuit_breaker::record_llm_failure("circuit-primary", "model-primary");
+        crate::ai_runtime::circuit_breaker::record_llm_failure("circuit-primary", "model-primary");
+
+        let route = DirectProviderRoute::from_secret_free_route(ResolvedModelPool {
+            resolved: resolved("circuit-primary", "model-primary"),
+            failover_candidates: vec![resolved("circuit-secondary", "model-backup")],
+        })
+        .expect("pool route");
+        let selected = route.select_streaming_for_requirements(requirements());
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].provider_id, "circuit-secondary");
+        crate::ai_runtime::circuit_breaker::reset_for_tests(&key);
     }
 }

@@ -145,6 +145,53 @@ function modelReferenceValue(providerId: string, modelId: string): string {
   return JSON.stringify([providerId, modelId]);
 }
 
+function normalizeCandidateOrder(
+  providers: LlmRoutingConfig["providers"],
+  candidateOrder: readonly { providerId: string; modelId: string }[],
+): { providerId: string; modelId: string }[] {
+  const enabled = new Set(
+    Object.entries(providers).flatMap(([providerId, provider]) =>
+      uniqueModelIds(provider.enabledModels ?? []).map((modelId) =>
+        modelReferenceValue(providerId, modelId),
+      ),
+    ),
+  );
+  const normalized: { providerId: string; modelId: string }[] = [];
+  for (const candidate of candidateOrder) {
+    const providerId = candidate.providerId.trim();
+    const modelId = candidate.modelId.trim();
+    const key = modelReferenceValue(providerId, modelId);
+    if (
+      providerId &&
+      modelId &&
+      enabled.has(key) &&
+      !normalized.some(
+        (item) => modelReferenceValue(item.providerId, item.modelId) === key,
+      )
+    ) {
+      normalized.push({ providerId, modelId });
+    }
+  }
+  for (const key of [...enabled].sort()) {
+    if (
+      normalized.some(
+        (item) => modelReferenceValue(item.providerId, item.modelId) === key,
+      )
+    ) {
+      continue;
+    }
+    const parsed: unknown = JSON.parse(key);
+    if (
+      Array.isArray(parsed) &&
+      typeof parsed[0] === "string" &&
+      typeof parsed[1] === "string"
+    ) {
+      normalized.push({ providerId: parsed[0], modelId: parsed[1] });
+    }
+  }
+  return normalized;
+}
+
 function findModelCatalogForProvider(
   catalog: ModelCatalogEntry[] | undefined,
   providerId: string,
@@ -610,7 +657,16 @@ export function LlmRoutingSection({
     return {
       ...normalized,
       providers,
-      defaultModel: normalized.defaultModel ?? null,
+      schemaVersion: 6,
+      candidateOrder: normalizeCandidateOrder(
+        providers,
+        normalized.candidateOrder.length > 0
+          ? normalized.candidateOrder
+          : normalized.defaultModel
+            ? [normalized.defaultModel]
+            : [],
+      ),
+      defaultModel: null,
     };
   };
 
@@ -966,28 +1022,40 @@ export function LlmRoutingSection({
     if (additions.length === 0) return;
     const enabled = enabledModelIdsForProvider(providerId);
     const nextEnabled = uniqueModelIds([...enabled, ...additions]);
-    updateProviderOverride(providerId, {
-      enabledModels: nextEnabled,
-      defaultModel:
-        routing.providers[providerId]?.defaultModel ?? nextEnabled[0],
-    });
+    const currentProvider =
+      routing.providers[providerId] ?? emptyProviderOverride(providerId);
+    const nextRouting = {
+      ...routing,
+      candidateOrder: normalizeCandidateOrder(
+        {
+          ...routing.providers,
+          [providerId]: {
+            ...currentProvider,
+            enabledModels: nextEnabled,
+          },
+        },
+        [
+          ...routing.candidateOrder,
+          ...additions.map((modelId) => ({ providerId, modelId })),
+        ],
+      ),
+    };
+    updateProviderOverride(providerId, { enabledModels: nextEnabled });
+    applyRouting(nextRouting);
     setNewModelInputs((prev) => ({ ...prev, [providerId]: "" }));
   };
 
   const removeProviderModel = (providerId: string, modelId: string) => {
     if (!routing) return;
-    if (
-      routing.defaultModel?.providerId === providerId &&
-      routing.defaultModel.modelId === modelId
-    ) {
-      setMessage(`模型 ${modelId} 是当前默认模型，请先选择其他默认模型。`);
-      return;
-    }
     const enabled = enabledModelIdsForProvider(providerId);
     const nextEnabled = enabled.filter((id) => id !== modelId);
-    updateProviderOverride(providerId, {
-      enabledModels: nextEnabled,
-      defaultModel: routing.providers[providerId]?.defaultModel,
+    updateProviderOverride(providerId, { enabledModels: nextEnabled });
+    applyRouting({
+      ...routing,
+      candidateOrder: routing.candidateOrder.filter(
+        (candidate) =>
+          candidate.providerId !== providerId || candidate.modelId !== modelId,
+      ),
     });
   };
 
@@ -1045,19 +1113,33 @@ export function LlmRoutingSection({
     return () => onProviderChromeChange(null);
   }, [onProviderChromeChange]);
 
-  const enabledModelReferences = visibleProviders.flatMap((provider) =>
-    provider.enabledModels.map((modelId) => ({
-      providerId: provider.id,
-      modelId,
-      label: `${provider.name} · ${modelId}`,
-    })),
-  );
-  const selectedDefaultModel = routing?.defaultModel
-    ? modelReferenceValue(
-        routing.defaultModel.providerId,
-        routing.defaultModel.modelId,
-      )
-    : "";
+  const routingForOrder = routing ?? DEFAULT_LLM_ROUTING;
+  const orderedModelReferences = normalizeCandidateOrder(
+    routingForOrder.providers,
+    routingForOrder.candidateOrder,
+  ).map((candidate) => ({
+    ...candidate,
+    label: `${providerName(candidate.providerId)} · ${candidate.modelId}`,
+  }));
+
+  const moveCandidate = (index: number, direction: -1 | 1) => {
+    if (!routing) return;
+    const target = index + direction;
+    if (target < 0 || target >= orderedModelReferences.length) return;
+    const candidateOrder = [...orderedModelReferences];
+    const source = candidateOrder[index];
+    const destination = candidateOrder[target];
+    if (!source || !destination) return;
+    candidateOrder[index] = destination;
+    candidateOrder[target] = source;
+    applyRouting({
+      ...routing,
+      candidateOrder: candidateOrder.map(({ providerId, modelId }) => ({
+        providerId,
+        modelId,
+      })),
+    });
+  };
 
   const testProvider = async (provider: VisibleProvider) => {
     const apiKeyOverride = keyInputsRef.current[provider.id]?.trim();
@@ -1085,8 +1167,12 @@ export function LlmRoutingSection({
   };
 
   const deleteProvider = async (provider: VisibleProvider) => {
-    if (routing?.defaultModel?.providerId === provider.id) {
-      setMessage(`${provider.name} 包含当前默认模型，请先选择其他默认模型。`);
+    if (
+      routing?.candidateOrder.some(
+        (candidate) => candidate.providerId === provider.id,
+      )
+    ) {
+      setMessage(`${provider.name} 仍在主备模型池中，请先移除其模型。`);
       return;
     }
     const confirmed = confirm(
@@ -1416,13 +1502,13 @@ export function LlmRoutingSection({
           <section className="space-y-2" data-section="llm-model-pool">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-medium text-muted-foreground">
-                模型池与默认模型
+                模型池与主备顺序
               </p>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              所有已启用模型构成同一候选池。任务按文本、工具、视觉、推理和上下文预算筛选；默认模型满足条件时优先使用，否则按稳定顺序切换到其他合格模型。
+              第一项是主模型，后两项是备用模型。任务先按文本、工具、视觉、推理和上下文能力过滤，再按此顺序最多尝试三个候选；显式指定模型的请求不会自动切换。
             </p>
-            {enabledModelReferences.length === 0 ? (
+            {orderedModelReferences.length === 0 ? (
               <Input
                 className="h-8 text-xs"
                 value=""
@@ -1430,40 +1516,41 @@ export function LlmRoutingSection({
                 disabled
               />
             ) : (
-              <Select
-                value={selectedDefaultModel}
-                onValueChange={(value) => {
-                  const parsed: unknown = JSON.parse(value);
-                  if (
-                    !Array.isArray(parsed) ||
-                    typeof parsed[0] !== "string" ||
-                    typeof parsed[1] !== "string"
-                  ) {
-                    return;
-                  }
-                  applyRouting({
-                    ...routing,
-                    defaultModel: { providerId: parsed[0], modelId: parsed[1] },
-                  });
-                }}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="选择默认模型" />
-                </SelectTrigger>
-                <SelectContent>
-                  {enabledModelReferences.map((model) => (
-                    <SelectItem
-                      key={modelReferenceValue(model.providerId, model.modelId)}
-                      value={modelReferenceValue(
-                        model.providerId,
-                        model.modelId,
-                      )}
-                    >
+              <div className="space-y-1">
+                {orderedModelReferences.map((model, index) => (
+                  <div
+                    key={modelReferenceValue(model.providerId, model.modelId)}
+                    className="flex items-center gap-2 rounded-md border border-border/50 px-2 py-1.5 text-xs"
+                  >
+                    <span className="w-16 shrink-0 text-muted-foreground">
+                      {index === 0 ? "主模型" : `备用 ${index}`}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate">
                       {model.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                    </span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-xs"
+                      disabled={index === 0}
+                      onClick={() => moveCandidate(index, -1)}
+                    >
+                      上移
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 px-2 text-xs"
+                      disabled={index === orderedModelReferences.length - 1}
+                      onClick={() => moveCandidate(index, 1)}
+                    >
+                      下移
+                    </Button>
+                  </div>
+                ))}
+              </div>
             )}
           </section>
 
@@ -1649,12 +1736,32 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     typeof providerId === "string" && typeof modelId === "string"
       ? { providerId, modelId: normalizePersistedModelId(modelId) }
       : null;
+  const rawCandidateOrder = Array.isArray(rawRecord.candidateOrder)
+    ? rawRecord.candidateOrder
+    : Array.isArray(rawRecord.candidate_order)
+      ? rawRecord.candidate_order
+      : [];
+  const candidateOrder = normalizeCandidateOrder(
+    providers,
+    rawCandidateOrder.flatMap((entry) => {
+      if (!isRecord(entry)) return [];
+      const providerId = entry.providerId ?? entry.provider_id;
+      const modelId = entry.modelId ?? entry.model_id;
+      return typeof providerId === "string" && typeof modelId === "string"
+        ? [{ providerId, modelId: normalizePersistedModelId(modelId) }]
+        : [];
+    }),
+  );
 
   return {
     version: typeof rawRecord.version === "number" ? rawRecord.version : 1,
     schemaVersion:
-      typeof rawRecord.schemaVersion === "number" ? rawRecord.schemaVersion : 5,
+      typeof rawRecord.schemaVersion === "number" ? rawRecord.schemaVersion : 6,
     providers,
+    candidateOrder:
+      candidateOrder.length > 0 || !defaultModel
+        ? candidateOrder
+        : normalizeCandidateOrder(providers, [defaultModel]),
     defaultModel,
   };
 }

@@ -108,6 +108,12 @@ pub trait StreamEventObserver: Send {
     fn on_tools_starting(&mut self) -> AppResult<()> {
         Ok(())
     }
+
+    /// Whether this attempt has already reached the user-visible answer slot.
+    /// Fallback routers must not splice a second provider into visible output.
+    fn has_visible_content(&self) -> bool {
+        false
+    }
 }
 
 fn lifecycle_content_hash(value: &str) -> String {

@@ -104,6 +104,8 @@ pub(crate) enum ProviderFailure {
     HttpStatus(u16),
     /// The provider explicitly reported a temporary outage.
     TemporarilyUnavailable,
+    /// The provider returned a syntactically valid but unusable empty response.
+    InvalidResponse,
     /// The provider rejected authentication.
     Unauthorized,
     /// The provider denied access to the resource.
@@ -121,10 +123,17 @@ impl ProviderFailure {
             self,
             Self::Connection
                 | Self::Timeout
+                | Self::HttpStatus(408)
                 | Self::HttpStatus(429)
                 | Self::HttpStatus(500..=599)
                 | Self::TemporarilyUnavailable
+                | Self::InvalidResponse
         )
+    }
+
+    /// Authentication failures may advance only to a different provider.
+    pub(crate) fn permits_cross_provider_failover(self) -> bool {
+        self.is_retryable() || matches!(self, Self::Unauthorized | Self::Forbidden)
     }
 }
 
@@ -144,7 +153,8 @@ pub(crate) fn classify_provider_failure_from_app_error(
             ProviderErrorKind::TemporarilyUnavailable => ProviderFailure::TemporarilyUnavailable,
             ProviderErrorKind::Cancelled => ProviderFailure::Cancelled,
             ProviderErrorKind::HttpStatus(status) => ProviderFailure::HttpStatus(*status),
-            ProviderErrorKind::InvalidResponse | ProviderErrorKind::Unknown => {
+            ProviderErrorKind::InvalidResponse => ProviderFailure::InvalidResponse,
+            ProviderErrorKind::Unknown => {
                 // Preserve legacy message-token fallback for gateway edges that
                 // still emit Provider{Unknown} with a descriptive message.
                 let from_message = classify_provider_failure_from_message(message);
@@ -183,6 +193,9 @@ fn classify_provider_failure_from_message(message: &str) -> ProviderFailure {
     let message = message.to_ascii_lowercase();
     if message.contains("request aborted") || message.contains("partial_visible_stream_error") {
         return ProviderFailure::Cancelled;
+    }
+    if message.contains("invalid_model_response") || message.contains("empty model response") {
+        return ProviderFailure::InvalidResponse;
     }
     if message.contains("timeout") || message.contains("deadline") {
         return ProviderFailure::Timeout;
@@ -295,17 +308,24 @@ impl ProviderRouter {
         })
     }
 
-    /// Return the next candidate only after a strictly retryable failure.
+    /// Return the next candidate after a permitted failure. A second model from
+    /// the same provider is never attempted in one Run: provider-wide outages
+    /// and authentication failures must advance to a distinct provider.
     pub(crate) fn next_candidate_after<'a>(
         &self,
         selected: &'a [&'a ProviderCandidate],
         attempted_index: usize,
         failure: ProviderFailure,
     ) -> Option<&'a ProviderCandidate> {
-        if !failure.is_retryable() {
+        if !failure.permits_cross_provider_failover() {
             return None;
         }
-        selected.get(attempted_index.saturating_add(1)).copied()
+        let failed = selected.get(attempted_index)?;
+        selected
+            .iter()
+            .skip(attempted_index.saturating_add(1))
+            .find(|candidate| candidate.provider_id != failed.provider_id)
+            .copied()
     }
 }
 

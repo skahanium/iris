@@ -10,6 +10,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 const CONSECUTIVE_FAILURES_TO_OPEN: u32 = 5;
+const LLM_CONSECUTIVE_FAILURES_TO_OPEN: u32 = 2;
 const COOLDOWN_DURATION_SECS: u64 = 30;
 const MAX_PROVIDER_CIRCUITS: usize = 128;
 const CLOSED_CIRCUIT_TTL: Duration = Duration::from_secs(10 * 60);
@@ -151,6 +152,27 @@ pub fn record_success(provider_id: &str) {
 }
 
 pub fn record_failure(provider_id: &str) {
+    record_failure_with_threshold(provider_id, CONSECUTIVE_FAILURES_TO_OPEN);
+}
+
+/// Return the dedicated circuit namespace for one LLM provider/model pair.
+pub fn llm_circuit_key(provider_id: &str, model_id: &str) -> String {
+    format!("llm:{provider_id}:{model_id}")
+}
+
+/// Record a transient LLM failure without changing the shared MCP circuit policy.
+pub fn record_llm_failure(provider_id: &str, model_id: &str) {
+    let key = llm_circuit_key(provider_id, model_id);
+    record_failure_with_threshold(&key, LLM_CONSECUTIVE_FAILURES_TO_OPEN);
+}
+
+/// Record a successful LLM dispatch and close its dedicated model circuit.
+pub fn record_llm_success(provider_id: &str, model_id: &str) {
+    let key = llm_circuit_key(provider_id, model_id);
+    record_success(&key);
+}
+
+fn record_failure_with_threshold(provider_id: &str, threshold: u32) {
     let mut map = CIRCUITS.lock().unwrap_or_else(|e| e.into_inner());
     let now = Instant::now();
     prune_circuit_map(&mut map, now);
@@ -172,7 +194,7 @@ pub fn record_failure(provider_id: &str) {
         return;
     }
 
-    if state.consecutive_failures >= CONSECUTIVE_FAILURES_TO_OPEN {
+    if state.consecutive_failures >= threshold {
         state.status = CircuitStatus::Open;
         state.opened_at = Some(now);
         tracing::warn!(
@@ -231,6 +253,21 @@ mod tests {
         record_failure(prov);
         assert!(!is_request_allowed(prov));
         reset_circuit(prov);
+    }
+
+    #[test]
+    fn llm_model_circuit_opens_after_two_transient_failures_and_resets_on_success() {
+        let key = llm_circuit_key("provider-a", "model-a");
+        reset_circuit(&key);
+
+        record_llm_failure("provider-a", "model-a");
+        assert!(is_request_allowed(&key));
+        record_llm_failure("provider-a", "model-a");
+        assert!(!is_request_allowed(&key));
+
+        record_llm_success("provider-a", "model-a");
+        assert!(is_request_allowed(&key));
+        reset_circuit(&key);
     }
 
     #[test]

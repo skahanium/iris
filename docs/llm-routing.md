@@ -2,13 +2,15 @@
 
 ## 配置边界
 
-路由配置保存在 SQLite `settings` 表的 `llm_routing` 键中，由 Rust `llm_config_*` 命令读写和迁移。前端不得通过通用 `settings_set` 写入该键。当前 schema 为 v5：历史能力槽、槽位故障切换、scene、上下文策略和虚构评分策略会在读取时迁移为统一模型池。
+路由配置保存在 SQLite `settings` 表的 `llm_routing` 键中，由 Rust `llm_config_*` 命令读写和迁移。前端不得通过通用 `settings_set` 写入该键。当前 schema 为 v6：历史能力槽、槽位故障切换、scene、上下文策略和虚构评分策略会在读取时迁移为统一模型池；v5 及更早版本会将 `defaultModel` 提升为首项，再追加稳定排序的已启用模型，写回唯一的 `candidateOrder`。
 
 配置由以下事实构成：
 
 1. **Provider**：启用状态、显示名称、允许的自定义 HTTPS base URL、模型目录与能力覆盖。
-2. **已启用模型池**：每个 provider 的 `enabledModels` 组成唯一候选池；`defaultModel` 只是满足硬条件时的第一选择，不是能力槽绑定。
-3. **任务要求**：AI Runtime 从 Run Envelope 计算流式、工具、视觉、推理与上下文预算要求，过滤不满足条件的模型；默认模型不合格时以稳定顺序选择其余候选，且仅在可重试传输失败后切换。
+2. **已启用模型池**：每个 provider 的 `enabledModels` 组成唯一候选池；`candidateOrder` 是持久化的主模型、备用 1、备用 2…顺序，不再写入 `defaultModel`。
+3. **任务要求**：AI Runtime 从 Run Envelope 计算流式、工具、视觉、推理与上下文预算要求，过滤不满足条件的模型，并至多保留前三个合格候选。显式 `modelOverride` 固定到精确 provider/model，不参与自动故障切换。
+
+LLM 仅在首个可见 token、工具调用或 provider continuation 之前切换。连接失败、超时、408、429、5xx、临时不可用和空/无效响应可推进到备用；401/403 跳过同一 provider 的其余模型后才尝试其他 provider。普通 4xx 业务错误、用户取消及已有可见输出不会切换。连续两次瞬态失败会打开 `llm:{provider}:{model}` 熔断器 30 秒；成功会关闭该模型熔断器，不改变 MCP provider 的熔断语义。每次切换只持久化安全的 capability、来源/目标 provider、目标 model、原因码与尝试序号。
 
 API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 Iris 本地 AES-256-GCM 凭据存储。
 
