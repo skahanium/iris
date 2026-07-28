@@ -4,4 +4,3 @@ CREATE TABLE IF NOT EXISTS agent_run_authorizations (
     authorization_hash         TEXT NOT NULL,
     created_at                 TEXT NOT NULL
 );
-
