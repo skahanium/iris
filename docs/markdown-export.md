@@ -7,8 +7,9 @@ the Markdown contract layer, and the TipTap/ProseMirror editor.
 
 1. `serializeOpenNote` calls `editorDocToMarkdown`.
 2. `editorDocToMarkdown` uses the ProseMirror Markdown serializer.
-3. If the PM serializer cannot handle a document, Iris falls back to
-   `editorBodyHtmlToMarkdown` as a compatibility path.
+3. If the PM serializer cannot handle a document, Iris reports a recoverable
+   error and keeps the last committed Markdown; it never falls back to
+   HTML/Turndown for a write.
 
 The user `.md` file remains the source of truth. Editor-only state must either
 round-trip to a documented Markdown representation or remain transient.

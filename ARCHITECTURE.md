@@ -1,5 +1,22 @@
 # Iris 架构
 
+## Compatibility boundaries
+
+Iris keeps compatibility only at read boundaries. Each adapter is one-way: current writes never dual-write or fall back to an old representation.
+
+- CEF v1/v2 payloads are read, validated, converted to the current Run schema, and atomically rewritten. New Runs write only the current schema.
+- Legacy Skills (`trigger` metadata or no manifest) are normalized to the current `SkillEntry` while scanning. A manifest draft requires explicit user action; vault `SKILL.md` is never auto-rewritten.
+- Legacy `frontmatter.title`, placeholder names, and old localStorage persona are read mappings only. New notes use the filename/current SQLite profile; localStorage clears only after SQLite persistence succeeds.
+- A stable document session id is allocated before normal editor entry. Recovery fixtures may use a recovery id, but normal paths never use `legacy:${path}` identity.
+
+These adapters remain until a separately announced, reversible migration boundary. Their exit requires explicit user communication; they are not a second write path.
+
+## Markdown document boundary
+
+The persisted boundary is `Markdown file -> frontmatter/title separation -> TipTap/ProseMirror document -> ProseMirror Markdown serializer -> Markdown file`. Unsupported syntax becomes a Preserve node carrying its original source. A serializer failure is recoverable and does not fall back to HTML/Turndown or overwrite committed Markdown.
+
+`marked` remains limited to AI messages and read-only Markdown display. The editor persistence path does not call `getHTML()` or Turndown.
+
 > 本文描述当前已实现的边界，不承诺版本排期；版本排期唯一来源是 [ROADMAP.md](./ROADMAP.md)。
 
 ## 分层

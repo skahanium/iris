@@ -43,4 +43,12 @@ describe("docs:check — document facts verification", () => {
     expect(source).toContain("embedding_scheduler_status");
     expect(source).not.toContain("missing search_embedding_status entry");
   });
+
+  it("guards the docs index and IPC contract against retired architecture", () => {
+    const source = readFileSync(scriptPath, "utf8");
+
+    expect(source).toContain("checkRetiredArchitectureReferences");
+    expect(source).toContain("agent-harness-refactor");
+    expect(source).toContain("version_cleanup_cmd");
+  });
 });
