@@ -2029,7 +2029,10 @@ pub(crate) fn generate_pressure_staircases() -> Result<Vec<PressureStaircase>, E
         },
         PressureStaircase {
             dimension: PressureDimension::WebEvidenceCount,
-            levels: vec![1, 2, 4, 6, 8, 9, 10],
+            // The initial strict-Web prefetch is intentionally capped at five
+            // provider results; include both adjacent levels so the measured
+            // production boundary is not inferred from a 4-to-6 gap.
+            levels: vec![1, 2, 4, 5, 6, 8, 9, 10],
         },
         PressureStaircase {
             dimension: PressureDimension::WebLatency,
