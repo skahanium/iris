@@ -6,7 +6,6 @@ pub mod corpus_commands;
 pub mod document_recovery;
 pub mod file;
 pub mod graph;
-pub mod llm;
 pub mod llm_config_commands;
 pub mod media;
 pub mod profile_commands;

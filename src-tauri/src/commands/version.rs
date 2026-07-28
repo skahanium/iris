@@ -96,11 +96,6 @@ pub fn version_finalize_current_cmd(
     version::version_finalize_current(&state, &path, &content, label)
 }
 
-#[tauri::command]
-pub fn version_cleanup_cmd(state: State<'_, Arc<AppState>>) -> AppResult<usize> {
-    version::version_cleanup(&state)
-}
-
 /// Creates a manual snapshot and returns its durable result.
 #[tauri::command]
 pub async fn version_save_manual_cmd(

@@ -36,7 +36,6 @@ pub async fn knowledge_reindex(
         }
         Ok::<_, crate::error::AppError>(())
     })?;
-    crate::llm::safe_lock(&state.ai.context_cache).clear();
 
     Ok(stats)
 }
@@ -51,24 +50,6 @@ pub async fn skills_list(
     // this scan; they consume the resulting in-memory per-vault registry.
     let skills = state.refresh_skills_for_vault(&vault)?;
     Ok(crate::ai_runtime::skills::skill_list_entries(skills))
-}
-
-#[derive(Debug, Serialize)]
-pub struct SkillsPathsResponse {
-    pub global: String,
-    pub vault: String,
-}
-
-/// Return resolved global and vault skill installation directories.
-#[tauri::command]
-pub async fn skills_paths(state: State<'_, Arc<AppState>>) -> AppResult<SkillsPathsResponse> {
-    use crate::ai_runtime::skills::{global_skills_dir, vault_skills_dir};
-
-    let vault = state.vault_path()?;
-    Ok(SkillsPathsResponse {
-        global: global_skills_dir().to_string_lossy().into_owned(),
-        vault: vault_skills_dir(&vault).to_string_lossy().into_owned(),
-    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -860,7 +841,6 @@ pub async fn prompt_profile_set(
     profile: crate::ai_runtime::prompt_profile::PromptProfile,
 ) -> AppResult<()> {
     crate::ai_runtime::prompt_profile::PromptProfile::save(&state.db, &profile)?;
-    crate::llm::safe_lock(&state.ai.context_cache).clear();
     Ok(())
 }
 

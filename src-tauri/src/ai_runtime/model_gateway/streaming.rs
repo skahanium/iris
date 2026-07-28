@@ -5,7 +5,6 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use std::error::Error as StdError;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
 
 use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult, ProviderErrorKind};
@@ -57,24 +56,6 @@ pub enum StreamSurface {
 }
 
 impl StreamSurface {
-    fn wire(self) -> &'static str {
-        match self {
-            StreamSurface::InternalCandidate => "internal_candidate",
-            StreamSurface::VisibleAnswer | StreamSurface::VisibleAnswerSanitized => {
-                "visible_answer"
-            }
-        }
-    }
-
-    fn candidate_kind(self) -> &'static str {
-        match self {
-            StreamSurface::InternalCandidate => "internal_candidate",
-            StreamSurface::VisibleAnswer | StreamSurface::VisibleAnswerSanitized => {
-                "visible_answer_candidate"
-            }
-        }
-    }
-
     fn is_visible(self) -> bool {
         matches!(
             self,
@@ -1601,65 +1582,6 @@ async fn wait_for_abort_signal(request_id: &str) {
     }
 }
 
-/// Emit a `llm:reset` event so the frontend drops buffered tokens from a
-/// non-terminal round (tool-call round or inconclusive reflection) before the
-/// next round begins streaming. This prevents intermediate preamble or
-/// `NEED_MORE_EVIDENCE` sentinels from sticking to the final answer surface.
-pub fn emit_stream_reset(app_handle: &AppHandle, request_id: &str) -> AppResult<()> {
-    emit_stream_reset_with_surface(
-        app_handle,
-        request_id,
-        "unknown",
-        StreamSurface::VisibleAnswer,
-        None,
-    )
-}
-
-pub fn emit_stream_reset_with_reason(
-    app_handle: &AppHandle,
-    request_id: &str,
-    reason_kind: &str,
-) -> AppResult<()> {
-    emit_stream_reset_with_surface(
-        app_handle,
-        request_id,
-        reason_kind,
-        StreamSurface::InternalCandidate,
-        None,
-    )
-}
-
-pub fn emit_stream_reset_with_surface(
-    app_handle: &AppHandle,
-    request_id: &str,
-    reason_kind: &str,
-    surface: StreamSurface,
-    round: Option<u32>,
-) -> AppResult<()> {
-    tracing::debug!(
-        request_id = %request_id,
-        event = "stream_reset_emitted",
-        reason_kind,
-        surface = surface.wire(),
-        candidate_kind = surface.candidate_kind(),
-        round,
-        "AI lifecycle stream reset emitted"
-    );
-    app_handle
-        .emit(
-            "llm:reset",
-            serde_json::json!({
-                "request_id": request_id,
-                "reason_kind": reason_kind,
-                "surface": surface.wire(),
-                "candidate_kind": surface.candidate_kind(),
-                "round": round,
-            }),
-        )
-        .map_err(|e| AppError::msg(format!("Failed to emit llm:reset: {e}")))?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1991,13 +1913,5 @@ mod tests {
     #[test]
     fn sanitized_surface_is_visible_to_the_frontend() {
         assert!(StreamSurface::VisibleAnswerSanitized.is_visible());
-        assert_eq!(
-            StreamSurface::VisibleAnswerSanitized.wire(),
-            "visible_answer"
-        );
-        assert_eq!(
-            StreamSurface::VisibleAnswerSanitized.candidate_kind(),
-            "visible_answer_candidate"
-        );
     }
 }

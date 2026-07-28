@@ -15,7 +15,6 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
-use crate::ai_runtime::context_cache::ContextAssemblyCache;
 use crate::ai_runtime::skills::SkillEntry;
 use crate::ai_types::{AutonomyLevel, SkillActivationPlanSummary};
 use crate::security::brute_force::BruteForceProtection;
@@ -105,7 +104,6 @@ impl StorageState {
 /// storage-only command handlers.
 pub struct AiRuntimeState {
     pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
-    pub context_cache: Mutex<ContextAssemblyCache>,
     pub(crate) classified_ephemeral:
         Mutex<crate::ai_runtime::classified_ephemeral::ClassifiedEphemeralStore>,
     pub vector_index_ready: AtomicBool,
@@ -161,7 +159,6 @@ impl AiRuntimeState {
     fn new(vector_ready: bool) -> Self {
         Self {
             pending_tool_calls: Mutex::new(HashMap::new()),
-            context_cache: Mutex::new(ContextAssemblyCache::new(64, 30)),
             classified_ephemeral: Mutex::new(
                 crate::ai_runtime::classified_ephemeral::ClassifiedEphemeralStore::default(),
             ),
@@ -262,7 +259,6 @@ impl AiRuntimeState {
             pending.clear();
         }
 
-        crate::llm::safe_lock(&self.context_cache).clear();
         if let Ok(mut classified) = self.classified_ephemeral.lock() {
             classified.clear();
         }
@@ -542,11 +538,6 @@ impl AppState {
     /// Clear all in-memory AI state when switching vaults.
     pub fn clear_ai_state(&self) {
         self.ai.clear();
-    }
-
-    /// Clear context assembly cache (called on .md file changes to prevent stale results).
-    pub fn clear_context_cache(&self) {
-        crate::llm::safe_lock(&self.ai.context_cache).clear();
     }
 
     pub fn data_dir(&self) -> &PathBuf {

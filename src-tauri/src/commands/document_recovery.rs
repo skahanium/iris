@@ -402,17 +402,6 @@ fn restore_orphaned_document(
     NoteWriteService::create(state, target_path, &content)
 }
 
-/// Read-only audit for title corruption; no Markdown is changed by this command.
-#[tauri::command]
-pub async fn document_title_audit_cmd(
-    state: State<'_, Arc<AppState>>,
-) -> AppResult<Vec<DocumentTitleAuditItem>> {
-    let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || audit_titles(&state))
-        .await
-        .map_err(|error| AppError::msg(format!("title audit task failed: {error}")))?
-}
-
 /// Read-only audit for missing indexed documents and unattached Markdown CAS blobs.
 #[tauri::command]
 pub async fn document_recovery_audit_cmd(

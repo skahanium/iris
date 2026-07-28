@@ -69,9 +69,6 @@ impl FileWatcher {
                         let is_note = path.extension().is_some_and(|e| e == "md");
                         let is_media = workspace_media_kind_for_path(path).is_some();
                         if is_note || is_media {
-                            if is_note {
-                                state_clone.clear_context_cache();
-                            }
                             let Ok(vault) = state_clone.vault_path() else {
                                 continue;
                             };
