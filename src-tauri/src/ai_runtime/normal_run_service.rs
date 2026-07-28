@@ -688,11 +688,32 @@ async fn dispatch_required_web_verified_run(
             reasoning_content: None,
         },
     );
+    // Required Web evidence is prefetched deterministically, but an authorized
+    // local retrieval may still be necessary for a hybrid answer. Keep only
+    // the local vault read surface available while deliberately
+    // withholding `web_search` from the model: the exact Run-local Web
+    // evidence above remains the sole external-fact source for this execution.
+    const LOCAL_FOLLOW_UP_CAPABILITIES: &[&str] = &["vault.read"];
+    let local_follow_up_capabilities = authorized_capabilities
+        .iter()
+        .filter(|capability| LOCAL_FOLLOW_UP_CAPABILITIES.contains(&capability.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    let registry = ToolRegistry::new();
+    let tools = ToolRegistry::constrain_for_explicit_references(
+        registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
+        context.envelope.context,
+        &context.retrieval_scope,
+    )
+    .into_iter()
+    .filter(|tool| tool.name != "web_search")
+    .collect::<Vec<_>>();
+    let has_local_follow_up_tools = !tools.is_empty();
     let serialized_messages = serde_json::to_string(messages).map_err(AppError::from)?;
     let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
         endpoint_family: None,
         streaming: true,
-        tools: false,
+        tools: has_local_follow_up_tools,
         vision: context.envelope.modalities.contains(&Modality::Image),
         reasoning: false,
         min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(
@@ -707,7 +728,7 @@ async fn dispatch_required_web_verified_run(
         context,
         requirements.min_input_budget_tokens,
         requirements.vision,
-        false,
+        has_local_follow_up_tools,
         sink,
     )?;
     let provider =
@@ -724,7 +745,7 @@ async fn dispatch_required_web_verified_run(
             &accepted.session,
             &accepted.run_id,
             messages.clone(),
-            Vec::new(),
+            tools.clone(),
             registered_evidence_ids,
             Some(domain_plan),
             &provider,
@@ -739,7 +760,7 @@ async fn dispatch_required_web_verified_run(
             &accepted.session,
             &accepted.run_id,
             messages.clone(),
-            Vec::new(),
+            tools,
             registered_evidence_ids,
             Some(domain_plan),
             &provider,

@@ -465,9 +465,16 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
         1,
         "strict Web service path uses one model turn"
     );
-    assert!(calls[0].body["tools"]
+    let tool_names = calls[0].body["tools"]
         .as_array()
-        .is_none_or(|tools| tools.is_empty()));
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| tool["function"]["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        tool_names.is_empty(),
+        "a strict Web-only Run must not expose unrelated tools to the model: {tool_names:?}"
+    );
     assert!(response
         .events
         .iter()

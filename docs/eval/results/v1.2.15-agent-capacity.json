@@ -158,7 +158,7 @@
   "scorecard": {
     "faultRecovery": {
       "constraintFailCases": 0,
-      "degradationCases": 12,
+      "degradationCases": 0,
       "truncationCases": 0
     },
     "hardAdmission": {
@@ -168,8 +168,8 @@
       "zeroToleranceGate": true
     },
     "performance": {
-      "modelTurns": 72,
-      "toolCalls": 24,
+      "modelTurns": 45,
+      "toolCalls": 9,
       "totalModelTimeP50Ms": null,
       "totalModelTimeP95Ms": null,
       "ttftP50Ms": null,
@@ -261,10 +261,10 @@
       "witness": "headless_hybrid_web_disclosure"
     },
     {
-      "caseId": "security-online-web-degradation-disclosed",
+      "caseId": "security-online-web-degradation-blocked",
       "domain": "online_web_degradation",
       "passed": true,
-      "witness": "headless_online_web_degradation_disclosed"
+      "witness": "headless_online_web_degradation_blocked"
     },
     {
       "caseId": "security-online-web-degradation-fabrication-blocked",
@@ -360,6 +360,35 @@
       "stableLevel": 6,
       "validationStatus": "stable_boundary_observed",
       "witness": "run_context_assembler_history"
+    },
+    {
+      "dimension": "conversation_turns",
+      "levels": [
+        {
+          "level": 1,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 20,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 50,
+          "passCount": 5,
+          "repetitions": 5
+        },
+        {
+          "level": 100,
+          "passCount": 5,
+          "repetitions": 5
+        }
+      ],
+      "nextLevel": null,
+      "stableLevel": null,
+      "validationStatus": "lower_bound_only",
+      "witness": "headless_run_engine"
     },
     {
       "dimension": "local_material",
@@ -634,12 +663,12 @@
         },
         {
           "level": 6,
-          "passCount": 5,
+          "passCount": 0,
           "repetitions": 5
         },
         {
           "level": 8,
-          "passCount": 5,
+          "passCount": 0,
           "repetitions": 5
         },
         {
@@ -653,8 +682,8 @@
           "repetitions": 5
         }
       ],
-      "nextLevel": 9,
-      "stableLevel": 8,
+      "nextLevel": 6,
+      "stableLevel": 4,
       "validationStatus": "stable_boundary_observed",
       "witness": "normal_run_web_executor"
     },

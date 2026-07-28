@@ -53,8 +53,8 @@ while IFS= read -r line; do
               ordinal=$((ordinal + 1))
             done
             if [ "$result_count" -gt 1 ]; then
-              results=''
-              index=1
+              results="[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\\n"
+              index=2
               while [ "$index" -le "$result_count" ]; do
                 results="$results[$index] title: Result $index\\nurl: https://source-$index.invalid/$index\\nsnippet: deterministic$claims\\n"
                 index=$((index + 1))

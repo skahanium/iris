@@ -1206,6 +1206,27 @@ fn web_enabled_external_fact_without_temporal_keywords_requires_current_run_evid
 }
 
 #[test]
+fn rejecting_local_notes_as_a_factual_source_still_requires_web_verification() {
+    for message in [
+        "确认 synthetic 软件当前稳定版本，不使用本地笔记作为版本事实。",
+        "Confirm the current synthetic software version; do not use local notes as version facts.",
+    ] {
+        let mut request = request();
+        request.web_enabled = true;
+        request.turn.message = message.to_string();
+
+        let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+        assert_eq!(envelope.freshness, Freshness::WebRequired, "{message}");
+        assert_eq!(
+            envelope.verification_requirement,
+            VerificationRequirement::CurrentRunWeb,
+            "{message}"
+        );
+    }
+}
+
+#[test]
 fn creative_copy_request_remains_offline_when_it_does_not_ask_for_external_facts() {
     let mut request = request();
     request.web_enabled = true;

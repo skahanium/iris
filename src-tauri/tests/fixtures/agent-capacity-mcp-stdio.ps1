@@ -64,10 +64,13 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
         }
         else {
             if ($ResultCount -gt 1) {
-                $text = (1..$ResultCount | ForEach-Object {
+                $claims = (1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " "
+                $text = "[1] title: Contract`nurl: https://source.invalid/contract`nsnippet: deterministic$claims"
+                $additional = (2..$ResultCount | ForEach-Object {
                     $claims = (1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " "
                     "[$_] title: Result $_`nurl: https://source-$_.invalid/$_`nsnippet: deterministic $claims"
                 }) -join "`n"
+                $text += "`n$additional"
             }
             else {
                 $claims = (1..48 | ForEach-Object { "fact-web-$_=value-$_" }) -join " "

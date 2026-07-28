@@ -1922,6 +1922,86 @@ async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certif
 }
 
 #[tokio::test]
+async fn headless_online_web_case_binds_its_prefetched_evidence_to_the_fact() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| scenario.case_id() == 26)
+        .expect("online web scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless online web case");
+
+    assert!(executed.fact_correctness_passed());
+    assert!(executed.overall_pass());
+}
+
+#[tokio::test]
+async fn headless_high_risk_web_case_requires_two_controlled_sources() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| scenario.case_id() == 34)
+        .expect("high-risk online web scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless high-risk web case");
+
+    assert!(executed.overall_pass());
+}
+
+#[tokio::test]
+async fn headless_strict_hybrid_case_can_retrieve_implicit_local_evidence() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| scenario.case_id() == 40)
+        .expect("strict hybrid scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless strict hybrid case");
+
+    assert!(executed.observed_local_source());
+    assert!(executed.fact_correctness_passed());
+    assert!(executed.overall_pass());
+}
+
+#[tokio::test]
+async fn headless_no_retrieval_rewrite_cases_remain_offline_and_complete() {
+    for case_id in [9, 10] {
+        let scenario = generate_core_scenarios()
+            .expect("core scenarios")
+            .into_iter()
+            .find(|scenario| scenario.case_id() == case_id)
+            .expect("no-retrieval rewrite scenario");
+
+        let executed = execute_headless_core_case(&scenario, None)
+            .await
+            .expect("headless no-retrieval rewrite case");
+
+        assert!(executed.overall_pass(), "case {case_id}");
+    }
+}
+
+#[tokio::test]
+async fn headless_offline_web_case_records_a_safe_refusal_as_an_evaluation_pass() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| scenario.case_id() == 25)
+        .expect("offline web scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless offline web case");
+
+    assert!(executed.overall_pass());
+}
+
+#[tokio::test]
 async fn headless_allowed_implicit_vault_scripts_local_retrieval_and_satisfies_facts() {
     let scenario = generate_core_scenarios()
         .expect("core scenarios")
@@ -2153,6 +2233,10 @@ async fn security_track_has_fourteen_independent_attested_zero_tolerance_cases()
     assert!(boundary_witnesses
         .iter()
         .all(|witness| witness.starts_with("headless_tool_")));
+    assert!(
+        results.iter().all(|result| result.passed()),
+        "security track failures: {results:?}"
+    );
 }
 
 #[tokio::test]
@@ -2219,7 +2303,9 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         (PressureDimension::LocalMaterial, 12, 13),
         (PressureDimension::LocalMaterialChars, 32_000, 32_001),
         (PressureDimension::ToolLoop, 24, 25),
-        (PressureDimension::WebEvidenceCount, 8, 9),
+        // The deterministic probe observes 4 as the final passing sample and
+        // 6 as the first failing sample; level 5 is intentionally unsampled.
+        (PressureDimension::WebEvidenceCount, 4, 6),
         (PressureDimension::Output, 32_000, 32_001),
     ] {
         let execution = executions

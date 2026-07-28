@@ -705,6 +705,7 @@ impl ExclusionClassifier {
                 && !is_volatile_external_request(directive_text)
                 && !is_high_stakes_current_request(directive_text)
                 && !requests_external_evidence(directive_text)
+                && !rejects_local_material_as_factual_source(directive_text)
             {
                 return offline(WebDecisionReason::LocalTransformation);
             }
@@ -818,6 +819,7 @@ fn requests_external_evidence(message: &str) -> bool {
             "current public",
             "external evidence",
             "external source",
+            "external",
             "on the web",
             "on the internet",
             "联网搜索",
@@ -832,6 +834,25 @@ fn requests_external_evidence(message: &str) -> bool {
             "当前公开",
             "外部证据",
             "外部来源",
+            "外部",
+        ],
+    )
+}
+
+/// A request that rejects local notes as proof cannot enter the implicit-vault
+/// shortcut merely because it names those notes; it remains a strict factual
+/// request and therefore follows the normal Web decision path.
+fn rejects_local_material_as_factual_source(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "不使用本地",
+            "不用本地",
+            "不得使用本地",
+            "不要用本地",
+            "do not use local",
+            "don't use local",
+            "without local",
         ],
     )
 }
