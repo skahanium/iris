@@ -26,13 +26,19 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 ## 联网证据
 
-联网开关只授予联网能力，不要求每条消息搜索。Run Intake 先以确定性规则解析 `offline`、`web_preferred`、`web_required`：本机时间、对话元问题、转换与创作任务优先离线；显式搜索、URL、时效事实和高风险时效事实强制核实；其余问题由同一回答模型按需调用工具，不增加分类模型。
+联网开关只授予联网能力。当前 Run Intake 以排除优先的确定性规则解析 `offline`、`web_required`：本机运行时事实、对话元问题、用户已提供材料的转换与创作任务可以离线；其余外部事实一律进入 `web_required`。`web_preferred` 仅为历史 Run 的兼容读值，新 Run 不会由默认分类产生它。
 
-`web_required` 在模型前做一次受预算约束的预取；`web_preferred` 不预取。搜索、一次瞬态重试和页面抓取共享 10 秒总预算，重试等待 250ms。鉴权、策略拒绝、Schema 错误和输出越界不重试；熔断打开时立即降级。页面正文抓取失败不会抹掉已取得的搜索摘要。
+`web_required` 在模型前做一次受预算约束的预取；证据充分时后续只有一次无工具模型生成，模型不能自行决定是否执行首轮搜索。仅在高风险来源门槛未满足时允许一次确定性的补充搜索。搜索与一次瞬态重试共享 20 秒 Run 预算，重试等待 250ms；鉴权、策略拒绝、Schema 错误和证据包超界不重试。页面正文抓取失败不会抹掉已取得的搜索摘要。
 
-联网失败返回结构化工具结果并产生非终态 `capability_degraded` 事件，Run 继续到 `completed`。`web_preferred` 可回答稳定知识并标明未核实内容；`web_required` 无证据时由后端追加固定透明声明，禁止当前事实和伪引用。诊断仅记录联网模式、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。
+非严格的可选 Web 工具失败会返回结构化工具结果并产生非终态 `capability_degraded` 事件。`web_required` 无可核验证据时写入 `web_verification_failed` 后安全终态，不生成事实结论或伪引用。诊断仅记录联网模式、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。偶发降级与 MCP/harness/LLM 分流步骤见 [ops/web-capability-degradation.md](./ops/web-capability-degradation.md)；可执行 `npm run diagnose:web-degradation` 读取本地 `agent_run_events`。
 
-助手只通过 `web_search` 语义入口请求外网证据。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider：前者失败返回“没有已启用模型满足当前任务所需能力”，后者返回“未配置可用的联网证据提供方”，不会误报模型服务故障。普通证据详情只展示引用、标题、安全 URL/域名、摘录和冲突说明；provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
+助手只通过 `web_search` 语义入口请求外网证据。严格事实回答使用 Run-local `[W1]…[Wn]` 标注，界面会渲染为上标徽章，并在消息底部「来源」列出对应 HTTPS 标题（见 [design-system.md](./design-system.md) Web 引用契约）。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。非严格工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider；严格路径先验证证据 provider，再选择无工具回答模型。普通证据详情只展示引用、标题、安全 URL/域名、摘录和冲突说明；provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
+
+## 严格事实核验（v1.2.16）
+
+联网开关只授予 `web_search` 能力；开启后，除本机运行时事实、对话元问题、用户已提供材料的变换与纯创作外，所有外部事实请求都使用 `web_required`。每次完成都必须绑定本 Run 的 HTTPS Web 证据；会话历史、摘要和旧引用不能充当新一轮的核验结果。模型可见、Run 关联和最终引用都来自同一份最多 8 条的证据包：单条摘录最多 2,000 字符，Web 工具结果专用上限为 32,000 字符，超过预算必须重新打包或拒绝，绝不静默截断。引用使用 Run-local 的 `[W1]…[Wn]`，不复用会话级编号。联网未开启、来源不足或来源冲突时，Run 以可重试的安全终态结束，不给出事实结论。
+
+时效新闻、赛果、职位和价格优先使用官方/主办方来源；没有官方来源时至少需要两个独立可信来源一致。来源不充分时宁可拒答。
 
 ## 相关 IPC
 

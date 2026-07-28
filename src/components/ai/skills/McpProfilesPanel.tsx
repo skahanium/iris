@@ -18,11 +18,20 @@ import {
 } from "@/lib/ipc";
 
 import { McpProfileCard, type McpCredentialSave } from "./McpProfileCard";
+import { McpProviderDetail } from "./McpProviderDetail";
+import {
+  mcpListMappingShortLabel,
+  mcpListTransportShortLabel,
+} from "./mcpProviderListUi";
 import type { McpProviderPreset } from "./mcpProviderPresets";
+import type { ManagementProviderChrome } from "@/components/settings/managementProviderChrome";
 
 interface McpProfilesPanelProps {
   open: boolean;
+  selectedProviderId?: string | null;
+  onSelectedProviderIdChange?: (providerId: string | null) => void;
   onProvidersChanged?: () => void;
+  onProviderChromeChange?: (chrome: ManagementProviderChrome | null) => void;
 }
 
 type DiagnosticsByProvider = Record<string, WebEvidenceProviderDiagnostics>;
@@ -166,7 +175,10 @@ function createDraftSummary(
 
 export function McpProfilesPanel({
   open,
+  selectedProviderId = null,
+  onSelectedProviderIdChange,
   onProvidersChanged,
+  onProviderChromeChange,
 }: McpProfilesPanelProps) {
   const [providers, setProviders] = useState<WebEvidenceProviderSummary[]>([]);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsByProvider>({});
@@ -176,7 +188,19 @@ export function McpProfilesPanel({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [localSelectedProviderId, setLocalSelectedProviderId] = useState<
+    string | null
+  >(selectedProviderId ?? null);
   const diagnosticsEpochRef = useRef(0);
+
+  useEffect(() => {
+    setLocalSelectedProviderId(selectedProviderId ?? null);
+  }, [selectedProviderId]);
+
+  const setSelectedProvider = (providerId: string | null) => {
+    setLocalSelectedProviderId(providerId);
+    onSelectedProviderIdChange?.(providerId);
+  };
 
   const invalidateDiagnostics = useCallback(() => {
     diagnosticsEpochRef.current += 1;
@@ -249,8 +273,10 @@ export function McpProfilesPanel({
         await credentialSet(credential.service, credential.value);
       }
       await webEvidenceProviderUpsert(input);
+      const savedId = input.id;
       setDraft(null);
       await load();
+      setSelectedProvider(savedId);
       onProvidersChanged?.();
       setMessage(
         credentialSaves.length > 0
@@ -328,6 +354,38 @@ export function McpProfilesPanel({
     }
   };
 
+  const activeDetailId = localSelectedProviderId ?? (draft ? draft.id : null);
+  const detailProvider =
+    draft && draft.id === activeDetailId
+      ? draft
+      : mcpProviders.find((item) => item.id === activeDetailId);
+
+  const providerChromePayload = useMemo((): ManagementProviderChrome | null => {
+    if (!detailProvider) return null;
+    return {
+      label: detailProvider.name || "MCP 联网证据提供方",
+      detail: `${mcpListTransportShortLabel(detailProvider.transportKind)} · ${mcpListMappingShortLabel(detailProvider.mappingStatus)}`,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by provider fields, not object identity
+  }, [
+    detailProvider?.id,
+    detailProvider?.mappingStatus,
+    detailProvider?.name,
+    detailProvider?.transportKind,
+  ]);
+
+  useEffect(() => {
+    if (!onProviderChromeChange || !open || !providerChromePayload) {
+      return;
+    }
+    onProviderChromeChange(providerChromePayload);
+  }, [onProviderChromeChange, open, providerChromePayload]);
+
+  useEffect(() => {
+    if (!onProviderChromeChange) return;
+    return () => onProviderChromeChange(null);
+  }, [onProviderChromeChange]);
+
   if (!isTauri()) {
     return <></>;
   }
@@ -337,15 +395,12 @@ export function McpProfilesPanel({
       data-testid="mcp-provider-panel"
       className="space-y-3 border-t border-border/60 pt-4"
     >
-      <header className="space-y-3">
+      {!detailProvider ? (
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-medium">MCP 联网证据提供方</h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              将 MCP 显式接入 web.search / web.fetch；联网搜索只使用当前选择的
-              MCP 提供方。
-            </p>
-          </div>
+          <p className="max-w-xl text-xs text-muted-foreground">
+            将 MCP 显式接入 web.search / web.fetch；联网搜索只使用当前选择的 MCP
+            提供方。
+          </p>
           <Button
             type="button"
             size="sm"
@@ -353,49 +408,75 @@ export function McpProfilesPanel({
             disabled={loading || saving}
             onClick={() => {
               invalidateDiagnostics();
-              setDraft(createDraftSummary());
+              const nextDraft = createDraftSummary();
+              setDraft(nextDraft);
+              setSelectedProvider(nextDraft.id);
             }}
           >
             添加 MCP 提供方
           </Button>
         </div>
-      </header>
-
-      {draft ? (
-        <McpProfileCard
-          provider={draft}
-          diagnostics={diagnostics[draft.id]}
-          credentialConfiguredByService={credentialConfiguredByService}
-          saving={saving}
-          persisted={false}
-          onSave={saveProvider}
-          onToggle={(enabled) => {
-            invalidateDiagnostics();
-            setDraft((current) =>
-              current ? { ...current, enabled } : current,
-            );
-          }}
-          onDelete={() => {
-            invalidateDiagnostics();
-            setDraft(null);
-          }}
-          onClearCredential={() => {
-            setMessage("草稿尚未保存，没有可清除的 API Key。");
-          }}
-          onDiagnostics={() => {
-            setMessage("请先保存 MCP 提供方，再执行实时诊断。");
-          }}
-          onConfigurationChanged={invalidateDiagnostics}
-        />
       ) : null}
 
-      {mcpProviders.length > 0 ? (
+      {detailProvider ? (
+        <McpProviderDetail
+          provider={detailProvider}
+          diagnostics={diagnostics[detailProvider.id]}
+          credentialConfiguredByService={credentialConfiguredByService}
+          saving={saving}
+          persisted={!(draft && draft.id === detailProvider.id)}
+          onSave={saveProvider}
+          onToggle={(enabled) => {
+            if (draft && draft.id === detailProvider.id) {
+              invalidateDiagnostics();
+              setDraft((current) =>
+                current ? { ...current, enabled } : current,
+              );
+              return;
+            }
+            void toggleProvider(detailProvider.id, enabled);
+          }}
+          onDelete={() => {
+            if (draft && draft.id === detailProvider.id) {
+              invalidateDiagnostics();
+              setDraft(null);
+              setSelectedProvider(null);
+              return;
+            }
+            void deleteProvider(detailProvider.id).then(() =>
+              setSelectedProvider(null),
+            );
+          }}
+          onClearCredential={clearCredential}
+          onDiagnostics={() => void runDiagnostics(detailProvider.id)}
+          onConfigurationChanged={invalidateDiagnostics}
+        />
+      ) : activeDetailId ? (
+        <div className="space-y-2 rounded-md border border-border/55 bg-background/60 p-3 text-xs text-muted-foreground">
+          <p>找不到该 MCP 提供方，可能已被删除。</p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7"
+            onClick={() => {
+              setDraft(null);
+              setSelectedProvider(null);
+            }}
+          >
+            返回列表
+          </Button>
+        </div>
+      ) : null}
+
+      {!activeDetailId && mcpProviders.length > 0 ? (
         <div className="space-y-3">
           {mcpProviders.map((provider) => (
             <McpProfileCard
               key={provider.id}
               provider={provider}
-              diagnostics={diagnostics[provider.id]}
+              surface="list"
+              onSelect={() => setSelectedProvider(provider.id)}
               credentialConfiguredByService={credentialConfiguredByService}
               saving={saving}
               onSave={saveProvider}
@@ -407,7 +488,7 @@ export function McpProfilesPanel({
             />
           ))}
         </div>
-      ) : !draft ? (
+      ) : !activeDetailId && !draft ? (
         <p className="rounded-md border border-dashed border-border/70 px-3 py-3 text-xs text-muted-foreground">
           还没有配置 MCP 提供方。点击添加 MCP 提供方后，可选择预设或自定义服务。
         </p>

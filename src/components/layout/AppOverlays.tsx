@@ -84,6 +84,8 @@ interface OverlayPort {
   managementCenterOpen: boolean;
   managementCenterSection: ManagementCenterSection;
   managementCenterDetail: ManagementCenterDetail;
+  managementCenterProviderId: string | null;
+  setManagementCenterProviderId: (providerId: string | null) => void;
   knowledgeRelationsOpen: boolean;
   versionOpen: boolean;
   graphOpen: boolean;
@@ -118,6 +120,10 @@ interface AppOverlaysProps {
     followSystemProxy: boolean;
     proxyStatusLabel: string;
     setFollowSystemProxy: (enabled: boolean) => void;
+  };
+  cjkPunctuationSettings: {
+    cjkPunctuationEnabled: boolean;
+    setCjkPunctuationEnabled: (enabled: boolean) => void;
   };
   bumpVaultIndex: () => void;
   classifiedIdleDeadline: number | null;
@@ -197,6 +203,7 @@ export function AppOverlays({
   restoreVersion,
   autoVersionSettings,
   followSystemProxySettings,
+  cjkPunctuationSettings,
   bumpVaultIndex,
   classifiedIdleDeadline,
   classifiedOpen,
@@ -328,6 +335,10 @@ export function AppOverlays({
             onClose={() => overlays.closeOverlay("managementCenter")}
             section={overlays.managementCenterSection}
             detail={overlays.managementCenterDetail}
+            managementCenterProviderId={overlays.managementCenterProviderId}
+            onManagementCenterProviderIdChange={
+              overlays.setManagementCenterProviderId
+            }
             webSearch={webSearch}
             webSearchAvailability={webSearchAvailability}
             webSearchProviderId={webSearchProviderId}
@@ -367,6 +378,10 @@ export function AppOverlays({
             proxyStatusLabel={followSystemProxySettings.proxyStatusLabel}
             onFollowSystemProxyChange={
               followSystemProxySettings.setFollowSystemProxy
+            }
+            cjkPunctuationEnabled={cjkPunctuationSettings.cjkPunctuationEnabled}
+            onCjkPunctuationChange={
+              cjkPunctuationSettings.setCjkPunctuationEnabled
             }
             embeddingStatus={embeddingStatus}
             embeddingStatusLoading={embeddingStatusLoading}

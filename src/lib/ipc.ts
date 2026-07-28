@@ -54,7 +54,6 @@ import type {
   DocumentRecoveryAudit,
   CredentialStatus,
   DocumentOpenResult,
-  DocumentTitleAuditItem,
   DocumentOpenScopeResult,
   EmbeddingIndexStatus,
   EmbeddingSchedulerStartResult,
@@ -69,7 +68,6 @@ import type {
   GraphData,
   InboxItem,
   KeywordHit,
-  LlmProviderInfo,
   MediaMetadata,
   MediaResolveResult,
   ProfileEntry,
@@ -78,7 +76,6 @@ import type {
   TagGroup,
   VersionEntry,
   VersionSaveOutcome,
-  VersionSaveCompleteEvent,
   WorkspaceItem,
 } from "@/types/ipc";
 
@@ -102,6 +99,8 @@ export interface SettingsMap {
   auto_version_idle_minutes: number;
   /** Follow OS system proxy / HTTP(S)_PROXY for HTTPS exits (updates, LLM, fetch). */
   follow_system_proxy: boolean;
+  /** Auto-convert ASCII punctuation to full-width CJK punctuation in CJK context. */
+  cjk_punctuation_enabled: boolean;
 }
 
 export async function settingsGet<K extends keyof SettingsMap>(
@@ -397,10 +396,6 @@ export async function versionDelete(versionId: number): Promise<void> {
   return invoke("version_delete_cmd", { versionId });
 }
 
-export async function versionCleanup(): Promise<number> {
-  return invoke<number>("version_cleanup_cmd");
-}
-
 export async function versionFinalizeCurrent(
   path: string,
   content: string,
@@ -446,11 +441,6 @@ export async function versionSavePreClose(
   });
 }
 
-/** Find title corruption candidates without modifying Markdown. */
-export async function documentTitleAudit(): Promise<DocumentTitleAuditItem[]> {
-  return invoke<DocumentTitleAuditItem[]>("document_title_audit_cmd");
-}
-
 /** Audits title corruption, missing Markdown, and recoverable orphan CAS blobs. */
 export async function documentRecoveryAudit(): Promise<DocumentRecoveryAudit> {
   return invoke<DocumentRecoveryAudit>("document_recovery_audit_cmd");
@@ -480,15 +470,6 @@ export async function documentRecoveryRestoreOrphan(
     targetPath,
     confirmed: true,
   });
-}
-
-export function listenVersionSaveComplete(
-  handler: (payload: VersionSaveCompleteEvent) => void,
-): Promise<() => void> {
-  return listen<VersionSaveCompleteEvent>(
-    IPC_EVENTS.VERSION_SAVE_COMPLETE,
-    (event) => handler(event.payload),
-  );
 }
 
 export async function templateList(): Promise<{ name: string }[]> {
@@ -563,10 +544,6 @@ export async function listenEmbeddingSchedulerStatus(
     IPC_EVENTS.EMBEDDING_INDEX_PROGRESS,
     (e) => handler(e.payload),
   );
-}
-
-export async function llmProviders(): Promise<LlmProviderInfo[]> {
-  return invoke<LlmProviderInfo[]>("llm_providers");
 }
 
 export async function llmConfigGet(): Promise<LlmConfigGetResponse> {
@@ -927,17 +904,8 @@ export interface PromptProfileDto {
   language: string;
 }
 
-export interface SkillsPathsDto {
-  global: string;
-  vault: string;
-}
-
 export async function skillsList(): Promise<SkillListEntryDto[]> {
   return invoke<SkillListEntryDto[]>("skills_list");
-}
-
-export async function skillsPaths(): Promise<SkillsPathsDto> {
-  return invoke<SkillsPathsDto>("skills_paths");
 }
 
 export async function promptProfileGet(): Promise<PromptProfileDto> {
@@ -1182,9 +1150,4 @@ export async function openExternalHttpsUrl(url: string): Promise<void> {
 // Classified AI cache IPC.
 export async function classifiedAiCacheClear(): Promise<void> {
   return invoke("classified_ai_cache_clear");
-}
-
-/** Clear the in-memory classified retrieval chunk index. */
-export async function classifiedAiRetrievalClear(): Promise<void> {
-  return invoke("classified_ai_retrieval_clear");
 }

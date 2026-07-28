@@ -534,13 +534,6 @@ pub fn classified_ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<(
     Ok(())
 }
 
-/// Clears the in-memory classified retrieval chunk index.
-#[tauri::command]
-pub fn classified_ai_retrieval_clear() -> AppResult<()> {
-    crate::ai_runtime::classified_retrieval::clear_classified_index();
-    Ok(())
-}
-
 #[tauri::command]
 pub fn classified_status(state: State<'_, Arc<AppState>>) -> AppResult<String> {
     classified_status_inner(state.inner())

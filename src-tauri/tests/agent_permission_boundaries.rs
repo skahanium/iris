@@ -32,6 +32,9 @@ fn ctx() -> ToolDispatchContext<'static> {
     ToolDispatchContext {
         note_path: None,
         file_id: None,
+        run_id: None,
+        write_target_path: None,
+        document_policy: None,
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],

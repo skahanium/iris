@@ -1,5 +1,8 @@
 //! Pure helpers that turn bare web footnotes into Markdown HTTPS links.
 
+use crate::ai_types::{CitationBinding, CitationBindingMode, WebCitationEntry};
+use serde_json::Value;
+
 /// One web evidence row used to rewrite model footnotes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WebCitationLink {
@@ -11,6 +14,91 @@ pub(crate) struct WebCitationLink {
     pub(crate) title: String,
     /// HTTPS URL from the evidence ledger.
     pub(crate) url: String,
+}
+
+/// Deterministic binding outcome for a strict-Web answer. Formatting variance
+/// is absorbed locally; only the absence of usable evidence remains terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CitationBindingOutcome {
+    pub(crate) content: String,
+    pub(crate) binding: CitationBinding,
+}
+
+/// Normalize model markers into the current Run projection without asking a
+/// model to rewrite prose. Unknown numeric markers are removed from the body
+/// and the verified answer falls back to an answer-level source group.
+pub(crate) fn bind_current_run_citations(
+    content: &str,
+    cites: &[WebCitationLink],
+) -> CitationBindingOutcome {
+    let chars = content.chars().collect::<Vec<_>>();
+    let mut normalized = String::with_capacity(content.len());
+    let mut cursor = 0;
+    let mut referenced_indices = Vec::new();
+    let mut normalized_marker = false;
+    let mut fallback_reason = None;
+
+    while cursor < chars.len() {
+        if chars[cursor] != '[' {
+            normalized.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+        let mut end = cursor + 1;
+        while end < chars.len() && chars[end] != ']' {
+            end += 1;
+        }
+        if end == chars.len() {
+            normalized.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+        let original_label = chars[cursor + 1..end].iter().collect::<String>();
+        let label = normalize_marker_label(&original_label);
+        match parse_marker_index(&label) {
+            Some(index) if cites.iter().any(|cite| cite.index == index) => {
+                if original_label != format!("W{index}") {
+                    normalized_marker = true;
+                }
+                if !referenced_indices.contains(&index) {
+                    referenced_indices.push(index);
+                }
+                normalized.push_str(&format!("[W{index}]"));
+            }
+            Some(_) => {
+                fallback_reason = Some("unknown_marker".to_string());
+                normalized.push_str("[来源待确认]");
+            }
+            None => {
+                normalized.push('[');
+                normalized.push_str(&original_label);
+                normalized.push(']');
+            }
+        }
+        cursor = end + 1;
+    }
+
+    let binding = if fallback_reason.is_some() || referenced_indices.is_empty() {
+        CitationBinding {
+            mode: CitationBindingMode::SourceGroupFallback,
+            referenced_indices: Vec::new(),
+            fallback_reason: fallback_reason.or_else(|| Some("missing_marker".to_string())),
+        }
+    } else {
+        CitationBinding {
+            mode: if normalized_marker {
+                CitationBindingMode::Normalized
+            } else {
+                CitationBindingMode::Exact
+            },
+            referenced_indices,
+            fallback_reason: None,
+        }
+    };
+    CitationBindingOutcome {
+        content: normalized,
+        binding,
+    }
 }
 
 /// Rewrite bare footnote markers / source lines into clickable Markdown links.
@@ -26,6 +114,143 @@ pub(crate) fn linkify_web_citations(content: &str, cites: &[WebCitationLink]) ->
     let normalized = normalize_superscript_brackets(content);
     let with_lists = linkify_source_list_lines(&normalized, cites);
     linkify_inline_markers(&with_lists, cites)
+}
+
+/// Remove prior Run web-citation syntax before an assistant answer is reused as
+/// model history. The persisted answer and its UI citation map stay unchanged;
+/// only the provider-facing copy loses historical URLs and `[Wn]` labels so a
+/// later strict-Web Run cannot mistake them for current-Run evidence.
+pub(crate) fn sanitize_web_citations_for_model_history(
+    content: &str,
+    citations: &[WebCitationEntry],
+) -> String {
+    if content.trim().is_empty() {
+        return content.to_string();
+    }
+
+    let sanitized = sanitize_markdown_http_links(content, citations);
+    let sanitized = sanitize_bare_http_urls(&sanitized);
+    let sanitized = citations.iter().fold(sanitized, |history, citation| {
+        history.replace(
+            &format!("[W{}]", citation.index),
+            &historical_marker(citation.index),
+        )
+    });
+    sanitize_unknown_current_run_markers(&sanitized)
+}
+
+fn sanitize_markdown_http_links(content: &str, citations: &[WebCitationEntry]) -> String {
+    let mut sanitized = String::with_capacity(content.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = content[cursor..].find('[') {
+        let start = cursor + relative_start;
+        sanitized.push_str(&content[cursor..start]);
+        let Some(relative_close) = content[start..].find(']') else {
+            sanitized.push_str(&content[start..]);
+            cursor = content.len();
+            break;
+        };
+        let close = start + relative_close;
+        let label = &content[start + 1..close];
+        let link_start = close + 1;
+        if content[link_start..].starts_with('(') {
+            let url_start = link_start + 1;
+            if let Some(end) = markdown_link_end(content, url_start) {
+                let url = &content[url_start..end];
+                if url.starts_with("https://") || url.starts_with("http://") {
+                    if let Some(citation) = citations.iter().find(|citation| {
+                        citation.url == url
+                            && parse_marker_index(label)
+                                .is_some_and(|index| index == citation.index)
+                    }) {
+                        sanitized.push_str(&historical_marker(citation.index));
+                    } else {
+                        sanitized.push_str(&format!("[历史链接: {}]", label.trim()));
+                    }
+                    cursor = end + 1;
+                    continue;
+                }
+            }
+        }
+        sanitized.push('[');
+        cursor = start + 1;
+    }
+    sanitized.push_str(&content[cursor..]);
+    sanitized
+}
+
+fn markdown_link_end(content: &str, url_start: usize) -> Option<usize> {
+    let mut depth = 1_u32;
+    for (offset, character) in content[url_start..].char_indices() {
+        match character {
+            '(' => depth = depth.saturating_add(1),
+            ')' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(url_start + offset);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn sanitize_bare_http_urls(content: &str) -> String {
+    let mut sanitized = String::with_capacity(content.len());
+    let mut cursor = 0;
+    loop {
+        let https = content[cursor..]
+            .find("https://")
+            .map(|offset| cursor + offset);
+        let http = content[cursor..]
+            .find("http://")
+            .map(|offset| cursor + offset);
+        let Some(start) = [https, http].into_iter().flatten().min() else {
+            break;
+        };
+        sanitized.push_str(&content[cursor..start]);
+        let end = content[start..]
+            .find(|character: char| {
+                character.is_whitespace()
+                    || matches!(character, ')' | ']' | '>' | '。' | '，' | '；')
+            })
+            .map(|offset| start + offset)
+            .unwrap_or(content.len());
+        sanitized.push_str("[历史链接]");
+        cursor = end;
+    }
+    sanitized.push_str(&content[cursor..]);
+    sanitized
+}
+
+fn sanitize_unknown_current_run_markers(content: &str) -> String {
+    let mut sanitized = String::with_capacity(content.len());
+    let mut cursor = 0;
+    while let Some(relative_start) = content[cursor..].find("[W") {
+        let start = cursor + relative_start;
+        sanitized.push_str(&content[cursor..start]);
+        let candidate = &content[start + 2..];
+        let Some(end) = candidate.find(']') else {
+            sanitized.push_str(&content[start..]);
+            return sanitized;
+        };
+        if !candidate[..end].is_empty()
+            && candidate[..end].bytes().all(|byte| byte.is_ascii_digit())
+        {
+            sanitized.push_str("[历史来源]");
+            cursor = start + 2 + end + 1;
+        } else {
+            sanitized.push_str("[W");
+            cursor = start + 2;
+        }
+    }
+    sanitized.push_str(&content[cursor..]);
+    sanitized
+}
+
+fn historical_marker(index: i64) -> String {
+    format!("[历史来源 {index}]")
 }
 
 fn normalize_superscript_brackets(content: &str) -> String {
@@ -254,6 +479,76 @@ fn display_title(cite: &WebCitationLink) -> &str {
     }
 }
 
+/// Build the persisted `citation_map_json` payload for one assistant message.
+pub(crate) fn web_citation_map_json(
+    cites: &[WebCitationLink],
+    binding: Option<&CitationBinding>,
+) -> Value {
+    let web = cites
+        .iter()
+        .map(|cite| {
+            serde_json::json!({
+                "index": cite.index,
+                "title": cite.title,
+                "url": cite.url,
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut map = serde_json::json!({ "web": web });
+    if let Some(binding) = binding {
+        map["binding"] = serde_json::to_value(binding).unwrap_or(serde_json::Value::Null);
+    }
+    map
+}
+
+/// Parse an optional safe binding projection from persisted citation metadata.
+pub(crate) fn parse_web_citation_binding(raw: Option<&str>) -> Option<CitationBinding> {
+    let raw = raw.filter(|value| !value.trim().is_empty())?;
+    serde_json::from_str::<Value>(raw)
+        .ok()?
+        .get("binding")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok())
+}
+
+/// Parse persisted `citation_map_json` into safe UI entries (HTTPS only).
+pub(crate) fn parse_web_citation_entries(raw: Option<&str>) -> Vec<WebCitationEntry> {
+    let Some(raw) = raw.filter(|value| !value.trim().is_empty()) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return Vec::new();
+    };
+    let Some(items) = value.get("web").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in items {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        let index = object.get("index").and_then(Value::as_i64).unwrap_or(0);
+        let title = object
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let url = object
+            .get("url")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if index <= 0 || !url.starts_with("https://") {
+            continue;
+        }
+        out.push(WebCitationEntry { index, title, url });
+    }
+    out.sort_by_key(|entry| entry.index);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +598,101 @@ mod tests {
         let input = "据报道 [1] 市场上涨。";
         let output = linkify_web_citations(input, &sample_cites());
         assert!(output.contains("[1](https://www.euronews.com/a)"));
+    }
+
+    #[test]
+    fn web_citation_map_json_and_parse_round_trip() {
+        let cites = sample_cites();
+        let binding = CitationBinding {
+            mode: CitationBindingMode::Normalized,
+            referenced_indices: vec![1, 3],
+            fallback_reason: None,
+        };
+        let json = web_citation_map_json(&cites, Some(&binding));
+        let raw = json.to_string();
+        let parsed = parse_web_citation_entries(Some(raw.as_str()));
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].index, 1);
+        assert!(parsed[0].url.starts_with("https://"));
+        assert_eq!(
+            parse_web_citation_binding(Some(raw.as_str())),
+            Some(binding)
+        );
+    }
+
+    #[test]
+    fn sanitizes_persisted_web_markdown_for_model_history() {
+        let citations = vec![WebCitationEntry {
+            index: 1,
+            title: "Euronews".to_string(),
+            url: "https://www.euronews.com/a".to_string(),
+        }];
+
+        let sanitized = sanitize_web_citations_for_model_history(
+            "历史结论见 [1](https://www.euronews.com/a)。",
+            &citations,
+        );
+
+        assert_eq!(sanitized, "历史结论见 [历史来源 1]。");
+    }
+
+    #[test]
+    fn sanitizes_canonical_current_run_markers_for_model_history() {
+        let citations = vec![WebCitationEntry {
+            index: 1,
+            title: "Euronews".to_string(),
+            url: "https://www.euronews.com/a".to_string(),
+        }];
+
+        let sanitized = sanitize_web_citations_for_model_history("历史结论见 [W1]。", &citations);
+
+        assert_eq!(sanitized, "历史结论见 [历史来源 1]。");
+    }
+
+    #[test]
+    fn sanitizes_unknown_markers_and_all_historical_urls_without_a_citation_map() {
+        let input =
+            "历史称 [W9]；见 [文档](https://user.example/a_(b)) 和 https://user.example/raw。";
+
+        let sanitized = sanitize_web_citations_for_model_history(input, &[]);
+
+        assert!(!sanitized.contains("[W9]"));
+        assert!(!sanitized.contains("https://"));
+        assert!(sanitized.contains("[历史来源]"));
+        assert!(sanitized.contains("[历史链接: 文档]"));
+    }
+
+    #[test]
+    fn binds_known_marker_variants_without_another_model_call() {
+        let outcome =
+            bind_current_run_citations("证据 [1]、[citation:2]、[¹] 与 [w3]。", &sample_cites());
+
+        assert_eq!(outcome.content, "证据 [W1]、[W2]、[W1] 与 [W3]。");
+        assert_eq!(outcome.binding.mode, CitationBindingMode::Normalized);
+        assert_eq!(outcome.binding.referenced_indices, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn binds_missing_or_unknown_marker_as_a_verified_source_group() {
+        let missing = bind_current_run_citations("没有行内标记。", &sample_cites());
+        assert_eq!(
+            missing.binding.mode,
+            CitationBindingMode::SourceGroupFallback
+        );
+        assert_eq!(
+            missing.binding.fallback_reason.as_deref(),
+            Some("missing_marker")
+        );
+
+        let unknown = bind_current_run_citations("错误标记 [W4]。", &sample_cites());
+        assert_eq!(unknown.content, "错误标记 [来源待确认]。");
+        assert_eq!(
+            unknown.binding.mode,
+            CitationBindingMode::SourceGroupFallback
+        );
+        assert_eq!(
+            unknown.binding.fallback_reason.as_deref(),
+            Some("unknown_marker")
+        );
     }
 }

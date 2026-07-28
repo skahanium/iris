@@ -14,6 +14,7 @@ interface OverlayPort {
   openManagementCenter: (
     section?: ManagementCenterSection,
     detail?: ManagementCenterDetail,
+    providerId?: string | null,
   ) => void;
   openOverlay: (overlay: OverlayId) => void;
 }
@@ -82,7 +83,11 @@ export function useAppShortcuts({
           overlays.openOverlay(action.overlay);
           break;
         case "openManagementCenter":
-          overlays.openManagementCenter(action.section, action.detail ?? null);
+          overlays.openManagementCenter(
+            action.section,
+            action.detail ?? null,
+            action.providerId ?? null,
+          );
           break;
         case "openClassifiedPanel":
           setClassifiedOpen(true);

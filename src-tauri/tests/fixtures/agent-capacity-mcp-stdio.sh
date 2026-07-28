@@ -4,6 +4,7 @@
 # with a cleared environment.
 
 mode="$1"
+result_count="${2:-1}"
 
 json_id() {
   value=${1#*\"id\":}
@@ -42,13 +43,27 @@ while IFS= read -r line; do
           printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"fetch-result"}],"isError":false}}\n' "$id"
           ;;
         *)
-          claims=''
-          ordinal=1
-          while [ "$ordinal" -le 48 ]; do
-            claims="$claims fact-web-$ordinal=value-$ordinal"
-            ordinal=$((ordinal + 1))
-          done
-          printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\"}],\"isError\":false}}"
+          if [ "$mode" = "search-empty" ]; then
+            printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"no parseable web evidence\"}],\"isError\":false}}"
+          else
+            claims=''
+            ordinal=1
+            while [ "$ordinal" -le 48 ]; do
+              claims="$claims fact-web-$ordinal=value-$ordinal"
+              ordinal=$((ordinal + 1))
+            done
+            if [ "$result_count" -gt 1 ]; then
+              results="[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\\n"
+              index=2
+              while [ "$index" -le "$result_count" ]; do
+                results="$results[$index] title: Result $index\\nurl: https://source-$index.invalid/$index\\nsnippet: deterministic$claims\\n"
+                index=$((index + 1))
+              done
+              printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"$results\"}],\"isError\":false}}"
+            else
+              printf '%s\n' "{\"jsonrpc\":\"2.0\",\"id\":$id,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"[1] title: Contract\\nurl: https://source.invalid/contract\\nsnippet: deterministic$claims\"}],\"isError\":false}}"
+            fi
+          fi
           ;;
       esac
       ;;

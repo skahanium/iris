@@ -25,6 +25,7 @@ fn envelope() -> ExecutionEnvelope {
         context: ContextMode::ExplicitReferences,
         freshness: Freshness::Offline,
         web_reason: WebDecisionReason::LegacyUnknown,
+        verification_requirement: crate::ai_runtime::run_contract::VerificationRequirement::None,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,
@@ -198,16 +199,62 @@ fn prompt_input_treats_legacy_empty_array_scope_as_an_empty_boundary() {
 #[test]
 fn policy_request_rebuilds_only_persisted_envelope_and_reference_paths() {
     let (db, session_id, session_key) = setup();
-    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
-        .expect("accepted run");
+    let mut input = accept_input(session_id, session_key.clone());
+    input.envelope.required_capabilities = vec![
+        super::run_contract::CapabilityId::new("model.text"),
+        super::run_contract::CapabilityId::new("note.apply_patch"),
+    ];
+    let expected_envelope = input.envelope.clone();
+    AgentRunRepository::accept(&db, input).expect("accepted run");
 
     let request = AgentRunRepository::policy_request_for_session(&db, &session_key, "run-1")
         .expect("read policy request")
         .expect("run exists");
 
-    assert_eq!(request.envelope, envelope());
+    assert_eq!(request.envelope, expected_envelope);
     assert_eq!(request.explicit_reference_paths, vec!["notes/roadmap.md"]);
     assert!(request.requested_capabilities.is_empty());
+}
+
+#[test]
+fn run_authorization_snapshot_is_immutable_and_scoped_to_its_session() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted run");
+    let capabilities = vec![
+        super::run_contract::CapabilityId::new("runtime.read"),
+        super::run_contract::CapabilityId::new("note.apply_patch"),
+    ];
+
+    let stored = AgentRunRepository::persist_authorization_snapshot(
+        &db,
+        &session_key,
+        "run-1",
+        &capabilities,
+    )
+    .expect("persist authorization");
+    let canonical = vec![
+        super::run_contract::CapabilityId::new("note.apply_patch"),
+        super::run_contract::CapabilityId::new("runtime.read"),
+    ];
+    assert_eq!(stored, canonical);
+    assert_eq!(
+        AgentRunRepository::authorization_snapshot_for_session(&db, &session_key, "run-1")
+            .expect("read authorization"),
+        Some(canonical)
+    );
+    assert!(AgentRunRepository::persist_authorization_snapshot(
+        &db,
+        &session_key,
+        "run-1",
+        &[super::run_contract::CapabilityId::new("memory.write")],
+    )
+    .is_err());
+    assert_eq!(
+        AgentRunRepository::authorization_snapshot_for_session(&db, "other-session", "run-1")
+            .expect("other session lookup"),
+        None
+    );
 }
 #[test]
 fn accept_is_idempotent_for_client_request_id_without_duplicate_message_or_event() {
@@ -243,7 +290,7 @@ fn accept_is_idempotent_for_client_request_id_without_duplicate_message_or_event
 fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
     let (db, session_id, session_key) = setup();
     let mut input = accept_input(session_id, session_key.clone());
-    input.envelope.freshness = Freshness::Online;
+    input.envelope.freshness = Freshness::WebPreferred;
     input.envelope.effort = Effort::ToolLoop;
     AgentRunRepository::accept(&db, input).expect("accepted source run");
     let preparing = AgentRunRepository::append_event(
@@ -941,6 +988,18 @@ fn atomic_confirmation_request_binds_the_pending_plan_to_awaiting_state() {
         .expect("snapshot")
         .expect("run");
     assert_eq!(snapshot.run.state, RunState::AwaitingConfirmation);
+    assert_eq!(
+        snapshot
+            .run
+            .pending_confirmation
+            .expect("pending plan")
+            .targets,
+        Some(vec![super::run_contract::ConfirmationTargetSummary {
+            kind: "other".into(),
+            label: "application://memory/profile".into(),
+            risk: RiskClass::BoundedWrite,
+        }])
+    );
 
     let approval = AgentRunRepository::approve_frozen_confirmation(
         &db,

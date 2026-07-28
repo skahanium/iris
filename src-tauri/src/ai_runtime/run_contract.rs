@@ -49,17 +49,32 @@ pub(crate) enum ContextMode {
 
 /// Whether a Run may use Web capabilities.
 ///
-/// Binary model (exclusion-based): Offline forbids `web_search`; Online registers it
-/// and lets the answering model decide whether to call it. Historical wire values
-/// `web_preferred` and `web_required` deserialize as [`Freshness::Online`].
+/// Explicit Web contract. `WebRequired` means the Run cannot produce a final
+/// answer until usable Web evidence has entered the evidence ledger.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Freshness {
     /// Web access is forbidden; `web_search` is not registered.
     Offline,
-    /// Web access is permitted; `web_search` is registered for model-driven use.
-    #[serde(alias = "web_preferred", alias = "web_required")]
-    Online,
+    /// Web is available to the model but local completion remains valid.
+    #[serde(alias = "online")]
+    WebPreferred,
+    /// Web evidence is mandatory before finalization.
+    WebRequired,
+}
+
+/// Evidence that must be bound to the current Run before it may state an
+/// external fact. This is intentionally separate from `Freshness`: Web access
+/// is an authorization decision, while verification is an answer-safety rule.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum VerificationRequirement {
+    /// The Run may complete without external evidence.
+    #[default]
+    None,
+    /// A successful `web_search` in this exact Run must register usable HTTPS
+    /// evidence before a final answer is accepted.
+    CurrentRunWeb,
 }
 
 /// Stable explanation for the deterministic Web decision attached to a Run.
@@ -82,7 +97,6 @@ pub(crate) enum WebDecisionReason {
     /// The request transforms only supplied or authorized text.
     LocalTransformation,
     /// The request is creative and has no explicit external-fact requirement.
-    /// Retained for historical envelopes; ExclusionClassifier no longer emits this.
     CreativeGeneration,
     /// The user explicitly instructed the assistant to search or verify online.
     ExplicitWebRequest,
@@ -90,6 +104,8 @@ pub(crate) enum WebDecisionReason {
     ExplicitUrl,
     /// The answer depends on volatile external facts.
     VolatileExternalFact,
+    /// Strict online verification is required for an external factual request.
+    StrictExternalFact,
     /// A current medical, legal, financial, or compliance fact has elevated stakes.
     HighStakesCurrentFact,
     /// Web is available by default after exclusion checks; the model decides whether to search.
@@ -179,6 +195,9 @@ pub(crate) struct ExecutionEnvelope {
     /// Deterministic, content-safe explanation for the Web freshness decision.
     #[serde(default)]
     pub(crate) web_reason: WebDecisionReason,
+    /// Evidence that must be available before this Run can state an external fact.
+    #[serde(default)]
+    pub(crate) verification_requirement: VerificationRequirement,
     /// Allowed execution depth.
     pub(crate) effort: Effort,
     /// Physical security domain.
@@ -429,7 +448,7 @@ pub struct PendingConfirmationSummary {
     /// Safe effect category projected from the immutable change plan.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) effect: Option<Effect>,
-    /// Counted and redacted change targets; never source paths or arguments.
+    /// Bounded, normalized change targets and no raw tool arguments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) targets: Option<Vec<ConfirmationTargetSummary>>,
     /// RFC 3339 expiry of the immutable approval window.
@@ -437,13 +456,13 @@ pub struct PendingConfirmationSummary {
     pub(crate) expires_at: Option<String>,
 }
 
-/// Redacted target metadata shown before approving a frozen change plan.
+/// Bounded target metadata shown before approving a frozen change plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ConfirmationTargetSummary {
-    /// Broad target kind, never a source path.
+    /// Broad target kind.
     pub(crate) kind: String,
-    /// Ordinal-only display label that contains no user data.
+    /// Normalized target identity so the user can approve the actual scope.
     pub(crate) label: String,
     /// Maximum risk class of the planned effect.
     pub(crate) risk: RiskClass,
@@ -1104,6 +1123,9 @@ pub(crate) enum SafeRunErrorCode {
     /// The Web evidence provider returned no safely parseable evidence.
     #[serde(rename = "agent_run_web_evidence_invalid")]
     WebEvidenceInvalid,
+    /// The request needs Web verification, but the Run is not authorized to search.
+    #[serde(rename = "agent_run_web_verification_required")]
+    WebVerificationRequired,
     /// A required persistence operation failed safely.
     #[serde(rename = "agent_run_persistence_failed")]
     PersistenceFailed,
@@ -1149,6 +1171,7 @@ impl SafeRunErrorCode {
             Self::WebProviderAuthFailed => "agent_run_web_provider_auth_failed",
             Self::WebProviderFailed => "agent_run_web_provider_failed",
             Self::WebEvidenceInvalid => "agent_run_web_evidence_invalid",
+            Self::WebVerificationRequired => "agent_run_web_verification_required",
             Self::PersistenceFailed => "agent_run_persistence_failed",
             Self::Cancelled => "agent_run_cancelled",
             Self::ClassifiedContextRequired => "agent_run_classified_context_required",

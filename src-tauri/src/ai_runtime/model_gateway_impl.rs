@@ -34,8 +34,7 @@ pub use messages_impl::{
     remove_orphan_tool_messages, repair_tool_api_messages, tool_api_message_chain_valid,
 };
 pub use streaming_impl::{
-    emit_stream_reset, emit_stream_reset_with_reason, emit_stream_reset_with_surface, StreamEvent,
-    StreamEventData, StreamEventObserver, StreamEventType, StreamSurface,
+    StreamEvent, StreamEventData, StreamEventObserver, StreamEventType, StreamSurface,
 };
 use usage_impl::parse_usage;
 

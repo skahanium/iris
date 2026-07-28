@@ -89,6 +89,22 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 brand tint；过程区脚注感（`assistant-process-footnote`）；折叠摘要末项在 Run `completed` 后为「答复完毕」。
 
+### Web 引用（联网来源）
+
+- **行内**：仅显示数字上标徽章（`sup.ai-citation-wrap` + `a.ai-citation`），字号 `--text-caption`，浅底、`--ai-citation` 前景，**无下划线**；与正文 `--prose-link` 外链区分。模型仍可输出 `[N]` / `[citation:N]`，渲染层统一为徽章。
+- **文末**：助手消息正文下方固定 **「来源」** 区块（`AssistantCitationFooter`），列出本次消息 `citation_map` 中、且在正文被引用过的 HTTPS 来源：`序号 · 标题`（可点击打开系统浏览器）。不展示 snippet、搜索词或工具参数。
+- **可访问性**：行内 `aria-label="引用来源 N"`；来源链接 `rel="noopener noreferrer"`。若模型在文末重复手写来源列表，产品展示以底部「来源」为准。
+
+## 管理中心子页与高级折叠
+
+- LLM / MCP 供应商配置采用三级导航：AI 子页列表 → 供应商卡片 → 详情子页；详情顶栏使用 `ChevronLeft` 返回上一级，不引入 URL 路由。
+- 详情页默认只展示连接凭据与核心操作（LLM 模型列表、MCP 预设与 API Key）；端点、映射、凭据引用等放入「高级设置」`Collapsible`，默认收起，分隔线使用 `border-border-subtle`。
+- 进入供应商详情时同步更新 overlay 的 `managementCenterProviderId`，以支持深链恢复与面板内导航一致。
+- 供应商列表行使用 `rounded-lg border-border/65 bg-background/55` 与 `Button asChild variant="ghost"` 包裹整行可点区域；钻取入口用右侧 `ChevronRight`，勿用裸「配置」文案。状态点：`bg-success`（就绪/Key 已配置/映射完整）、`bg-amber-500`（待完善）、`bg-muted-foreground/60`（未启用）；须配 `aria-label`。
+- AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
+- 二级/三级详情页顶栏采用「左侧弱化返回按钮（`rounded-full` + `border-border-subtle` + `text-muted-foreground` + `aria-label="返回 X"`）+ 跨行居中标题/副标题」结构；返回按钮与主标题视觉分层，不再左对齐混排。
+- 进入 MCP 第三级（`managementCenterProviderId` 非空）时，二级「联网搜索」PanelSection（当前搜索提供方、联网已开启）整体隐藏，仅保留 `McpProfilesPanel` 详情；返回列表时恢复。
+
 ## 交互规则
 
 - 主路径必须有可见入口或快捷键；纯 icon 控件必须有可访问名称和 tooltip。
@@ -99,6 +115,8 @@ AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 bra
 - AI 活动状态须投影到 Composer 和/或 StatusBar；禁止只写不读的 activity hint。
 - 普通域 `@` 文件/文件夹与 `#` 标签在输入框和用户消息中只以内联名称呈现，使用 `--ai-mention` 浅绿色前景色；不得显示 `@`、方括号、胶囊、“引用”行，也不得添加底色、边框、圆角或图标。真实相对路径与类型仅用于安全 tooltip。
 - 标题栏、Rail 和 Tab 溢出应维持当前平台窗口行为；人工验收见 `docs/testing/`。
+- 顶栏底色与编辑区同源（`bg-background`），不使用 `surface-chrome`，避免与编辑区形成灰带；活动 Tab 用 inset rim light（顶/左高光）+ 底部内阴影呈现玻璃质感，inactive Tab 保持透明。Tab 固定宽度 `9rem`（溢出压缩至 `4.5rem`），不随标题长度变化。
+- 编辑器在中文上下文自动把 ASCII 标点转为全角（`.` `,` `:` `;` `!` `?` `(` `)` → `。` `，` `：` `；` `！` `？` `（` `）`；`"` `'` 按当前文本块内未配对计数转为 `“”` `‘’`）。仅当紧邻前一个字符属于 CJK 上下文（Han/Hiragana/Katakana/Hangul/全角符号）时转换，保护 `1.` 有序列表、URL、英文段落与 markdown 触发符；codeBlock 与 inline code 不转换。默认开启，管理中心「笔记 → 保存策略」可关。
 
 ## Iris Rail 完整刷新设计
 

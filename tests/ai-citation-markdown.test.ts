@@ -3,23 +3,20 @@ import { describe, expect, it } from "vitest";
 import {
   citationHrefForLabel,
   decodeCitationHref,
+  formatCitationDisplayLabel,
   isExternalHttpsHref,
   linkifyAiCitations,
   normalizeCitationLabel,
   postProcessCitations,
   repairOverEscapedCitationLinks,
-  tagCitationLinksInHtml,
 } from "@/lib/ai/citation-markdown";
-import {
-  parseMarkdownToHtml,
-  renderAiMarkdownToHtml,
-} from "@/lib/markdown-render";
+import { renderAiMarkdownToHtml } from "@/lib/markdown-render";
 
 describe("citation markdown rendering", () => {
-  it("linkifies a bare citation label with a clean bracket display", () => {
+  it("linkifies a bare citation label with a superscript badge display", () => {
     const output = linkifyAiCitations("source [citation:3]");
     expect(output).toContain("#iris-cite-");
-    expect(output).toContain("[citation:3](");
+    expect(output).toContain("[3](#iris-cite-");
     expect(output).not.toContain("\\[");
   });
 
@@ -30,6 +27,11 @@ describe("citation markdown rendering", () => {
     expect(output).toContain("[2](#iris-cite-2)");
   });
 
+  it("formats display labels without brackets", () => {
+    expect(formatCitationDisplayLabel("citation:3")).toBe("3");
+    expect(formatCitationDisplayLabel("W2")).toBe("2");
+  });
+
   it("does not linkify the same citation twice", () => {
     const once = linkifyAiCitations("[citation:2]");
     expect(linkifyAiCitations(once)).toBe(once);
@@ -37,16 +39,17 @@ describe("citation markdown rendering", () => {
 
   it("repairs escaped citation links before markdown rendering", () => {
     const escaped = "[\\\\[citation:2\\\\]](#iris-cite-citation%3A2)";
-    const output = repairOverEscapedCitationLinks(escaped);
-    expect(tagCitationLinksInHtml(parseMarkdownToHtml(output))).toContain(
-      "ai-citation",
+    const output = renderAiMarkdownToHtml(
+      repairOverEscapedCitationLinks(escaped),
     );
+    expect(output).toContain("ai-citation-wrap");
   });
 
   it("post-processes citation anchors without breaking markdown", () => {
     const html = renderAiMarkdownToHtml("**important** [citation:1]");
     expect(html).toContain("<strong>important</strong>");
     expect(postProcessCitations(html)).toContain("ai-citation");
+    expect(postProcessCitations(html)).toContain("ai-citation-wrap");
   });
 
   it("round-trips a safe citation hash", () => {
@@ -60,12 +63,19 @@ describe("citation markdown rendering", () => {
     expect(isExternalHttpsHref("#iris-cite-1")).toBe(false);
   });
 
-  it("renders https markdown citations as styled clickable anchors", () => {
-    const html = renderAiMarkdownToHtml(
-      "[1. Euronews, 2026-07-20](https://www.euronews.com/a)",
-    );
+  it("renders numeric https markdown citations as badge links", () => {
+    const html = renderAiMarkdownToHtml("[3](https://www.euronews.com/a)");
     expect(html).toContain('href="https://www.euronews.com/a"');
     expect(html).toContain('class="ai-citation"');
-    expect(html).toContain("1. Euronews, 2026-07-20");
+    expect(html).toContain("ai-citation-wrap");
+    expect(html).not.toContain("underline");
+  });
+
+  it("renders descriptive https links as prose links not citations", () => {
+    const html = renderAiMarkdownToHtml(
+      "[Euronews article](https://www.euronews.com/a)",
+    );
+    expect(html).toContain('href="https://www.euronews.com/a"');
+    expect(html).not.toContain("ai-citation");
   });
 });

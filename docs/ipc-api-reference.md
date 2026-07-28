@@ -1,5 +1,11 @@
 # Iris IPC API 参考
 
+## Retired contracts
+
+The current frontend event registry contains no `version:save_complete` or `llm:reset` event. The only Run lifecycle event is `assistant:run_event`.
+
+The following internal commands are retired and must not be registered in `generate_handler!`, declared in `src/types/ipc.ts`, or wrapped by `src/lib/ipc.ts`: `llm_providers`, `version_cleanup_cmd`, `document_title_audit_cmd`, `skills_paths`, and `classified_ai_retrieval_clear`.
+
 Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端类型定义在 [`src/types/ai.ts`](../src/types/ai.ts) 与 [`src/types/ipc.ts`](../src/types/ipc.ts)，调用封装在 [`src/lib/ipc.ts`](../src/lib/ipc.ts)。这三处是命令名、参数和返回类型的权威来源；本文只记录稳定的边界规则。
 
 ## 调用规则

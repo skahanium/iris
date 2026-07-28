@@ -1,6 +1,6 @@
 //! Minimal scene-free direct-answer Run Engine.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
@@ -14,12 +14,16 @@ use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunEventInput, FinalizeRunInput,
 };
 use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
-use crate::ai_runtime::citation_linkify::linkify_web_citations;
+use crate::ai_runtime::citation_linkify::{bind_current_run_citations, linkify_web_citations};
+use crate::ai_runtime::conversation_memory::ConversationMemory;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
+use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, PresentationProcessKind, PresentationProcessStatus, RunEventPayload,
     RunEventType, RunPresentationEvent, RunPresentationPayload, RunState, SafeRunErrorCode,
+    WebEvidenceFailureReason,
 };
+use crate::ai_types::CitationBinding;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -45,6 +49,18 @@ pub(crate) trait StreamingDirectAnswerProvider: Send + Sync {
                 + 'a,
         >,
     >;
+}
+
+/// Sanitized terminal metadata for a deterministic Web verification stage.
+///
+/// This deliberately contains no query, URL, provider payload, or credential.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct WebVerificationFailure {
+    pub(crate) code: SafeRunErrorCode,
+    pub(crate) reason: WebEvidenceFailureReason,
+    pub(crate) retryable: bool,
+    pub(crate) attempt_count: u32,
+    pub(crate) duration_bucket: &'static str,
 }
 
 /// Model Gateway adapter for a single, tool-free streaming direct answer.
@@ -1372,6 +1388,55 @@ impl RunEngine {
         sink.emit(&failed)
     }
 
+    /// Persist the structured strict-Web failure before terminalizing the Run.
+    /// This is used when deterministic evidence acquisition completed its own
+    /// bounded attempts but could not produce evidence safe for a factual
+    /// answer. The UI can therefore offer a real retry instead of presenting a
+    /// generic model failure.
+    pub(crate) fn fail_web_verification_with_sink(
+        db: &Database,
+        session: &AssistantSessionRef,
+        run_id: &str,
+        failure: WebVerificationFailure,
+        sink: &impl RunEventSink,
+    ) -> AppResult<()> {
+        let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
+            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        if snapshot.run.state.is_terminal() {
+            return Ok(());
+        }
+        let verification = AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: run_id.to_string(),
+                state_version: snapshot.run.state_version,
+                event_type: RunEventType::WebVerificationFailed,
+                payload: RunEventPayload::WebVerificationFailed {
+                    code: failure.code,
+                    failure_reason: failure.reason,
+                    retryable: failure.retryable,
+                    attempt_count: failure.attempt_count.max(1),
+                    duration_bucket: failure.duration_bucket.to_string(),
+                    diagnostic_id: run_id.to_string(),
+                },
+            },
+        )?;
+        sink.emit(&verification)?;
+        let failed = AgentRunRepository::append_event(
+            db,
+            AppendRunEventInput {
+                run_id: run_id.to_string(),
+                state_version: verification.state_version(),
+                event_type: RunEventType::Failed,
+                payload: RunEventPayload::Failed {
+                    code: failure.code,
+                    message: safe_failure_message(failure.code).to_string(),
+                },
+            },
+        )?;
+        sink.emit(&failed)
+    }
+
     /// Move an accepted Run into the visible Preparing stage before heavy context work.
     pub(crate) fn mark_preparing_with_sink(
         db: &Database,
@@ -1582,6 +1647,7 @@ impl RunEngine {
             running.state_version(),
             answer,
             Vec::new(),
+            None,
             sink,
         )
     }
@@ -1946,7 +2012,7 @@ impl RunEngine {
         )? {
             return Ok(());
         }
-        executor.emit_deferred_web_degradation_if_needed(db, sink)?;
+        let web_degraded = executor.emit_deferred_web_degradation_if_needed(db, sink)?;
         if !observer.emitted_generating_answer_stage() {
             if let Err(error) = observer.emit_generating_answer_stage_if_needed() {
                 if settle_cancelled_run_with_partial(
@@ -1991,7 +2057,8 @@ impl RunEngine {
                 );
             }
         }
-        if let Err(error) = apply_required_web_degradation_notice(db, session, run_id, &mut content)
+        if let Err(error) =
+            apply_required_web_degradation_notice(db, session, run_id, &mut content, web_degraded)
         {
             return fail_finalization_with_sink(
                 db,
@@ -2028,7 +2095,77 @@ impl RunEngine {
                 );
             }
         };
-        content = linkify_final_web_citations(db, &final_evidence_ids, content);
+        let citation_evidence_ids = if executor.requires_web_evidence() {
+            executor.evidence_ids()
+        } else {
+            final_evidence_ids.clone()
+        };
+        let mut citation_binding = None;
+        if executor.requires_web_evidence() {
+            if !AgentEvidenceRepository::has_current_run_web_evidence(
+                db,
+                run_id,
+                &citation_evidence_ids,
+            )? {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::EvidenceInvalid,
+                        "agent_run_web_evidence_required",
+                    ),
+                );
+            }
+            let citations =
+                match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
+                    Ok(citations) => citations,
+                    Err(_) => {
+                        return fail_finalization_with_sink(
+                            db,
+                            run_id,
+                            running_state_version,
+                            sink,
+                            RunFinalizationFailure::new(
+                                RunFinalizationStage::EvidenceValidation,
+                                SafeRunErrorCode::PersistenceFailed,
+                                "current_run_citation_load_failed",
+                            ),
+                        );
+                    }
+                };
+            let outcome = bind_current_run_citations(&content, &citations);
+            tracing::info!(
+                run_id = %run_id,
+                binding_mode = ?outcome.binding.mode,
+                fallback_reason = ?outcome.binding.fallback_reason,
+                referenced_count = outcome.binding.referenced_indices.len(),
+                "current Run citation binding resolved"
+            );
+            content = outcome.content;
+            citation_binding = Some(outcome.binding);
+        } else {
+            content = linkify_final_web_citations(db, &citation_evidence_ids, content);
+        }
+        if executor.requires_web_evidence() {
+            if let Err(error) =
+                validate_current_run_citation_links(db, &citation_evidence_ids, &content)
+            {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    RunFinalizationFailure::new(
+                        RunFinalizationStage::EvidenceValidation,
+                        SafeRunErrorCode::EvidenceInvalid,
+                        error.to_string(),
+                    ),
+                );
+            }
+        }
         if settle_cancelled_run_with_partial(
             db,
             session,
@@ -2048,6 +2185,7 @@ impl RunEngine {
             running_state_version,
             content,
             final_evidence_ids,
+            citation_binding,
             sink,
         )
     }
@@ -2232,7 +2370,8 @@ impl RunEngine {
                 );
             }
         }
-        if let Err(error) = apply_required_web_degradation_notice(db, session, run_id, &mut content)
+        if let Err(error) =
+            apply_required_web_degradation_notice(db, session, run_id, &mut content, false)
         {
             return fail_finalization_with_sink(
                 db,
@@ -2279,19 +2418,27 @@ impl RunEngine {
             running_state_version,
             content,
             evidence_ids.to_vec(),
+            None,
             sink,
         )
     }
 }
 
+/// Prepend an inline disclosure blockquote when Web search degraded without usable evidence.
+/// The `capability_degraded` event is still emitted separately for diagnostics/eval; this
+/// function only rewrites the persisted answer body so the user sees the notice inline
+/// instead of a separate banner.
 fn apply_required_web_degradation_notice(
     _db: &Database,
     _session: &AssistantSessionRef,
     _run_id: &str,
-    _content: &mut String,
+    content: &mut String,
+    web_degraded: bool,
 ) -> AppResult<()> {
-    // Historical WebRequired runs appended a forced notice into model output.
-    // Online emits CapabilityDegraded and continues without rewriting the answer here.
+    if !web_degraded || content.trim().is_empty() {
+        return Ok(());
+    }
+    *content = format!("> 联网搜索未取得结果，以下为离线回答。\n\n{content}");
     Ok(())
 }
 
@@ -2307,6 +2454,50 @@ fn linkify_final_web_citations(db: &Database, evidence_ids: &[i64], content: Str
             content
         }
     }
+}
+
+/// Reject model-authored Web links that are not registered by this exact Run.
+///
+/// The UI citation map is derived from the ledger, but a model can still emit
+/// arbitrary Markdown links in its prose. A strict factual Run must not finish
+/// with a URL that was not supplied by its own `web_search` evidence.
+fn validate_current_run_citation_links(
+    db: &Database,
+    evidence_ids: &[i64],
+    content: &str,
+) -> AppResult<()> {
+    let allowed_urls = AgentEvidenceRepository::list_web_citation_links(db, evidence_ids)?
+        .into_iter()
+        .map(|citation| citation.url)
+        .collect::<HashSet<_>>();
+    if allowed_urls.is_empty() {
+        return Err(AppError::msg("agent_run_web_evidence_required"));
+    }
+    validate_web_urls_against_allowed(content, &allowed_urls)
+}
+
+fn validate_web_urls_against_allowed(
+    content: &str,
+    allowed_urls: &HashSet<String>,
+) -> AppResult<()> {
+    if content.contains("http://") {
+        return Err(AppError::msg("agent_run_unverified_web_citation"));
+    }
+    let mut remainder = content;
+    while let Some(offset) = remainder.find("https://") {
+        let candidate = &remainder[offset..];
+        let end = candidate
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, ')' | ']' | '>')
+            })
+            .unwrap_or(candidate.len());
+        let url = candidate[..end].trim_end_matches(['.', ',', ';', ':']);
+        if !allowed_urls.contains(url) {
+            return Err(AppError::msg("agent_run_unverified_web_citation"));
+        }
+        remainder = &candidate[end..];
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2474,6 +2665,7 @@ fn flush_validated_stream_or_fail(
 
 /// Shared Direct/ToolLoop terminal contract:
 /// AnswerComplete (via flush) → durable `completed` emit → clear abort handle.
+#[allow(clippy::too_many_arguments)]
 fn emit_run_terminal(
     db: &Database,
     session: &AssistantSessionRef,
@@ -2481,8 +2673,38 @@ fn emit_run_terminal(
     state_version: u64,
     content: String,
     evidence_ids: Vec<i64>,
+    citation_binding: Option<CitationBinding>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
+    let citation_map =
+        match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
+            Ok(cites) if !cites.is_empty() => {
+                crate::ai_runtime::citation_linkify::web_citation_map_json(
+                    &cites,
+                    citation_binding.as_ref(),
+                )
+            }
+            Ok(_) => match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
+                Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(
+                    &cites,
+                    citation_binding.as_ref(),
+                ),
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "web citation map skipped after evidence lookup failure"
+                    );
+                    serde_json::json!({ "web": [] })
+                }
+            },
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "current Run citation map skipped after evidence lookup failure"
+                );
+                serde_json::json!({ "web": [] })
+            }
+        };
     if let Err(error) = AgentRunRepository::finalize(
         db,
         FinalizeRunInput {
@@ -2490,7 +2712,7 @@ fn emit_run_terminal(
             state_version,
             content,
             evidence_ids,
-            citation_map: serde_json::json!({}),
+            citation_map,
         },
     ) {
         return fail_finalization_with_sink(
@@ -2504,6 +2726,33 @@ fn emit_run_terminal(
                 error.to_string(),
             ),
         );
+    }
+    match NormalSessionRepository::get(db, &session.session_key) {
+        Ok(Some(normal_session)) => {
+            if ConversationMemory::refresh_for_session(
+                db,
+                normal_session.session_id,
+                Default::default(),
+            )
+            .is_err()
+            {
+                tracing::warn!(
+                    run_id = %run_id,
+                    reason = "conversation_memory_refresh_failed",
+                    "conversation memory refresh skipped after completed Run"
+                );
+            }
+        }
+        Ok(None) => tracing::warn!(
+            run_id = %run_id,
+            reason = "conversation_memory_session_missing",
+            "conversation memory refresh skipped after completed Run"
+        ),
+        Err(_) => tracing::warn!(
+            run_id = %run_id,
+            reason = "conversation_memory_session_lookup_failed",
+            "conversation memory refresh skipped after completed Run"
+        ),
     }
     let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)
         .map_err(|_| AppError::msg(SafeRunErrorCode::PersistenceFailed.as_str()))?
@@ -2523,6 +2772,7 @@ fn emit_run_terminal(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finalize_and_emit_with_sink(
     db: &Database,
     session: &AssistantSessionRef,
@@ -2530,6 +2780,7 @@ fn finalize_and_emit_with_sink(
     state_version: u64,
     content: String,
     evidence_ids: Vec<i64>,
+    citation_binding: Option<CitationBinding>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     emit_run_terminal(
@@ -2539,6 +2790,7 @@ fn finalize_and_emit_with_sink(
         state_version,
         content,
         evidence_ids,
+        citation_binding,
         sink,
     )
 }
@@ -2558,7 +2810,12 @@ fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
             "联网 API Key 无效，请在联网配置中重新输入原始 Key"
         }
         SafeRunErrorCode::WebProviderFailed => "联网证据服务暂时不可用，请稍后重试",
-        SafeRunErrorCode::WebEvidenceInvalid => "联网证据服务未返回可用结果，请稍后重试",
+        SafeRunErrorCode::WebEvidenceInvalid => {
+            "联网证据未返回可核验结果，不能给出事实结论，请稍后重试"
+        }
+        SafeRunErrorCode::WebVerificationRequired => {
+            "该请求需要联网核验；当前未开启联网，不能给出事实结论"
+        }
         SafeRunErrorCode::InvalidRequest => "请求无法按当前运行能力处理",
         SafeRunErrorCode::ToolLoopLimit => "模型调用工具次数过多，请基于已附资料缩小问题后重试",
         SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
@@ -2743,5 +3000,77 @@ pub(crate) fn gateway_request_for_messages(
         reasoning,
         continuation: None,
         skip_stub_ids: vec![],
+    }
+}
+
+#[cfg(test)]
+mod apply_notice_tests {
+    use std::collections::HashSet;
+
+    use super::{apply_required_web_degradation_notice, validate_web_urls_against_allowed};
+    use crate::ai_runtime::run_contract::AssistantSessionRef;
+    use crate::storage::db::Database;
+
+    fn dummy_session() -> AssistantSessionRef {
+        use crate::ai_runtime::run_contract::SecurityDomain;
+        AssistantSessionRef {
+            domain: SecurityDomain::Normal,
+            session_key: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn prepends_notice_when_web_degraded_and_content_nonempty() {
+        let db = Database::open_in_memory().expect("database");
+        let session = dummy_session();
+        let mut content = "这是模型回答。".to_string();
+        apply_required_web_degradation_notice(&db, &session, "run-1", &mut content, true)
+            .expect("notice apply");
+        assert!(
+            content.starts_with("> 联网搜索未取得结果，以下为离线回答。"),
+            "content should start with notice blockquote, got: {content}"
+        );
+        assert!(content.contains("这是模型回答。"));
+    }
+
+    #[test]
+    fn does_not_inject_when_not_degraded() {
+        let db = Database::open_in_memory().expect("database");
+        let session = dummy_session();
+        let mut content = "这是模型回答。".to_string();
+        apply_required_web_degradation_notice(&db, &session, "run-1", &mut content, false)
+            .expect("notice apply");
+        assert_eq!(content, "这是模型回答。");
+    }
+
+    #[test]
+    fn does_not_inject_when_content_empty() {
+        let db = Database::open_in_memory().expect("database");
+        let session = dummy_session();
+        let mut content = "   ".to_string();
+        apply_required_web_degradation_notice(&db, &session, "run-1", &mut content, true)
+            .expect("notice apply");
+        assert_eq!(content, "   ");
+    }
+
+    #[test]
+    fn strict_web_answer_rejects_a_model_invented_source_url() {
+        let allowed = HashSet::from(["https://official.example/result".to_string()]);
+        let error = validate_web_urls_against_allowed(
+            "See [invented source](https://invented.example/result).",
+            &allowed,
+        )
+        .expect_err("invented source must fail finalization");
+        assert_eq!(error.to_string(), "agent_run_unverified_web_citation");
+    }
+
+    #[test]
+    fn strict_web_answer_accepts_only_its_registered_source_url() {
+        let allowed = HashSet::from(["https://official.example/result".to_string()]);
+        validate_web_urls_against_allowed(
+            "See [official source](https://official.example/result).",
+            &allowed,
+        )
+        .expect("registered source must be accepted");
     }
 }

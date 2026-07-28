@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +36,13 @@ import {
   type ProviderOverride,
 } from "@/types/llm";
 import builtinLlmProviders from "../../../config/llm-builtin-providers.json";
+
+import { LlmProviderDetail } from "./LlmProviderDetail";
+import { LlmProviderListCard } from "./LlmProviderListCard";
+import type {
+  LlmEnabledProviderModel,
+  LlmVisibleProvider,
+} from "./llmProviderTypes";
 
 const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] =
   builtinLlmProviders.map((provider) => ({
@@ -90,24 +97,18 @@ const UNSUPPORTED_REASONING_CAPABILITY: ReasoningUiCapability = {
   source: "unknown",
 };
 
+import type { ManagementProviderChrome } from "./managementProviderChrome";
+
 interface LlmRoutingSectionProps {
   open: boolean;
+  selectedProviderId: string | null;
+  onSelectedProviderIdChange: (providerId: string | null) => void;
+  onProviderChromeChange?: (chrome: ManagementProviderChrome | null) => void;
 }
 
-interface VisibleProvider {
-  id: string;
-  name: string;
-  enabledModels: string[];
-  configured: boolean;
-  custom: boolean;
-  endpointManaged: "builtin" | "custom";
-}
+type VisibleProvider = LlmVisibleProvider;
 
-interface EnabledProviderModel {
-  id: string;
-  catalog: ModelCatalogEntry | undefined;
-  registry: ModelRegistryEntry | undefined;
-}
+type EnabledProviderModel = LlmEnabledProviderModel;
 
 interface ReasoningUiCapability {
   supported: boolean;
@@ -138,10 +139,6 @@ function uniqueModelIds(models: Iterable<string>): string[] {
 
 function parseModelIds(input: string): string[] {
   return uniqueModelIds(input.split(/[\n,，]/));
-}
-
-function registryKey(providerId: string, modelId: string): string {
-  return `${providerId}:${modelId}`;
 }
 
 function modelReferenceValue(providerId: string, modelId: string): string {
@@ -448,7 +445,12 @@ function reasoningCapabilitySummary(capability: ReasoningUiCapability): string {
   return `推理可用（${detail}，${source}）`;
 }
 
-export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
+export function LlmRoutingSection({
+  open,
+  selectedProviderId,
+  onSelectedProviderIdChange,
+  onProviderChromeChange,
+}: LlmRoutingSectionProps) {
   const [data, setData] = useState<LlmConfigGetResponse | null>(null);
   const [routing, setRouting] = useState<LlmRoutingConfig | null>(null);
   const keyInputsRef = useRef<Record<string, string>>({});
@@ -765,6 +767,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     });
     void refreshKeyStatus([id]);
     setWizardOpen(false);
+    onSelectedProviderIdChange(id);
     return id;
   };
 
@@ -806,6 +809,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     setMessage(null);
     try {
       await saveProviderKeyValue(providerId, value);
+      if (wizardOpen) {
+        setWizardOpen(false);
+        onSelectedProviderIdChange(providerId);
+      }
     } catch (err) {
       setMessage(`保存 ${label} Key 失败：${invokeErrorMessage(err)}`);
     } finally {
@@ -984,7 +991,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     });
   };
 
-  const visibleProviders = (() => {
+  // providerInfo / enabledModelIdsForProvider close over data+routing; providerName is stable.
+  const visibleProviders = useMemo(() => {
     if (!routing || !data) return [];
     const configuredProviderIds = Object.keys(routing.providers);
     const providers = configuredProviderIds.map((providerId) => {
@@ -1000,7 +1008,42 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     });
 
     return providers.sort((a, b) => a.name.localeCompare(b.name));
-  })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- derived from data, routing, providerName only
+  }, [data, providerName, routing]);
+
+  useEffect(() => {
+    if (!selectedProviderId || visibleProviders.length === 0) return;
+    if (
+      visibleProviders.some((provider) => provider.id === selectedProviderId)
+    ) {
+      return;
+    }
+    onSelectedProviderIdChange(null);
+  }, [onSelectedProviderIdChange, selectedProviderId, visibleProviders]);
+
+  const providerChromePayload = useMemo((): ManagementProviderChrome | null => {
+    if (!selectedProviderId) return null;
+    const provider = visibleProviders.find(
+      (item) => item.id === selectedProviderId,
+    );
+    if (!provider) return null;
+    return {
+      label: provider.name,
+      detail: `${provider.enabledModels.length} 个已启用模型`,
+    };
+  }, [selectedProviderId, visibleProviders]);
+
+  useEffect(() => {
+    if (!onProviderChromeChange || !open || !providerChromePayload) {
+      return;
+    }
+    onProviderChromeChange(providerChromePayload);
+  }, [onProviderChromeChange, open, providerChromePayload]);
+
+  useEffect(() => {
+    if (!onProviderChromeChange) return;
+    return () => onProviderChromeChange(null);
+  }, [onProviderChromeChange]);
 
   const enabledModelReferences = visibleProviders.flatMap((provider) =>
     provider.enabledModels.map((modelId) => ({
@@ -1210,389 +1253,235 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
 
   return (
     <div className="space-y-5" data-section="ai-connection">
-      <div>
-        <h3 className="text-sm font-medium">模型与供应商</h3>
-        <p className="mt-0.5 text-xs text-muted-foreground">
+      {loadError ? (
+        <p className="text-xs text-warning">未能从后端读取配置：{loadError}</p>
+      ) : null}
+      {keysLoading ? (
+        <p className="text-[10px] text-muted-foreground">正在检查已配置凭据…</p>
+      ) : null}
+
+      {!selectedProviderId ? (
+        <p className="text-xs text-muted-foreground">
           供应商只保存 API
           与端点；模型由你手动填写，未添加模型时不会激活或展示任何模型。
         </p>
-        {loadError ? (
-          <p className="mt-2 text-xs text-warning">
-            未能从后端读取配置：{loadError}
-          </p>
-        ) : null}
-        {keysLoading ? (
-          <p className="mt-1 text-[10px] text-muted-foreground">
-            正在检查已配置凭据…
-          </p>
-        ) : null}
-      </div>
+      ) : null}
 
       <section className="space-y-2" data-section="llm-providers">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">
-            供应商配置
-          </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-7 text-xs"
-            onClick={() => setWizardOpen((value) => !value)}
-          >
-            添加供应商
-          </Button>
-        </div>
+        {!selectedProviderId ? (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                供应商配置
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => setWizardOpen((value) => !value)}
+              >
+                添加供应商
+              </Button>
+            </div>
 
-        {wizardOpen ? (
-          <AddModelWizard
-            providers={data.providers}
-            keyConfigured={keyConfigured}
-            keyInputsRef={keyInputsRef}
-            keySaving={keySaving}
-            onKeyInput={(id, value) => {
-              keyInputsRef.current[id] = value;
-              setKeyInputTouch((n) => n + 1);
-            }}
-            onSaveKey={(id) => void saveKey(id)}
-            onCreateCustom={ensureCustomProvider}
-            onBaseUrl={(id, url) => updateProviderBaseUrl(id, url)}
-            onLabel={(id, label) =>
-              updateProviderOverride(id, { label: label.trim() || null })
-            }
-            onClose={() => setWizardOpen(false)}
-          />
+            {wizardOpen ? (
+              <AddModelWizard
+                providers={data.providers}
+                keyConfigured={keyConfigured}
+                keyInputsRef={keyInputsRef}
+                keySaving={keySaving}
+                onKeyInput={(id, value) => {
+                  keyInputsRef.current[id] = value;
+                  setKeyInputTouch((n) => n + 1);
+                }}
+                onSaveKey={(id) => void saveKey(id)}
+                onCreateCustom={ensureCustomProvider}
+                onBaseUrl={(id, url) => updateProviderBaseUrl(id, url)}
+                onLabel={(id, label) =>
+                  updateProviderOverride(id, { label: label.trim() || null })
+                }
+                onClose={() => setWizardOpen(false)}
+              />
+            ) : null}
+
+            {visibleProviders.length === 0 ? (
+              <p className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
+                暂无已配置供应商。点击“添加供应商”保存 Key 或配置本地端点。
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {visibleProviders.map((provider) => {
+                  const providerModels = enabledModelsForProvider(provider.id);
+                  return (
+                    <LlmProviderListCard
+                      key={provider.id}
+                      providerId={provider.id}
+                      providerName={provider.name}
+                      providerModels={providerModels}
+                      keyConfigured={Boolean(keyConfigured[provider.id])}
+                      onSelect={() => onSelectedProviderIdChange(provider.id)}
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </>
         ) : null}
 
-        {visibleProviders.length === 0 ? (
-          <p className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
-            暂无已配置供应商。点击“添加供应商”保存 Key 或配置本地端点。
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {visibleProviders.map((provider) => {
+        {selectedProviderId
+          ? (() => {
+              const provider = visibleProviders.find(
+                (item) => item.id === selectedProviderId,
+              );
+              if (!provider) {
+                return (
+                  <div className="space-y-2 rounded-md border border-border/55 bg-background/60 p-3 text-xs text-muted-foreground">
+                    <p>找不到该供应商，可能已被删除。</p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      onClick={() => onSelectedProviderIdChange(null)}
+                    >
+                      返回列表
+                    </Button>
+                  </div>
+                );
+              }
               const override = routing.providers[provider.id];
               const providerModels = enabledModelsForProvider(provider.id);
               const providerResult = providerResults[provider.id];
               const requiresBaseUrl = providerRequiresBaseUrl(provider.id);
               return (
-                <div
-                  key={provider.id}
-                  data-testid="llm-provider-card"
-                  className="grid gap-3 rounded-md border border-border/55 bg-background/60 p-3 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(18rem,1.4fr)]"
-                >
-                  <div className="min-w-0 space-y-2">
-                    <p className="truncate text-xs font-medium text-foreground">
-                      {provider.name}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {providerModels.length} 个已启用模型
-                    </p>
-                    {isCustomProviderId(provider.id) ? (
-                      <Input
-                        className="h-8 text-xs"
-                        placeholder="显示名称"
-                        defaultValue={override?.label ?? provider.name}
-                        onBlur={(event) =>
-                          updateProviderOverride(provider.id, {
-                            label: event.target.value.trim() || null,
-                          })
-                        }
-                      />
-                    ) : null}
-                    {requiresBaseUrl ? (
-                      <Input
-                        className="h-8 text-xs"
-                        placeholder="自定义端点 Base URL"
-                        value={baseUrlForProvider(provider.id)}
-                        onChange={(event) =>
-                          updateProviderBaseUrl(provider.id, event.target.value)
-                        }
-                      />
-                    ) : (
-                      <p className="rounded-md border border-border/45 bg-background/45 px-3 py-2 text-[11px] text-muted-foreground">
-                        内置供应商使用系统默认端点
-                      </p>
-                    )}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Input
-                        type="password"
-                        className="h-8 w-44 text-xs"
-                        placeholder="API Key…"
-                        value={keyInputsRef.current?.[provider.id] ?? ""}
-                        onChange={(event) => {
-                          keyInputsRef.current[provider.id] =
-                            event.target.value;
-                          setKeyInputTouch((n) => n + 1);
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-8"
-                        disabled={keySaving === provider.id}
-                        onClick={() => void saveKey(provider.id)}
-                      >
-                        保存 Key
-                      </Button>
-                      {keyConfigured[provider.id] ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-8"
-                          onClick={() => void clearKey(provider.id)}
-                        >
-                          清除
-                        </Button>
-                      ) : null}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      {keyConfigured[provider.id]
-                        ? "Key 已配置"
-                        : "需要配置 Key"}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      检查、刷新、验证会优先使用当前输入框 Key；留空则使用已保存
-                      Key。
-                    </p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="h-7 text-xs"
-                        disabled={testing === provider.id}
-                        onClick={() => void testProvider(provider)}
-                      >
-                        {testing === provider.id ? "检查中…" : "检查端点"}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-xs"
-                        disabled={refreshingProvider === provider.id}
-                        onClick={() => void refreshProviderModels(provider)}
-                      >
-                        {refreshingProvider === provider.id
-                          ? "刷新中…"
-                          : "刷新模型"}
-                      </Button>
-                      {provider.configured ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 text-xs text-destructive"
-                          onClick={() => void deleteProvider(provider)}
-                        >
-                          Delete
-                        </Button>
-                      ) : null}
-                    </div>
-                    {providerResult ? (
-                      <p
-                        className={
-                          providerResult.ok
-                            ? "text-[11px] text-success"
-                            : "text-[11px] text-destructive"
-                        }
-                      >
-                        {providerResult.message}
-                      </p>
-                    ) : null}
-                  </div>
-
-                  <div
-                    className="space-y-2"
-                    data-testid="llm-provider-enabled-models"
-                  >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Input
-                        className="h-8 min-w-48 flex-1 text-xs"
-                        placeholder="模型 ID，如 deepseek-v4-flash"
-                        autoCapitalize="none"
-                        autoCorrect="off"
-                        spellCheck={false}
-                        value={newModelInputs[provider.id] ?? ""}
-                        onChange={(event) =>
-                          setNewModelInputs((prev) => ({
-                            ...prev,
-                            [provider.id]: event.target.value,
-                          }))
-                        }
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            addProviderModel(provider.id);
-                          }
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="h-8 text-xs"
-                        onClick={() => addProviderModel(provider.id)}
-                      >
-                        添加模型
-                      </Button>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      可一次粘贴多个模型 ID，用逗号或换行分隔；同一个 Key
-                      会被这些模型共享。
-                    </p>
-                    {providerModels.length === 0 ? (
-                      <p className="rounded-md border border-dashed border-border/50 px-3 py-2 text-[11px] text-muted-foreground">
-                        未添加模型时不会激活或展示任何模型。
-                      </p>
-                    ) : (
-                      providerModels.map((model) => {
-                        const key = registryKey(provider.id, model.id);
-                        const result = testResults[key];
-                        const modelTesting = testing === key;
-                        const reasoningSummary = reasoningCapabilitySummary(
-                          reasoningCapabilityForModel(provider.id, model.id),
-                        );
-                        const summary = modelCapabilitySummary(
-                          model,
-                          result,
-                          reasoningSummary,
-                        );
-                        return (
-                          <div
-                            key={model.id}
-                            className="rounded-md border border-border/45 bg-background/50 p-2"
-                          >
-                            <div className="flex flex-wrap items-start justify-between gap-2">
-                              <div className="flex min-w-0 flex-1 items-start gap-2">
-                                <span className="min-w-0">
-                                  <span className="block truncate font-mono text-xs font-medium text-foreground">
-                                    {model.id}
-                                  </span>
-                                  {model.catalog?.displayName ? (
-                                    <span className="block truncate text-[11px] text-muted-foreground">
-                                      {model.catalog.displayName}
-                                    </span>
-                                  ) : null}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="secondary"
-                                  className="h-7 text-xs"
-                                  disabled={modelTesting}
-                                  onClick={() =>
-                                    void validateProviderModel(provider, model)
-                                  }
-                                >
-                                  {modelTesting ? "验证中…" : "验证模型"}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="ghost"
-                                  className="h-7 text-xs"
-                                  onClick={() =>
-                                    removeProviderModel(provider.id, model.id)
-                                  }
-                                >
-                                  移除
-                                </Button>
-                              </div>
-                            </div>
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                              <span
-                                className={
-                                  result?.ok === false
-                                    ? "text-[11px] text-destructive"
-                                    : "text-[11px] text-muted-foreground"
-                                }
-                              >
-                                {summary}
-                              </span>
-                              <ModelDebugDetails model={model.catalog} />
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
+                <LlmProviderDetail
+                  provider={provider}
+                  override={override}
+                  providerModels={providerModels}
+                  providerResult={providerResult}
+                  requiresBaseUrl={requiresBaseUrl}
+                  baseUrl={baseUrlForProvider(provider.id)}
+                  keyInput={keyInputsRef.current?.[provider.id] ?? ""}
+                  keyConfigured={Boolean(keyConfigured[provider.id])}
+                  keySaving={keySaving === provider.id}
+                  testing={testing}
+                  refreshingProvider={refreshingProvider}
+                  newModelInput={newModelInputs[provider.id] ?? ""}
+                  testResults={testResults}
+                  modelSummary={modelCapabilitySummary}
+                  reasoningSummaryForModel={(modelId) =>
+                    reasoningCapabilitySummary(
+                      reasoningCapabilityForModel(provider.id, modelId),
+                    )
+                  }
+                  onKeyInput={(value) => {
+                    keyInputsRef.current[provider.id] = value;
+                    setKeyInputTouch((n) => n + 1);
+                  }}
+                  onSaveKey={() => void saveKey(provider.id)}
+                  onClearKey={() => void clearKey(provider.id)}
+                  onTestProvider={() => void testProvider(provider)}
+                  onRefreshModels={() => void refreshProviderModels(provider)}
+                  onDeleteProvider={() => void deleteProvider(provider)}
+                  onBaseUrlChange={(url) =>
+                    updateProviderBaseUrl(provider.id, url)
+                  }
+                  onLabelChange={(label) =>
+                    updateProviderOverride(provider.id, {
+                      label: label || null,
+                    })
+                  }
+                  onNewModelInputChange={(value) =>
+                    setNewModelInputs((prev) => ({
+                      ...prev,
+                      [provider.id]: value,
+                    }))
+                  }
+                  onAddModel={() => addProviderModel(provider.id)}
+                  onValidateModel={(model) =>
+                    void validateProviderModel(provider, model)
+                  }
+                  onRemoveModel={(modelId) =>
+                    removeProviderModel(provider.id, modelId)
+                  }
+                />
               );
-            })}
+            })()
+          : null}
+      </section>
+
+      {!selectedProviderId ? (
+        <>
+          <section className="space-y-2" data-section="llm-model-pool">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                模型池与默认模型
+              </p>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              所有已启用模型构成同一候选池。任务按文本、工具、视觉、推理和上下文预算筛选；默认模型满足条件时优先使用，否则按稳定顺序切换到其他合格模型。
+            </p>
+            {enabledModelReferences.length === 0 ? (
+              <Input
+                className="h-8 text-xs"
+                value=""
+                placeholder="先在供应商配置中添加并启用模型"
+                disabled
+              />
+            ) : (
+              <Select
+                value={selectedDefaultModel}
+                onValueChange={(value) => {
+                  const parsed: unknown = JSON.parse(value);
+                  if (
+                    !Array.isArray(parsed) ||
+                    typeof parsed[0] !== "string" ||
+                    typeof parsed[1] !== "string"
+                  ) {
+                    return;
+                  }
+                  applyRouting({
+                    ...routing,
+                    defaultModel: { providerId: parsed[0], modelId: parsed[1] },
+                  });
+                }}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="选择默认模型" />
+                </SelectTrigger>
+                <SelectContent>
+                  {enabledModelReferences.map((model) => (
+                    <SelectItem
+                      key={modelReferenceValue(model.providerId, model.modelId)}
+                      value={modelReferenceValue(
+                        model.providerId,
+                        model.modelId,
+                      )}
+                    >
+                      {model.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </section>
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              disabled={saving || Boolean(loadError)}
+              onClick={() => void saveRouting()}
+            >
+              {saving ? "保存中…" : "保存模型池"}
+            </Button>
+            {message ? (
+              <span className="text-xs text-muted-foreground">{message}</span>
+            ) : null}
           </div>
-        )}
-      </section>
-
-      <section className="space-y-2" data-section="llm-model-pool">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">
-            模型池与默认模型
-          </p>
-        </div>
-        <p className="text-[11px] text-muted-foreground">
-          所有已启用模型构成同一候选池。任务按文本、工具、视觉、推理和上下文预算筛选；默认模型满足条件时优先使用，否则按稳定顺序切换到其他合格模型。
-        </p>
-        {enabledModelReferences.length === 0 ? (
-          <Input
-            className="h-8 text-xs"
-            value=""
-            placeholder="先在供应商配置中添加并启用模型"
-            disabled
-          />
-        ) : (
-          <Select
-            value={selectedDefaultModel}
-            onValueChange={(value) => {
-              const parsed: unknown = JSON.parse(value);
-              if (
-                !Array.isArray(parsed) ||
-                typeof parsed[0] !== "string" ||
-                typeof parsed[1] !== "string"
-              ) {
-                return;
-              }
-              applyRouting({
-                ...routing,
-                defaultModel: { providerId: parsed[0], modelId: parsed[1] },
-              });
-            }}
-          >
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="选择默认模型" />
-            </SelectTrigger>
-            <SelectContent>
-              {enabledModelReferences.map((model) => (
-                <SelectItem
-                  key={modelReferenceValue(model.providerId, model.modelId)}
-                  value={modelReferenceValue(model.providerId, model.modelId)}
-                >
-                  {model.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-      </section>
-
-      <div className="flex items-center gap-2">
-        <Button
-          type="button"
-          size="sm"
-          disabled={saving || Boolean(loadError)}
-          onClick={() => void saveRouting()}
-        >
-          {saving ? "保存中…" : "保存模型池"}
-        </Button>
-        {message ? (
-          <span className="text-xs text-muted-foreground">{message}</span>
-        ) : null}
-      </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1705,47 +1594,6 @@ function AddModelWizard({
         </span>
       </div>
     </div>
-  );
-}
-
-function ModelDebugDetails({
-  model,
-}: {
-  model: ModelCatalogEntry | undefined;
-}) {
-  if (!model) {
-    return (
-      <details className="text-[10px] text-muted-foreground">
-        <summary className="cursor-pointer select-none">详情</summary>
-        <span className="mt-1 inline-block rounded border border-border/50 px-1.5 py-0.5">
-          manual model
-        </span>
-      </details>
-    );
-  }
-  const tags = [
-    model.supportsVision ? "vision" : null,
-    model.supportsTools ? "tools" : null,
-    model.supportsStreaming ? "streaming" : null,
-    model.supportsThinking ? "reasoning" : null,
-    `${Math.round(model.contextWindow / 1000)}k ctx`,
-    model.endpointFamily,
-  ].filter((tag): tag is string => Boolean(tag));
-
-  return (
-    <details className="text-[10px] text-muted-foreground">
-      <summary className="cursor-pointer select-none">详情</summary>
-      <div className="mt-1 flex flex-wrap items-center gap-1">
-        {tags.map((tag) => (
-          <span
-            key={tag}
-            className="rounded border border-border/50 px-1.5 py-0.5"
-          >
-            {tag}
-          </span>
-        ))}
-      </div>
-    </details>
   );
 }
 

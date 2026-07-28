@@ -13,6 +13,7 @@ fn envelope(context: ContextMode, material_needs: Vec<MaterialNeed>) -> Executio
         context,
         freshness: Freshness::Offline,
         web_reason: WebDecisionReason::LegacyUnknown,
+        verification_requirement: crate::ai_runtime::run_contract::VerificationRequirement::None,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,

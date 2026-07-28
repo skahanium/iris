@@ -87,7 +87,8 @@ function loadLegacyAssistantIdentity(): LegacyAssistantIdentity | null {
   }
 }
 
-function clearLegacyAssistantIdentity(): void {
+/** Clear legacy storage only after the normalized profile has reached SQLite. */
+export function clearPersistedLegacyAssistantIdentity(): void {
   if (typeof localStorage === "undefined") return;
   localStorage.removeItem(LEGACY_IDENTITY_STORAGE_KEY);
 }
@@ -108,7 +109,6 @@ export function mergeLegacyAssistantIdentity(profile: PromptProfileDto): {
     sanitizeDisplayName(profile.display_name) === DEFAULT_DISPLAY_NAME;
 
   if (!isDefaultDisplay && !legacyName && !legacyEmoji) {
-    clearLegacyAssistantIdentity();
     return { profile, migrated: false };
   }
 
@@ -122,7 +122,6 @@ export function mergeLegacyAssistantIdentity(profile: PromptProfileDto): {
         : profile.avatar_emoji,
   });
 
-  clearLegacyAssistantIdentity();
   return { profile: next, migrated: true };
 }
 

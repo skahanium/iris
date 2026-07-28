@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use super::agent_capacity_eval::{
     spawn_llm_protocol_double, EvaluationTelemetryTap, HttpResponseScript,
@@ -7,19 +8,21 @@ use super::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
 use super::agent_tool_loop::ToolLoopExecutor;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::ModelGateway;
-use super::normal_run_service::{execute_normal_run, execute_normal_run_with_eval_telemetry};
+use super::normal_run_service::{
+    execute_normal_run, execute_normal_run_with_eval_telemetry,
+    required_web_query_from_user_history,
+};
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
-    AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, RunEventPayload, RunEventType,
-    RunState, SecurityDomain,
+    AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, RunEventPayload,
+    RunEventType, RunState, SecurityDomain,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
 use super::run_intake::RunIntake;
 use super::run_tool_loop::NormalRunToolExecutor;
 use super::tool_executor::ToolRegistry;
-use super::tool_policy::ToolPolicyContext;
-use super::{AutonomyLevel, ToolCall};
+use super::ToolCall;
 use crate::ai_types::{EndpointFamily, ProviderConfig};
 use crate::app::AppState;
 use crate::error::AppResult;
@@ -67,11 +70,60 @@ fn web_tool_loop_request() -> AssistantRunStartRequest {
     request
 }
 
-fn install_headless_contract_mcp(state: &AppState) {
-    let fixture = format!(
-        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-        env!("CARGO_MANIFEST_DIR")
+#[test]
+fn required_web_query_avoids_polluting_a_new_question_with_retry_chatter() {
+    let history = vec![
+        "你再试试?".to_string(),
+        "这不会是 OpenAI 自导自演的吧？".to_string(),
+    ];
+
+    assert_eq!(
+        required_web_query_from_user_history(
+            "为什么我总觉得 OpenAI 和 Anthropic 的负责人表演欲望都严重过头？",
+            &history,
+        ),
+        "为什么我总觉得 OpenAI 和 Anthropic 的负责人表演欲望都严重过头？"
     );
+}
+
+#[test]
+fn required_web_query_uses_last_substantive_turn_for_a_retry_instruction() {
+    let history = vec![
+        "你再试试?".to_string(),
+        "详细讲一下 OpenAI AI 智能体越狱事件".to_string(),
+    ];
+
+    assert_eq!(
+        required_web_query_from_user_history("你再试试?", &history),
+        "详细讲一下 OpenAI AI 智能体越狱事件\n你再试试?"
+    );
+}
+
+fn install_headless_contract_mcp(state: &AppState) {
+    let (command, args) = if cfg!(windows) {
+        let fixture = format!(
+            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        (
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                fixture,
+                "search-only".to_string(),
+            ],
+        )
+    } else {
+        let fixture = format!(
+            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        ("/bin/sh", vec![fixture, "search-only".to_string()])
+    };
     upsert_web_evidence_provider(
         &state.db,
         &WebEvidenceProviderInput {
@@ -81,8 +133,8 @@ fn install_headless_contract_mcp(state: &AppState) {
             enabled: true,
             transport_kind: "stdio".into(),
             transport_config_json: serde_json::json!({
-                "command": "/bin/sh",
-                "args": [fixture, "search-only"],
+                "command": command,
+                "args": args,
             })
             .to_string(),
             credential_refs_json: "{}".into(),
@@ -107,6 +159,13 @@ async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
         .expect("run snapshot")
         .expect("persisted run");
     assert_eq!(response.run.state, RunState::Failed);
+    assert!(matches!(
+        response.events.last().map(AssistantRunEvent::payload),
+        Some(RunEventPayload::Failed {
+            code: super::run_contract::SafeRunErrorCode::WebVerificationRequired,
+            ..
+        })
+    ));
     let event_types = sink
         .events
         .lock()
@@ -122,6 +181,76 @@ async fn headless_normal_direct_run_preserves_terminal_and_content_lifecycle() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, "user");
     assert_eq!(messages[0].content, "请概述当前信息");
+}
+
+#[tokio::test]
+async fn normal_run_injects_cached_confirmed_skill_after_source_file_is_removed() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let vault = directory.path().join("vault");
+    std::fs::create_dir_all(&vault).expect("vault directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    state.set_vault(vault.clone()).expect("activate vault");
+    let skill_path = vault.join(".iris/skills/run-skill/SKILL.md");
+    let skill_target = std::path::PathBuf::from("run-skill/SKILL.md");
+    let skill = crate::ai_runtime::skills::write_confirmed_skill_content(
+        &vault,
+        &skill_target,
+        crate::ai_runtime::skills::SkillScope::Vault,
+        "---\nname: run-skill\ndescription: run-skill applies a confirmed response style\n---\n\nAlways include the marker SKILL-RUN-CACHED.",
+    )
+    .expect("write confirmed skill");
+    state
+        .upsert_cached_skill_for_vault(&vault, skill)
+        .expect("cache confirmed skill");
+    std::fs::remove_file(skill_path).expect("remove source after caching");
+
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"已答复\"}}]}\n\ndata: [DONE]\n\n",
+    )])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["cached-skill-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "cached-skill-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "cached-skill-production-run".into();
+    request.turn.message =
+        "Summarize the authorized local project material using run-skill.".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
+
+    execute_normal_run(
+        Arc::clone(&state),
+        accepted.clone(),
+        Some(vault),
+        None,
+        &sink,
+    )
+    .await;
+
+    let captures = llm.finish().await.expect("LLM completion");
+    let system_prompt = captures[0].body["messages"][0]["content"]
+        .as_str()
+        .expect("system prompt text");
+    assert!(system_prompt.contains("## Activated Skills"));
+    assert!(system_prompt.contains("SKILL-RUN-CACHED"));
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("persisted run");
+    assert_eq!(response.run.state, RunState::Completed);
 }
 
 #[tokio::test]
@@ -158,14 +287,7 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
         None,
         &accepted,
         &context,
-        ToolPolicyContext {
-            autonomy_level: AutonomyLevel::L2,
-            web_search_enabled: false,
-            allow_writes: false,
-            allow_research: false,
-            allow_skill_management: false,
-            allow_implicit_vault: false,
-        },
+        vec![CapabilityId::new("runtime.read")],
         &sink,
         None,
     );
@@ -207,7 +329,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
             "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"headless-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
         ),
         HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。\"}}]}\n\ndata: [DONE]\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"联网证据已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
         ),
     ])
     .await
@@ -225,18 +347,21 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         256,
     )
     .expect("model gateway provider");
-    let policy = ToolPolicyContext {
-        autonomy_level: AutonomyLevel::L2,
-        web_search_enabled: true,
-        allow_writes: false,
-        allow_research: true,
-        allow_skill_management: false,
-        allow_implicit_vault: true,
-    };
-    let tools = ToolRegistry::new().tools_for_policy_surface(&policy, true);
+    let capabilities = vec![CapabilityId::new("web.search")];
+    let tools = ToolRegistry::new().tools_for_authorized_capabilities(&capabilities, true);
     assert!(tools.iter().any(|tool| tool.name == "web_search"));
-    let executor =
-        NormalRunToolExecutor::new(&state, None, &accepted, &context, policy, &sink, None);
+    let provider_snapshot =
+        super::mcp_runtime_registry::resolve_selected_web_search_provider(&state.db)
+            .expect("freeze selected MCP provider before the model tool loop");
+    let executor = NormalRunToolExecutor::new(
+        &state,
+        None,
+        &accepted,
+        &context,
+        capabilities,
+        &sink,
+        Some(provider_snapshot),
+    );
 
     RunEngine::execute_tool_loop_with_sink(
         &state.db,
@@ -285,14 +410,9 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
     let directory = tempfile::tempdir().expect("temporary app directory");
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
-    let llm = spawn_llm_protocol_double(vec![
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"service-web-call\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"{\\\"query\\\":\\\"synthetic\\\"}\"}}]}}]}\n\ndata: [DONE]\n\n",
-        ),
-        HttpResponseScript::sse(
-            "data: {\"choices\":[{\"delta\":{\"content\":\"服务链路已核实。\"}}]}\n\ndata: [DONE]\n\n",
-        ),
-    ])
+    let llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"服务链路已核实。[W1]\"}}]}\n\ndata: [DONE]\n\n",
+    )])
     .await
     .expect("local LLM boundary");
     let mut routing = LlmRoutingConfig::default();
@@ -315,18 +435,129 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
     let sink = RecordingSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, web_tool_loop_request(), &sink)
         .expect("accepted web tool-loop run");
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink),
+    )
+    .await
+    .expect("strict service path must finish within its bounded evidence budget");
+
+    let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+        .expect("run snapshot")
+        .expect("completed run");
+    assert_eq!(
+        response.run.state,
+        RunState::Completed,
+        "terminal events: {:?}",
+        response
+            .events
+            .iter()
+            .map(AssistantRunEvent::payload)
+            .collect::<Vec<_>>()
+    );
+
+    let calls = tokio::time::timeout(Duration::from_secs(2), llm.finish())
+        .await
+        .expect("strict service path must reach the one model turn")
+        .expect("LLM double completion");
+    assert_eq!(
+        calls.len(),
+        1,
+        "strict Web service path uses one model turn"
+    );
+    let tool_names = calls[0].body["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|tool| tool["function"]["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        tool_names.is_empty(),
+        "a strict Web-only Run must not expose unrelated tools to the model: {tool_names:?}"
+    );
+    assert!(response
+        .events
+        .iter()
+        .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+}
+
+#[tokio::test]
+async fn normal_service_executes_depth_one_child_run_on_the_real_provider_route() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    let llm = spawn_llm_protocol_double(vec![
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"parent-spawn\",\"type\":\"function\",\"function\":{\"name\":\"spawn_subagent\",\"arguments\":\"{\\\"task\\\":\\\"读取当前时间\\\",\\\"allowed_tools\\\":[\\\"system_time_now\\\",\\\"memory_write\\\",\\\"spawn_subagent\\\"]}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"child-time\",\"type\":\"function\",\"function\":{\"name\":\"system_time_now\",\"arguments\":\"{}\"}}]}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"子任务已读取当前时间。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+        HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"父级已整合子任务结果。\"}}]}\n\ndata: [DONE]\n\n",
+        ),
+    ])
+    .await
+    .expect("local LLM boundary");
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".into(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["child-run-model".into()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".into(),
+        model_id: "child-run-model".into(),
+    });
+    crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
+    state.set_test_streaming_client(reqwest::Client::new());
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "normal-service-child-run".into();
+    request.turn.message = "请委派一个子任务读取当前时间后汇总。".into();
+    let accepted =
+        RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted child-run request");
+
     execute_normal_run(Arc::clone(&state), accepted.clone(), None, None, &sink).await;
 
     let calls = llm.finish().await.expect("LLM double completion");
     let response = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
         .expect("run snapshot")
         .expect("completed run");
-    assert_eq!(calls.len(), 2, "service must complete a tool continuation");
-    assert_eq!(response.run.state, RunState::Completed);
-    assert!(response
-        .events
+    assert_eq!(
+        calls.len(),
+        4,
+        "parent and child must each complete their loop"
+    );
+    let child_tools = calls[1].body["tools"]
+        .as_array()
+        .expect("child tool surface");
+    let child_tool_names = child_tools
         .iter()
-        .any(|event| matches!(event.payload(), RunEventPayload::EvidenceRegistered { .. })));
+        .filter_map(|tool| tool["function"]["name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(child_tool_names.contains(&"system_time_now"));
+    assert!(!child_tool_names.contains(&"memory_write"));
+    assert!(!child_tool_names.contains(&"spawn_subagent"));
+    assert_eq!(response.run.state, RunState::Completed);
+    let child_depth = state
+        .db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT subagent_depth FROM tool_audit WHERE run_id = ?1 AND tool_name = 'system_time_now'",
+                [&accepted.run_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("child tool audit");
+    assert_eq!(child_depth, 1);
 }
 
 #[tokio::test]
@@ -355,8 +586,9 @@ async fn evaluation_headless_entry_observes_the_real_normal_service_direct_path(
     crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
     state.set_test_streaming_client(reqwest::Client::new());
     let sink = RecordingSink::default();
-    let accepted =
-        RunIntake::start_with_sink(&state.db, direct_request(), &sink).expect("accepted run");
+    let mut request = direct_request();
+    request.turn.message = "hello".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
     let telemetry = EvaluationTelemetryTap::default();
 
     execute_normal_run_with_eval_telemetry(

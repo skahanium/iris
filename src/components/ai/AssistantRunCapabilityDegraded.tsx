@@ -1,4 +1,8 @@
 import type { AssistantRunEventPayload } from "@/types/ai";
+import {
+  triageWebCapabilityDegradation,
+  WEB_CAPABILITY_DEGRADATION_DOMAIN_LABEL,
+} from "@/lib/web-capability-degradation-triage";
 
 interface AssistantRunCapabilityDegradedProps {
   degradation: Extract<
@@ -98,6 +102,7 @@ export function AssistantRunCapabilityDegraded({
   const retryHint = degradation.retryable
     ? "可稍后重试联网核实。"
     : "请检查联网配置或稍后重新发起核实。";
+  const triage = triageWebCapabilityDegradation(degradation.code);
 
   return (
     <div
@@ -110,6 +115,46 @@ export function AssistantRunCapabilityDegraded({
       <p>
         {degradation.message} {retryHint}
       </p>
+      <details
+        className="mt-2 text-[11px]"
+        data-testid="assistant-run-capability-degraded-diagnostics"
+      >
+        <summary className="cursor-pointer select-none text-foreground/70">
+          排查信息
+        </summary>
+        <dl className="mt-2 space-y-1.5 font-mono text-[10px] tabular-nums leading-relaxed">
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted-foreground">capability</dt>
+            <dd className="text-foreground">{degradation.capability}</dd>
+          </div>
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted-foreground">code</dt>
+            <dd className="text-foreground">{degradation.code}</dd>
+          </div>
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted-foreground">attemptCount</dt>
+            <dd className="text-foreground">{degradation.attemptCount}</dd>
+          </div>
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted-foreground">retryable</dt>
+            <dd className="text-foreground">
+              {degradation.retryable ? "true" : "false"}
+            </dd>
+          </div>
+          <div className="flex flex-wrap gap-x-2">
+            <dt className="text-muted-foreground">domain</dt>
+            <dd className="text-foreground">
+              {WEB_CAPABILITY_DEGRADATION_DOMAIN_LABEL[triage.domain]}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">建议</dt>
+            <dd className="mt-0.5 font-sans text-foreground/90">
+              {triage.nextStep}
+            </dd>
+          </div>
+        </dl>
+      </details>
     </div>
   );
 }

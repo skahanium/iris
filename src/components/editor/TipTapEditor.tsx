@@ -91,6 +91,7 @@ import { IrisDocument } from "./extensions/IrisDocument";
 import { isSafeHref, LinkExtension } from "./extensions/LinkExtension";
 
 import { CalloutBlockquoteExtension } from "./extensions/CalloutBlockquoteExtension";
+import { CjkPunctuationExtension } from "./extensions/CjkPunctuationExtension";
 import { PreserveBlockExtension } from "./extensions/PreserveBlockExtension";
 import { PreserveInlineExtension } from "./extensions/PreserveInlineExtension";
 
@@ -185,7 +186,6 @@ interface TipTapEditorProps {
 
   /** When true, refresh status-bar stats (e.g. tab became visible). */
   statsReportingActive?: boolean;
-
   /** Synchronously guards imperative mutations while departure persistence holds a lease. */
   mutationBlocked?: () => boolean;
 
@@ -194,6 +194,9 @@ interface TipTapEditorProps {
   mediaLoading?: "deferred" | "visible";
 
   setLocked?: (locked: boolean) => void;
+
+  /** 在中文上下文中自动把 ASCII 标点转为全角（管理中心可关）。 */
+  cjkPunctuationEnabled?: boolean;
 }
 
 function TipTapEditorInner({
@@ -257,11 +260,15 @@ function TipTapEditorInner({
   mediaLoading = "visible",
 
   setLocked,
+  cjkPunctuationEnabled = true,
 }: TipTapEditorProps) {
   const lockedRef = useRef(locked);
   lockedRef.current = locked;
   const mutationBlockedRef = useRef(mutationBlocked);
   mutationBlockedRef.current = mutationBlocked;
+  // 用 ref 透传开关：避免把 cjkPunctuationEnabled 加入 useEditor deps 触发编辑器重建
+  const cjkPunctuationRef = useRef(cjkPunctuationEnabled);
+  cjkPunctuationRef.current = cjkPunctuationEnabled;
 
   const mutationAllowed = useCallback(
     () => !lockedRef.current && !mutationBlockedRef.current(),
@@ -419,6 +426,10 @@ function TipTapEditorInner({
       ImeCompositionGuardExtension,
 
       IrisParagraphExtension,
+
+      CjkPunctuationExtension.configure({
+        isEnabled: () => cjkPunctuationRef.current,
+      }),
 
       ListIndentKeymapExtension,
 

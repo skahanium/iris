@@ -1,0 +1,53 @@
+name: Long Conversation Pressure
+
+on:
+  schedule:
+    # GitHub Actions cron uses UTC: 18:00 UTC is 02:00 Asia/Shanghai.
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: long-conversation-pressure-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pressure:
+    name: Long conversation lifecycle pressure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential curl file libayatana-appindicator3-dev libssl-dev libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev patchelf wget
+
+      - name: Run deterministic direct conversation pressure test
+        working-directory: src-tauri
+        run: cargo test multi_turn_pressure_keeps_recent_context_bounded_and_memory_disjoint
+
+      - name: Run deterministic strict Web conversation pressure test
+        working-directory: src-tauri
+        run: cargo test strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_calls
+
+      - name: Run cancellation and retraction lifecycle pressure test
+        working-directory: src-tauri
+        run: cargo test long_conversation_cancel_retract_and_resume_keeps_context_and_terminals_consistent
+
+      - name: Run production history boundary pressure staircase
+        working-directory: src-tauri
+        run: cargo test input_history_and_material_staircases_execute_five_repetitions_per_level

@@ -91,13 +91,6 @@ export interface FileWriteResult {
   indexStatus: FileWriteIndexStatus;
 }
 
-export interface LlmProviderInfo {
-  id: string;
-  name: string;
-  default_model: string;
-  endpointManaged: "builtin" | "custom";
-}
-
 export type CredentialState = "available" | "missing";
 
 export interface CredentialStatus {
@@ -244,61 +237,6 @@ export interface SandboxProfileSummary {
   limitations: string[];
 }
 
-export interface ToolConfirmRequestEvent {
-  request_id: string;
-  tool_call_id: string;
-  tool_name: string;
-  arguments: Record<string, string | number | boolean | null | undefined>;
-  permissionEffects?: PermissionEffectSummary[];
-  permissionDecision?: PermissionDecisionOutcome;
-  sandboxProfile?: SandboxProfileSummary;
-  pendingConfirmationIndex?: number;
-  pendingConfirmationCount?: number;
-  preview?: Record<string, unknown>;
-}
-
-export type StreamSurface = "internal_candidate" | "visible_answer";
-
-export interface LlmTokenEvent {
-  request_id: string;
-  token: string;
-  index: number;
-  classified?: boolean;
-  surface?: StreamSurface;
-  candidate_kind?: "internal_candidate" | "visible_answer_candidate";
-}
-
-export interface LlmDoneEvent {
-  request_id?: string;
-  classified?: boolean;
-  surface?: StreamSurface;
-  candidate_kind?: "internal_candidate" | "visible_answer_candidate";
-}
-
-export interface LlmErrorEvent {
-  request_id?: string;
-  error?: string;
-  classified?: boolean;
-  surface?: StreamSurface;
-  candidate_kind?: "internal_candidate" | "visible_answer_candidate";
-  /** False means the backend is retrying and the stream listener must stay active. */
-  final?: boolean;
-}
-
-export interface LlmResetEvent {
-  request_id?: string;
-  reason_kind?:
-    | "parse_retry"
-    | "tool_round"
-    | "need_more_evidence"
-    | "reflection_no_answer"
-    | "unknown";
-  classified?: boolean;
-  surface?: StreamSurface;
-  candidate_kind?: "internal_candidate" | "visible_answer_candidate";
-  round?: number | null;
-}
-
 export interface AiRetryStatusEvent {
   request_id: string;
   attempt: number;
@@ -320,18 +258,6 @@ export interface AiThinkingEvent {
   round: number;
   has_internal_thinking?: boolean;
   content_chars?: number;
-}
-
-/** Harness agent loop tool execution trace (backend `ai:harness_trace`). */
-export interface HarnessTraceEvent {
-  request_id: string;
-  round: number;
-  phase?: string;
-  tool_name: string;
-  status: string;
-  duration_ms?: number | null;
-  message?: string | null;
-  output_preview?: string | null;
 }
 
 export interface BacklinkEntry {
@@ -459,20 +385,6 @@ export interface DocumentRecoveryAudit {
   missingDocuments: MissingDocumentRecoveryItem[];
   orphanedDocuments: OrphanedDocumentRecoveryItem[];
   unavailableDocuments: UnavailableDocumentRecoveryItem[];
-}
-
-/** Legacy completion event emitted by older app builds. */
-export interface VersionSaveCompleteEvent {
-  path: string;
-  kind: VersionKind | "manual" | "auto_idle";
-  created: boolean;
-  versionId: number | null;
-  skipReason?:
-    | "duplicate_hash"
-    | "auto_idle_any_snapshot_cooldown"
-    | "auto_idle_interval_cooldown"
-    | null;
-  error: string | null;
 }
 
 // AI Runtime IPC types

@@ -130,6 +130,7 @@ describe("SessionHistoryDropdown", () => {
     });
     expect(mockAssistantSessionLoad).toHaveBeenCalledWith({
       session: summary.session,
+      limit: 240,
     });
     expect(mockAssistantRunGet).toHaveBeenCalledWith({
       session: summary.session,
@@ -147,6 +148,54 @@ describe("SessionHistoryDropdown", () => {
       ],
       null,
     );
+  });
+
+  it("hands the latest 240 persisted messages to the restored session", async () => {
+    const summary: AssistantSessionSummary = {
+      session: { domain: "normal", sessionKey: "conversation-240" },
+      title: "Long restored conversation",
+      messageCount: 260,
+      createdAt: "2026-07-27T08:00:00.000Z",
+      updatedAt: "2026-07-27T08:01:00.000Z",
+    };
+    const messages = Array.from({ length: 240 }, (_, offset) => {
+      const seq = offset + 21;
+      return {
+        seq,
+        role: seq % 2 === 0 ? "assistant" : "user",
+        content: `message-${seq}`,
+        explicitReferences: [],
+        contextScope: [],
+        displayMentions: [],
+        createdAt: "2026-07-27T08:01:00.000Z",
+      } satisfies AssistantSessionMessage;
+    });
+    mockAssistantSessionList.mockResolvedValue([summary]);
+    mockAssistantSessionLoad.mockResolvedValue(messages);
+    mockAssistantRunGet.mockResolvedValue(null);
+    const onSelectSession = renderHistory();
+
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="session-history-trigger"]',
+        )
+        ?.click();
+    });
+    await flushPromises();
+    const sessionRow = Array.from(
+      document.querySelectorAll<HTMLElement>('[role="button"]'),
+    ).find((element) => element.textContent?.includes(summary.title));
+
+    await act(async () => {
+      sessionRow?.click();
+      await Promise.resolve();
+    });
+
+    const restored = vi.mocked(onSelectSession).mock.calls[0]?.[1];
+    expect(restored).toHaveLength(240);
+    expect(restored?.[0]?.seq).toBe(21);
+    expect(restored?.at(-1)?.seq).toBe(260);
   });
 
   it("restores persisted process events only onto their assistant message", async () => {

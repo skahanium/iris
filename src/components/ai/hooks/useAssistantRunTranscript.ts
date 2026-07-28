@@ -6,11 +6,16 @@ import { ensureTerminalAnswerComplete } from "@/lib/ensure-answer-complete-proce
 import type { AssistantPresentationState } from "@/lib/assistant-presentation";
 import { deriveRunOutputting } from "@/lib/assistant-run-activity";
 import type { AssistantRunEventState } from "@/lib/assistant-run-events";
-import type { ClassifiedRunResultRequest } from "@/types/ai";
+import { assistantSessionLoad } from "@/lib/ipc";
+import type {
+  AssistantSessionRef,
+  ClassifiedRunResultRequest,
+} from "@/types/ai";
 
 export interface AssistantRunTranscriptOptions {
   run: AssistantRunEventState | null;
   presentation?: AssistantPresentationState | null;
+  session?: AssistantSessionRef | null;
   messages: readonly ChatLine[];
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setStreaming: (streaming: boolean) => void;
@@ -26,6 +31,7 @@ export interface AssistantRunTranscriptOptions {
 export function useAssistantRunTranscript({
   run,
   presentation,
+  session,
   messages,
   setMessages,
   setStreaming,
@@ -35,6 +41,50 @@ export function useAssistantRunTranscript({
   takeClassifiedResult,
 }: AssistantRunTranscriptOptions) {
   const appliedEventRef = useRef<string | null>(null);
+  const webCitationsHydratedRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (
+      !run ||
+      run.state !== "completed" ||
+      !session ||
+      session.domain !== "normal"
+    ) {
+      return;
+    }
+    const runId = run.runId;
+    if (webCitationsHydratedRef.current.has(runId)) {
+      return;
+    }
+    webCitationsHydratedRef.current.add(runId);
+    void assistantSessionLoad({ session, limit: 48 })
+      .then((loaded) => {
+        const persisted = loaded.find(
+          (message) =>
+            message.role === "assistant" &&
+            message.runId === runId &&
+            message.webCitations &&
+            message.webCitations.length > 0,
+        );
+        if (!persisted?.webCitations?.length) {
+          return;
+        }
+        setMessages((previous) =>
+          previous.map((message) =>
+            message.role === "assistant" && message.runId === runId
+              ? {
+                  ...message,
+                  webCitations: persisted.webCitations,
+                  citationBinding: persisted.citationBinding,
+                }
+              : message,
+          ),
+        );
+      })
+      .catch(() => {
+        webCitationsHydratedRef.current.delete(runId);
+      });
+  }, [run, session, setMessages]);
 
   // Streaming must also react to presentation.answerComplete without a new durable seq.
   useEffect(() => {

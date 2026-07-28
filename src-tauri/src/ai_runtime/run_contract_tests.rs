@@ -13,6 +13,7 @@ fn direct_answer_envelope() -> ExecutionEnvelope {
         context: ContextMode::Conversation,
         freshness: Freshness::Offline,
         web_reason: WebDecisionReason::LegacyUnknown,
+        verification_requirement: crate::ai_runtime::run_contract::VerificationRequirement::None,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,
@@ -294,6 +295,7 @@ fn execution_envelope_uses_the_same_camel_case_wire_fields_as_typescript() {
             "context": "conversation",
             "freshness": "offline",
             "webReason": "legacy_unknown",
+            "verificationRequirement": "none",
             "effort": "direct",
             "securityDomain": "normal",
             "risk": "read_only",
@@ -321,18 +323,22 @@ fn historical_envelope_without_web_reason_deserializes_safely() {
     }))
     .expect("legacy envelope remains readable");
 
-    assert_eq!(envelope.freshness, Freshness::Online);
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
     assert_eq!(envelope.web_reason, WebDecisionReason::LegacyUnknown);
+    assert_eq!(
+        envelope.verification_requirement,
+        super::run_contract::VerificationRequirement::None
+    );
 }
 
 #[test]
-fn online_and_reason_use_stable_wire_values() {
+fn web_preferred_and_reason_use_stable_wire_values() {
     let mut envelope = direct_answer_envelope();
-    envelope.freshness = Freshness::Online;
+    envelope.freshness = Freshness::WebPreferred;
     envelope.web_reason = WebDecisionReason::DefaultOnline;
 
     let json = serde_json::to_value(envelope).expect("serialize envelope");
-    assert_eq!(json["freshness"], "online");
+    assert_eq!(json["freshness"], "web_preferred");
     assert_eq!(json["webReason"], "default_online");
 }
 
@@ -345,8 +351,8 @@ fn legacy_freshness_and_reason_aliases_deserialize() {
     let reason: WebDecisionReason =
         serde_json::from_value(serde_json::json!("general_question")).expect("alias");
 
-    assert_eq!(preferred, Freshness::Online);
-    assert_eq!(required, Freshness::Online);
+    assert_eq!(preferred, Freshness::WebPreferred);
+    assert_eq!(required, Freshness::WebRequired);
     assert_eq!(reason, WebDecisionReason::DefaultOnline);
 }
 

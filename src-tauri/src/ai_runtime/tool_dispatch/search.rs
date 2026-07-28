@@ -48,7 +48,17 @@ pub(super) async fn hybrid_search(
             runtime_documents: ctx.runtime_documents.to_vec(),
             corpus_config: None,
         };
-        crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
+        let mut packets = crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)?;
+        packets.retain(|packet| {
+            packet.source_path.as_deref().is_none_or(|path| {
+                ctx.ensure_document_capability(
+                    path,
+                    crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
+                )
+                .is_ok()
+            })
+        });
+        Ok(packets)
     })?;
     Ok(serde_json::json!({ "results": packets, "count": packets.len() }))
 }
@@ -82,7 +92,17 @@ pub(super) async fn regulation_lookup(
             runtime_documents: Vec::new(),
             corpus_config: None,
         };
-        crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
+        let mut packets = crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)?;
+        packets.retain(|packet| {
+            packet.source_path.as_deref().is_none_or(|path| {
+                ctx.ensure_document_capability(
+                    path,
+                    crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
+                )
+                .is_ok()
+            })
+        });
+        Ok(packets)
     })?;
     Ok(serde_json::json!({
         "regulation": packets.first(),

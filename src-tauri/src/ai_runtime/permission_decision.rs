@@ -7,13 +7,13 @@ use crate::ai_runtime::agent_permissions::{
     PermissionAuditInput, PermissionDecision, PermissionEffectSummary, PermissionPreflight,
     PermissionScopeKind,
 };
+use crate::ai_runtime::run_contract::CapabilityId;
 use crate::ai_runtime::tool_catalog::ToolCatalogEntry;
-use crate::ai_runtime::tool_policy::{self, ToolPolicyContext, ToolPolicyVerdict};
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
 /// Input for one permission decision.
-pub struct PermissionDecisionRequest<'a> {
+pub(crate) struct PermissionDecisionRequest<'a> {
     /// Stable request id used for request/session scoped grants and audit.
     pub run_id: &'a str,
     /// Owning normal-domain session; required to consume a Session-scoped grant.
@@ -22,13 +22,14 @@ pub struct PermissionDecisionRequest<'a> {
     pub entry: &'a ToolCatalogEntry,
     /// Tool arguments. Used only for safe preflight summaries.
     pub args: &'a serde_json::Value,
-    /// Runtime tool policy context.
-    pub policy_ctx: &'a ToolPolicyContext,
+    /// Immutable capabilities authorized for this Run after policy evaluation.
+    pub authorized_capabilities: &'a [CapabilityId],
     /// Optional skill id when the tool is requested by a skill.
     pub skill_id: Option<&'a str>,
 }
 
-/// Execution decision after combining ToolPolicy, permission profile, and grants.
+/// Execution decision after combining the immutable Run authorization,
+/// permission profile, and grants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionExecutionDecision {
@@ -56,7 +57,7 @@ impl PermissionDecisionOutcome {
 }
 
 /// Decide whether a tool call can execute, needs confirmation, or must be denied.
-pub fn decide_tool_permission(
+pub(crate) fn decide_tool_permission(
     db: &Database,
     request: PermissionDecisionRequest<'_>,
 ) -> AppResult<PermissionDecisionOutcome> {
@@ -72,38 +73,17 @@ pub fn decide_tool_permission(
         });
     }
 
-    match tool_policy::evaluate_tool(request.entry.name, request.policy_ctx) {
-        ToolPolicyVerdict::Denied(reason) => {
-            return Ok(PermissionDecisionOutcome {
-                tool_name: request.entry.name.to_string(),
-                decision: PermissionExecutionDecision::Denied,
-                preflight,
-                denied_reason: Some(format!("tool policy denied: {reason:?}")),
-                granted_by: None,
-            });
-        }
-        ToolPolicyVerdict::AutoAllowed => {}
-        ToolPolicyVerdict::RequiresConfirmation => {
-            let granted_by = granted_decision(
-                db,
-                request.run_id,
-                request.session_id,
-                request.skill_id,
-                &preflight.effects,
-            )?;
-            let decision = if granted_by.is_some() {
-                PermissionExecutionDecision::AutoAllowed
-            } else {
-                PermissionExecutionDecision::RequiresConfirmation
-            };
-            return Ok(PermissionDecisionOutcome {
-                tool_name: request.entry.name.to_string(),
-                decision,
-                preflight,
-                denied_reason: None,
-                granted_by,
-            });
-        }
+    if !request
+        .entry
+        .is_authorized_by(request.authorized_capabilities)
+    {
+        return Ok(PermissionDecisionOutcome {
+            tool_name: request.entry.name.to_string(),
+            decision: PermissionExecutionDecision::Denied,
+            preflight,
+            denied_reason: Some("tool is outside the immutable Run capability contract".into()),
+            granted_by: None,
+        });
     }
 
     let granted_by = granted_decision(

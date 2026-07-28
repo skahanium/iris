@@ -153,7 +153,7 @@ mod model_pool_tests {
         routing.providers.insert(
             "mimo".into(),
             ProviderOverride {
-                enabled_models: Some(vec!["MiMo-V2.5-Pro".into()]),
+                enabled_models: Some(vec!["MiMo-V2.5-ASR".into()]),
                 ..Default::default()
             },
         );
@@ -167,8 +167,38 @@ mod model_pool_tests {
                 needs_reasoning: false,
             },
         )
-        .expect_err("model without tools must not be selected");
+        .expect_err("non-chat model without tools must not be selected");
         assert_eq!(error.to_string(), "agent_run_no_capable_model");
+    }
+
+    #[test]
+    fn mimo_only_enabled_pool_satisfies_tool_loop_requirements() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "mimo".into(),
+            ProviderOverride {
+                enabled_models: Some(vec!["mimo-v2.5".into()]),
+                ..Default::default()
+            },
+        );
+        routing.default_model = Some(ModelReference {
+            provider_id: "mimo".into(),
+            model_id: "mimo-v2.5".into(),
+        });
+
+        let route = resolve_model_pool_from_config(
+            &routing,
+            ModelPoolRequirements {
+                context_tokens: 1,
+                has_images: false,
+                needs_tools: true,
+                needs_reasoning: false,
+            },
+        )
+        .expect("MiMo chat model should satisfy tool loop requirements");
+        assert_eq!(route.resolved.provider_id, "mimo");
+        assert_eq!(route.resolved.model, "mimo-v2.5");
+        assert!(route.resolved.supports_tools);
     }
 
     #[test]

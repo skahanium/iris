@@ -43,6 +43,15 @@ describe("AssistantRunCapabilityDegraded", () => {
     expect(status?.textContent).toContain("联网核实暂不可用");
     expect(status?.textContent).toContain("可稍后重试");
     expect(status?.className).not.toContain("text-destructive");
+
+    const diagnostics = host.querySelector(
+      '[data-testid="assistant-run-capability-degraded-diagnostics"]',
+    );
+    expect(diagnostics?.textContent).toContain(
+      "agent_run_web_provider_timeout",
+    );
+    expect(diagnostics?.textContent).toContain("attemptCount");
+    expect(diagnostics?.textContent).toContain("MCP");
   });
 
   it("renders a terminal diagnostic and retry action without an answer", () => {

@@ -33,8 +33,11 @@ describe("Run tool permission contract", () => {
     expect(aiTypes).toContain("scopeSummary");
     expect(aiTypes).toContain("reversibleBy");
     expect(aiTypes).toContain("blockedReason");
-    expect(ipcTypes).toContain("permissionEffects");
-    expect(ipcTypes).toContain("permissionDecision");
+    expect(ipcTypes).toContain("PermissionPreflightSummary");
+    expect(ipcTypes).toContain("effects: PermissionEffectSummary[]");
+    expect(ipcTypes).toContain("PermissionDecisionOutcome");
+    expect(ipcTypes).toContain("preflight: PermissionPreflightSummary");
+    expect(ipcTypes).not.toContain("ToolConfirmRequestEvent");
     expect(permissions).toContain("preflight_tool_permission");
     expect(pipeline).toContain("pub run_id: &'a str");
     expect(pipeline).toContain("record_permission_decision_audit");

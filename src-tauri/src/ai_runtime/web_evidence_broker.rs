@@ -41,6 +41,9 @@ pub struct WebEvidenceBrokerInput {
     /// the broker fails closed if that provider changes before a request.
     pub provider_snapshot:
         Option<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
+    /// Distinguishes a deliberately frozen absence from legacy callers that
+    /// have not yet supplied a Run-local provider decision.
+    pub provider_selection_frozen: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -137,6 +140,7 @@ async fn collect_web_evidence_with_queries(
             planned_queries,
             input.max_search_results,
             input.provider_snapshot.as_ref(),
+            input.provider_selection_frozen,
         )
         .await
         {
@@ -181,6 +185,17 @@ fn initial_run_search_queries(query: &str) -> Vec<String> {
 }
 
 pub fn web_evidence_items_to_packets(query: &str, items: &[WebEvidenceItem]) -> Vec<ContextPacket> {
+    web_evidence_items_to_packets_with_excerpt_limit(query, items, WEB_PACKET_EXCERPT_MAX_CHARS)
+}
+
+/// Convert selected evidence into model packets with one caller-owned excerpt
+/// limit. Strict Run packing uses this to guarantee the persisted excerpt and
+/// model-visible excerpt are byte-for-byte identical after normalization.
+pub fn web_evidence_items_to_packets_with_excerpt_limit(
+    query: &str,
+    items: &[WebEvidenceItem],
+    excerpt_limit: usize,
+) -> Vec<ContextPacket> {
     let fetched_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     items
         .iter()
@@ -199,7 +214,7 @@ pub fn web_evidence_items_to_packets(query: &str, items: &[WebEvidenceItem]) -> 
                     .fetched_excerpt
                     .clone()
                     .unwrap_or_else(|| item.snippet.clone()),
-                WEB_PACKET_EXCERPT_MAX_CHARS,
+                excerpt_limit,
             ),
             retrieval_reason: "web_evidence_broker".into(),
             score: 0.7,
@@ -416,9 +431,13 @@ fn search_provider_candidates(
     provider_snapshot: Option<
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
+    provider_selection_frozen: bool,
 ) -> AppResult<Vec<SearchProviderCandidate>> {
     let provider = match provider_snapshot {
         Some(snapshot) => snapshot.clone(),
+        None if provider_selection_frozen => {
+            return Err(AppError::msg("web_search_provider_missing"));
+        }
         None => crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)?,
     };
     Ok(vec![SearchProviderCandidate::Mcp(provider.id)])
@@ -431,9 +450,16 @@ async fn collect_planned_query_fetches(
     provider_snapshot: Option<
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
+    provider_selection_frozen: bool,
 ) -> Vec<Result<SearchProviderFetch, String>> {
     let futures = planned_queries.iter().map(|query| {
-        collect_search_provider_fetches(db, query, max_search_results, provider_snapshot)
+        collect_search_provider_fetches(
+            db,
+            query,
+            max_search_results,
+            provider_snapshot,
+            provider_selection_frozen,
+        )
     });
     flatten_planned_query_fetch_results(join_all(futures).await)
 }
@@ -451,11 +477,13 @@ async fn collect_search_provider_fetches(
     provider_snapshot: Option<
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
+    provider_selection_frozen: bool,
 ) -> Vec<Result<SearchProviderFetch, String>> {
-    let candidates = match search_provider_candidates(db, provider_snapshot) {
-        Ok(candidates) => candidates,
-        Err(error) => return vec![Err(error.to_string())],
-    };
+    let candidates =
+        match search_provider_candidates(db, provider_snapshot, provider_selection_frozen) {
+            Ok(candidates) => candidates,
+            Err(error) => return vec![Err(error.to_string())],
+        };
     let futures = candidates.into_iter().map(|candidate| async move {
         match candidate {
             SearchProviderCandidate::Mcp(provider_id) => {
@@ -491,7 +519,7 @@ async fn collect_mcp_search_provider_fetch(
         &mapping_json,
         query,
         max_search_results,
-        Duration::from_secs(10),
+        Duration::from_secs(15),
         true,
     )
     .await;
@@ -576,7 +604,11 @@ async fn call_mcp_search_provider(
             max_stdout_line_bytes: 64 * 1024,
             max_stderr_bytes: 4 * 1024,
             cwd: None,
-            stdio_session_pool: true,
+            // Each unit test owns a short-lived Tokio runtime. Retaining an
+            // RMCP service in the process-wide pool past that runtime would
+            // leave a stale transport for a later test to reuse. Production
+            // runs in one long-lived runtime and retain pooling normally.
+            stdio_session_pool: !cfg!(test),
             stdio_session_idle_timeout:
                 crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         },
@@ -1653,7 +1685,9 @@ async fn collect_mcp_page_fetch(
             max_stdout_line_bytes: 128 * 1024,
             max_stderr_bytes: 4 * 1024,
             cwd: None,
-            stdio_session_pool: true,
+            // See the search path above: never pool a test-owned stdio child
+            // across independent Tokio test runtimes.
+            stdio_session_pool: !cfg!(test),
             stdio_session_idle_timeout:
                 crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
         },
@@ -1921,6 +1955,7 @@ mod tests {
                 max_search_results: 5,
                 max_fetches: 0,
                 provider_snapshot: None,
+                provider_selection_frozen: false,
             },
         )
         .await
@@ -2119,9 +2154,19 @@ mod tests {
     fn search_provider_candidates_require_mcp_provider() {
         let db = Database::open_in_memory().unwrap();
 
-        let err = search_provider_candidates(&db, None).unwrap_err();
+        let err = search_provider_candidates(&db, None, false).unwrap_err();
 
         assert!(err.to_string().contains("web_search_provider_missing"));
+    }
+
+    #[test]
+    fn frozen_absent_search_provider_never_reselects_mid_run() {
+        let db = Database::open_in_memory().unwrap();
+
+        let error = search_provider_candidates(&db, None, true)
+            .expect_err("a frozen absence must not dynamically select a later provider");
+
+        assert_eq!(error.to_string(), "web_search_provider_missing");
     }
 
     #[test]
@@ -2209,7 +2254,7 @@ mod tests {
         )
         .unwrap();
 
-        let candidates = search_provider_candidates(&db, None).unwrap();
+        let candidates = search_provider_candidates(&db, None, false).unwrap();
 
         assert_eq!(
             candidates,
@@ -2236,7 +2281,7 @@ mod tests {
         )
         .unwrap();
 
-        let candidates = search_provider_candidates(&db, None).unwrap();
+        let candidates = search_provider_candidates(&db, None, false).unwrap();
 
         assert_eq!(
             candidates,

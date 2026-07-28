@@ -246,7 +246,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
       role="banner"
       data-testid="desktop-title-bar"
       className={cn(
-        "iris-desktop-titlebar flex h-[var(--titlebar-height)] shrink-0 cursor-default select-none border-b border-border-subtle bg-surface-chrome",
+        "iris-desktop-titlebar flex h-[var(--titlebar-height)] shrink-0 cursor-default select-none border-b border-border-subtle bg-background",
         "items-center pl-[var(--titlebar-leading-inset)]",
         isDesktop && "iris-desktop-titlebar--desktop",
         customWindowControls && "relative pr-[var(--window-controls-width)]",

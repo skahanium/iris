@@ -329,6 +329,8 @@ mod tests {
                     context: ContextMode::ExplicitReferences,
                     freshness: Freshness::Offline,
                     web_reason: WebDecisionReason::LegacyUnknown,
+                    verification_requirement:
+                        crate::ai_runtime::run_contract::VerificationRequirement::None,
                     effort: Effort::Direct,
                     security_domain: SecurityDomain::Normal,
                     risk: RiskClass::ReadOnly,

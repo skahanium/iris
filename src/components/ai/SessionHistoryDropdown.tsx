@@ -50,6 +50,12 @@ function toChatLines(messages: AssistantSessionMessage[]): ChatLine[] {
     ...(message.displayMentions.length > 0
       ? { displayMentions: message.displayMentions }
       : {}),
+    ...(message.webCitations && message.webCitations.length > 0
+      ? { webCitations: message.webCitations }
+      : {}),
+    ...(message.citationBinding
+      ? { citationBinding: message.citationBinding }
+      : {}),
     seq: message.seq,
     created_at: message.createdAt,
   }));
@@ -118,7 +124,7 @@ export function SessionHistoryDropdown({
     async (summary: AssistantSessionSummary) => {
       try {
         const [messages, activeRun] = await Promise.all([
-          assistantSessionLoad({ session: summary.session }),
+          assistantSessionLoad({ session: summary.session, limit: 240 }),
           assistantRunGet({ session: summary.session }),
         ]);
         onSelectSession(summary.session, toChatLines(messages), activeRun);

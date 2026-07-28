@@ -12,7 +12,6 @@ describe("IPC event registry", () => {
     const ipc = read("src/lib/ipc.ts");
 
     for (const eventName of [
-      "version:save_complete",
       "file:changed",
       "classified:file_taken",
       "skills:changed",

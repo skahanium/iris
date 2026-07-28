@@ -1,8 +1,9 @@
 //! Bounded model-driven Web evidence for normal-domain Runs.
 //!
 //! This module owns the `web_search` tool path used by `NormalRunToolExecutor`: policy/audit
-//! gates, bounded evidence registration, and deferred `CapabilityDegraded` emission when Online
-//! search fails without usable evidence. Offline Runs never enable the tool.
+//! gates, bounded evidence registration, and deferred `CapabilityDegraded` emission when an
+//! authorized Web search fails without usable evidence. Runs without `web.search` never enable
+//! the tool.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -14,10 +15,14 @@ use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
-use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
+use crate::ai_runtime::agent_tool_loop::{
+    AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
+};
+use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, RunEventPayload, RunEventType, SafeRunErrorCode, WebEvidenceFailureReason,
+    AssistantRunAccepted, CapabilityId, RunEventPayload, RunEventType, SafeRunErrorCode,
+    WebDecisionReason, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::tool_audit::record_web_query_taint_witness;
@@ -27,8 +32,9 @@ use crate::ai_runtime::tool_execution_pipeline::{
     audit_dispatched_tool, audit_tool_confirmation_requested, evaluate_tool_execution,
     ToolExecutionGate,
 };
-use crate::ai_runtime::tool_policy::ToolPolicyContext;
-use crate::ai_runtime::ToolCallResult;
+use crate::ai_runtime::tool_executor::ToolRegistry;
+use crate::ai_runtime::{LlmMessage, MessageRole, ToolCallResult};
+use crate::ai_types::WebSourceRank;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -40,7 +46,11 @@ const MAX_WEB_EVIDENCE_PER_RUN: usize = 8;
 pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 5;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
 /// Model-requested follow-up searches retain their own bounded interaction budget.
-const MODEL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(10);
+const MODEL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(20);
+/// Minimum remaining budget required before retrying a failed web search attempt.
+/// Spawning a fresh MCP stdio process commonly takes 3-5s; retrying with less
+/// than this budget just burns time before the outer timeout fires.
+const MIN_RETRY_BUDGET: Duration = Duration::from_secs(5);
 /// Internal control-flow signal: the Run was durably moved to confirmation,
 /// so the model loop must stop without terminalizing it.
 pub(crate) const CONFIRMATION_PENDING_ERROR: &str = "agent_run_confirmation_pending";
@@ -110,18 +120,29 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     app_handle: Option<tauri::AppHandle>,
     accepted: &'a AssistantRunAccepted,
     context: &'a RunContext,
-    policy_ctx: ToolPolicyContext,
+    authorized_capabilities: Vec<CapabilityId>,
+    /// The exact cached Skill plan selected before this Run entered the model.
+    /// It is inherited by ChildRuns only as a scope restriction; Skill bodies
+    /// never become tools or a second authorization path.
+    skill_activation_plan: Option<crate::ai_types::SkillActivationPlanSummary>,
     sink: &'a dyn RunEventSink,
     retrieval_scope: crate::ai_runtime::retrieval_scope::RetrievalScope,
     cold_start_packets: Vec<crate::ai_runtime::ContextPacket>,
     runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot>,
     evidence_ids: Mutex<Vec<i64>>,
+    web_evidence_domains: Mutex<BTreeSet<String>>,
+    web_evidence_has_official_source: Mutex<bool>,
     web_failure: Mutex<Option<WebFailure>>,
     web_attempt_count: Mutex<u32>,
     web_budget: RunWebBudget,
     web_degradation_emitted: Mutex<bool>,
     required_web_provider_snapshot:
         Option<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
+    /// The parent Run's provider, used only for a bounded depth-one ChildRun.
+    /// The ChildRun retains the parent Run identity and persistence boundary.
+    child_run_provider: Option<&'a dyn ToolLoopProvider>,
+    /// Audit depth of this executor. Only `0` may launch a ChildRun.
+    subagent_depth: u32,
 }
 
 impl<'a> NormalRunToolExecutor<'a> {
@@ -131,7 +152,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         app_handle: Option<tauri::AppHandle>,
         accepted: &'a AssistantRunAccepted,
         context: &'a RunContext,
-        policy_ctx: ToolPolicyContext,
+        authorized_capabilities: Vec<CapabilityId>,
         sink: &'a dyn RunEventSink,
         required_web_provider_snapshot: Option<
             crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
@@ -142,18 +163,47 @@ impl<'a> NormalRunToolExecutor<'a> {
             app_handle,
             accepted,
             context,
-            policy_ctx,
+            authorized_capabilities,
+            skill_activation_plan: None,
             sink,
             retrieval_scope: context.retrieval_scope.clone(),
             cold_start_packets: context.local_retrieval_packets.clone(),
             runtime_documents: Vec::new(),
             evidence_ids: Mutex::new(Vec::new()),
+            web_evidence_domains: Mutex::new(BTreeSet::new()),
+            web_evidence_has_official_source: Mutex::new(false),
             web_failure: Mutex::new(None),
             web_attempt_count: Mutex::new(0),
             web_budget: RunWebBudget::default(),
             web_degradation_emitted: Mutex::new(false),
             required_web_provider_snapshot,
+            child_run_provider: None,
+            subagent_depth: 0,
         }
+    }
+
+    /// Enable real ChildRun execution with the same provider route selected for
+    /// the parent Run. Keeping this as a builder leaves confirmation replay and
+    /// other non-model executor callers without an accidental child capability.
+    pub(crate) fn with_child_run_provider(mut self, provider: &'a dyn ToolLoopProvider) -> Self {
+        self.child_run_provider = Some(provider);
+        self
+    }
+
+    /// Bind the prompt-only Skill plan selected from the in-memory vault cache.
+    /// The executor passes it only to the normal dispatch context so existing
+    /// retrieval-scope checks can enforce confirmed Skill scope rules.
+    pub(crate) fn with_skill_activation_plan(
+        mut self,
+        plan: Option<crate::ai_types::SkillActivationPlanSummary>,
+    ) -> Self {
+        self.skill_activation_plan = plan;
+        self
+    }
+
+    fn at_subagent_depth(mut self, depth: u32) -> Self {
+        self.subagent_depth = depth;
+        self
     }
 
     async fn execute_web_search(
@@ -197,35 +247,75 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "web_evidence_budget_exhausted",
             ));
         }
-        // Model web calls share MODEL_WEB_EVIDENCE_DEADLINE (10s). MCP search alone
+        // Model web calls share MODEL_WEB_EVIDENCE_DEADLINE (20s). MCP search alone
         // commonly takes ~4s; scheduling deep page fetches (WEB_FETCH_TURN_BUDGET=8s)
         // after that exceeds the outer timeout and discards already-usable search
         // snippets. Prefer registering search snippets first.
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.to_owned(),
             urls,
-            enabled: self.policy_ctx.web_search_enabled,
-            max_search_results: remaining,
+            enabled: self.has_capability("web.search"),
+            max_search_results: web_search_result_limit(remaining, 1),
             max_fetches: 0,
             provider_snapshot: self.required_web_provider_snapshot.clone(),
+            provider_selection_frozen: true,
         };
         let budget_started = self.web_budget.started()?;
         let call_started = Instant::now();
-        let output = loop {
-            let Some(attempt_count) = self.reserve_web_attempt()? else {
-                let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
-                self.set_web_failure(Some(failure))?;
-                return Ok(failed_web_tool_call(
-                    failure,
-                    self.web_attempt_count(),
-                    call_started.elapsed(),
-                    remaining_model_web_budget_ms(budget_started.elapsed()),
-                ));
+        let output =
+            loop {
+                let Some(attempt_count) = self.reserve_web_attempt()? else {
+                    let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
+                    self.set_web_failure(Some(failure))?;
+                    return Ok(failed_web_tool_call(
+                        failure,
+                        self.web_attempt_count(),
+                        call_started.elapsed(),
+                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                    ));
+                };
+                let remaining_time =
+                    MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
+                if remaining_time.is_zero() {
+                    let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
+                    self.set_web_failure(Some(failure))?;
+                    return Ok(failed_web_tool_call(
+                        failure,
+                        attempt_count,
+                        call_started.elapsed(),
+                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                    ));
+                }
+                let mut attempt_input = broker_input.clone();
+                attempt_input.max_search_results =
+                    web_search_result_limit(remaining, attempt_count);
+                let failure = match tokio::time::timeout(
+                remaining_time,
+                crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
+                    &self.state.db,
+                    attempt_input,
+                ),
+            )
+            .await
+            {
+                Ok(Ok(output)) if output.items.iter().any(|item| item.conflict_group.is_some()) => {
+                    WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false)
+                }
+                Ok(Ok(output)) if web_output_has_usable_evidence(&output) => break output,
+                Ok(Ok(output)) => classify_web_evidence_output_failure(&output),
+                Ok(Err(error)) => classify_web_failure(&error),
+                Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
             };
-            let remaining_time =
-                MODEL_WEB_EVIDENCE_DEADLINE.saturating_sub(budget_started.elapsed());
-            if remaining_time.is_zero() {
-                let failure = WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true);
+                let adaptive_oversize_retry =
+                    failure.reason == WebEvidenceFailureReason::ProviderOutputTooLarge;
+                if attempt_count < 2
+                    && (failure.retryable || adaptive_oversize_retry)
+                    && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
+                        < MODEL_WEB_EVIDENCE_DEADLINE
+                {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
                 self.set_web_failure(Some(failure))?;
                 return Ok(failed_web_tool_call(
                     failure,
@@ -233,48 +323,28 @@ impl<'a> NormalRunToolExecutor<'a> {
                     call_started.elapsed(),
                     remaining_model_web_budget_ms(budget_started.elapsed()),
                 ));
-            }
-            let failure = match tokio::time::timeout(
-                remaining_time,
-                crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
-                    &self.state.db,
-                    broker_input.clone(),
-                ),
-            )
-            .await
-            {
-                Ok(Ok(output)) if web_output_has_usable_evidence(&output) => break output,
-                Ok(Ok(output)) => classify_web_evidence_output_failure(&output),
-                Ok(Err(error)) => classify_web_failure(&error),
-                Err(_) => WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true),
             };
-            if attempt_count < 2
-                && failure.retryable
-                && budget_started.elapsed() + Duration::from_millis(250)
-                    < MODEL_WEB_EVIDENCE_DEADLINE
-            {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                continue;
-            }
-            self.set_web_failure(Some(failure))?;
-            return Ok(failed_web_tool_call(
-                failure,
-                attempt_count,
-                call_started.elapsed(),
-                remaining_model_web_budget_ms(budget_started.elapsed()),
-            ));
-        };
-        let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets(
-            query,
-            &output.items,
-        );
+        let packed_items =
+            match pack_web_evidence_for_model(query, &output.items, remaining, &output.usage) {
+                Ok(items) if !items.is_empty() => items,
+                Ok(_) | Err(_) => {
+                    let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
+                    self.set_web_failure(Some(failure))?;
+                    return Ok(failed_web_tool_call(
+                        failure,
+                        self.web_attempt_count(),
+                        call_started.elapsed(),
+                        remaining_model_web_budget_ms(budget_started.elapsed()),
+                    ));
+                }
+            };
         let evidence_ids = register_model_web_evidence(
             &self.state.db,
             self.accepted,
             self.context,
             self.sink,
             state_version,
-            &output.items,
+            &packed_items,
             remaining,
         )?;
         if evidence_ids.is_empty() {
@@ -292,6 +362,12 @@ impl<'a> NormalRunToolExecutor<'a> {
             .lock()
             .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?
             .extend(evidence_ids.iter().copied());
+        self.record_web_evidence_quality(&packed_items)?;
+        let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
+            query,
+            &packed_items,
+            MAX_WEB_EXCERPT_CHARS,
+        );
         Ok(ToolCallResult {
             tool_name: WEB_TOOL_NAME.to_string(),
             success: true,
@@ -410,7 +486,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             run_step: 1,
             entry,
             args,
-            policy_ctx: &self.policy_ctx,
+            authorized_capabilities: &self.authorized_capabilities,
             skill_id: None,
             subagent_depth: 0,
         };
@@ -447,14 +523,17 @@ impl<'a> NormalRunToolExecutor<'a> {
         let dispatch_context = ToolDispatchContext {
             note_path: None,
             file_id: None,
-            web_search_enabled: self.policy_ctx.web_search_enabled,
+            run_id: Some(&self.accepted.run_id),
+            write_target_path: self.context.write_target_path.as_deref(),
+            document_policy: Some(&self.context.document_policy),
+            web_search_enabled: self.has_capability("web.search"),
             max_web_fetches: 5,
             cold_start_packets: &self.cold_start_packets,
             retrieval_scope: &self.retrieval_scope,
             runtime_documents: &self.runtime_documents,
             app_handle: self.app_handle.clone(),
             attachment_count: 0,
-            skill_activation_plan: None,
+            skill_activation_plan: self.skill_activation_plan.as_ref(),
         };
         dispatch_tool_with_retry(self.state.as_ref(), &dispatch_context, tool_name, args).await
     }
@@ -516,6 +595,21 @@ impl<'a> NormalRunToolExecutor<'a> {
     }
 }
 
+/// Select the provider-facing result count for one bounded Web attempt.
+///
+/// The Run may ultimately register up to eight evidence rows, but an MCP
+/// provider must never be asked for that many raw search bodies in one strict
+/// prefetch. A response that exceeds the host cap gets exactly one smaller
+/// retry; this preserves the cap rather than hiding an unbounded payload.
+fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
+    let first_attempt = remaining.clamp(1, INITIAL_WEB_SEARCH_RESULTS);
+    if attempt_count >= 2 {
+        first_attempt.min(2)
+    } else {
+        first_attempt
+    }
+}
+
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     fn execute<'a>(
         &'a self,
@@ -545,9 +639,9 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 run_step: step,
                 entry,
                 args: &args,
-                policy_ctx: &self.policy_ctx,
+                authorized_capabilities: &self.authorized_capabilities,
                 skill_id: None,
-                subagent_depth: 0,
+                subagent_depth: self.subagent_depth,
             };
             let gate_outcome = match evaluate_tool_execution(&self.state.db, gate) {
                 Ok(outcome) => outcome,
@@ -565,6 +659,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             };
             let result = if let Some(result) = gate_outcome.tool_result {
                 result
+            } else if call.function.name == "spawn_subagent" {
+                if self.subagent_depth != 0 {
+                    failed_tool_call(&call.function.name, "subagent_depth_exceeded")
+                } else {
+                    self.execute_child_run(run_id, call, &args).await?
+                }
             } else if entry.requires_confirmation {
                 self.request_change_confirmation(
                     call,
@@ -631,26 +731,253 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn has_web_evidence(&self) -> bool {
-        !self.evidence_ids().is_empty()
+        // This vector is populated only after this executor's successful
+        // `web_search` call has persisted a Run-level evidence association.
+        // It deliberately cannot be satisfied by session history or a prior
+        // Run's citations.
+        if self.evidence_ids().is_empty() {
+            return false;
+        }
+        if !self.requires_corroborated_web_evidence() {
+            return true;
+        }
+        let has_official = self
+            .web_evidence_has_official_source
+            .lock()
+            .map(|value| *value)
+            .unwrap_or(false);
+        let independent_domains = self
+            .web_evidence_domains
+            .lock()
+            .map(|domains| domains.len())
+            .unwrap_or(0);
+        corroborated_source_threshold_met(has_official, independent_domains)
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        // A ChildRun produces an internal tool result, never the parent Run's
+        // final factual answer. Requiring the parent's Web proof here would
+        // reject trusted runtime operations (for example system_time_now)
+        // before the parent can continue. The depth-zero parent still owns the
+        // terminal gate and cannot complete an external factual response
+        // without current-run Web evidence.
+        self.subagent_depth == 0
+            && self.context.envelope.verification_requirement
+                == crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb
     }
 
     fn emit_deferred_web_degradation_if_needed(
         &self,
         db: &Database,
         sink: &dyn RunEventSink,
-    ) -> AppResult<()> {
+    ) -> AppResult<bool> {
         NormalRunToolExecutor::emit_deferred_web_degradation_if_needed(self, db, sink)
     }
 }
 
 impl NormalRunToolExecutor<'_> {
+    fn requires_corroborated_web_evidence(&self) -> bool {
+        matches!(
+            self.context.envelope.web_reason,
+            WebDecisionReason::VolatileExternalFact | WebDecisionReason::HighStakesCurrentFact
+        )
+    }
+
+    fn record_web_evidence_quality(
+        &self,
+        items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    ) -> AppResult<()> {
+        let mut domains = self
+            .web_evidence_domains
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_evidence_lock_failed"))?;
+        let mut has_official = self
+            .web_evidence_has_official_source
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_evidence_lock_failed"))?;
+        for item in items {
+            if item.failure_reason.is_none()
+                && item.url.starts_with("https://")
+                && item.canonical_url.starts_with("https://")
+                && bounded_page_evidence(item).is_some()
+            {
+                if !item.domain.trim().is_empty() {
+                    domains.insert(item.domain.to_ascii_lowercase());
+                }
+                *has_official |= item.source_rank == WebSourceRank::Official;
+            }
+        }
+        Ok(())
+    }
+
+    /// Execute one bounded ChildRun inside the parent Run's provider, policy,
+    /// evidence and audit boundary. There is intentionally no child task table
+    /// or child lifecycle: only the parent Run may persist an effect or ask the
+    /// user for confirmation.
+    async fn execute_child_run(
+        &self,
+        run_id: &str,
+        call: &crate::ai_runtime::ToolCall,
+        args: &serde_json::Value,
+    ) -> AppResult<ToolCallResult> {
+        let started = Instant::now();
+        let Some(provider) = self.child_run_provider else {
+            return Ok(failed_tool_call(
+                &call.function.name,
+                "child_run_provider_unavailable",
+            ));
+        };
+
+        let registry = ToolRegistry::new();
+        let parent_surface = ToolRegistry::constrain_for_explicit_references(
+            registry.tools_for_authorized_capabilities(&self.authorized_capabilities, true),
+            self.context.envelope.context,
+            &self.context.retrieval_scope,
+        );
+        let inherited_tool_names = parent_surface
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
+        let inherited_tool_names =
+            crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::child_tool_surface(
+                &inherited_tool_names,
+            );
+        let spec = crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::from_tool_call(
+            run_id,
+            call,
+            self.context
+                .materials
+                .first()
+                .map(|material| material.source_path.as_str()),
+            self.evidence_ids()
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect(),
+            inherited_tool_names,
+            Some(2_000),
+        );
+        if spec.resource_locks.iter().any(|lock| {
+            lock.access == crate::ai_runtime::subagent_coordinator::ResourceAccess::Write
+        }) {
+            let report = crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                &spec,
+                "child_run_write_lock_forbidden",
+            );
+            return Ok(child_report_tool_result(
+                &call.function.name,
+                report,
+                0,
+                started.elapsed(),
+            ));
+        }
+        if spec.allowed_tools.is_empty() {
+            let report = crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                &spec,
+                "child_run_no_safe_authorized_tools",
+            );
+            return Ok(child_report_tool_result(
+                &call.function.name,
+                report,
+                0,
+                started.elapsed(),
+            ));
+        }
+        let tools = parent_surface
+            .into_iter()
+            .filter(|tool| spec.allowed_tools.contains(&tool.name))
+            .collect::<Vec<_>>();
+        let max_rounds = args
+            .get("max_rounds")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(2)
+            .clamp(1, 2);
+        let messages = vec![
+            LlmMessage {
+                role: MessageRole::System,
+                content: format!(
+                    "你是父级 Agent 的受限子任务执行者，角色为 {}。只可使用列出的只读或联网工具；禁止修改数据、创建确认、调用 spawn_subagent，最后给出可供父级核验的简明结论。",
+                    spec.role
+                )
+                .into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+            LlmMessage {
+                role: MessageRole::User,
+                content: spec.task.clone().into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        ];
+        let child_executor = NormalRunToolExecutor::new(
+            self.state,
+            self.app_handle.clone(),
+            self.accepted,
+            self.context,
+            self.authorized_capabilities.clone(),
+            self.sink,
+            self.required_web_provider_snapshot.clone(),
+        )
+        .with_skill_activation_plan(self.skill_activation_plan.clone())
+        .at_subagent_depth(1);
+        let mut observer = ChildRunStreamObserver;
+        let outcome = AgentToolLoop::with_limits(max_rounds, 6)
+            .execute(
+                provider,
+                &child_executor,
+                run_id,
+                messages,
+                tools,
+                &mut observer,
+            )
+            .await;
+        let result = match outcome {
+            Ok(outcome) => {
+                let citation_valid = !child_executor.evidence_ids().is_empty()
+                    || !spec.input_evidence_ids.is_empty();
+                let report =
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
+                        &spec,
+                        outcome.content,
+                        citation_valid,
+                        outcome.model_turns,
+                    );
+                child_report_tool_result(
+                    &call.function.name,
+                    report,
+                    outcome.model_turns,
+                    started.elapsed(),
+                )
+            }
+            Err(error) => {
+                let report =
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                        &spec,
+                        sanitize_child_run_error(&error),
+                    );
+                child_report_tool_result(&call.function.name, report, 0, started.elapsed())
+            }
+        };
+        Ok(result)
+    }
+
+    fn has_capability(&self, required: &str) -> bool {
+        self.authorized_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == required)
+    }
+
     /// Emit `capability_degraded` once after a successful tool loop when Web attempts
     /// failed and no usable Web evidence was registered for this Run.
+    /// Returns `true` when the event was emitted on this call.
     pub(crate) fn emit_deferred_web_degradation_if_needed(
         &self,
         db: &Database,
         sink: &dyn RunEventSink,
-    ) -> AppResult<()> {
+    ) -> AppResult<bool> {
         emit_deferred_web_degradation(
             DeferredWebDegradationInput {
                 db,
@@ -673,6 +1000,23 @@ impl NormalRunToolExecutor<'_> {
 
     fn web_failure(&self) -> Option<WebFailure> {
         self.web_failure.lock().ok().and_then(|failure| *failure)
+    }
+
+    /// Return the sanitized state of the deterministic evidence stage. This
+    /// crosses the service boundary only as stable UI/event fields; raw search
+    /// errors remain inside the executor.
+    pub(crate) fn web_verification_failure_details(
+        &self,
+    ) -> (SafeRunErrorCode, WebEvidenceFailureReason, bool, u32) {
+        let failure = self
+            .web_failure()
+            .unwrap_or_else(|| WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false));
+        (
+            failure.code,
+            failure.reason,
+            failure.retryable,
+            self.web_attempt_count().max(1),
+        )
     }
 
     fn reserve_web_attempt(&self) -> AppResult<Option<u32>> {
@@ -778,6 +1122,48 @@ fn rollback_summary(tool_name: &str) -> String {
             "可通过应用设置撤销或更新".to_string()
         }
         _ => "可通过版本历史或后续编辑撤销".to_string(),
+    }
+}
+
+/// Child streaming is intentionally not forwarded as parent visible output.
+/// Only the normalized report returns to the parent model transcript.
+struct ChildRunStreamObserver;
+
+impl StreamEventObserver for ChildRunStreamObserver {
+    fn observe(&mut self, _event: &StreamEvent, _token_index: u32) -> AppResult<()> {
+        Ok(())
+    }
+}
+
+fn child_report_tool_result(
+    tool_name: &str,
+    report: crate::ai_runtime::subagent_coordinator::SubagentReport,
+    harness_rounds: u32,
+    duration: Duration,
+) -> ToolCallResult {
+    let success = report.errors.is_empty();
+    let error = (!success).then(|| "child_run_failed".to_string());
+    ToolCallResult {
+        tool_name: tool_name.to_string(),
+        success,
+        output: serde_json::json!({
+            "content": report.summary,
+            "citation_valid": report.errors.is_empty(),
+            "harness_rounds": harness_rounds,
+            "subagent_report": report,
+        }),
+        duration_ms: bounded_duration_ms(duration),
+        tokens_used: None,
+        error,
+    }
+}
+
+fn sanitize_child_run_error(error: &AppError) -> &'static str {
+    match error.to_string().as_str() {
+        "agent_run_cancelled" => "child_run_cancelled",
+        "agent_run_tool_loop_limit" => "child_run_limit_exceeded",
+        "agent_run_web_evidence_required" => "child_run_web_evidence_required",
+        _ => "child_run_failed",
     }
 }
 
@@ -1002,12 +1388,12 @@ struct DeferredWebDegradationInput<'a> {
 fn emit_deferred_web_degradation(
     input: DeferredWebDegradationInput<'_>,
     mark_emitted: &mut dyn FnMut() -> AppResult<bool>,
-) -> AppResult<()> {
+) -> AppResult<bool> {
     let Some(failure) = input.web_failure else {
-        return Ok(());
+        return Ok(false);
     };
     if input.has_web_evidence {
-        return Ok(());
+        return Ok(false);
     }
     if mark_emitted()? {
         append_capability_degraded(
@@ -1017,8 +1403,10 @@ fn emit_deferred_web_degradation(
             failure,
             input.attempt_count,
         )?;
+        Ok(true)
+    } else {
+        Ok(false)
     }
-    Ok(())
 }
 
 fn append_capability_degraded(
@@ -1066,6 +1454,112 @@ struct BoundedWebItem {
     extraction_method: String,
     excerpt: String,
     conflict_group: Option<String>,
+}
+
+/// Select and normalize the exact Web evidence that may reach a model. The
+/// same normalized values are later written to the evidence ledger, which
+/// prevents a session record from claiming support that the model never saw.
+fn pack_web_evidence_for_model(
+    query: &str,
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    limit: usize,
+    usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
+) -> AppResult<Vec<crate::ai_runtime::web_evidence_broker::WebEvidenceItem>> {
+    let mut packed = items
+        .iter()
+        .filter(|item| item.failure_reason.is_none())
+        .filter(|item| {
+            item.url.starts_with("https://") && item.canonical_url.starts_with("https://")
+        })
+        .filter_map(|item| {
+            let bounded = bounded_page_evidence(item)?;
+            let mut item = item.clone();
+            item.title = truncate_web_field(&bounded.title, 256);
+            item.url = truncate_web_field(&bounded.url, 512);
+            item.canonical_url = truncate_web_field(&bounded.canonical_url, 512);
+            item.domain = truncate_web_field(&bounded.domain, 255);
+            item.provider_id = truncate_web_field(&bounded.provider_id, 128);
+            item.provider_kind = truncate_web_field(&bounded.provider_kind, 128);
+            item.raw_result_hash = truncate_web_field(&bounded.raw_result_hash, 128);
+            item.extraction_method = truncate_web_field(&bounded.extraction_method, 128);
+            item.snippet = bounded.excerpt.clone();
+            item.fetched_excerpt = Some(bounded.excerpt);
+            Some(item)
+        })
+        .take(limit)
+        .collect::<Vec<_>>();
+
+    // The final evidence ids are decimal SQLite identifiers. Reserve their
+    // worst-case serialized footprint before persistence, then compact the
+    // longest excerpts until the *actual JSON shape* fits. Never leave a
+    // later generic string truncation to corrupt the JSON packet.
+    let placeholder_ids = vec!["9223372036854775807"; packed.len()];
+    while !packed.is_empty()
+        && serialized_web_tool_payload_chars(query, &packed, &placeholder_ids, usage)
+            > MAX_WEB_TOOL_RESULT_CHARS
+    {
+        let Some((index, length)) = packed
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                item.fetched_excerpt
+                    .as_ref()
+                    .map(|excerpt| (index, excerpt.chars().count()))
+            })
+            .max_by_key(|(_, length)| *length)
+        else {
+            break;
+        };
+        if length <= 64 {
+            return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
+        }
+        let next_length = length.saturating_sub(256).max(64);
+        let excerpt = packed[index].fetched_excerpt.as_deref().unwrap_or_default();
+        let compact = truncate_web_field(excerpt, next_length);
+        packed[index].snippet = compact.clone();
+        packed[index].fetched_excerpt = Some(compact);
+    }
+    if packed.is_empty()
+        || serialized_web_tool_payload_chars(query, &packed, &placeholder_ids, usage)
+            > MAX_WEB_TOOL_RESULT_CHARS
+    {
+        return Err(AppError::msg("agent_run_web_evidence_pack_overflow"));
+    }
+    Ok(packed)
+}
+
+fn serialized_web_tool_payload_chars(
+    query: &str,
+    items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
+    evidence_ids: &[&str],
+    usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
+) -> usize {
+    let packets =
+        crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
+            query,
+            items,
+            MAX_WEB_EXCERPT_CHARS,
+        );
+    serde_json::to_string(&serde_json::json!({
+        "success": true,
+        "output": {
+            "results": packets,
+            "evidenceIds": evidence_ids,
+            "count": evidence_ids.len(),
+            "resultBudget": { "format": "context_packets_only", "rawEvidenceOmitted": true },
+            // Reserve the largest possible decimal representation because the
+            // remaining budget is produced after the packer has run.
+            "remainingBudgetMs": u64::MAX,
+            "webUsage": usage,
+        },
+        "error": serde_json::Value::Null,
+    }))
+    .map(|value| value.chars().count())
+    .unwrap_or(usize::MAX)
+}
+
+fn truncate_web_field(value: &str, limit: usize) -> String {
+    value.chars().take(limit).collect()
 }
 
 fn bounded_page_evidence(
@@ -1236,19 +1730,38 @@ fn web_output_has_usable_evidence(
     })
 }
 
+fn corroborated_source_threshold_met(has_official: bool, independent_domains: usize) -> bool {
+    has_official || independent_domains >= 2
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+    use std::future::Future;
+    use std::pin::Pin;
     use std::sync::Mutex;
 
-    use super::{emit_deferred_web_degradation, DeferredWebDegradationInput, RunWebBudget};
-    use crate::ai_runtime::run_contract::{
-        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, SafeRunErrorCode,
-        SecurityDomain,
+    use super::{
+        corroborated_source_threshold_met, emit_deferred_web_degradation, web_search_result_limit,
+        DeferredWebDegradationInput, NormalRunToolExecutor, RunWebBudget,
     };
-    use crate::ai_runtime::run_engine::RunEventSink;
+    use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+    use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
+    use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
+    use crate::ai_runtime::run_context::RunContextAssembler;
+    use crate::ai_runtime::run_contract::{
+        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId,
+        RunEventPayload, RunEventType, RunState, SafeRunErrorCode, SecurityDomain,
+    };
+    use crate::ai_runtime::run_engine::{RunEngine, RunEventSink};
     use crate::ai_runtime::run_intake::RunIntake;
+    use crate::ai_runtime::skills::SkillScopeRule;
+    use crate::ai_runtime::{FunctionCall, LlmMessage, ToolCall, ToolSpec};
+    use crate::ai_types::{SkillActivationItemSummary, SkillActivationPlanSummary};
+    use crate::app::AppState;
     use crate::error::AppResult;
     use crate::storage::db::Database;
+    use std::sync::Arc;
 
     #[derive(Default)]
     struct RecordingSink {
@@ -1262,6 +1775,33 @@ mod tests {
                 .expect("recording sink lock")
                 .push(serde_json::to_value(event)?);
             Ok(())
+        }
+    }
+
+    struct ScriptedChildProvider {
+        responses: Mutex<VecDeque<GatewayResponse>>,
+        tool_surfaces: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl ToolLoopProvider for ScriptedChildProvider {
+        fn answer_turn<'a>(
+            &'a self,
+            _run_id: &'a str,
+            _messages: &'a [LlmMessage],
+            tools: &'a [ToolSpec],
+            _observer: &'a mut dyn StreamEventObserver,
+        ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>> {
+            self.tool_surfaces
+                .lock()
+                .expect("tool surfaces")
+                .push(tools.iter().map(|tool| tool.name.clone()).collect());
+            Box::pin(async move {
+                self.responses
+                    .lock()
+                    .expect("responses")
+                    .pop_front()
+                    .ok_or_else(|| crate::error::AppError::msg("missing child response"))
+            })
         }
     }
 
@@ -1288,6 +1828,204 @@ mod tests {
         super::WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
     }
 
+    #[tokio::test]
+    async fn child_run_executes_a_real_bounded_model_tool_loop_with_no_write_or_recursion() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
+        let mut start = request();
+        start.web_enabled = false;
+        start.turn.message = "请委派一个子任务读取时间。".to_string();
+        let accepted = RunIntake::start(&state.db, start).expect("accepted");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试 ChildRun".to_string(),
+                },
+            },
+        )
+        .expect("running");
+        let provider = ScriptedChildProvider {
+            responses: Mutex::new(VecDeque::from([
+                GatewayResponse {
+                    content: None,
+                    tool_calls: vec![ToolCall {
+                        id: "child-time".to_string(),
+                        call_type: "function".to_string(),
+                        function: FunctionCall {
+                            name: "system_time_now".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                    }],
+                    usage: Default::default(),
+                    finish_reason: "tool_calls".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                },
+                GatewayResponse {
+                    content: Some("子任务已读取当前时间。".to_string()),
+                    tool_calls: Vec::new(),
+                    usage: Default::default(),
+                    finish_reason: "stop".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                },
+            ])),
+            tool_surfaces: Mutex::new(Vec::new()),
+        };
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![
+                CapabilityId::new("runtime.read"),
+                CapabilityId::new("harness.child_run"),
+                CapabilityId::new("memory.write"),
+            ],
+            &sink,
+            None,
+        )
+        .with_child_run_provider(&provider);
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "parent-spawn",
+                    "spawn_subagent",
+                    r#"{"task":"请联网读取当前时间","allowed_tools":["system_time_now","memory_write","spawn_subagent"]}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("child execution result");
+
+        assert!(
+            result.success,
+            "error: {:?}, report: {}",
+            result.error, result.output
+        );
+        assert_eq!(
+            result.output["subagent_report"]["summary"],
+            "子任务已读取当前时间。"
+        );
+        let surfaces = provider.tool_surfaces.lock().expect("surfaces");
+        assert_eq!(
+            surfaces.len(),
+            2,
+            "child must make a real continuation turn"
+        );
+        assert!(surfaces[0].contains(&"system_time_now".to_string()));
+        assert!(!surfaces[0].contains(&"web_search".to_string()));
+        assert!(!surfaces[0].contains(&"memory_write".to_string()));
+        assert!(!surfaces[0].contains(&"spawn_subagent".to_string()));
+        let child_depth = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT subagent_depth FROM tool_audit WHERE run_id = ?1 AND tool_name = 'system_time_now'",
+                    [&accepted.run_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("child audit");
+        assert_eq!(child_depth, 1);
+    }
+
+    #[tokio::test]
+    async fn child_run_rejects_a_declared_write_lock_before_calling_the_model() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
+        let mut start = request();
+        start.web_enabled = false;
+        start.turn.message = "请委派子任务。".to_string();
+        let accepted = RunIntake::start(&state.db, start).expect("accepted");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试 ChildRun".to_string(),
+                },
+            },
+        )
+        .expect("running");
+        let provider = ScriptedChildProvider {
+            responses: Mutex::new(VecDeque::new()),
+            tool_surfaces: Mutex::new(Vec::new()),
+        };
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![
+                CapabilityId::new("runtime.read"),
+                CapabilityId::new("harness.child_run"),
+            ],
+            &sink,
+            None,
+        )
+        .with_child_run_provider(&provider);
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "parent-spawn-write-lock",
+                    "spawn_subagent",
+                    r#"{"task":"写入","resource_locks":[{"resource_id":"note.md","access":"write"}]}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("bounded child result");
+
+        assert!(!result.success);
+        assert_eq!(
+            result.output["subagent_report"]["errors"][0],
+            "child_run_write_lock_forbidden"
+        );
+        assert!(provider.tool_surfaces.lock().expect("surfaces").is_empty());
+    }
+
     fn capability_degraded_count(events: &[serde_json::Value]) -> usize {
         events
             .iter()
@@ -1306,13 +2044,28 @@ mod tests {
     }
 
     #[test]
+    fn strict_web_search_retries_an_oversize_provider_with_two_results() {
+        assert_eq!(web_search_result_limit(8, 1), 5);
+        assert_eq!(web_search_result_limit(8, 2), 2);
+        assert_eq!(web_search_result_limit(1, 1), 1);
+        assert_eq!(web_search_result_limit(1, 2), 1);
+    }
+
+    #[test]
+    fn high_risk_web_facts_require_official_or_two_independent_domains() {
+        assert!(corroborated_source_threshold_met(true, 1));
+        assert!(corroborated_source_threshold_met(false, 2));
+        assert!(!corroborated_source_threshold_met(false, 1));
+    }
+
+    #[test]
     fn deferred_web_degradation_emits_once_when_failed_without_evidence() {
         let db = Database::open_in_memory().expect("database");
         let accepted = RunIntake::start(&db, request()).expect("accepted");
         let sink = RecordingSink::default();
         let mut emitted = false;
 
-        emit_deferred_web_degradation(
+        let emitted_now = emit_deferred_web_degradation(
             DeferredWebDegradationInput {
                 db: &db,
                 accepted: &accepted,
@@ -1330,6 +2083,7 @@ mod tests {
             },
         )
         .expect("emit deferred degradation");
+        assert!(emitted_now);
 
         let events = sink.events.lock().expect("events");
         assert_eq!(capability_degraded_count(&events), 1);
@@ -1339,7 +2093,7 @@ mod tests {
             SafeRunErrorCode::WebProviderTimeout.as_str()
         );
 
-        emit_deferred_web_degradation(
+        let second = emit_deferred_web_degradation(
             DeferredWebDegradationInput {
                 db: &db,
                 accepted: &accepted,
@@ -1351,6 +2105,7 @@ mod tests {
             &mut || Ok(false),
         )
         .expect("second emit is idempotent");
+        assert!(!second);
         assert_eq!(capability_degraded_count(&events), 1);
     }
 
@@ -1398,5 +2153,67 @@ mod tests {
 
         let events = sink.events.lock().expect("events");
         assert_eq!(capability_degraded_count(&events), 0);
+    }
+
+    #[tokio::test]
+    async fn cached_skill_plan_reaches_dispatch_scope_guard() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        std::fs::write(vault.join("allowed.md"), "allowed").expect("allowed note");
+        std::fs::write(vault.join("blocked.md"), "blocked").expect("blocked note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let plan = SkillActivationPlanSummary {
+            activated_skills: vec![SkillActivationItemSummary {
+                name: "bounded-skill".into(),
+                scope: "Vault".into(),
+                scope_rules: vec![SkillScopeRule {
+                    kind: "path".into(),
+                    pattern: "allowed.md".into(),
+                }],
+                score: 1.0,
+                match_reason: "test".into(),
+                injected_sections: vec!["skill_overlay".into()],
+                degraded_reasons: vec![],
+                requested_tools: vec![],
+                confirmation_required_tools: vec![],
+                blocked_capabilities: vec![],
+            }],
+            requested_tools: vec![],
+            confirmation_required_tools: vec![],
+            blocked_capabilities: vec![],
+            skill_overlay_summary: "one skill".into(),
+            degraded: false,
+        };
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("note.read")],
+            &sink,
+            None,
+        )
+        .with_skill_activation_plan(Some(plan));
+
+        let result = executor
+            .dispatch_non_web_tool("read_note", &serde_json::json!({"path": "blocked.md"}))
+            .await;
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("outside the confirmed Skill scope"));
     }
 }

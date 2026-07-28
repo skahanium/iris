@@ -296,10 +296,10 @@ export const EditorOutline = memo(function EditorOutline({
         type="button"
         data-testid="outline-ghost-item"
         className={cn(
-          "outline-ghost-item flex w-full items-center text-left text-[hsl(var(--outline-rail-active))]",
+          "outline-ghost-item flex w-full items-center text-left text-[hsl(var(--outline-rail-marker))]",
           `outline-ghost-item--level-${relativeLevel}`,
           active &&
-            "outline-ghost-item--active text-[hsl(var(--outline-rail-active))]",
+            "outline-ghost-item--active text-[hsl(var(--outline-rail-marker))]",
           !active && activeDistance === 1 && "outline-ghost-item--near-1",
           !active && activeDistance === 2 && "outline-ghost-item--near-2",
           candidate && "outline-ghost-item--candidate",

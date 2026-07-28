@@ -1,5 +1,22 @@
 # Iris 架构
 
+## Compatibility boundaries
+
+Iris keeps compatibility only at read boundaries. Each adapter is one-way: current writes never dual-write or fall back to an old representation.
+
+- CEF v1/v2 payloads are read, validated, converted to the current Run schema, and atomically rewritten. New Runs write only the current schema.
+- Legacy Skills (`trigger` metadata or no manifest) are normalized to the current `SkillEntry` while scanning. A manifest draft requires explicit user action; vault `SKILL.md` is never auto-rewritten.
+- Legacy `frontmatter.title`, placeholder names, and old localStorage persona are read mappings only. New notes use the filename/current SQLite profile; localStorage clears only after SQLite persistence succeeds.
+- A stable document session id is allocated before normal editor entry. Recovery fixtures may use a recovery id, but normal paths never use `legacy:${path}` identity.
+
+These adapters remain until a separately announced, reversible migration boundary. Their exit requires explicit user communication; they are not a second write path.
+
+## Markdown document boundary
+
+The persisted boundary is `Markdown file -> frontmatter/title separation -> Preserve-aware editor ingest -> TipTap/ProseMirror document -> ProseMirror Markdown serializer -> Markdown file`. Unsupported syntax becomes a Preserve node carrying its original source. A serializer failure is recoverable and does not fall back to HTML/Turndown or overwrite committed Markdown.
+
+The current editor ingress still uses its isolated Marked renderer internally to prepare TipTap HTML; it is not a second persistence path. `marked` also serves AI messages and read-only Markdown display. The editor persistence path does not call `getHTML()` or Turndown. Replacing editor ingress with a ProseMirror MarkdownParser requires a complete custom-node parser and corpus migration before it can be claimed as complete.
+
 > 本文描述当前已实现的边界，不承诺版本排期；版本排期唯一来源是 [ROADMAP.md](./ROADMAP.md)。
 
 ## 分层
@@ -26,15 +43,15 @@ React 19 UI
 
 `assistant_run_start`、`assistant_run_control` 和 `assistant_run_get` 是唯一执行、控制和恢复入口。每个 Run 先持久化 accepted，再进行策略、上下文、路由与 provider 调度；`assistant:run_event` 是唯一的前端生命周期事件，断流使用 `assistant_run_get` 回放。
 
-会话通过不透明 `AssistantSessionRef` 寻址，并按 normal/classified 安全域物理隔离。当前编辑器、活动 tab、scene、intent、旧 task ID 和笔记正文不进入隐式请求上下文；只有用户明确提交的引用和一次性 action snapshot 可以进入 Run。
+会话通过不透明 `AssistantSessionRef` 寻址，并按 normal/classified 安全域物理隔离。当前编辑器、活动 tab、scene、intent、旧 task ID 和笔记正文不进入隐式请求上下文；只有用户明确提交的引用和一次性 action snapshot 可以进入 Run。`Apply` 还必须把确认计划、模型工具参数和真实写入绑定到同一个显式目标与基准 hash；取消信号会进入 provider、工具调度和写盘前提交检查。
 
 旧 `assistant_execute`、`ai_send_message`、`context_assemble`、`tool_confirm`、`session_*`、`agent_task_*`、`harness_*` 与独立领域执行入口均已移除。不会保留兼容 facade、第二状态机或双写。
 
 ## 搜索、联网与 Skills
 
-普通搜索和 AI 检索均在 Rust 侧执行。Run 仅按显式引用和获授权范围请求材料；检索结果通过证据 ID 与安全展示元数据进入账本，不将证据正文作为系统指令。
+普通搜索和 AI 检索均在 Rust 侧执行。Run 仅按显式引用和获授权范围请求材料；显式材料在读取/送模前、工具读取在打开文件前、Markdown 提交在写盘前都会复核文档策略。检索结果通过证据 ID 与安全展示元数据进入账本，不将证据正文作为系统指令。
 
-模型请求只允许 HTTPS。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
+模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
 
 ## 凭据安全
 
@@ -42,7 +59,7 @@ API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解�
 
 ## SQLite 与迁移
 
-当前共有 **55 组**增量迁移（`001` 至 `055`）。
+当前共有 **57 组**增量迁移（`001` 至 `057`）。
 
 Schema 只允许通过带 up/down 的增量迁移变更。`051_agent_harness_cutover` 使用 copy-transform-swap 将旧会话、任务、trace 和审计外键迁移到统一 Run 模型；运行中或暂停的旧任务被安全归档为 `cancelled` 并带 `cancelled_legacy` 原因。迁移不要求用户删除数据库重建。
 

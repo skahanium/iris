@@ -10,14 +10,13 @@ use crate::ai_runtime::agent_run_repository::{
 };
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
-    ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed, Modality, RiskClass,
-    SafeRunErrorCode, SecurityDomain, WebDecisionReason,
+    CapabilityId, ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed,
+    Modality, RiskClass, SafeRunErrorCode, SecurityDomain, WebDecisionReason,
 };
 use crate::ai_runtime::tool_dispatch::{dispatch_tool, ToolDispatchContext};
 use crate::ai_runtime::tool_execution_pipeline::{
     audit_dispatched_tool, evaluate_tool_execution, ToolExecutionGate,
 };
-use crate::ai_runtime::tool_policy::ToolPolicyContext;
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
 use crate::app::AppState;
 use crate::storage::db::Database;
@@ -28,6 +27,7 @@ fn envelope() -> ExecutionEnvelope {
         context: ContextMode::ExplicitReferences,
         freshness: Freshness::Offline,
         web_reason: WebDecisionReason::LegacyUnknown,
+        verification_requirement: crate::ai_runtime::run_contract::VerificationRequirement::None,
         effort: Effort::Direct,
         security_domain: SecurityDomain::Normal,
         risk: RiskClass::ReadOnly,
@@ -1257,6 +1257,9 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
     let dispatch_context = ToolDispatchContext {
         note_path: None,
         file_id: None,
+        run_id: None,
+        write_target_path: None,
+        document_policy: None,
         web_search_enabled: false,
         max_web_fetches: 5,
         cold_start_packets: &context.local_retrieval_packets,
@@ -1269,18 +1272,14 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
     let tool_arguments = serde_json::json!({});
     let tool_entry = crate::ai_runtime::tool_catalog::catalog_find("get_context_packets")
         .expect("registered context packet tool");
-    let tool_policy = ToolPolicyContext {
-        autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
-        allow_implicit_vault: true,
-        ..ToolPolicyContext::default()
-    };
+    let authorized_capabilities = vec![CapabilityId::new("context.read")];
     let tool_gate = ToolExecutionGate {
         run_id: "run-transient-body",
         session_id: Some(session.session_id),
         run_step: 1,
         entry: tool_entry,
         args: &tool_arguments,
-        policy_ctx: &tool_policy,
+        authorized_capabilities: &authorized_capabilities,
         skill_id: None,
         subagent_depth: 0,
     };
@@ -1439,6 +1438,10 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
             material_needs: vec![MaterialNeed::Authority, MaterialNeed::Exemplar],
             ..envelope()
         },
+        write_target_path: None,
+        document_policy: crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine::new(
+            crate::ai_runtime::policy_decision_engine::DocumentPolicy::allow_all(),
+        ),
         materials: vec![RunContextMaterial {
             role: DomainMaterialRole::Reference,
             source_path: "notes/attached.md".into(),
@@ -1584,8 +1587,73 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
     assert!(messages[0]
         .content
         .text_content()
-        .contains("When the mode is online, prefer calling web_search"));
+        .contains("The web toggle is the sole authority for web access"));
     assert!(messages[0].content.text_content().contains("Local date"));
+}
+
+#[test]
+fn provider_history_sanitizes_prior_web_citations_without_changing_answer_text() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, turn_id, citation_map_json, created_at)
+             VALUES (?1, 1, 'user', '首轮提问', 'history-turn', NULL, ?2)",
+            rusqlite::params![session.session_id, "2026-07-27T00:00:00Z"],
+        )?;
+        conn.execute(
+            "INSERT INTO session_messages
+             (session_id, seq, role, content, turn_id, citation_map_json, created_at)
+             VALUES (?1, 2, 'assistant', ?2, 'history-turn', ?3, ?4)",
+            rusqlite::params![
+                session.session_id,
+                "历史结论见 [1](https://example.test/first)。",
+                r#"{"web":[{"index":1,"title":"首轮来源","url":"https://example.test/first"}]}"#,
+                "2026-07-27T00:00:01Z",
+            ],
+        )?;
+        Ok(())
+    })
+    .expect("seed historical web answer");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "history-sanitization-current".into(),
+            run_id: "history-sanitization-current".into(),
+            turn_id: "history-sanitization-current".into(),
+            message: "第二轮追问".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::Conversation,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accept current run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        None,
+        &session.session_key,
+        "history-sanitization-current",
+    )
+    .expect("assemble context");
+    let messages = context.messages_with_domain_plan(&context.domain_plan());
+    let history = messages
+        .iter()
+        .find(|message| message.content.text_content().contains("历史结论见"))
+        .expect("assistant history");
+
+    assert_eq!(history.content.text_content(), "历史结论见 [历史来源 1]。");
+    assert!(!history.content.text_content().contains("https://"));
+    assert!(!history.content.text_content().contains("[W1]"));
 }
 
 #[test]

@@ -15,7 +15,7 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
-use crate::ai_runtime::context_cache::ContextAssemblyCache;
+use crate::ai_runtime::skills::SkillEntry;
 use crate::ai_types::{AutonomyLevel, SkillActivationPlanSummary};
 use crate::security::brute_force::BruteForceProtection;
 
@@ -104,10 +104,14 @@ impl StorageState {
 /// storage-only command handlers.
 pub struct AiRuntimeState {
     pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
-    pub context_cache: Mutex<ContextAssemblyCache>,
     pub(crate) classified_ephemeral:
         Mutex<crate::ai_runtime::classified_ephemeral::ClassifiedEphemeralStore>,
     pub vector_index_ready: AtomicBool,
+    /// Fully parsed, user-confirmed Skills keyed by the currently selected vault.
+    ///
+    /// Normal Runs may only read this in-memory registry. Filesystem scanning is
+    /// confined to vault activation and explicit user refresh operations.
+    skill_registry: Mutex<HashMap<PathBuf, Vec<SkillEntry>>>,
     embedding_scheduler: OnceLock<Arc<EmbeddingScheduler>>,
 }
 
@@ -155,11 +159,11 @@ impl AiRuntimeState {
     fn new(vector_ready: bool) -> Self {
         Self {
             pending_tool_calls: Mutex::new(HashMap::new()),
-            context_cache: Mutex::new(ContextAssemblyCache::new(64, 30)),
             classified_ephemeral: Mutex::new(
                 crate::ai_runtime::classified_ephemeral::ClassifiedEphemeralStore::default(),
             ),
             vector_index_ready: AtomicBool::new(vector_ready),
+            skill_registry: Mutex::new(HashMap::new()),
             embedding_scheduler: OnceLock::new(),
         }
     }
@@ -191,6 +195,44 @@ impl AiRuntimeState {
         }
     }
 
+    fn replace_skill_registry(&self, vault: PathBuf, skills: Vec<SkillEntry>) -> AppResult<()> {
+        let mut registry = self
+            .skill_registry
+            .lock()
+            .map_err(|_| AppError::msg("skill_registry_lock_failed"))?;
+        registry.insert(vault, skills);
+        Ok(())
+    }
+
+    fn cached_skills(&self, vault: &std::path::Path) -> AppResult<Option<Vec<SkillEntry>>> {
+        let registry = self
+            .skill_registry
+            .lock()
+            .map_err(|_| AppError::msg("skill_registry_lock_failed"))?;
+        Ok(registry.get(vault).cloned())
+    }
+
+    fn upsert_cached_skill(
+        &self,
+        vault: &std::path::Path,
+        skill: SkillEntry,
+    ) -> AppResult<Vec<SkillEntry>> {
+        let mut registry = self
+            .skill_registry
+            .lock()
+            .map_err(|_| AppError::msg("skill_registry_lock_failed"))?;
+        let skills = registry.entry(vault.to_path_buf()).or_default();
+        if let Some(existing) = skills
+            .iter_mut()
+            .find(|existing| existing.name == skill.name && existing.scope == skill.scope)
+        {
+            *existing = skill;
+        } else {
+            skills.push(skill);
+        }
+        Ok(skills.clone())
+    }
+
     fn prune_pending_tool_calls_locked(
         pending: &mut HashMap<String, PendingToolCall>,
         now: Instant,
@@ -217,9 +259,11 @@ impl AiRuntimeState {
             pending.clear();
         }
 
-        crate::llm::safe_lock(&self.context_cache).clear();
         if let Ok(mut classified) = self.classified_ephemeral.lock() {
             classified.clear();
+        }
+        if let Ok(mut registry) = self.skill_registry.lock() {
+            registry.clear();
         }
         self.vector_index_ready
             .store(false, std::sync::atomic::Ordering::Relaxed);
@@ -435,6 +479,10 @@ impl AppState {
             );
             path
         });
+        // This is an explicit vault activation boundary, not a Run. Refresh the
+        // loaded Skill registry here so every later Run can stay I/O-free.
+        let skills = crate::ai_runtime::skills::scan_all(&canonical)?;
+        crate::ai_runtime::skills::rebuild_activation_index(&self.db, &skills)?;
         {
             let mut guard = self.vault.lock().map_err(|_| AppError::msg("Lock error"))?;
             *guard = Some(canonical.clone());
@@ -449,7 +497,35 @@ impl AppState {
             Ok(())
         })?;
         self.embedding_scheduler().reset_for_vault();
+        self.ai.replace_skill_registry(canonical, skills)?;
         Ok(())
+    }
+
+    /// Explicitly rescan Skills for a vault. Never call this from a Run path.
+    pub fn refresh_skills_for_vault(&self, vault: &std::path::Path) -> AppResult<Vec<SkillEntry>> {
+        let skills = crate::ai_runtime::skills::scan_all(vault)?;
+        crate::ai_runtime::skills::rebuild_activation_index(&self.db, &skills)?;
+        self.ai
+            .replace_skill_registry(vault.to_path_buf(), skills.clone())?;
+        Ok(skills)
+    }
+
+    /// Return the already-loaded Skills for this vault without filesystem I/O.
+    pub fn cached_skills_for_vault(
+        &self,
+        vault: &std::path::Path,
+    ) -> AppResult<Option<Vec<SkillEntry>>> {
+        self.ai.cached_skills(vault)
+    }
+
+    /// Update one cached entry after an explicit user-confirmed Skill write.
+    pub fn upsert_cached_skill_for_vault(
+        &self,
+        vault: &std::path::Path,
+        skill: SkillEntry,
+    ) -> AppResult<()> {
+        let skills = self.ai.upsert_cached_skill(vault, skill)?;
+        crate::ai_runtime::skills::rebuild_activation_index(&self.db, &skills)
     }
 
     pub fn vault_path(&self) -> AppResult<PathBuf> {
@@ -462,11 +538,6 @@ impl AppState {
     /// Clear all in-memory AI state when switching vaults.
     pub fn clear_ai_state(&self) {
         self.ai.clear();
-    }
-
-    /// Clear context assembly cache (called on .md file changes to prevent stale results).
-    pub fn clear_context_cache(&self) {
-        crate::llm::safe_lock(&self.ai.context_cache).clear();
     }
 
     pub fn data_dir(&self) -> &PathBuf {
@@ -593,5 +664,55 @@ mod document_open_state_tests {
         assert_eq!(state.foreground_document_open_count(), 1);
         assert!(state.end_document_open(&second));
         assert_eq!(state.foreground_document_open_count(), 0);
+    }
+
+    #[test]
+    fn cached_skills_survive_filesystem_changes_until_explicit_refresh() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let state =
+            AppState::new_with_test_cas_key(directory.path().join("data"), [0xB1; 32]).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+
+        let skill_path = vault.join(".iris/skills/cached-skill/SKILL.md");
+        let skill_target = std::path::PathBuf::from("cached-skill/SKILL.md");
+        let entry = crate::ai_runtime::skills::write_confirmed_skill_content(
+            &vault,
+            &skill_target,
+            crate::ai_runtime::skills::SkillScope::Vault,
+            "---\nname: cached-skill\ndescription: Cached run instructions\n---\n\nUse cached instructions.",
+        )
+        .unwrap();
+        state.upsert_cached_skill_for_vault(&vault, entry).unwrap();
+        let indexed_description = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT description FROM skill_activation_index WHERE skill_name = 'cached-skill' AND scope = 'Vault'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert_eq!(
+            indexed_description.as_deref(),
+            Some("Cached run instructions")
+        );
+        std::fs::remove_file(&skill_path).unwrap();
+
+        let cached = state
+            .cached_skills_for_vault(&vault)
+            .unwrap()
+            .expect("vault activation owns an in-memory Skill registry");
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].name, "cached-skill");
+
+        let refreshed = state.refresh_skills_for_vault(&vault).unwrap();
+        assert!(
+            refreshed.is_empty(),
+            "only an explicit refresh may observe removal"
+        );
     }
 }

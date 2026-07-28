@@ -22,7 +22,13 @@ import {
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { SkillsPanelBody } from "@/components/ai/SkillsPanel";
@@ -51,6 +57,7 @@ import type {
 import type { ConnectivityStatus } from "@/types/llm";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
+import type { ManagementProviderChrome } from "./managementProviderChrome";
 import { PersonaSettingsBody } from "./PersonaSettingsPanel";
 
 interface ManagementCenterPanelProps {
@@ -58,6 +65,8 @@ interface ManagementCenterPanelProps {
   onClose: () => void;
   section: ManagementCenterSection;
   detail: ManagementCenterDetail;
+  managementCenterProviderId: string | null;
+  onManagementCenterProviderIdChange: (providerId: string | null) => void;
   webSearch: boolean;
   webSearchAvailability: WebSearchAvailability;
   webSearchProviderId: string | null;
@@ -91,6 +100,8 @@ interface ManagementCenterPanelProps {
   followSystemProxy: boolean;
   proxyStatusLabel: string;
   onFollowSystemProxyChange: (enabled: boolean) => void;
+  cjkPunctuationEnabled: boolean;
+  onCjkPunctuationChange: (enabled: boolean) => void;
   embeddingStatus: EmbeddingIndexStatus | null;
   embeddingStatusLoading: boolean;
   onSetEmbeddingPaused: (paused: boolean) => Promise<void>;
@@ -339,6 +350,49 @@ function SwitchControl({
     </button>
   );
 }
+
+function DetailChrome({
+  backLabel,
+  onBack,
+  title,
+  detail,
+  providerDetailActive,
+}: {
+  backLabel: string;
+  onBack: () => void;
+  title: string;
+  detail: string;
+  providerDetailActive?: boolean;
+}) {
+  return (
+    <header
+      className="relative flex items-center border-b border-border-subtle pb-3"
+      data-management-provider-detail={
+        providerDetailActive ? "true" : undefined
+      }
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        data-testid="management-detail-back"
+        aria-label={`返回 ${backLabel}`}
+        className="h-8 gap-1 rounded-full border border-border-subtle bg-surface-inset/40 px-3 text-xs text-muted-foreground hover:bg-surface-inset hover:text-foreground"
+        onClick={onBack}
+      >
+        <ChevronLeft className="h-3.5 w-3.5" />
+        {backLabel}
+      </Button>
+      <div className="pointer-events-none absolute inset-x-0 flex flex-col items-center text-center">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="mt-1 max-w-prose px-10 text-xs text-muted-foreground">
+          {detail}
+        </p>
+      </div>
+    </header>
+  );
+}
+
 function isAiManagementDetail(
   detail: ManagementCenterDetail,
 ): detail is AiManagementDetail {
@@ -380,6 +434,8 @@ export function ManagementCenterPanel({
   onClose,
   section,
   detail,
+  managementCenterProviderId,
+  onManagementCenterProviderIdChange,
   webSearch,
   webSearchAvailability,
   webSearchProviderId,
@@ -409,6 +465,8 @@ export function ManagementCenterPanel({
   followSystemProxy,
   proxyStatusLabel,
   onFollowSystemProxyChange,
+  cjkPunctuationEnabled,
+  onCjkPunctuationChange,
   embeddingStatus,
   embeddingStatusLoading,
   onSetEmbeddingPaused,
@@ -425,6 +483,27 @@ export function ManagementCenterPanel({
     useState<AiManagementDetail | null>(null);
   const [activeNotesDetail, setActiveNotesDetail] =
     useState<NotesManagementDetail | null>(null);
+  const [providerChrome, setProviderChrome] =
+    useState<ManagementProviderChrome | null>(null);
+
+  const handleProviderChromeChange = useCallback(
+    (chrome: ManagementProviderChrome | null) => {
+      setProviderChrome((previous) => {
+        if (chrome === null) {
+          return previous === null ? previous : null;
+        }
+        if (
+          previous !== null &&
+          previous.label === chrome.label &&
+          previous.detail === chrome.detail
+        ) {
+          return previous;
+        }
+        return chrome;
+      });
+    },
+    [],
+  );
   const status = connectivityStatus;
   const [embeddingActionMessage, setEmbeddingActionMessage] = useState<
     string | null
@@ -461,6 +540,17 @@ export function ManagementCenterPanel({
     );
   }, [detail, open, section]);
 
+  useEffect(() => {
+    if (!managementCenterProviderId) {
+      setProviderChrome(null);
+    }
+  }, [managementCenterProviderId]);
+
+  const llmSelectedProviderId =
+    activeAiDetail === "models" ? managementCenterProviderId : null;
+  const mcpSelectedProviderId =
+    activeAiDetail === "web-search" ? managementCenterProviderId : null;
+
   const activeMeta = useMemo(
     () =>
       MANAGEMENT_SECTIONS.find((item) => item.id === activeSection) ??
@@ -496,6 +586,8 @@ export function ManagementCenterPanel({
     setActiveSection("ai");
     setActiveAiDetail(detail);
     setActiveNotesDetail(null);
+    setProviderChrome(null);
+    onManagementCenterProviderIdChange(null);
   };
 
   const openNotesDetail = (nextDetail: NotesManagementDetail) => {
@@ -566,7 +658,7 @@ export function ManagementCenterPanel({
           title="关于 Iris"
           detail={
             <>
-              版本 1.2.15 · GNU Affero General Public License v3.0 · Source:
+              版本 1.2.17 · GNU Affero General Public License v3.0 · Source:
               <span className="ml-1 font-mono">
                 https://github.com/skahanium/iris
               </span>
@@ -794,6 +886,19 @@ export function ManagementCenterPanel({
           detail="Cmd/Ctrl+S 只保存当前 Markdown 内容；自动版本追踪是额外安全网。"
         />
       </PanelSection>
+
+      <PanelSection title="编辑">
+        <SettingRow
+          title="中文标点自动转换"
+          detail="在中文上下文中把英文标点（. , : ; ! ? ( ) 及引号）自动转为全角（。 ， ： ； ！ ？ （ ） “ ” ‘ ’）；代码块、URL、英文段落与 markdown 触发符不受影响。"
+        >
+          <SwitchControl
+            checked={cjkPunctuationEnabled}
+            label="中文标点自动转换"
+            onCheckedChange={onCjkPunctuationChange}
+          />
+        </SettingRow>
+      </PanelSection>
     </SectionShell>
   );
 
@@ -801,29 +906,16 @@ export function ManagementCenterPanel({
     const isFileTree = notesDetail === "file-sheet";
     return (
       <section className="flex min-h-[34rem] flex-col">
-        <header className="flex items-start gap-3 border-b border-border/60 pb-3">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-testid="management-detail-back"
-            className="h-8 gap-1.5"
-            onClick={() => setActiveNotesDetail(null)}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            笔记
-          </Button>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-foreground">
-              {isFileTree ? "浏览笔记库" : "回收站"}
-            </h3>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {isFileTree
-                ? "文件树、文档列表和文件操作在同一个管理中心面板内完成。"
-                : "已删除笔记保留 15 天，恢复后会回到原路径。"}
-            </p>
-          </div>
-        </header>
+        <DetailChrome
+          backLabel="笔记"
+          onBack={() => setActiveNotesDetail(null)}
+          title={isFileTree ? "浏览笔记库" : "回收站"}
+          detail={
+            isFileTree
+              ? "文件树、文档列表和文件操作在同一个管理中心面板内完成。"
+              : "已删除笔记保留 15 天，恢复后会回到原路径。"
+          }
+        />
 
         <div className="mt-4 flex h-[min(58vh,34rem)] min-h-[28rem] flex-col overflow-hidden rounded-lg border border-border/65 bg-background/55">
           {isFileTree ? (
@@ -1016,77 +1108,93 @@ export function ManagementCenterPanel({
 
   const renderAiDetail = (detail: AiManagementDetail) => {
     const meta = AI_DETAIL_META[detail];
+    const providerDetailActive =
+      (detail === "models" && Boolean(llmSelectedProviderId)) ||
+      (detail === "web-search" && Boolean(mcpSelectedProviderId));
+    const headerTitle = providerChrome?.label ?? meta.label;
+    const headerDetail = providerChrome?.detail ?? meta.detail;
+    const backLabel = providerDetailActive ? meta.label : "AI";
+
     return (
       <section data-testid="management-ai-detail" className="space-y-5">
-        <header className="flex items-start gap-3 border-b border-border/60 pb-3">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            data-testid="management-detail-back"
-            className="h-8 gap-1.5"
-            onClick={() => setActiveAiDetail(null)}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            AI
-          </Button>
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-foreground">
-              {meta.label}
-            </h3>
-            <p className="mt-1 text-xs text-muted-foreground">{meta.detail}</p>
-          </div>
-        </header>
+        <DetailChrome
+          backLabel={backLabel}
+          onBack={() => {
+            if (providerDetailActive) {
+              onManagementCenterProviderIdChange(null);
+              setProviderChrome(null);
+              return;
+            }
+            setActiveAiDetail(null);
+            onManagementCenterProviderIdChange(null);
+            setProviderChrome(null);
+          }}
+          title={headerTitle}
+          detail={headerDetail}
+          providerDetailActive={providerDetailActive}
+        />
 
-        {detail === "models" ? <LlmRoutingSection open={open} /> : null}
+        {detail === "models" ? (
+          <LlmRoutingSection
+            open={open}
+            selectedProviderId={llmSelectedProviderId}
+            onSelectedProviderIdChange={onManagementCenterProviderIdChange}
+            onProviderChromeChange={handleProviderChromeChange}
+          />
+        ) : null}
         {detail === "web-search" ? (
           <div className="space-y-5">
-            <PanelSection title="联网搜索">
-              <SettingRow
-                icon={Globe2}
-                title="当前搜索提供方"
-                detail={
-                  webSearchAvailability.canEnable
-                    ? `将使用 ${searchBackend} 执行联网搜索。`
-                    : `${webSearchAvailability.detail}。已配置 ${configuredWebSearchProviderCount} 个 MCP 搜索映射。`
-                }
-              >
-                <select
-                  value={selectedWebSearchProviderId}
-                  disabled={webSearchAvailability.options.length === 0}
-                  className="h-8 min-w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-55"
-                  onChange={(event) =>
-                    onWebSearchProviderChange(event.target.value || null)
+            {!mcpSelectedProviderId ? (
+              <PanelSection title="联网搜索">
+                <SettingRow
+                  icon={Globe2}
+                  title="当前搜索提供方"
+                  detail={
+                    webSearchAvailability.canEnable
+                      ? `将使用 ${searchBackend} 执行联网搜索。`
+                      : `${webSearchAvailability.detail}。已配置 ${configuredWebSearchProviderCount} 个 MCP 搜索映射。`
                   }
                 >
-                  <option value="">请选择</option>
-                  {webSearchAvailability.options.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.name}
-                    </option>
-                  ))}
-                </select>
-              </SettingRow>
-              <SettingRow
-                icon={Globe2}
-                title={webSearch ? "联网已开启" : "联网已关闭"}
-                detail={`联网：${webSearchDetail}`}
-              >
-                <SwitchControl
-                  checked={webSearch && webSearchAvailability.canEnable}
-                  disabled={!webSearchAvailability.canEnable}
-                  label="联网搜索"
-                  onCheckedChange={(checked) => {
-                    if (!checked || webSearchAvailability.canEnable) {
-                      onWebSearchChange(checked);
+                  <select
+                    value={selectedWebSearchProviderId}
+                    disabled={webSearchAvailability.options.length === 0}
+                    className="h-8 min-w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-55"
+                    onChange={(event) =>
+                      onWebSearchProviderChange(event.target.value || null)
                     }
-                  }}
-                />
-              </SettingRow>
-            </PanelSection>
+                  >
+                    <option value="">请选择</option>
+                    {webSearchAvailability.options.map((provider) => (
+                      <option key={provider.id} value={provider.id}>
+                        {provider.name}
+                      </option>
+                    ))}
+                  </select>
+                </SettingRow>
+                <SettingRow
+                  icon={Globe2}
+                  title={webSearch ? "联网已开启" : "联网已关闭"}
+                  detail={`联网：${webSearchDetail}`}
+                >
+                  <SwitchControl
+                    checked={webSearch && webSearchAvailability.canEnable}
+                    disabled={!webSearchAvailability.canEnable}
+                    label="联网搜索"
+                    onCheckedChange={(checked) => {
+                      if (!checked || webSearchAvailability.canEnable) {
+                        onWebSearchChange(checked);
+                      }
+                    }}
+                  />
+                </SettingRow>
+              </PanelSection>
+            ) : null}
             <McpProfilesPanel
               open={open}
+              selectedProviderId={mcpSelectedProviderId}
+              onSelectedProviderIdChange={onManagementCenterProviderIdChange}
               onProvidersChanged={onRefreshWebSearchProviders}
+              onProviderChromeChange={handleProviderChromeChange}
             />
           </div>
         ) : null}

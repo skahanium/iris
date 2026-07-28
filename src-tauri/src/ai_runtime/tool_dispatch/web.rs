@@ -91,6 +91,7 @@ pub(super) async fn web_search_tool(
             max_search_results: 8,
             max_fetches: ctx.max_web_fetches,
             provider_snapshot: None,
+            provider_selection_frozen: false,
         },
     )
     .await?;

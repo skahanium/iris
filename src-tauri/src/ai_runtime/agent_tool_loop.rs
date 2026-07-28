@@ -18,6 +18,10 @@ const MAX_MODEL_TURNS: u32 = 8;
 const MAX_TOOL_CALLS: u32 = 24;
 const MAX_REPEAT_CALLS: u32 = 2;
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
+/// Web evidence is deliberately allowed a larger envelope than generic tool
+/// output. Eight compact evidence excerpts need materially more room than a
+/// normal tool response, but the budget remains bounded per tool turn.
+pub(crate) const MAX_WEB_TOOL_RESULT_CHARS: usize = 32_000;
 
 /// Result of a fully bounded model/tool exchange.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,14 +66,21 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         false
     }
 
+    /// Whether a final model answer is invalid until this executor has
+    /// registered usable Web evidence for the Run.
+    fn requires_web_evidence(&self) -> bool {
+        false
+    }
+
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
+    /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
     fn emit_deferred_web_degradation_if_needed(
         &self,
         _db: &Database,
         _sink: &dyn RunEventSink,
-    ) -> AppResult<()> {
-        Ok(())
+    ) -> AppResult<bool> {
+        Ok(false)
     }
 }
 
@@ -90,10 +101,20 @@ impl Default for AgentToolLoop {
 }
 
 impl AgentToolLoop {
+    /// Build a bounded loop for a nested harness operation. Zero is never a
+    /// meaningful limit: clamp it to one so callers fail deterministically
+    /// after a real bounded attempt instead of silently doing no work.
+    pub(crate) fn with_limits(max_model_turns: u32, max_tool_calls: u32) -> Self {
+        Self {
+            max_model_turns: max_model_turns.clamp(1, MAX_MODEL_TURNS),
+            max_tool_calls: max_tool_calls.clamp(1, MAX_TOOL_CALLS),
+        }
+    }
+
     /// Run model turns until a non-empty final answer is received or a bound is reached.
     pub(crate) async fn execute(
         &self,
-        provider: &impl ToolLoopProvider,
+        provider: &(impl ToolLoopProvider + ?Sized),
         executor: &impl ToolLoopExecutor,
         run_id: &str,
         messages: Vec<LlmMessage>,
@@ -109,7 +130,7 @@ impl AgentToolLoop {
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_with_eval_telemetry(
         &self,
-        provider: &impl ToolLoopProvider,
+        provider: &(impl ToolLoopProvider + ?Sized),
         executor: &impl ToolLoopExecutor,
         run_id: &str,
         messages: Vec<LlmMessage>,
@@ -132,7 +153,7 @@ impl AgentToolLoop {
     #[allow(clippy::too_many_arguments)]
     async fn execute_internal(
         &self,
-        provider: &impl ToolLoopProvider,
+        provider: &(impl ToolLoopProvider + ?Sized),
         executor: &impl ToolLoopExecutor,
         run_id: &str,
         mut messages: Vec<LlmMessage>,
@@ -149,6 +170,7 @@ impl AgentToolLoop {
         let mut fingerprints = HashMap::<String, u32>::new();
 
         while model_turns < self.max_model_turns {
+            ensure_run_not_cancelled(run_id)?;
             model_turns += 1;
             let model_started_at = std::time::Instant::now();
             let response = provider
@@ -159,6 +181,9 @@ impl AgentToolLoop {
             }
 
             if response.tool_calls.is_empty() {
+                if executor.requires_web_evidence() && !executor.has_web_evidence() {
+                    return Err(AppError::msg("agent_run_web_evidence_required"));
+                }
                 let content = response.content.unwrap_or_default();
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
@@ -182,6 +207,7 @@ impl AgentToolLoop {
             observer.on_tools_starting()?;
             messages.push(assistant_tool_message(&response));
             for call in &response.tool_calls {
+                ensure_run_not_cancelled(run_id)?;
                 tool_calls += 1;
                 let result = if !allowed_tools.contains(call.function.name.as_str()) {
                     rejected_result(call, "tool_not_in_run_surface")
@@ -219,6 +245,14 @@ impl AgentToolLoop {
     }
 }
 
+fn ensure_run_not_cancelled(run_id: &str) -> AppResult<()> {
+    if crate::ai_runtime::model_gateway::is_abort_requested(run_id) {
+        Err(AppError::msg("agent_run_cancelled"))
+    } else {
+        Ok(())
+    }
+}
+
 fn assistant_tool_message(response: &GatewayResponse) -> LlmMessage {
     LlmMessage {
         role: MessageRole::Assistant,
@@ -238,8 +272,34 @@ fn tool_result_message(call: &ToolCall, result: &ToolCallResult) -> (LlmMessage,
     let serialized = serde_json::to_string(&payload).unwrap_or_else(|_| {
         "{\"success\":false,\"error\":\"tool_result_serialization_failed\"}".into()
     });
-    let truncated = serialized.chars().count() > MAX_TOOL_RESULT_CHARS;
-    let content = truncate_chars(&serialized, MAX_TOOL_RESULT_CHARS);
+    let budget = tool_result_char_budget(&call.function.name);
+    let truncated = serialized.chars().count() > budget;
+    // Web evidence is a structured protocol packet, not prose. Slicing it
+    // would turn a capacity problem into malformed JSON and let the model
+    // reason over a partial, unverifiable result. The normal Web executor
+    // packs its output below this limit; this branch is a fail-closed guard
+    // for every other executor (including harness implementations).
+    if truncated && call.function.name == "web_search" {
+        let overflow = serde_json::json!({
+            "success": false,
+            "output": serde_json::Value::Null,
+            "error": "web_evidence_pack_overflow",
+        });
+        let content = serde_json::to_string(&overflow).unwrap_or_else(|_| {
+            "{\"success\":false,\"error\":\"web_evidence_pack_overflow\"}".into()
+        });
+        return (
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: content.into(),
+                tool_call_id: Some(call.id.clone()),
+                tool_calls: None,
+                reasoning_content: None,
+            },
+            false,
+        );
+    }
+    let content = truncate_chars(&serialized, budget);
     (
         LlmMessage {
             role: MessageRole::Tool,
@@ -250,6 +310,14 @@ fn tool_result_message(call: &ToolCall, result: &ToolCallResult) -> (LlmMessage,
         },
         truncated,
     )
+}
+
+fn tool_result_char_budget(tool_name: &str) -> usize {
+    if tool_name == "web_search" {
+        MAX_WEB_TOOL_RESULT_CHARS
+    } else {
+        MAX_TOOL_RESULT_CHARS
+    }
 }
 
 fn valid_call_arguments(call: &ToolCall) -> bool {

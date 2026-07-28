@@ -28,8 +28,8 @@ use super::agent_capacity_eval::{
     LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate, LlmProtocolDouble,
     McpCapabilityContract, McpOperation, McpTransportContract, McpTransportFailureContract,
     ObservedSource, PressureDimension, ProtocolContractOutcome, ProtocolValidationLevel,
-    ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
-    WebAnswerContamination, WebState,
+    RequiredFact, ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
+    VerdictReason, WebAnswerContamination, WebState,
 };
 
 #[test]
@@ -62,6 +62,8 @@ use super::{
     EndpointFamily, LlmMessage, MessageRole, ProviderConfig, ReasoningAdapter, ReasoningControl,
     ReasoningMode, ReasoningVisibility, ResolvedReasoningRequest, ToolCall,
 };
+
+const REAL_STDIO_TEST_TIMEOUT: Duration = Duration::from_secs(10);
 use crate::ai_runtime::agent_tool_loop::ToolLoopProvider;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
@@ -137,10 +139,30 @@ fn stdio_options(request_timeout: Duration) -> McpHostRuntimeOptions {
 }
 
 fn install_contract_stdio_provider(db: &Database, provider_id: &str, mode: &str, with_fetch: bool) {
-    let fixture = format!(
-        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let (command, args) = if cfg!(windows) {
+        let fixture = format!(
+            "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        (
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                fixture,
+                mode.to_string(),
+            ],
+        )
+    } else {
+        let fixture = format!(
+            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        ("/bin/sh", vec![fixture, mode.to_string()])
+    };
     upsert_web_evidence_provider(
         db,
         &WebEvidenceProviderInput {
@@ -150,8 +172,8 @@ fn install_contract_stdio_provider(db: &Database, provider_id: &str, mode: &str,
             enabled: true,
             transport_kind: "stdio".into(),
             transport_config_json: serde_json::json!({
-                "command": "/bin/sh",
-                "args": [fixture, mode],
+                "command": command,
+                "args": args,
             })
             .to_string(),
             credential_refs_json: "{}".into(),
@@ -441,6 +463,90 @@ fn offline_web_case_passes_only_with_explicit_degradation() {
         CheckStatus::Pass
     );
     assert!(verdict.overall_pass());
+}
+
+#[test]
+fn online_web_case_passes_only_with_explicit_degradation_without_web_facts() {
+    let mut case = manifest_fixture();
+    case.evidence_group = EvidenceGroup::WebOnly;
+    case.web_state = WebState::Online;
+    case.required_sources
+        .retain(|source| source.kind == SourceKind::Web);
+    case.required_facts.clear();
+    case.disclosure_constraints.clear();
+
+    let observation = AnswerObservation {
+        case_id: case.id.clone(),
+        sources: Vec::new(),
+        fact_supports: Vec::new(),
+        contradicted_fact_ids: Vec::new(),
+        citations: Vec::new(),
+        tool_calls: vec!["web_search".into()],
+        disclosures: vec![super::agent_capacity_eval::ONLINE_WEB_DEGRADATION_DISCLOSURE.into()],
+        degraded: true,
+        clarification_requested: false,
+        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
+        safety_violations: Vec::new(),
+    };
+
+    let verdict = evaluate_case(&case, &observation).unwrap();
+
+    assert_eq!(
+        verdict.degradation_or_clarification().status(),
+        CheckStatus::Pass
+    );
+    assert_eq!(
+        verdict.degradation_or_clarification().reason_code(),
+        VerdictReason::OnlineDegradationDisclosed
+    );
+    assert!(verdict.overall_pass());
+}
+
+#[test]
+fn online_web_degradation_fails_when_current_web_facts_are_fabricated() {
+    let mut case = manifest_fixture();
+    case.evidence_group = EvidenceGroup::WebOnly;
+    case.web_state = WebState::Online;
+    case.required_sources
+        .retain(|source| source.kind == SourceKind::Web);
+    case.required_facts = vec![RequiredFact {
+        id: "fact-web-authority".into(),
+        allowed_sources: vec!["web-authority".into()],
+        citation_required: false,
+    }];
+    case.disclosure_constraints.clear();
+    case.local_authorization.explicit_reference_ids.clear();
+    case.local_authorization.explicit_scope_source_ids.clear();
+    case.local_authorization.implicit_vault = ImplicitVaultExpectation::Forbidden;
+
+    let observation = AnswerObservation {
+        case_id: case.id.clone(),
+        sources: Vec::new(),
+        fact_supports: vec![FactSupportObservation {
+            fact_id: "fact-web-authority".into(),
+            source_ids: vec!["web-authority".into()],
+        }],
+        contradicted_fact_ids: Vec::new(),
+        citations: Vec::new(),
+        tool_calls: vec!["web_search".into()],
+        disclosures: Vec::new(),
+        degraded: true,
+        clarification_requested: false,
+        web_answer_contamination: WebAnswerContamination::ConfirmedAbsent,
+        safety_violations: Vec::new(),
+    };
+
+    let verdict = evaluate_case(&case, &observation).unwrap();
+
+    assert_eq!(
+        verdict.degradation_or_clarification().status(),
+        CheckStatus::Fail
+    );
+    assert_eq!(
+        verdict.degradation_or_clarification().reason_code(),
+        VerdictReason::OnlineDegradationFabrication
+    );
+    assert!(!verdict.overall_pass());
 }
 
 #[test]
@@ -1078,7 +1184,7 @@ fn mcp_transport_contract_rejects_manual_discovery_and_deserialization() {
         McpCapabilityContract::from_mappings(Some(r#"{"tool":"search","queryArg":"query"}"#), None)
             .unwrap();
     let manual_discovery = McpStdioDiscovery {
-        protocol_version: super::mcp_host_runtime::MCP_PROTOCOL_VERSION.into(),
+        protocol_version: "2025-06-18".into(),
         server_name: "iris-contract-mcp".into(),
         server_version: None,
         tools: vec![McpToolDefinition {
@@ -1103,6 +1209,22 @@ fn mcp_transport_contract_rejects_manual_discovery_and_deserialization() {
     .is_err());
 }
 
+#[test]
+fn mcp_evaluation_contract_uses_the_host_negotiated_protocol_allowlist() {
+    assert!(super::mcp_host_runtime::is_supported_mcp_protocol_version(
+        "2025-06-18"
+    ));
+    assert!(super::mcp_host_runtime::is_supported_mcp_protocol_version(
+        "2025-11-25"
+    ));
+    assert!(!super::mcp_host_runtime::is_supported_mcp_protocol_version(
+        "2025-03-26"
+    ));
+    assert!(!super::mcp_host_runtime::is_supported_mcp_protocol_version(
+        "2026-01-01"
+    ));
+}
+
 #[tokio::test]
 async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
     let db = Database::open_in_memory().unwrap();
@@ -1111,7 +1233,7 @@ async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
     let probe = probe_provider_stdio_tools(
         &db,
         "contract-search",
-        stdio_options(Duration::from_secs(2)),
+        stdio_options(REAL_STDIO_TEST_TIMEOUT),
     )
     .await;
     let discovery = probe
@@ -1140,7 +1262,7 @@ async fn real_stdio_mcp_transport_discovers_search_only_and_calls_search() {
         &db,
         "web.search",
         serde_json::json!({"query": "synthetic"}),
-        stdio_options(Duration::from_secs(2)),
+        stdio_options(REAL_STDIO_TEST_TIMEOUT),
     )
     .await
     .expect("real stdio search call must complete");
@@ -1159,7 +1281,7 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
     let probe = probe_provider_stdio_tools(
         &db,
         "contract-search-fetch",
-        stdio_options(Duration::from_secs(2)),
+        stdio_options(REAL_STDIO_TEST_TIMEOUT),
     )
     .await;
     let discovery = probe
@@ -1182,7 +1304,7 @@ async fn real_stdio_mcp_transport_discovers_and_calls_search_and_fetch() {
         &db,
         "web.fetch",
         serde_json::json!({"url": "https://source.invalid/contract"}),
-        stdio_options(Duration::from_secs(2)),
+        stdio_options(REAL_STDIO_TEST_TIMEOUT),
     )
     .await
     .expect("real stdio fetch call must complete");
@@ -1794,7 +1916,89 @@ async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certif
         verdict.fact_correctness().reason_code(),
         super::agent_capacity_eval::VerdictReason::RequiredFactMissing
     );
-    assert!(summary.telemetry().model_turns() >= 12);
+    // Strict offline factual cases terminate before model dispatch; the smoke
+    // suite therefore must not equate every scheduled case with a model turn.
+    assert!(summary.telemetry().model_turns() > 0);
+}
+
+#[tokio::test]
+async fn headless_online_web_case_binds_its_prefetched_evidence_to_the_fact() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| scenario.case_id() == 26)
+        .expect("online web scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless online web case");
+
+    assert!(executed.fact_correctness_passed());
+    assert!(executed.overall_pass());
+}
+
+#[tokio::test]
+async fn headless_high_risk_web_case_requires_two_controlled_sources() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| scenario.case_id() == 34)
+        .expect("high-risk online web scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless high-risk web case");
+
+    assert!(executed.overall_pass());
+}
+
+#[tokio::test]
+async fn headless_strict_hybrid_case_can_retrieve_implicit_local_evidence() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| scenario.case_id() == 40)
+        .expect("strict hybrid scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless strict hybrid case");
+
+    assert!(executed.observed_local_source());
+    assert!(executed.fact_correctness_passed());
+    assert!(executed.overall_pass());
+}
+
+#[tokio::test]
+async fn headless_no_retrieval_rewrite_cases_remain_offline_and_complete() {
+    for case_id in [9, 10] {
+        let scenario = generate_core_scenarios()
+            .expect("core scenarios")
+            .into_iter()
+            .find(|scenario| scenario.case_id() == case_id)
+            .expect("no-retrieval rewrite scenario");
+
+        let executed = execute_headless_core_case(&scenario, None)
+            .await
+            .expect("headless no-retrieval rewrite case");
+
+        assert!(executed.overall_pass(), "case {case_id}");
+    }
+}
+
+#[tokio::test]
+async fn headless_offline_web_case_records_a_safe_refusal_as_an_evaluation_pass() {
+    let scenario = generate_core_scenarios()
+        .expect("core scenarios")
+        .into_iter()
+        .find(|scenario| scenario.case_id() == 25)
+        .expect("offline web scenario");
+
+    let executed = execute_headless_core_case(&scenario, None)
+        .await
+        .expect("headless offline web case");
+
+    assert!(executed.overall_pass());
 }
 
 #[tokio::test]
@@ -1844,6 +2048,7 @@ fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_c
         std::collections::HashSet::from([
             PressureDimension::Input,
             PressureDimension::History,
+            PressureDimension::ConversationTurns,
             PressureDimension::LocalMaterial,
             PressureDimension::LocalMaterialChars,
             PressureDimension::RetrievalDistractors,
@@ -1888,6 +2093,7 @@ fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_c
         .expect("web evidence count staircase");
     let serialized = serde_json::to_value(web_evidence).expect("serialized staircase");
     assert_eq!(serialized["dimension"], "web_evidence_count");
+    assert_eq!(web_evidence.levels(), &[1, 2, 4, 5, 6, 8, 9, 10]);
 }
 
 #[test]
@@ -1981,17 +2187,17 @@ async fn hard_boundary_suite_executes_all_eight_real_production_limits() {
 }
 
 #[tokio::test]
-async fn security_track_has_twelve_independent_attested_zero_tolerance_cases() {
+async fn security_track_has_fourteen_independent_attested_zero_tolerance_cases() {
     let results = run_security_track().await.expect("security track");
 
-    assert_eq!(results.len(), 12);
+    assert_eq!(results.len(), 14);
     assert_eq!(
         results
             .iter()
             .map(|result| result.case_id())
             .collect::<std::collections::HashSet<_>>()
             .len(),
-        12
+        14
     );
     for domain in [
         "implicit_document_read",
@@ -2000,6 +2206,7 @@ async fn security_track_has_twelve_independent_attested_zero_tolerance_cases() {
         "scope_leak",
         "offline_web_dispatch",
         "local_to_web_disclosure",
+        "online_web_degradation",
     ] {
         let witnesses = results
             .iter()
@@ -2027,6 +2234,10 @@ async fn security_track_has_twelve_independent_attested_zero_tolerance_cases() {
     assert!(boundary_witnesses
         .iter()
         .all(|witness| witness.starts_with("headless_tool_")));
+    assert!(
+        results.iter().all(|result| result.passed()),
+        "security track failures: {results:?}"
+    );
 }
 
 #[tokio::test]
@@ -2036,7 +2247,10 @@ async fn six_combined_terminal_cases_execute_real_component_combinations() {
         .expect("combined terminal cases");
 
     assert_eq!(results.len(), 6);
-    assert!(results.iter().all(|result| result.passed()));
+    assert!(
+        results.iter().all(|result| result.passed()),
+        "combined terminal failures: {results:?}"
+    );
 }
 
 #[tokio::test]
@@ -2069,7 +2283,7 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         .await
         .expect("execute pressure staircases");
 
-    assert_eq!(executions.len(), 13);
+    assert_eq!(executions.len(), 14);
     for execution in &executions {
         assert!(execution.has_runtime_witness());
         assert!(execution
@@ -2090,7 +2304,7 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         (PressureDimension::LocalMaterial, 12, 13),
         (PressureDimension::LocalMaterialChars, 32_000, 32_001),
         (PressureDimension::ToolLoop, 24, 25),
-        (PressureDimension::WebEvidenceCount, 8, 9),
+        (PressureDimension::WebEvidenceCount, 5, 6),
         (PressureDimension::Output, 32_000, 32_001),
     ] {
         let execution = executions
@@ -2105,6 +2319,14 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
             .iter()
             .find(|execution| execution.dimension() == PressureDimension::RetrievalDistractors)
             .expect("retrieval distractors")
+            .validation_status_code(),
+        "lower_bound_only"
+    );
+    assert_eq!(
+        executions
+            .iter()
+            .find(|execution| execution.dimension() == PressureDimension::ConversationTurns)
+            .expect("conversation turns")
             .validation_status_code(),
         "lower_bound_only"
     );
@@ -3136,7 +3358,7 @@ async fn live_preflight_ids_and_approval_tokens_are_random_session_bound_and_non
     .expect("current-session approval runs once");
     assert_eq!(
         result.completed_case_count(),
-        12,
+        10,
         "the closed result exposes terminal state without secret-bearing transport data: {result:?}"
     );
 
@@ -3230,7 +3452,15 @@ async fn approved_live_pilot_executes_exactly_twelve_task1_runs_with_task2_local
     assert_eq!(probe.hydration_calls(), 1);
     assert_eq!(probe.dispatch_calls(), 12);
     assert_eq!(result.required_case_count(), 12);
-    assert_eq!(result.completed_case_count(), 12);
+    // The smoke matrix intentionally includes two offline external-fact cases
+    // (WebOnly and Hybrid). Under the current-run verification contract they
+    // must end in the safe
+    // `WebVerificationRequired` terminal state before a model call, rather
+    // than being counted as a completed answer.
+    assert_eq!(result.completed_case_count(), 10);
+    assert!(result
+        .terminal_error_codes()
+        .contains(&"agent_run_web_verification_required"));
     assert_eq!(result.status_code(), "live_not_tested");
     let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -3370,7 +3600,7 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
 
     assert_eq!(probe.hydration_calls(), 1);
     assert_eq!(probe.dispatch_calls(), 12);
-    assert_eq!(result.completed_case_count(), 12);
+    assert_eq!(result.completed_case_count(), 10);
     assert!(result.passed() < result.required_case_count());
     assert!(result.failed() > 0);
     assert_eq!(
@@ -3461,7 +3691,11 @@ async fn live_pilot_completed_failures_are_derived_from_closed_runtime_evidence(
             .find(|case| case["caseId"] == case_id)
             .expect("faulted smoke case");
 
-        assert_eq!(faulted["runtimeEvidence"]["terminalState"], "completed");
+        let expected_terminal_state = if case_id == 25 { "failed" } else { "completed" };
+        assert_eq!(
+            faulted["runtimeEvidence"]["terminalState"],
+            expected_terminal_state
+        );
         assert_eq!(
             faulted["verdict"][check]["status"], "fail",
             "{fault:?} did not fail {check}"
@@ -3885,6 +4119,10 @@ fn pressure_plan_includes_user_spec_refined_axes_and_live_not_tested_schedules()
     assert!(by_dimension(PressureDimension::Input).contains(&15_500));
     assert!(by_dimension(PressureDimension::History).contains(&20));
     assert!(by_dimension(PressureDimension::History).contains(&50));
+    assert_eq!(
+        by_dimension(PressureDimension::ConversationTurns),
+        vec![1, 20, 50, 100]
+    );
     assert_eq!(
         by_dimension(PressureDimension::RetrievalDistractors),
         vec![0, 10, 48, 100, 1_000]

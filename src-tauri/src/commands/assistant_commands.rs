@@ -8,7 +8,7 @@ use tauri::{AppHandle, State};
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent, AssistantRunGetRequest,
     AssistantRunGetResponse, AssistantRunRetryRequest, AssistantRunStartRequest,
-    AssistantSessionRef, Effect, Effort, Freshness, SecurityDomain,
+    AssistantSessionRef, Effect, Effort, SecurityDomain,
 };
 use crate::ai_runtime::run_engine::{
     ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink,
@@ -16,7 +16,6 @@ use crate::ai_runtime::run_engine::{
 };
 use crate::ai_runtime::run_intake::{NormalRunControlOutcome, RunIntake};
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
-use crate::ai_runtime::tool_policy::ToolPolicyContext;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 /// List request for the unified, domain-routed conversation history API.
@@ -100,6 +99,10 @@ pub struct AssistantSessionMessage {
     pub explicit_references: Vec<serde_json::Value>,
     pub context_scope: serde_json::Value,
     pub display_mentions: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub web_citations: Vec<crate::ai_types::WebCitationEntry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub citation_binding: Option<crate::ai_types::CitationBinding>,
     pub created_at: String,
 }
 
@@ -177,6 +180,18 @@ pub async fn assistant_session_load(
                         .then_some(item.turn_id.as_deref())
                         .flatten()
                         .and_then(|turn_id| process_by_turn.get(turn_id));
+                    let web_citations = historical_web_citations_for_run(
+                        &state.db,
+                        process.map(|value| value.run_id.as_str()),
+                        item.web_citations,
+                    );
+                    let citation_binding = item.citation_binding.or_else(|| {
+                        (!web_citations.is_empty()).then_some(crate::ai_types::CitationBinding {
+                            mode: crate::ai_types::CitationBindingMode::SourceGroupFallback,
+                            referenced_indices: Vec::new(),
+                            fallback_reason: Some("legacy_binding_unavailable".to_string()),
+                        })
+                    });
                     AssistantSessionMessage {
                         seq: item.seq,
                         role: item.role,
@@ -193,6 +208,8 @@ pub async fn assistant_session_load(
                         explicit_references: Vec::new(),
                         context_scope: item.context_scope,
                         display_mentions: item.display_mentions,
+                        web_citations,
+                        citation_binding,
                         created_at: item.created_at,
                     }
                 })
@@ -202,6 +219,31 @@ pub async fn assistant_session_load(
             let _ = request;
             Err(AppError::msg("agent_run_classified_history_disabled"))
         }
+    }
+}
+
+/// Rebuild an assistant turn's Web citations from the immutable Run ledger when
+/// available. This makes old sessions written with session-global indices
+/// render against the same Run-local `[Wn]` projection as the answer body,
+/// without mutating existing SQLite rows.
+fn historical_web_citations_for_run(
+    db: &crate::storage::db::Database,
+    run_id: Option<&str>,
+    persisted: Vec<crate::ai_types::WebCitationEntry>,
+) -> Vec<crate::ai_types::WebCitationEntry> {
+    let Some(run_id) = run_id else {
+        return persisted;
+    };
+    match crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
+        Ok(run_local) if !run_local.is_empty() => run_local
+            .into_iter()
+            .map(|citation| crate::ai_types::WebCitationEntry {
+                index: citation.index,
+                title: citation.title,
+                url: citation.url,
+            })
+            .collect(),
+        Ok(_) | Err(_) => persisted,
     }
 }
 
@@ -564,7 +606,18 @@ fn spawn_confirmed_change_execution(
                 return;
             }
         };
-        let _ = policy;
+        let authorized_capabilities = match crate::ai_runtime::agent_run_repository::AgentRunRepository::persist_authorization_snapshot(
+            &db,
+            &session.session_key,
+            &run_id,
+            &policy.allowed_capabilities,
+        ) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                fail();
+                return;
+            }
+        };
         let context = match crate::ai_runtime::run_context::RunContextAssembler::assemble(
             &db,
             vault.as_deref(),
@@ -590,24 +643,12 @@ fn spawn_confirmed_change_execution(
             state: crate::ai_runtime::run_contract::RunState::Running,
             state_version: 0,
         };
-        let tool_policy = ToolPolicyContext {
-            autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
-            web_search_enabled: context.envelope.freshness != Freshness::Offline,
-            allow_writes: true,
-            allow_research: context.envelope.freshness != Freshness::Offline,
-            allow_skill_management: false,
-            allow_implicit_vault: crate::ai_runtime::run_intake::allow_implicit_vault_for_run(
-                context.envelope.security_domain,
-                &context.user_message,
-                !context.materials.is_empty() || !context.retrieval_scope.is_unrestricted(),
-            ),
-        };
         let executor = NormalRunToolExecutor::new(
             &state,
             Some(app_handle.clone()),
             &accepted,
             &context,
-            tool_policy,
+            authorized_capabilities,
             &sink,
             None,
         );

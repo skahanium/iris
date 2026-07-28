@@ -31,10 +31,10 @@ mod scan_impl;
 mod validation_impl;
 
 pub use activation_impl::{
-    active_skills_for_task_prompt, build_skill_activation_plan_for_task,
+    activated_skills_from_plan, build_skill_activation_plan_for_task,
     build_skill_activation_plan_for_task_with_runtime, enrich_list_with_task,
     filter_skill_content_to_injected_sections, load_activation_index, rank_skills_for_task,
-    rerank_skills_with_vectors, skills_for_task,
+    rebuild_activation_index, rerank_skills_with_vectors, skills_for_task,
 };
 pub use compatibility_impl::{
     blocked_capabilities_for_skill, fallback_guidance, normalize_external_capability,
@@ -55,9 +55,10 @@ pub use path_impl::validate_skill_path;
 use path_impl::{atomic_copy_dir, slugify, validate_subpath};
 pub(crate) use path_impl::{global_skills_dir, vault_skills_dir};
 use path_impl::{load_config, save_config, skill_key};
-pub use prompt_impl::inject_into_prompt;
+pub use prompt_impl::{inject_into_prompt, inject_selected_skills_into_prompt};
 pub use scan_impl::{
     load_skill, scan_all, scan_all_metadata, scan_all_with_status, skill_content_hash_for_path,
+    skill_list_entries,
 };
 pub use validation_impl::{license_is_agpl_compatible, validate_skill_license};
 
@@ -605,11 +606,10 @@ Large instruction body."#,
     }
 
     #[test]
-    fn no_trigger_matches_all_scenes() {
+    fn no_trigger_does_not_activate_without_task_evidence() {
         let skills = vec![make_skill("universal", None, true)];
         let matched = skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
-        assert_eq!(matched.len(), 1);
-        assert_eq!(matched[0].name, "universal");
+        assert!(matched.is_empty());
     }
 
     #[test]
@@ -693,7 +693,96 @@ Large instruction body."#,
             make_skill("c", None, true),
         ];
         let matched = skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
-        assert_eq!(matched.len(), 2); // a + c (universal)
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].name, "a");
+    }
+
+    #[test]
+    fn activation_plan_limits_prompt_overlay_to_primary_and_auxiliary_skill() {
+        let skills = vec![
+            make_skill("first", Some("knowledge"), true),
+            make_skill("second", Some("knowledge"), true),
+            make_skill("third", Some("knowledge"), true),
+            make_skill("fourth", Some("knowledge"), true),
+        ];
+
+        let plan =
+            build_skill_activation_plan_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
+
+        assert_eq!(plan.activated_skills.len(), 2);
+        assert_eq!(
+            plan.skill_overlay_summary,
+            "2 prompt-only skill(s) activated."
+        );
+    }
+
+    #[test]
+    fn activation_index_selects_the_two_best_skills_without_loading_skill_files() {
+        let skills = vec![
+            make_skill("general", None, true),
+            make_skill("primary-audit", None, true),
+            make_skill("auxiliary-audit", None, true),
+            make_skill("unrelated", None, true),
+        ];
+        let mut index = ActivationIndexMap::new();
+        for (name, keywords) in [
+            ("general", "general"),
+            ("primary-audit", "forensic incident audit"),
+            ("auxiliary-audit", "forensic audit evidence"),
+            ("unrelated", "gardening plants"),
+        ] {
+            index.insert(
+                (name.to_string(), SkillScope::Vault),
+                SkillActivationIndexRow {
+                    skill_name: name.to_string(),
+                    scope: SkillScope::Vault,
+                    description: None,
+                    keywords: Some(keywords.to_string()),
+                    embedding_json: None,
+                },
+            );
+        }
+
+        let plan = build_skill_activation_plan_for_task(
+            &skills,
+            AgentIntent::Chat,
+            "perform a forensic audit",
+            &[],
+            Some(&index),
+        );
+
+        let names: Vec<_> = plan
+            .activated_skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"primary-audit"));
+        assert!(names.contains(&"auxiliary-audit"));
+        assert!(!names.contains(&"general"));
+        assert!(!names.contains(&"unrelated"));
+    }
+
+    #[test]
+    fn activation_plan_resolves_only_its_cached_primary_and_auxiliary_entries() {
+        let skills = vec![
+            make_skill("first", Some("knowledge"), true),
+            make_skill("second", Some("knowledge"), true),
+            make_skill("third", Some("knowledge"), true),
+        ];
+        let plan =
+            build_skill_activation_plan_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
+
+        let resolved = activated_skills_from_plan(&plan, &skills);
+        let resolved_names: Vec<_> = resolved.iter().map(|skill| skill.name.as_str()).collect();
+        let planned_names: Vec<_> = plan
+            .activated_skills
+            .iter()
+            .map(|skill| skill.name.as_str())
+            .collect();
+
+        assert_eq!(resolved_names, planned_names);
+        assert_eq!(resolved.len(), 2);
     }
     // BM25 scoring
 
@@ -704,9 +793,8 @@ Large instruction body."#,
             make_skill("knowledge-expert", Some("knowledge"), true),
         ];
         let ranked = rank_skills_for_task(&skills, AgentIntent::AskNotes, "", &[], None);
-        assert_eq!(ranked.len(), 2);
-        // knowledge-expert should score higher (trigger match + possible desc match)
-        assert!(ranked[0].score >= ranked[1].score);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].skill.name, "knowledge-expert");
     }
 
     #[test]
@@ -929,14 +1017,30 @@ description: Already new format
     fn inject_into_prompt_only_includes_enabled_skills() {
         let vault = tempfile::tempdir().unwrap();
         let skills = vec![
-            make_skill("enabled-one", None, true),
-            make_skill("disabled-one", None, false),
-            make_skill("enabled-two", None, true),
+            make_skill("enabled-one", Some("knowledge"), true),
+            make_skill("disabled-one", Some("knowledge"), false),
+            make_skill("enabled-two", Some("knowledge"), true),
         ];
         let prompt = inject_into_prompt(vault.path(), &skills, AgentIntent::AskNotes, "");
         assert!(prompt.contains("enabled-one"));
         assert!(prompt.contains("enabled-two"));
         assert!(!prompt.contains("disabled-one"));
+    }
+
+    #[test]
+    fn inject_selected_skills_is_capped_at_primary_and_auxiliary() {
+        let vault = tempfile::tempdir().unwrap();
+        let skills = vec![
+            make_skill("primary", None, true),
+            make_skill("auxiliary", None, true),
+            make_skill("overflow", None, true),
+        ];
+
+        let prompt = inject_selected_skills_into_prompt(vault.path(), &skills);
+
+        assert!(prompt.contains("primary"));
+        assert!(prompt.contains("auxiliary"));
+        assert!(!prompt.contains("overflow"));
     }
 
     #[test]
@@ -950,7 +1054,7 @@ description: Already new format
     #[test]
     fn inject_into_prompt_truncates_large_skill_body() {
         let vault = tempfile::tempdir().unwrap();
-        let mut skill = make_skill("large-skill", None, true);
+        let mut skill = make_skill("large-skill", Some("knowledge"), true);
         skill.content = format!("start\n{}\nend", "x".repeat(80_000));
 
         let prompt = inject_into_prompt(vault.path(), &[skill], AgentIntent::AskNotes, "");

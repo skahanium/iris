@@ -1,5 +1,4 @@
 export const IPC_EVENTS = {
-  VERSION_SAVE_COMPLETE: "version:save_complete",
   FILE_CHANGED: "file:changed",
   CLASSIFIED_FILE_TAKEN: "classified:file_taken",
   SKILLS_CHANGED: "skills:changed",

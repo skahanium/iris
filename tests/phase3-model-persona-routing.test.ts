@@ -33,19 +33,21 @@ describe("model routing and Run execution contracts", () => {
 
   it("keeps credentials provider-scoped and model identifiers user-entered", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const detail = read("src/components/settings/LlmProviderDetail.tsx");
     const rust = read("src-tauri/src/commands/llm_config_commands.rs");
 
     expect(section).toContain("apiKeyOverride");
-    expect(section).toContain('autoCapitalize="none"');
-    expect(section).toContain("spellCheck={false}");
+    expect(detail).toContain('autoCapitalize="none"');
+    expect(detail).toContain("spellCheck={false}");
     expect(rust).toContain("resolve_for_provider_without_secret");
   });
 
   it("keeps base URL editing scoped to custom providers", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const detail = read("src/components/settings/LlmProviderDetail.tsx");
 
     expect(section).toContain("providerRequiresBaseUrl");
-    expect(section).toContain("isCustomProviderId(provider.id)");
+    expect(detail).toContain("isCustomProviderId(provider.id)");
     expect(section).not.toContain('provider.id === "mimo"');
   });
 

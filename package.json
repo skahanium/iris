@@ -1,7 +1,7 @@
 {
   "name": "iris",
   "private": true,
-  "version": "1.2.15",
+  "version": "1.2.17",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -41,9 +41,11 @@
     "hygiene:gitignore-check": "node scripts/hygiene-gitignore-check.mjs",
     "version:set": "node scripts/set-version.mjs",
     "version:check": "node scripts/set-version.mjs --check",
-    "docs:check": "node scripts/docs-facts-check.mjs"
+    "docs:check": "node scripts/docs-facts-check.mjs",
+    "diagnose:web-degradation": "node scripts/diagnose-web-capability-degradation.mjs"
   },
   "dependencies": {
+    "@radix-ui/react-collapsible": "^1.1.20",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-scroll-area": "^1.2.9",
     "@radix-ui/react-select": "^2.2.6",
@@ -55,7 +57,6 @@
     "@tiptap/core": "^2.14.0",
     "@tiptap/extension-blockquote": "^2.14.0",
     "@tiptap/extension-code-block": "^2.14.0",
-    "@tiptap/extension-code-block-lowlight": "^2.14.0",
     "@tiptap/extension-paragraph": "^2.14.0",
     "@tiptap/extension-placeholder": "^2.14.0",
     "@tiptap/extension-table": "^2.14.0",
@@ -90,15 +91,16 @@
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@tiptap/extension-code-block-lowlight": "^2.14.0",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@types/turndown": "^5.0.5",
     "@vitejs/plugin-react": "^4.5.2",
     "@vitest/coverage-v8": "^4.1.8",
     "autoprefixer": "^10.4.21",
-    "eslint": "^9.28.0",
-    "eslint-plugin-react-hooks": "^5.2.0",
-    "eslint-plugin-react-refresh": "^0.4.20",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^16.2.0",
     "jsdom": "^26.1.0",
     "postcss": "^8.5.4",
@@ -106,7 +108,7 @@
     "prettier-plugin-tailwindcss": "^0.6.12",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.33.1",
+    "typescript-eslint": "^8.65.0",
     "vite": "^6.3.5",
     "vitest": "^4.1.8"
   }

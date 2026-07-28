@@ -65,6 +65,34 @@
     text-decoration-color: hsl(var(--prose-link) / 0.7);
   }
 
+  .iris-markdown-content sup.ai-citation-wrap {
+    line-height: 0;
+    vertical-align: super;
+    font-size: 0.75em;
+    font-weight: 500;
+  }
+
+  .iris-markdown-content a.ai-citation {
+    display: inline-block;
+    min-width: 1.1em;
+    padding: 0.05em 0.35em;
+    border-radius: 0.25rem;
+    font-size: var(--text-caption);
+    font-weight: 500;
+    line-height: 1.2;
+    text-decoration: none;
+    color: hsl(var(--ai-citation));
+    background: hsl(var(--ai-citation) / 0.12);
+    transition:
+      color var(--motion-fast) var(--motion-ease),
+      background-color var(--motion-fast) var(--motion-ease);
+  }
+
+  .iris-markdown-content a.ai-citation:hover {
+    color: hsl(var(--ai-citation-hover));
+    background: hsl(var(--ai-citation) / 0.2);
+  }
+
   .iris-markdown-content code {
     @apply rounded px-1.5 py-0.5 font-mono text-[0.9em];
     background: hsl(var(--editor-code-bg));

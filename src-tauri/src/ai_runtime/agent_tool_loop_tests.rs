@@ -52,6 +52,24 @@ struct RecordingExecutor {
 
 struct FailingWebExecutor;
 struct LargeResultExecutor;
+struct LargeWebResultExecutor;
+struct OversizedWebResultExecutor;
+struct RequiredWebExecutor;
+
+impl ToolLoopExecutor for RequiredWebExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("a required Web Run must not finalize before a call") })
+    }
+
+    fn requires_web_evidence(&self) -> bool {
+        true
+    }
+}
 
 impl ToolLoopExecutor for LargeResultExecutor {
     fn execute<'a>(
@@ -66,6 +84,51 @@ impl ToolLoopExecutor for LargeResultExecutor {
                 tool_name,
                 success: true,
                 output: serde_json::json!({ "body": "x".repeat(8_500) }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopExecutor for LargeWebResultExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({
+                    "evidence": "x".repeat(20_000),
+                    "sentinel": "web-evidence-tail-must-survive",
+                }),
+                duration_ms: 1,
+                tokens_used: None,
+                error: None,
+            })
+        })
+    }
+}
+
+impl ToolLoopExecutor for OversizedWebResultExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        let tool_name = call.function.name.clone();
+        Box::pin(async move {
+            Ok(ToolCallResult {
+                tool_name,
+                success: true,
+                output: serde_json::json!({ "evidence": "x".repeat(40_000) }),
                 duration_ms: 1,
                 tokens_used: None,
                 error: None,
@@ -288,6 +351,68 @@ async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
 }
 
 #[tokio::test]
+async fn web_required_rejects_a_final_answer_without_registered_evidence() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: Some("unverified answer".into()),
+            tool_calls: Vec::new(),
+            usage: Default::default(),
+            finish_reason: "stop".into(),
+            reasoning_content: None,
+            continuation: None,
+        }])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    let error = AgentToolLoop::default()
+        .execute(
+            &provider,
+            &RequiredWebExecutor,
+            "run-required-web",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect_err("web-required must not silently finalize");
+    assert_eq!(error.to_string(), "agent_run_web_evidence_required");
+}
+
+#[tokio::test]
+async fn cancelled_run_never_starts_a_model_or_tool_turn() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::new()),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+    crate::ai_runtime::model_gateway::request_abort("run-cancelled-loop");
+    let result = AgentToolLoop::default()
+        .execute(
+            &provider,
+            &executor,
+            "run-cancelled-loop",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await;
+    crate::ai_runtime::model_gateway::clear_abort("run-cancelled-loop");
+
+    assert_eq!(
+        result.expect_err("cancelled loop must stop").to_string(),
+        "agent_run_cancelled"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([
@@ -430,4 +555,122 @@ async fn evaluation_tool_loop_tap_records_turns_usage_tools_and_truncation_in_me
     assert_eq!(snapshot.tool_calls(), 1);
     assert_eq!(snapshot.total_tokens(), 30);
     assert_eq!(snapshot.tool_result_truncations(), 1);
+}
+
+#[tokio::test]
+async fn web_tool_results_use_the_web_specific_budget_without_losing_the_tail() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![web_tool_call()],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("final answer".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    AgentToolLoop::default()
+        .execute(
+            &provider,
+            &LargeWebResultExecutor,
+            "run-web-result-budget",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "web_search".into(),
+                description: "Search Web".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::Network,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("web tool loop result");
+
+    let messages = provider
+        .second_turn_messages
+        .lock()
+        .expect("second turn messages lock");
+    assert!(messages.iter().any(|message| {
+        matches!(message.role, MessageRole::Tool)
+            && message
+                .content
+                .text_content()
+                .contains("web-evidence-tail-must-survive")
+    }));
+}
+
+#[tokio::test]
+async fn oversized_web_tool_results_fail_closed_with_valid_json() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![web_tool_call()],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("I cannot verify this from the returned evidence.".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    AgentToolLoop::default()
+        .execute(
+            &provider,
+            &OversizedWebResultExecutor,
+            "run-web-result-overflow",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "web_search".into(),
+                description: "Search Web".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::Network,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("overflow is presented as a valid failed tool result");
+
+    let messages = provider
+        .second_turn_messages
+        .lock()
+        .expect("second turn messages lock");
+    let tool_payload = messages
+        .iter()
+        .find(|message| matches!(message.role, MessageRole::Tool))
+        .expect("tool result")
+        .content
+        .text_content();
+    let parsed: serde_json::Value = serde_json::from_str(&tool_payload).expect("valid JSON packet");
+    assert_eq!(parsed["success"], false);
+    assert_eq!(parsed["error"], "web_evidence_pack_overflow");
 }

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+
+use rusqlite::params;
 
 use crate::ai_types::{AgentIntent, SkillActivationItemSummary, SkillActivationPlanSummary};
 use crate::embedding::engine::{cosine_similarity, embed_text};
@@ -7,9 +8,12 @@ use crate::error::AppResult;
 use crate::storage::db::Database;
 
 use super::{
-    load_skill, scan_all_metadata, ActivationIndexMap, ScoredSkill, SkillActivationIndexRow,
-    SkillConfirmationStatus, SkillEntry, SkillListEntry, SkillScope,
+    ActivationIndexMap, ScoredSkill, SkillActivationIndexRow, SkillConfirmationStatus, SkillEntry,
+    SkillListEntry, SkillScope,
 };
+
+/// A run may activate one primary skill and at most one auxiliary skill.
+const MAX_ACTIVATED_SKILLS: usize = 2;
 
 /// Load all rows from `skill_activation_index` for fast scene matching.
 pub fn load_activation_index(db: &Database) -> AppResult<ActivationIndexMap> {
@@ -41,6 +45,59 @@ pub fn load_activation_index(db: &Database) -> AppResult<ActivationIndexMap> {
     })
 }
 
+/// Rebuild the activation metadata for the one vault whose Skills are loaded
+/// into the runtime cache. This is called only during vault activation and
+/// explicit user refresh/confirmation, never from a Run.
+///
+/// The index intentionally persists descriptions and declared trigger keywords
+/// only. Full Skill instruction bodies stay in the in-memory, confirmed cache
+/// and are selected for prompt injection only after the Run plan is built.
+pub fn rebuild_activation_index(db: &Database, skills: &[SkillEntry]) -> AppResult<()> {
+    db.with_conn(|conn| {
+        let transaction = conn.unchecked_transaction()?;
+        transaction.execute("DELETE FROM skill_activation_index", [])?;
+        let mut statement = transaction.prepare(
+            "INSERT INTO skill_activation_index (skill_name, scope, description, keywords, embedding_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, NULL, datetime('now'))",
+        )?;
+        for skill in skills {
+            statement.execute(params![
+                skill.name,
+                scope_wire(skill.scope),
+                skill.description,
+                activation_index_keywords(skill),
+            ])?;
+        }
+        drop(statement);
+        transaction.commit()?;
+        Ok(())
+    })
+}
+
+fn activation_index_keywords(skill: &SkillEntry) -> String {
+    let mut keywords = skill.trigger_hints();
+    if let Some(value) = skill.metadata.get("keywords") {
+        match value {
+            serde_json::Value::String(raw) => keywords.extend(
+                raw.split(|character: char| character.is_whitespace() || character == ',')
+                    .filter(|keyword| !keyword.is_empty())
+                    .map(str::to_owned),
+            ),
+            serde_json::Value::Array(values) => keywords.extend(
+                values
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .filter(|keyword| !keyword.is_empty())
+                    .map(str::to_owned),
+            ),
+            _ => {}
+        }
+    }
+    keywords.sort();
+    keywords.dedup();
+    keywords.join(" ")
+}
+
 fn parse_embedding_json(raw: &str) -> Option<Vec<f32>> {
     serde_json::from_str::<Vec<f32>>(raw).ok()
 }
@@ -53,16 +110,10 @@ pub fn skills_for_task(
     source_hints: &[String],
     index: Option<&ActivationIndexMap>,
 ) -> Vec<SkillEntry> {
-    rerank_skills_with_vectors(
-        rank_skills_for_task(skills, intent, user_message, source_hints, index),
-        task_query(intent, user_message),
-        index,
-    )
-    .into_iter()
-    .filter(|s| s.score >= 0.35)
-    .take(3)
-    .map(|s| s.skill.clone())
-    .collect()
+    select_skills_for_activation(skills, intent, user_message, source_hints, index)
+        .into_iter()
+        .map(|scored| scored.skill.clone())
+        .collect()
 }
 
 /// Scored ranking with optional activation-index overlay.
@@ -108,10 +159,6 @@ fn compute_skill_score(
     index_row: Option<&SkillActivationIndexRow>,
 ) -> f64 {
     let mut score: f64 = 0.0;
-
-    if skill.legacy_trigger.is_none() || skill.legacy_trigger.as_deref() == Some("") {
-        score += 1.0;
-    }
 
     if let Some(trigger) = &skill.legacy_trigger {
         let t = trigger.to_lowercase();
@@ -274,10 +321,6 @@ pub fn filter_skill_content_to_injected_sections(
     Ok(())
 }
 
-fn apply_runtime_prompt_sections(skill: &mut SkillEntry, vault: &Path, db: Option<&Database>) {
-    let _ = (skill, vault, db);
-}
-
 fn activation_reason(
     skill: &SkillEntry,
     intent: AgentIntent,
@@ -377,46 +420,15 @@ fn build_skill_activation_plan_for_task_inner(
     source_hints: &[String],
     options: SkillActivationBuildOptions<'_>,
 ) -> SkillActivationPlanSummary {
-    let mut candidates: Vec<ScoredSkill<'_>> = Vec::new();
-    for skill in skills.iter().filter(|skill| skill_can_activate(skill)) {
-        if let Some((score, _reason)) =
-            activation_reason(skill, agent_intent, user_message, source_hints)
-        {
-            candidates.push(ScoredSkill { skill, score });
-        }
-    }
-
-    let ranked = rerank_skills_with_vectors(
-        rank_skills_for_task(
-            skills,
-            agent_intent,
-            user_message,
-            source_hints,
-            options.index,
-        ),
-        task_query(agent_intent, user_message),
-        options.index,
-    );
-    for scored in ranked {
-        if scored.score >= 0.35
-            && !candidates
-                .iter()
-                .any(|existing| existing.skill.name == scored.skill.name)
-        {
-            candidates.push(scored);
-        }
-    }
-
-    candidates.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    candidates.truncate(5);
-
     let mut activated = Vec::new();
 
-    for scored in candidates.into_iter().take(3) {
+    for scored in select_skills_for_activation(
+        skills,
+        agent_intent,
+        user_message,
+        source_hints,
+        options.index,
+    ) {
         let skill = scored.skill;
         let reason = activation_reason(skill, agent_intent, user_message, source_hints)
             .map(|(_, reason)| reason)
@@ -449,41 +461,73 @@ fn build_skill_activation_plan_for_task_inner(
         blocked_capabilities: Vec::new(),
     }
 }
-/// Load enabled skills for prompt injection after task/capability matching.
-pub fn active_skills_for_task_prompt(
-    vault: &Path,
+
+/// Resolve the exact, already-loaded instruction bodies for a run plan.
+///
+/// This function deliberately performs no filesystem or database I/O. Callers must build the
+/// activation plan from their cached skill registry and activation index, then pass the same
+/// loaded entries here before prompt construction.
+pub fn activated_skills_from_plan(
+    plan: &SkillActivationPlanSummary,
+    available_skills: &[SkillEntry],
+) -> Vec<SkillEntry> {
+    plan.activated_skills
+        .iter()
+        .take(MAX_ACTIVATED_SKILLS)
+        .filter_map(|planned| {
+            available_skills
+                .iter()
+                .find(|skill| {
+                    skill.name == planned.name
+                        && scope_wire(skill.scope) == planned.scope
+                        && skill_can_activate(skill)
+                })
+                .cloned()
+        })
+        .collect()
+}
+
+fn select_skills_for_activation<'a>(
+    skills: &'a [SkillEntry],
     intent: AgentIntent,
-    db: Option<&Database>,
     user_message: &str,
     source_hints: &[String],
-) -> AppResult<Vec<SkillEntry>> {
-    let metadata = scan_all_metadata(vault)?;
-    let index_map = db
-        .map(load_activation_index)
-        .transpose()?
-        .unwrap_or_default();
-    let index_ref = if index_map.is_empty() {
-        None
-    } else {
-        Some(&index_map)
-    };
+    index: Option<&ActivationIndexMap>,
+) -> Vec<ScoredSkill<'a>> {
+    let mut candidates: Vec<ScoredSkill<'_>> = skills
+        .iter()
+        .filter(|skill| skill_can_activate(skill))
+        .filter_map(|skill| {
+            activation_reason(skill, intent, user_message, source_hints)
+                .map(|(score, _reason)| ScoredSkill { skill, score })
+        })
+        .collect();
+
     let ranked = rerank_skills_with_vectors(
-        rank_skills_for_task(&metadata, intent, user_message, source_hints, index_ref),
+        rank_skills_for_task(skills, intent, user_message, source_hints, index),
         task_query(intent, user_message),
-        index_ref,
+        index,
     );
-    let mut out = Vec::new();
     for scored in ranked {
-        let path = PathBuf::from(&scored.skill.file_path);
-        if let Ok(mut skill) = load_skill(&path, scored.skill.scope) {
-            skill.enabled = scored.skill.enabled;
-            if skill_can_activate(&skill) {
-                apply_runtime_prompt_sections(&mut skill, vault, db);
-                out.push(skill);
-            }
+        if scored.score >= 0.35
+            && !candidates.iter().any(|existing| {
+                existing.skill.name == scored.skill.name
+                    && existing.skill.scope == scored.skill.scope
+            })
+        {
+            candidates.push(scored);
         }
     }
-    Ok(out)
+
+    candidates.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.skill.name.cmp(&b.skill.name))
+            .then_with(|| scope_wire(a.skill.scope).cmp(&scope_wire(b.skill.scope)))
+    });
+    candidates.truncate(MAX_ACTIVATED_SKILLS);
+    candidates
 }
 
 /// Annotate list entries with task affinity when an intent is provided.

@@ -25,6 +25,7 @@ import { TabBar } from "@/components/layout/TabBar";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
 import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
+import { useCjkPunctuationSettings } from "@/hooks/useCjkPunctuationSettings";
 import { useFollowSystemProxy } from "@/hooks/useFollowSystemProxy";
 import { useAppUpdateController } from "@/hooks/useAppUpdate";
 import { useEmbeddingScheduler } from "@/hooks/useEmbeddingScheduler";
@@ -442,6 +443,7 @@ function App() {
   getLiveMarkdownForTabsRef.current = getLiveMarkdown;
   const autoVersionSettings = useAutoVersionSettings();
   const followSystemProxySettings = useFollowSystemProxy();
+  const cjkPunctuationSettings = useCjkPunctuationSettings();
 
   const {
     notifyDirty,
@@ -919,6 +921,7 @@ function App() {
             openNotePaths={openNotePaths}
             onOpenSearch={() => overlays.setSearchOpen(true)}
             zen={zen}
+            cjkPunctuationEnabled={cjkPunctuationSettings.cjkPunctuationEnabled}
           />
         }
         aiPanel={
@@ -1054,6 +1057,7 @@ function App() {
             rescanVault={rescanVaultManually}
             autoVersionSettings={autoVersionSettings}
             followSystemProxySettings={followSystemProxySettings}
+            cjkPunctuationSettings={cjkPunctuationSettings}
             tabs={tabs}
             touchClassifiedActivity={touchClassifiedActivity}
             versionSnapshotScheduler={versionSnapshotScheduler}

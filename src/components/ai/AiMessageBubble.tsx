@@ -27,7 +27,14 @@ import { cn } from "@/lib/utils";
 import { useStreamingContent } from "@/hooks/useStreamingContent";
 import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
 import type { AssistantProcessItem } from "@/lib/assistant-process";
-import type { DisplayMention } from "@/types/ai";
+import type {
+  CitationBinding,
+  DisplayMention,
+  WebCitationEntry,
+} from "@/types/ai";
+import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
+import { resolveWebCitationUrl } from "@/lib/ai/citation-display";
+import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
 import { sanitizeHtml, toTrustedHtml } from "@/lib/sanitize";
 
 interface AiMessageBubbleProps {
@@ -55,10 +62,13 @@ interface AiMessageBubbleProps {
 
   /** Runtime-only safe process events. Never persisted as message content. */
   processItems?: AssistantProcessItem[];
+
+  /** Safe persisted web citations for footer + inline resolve. */
+  webCitations?: WebCitationEntry[];
+  citationBinding?: CitationBinding;
 }
 
-const proseConversation =
-  "iris-markdown-content select-text [&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover";
+const proseConversation = "iris-markdown-content select-text";
 
 const STREAMING_SYNC_FALLBACK_CHAR_LIMIT = 40_000;
 
@@ -392,12 +402,16 @@ const AssistantBody = memo(function AssistantBody({
   streaming = false,
 
   onCitationClick,
+  webCitations = [],
+  citationBinding,
 }: {
   content: string;
 
   streaming?: boolean;
 
   onCitationClick?: (ref: string) => void;
+  webCitations?: WebCitationEntry[];
+  citationBinding?: CitationBinding;
 }) {
   const renderable = useMemo(
     () => createRenderableAssistantContent(content, { streaming }),
@@ -507,6 +521,21 @@ const AssistantBody = memo(function AssistantBody({
     }, 1200);
   }, []);
 
+  const openCitation = useCallback(
+    (ref: string) => {
+      if (!onCitationClick) return;
+      const resolved = resolveWebCitationUrl(webCitations, ref);
+      if (resolved) {
+        onCitationClick(resolved);
+        return;
+      }
+      if (webCitations.length === 0 && isExternalHttpsHref(ref)) {
+        onCitationClick(ref);
+      }
+    },
+    [onCitationClick, webCitations],
+  );
+
   const handleClick = useCallback(
     (e: MouseEvent<HTMLDivElement>) => {
       const target = e.target as HTMLElement;
@@ -526,7 +555,7 @@ const AssistantBody = memo(function AssistantBody({
       if (external instanceof HTMLAnchorElement) {
         e.preventDefault();
         e.stopPropagation();
-        onCitationClick(external.href);
+        if (webCitations.length === 0) onCitationClick(external.href);
         return;
       }
 
@@ -543,33 +572,49 @@ const AssistantBody = memo(function AssistantBody({
       e.preventDefault();
 
       try {
-        onCitationClick(decodeURIComponent(ref));
+        openCitation(decodeURIComponent(ref));
       } catch (decodeError) {
         console.warn(
           "[ai-message] decodeURIComponent failed, using raw ref:",
           decodeError,
         );
 
-        onCitationClick(ref);
+        openCitation(ref);
       }
     },
 
-    [handleCodeCopy, onCitationClick],
+    [handleCodeCopy, onCitationClick, openCitation, webCitations.length],
   );
 
   return (
-    <div
-      className={cn(
-        "ai-message-body",
+    <>
+      <div
+        className={cn(
+          "ai-message-body",
 
-        proseConversation,
+          proseConversation,
 
-        streaming && content && "opacity-[0.92]",
-      )}
-      data-prose-surface="conversation"
-      dangerouslySetInnerHTML={{ __html: toTrustedHtml(html) }}
-      onClick={handleClick}
-    />
+          streaming && content && "opacity-[0.92]",
+        )}
+        data-prose-surface="conversation"
+        dangerouslySetInnerHTML={{ __html: toTrustedHtml(html) }}
+        onClick={handleClick}
+      />
+      {!streaming && webCitations.length > 0 ? (
+        <AssistantCitationFooter
+          content={content}
+          entries={webCitations}
+          binding={citationBinding}
+          onOpenUrl={
+            onCitationClick
+              ? (url) => {
+                  onCitationClick(url);
+                }
+              : undefined
+          }
+        />
+      ) : null}
+    </>
   );
 });
 
@@ -597,6 +642,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   displayMentions,
 
   processItems = [],
+  webCitations = [],
+  citationBinding,
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
 
@@ -697,6 +744,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
             content={content}
             streaming={streaming}
             onCitationClick={onCitationClick}
+            webCitations={webCitations}
+            citationBinding={citationBinding}
           />
         </MarkdownErrorBoundary>
       ) : null}

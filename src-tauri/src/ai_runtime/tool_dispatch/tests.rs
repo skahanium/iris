@@ -82,6 +82,9 @@ fn dispatch_context_with_plan<'a>(
     ToolDispatchContext {
         note_path: None,
         file_id: None,
+        run_id: None,
+        write_target_path: None,
+        document_policy: None,
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
@@ -99,6 +102,9 @@ fn dispatch_context_with_retrieval_scope<'a>(
     ToolDispatchContext {
         note_path: None,
         file_id: None,
+        run_id: None,
+        write_target_path: None,
+        document_policy: None,
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
@@ -164,6 +170,47 @@ async fn read_note_accepts_valid_path() {
     let val = result.unwrap();
     assert_eq!(val["path"], "notes/test.md");
     assert_eq!(val["content"], "# Test\nHello world");
+}
+
+#[tokio::test]
+async fn read_note_rejects_document_policy_before_opening_the_file() {
+    let (state, _dir) = test_state();
+    let mut policy = crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine::new(
+        crate::ai_runtime::policy_decision_engine::DocumentPolicy::allow_all(),
+    );
+    policy.set_document_policy(
+        "private/secret.md",
+        crate::ai_runtime::policy_decision_engine::DocumentPolicy::from_rules([(
+            crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
+            crate::ai_runtime::policy_decision_engine::CapabilityDecision::Deny,
+        )]),
+    );
+    let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+    let ctx = ToolDispatchContext {
+        note_path: None,
+        file_id: None,
+        run_id: Some("policy-read-run"),
+        write_target_path: None,
+        document_policy: Some(&policy),
+        web_search_enabled: false,
+        max_web_fetches: 3,
+        cold_start_packets: &[],
+        retrieval_scope: &retrieval_scope,
+        runtime_documents: &[],
+        app_handle: None,
+        attachment_count: 0,
+        skill_activation_plan: None,
+    };
+
+    let error = note_impl::read_note(
+        &state,
+        &ctx,
+        &serde_json::json!({ "path": "private/secret.md" }),
+    )
+    .await
+    .expect_err("policy-denied document must not be opened by a tool");
+
+    assert_eq!(error.to_string(), "agent_run_document_policy_denied");
 }
 
 #[tokio::test]
@@ -441,6 +488,9 @@ fn write_tool_approval_applies_patch_with_cas() {
     let ctx = ToolDispatchContext {
         note_path: Some("notes/test.md"),
         file_id: None,
+        run_id: None,
+        write_target_path: None,
+        document_policy: None,
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
@@ -507,12 +557,61 @@ fn write_tool_rejects_target_outside_active_skill_scope_before_apply() {
 }
 
 #[test]
+fn write_tool_rejects_a_target_other_than_the_explicit_run_target() {
+    let (state, _dir) = test_state();
+    let base = "# Secret\nHidden";
+    let base_hash = crate::cas::hash::content_hash_str(base);
+    let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+    let ctx = ToolDispatchContext {
+        note_path: None,
+        file_id: None,
+        run_id: Some("bound-target-run"),
+        write_target_path: Some("notes/test.md"),
+        document_policy: None,
+        web_search_enabled: false,
+        max_web_fetches: 3,
+        cold_start_packets: &[],
+        retrieval_scope: &retrieval_scope,
+        runtime_documents: &[],
+        app_handle: None,
+        attachment_count: 0,
+        skill_activation_plan: None,
+    };
+
+    let result = markdown_impl::markdown_write_patch_apply(
+        &state,
+        &ctx,
+        "replace_selection",
+        &serde_json::json!({
+            "target_path": "private/secret.md",
+            "replacement": "Public",
+            "base_content_hash": base_hash,
+            "range": {"start": 9, "end": 15},
+            "original_text": "Hidden",
+        }),
+    )
+    .expect("out-of-target write returns a safe tool result");
+
+    assert_eq!(result["result"]["success"], false);
+    assert_eq!(
+        result["result"]["error"],
+        "agent_run_write_target_violation"
+    );
+    let content =
+        std::fs::read_to_string(state.vault_path().unwrap().join("private/secret.md")).unwrap();
+    assert_eq!(content, base);
+}
+
+#[test]
 fn write_tool_approval_reports_hash_conflict_without_writing() {
     let (state, _dir) = test_state();
     let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
     let ctx = ToolDispatchContext {
         note_path: Some("notes/test.md"),
         file_id: None,
+        run_id: None,
+        write_target_path: None,
+        document_policy: None,
         web_search_enabled: false,
         max_web_fetches: 3,
         cold_start_packets: &[],
@@ -545,4 +644,48 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
     let content =
         std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap();
     assert_eq!(content, "# Test\nHello world");
+}
+
+#[tokio::test]
+async fn cancelled_run_never_commits_a_markdown_patch() {
+    let (state, _dir) = test_state();
+    let base = "# Test\nHello world";
+    let base_hash = crate::cas::hash::content_hash_str(base);
+    let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+    let ctx = ToolDispatchContext {
+        note_path: Some("notes/test.md"),
+        file_id: None,
+        run_id: Some("cancelled-markdown-write"),
+        write_target_path: None,
+        document_policy: None,
+        web_search_enabled: false,
+        max_web_fetches: 3,
+        cold_start_packets: &[],
+        retrieval_scope: &retrieval_scope,
+        runtime_documents: &[],
+        app_handle: None,
+        attachment_count: 0,
+        skill_activation_plan: None,
+    };
+    crate::ai_runtime::model_gateway::request_abort("cancelled-markdown-write");
+
+    let result = dispatch_tool(
+        &state,
+        &ctx,
+        "replace_selection",
+        &serde_json::json!({
+            "replacement": "Hi",
+            "base_content_hash": base_hash,
+            "range": {"start": 7, "end": 12},
+            "original_text": "Hello",
+        }),
+    )
+    .await;
+    crate::ai_runtime::model_gateway::clear_abort("cancelled-markdown-write");
+
+    assert!(!result.success);
+    assert_eq!(result.error.as_deref(), Some("agent_run_cancelled"));
+    let content =
+        std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap();
+    assert_eq!(content, base);
 }

@@ -641,7 +641,7 @@ describe("outline ghost spine", () => {
     expect(titleBar).toContain("text-muted-foreground");
     expect(titleBar).toContain("text-[hsl(var(--outline-rail-active))]");
     expect(outline).toContain("outline-ghost-item-line");
-    expect(outline).toContain("text-[hsl(var(--outline-rail-active))]");
+    expect(outline).toContain("text-[hsl(var(--outline-rail-marker))]");
     expect(outline).not.toContain(
       "outline-ghost-item flex w-full items-center text-left text-xs",
     );

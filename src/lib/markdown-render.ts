@@ -1,4 +1,5 @@
 import { postProcessCitations } from "@/lib/ai/citation-markdown";
+import { isNumericFootnoteLinkText } from "@/lib/ai/citation-display";
 import { Marked, type Renderer, type Tokens } from "marked";
 import { common, createLowlight } from "lowlight";
 import { repairTightStrongPunctuationBoundaries } from "@/lib/markdown";
@@ -265,11 +266,24 @@ export const proseMarked = new Marked({
     }): string {
       const text = tokens.map((t) => t.text ?? t.raw ?? "").join("");
       const titleAttr = title ? ` title="${title}"` : "";
+      const footnote = isNumericFootnoteLinkText(text);
+      const wrapCitation = (inner: string) =>
+        footnote ? `<sup class="ai-citation-wrap">${inner}</sup>` : inner;
+      const footnoteAria = footnote
+        ? ` aria-label="引用来源 ${text.trim()}"`
+        : "";
       if (href.startsWith("#iris-cite-")) {
-        return `<a href="${href}"${titleAttr} class="ai-citation">${text}</a>`;
+        return wrapCitation(
+          `<a href="${href}"${titleAttr} class="ai-citation"${footnoteAria}>${text}</a>`,
+        );
+      }
+      if (href.startsWith("https://") && footnote) {
+        return wrapCitation(
+          `<a href="${href}"${titleAttr} class="ai-citation"${footnoteAria} target="_blank" rel="noopener noreferrer">${text}</a>`,
+        );
       }
       if (href.startsWith("https://")) {
-        return `<a href="${href}"${titleAttr} class="ai-citation" target="_blank" rel="noopener noreferrer">${text}</a>`;
+        return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
       }
       return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
     },

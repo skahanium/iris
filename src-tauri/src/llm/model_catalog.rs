@@ -542,9 +542,9 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             display_name: "MiMo-V2.5-Pro",
             context_window: 128_000,
             max_output: 8_192,
-            supports_tools: false,
+            supports_tools: true,
             supports_thinking: true,
-            supports_vision: true,
+            supports_vision: false,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -556,9 +556,9 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             display_name: "MiMo-V2.5-Pro-UltraSpeed",
             context_window: 128_000,
             max_output: 8_192,
-            supports_tools: false,
+            supports_tools: true,
             supports_thinking: true,
-            supports_vision: true,
+            supports_vision: false,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -570,9 +570,9 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             display_name: "MiMo-V2.5",
             context_window: 128_000,
             max_output: 8_192,
-            supports_tools: false,
+            supports_tools: true,
             supports_thinking: true,
-            supports_vision: true,
+            supports_vision: false,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -866,19 +866,54 @@ mod tests {
     }
 
     #[test]
+    fn openai_compatible_chat_models_support_tools() {
+        for model in catalog_for_settings() {
+            if model.endpoint_family != EndpointFamily::OpenAiCompatibleChatCompletions {
+                continue;
+            }
+            assert!(
+                model.supports_tools,
+                "{} should support tools (chat completions entry)",
+                model.id
+            );
+        }
+    }
+
+    #[test]
+    fn responses_reserved_models_do_not_support_tools() {
+        for model in catalog_for_settings() {
+            if model.endpoint_family != EndpointFamily::ResponsesReserved {
+                continue;
+            }
+            assert!(
+                !model.supports_tools,
+                "{} must not advertise tools (non-chat endpoint)",
+                model.id
+            );
+        }
+    }
+
+    #[test]
     fn vision_capable_models_have_supports_vision_true() {
-        let models_to_check = [
-            "MiniMax-M3",
-            "glm-4.5",
-            "MiMo-V2.5-Pro",
-            "MiMo-V2.5-Pro-UltraSpeed",
-        ];
+        let models_to_check = ["MiniMax-M3", "glm-4.5"];
         for model_id in models_to_check {
             let model = find_model(model_id)
                 .unwrap_or_else(|| panic!("model {model_id} not found in catalog"));
             assert!(
                 model.supports_vision,
                 "{model_id} should support vision but catalog says false"
+            );
+        }
+    }
+
+    #[test]
+    fn mimo_chat_models_do_not_advertise_vision() {
+        for model_id in ["MiMo-V2.5-Pro", "MiMo-V2.5-Pro-UltraSpeed", "mimo-v2.5"] {
+            let model = find_model(model_id)
+                .unwrap_or_else(|| panic!("model {model_id} not found in catalog"));
+            assert!(
+                !model.supports_vision,
+                "{model_id} must not claim vision in catalog"
             );
         }
     }

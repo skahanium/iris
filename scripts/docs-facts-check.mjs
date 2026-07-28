@@ -153,6 +153,36 @@ function checkDocLinks() {
   }
 }
 
+function checkRetiredArchitectureReferences() {
+  const indexPath = path.join(root, "docs", "README.md");
+  const indexContent = readFileSync(indexPath, "utf8");
+  if (indexContent.includes("agent-harness-refactor")) {
+    fail("docs/README.md must not link to a historical architecture directory");
+  }
+
+  const commandSources = [
+    path.join(root, "src-tauri", "src", "lib.rs"),
+    path.join(root, "src", "types", "ipc.ts"),
+    path.join(root, "src", "lib", "ipc.ts"),
+  ]
+    .filter(existsSync)
+    .map((file) => readFileSync(file, "utf8"))
+    .join("\n");
+  for (const retired of [
+    "llm_providers",
+    "version_cleanup_cmd",
+    "document_title_audit_cmd",
+    "skills_paths",
+    "classified_ai_retrieval_clear",
+  ]) {
+    if (commandSources.includes(retired)) {
+      fail(
+        `retired IPC command remains in a current contract source: ${retired}`,
+      );
+    }
+  }
+}
+
 // ── 4. Forbidden phrases ───────────────────────────────────
 
 function isNegationContext(line) {
@@ -264,6 +294,7 @@ function checkIpcIndex() {
 checkVersionConsistency();
 checkMigrationCount();
 checkDocLinks();
+checkRetiredArchitectureReferences();
 checkForbiddenPhrases();
 checkIpcIndex();
 
