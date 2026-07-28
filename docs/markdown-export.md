@@ -14,6 +14,12 @@ the Markdown contract layer, and the TipTap/ProseMirror editor.
 The user `.md` file remains the source of truth. Editor-only state must either
 round-trip to a documented Markdown representation or remain transient.
 
+Current ingress is Preserve-aware `editor-ingest`. It still uses an isolated
+Marked renderer to prepare TipTap HTML for the current custom schema; this is
+an import implementation detail, not a write fallback. A direct ProseMirror
+MarkdownParser migration is not complete until it supports the same Preserve,
+callout, footnote, media, table, and wiki-link corpus.
+
 ## Block Separation
 
 Blank lines between ordinary Markdown blocks are structural separators, not

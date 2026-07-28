@@ -13,9 +13,9 @@ These adapters remain until a separately announced, reversible migration boundar
 
 ## Markdown document boundary
 
-The persisted boundary is `Markdown file -> frontmatter/title separation -> TipTap/ProseMirror document -> ProseMirror Markdown serializer -> Markdown file`. Unsupported syntax becomes a Preserve node carrying its original source. A serializer failure is recoverable and does not fall back to HTML/Turndown or overwrite committed Markdown.
+The persisted boundary is `Markdown file -> frontmatter/title separation -> Preserve-aware editor ingest -> TipTap/ProseMirror document -> ProseMirror Markdown serializer -> Markdown file`. Unsupported syntax becomes a Preserve node carrying its original source. A serializer failure is recoverable and does not fall back to HTML/Turndown or overwrite committed Markdown.
 
-`marked` remains limited to AI messages and read-only Markdown display. The editor persistence path does not call `getHTML()` or Turndown.
+The current editor ingress still uses its isolated Marked renderer internally to prepare TipTap HTML; it is not a second persistence path. `marked` also serves AI messages and read-only Markdown display. The editor persistence path does not call `getHTML()` or Turndown. Replacing editor ingress with a ProseMirror MarkdownParser requires a complete custom-node parser and corpus migration before it can be claimed as complete.
 
 > 本文描述当前已实现的边界，不承诺版本排期；版本排期唯一来源是 [ROADMAP.md](./ROADMAP.md)。
 
