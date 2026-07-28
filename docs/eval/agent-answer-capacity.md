@@ -133,7 +133,7 @@ v1.2.15 确定性 full 结果为 48/48：
 索引规模 >48、向量可用性与 Web 延迟在确定性层固定为 `live_not_tested`；
 检索干扰 >48 不在 CI 中物化，只保留调度与下界声明。
 
-压力探针中的 headless Web 回答路径稳定边界为 4/6（第 5 条未采样），而生产
+压力探针中的 headless Web 回答路径稳定边界为 5/6，而生产
 `NormalRunToolExecutor` 的 Web 证据预算硬边界仍为 8/9，二者分别记录，禁止
 互相替代。这里的 `web_evidence_count` 只表示 Iris 的证据预算，绝不表示网络
 延迟；机器报告将 `webLatency` 单独固定为 `live_not_tested`。检索干扰项

@@ -2093,6 +2093,7 @@ fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_c
         .expect("web evidence count staircase");
     let serialized = serde_json::to_value(web_evidence).expect("serialized staircase");
     assert_eq!(serialized["dimension"], "web_evidence_count");
+    assert_eq!(web_evidence.levels(), &[1, 2, 4, 5, 6, 8, 9, 10]);
 }
 
 #[test]
@@ -2303,9 +2304,7 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         (PressureDimension::LocalMaterial, 12, 13),
         (PressureDimension::LocalMaterialChars, 32_000, 32_001),
         (PressureDimension::ToolLoop, 24, 25),
-        // The deterministic probe observes 4 as the final passing sample and
-        // 6 as the first failing sample; level 5 is intentionally unsampled.
-        (PressureDimension::WebEvidenceCount, 4, 6),
+        (PressureDimension::WebEvidenceCount, 5, 6),
         (PressureDimension::Output, 32_000, 32_001),
     ] {
         let execution = executions
