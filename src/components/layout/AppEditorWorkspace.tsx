@@ -279,6 +279,18 @@ export function AppEditorWorkspace({
     pendingNoteOpen?.namespace ??
     (activeNoteIsClassified ? "classified" : "normal");
   const effectiveTitle = pendingNoteOpen?.title;
+  const recoveryDocumentSessionIdsRef = useRef(new Map<string, string>());
+  const recoveryDocumentSessionSequenceRef = useRef(0);
+  const recoveryDocumentSessionId = useMemo(() => {
+    if (!effectiveNotePath) return "recovery-document-session-unavailable";
+    const existing =
+      recoveryDocumentSessionIdsRef.current.get(effectiveNotePath);
+    if (existing) return existing;
+    recoveryDocumentSessionSequenceRef.current += 1;
+    const next = `recovery-document-session-${recoveryDocumentSessionSequenceRef.current}`;
+    recoveryDocumentSessionIdsRef.current.set(effectiveNotePath, next);
+    return next;
+  }, [effectiveNotePath]);
   const hideCurrentSurfaceForPendingOpen = Boolean(
     !pendingNoteOpen &&
     pendingOpen &&
@@ -312,7 +324,7 @@ export function AppEditorWorkspace({
       documentSessionId:
         pendingNoteOpen?.documentSessionId ??
         activeDocumentSessionId ??
-        `legacy:${effectiveNotePath}`,
+        recoveryDocumentSessionId,
       path: effectiveNotePath,
       title: effectiveTitle ?? displayTitleFromPath(effectiveNotePath),
     };
@@ -330,6 +342,7 @@ export function AppEditorWorkspace({
     hideCurrentSurfaceForPendingOpen,
     workspaceEmpty,
     pendingNoteOpen,
+    recoveryDocumentSessionId,
     warmPreparedNotes,
   ]);
 

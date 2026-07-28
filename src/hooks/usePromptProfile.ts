@@ -5,6 +5,7 @@ import { promptProfileGet, promptProfileSet } from "@/lib/ipc";
 import type { PromptProfileDto } from "@/lib/ipc";
 import {
   DEFAULT_PROMPT_PROFILE,
+  clearPersistedLegacyAssistantIdentity,
   dispatchPromptProfileChanged,
   mergeLegacyAssistantIdentity,
   normalizePromptProfile,
@@ -26,6 +27,7 @@ export function usePromptProfile() {
         mergeLegacyAssistantIdentity(loaded);
       if (migrated) {
         await promptProfileSet(merged);
+        clearPersistedLegacyAssistantIdentity();
       }
       setProfileState(merged);
     } catch (e) {
@@ -52,6 +54,7 @@ export function usePromptProfile() {
     setError(null);
     const normalized = normalizePromptProfile(next);
     await promptProfileSet(normalized);
+    clearPersistedLegacyAssistantIdentity();
     setProfileState(normalized);
     dispatchPromptProfileChanged();
   }, []);

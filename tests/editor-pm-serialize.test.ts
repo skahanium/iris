@@ -531,7 +531,7 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
-  it("falls back to Turndown when prosemirror-markdown throws", () => {
+  it("surfaces a serializer failure without falling back to Turndown", () => {
     const serializeSpy = vi
       .spyOn(MarkdownSerializer.prototype, "serialize")
       .mockImplementation(() => {
@@ -540,13 +540,10 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     const turndown = vi
       .spyOn(markdownLib, "editorBodyHtmlToMarkdown")
       .mockReturnValue("turndown-body");
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-
     const editor = createProductionEditorFromBody("Fallback path.");
     try {
-      expect(pmSerializeBody(editor)).toBe("turndown-body");
-      expect(turndown).toHaveBeenCalled();
-      expect(errorSpy).not.toHaveBeenCalled();
+      expect(() => pmSerializeBody(editor)).toThrow("unsupported node");
+      expect(turndown).not.toHaveBeenCalled();
     } finally {
       serializeSpy.mockRestore();
       editor.destroy();

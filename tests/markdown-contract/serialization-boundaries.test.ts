@@ -14,6 +14,13 @@ describe("markdown serialization path boundaries", () => {
     expect(source).not.toContain("exportEditorToMarkdown(");
   });
 
+  it("does not silently fall back to HTML-to-Markdown during persistence", () => {
+    const source = read("src/lib/editor-pm-serialize.ts");
+
+    expect(source).not.toContain("editorBodyHtmlToMarkdown");
+    expect(source).not.toContain("editor.getHTML()");
+  });
+
   it("deprecated HTML fragment export is explicitly marked contract-only", () => {
     const source = read("src/lib/editor-export.ts");
 

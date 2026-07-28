@@ -7,6 +7,7 @@ import {
 import {
   DEFAULT_DISPLAY_NAME,
   DEFAULT_PROMPT_PROFILE,
+  clearPersistedLegacyAssistantIdentity,
   mergeLegacyAssistantIdentity,
   normalizePromptProfile,
   profileToAvatarIdentity,
@@ -39,7 +40,7 @@ describe("prompt profile", () => {
     });
   });
 
-  it("migrates legacy localStorage identity into default profile", () => {
+  it("keeps legacy localStorage identity until SQLite persistence succeeds", () => {
     localStorage.setItem(
       "iris-assistant-identity",
       JSON.stringify({ displayName: "Iris", avatarEmoji: "✨" }),
@@ -50,6 +51,9 @@ describe("prompt profile", () => {
     expect(migrated).toBe(true);
     expect(profile.display_name).toBe("Iris");
     expect(profile.avatar_emoji).toBe("✨");
+    expect(localStorage.getItem("iris-assistant-identity")).not.toBeNull();
+
+    clearPersistedLegacyAssistantIdentity();
     expect(localStorage.getItem("iris-assistant-identity")).toBeNull();
   });
 

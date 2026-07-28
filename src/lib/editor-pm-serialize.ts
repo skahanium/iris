@@ -26,7 +26,6 @@ import {
 } from "prosemirror-markdown";
 
 import { renderCalloutBlockquote } from "@/lib/callout-pm-serialize";
-import { editorBodyHtmlToMarkdown } from "@/lib/markdown";
 
 function cellPlainText(cell: ProseMirrorNode): string {
   let text = "";
@@ -173,10 +172,6 @@ function withoutTrailingEmptyListItems(
   }
 
   return children.length > 0 ? node.copy(Fragment.fromArray(children)) : null;
-}
-
-function shouldLogSerializerFallback(): boolean {
-  return import.meta.env.MODE !== "test";
 }
 
 const irisMarkdownSerializer = new MarkdownSerializer(
@@ -337,15 +332,5 @@ const irisMarkdownSerializer = new MarkdownSerializer(
  * Falls back to HTML turndown when the doc contains unsupported nodes.
  */
 export function editorDocToMarkdown(editor: Editor): string {
-  try {
-    return irisMarkdownSerializer.serialize(editor.state.doc);
-  } catch (e) {
-    if (shouldLogSerializerFallback()) {
-      console.error(
-        "[editor-pm-serialize] PM serializer failed, falling back to HTML turndown:",
-        e,
-      );
-    }
-    return editorBodyHtmlToMarkdown(editor.getHTML());
-  }
+  return irisMarkdownSerializer.serialize(editor.state.doc);
 }
