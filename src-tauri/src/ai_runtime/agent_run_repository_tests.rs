@@ -8,8 +8,8 @@ use super::normal_session_repository::NormalSessionRepository;
 use super::run_contract::{
     AssistantRunEvent, CapabilityId, ContextMode, DisplayMention, DisplayMentionKind,
     DisplayMentionRange, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness,
-    MaterialNeed, Modality, RiskClass, RunBudgetProfile, RunEventPayload, RunEventType, RunState,
-    SecurityDomain, WebDecisionReason,
+    MaterialNeed, Modality, RiskClass, RunBudgetPolicy, RunBudgetProfile, RunEventPayload,
+    RunEventType, RunState, SecurityDomain, WebDecisionReason,
 };
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan};
 use crate::storage::db::Database;
@@ -155,14 +155,13 @@ fn accepted_and_retried_runs_keep_the_frozen_budget_policy() {
     db.with_conn(|conn| {
         conn.execute(
             "UPDATE agent_runs
-             SET envelope_json = json_set(envelope_json, '$.effort', 'direct'),
-                 status = 'failed'
+             SET status = 'failed'
              WHERE run_id = 'run-1'",
             [],
         )?;
         Ok(())
     })
-    .expect("simulate later configuration/envelope drift");
+    .expect("make the frozen run retryable");
     AgentRunRepository::accept_retry(
         &db,
         RetryRunInput {
@@ -232,6 +231,81 @@ fn legacy_empty_budget_is_materialized_for_retry_and_active_execution() {
         Ok(())
     })
     .expect("legacy budgets are frozen once");
+}
+
+#[test]
+fn complete_but_noncanonical_budget_policies_fail_closed_for_read_and_retry() {
+    let canonical_direct = RunBudgetPolicy::for_envelope(&envelope());
+    let canonical_json = serde_json::to_value(&canonical_direct).expect("canonical direct policy");
+
+    let mut unknown_schema = canonical_json.clone();
+    unknown_schema["schemaVersion"] = serde_json::json!(2);
+
+    let mut expanded_main_budget = canonical_json.clone();
+    expanded_main_budget["maxModelTurns"] = serde_json::json!(1_000);
+
+    let mut mismatched_profile_field = canonical_json.clone();
+    mismatched_profile_field["profile"] = serde_json::json!("standard");
+
+    let mut standard_envelope = envelope();
+    standard_envelope.effort = Effort::ToolLoop;
+    let standard_policy = serde_json::to_value(RunBudgetPolicy::for_envelope(&standard_envelope))
+        .expect("canonical standard policy");
+
+    let cases = [
+        ("unknown_schema", unknown_schema),
+        ("expanded_main_budget", expanded_main_budget),
+        ("mismatched_profile_field", mismatched_profile_field),
+        ("profile_mismatches_envelope", standard_policy),
+    ];
+    let mut outcomes = Vec::new();
+
+    for (index, (name, tampered_policy)) in cases.into_iter().enumerate() {
+        let (db, session_id, session_key) = setup();
+        AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+            .expect("accepted direct run");
+        let tampered_policy =
+            serde_json::to_string(&tampered_policy).expect("tampered policy JSON");
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE agent_runs
+                 SET budget_policy_json = ?1, status = 'failed'
+                 WHERE run_id = 'run-1'",
+                [tampered_policy],
+            )?;
+            Ok(())
+        })
+        .expect("tamper frozen budget");
+
+        let read_error = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+            .err()
+            .map(|error| error.to_string());
+        let retry_error = AgentRunRepository::accept_retry(
+            &db,
+            RetryRunInput {
+                session_key,
+                source_run_id: "run-1".into(),
+                client_request_id: format!("retry-invalid-budget-{index}"),
+                run_id: "run-2".into(),
+            },
+        )
+        .err()
+        .map(|error| error.to_string());
+        outcomes.push((name, read_error, retry_error));
+    }
+
+    for (name, read_error, retry_error) in outcomes {
+        assert_eq!(
+            read_error.as_deref(),
+            Some("agent_run_invalid_budget_policy"),
+            "{name} must fail closed before active execution"
+        );
+        assert_eq!(
+            retry_error.as_deref(),
+            Some("agent_run_invalid_budget_policy"),
+            "{name} must fail closed before retry acceptance"
+        );
+    }
 }
 
 #[test]

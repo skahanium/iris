@@ -1839,17 +1839,20 @@ fn materialize_budget_policy(
     stored_policy: &str,
     envelope_json: &str,
 ) -> AppResult<(RunBudgetPolicy, String)> {
-    if stored_policy.trim() == "{}" {
-        let envelope: ExecutionEnvelope = serde_json::from_str(envelope_json)
-            .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
-        let policy = RunBudgetPolicy::for_envelope(&envelope);
-        let normalized = serde_json::to_string(&policy)
-            .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
-        return Ok((policy, normalized));
-    }
-    let policy = serde_json::from_str(stored_policy)
+    let envelope: ExecutionEnvelope = serde_json::from_str(envelope_json)
         .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
-    Ok((policy, stored_policy.to_string()))
+    let canonical_policy = RunBudgetPolicy::for_envelope(&envelope);
+    let normalized = serde_json::to_string(&canonical_policy)
+        .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
+    if stored_policy == "{}" {
+        return Ok((canonical_policy, normalized));
+    }
+    let stored_policy: RunBudgetPolicy = serde_json::from_str(stored_policy)
+        .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
+    if stored_policy != canonical_policy {
+        return Err(AppError::msg("agent_run_invalid_budget_policy"));
+    }
+    Ok((stored_policy, normalized))
 }
 
 /// Persisted explicit-reference facts that may be resolved for one Run.
