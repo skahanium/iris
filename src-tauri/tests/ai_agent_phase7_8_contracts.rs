@@ -9,7 +9,6 @@ fn task(id: &str, access: ResourceAccess, note_path: &str) -> SubAgentTaskSpec {
         role: "researcher".to_string(),
         task: format!("Inspect {note_path}"),
         allowed_tools: vec!["search_notes".to_string()],
-        input_evidence_ids: vec!["ev-1".to_string()],
         output_schema: "SubagentReport".to_string(),
         resource_locks: vec![ResourceLock {
             resource_type: "note".to_string(),
@@ -49,7 +48,7 @@ fn subagent_error_reports_do_not_become_parent_findings() {
 
     assert_eq!(report.subagent_id, "sub-error");
     assert!(report.findings.is_empty());
-    assert_eq!(report.confidence, 0.0);
+    assert_eq!(report.confidence, 0);
     assert_eq!(report.errors, vec!["child model failed".to_string()]);
 
     let parent_payload = SubAgentCoordinator::tool_output_for_report(&report);

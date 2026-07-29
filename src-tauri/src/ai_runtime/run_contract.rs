@@ -797,6 +797,9 @@ pub(crate) enum RunEventPayload {
         /// Whether the capability completed successfully; absent on historical events.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         success: Option<bool>,
+        /// Optional safe, bounded ChildRun report for durable replay.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subagent_batch_report: Option<crate::ai_runtime::subagent_coordinator::SubagentBatchReport>,
     },
     /// A recoverable capability failure that allows the Run to continue.
     CapabilityDegraded {

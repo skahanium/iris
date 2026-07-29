@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::ai_runtime::model_gateway::ToolCall;
 
 pub(crate) const MAX_SUBAGENT_BATCH_TASKS: usize = 3;
-const MAX_SUBAGENT_SUMMARY_CHARS: usize = 1_500;
+const MAX_SUBAGENT_SUMMARY_CHARS: usize = 600;
 
 /// Resource access requested by a subagent task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,7 +46,6 @@ pub struct SubAgentTaskSpec {
     pub role: String,
     pub task: String,
     pub allowed_tools: Vec<String>,
-    pub input_evidence_ids: Vec<String>,
     pub output_schema: String,
     pub resource_locks: Vec<ResourceLock>,
     pub token_budget: Option<u32>,
@@ -59,7 +58,6 @@ impl SubAgentTaskSpec {
         parent_request_id: &str,
         tool_call: &ToolCall,
         note_path: Option<&str>,
-        input_evidence_ids: Vec<String>,
         inherited_allowed_tools: Vec<String>,
         token_budget: Option<u32>,
     ) -> Self {
@@ -69,7 +67,6 @@ impl SubAgentTaskSpec {
             subagent_call_id(parent_request_id, tool_call),
             &args,
             note_path,
-            input_evidence_ids,
             inherited_allowed_tools,
             token_budget,
         )
@@ -78,7 +75,6 @@ impl SubAgentTaskSpec {
             role: "subagent".to_string(),
             task: "subagent task".to_string(),
             allowed_tools: Vec::new(),
-            input_evidence_ids: Vec::new(),
             output_schema: "SubagentReport".to_string(),
             resource_locks: Vec::new(),
             token_budget,
@@ -91,7 +87,6 @@ impl SubAgentTaskSpec {
         tool_call: &ToolCall,
         args: &serde_json::Value,
         note_path: Option<&str>,
-        input_evidence_ids: Vec<String>,
         inherited_allowed_tools: Vec<String>,
         token_budget: Option<u32>,
     ) -> Result<Vec<Self>, &'static str> {
@@ -104,7 +99,6 @@ impl SubAgentTaskSpec {
                 subagent_call_id(parent_request_id, tool_call),
                 args,
                 note_path,
-                input_evidence_ids,
                 inherited_allowed_tools,
                 token_budget,
             )?]),
@@ -125,7 +119,6 @@ impl SubAgentTaskSpec {
                             format!("{base_id}:{}", index + 1),
                             task_args,
                             note_path,
-                            input_evidence_ids.clone(),
                             inherited_allowed_tools.clone(),
                             token_budget,
                         )
@@ -139,7 +132,6 @@ impl SubAgentTaskSpec {
         id: String,
         args: &serde_json::Value,
         note_path: Option<&str>,
-        input_evidence_ids: Vec<String>,
         inherited_allowed_tools: Vec<String>,
         token_budget: Option<u32>,
     ) -> Result<Self, &'static str> {
@@ -155,24 +147,18 @@ impl SubAgentTaskSpec {
             .and_then(|value| value.as_str())
             .unwrap_or("subagent")
             .to_string();
-        let requested_allowed_tools = args
-            .get("allowed_tools")
-            .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect()
-            })
-            .filter(|items: &Vec<String>| !items.is_empty())
-            .unwrap_or_default();
-        let allowed_tools = if requested_allowed_tools.is_empty() {
-            inherited_allowed_tools
-        } else {
-            requested_allowed_tools
+        let allowed_tools = match args.get("allowed_tools") {
+            None => inherited_allowed_tools,
+            Some(value) => value
+                .as_array()
+                .ok_or("child_run_allowed_tools_invalid")?
+                .iter()
+                .map(|item| item.as_str().ok_or("child_run_allowed_tools_invalid"))
+                .collect::<Result<Vec<_>, _>>()?
                 .into_iter()
-                .filter(|tool| inherited_allowed_tools.contains(tool))
-                .collect()
+                .filter(|tool| inherited_allowed_tools.iter().any(|parent| parent == tool))
+                .map(str::to_string)
+                .collect(),
         };
         let resource_locks = parse_resource_locks(args).unwrap_or_else(|| {
             note_path
@@ -191,7 +177,6 @@ impl SubAgentTaskSpec {
             role,
             task,
             allowed_tools,
-            input_evidence_ids,
             output_schema: "SubagentReport".to_string(),
             resource_locks,
             token_budget,
@@ -201,11 +186,41 @@ impl SubAgentTaskSpec {
 }
 
 fn subagent_call_id(parent_request_id: &str, tool_call: &ToolCall) -> String {
-    if tool_call.id.is_empty() {
+    let raw = if tool_call.id.is_empty() {
         format!("{parent_request_id}:subagent")
     } else {
         tool_call.id.clone()
+    };
+    bounded_subagent_id(raw)
+}
+
+fn bounded_subagent_id(raw: String) -> String {
+    if raw.chars().count() <= 160
+        && !raw.chars().any(char::is_control)
+        && !crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(&raw)
+    {
+        raw
+    } else {
+        format!("subagent:{}", crate::cas::hash::content_hash_str(&raw))
     }
+}
+
+fn safe_report_summary(value: &str) -> String {
+    let trimmed = value.trim();
+    if crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(trimmed) {
+        return "敏感内容已隐藏".to_string();
+    }
+    trimmed
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .take(MAX_SUBAGENT_SUMMARY_CHARS)
+        .collect()
 }
 
 fn parse_resource_locks(args: &serde_json::Value) -> Option<Vec<ResourceLock>> {
@@ -276,21 +291,22 @@ pub struct SubagentBudgetUsage {
 }
 
 /// Unified subagent report surfaced to the parent harness.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentReport {
     pub subagent_id: String,
     pub summary: String,
     pub findings: Vec<String>,
     pub evidence_ids: Vec<String>,
-    pub confidence: f64,
+    /// Harness-generated confidence percentage in the closed interval 0..=100.
+    pub confidence: u8,
     pub open_questions: Vec<String>,
     pub errors: Vec<String>,
     pub budget: SubagentBudgetUsage,
 }
 
 /// Request-ordered reports for one bounded ChildRun batch.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentBatchReport {
     pub items: Vec<SubagentReport>,
@@ -370,19 +386,14 @@ impl SubAgentCoordinator {
         mut evidence_ids: Vec<String>,
         budget: SubagentBudgetUsage,
     ) -> SubagentReport {
-        evidence_ids.extend(spec.input_evidence_ids.iter().cloned());
         evidence_ids.sort();
         evidence_ids.dedup();
-        let summary = summary
-            .trim()
-            .chars()
-            .take(MAX_SUBAGENT_SUMMARY_CHARS)
-            .collect();
+        let summary = safe_report_summary(&summary);
         SubagentReport {
             subagent_id: spec.id.clone(),
             summary,
             findings: Vec::new(),
-            confidence: if evidence_ids.is_empty() { 0.5 } else { 0.75 },
+            confidence: if evidence_ids.is_empty() { 50 } else { 75 },
             evidence_ids,
             open_questions: Vec::new(),
             errors: Vec::new(),
@@ -392,7 +403,7 @@ impl SubAgentCoordinator {
 
     /// Build a structured failure without copying provider text into the report.
     pub fn report_error(spec: &SubAgentTaskSpec, error: impl Into<String>) -> SubagentReport {
-        Self::report_error_with_budget(spec, error, SubagentBudgetUsage::default())
+        Self::report_error_with_budget(spec, error, SubagentBudgetUsage::default(), Vec::new())
     }
 
     /// Build a structured failure while retaining the budget already consumed.
@@ -400,13 +411,16 @@ impl SubAgentCoordinator {
         spec: &SubAgentTaskSpec,
         error: impl Into<String>,
         budget: SubagentBudgetUsage,
+        mut evidence_ids: Vec<String>,
     ) -> SubagentReport {
+        evidence_ids.sort();
+        evidence_ids.dedup();
         SubagentReport {
             subagent_id: spec.id.clone(),
             summary: String::new(),
             findings: Vec::new(),
-            evidence_ids: spec.input_evidence_ids.clone(),
-            confidence: 0.0,
+            evidence_ids,
+            confidence: 0,
             open_questions: Vec::new(),
             errors: vec![error.into()],
             budget,
@@ -430,6 +444,24 @@ impl SubAgentCoordinator {
         Self::tool_output_for_batch(&SubagentBatchReport {
             items: vec![report.clone()],
         })
+    }
+
+    pub(crate) fn invalid_batch_report(
+        subagent_id: impl Into<String>,
+        error: impl Into<String>,
+    ) -> SubagentBatchReport {
+        SubagentBatchReport {
+            items: vec![SubagentReport {
+                subagent_id: bounded_subagent_id(subagent_id.into()),
+                summary: String::new(),
+                findings: Vec::new(),
+                evidence_ids: Vec::new(),
+                confidence: 0,
+                open_questions: Vec::new(),
+                errors: vec![error.into()],
+                budget: SubagentBudgetUsage::default(),
+            }],
+        }
     }
 
     pub(crate) fn tool_output_for_batch(report: &SubagentBatchReport) -> serde_json::Value {
@@ -463,7 +495,6 @@ mod tests {
             "parent",
             &call,
             None,
-            Vec::new(),
             vec!["read_note".to_string()],
             Some(1000),
         );
@@ -475,16 +506,108 @@ mod tests {
     fn requested_tools_do_not_expand_empty_parent_surface() {
         let call = subagent_call(r#"{"task":"search","allowed_tools":["web_search"]}"#);
 
+        let spec = SubAgentTaskSpec::from_tool_call("parent", &call, None, Vec::new(), Some(1000));
+
+        assert!(spec.allowed_tools.is_empty());
+    }
+
+    #[test]
+    fn explicit_empty_allowed_tools_does_not_inherit_parent_surface() {
+        let call = subagent_call(r#"{"task":"reason only","allowed_tools":[]}"#);
+
         let spec = SubAgentTaskSpec::from_tool_call(
             "parent",
             &call,
             None,
-            Vec::new(),
-            Vec::new(),
+            vec!["read_note".to_string(), "web_search".to_string()],
             Some(1000),
         );
 
-        assert!(spec.allowed_tools.is_empty());
+        assert!(
+            spec.allowed_tools.is_empty(),
+            "an explicit empty list must remain a tool-free child surface"
+        );
+    }
+
+    #[test]
+    fn child_reports_never_copy_parent_evidence() {
+        let call = subagent_call(r#"{"task":"reason only"}"#);
+        let spec = SubAgentTaskSpec::from_tool_call(
+            "parent",
+            &call,
+            None,
+            vec!["read_note".to_string()],
+            Some(1000),
+        );
+
+        let success = SubAgentCoordinator::report_success(
+            &spec,
+            "done".to_string(),
+            Vec::new(),
+            SubagentBudgetUsage::default(),
+        );
+        let failure = SubAgentCoordinator::report_error(&spec, "child_run_failed");
+
+        assert!(success.evidence_ids.is_empty());
+        assert!(failure.evidence_ids.is_empty());
+        assert_eq!(success.confidence, 50);
+    }
+
+    #[test]
+    fn failed_child_report_keeps_only_evidence_registered_by_that_child() {
+        let call = subagent_call(r#"{"task":"search then verify"}"#);
+        let spec = SubAgentTaskSpec::from_tool_call(
+            "parent",
+            &call,
+            None,
+            vec!["web_search".to_string()],
+            Some(1000),
+        );
+
+        let report = SubAgentCoordinator::report_error_with_budget(
+            &spec,
+            "child_run_failed",
+            SubagentBudgetUsage {
+                model_turns: 2,
+                tool_calls: 1,
+                ..Default::default()
+            },
+            vec!["42".to_string()],
+        );
+
+        assert_eq!(report.evidence_ids, vec!["42"]);
+        assert_eq!(report.confidence, 0);
+        assert_eq!(report.budget.tool_calls, 1);
+    }
+
+    #[test]
+    fn persisted_report_summary_redacts_credential_shaped_content() {
+        let call = subagent_call(r#"{"task":"check"}"#);
+        let spec = SubAgentTaskSpec::from_tool_call("parent", &call, None, Vec::new(), Some(1000));
+
+        for leaked in [
+            "api_key=plain-secret",
+            "token=plain-secret",
+            "key=plain-secret",
+            "password: plain-secret",
+            r#"{"token":"plain-secret"}"#,
+            "token: plain-secret",
+            r#"{"token" : "plain-secret"}"#,
+            "x-api-key: plain-secret",
+            "client_secret: plain-secret",
+        ] {
+            let report = SubAgentCoordinator::report_success(
+                &spec,
+                leaked.to_string(),
+                Vec::new(),
+                SubagentBudgetUsage::default(),
+            );
+
+            assert_eq!(report.summary, "敏感内容已隐藏");
+            assert!(!serde_json::to_string(&report)
+                .expect("serialize report")
+                .contains("plain-secret"));
+        }
     }
 
     #[test]
@@ -498,7 +621,6 @@ mod tests {
                 &call,
                 &args,
                 None,
-                Vec::new(),
                 inherited.clone(),
                 Some(2_000),
             )

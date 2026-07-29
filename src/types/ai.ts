@@ -451,6 +451,31 @@ export interface PendingConfirmation {
   expiresAt?: string;
 }
 
+export interface SubagentBudgetUsage {
+  modelTurns: number;
+  toolCalls: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+/** Safe, bounded ChildRun result persisted without tool arguments or raw output. */
+export interface SubagentReport {
+  subagentId: string;
+  summary: string;
+  findings: string[];
+  evidenceIds: string[];
+  /** Harness-generated confidence percentage in the closed interval 0..=100. */
+  confidence: number;
+  openQuestions: string[];
+  errors: string[];
+  budget: SubagentBudgetUsage;
+}
+
+export interface SubagentBatchReport {
+  items: SubagentReport[];
+}
+
 export type AssistantRunEventPayload =
   | {
       kind: "accepted";
@@ -483,6 +508,8 @@ export type AssistantRunEventPayload =
       durationMs?: number;
       /** Absent on legacy events; false maps to a failed process item. */
       success?: boolean;
+      /** Present only for persisted spawn_subagent completions. */
+      subagentBatchReport?: SubagentBatchReport;
     }
   | {
       kind: "capability_degraded";

@@ -305,9 +305,12 @@ impl AgentToolLoop {
                 if let Some(usage) = usage.as_deref_mut() {
                     usage.tool_calls = tool_calls;
                 }
+                let valid_arguments = valid_call_arguments(call);
+                let executor_owns_invalid_arguments =
+                    call.function.name == "spawn_subagent" && valid_call_identity(call);
                 let result = if !allowed_tools.contains(call.function.name.as_str()) {
                     rejected_result(call, "tool_not_in_run_surface")
-                } else if !valid_call_arguments(call) {
+                } else if !valid_arguments && !executor_owns_invalid_arguments {
                     rejected_result(call, "tool_arguments_invalid")
                 } else {
                     let fingerprint = tool_fingerprint(call);
@@ -417,10 +420,13 @@ fn tool_result_char_budget(tool_name: &str) -> usize {
 }
 
 fn valid_call_arguments(call: &ToolCall) -> bool {
-    !call.id.trim().is_empty()
-        && !call.function.name.trim().is_empty()
+    valid_call_identity(call)
         && serde_json::from_str::<serde_json::Value>(&call.function.arguments)
             .is_ok_and(|value| value.is_object())
+}
+
+fn valid_call_identity(call: &ToolCall) -> bool {
+    !call.id.trim().is_empty() && !call.function.name.trim().is_empty()
 }
 
 fn tool_fingerprint(call: &ToolCall) -> String {

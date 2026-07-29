@@ -1173,6 +1173,7 @@ fn tool_call_identifiers_are_unique_and_must_start_before_completion() {
                 summary: "不应完成未开始的调用".to_string(),
                 duration_ms: None,
                 success: None,
+                subagent_batch_report: None,
             },
         },
     );

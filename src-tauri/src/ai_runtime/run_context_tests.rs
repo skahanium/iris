@@ -1316,6 +1316,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
                 summary: "工具调用完成".into(),
                 duration_ms: None,
                 success: None,
+                subagent_batch_report: None,
             },
         },
     )

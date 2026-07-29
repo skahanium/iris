@@ -307,6 +307,70 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
 }
 
 #[tokio::test]
+async fn malformed_spawn_subagent_arguments_reach_the_bounded_executor() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "spawn-invalid-json".into(),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: "spawn_subagent".into(),
+                        arguments: "{".into(),
+                    },
+                }],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("handled invalid child request".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-invalid-child-json",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "spawn_subagent".into(),
+                description: "Run bounded child".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("the executor normalizes malformed child arguments");
+
+    assert_eq!(
+        executor.calls.load(Ordering::SeqCst),
+        1,
+        "spawn_subagent owns its structured parse-error report"
+    );
+}
+
+#[tokio::test]
 async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {

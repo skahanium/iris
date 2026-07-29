@@ -2188,6 +2188,64 @@ fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
             return Err(AppError::msg("agent_run_invalid_reasoning_summary"));
         }
     }
+    if let RunEventPayload::ToolCompleted {
+        capability,
+        subagent_batch_report: Some(report),
+        ..
+    } = payload
+    {
+        if capability != "spawn_subagent"
+            || report.items.is_empty()
+            || report.items.len()
+                > crate::ai_runtime::subagent_coordinator::MAX_SUBAGENT_BATCH_TASKS
+            || report.items.iter().any(|item| {
+                item.subagent_id.trim().is_empty()
+                    || item.subagent_id.chars().count() > 256
+                    || item.subagent_id.chars().any(char::is_control)
+                    || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(
+                        &item.subagent_id,
+                    )
+                    || item.summary.chars().count() > 600
+                    || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(
+                        &item.summary,
+                    )
+                    || item.findings.len() > 8
+                    || item
+                        .findings
+                        .iter()
+                        .any(|value| {
+                            value.chars().count() > 500
+                                || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(value)
+                        })
+                    || item.evidence_ids.len() > 8
+                    || item
+                        .evidence_ids
+                        .iter()
+                        .any(|value| !matches!(value.parse::<i64>(), Ok(id) if id > 0))
+                    || item.confidence > 100
+                    || item.open_questions.len() > 8
+                    || item
+                        .open_questions
+                        .iter()
+                        .any(|value| {
+                            value.chars().count() > 500
+                                || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(value)
+                        })
+                    || item.errors.len() > 4
+                    || item.errors.iter().any(|value| {
+                        value.trim().is_empty()
+                            || value.chars().count() > 96
+                            || !value.chars().all(|character| {
+                                character.is_ascii_lowercase()
+                                    || character.is_ascii_digit()
+                                    || character == '_'
+                            })
+                    })
+            })
+        {
+            return Err(AppError::msg("agent_run_invalid_subagent_batch_report"));
+        }
+    }
     let payload_json = serde_json::to_string(payload)?;
     if payload_json.chars().count() > MAX_SAFE_EVENT_TEXT_CHARS {
         return Err(AppError::msg("agent_run_event_payload_too_large"));

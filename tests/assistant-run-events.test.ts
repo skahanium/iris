@@ -794,4 +794,63 @@ describe("Assistant Run 事件归约", () => {
     expect(replayed.content).toBe("可重放内容");
     expect(replayed.summary).toBeNull();
   });
+
+  it("断流重连后仍可读取按请求序持久化的子任务批报告", () => {
+    const report = {
+      items: [
+        {
+          subagentId: "parent-batch:1",
+          summary: "核验完成",
+          findings: [],
+          evidenceIds: ["42"],
+          confidence: 75,
+          openQuestions: [],
+          errors: [],
+          budget: {
+            modelTurns: 2,
+            toolCalls: 1,
+            promptTokens: 16,
+            completionTokens: 6,
+            totalTokens: 22,
+          },
+        },
+      ],
+    };
+    const persisted = [
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(2, "tool_started", {
+        kind: "tool_started",
+        capability: "spawn_subagent",
+        toolCallId: "parent-batch:1",
+      }),
+      event(3, "tool_completed", {
+        kind: "tool_completed",
+        capability: "spawn_subagent",
+        toolCallId: "parent-batch:1",
+        summary: "子任务完成",
+        durationMs: 12,
+        success: true,
+        subagentBatchReport: report,
+      }),
+    ];
+
+    const replayed = replayAssistantRunEvents(runId, [
+      persisted[2]!,
+      persisted[0]!,
+      persisted[1]!,
+    ]);
+    const completed = replayed.events.find(
+      (candidate) => candidate.type === "tool_completed",
+    );
+
+    expect(completed?.payload.kind).toBe("tool_completed");
+    if (completed?.payload.kind !== "tool_completed") {
+      throw new Error("expected replayed tool_completed event");
+    }
+    expect(completed.payload.subagentBatchReport).toEqual(report);
+  });
 });
