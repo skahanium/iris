@@ -554,6 +554,11 @@ impl<'a> NormalRunToolExecutor<'a> {
         let result = if let Some(result) = gate_outcome.tool_result {
             result
         } else {
+            AgentRunRepository::validate_durable_apply_checkpoint_binding(
+                &self.state.db,
+                &self.accepted.run_id,
+                plan,
+            )?;
             AgentRunRepository::append_checkpoint_step(
                 &self.state.db,
                 AppendRunCheckpointInput {

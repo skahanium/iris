@@ -411,9 +411,17 @@ pub async fn assistant_run_retry(
 
 /// Apply one explicit control action to an isolated Agent Run.
 #[tauri::command]
-pub async fn assistant_run_control(
+pub async fn assistant_run_control<R: tauri::Runtime>(
     state: State<'_, Arc<AppState>>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
+    request: AssistantRunControlRequest,
+) -> AppResult<()> {
+    assistant_run_control_inner(Arc::clone(&state), app_handle, request).await
+}
+
+async fn assistant_run_control_inner<R: tauri::Runtime>(
+    state: Arc<AppState>,
+    app_handle: AppHandle<R>,
     request: AssistantRunControlRequest,
 ) -> AppResult<()> {
     let sink = TauriRunEventSink::new(&app_handle);
@@ -565,9 +573,9 @@ fn evaluate_normal_run_policy(
 /// Resume exactly one consumed frozen change plan. This path intentionally has
 /// no Provider construction or model invocation: approval authorizes the
 /// immutable arguments that were already produced during the original Run.
-fn spawn_confirmed_change_execution(
+fn spawn_confirmed_change_execution<R: tauri::Runtime>(
     state: Arc<AppState>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     session: AssistantSessionRef,
     run_id: String,
     confirmation_id: String,
@@ -575,120 +583,130 @@ fn spawn_confirmed_change_execution(
 ) {
     tauri::async_runtime::spawn(async move {
         let sink = TauriRunEventSink::new(&app_handle);
-        let db = Arc::clone(&state.db);
-        let fail = || {
-            RunEngine::fail_active_with_sink(&db, &session, &run_id, &sink)
-                .map(|_| ())
-                .ok();
-        };
-        let consumed = match crate::ai_runtime::agent_run_repository::AgentRunRepository::consumed_frozen_confirmation_for_session(
+        execute_confirmed_change_with_sink(state, session, run_id, confirmation_id, vault, &sink)
+            .await;
+    });
+}
+
+async fn execute_confirmed_change_with_sink(
+    state: Arc<AppState>,
+    session: AssistantSessionRef,
+    run_id: String,
+    confirmation_id: String,
+    vault: Option<std::path::PathBuf>,
+    sink: &impl RunEventSink,
+) {
+    let db = Arc::clone(&state.db);
+    let fail = || {
+        RunEngine::fail_active_with_sink(&db, &session, &run_id, sink)
+            .map(|_| ())
+            .ok();
+    };
+    let consumed = match crate::ai_runtime::agent_run_repository::AgentRunRepository::consumed_frozen_confirmation_for_session(
             &db,
             &session.session_key,
             &run_id,
             &confirmation_id,
         ) {
-            Ok(plan) => plan,
-            Err(_) => {
-                fail();
-                return;
-            }
-        };
-        let plan =
-            match crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
-                &consumed.plan_json,
-            ) {
-                Ok(plan) if plan.plan_hash() == consumed.plan_hash => plan,
-                _ => {
-                    fail();
-                    return;
-                }
-            };
-        if plan.confirmation_id() != confirmation_id || plan.run_id() != run_id {
+        Ok(plan) => plan,
+        Err(_) => {
             fail();
             return;
         }
-        let policy = match evaluate_normal_run_policy(
-            &db,
-            &AssistantRunAccepted {
-                client_request_id: String::new(),
-                run_id: run_id.clone(),
-                turn_id: String::new(),
-                session: session.clone(),
-                state: crate::ai_runtime::run_contract::RunState::Running,
-                state_version: 0,
-            },
+    };
+    let plan =
+        match crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
+            &consumed.plan_json,
         ) {
-            Ok(policy) if policy.denial_code.is_none() => policy,
+            Ok(plan) if plan.plan_hash() == consumed.plan_hash => plan,
             _ => {
                 fail();
                 return;
             }
         };
-        let authorized_capabilities = match crate::ai_runtime::agent_run_repository::AgentRunRepository::persist_authorization_snapshot(
-            &db,
-            &session.session_key,
-            &run_id,
-            &policy.allowed_capabilities,
-        ) {
-            Ok(snapshot) => snapshot,
-            Err(_) => {
-                fail();
-                return;
-            }
-        };
-        let context = match crate::ai_runtime::run_context::RunContextAssembler::assemble(
-            &db,
-            vault.as_deref(),
-            &session.session_key,
-            &run_id,
-        ) {
-            Ok(context)
-                if context.envelope.effort == Effort::Durable
-                    && context.envelope.effect == Effect::Apply =>
-            {
-                context
-            }
-            _ => {
-                fail();
-                return;
-            }
-        };
-        let accepted = AssistantRunAccepted {
+    if plan.confirmation_id() != confirmation_id || plan.run_id() != run_id {
+        fail();
+        return;
+    }
+    let policy = match evaluate_normal_run_policy(
+        &db,
+        &AssistantRunAccepted {
             client_request_id: String::new(),
             run_id: run_id.clone(),
             turn_id: String::new(),
             session: session.clone(),
             state: crate::ai_runtime::run_contract::RunState::Running,
             state_version: 0,
-        };
-        let executor = NormalRunToolExecutor::new(
-            &state,
-            Some(app_handle.clone()),
-            &accepted,
-            &context,
-            authorized_capabilities,
-            &sink,
-            Vec::new(),
-        );
-        match executor.execute_confirmed_frozen_change(&plan).await {
-            Ok(result) if result.success => {
-                if RunEngine::finalize_confirmed_change_with_sink(
-                    &db, &session, &run_id, &sink, true,
-                )
-                .is_err()
-                {
-                    fail();
-                }
-            }
-            Ok(_) | Err(_) => fail(),
+        },
+    ) {
+        Ok(policy) if policy.denial_code.is_none() => policy,
+        _ => {
+            fail();
+            return;
         }
-    });
+    };
+    let authorized_capabilities = match crate::ai_runtime::agent_run_repository::AgentRunRepository::persist_authorization_snapshot(
+            &db,
+            &session.session_key,
+            &run_id,
+            &policy.allowed_capabilities,
+        ) {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            fail();
+            return;
+        }
+    };
+    let context = match crate::ai_runtime::run_context::RunContextAssembler::assemble(
+        &db,
+        vault.as_deref(),
+        &session.session_key,
+        &run_id,
+    ) {
+        Ok(context)
+            if context.envelope.effort == Effort::Durable
+                && context.envelope.effect == Effect::Apply =>
+        {
+            context
+        }
+        _ => {
+            fail();
+            return;
+        }
+    };
+    let accepted = AssistantRunAccepted {
+        client_request_id: String::new(),
+        run_id: run_id.clone(),
+        turn_id: String::new(),
+        session: session.clone(),
+        state: crate::ai_runtime::run_contract::RunState::Running,
+        state_version: 0,
+    };
+    let executor = NormalRunToolExecutor::new(
+        &state,
+        None,
+        &accepted,
+        &context,
+        authorized_capabilities,
+        sink,
+        Vec::new(),
+    );
+    match executor.execute_confirmed_frozen_change(&plan).await {
+        Ok(result) if result.success => {
+            if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, sink, true)
+                .is_err()
+            {
+                fail();
+            }
+        }
+        Ok(_) | Err(_) => fail(),
+    }
 }
 
 /// A rejected frozen plan ends the Run without dispatching a tool or calling a model.
-fn spawn_rejected_change_finalization(
+fn spawn_rejected_change_finalization<R: tauri::Runtime>(
     db: Arc<crate::storage::db::Database>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     session: AssistantSessionRef,
     run_id: String,
 ) {
@@ -969,15 +987,29 @@ fn fail_ephemeral_classified_run(
 mod normal_run_desktop_adapter_tests {
     use std::cell::Cell;
     use std::sync::Arc;
+    use std::time::Duration;
 
-    use super::dispatch_normal_run_service;
-    use crate::ai_runtime::run_contract::{
-        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, SecurityDomain,
+    use super::{
+        assistant_run_control, dispatch_normal_run_service, evaluate_normal_run_policy,
+        execute_confirmed_change_with_sink,
     };
+    use crate::ai_runtime::agent_run_repository::{
+        AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
+        DurableApplyCheckpointStage,
+    };
+    use crate::ai_runtime::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
+    use crate::ai_runtime::run_contract::{
+        AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent,
+        AssistantRunStartRequest, AssistantTurnDraft, Effect, ExplicitAction, ExplicitTarget,
+        RunControlAction, RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain,
+    };
+    use crate::ai_runtime::run_engine::RunEngine;
     use crate::ai_runtime::run_engine::RunEventSink;
     use crate::ai_runtime::run_intake::RunIntake;
+    use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
     use crate::app::AppState;
     use crate::error::AppResult;
+    use tauri::webview::InvokeRequest;
 
     struct NoopSink;
 
@@ -1028,5 +1060,458 @@ mod normal_run_desktop_adapter_tests {
         .await;
 
         assert!(observed_present.get());
+    }
+
+    fn durable_apply_fixture() -> (
+        tempfile::TempDir,
+        Arc<AppState>,
+        AssistantRunAccepted,
+        FrozenChangePlan,
+    ) {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        std::fs::write(vault.join("note.md"), "base").expect("base note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let base_hash = crate::cas::hash::content_hash_str("base");
+        let accepted = RunIntake::start(
+            &state.db,
+            AssistantRunStartRequest {
+                client_request_id: format!("durable-command-{}", uuid::Uuid::new_v4()),
+                session: None,
+                turn: AssistantTurnDraft {
+                    message: "将已确认的修改应用到笔记".into(),
+                    content_parts: None,
+                    explicit_references: vec![ContextReferenceWire {
+                        id: "target-note".into(),
+                        kind: ContextReferenceKind::Note,
+                        file_path: Some("note.md".into()),
+                        content_hash: Some(base_hash.clone()),
+                        utf8_range: None,
+                        editor_range: None,
+                        excerpt: String::new(),
+                        heading_path: None,
+                        anchor: None,
+                        stale: false,
+                        invalid_reason: None,
+                    }],
+                    retrieval_scope: Default::default(),
+                    display_mentions: vec![],
+                },
+                explicit_action: Some(ExplicitAction {
+                    effect: Effect::Apply,
+                    target: Some(ExplicitTarget {
+                        reference_id: "target-note".into(),
+                        content_hash: base_hash.clone(),
+                    }),
+                    selection_snapshot: None,
+                }),
+                web_enabled: false,
+                model_override: None,
+                security_domain: SecurityDomain::Normal,
+                classified_context_ref: None,
+            },
+        )
+        .expect("accepted durable apply");
+        let active_vault = state.vault_path().expect("canonical active vault");
+        let policy =
+            evaluate_normal_run_policy(&state.db, &accepted).expect("current policy decision");
+        AgentRunRepository::persist_authorization_snapshot(
+            &state.db,
+            &accepted.session.session_key,
+            &accepted.run_id,
+            &policy.allowed_capabilities,
+        )
+        .expect("immutable authorization snapshot");
+        let session_id = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT session_id FROM agent_runs WHERE run_id = ?1",
+                    [&accepted.run_id],
+                    |row| row.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("session id");
+        let preparing = AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: accepted.state_version,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Preparing,
+                    stage: "正在准备".into(),
+                },
+            },
+        )
+        .expect("preparing");
+        let running = AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing.state_version(),
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "正在生成变更预览".into(),
+                },
+            },
+        )
+        .expect("running");
+        let tool_call_id = format!("tool-{}", accepted.run_id);
+        let started = AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: running.state_version(),
+                event_type: RunEventType::ToolStarted,
+                payload: RunEventPayload::ToolStarted {
+                    capability: "replace_selection".into(),
+                    tool_call_id: tool_call_id.clone(),
+                },
+            },
+        )
+        .expect("tool started");
+        let plan = FrozenChangePlan::freeze(FrozenChangePlanInput {
+            confirmation_id: format!("confirmation-{}", accepted.run_id),
+            run_id: accepted.run_id.clone(),
+            session_id,
+            request_id: accepted.run_id.clone(),
+            tool_call_id,
+            vault_id: crate::cas::hash::content_hash_str(&active_vault.to_string_lossy()),
+            relative_paths: vec!["note.md".into()],
+            operation: "replace_selection".into(),
+            base_content_hashes: vec![("note.md".into(), base_hash.clone())],
+            expected_post_content_hashes: vec![(
+                "note.md".into(),
+                crate::cas::hash::content_hash_str("after"),
+            )],
+            change: serde_json::json!({
+                "target_path": "note.md",
+                "base_content_hash": base_hash,
+                "range": { "start": 0, "end": 4 },
+                "original_text": "base",
+                "replacement": "after"
+            }),
+            affected_file_count: 1,
+            rollback_summary: "可通过版本历史撤销".into(),
+            expires_at_unix_ms: i64::MAX,
+        })
+        .expect("frozen plan");
+        let awaiting = AgentRunRepository::request_frozen_confirmation(
+            &state.db,
+            &plan,
+            started.state_version(),
+            "等待确认：更新 1 个目标",
+        )
+        .expect("await confirmation");
+        AgentRunRepository::approve_frozen_confirmation(
+            &state.db,
+            &accepted.session.session_key,
+            &accepted.run_id,
+            plan.confirmation_id(),
+            plan.plan_hash(),
+            awaiting.state_version(),
+            0,
+        )
+        .expect("consume confirmation");
+        (directory, state, accepted, plan)
+    }
+
+    fn tamper_consumed_confirmation(
+        state: &AppState,
+        original: &FrozenChangePlan,
+    ) -> FrozenChangePlan {
+        let tampered = FrozenChangePlan::freeze(FrozenChangePlanInput {
+            confirmation_id: original.confirmation_id().into(),
+            run_id: original.run_id().into(),
+            session_id: original.session_id(),
+            request_id: original.run_id().into(),
+            tool_call_id: original.tool_call_id().into(),
+            vault_id: original.vault_id().into(),
+            relative_paths: original.relative_paths().to_vec(),
+            operation: original.operation().into(),
+            base_content_hashes: original.base_content_hashes().to_vec(),
+            expected_post_content_hashes: vec![(
+                "note.md".into(),
+                crate::cas::hash::content_hash_str("tampered"),
+            )],
+            change: serde_json::json!({
+                "target_path": "note.md",
+                "base_content_hash": crate::cas::hash::content_hash_str("base"),
+                "range": { "start": 0, "end": 4 },
+                "original_text": "base",
+                "replacement": "tampered"
+            }),
+            affected_file_count: 1,
+            rollback_summary: "可通过版本历史撤销".into(),
+            expires_at_unix_ms: i64::MAX,
+        })
+        .expect("tampered frozen plan");
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "UPDATE agent_run_confirmations
+                     SET plan_hash = ?1, plan_json = ?2
+                     WHERE confirmation_id = ?3 AND run_id = ?4 AND status = 'consumed'",
+                    rusqlite::params![
+                        tampered.plan_hash(),
+                        tampered.persisted_plan_json()?,
+                        tampered.confirmation_id(),
+                        tampered.run_id(),
+                    ],
+                )?;
+                Ok(())
+            })
+            .expect("tamper consumed confirmation row");
+        tampered
+    }
+
+    fn assert_zero_write_and_dispatch(
+        state: &AppState,
+        accepted: &AssistantRunAccepted,
+        directory: &tempfile::TempDir,
+    ) {
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("vault/note.md"))
+                .expect("read unchanged note"),
+            "base"
+        );
+        assert_eq!(
+            crate::ai_runtime::tool_audit::count_by_run(&state.db, &accepted.run_id)
+                .expect("dispatch audit count"),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn approved_confirmation_tamper_before_async_executor_fails_closed_without_write() {
+        let (directory, state, accepted, plan) = durable_apply_fixture();
+        tamper_consumed_confirmation(&state, &plan);
+
+        execute_confirmed_change_with_sink(
+            Arc::clone(&state),
+            accepted.session.clone(),
+            accepted.run_id.clone(),
+            plan.confirmation_id().into(),
+            state.vault_path().ok(),
+            &NoopSink,
+        )
+        .await;
+
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::Failed);
+        assert_zero_write_and_dispatch(&state, &accepted, &directory);
+    }
+
+    #[tokio::test]
+    async fn tamper_after_startup_classification_before_resume_executor_fails_closed() {
+        let (directory, state, accepted, plan) = durable_apply_fixture();
+        RunEngine::recover_interrupted_runs(&state.db).expect("startup classification");
+        let paused = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("paused replay")
+            .expect("run");
+        assert_eq!(paused.run.state, RunState::Paused);
+        assert_eq!(
+            paused.run.recovery,
+            Some(RunRecoveryKind::ResumeAvailable),
+            "startup recovery must classify the intact fixture as resumable"
+        );
+        RunIntake::control(
+            &state.db,
+            AssistantRunControlRequest {
+                session: accepted.session.clone(),
+                run_id: accepted.run_id.clone(),
+                expected_state_version: paused.run.state_version,
+                action: RunControlAction::Resume,
+            },
+        )
+        .expect("resume classified run");
+        tamper_consumed_confirmation(&state, &plan);
+
+        execute_confirmed_change_with_sink(
+            Arc::clone(&state),
+            accepted.session.clone(),
+            accepted.run_id.clone(),
+            plan.confirmation_id().into(),
+            state.vault_path().ok(),
+            &NoopSink,
+        )
+        .await;
+
+        let replay = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("replay")
+            .expect("run");
+        assert_eq!(replay.run.state, RunState::Failed);
+        assert_zero_write_and_dispatch(&state, &accepted, &directory);
+    }
+
+    #[tokio::test]
+    async fn resume_from_dispatching_checkpoint_replays_the_exact_plan_once() {
+        let (directory, state, accepted, plan) = durable_apply_fixture();
+        let running = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("running replay")
+            .expect("run");
+        AgentRunRepository::append_checkpoint_step(
+            &state.db,
+            AppendRunCheckpointInput {
+                run_id: accepted.run_id.clone(),
+                state_version: running.run.state_version,
+                checkpoint: DurableApplyCheckpoint::new(
+                    plan.confirmation_id(),
+                    plan.plan_hash(),
+                    DurableApplyCheckpointStage::Dispatching,
+                    plan.base_content_hashes()
+                        .iter()
+                        .map(|(_, hash)| hash.clone())
+                        .collect(),
+                    plan.expected_post_content_hashes()
+                        .iter()
+                        .map(|(_, hash)| hash.clone())
+                        .collect(),
+                    Vec::new(),
+                )
+                .expect("dispatching checkpoint"),
+            },
+        )
+        .expect("simulate crash after dispatching checkpoint");
+        RunEngine::recover_interrupted_runs(&state.db).expect("startup classification");
+        let paused = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("paused replay")
+            .expect("run");
+        assert_eq!(paused.run.recovery, Some(RunRecoveryKind::ResumeAvailable));
+        RunIntake::control(
+            &state.db,
+            AssistantRunControlRequest {
+                session: accepted.session.clone(),
+                run_id: accepted.run_id.clone(),
+                expected_state_version: paused.run.state_version,
+                action: RunControlAction::Resume,
+            },
+        )
+        .expect("resume dispatching checkpoint");
+
+        execute_confirmed_change_with_sink(
+            Arc::clone(&state),
+            accepted.session.clone(),
+            accepted.run_id.clone(),
+            plan.confirmation_id().into(),
+            state.vault_path().ok(),
+            &NoopSink,
+        )
+        .await;
+
+        let completed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("completed replay")
+            .expect("run");
+        assert_eq!(completed.run.state, RunState::Completed);
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("vault/note.md")).expect("applied note"),
+            "after"
+        );
+        assert_eq!(
+            crate::ai_runtime::tool_audit::count_by_run(&state.db, &accepted.run_id)
+                .expect("single dispatch audit"),
+            1
+        );
+    }
+
+    fn invoke_control(
+        webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        request: AssistantRunControlRequest,
+    ) -> Result<tauri::ipc::InvokeResponseBody, serde_json::Value> {
+        tauri::test::get_ipc_response(
+            webview,
+            InvokeRequest {
+                cmd: "assistant_run_control".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "tauri://localhost".parse().expect("invoke URL"),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "request": request })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+    }
+
+    #[test]
+    fn production_resume_command_completes_without_model_and_repeated_resume_does_not_dispatch() {
+        let (directory, state, accepted, _plan) = durable_apply_fixture();
+        RunEngine::recover_interrupted_runs(&state.db).expect("startup classification");
+        let paused = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("paused replay")
+            .expect("run");
+        assert_eq!(
+            paused.run.recovery,
+            Some(RunRecoveryKind::ResumeAvailable),
+            "startup recovery must classify the intact fixture as resumable"
+        );
+        let request = AssistantRunControlRequest {
+            session: accepted.session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: paused.run.state_version,
+            action: RunControlAction::Resume,
+        };
+        let app = tauri::test::mock_builder()
+            .manage(Arc::clone(&state))
+            .invoke_handler(tauri::generate_handler![assistant_run_control])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock application");
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("mock webview");
+
+        assert!(invoke_control(&webview, request.clone()).is_ok());
+        for _ in 0..100 {
+            let completed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+                .expect("poll replay")
+                .is_some_and(|replay| replay.run.state == RunState::Completed);
+            if completed {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let completed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+            .expect("completed replay")
+            .expect("run");
+        assert_eq!(completed.run.state, RunState::Completed);
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("vault/note.md")).expect("applied note"),
+            "after"
+        );
+        assert_eq!(
+            AgentRunRepository::latest_durable_apply_checkpoint(&state.db, &accepted.run_id)
+                .expect("latest checkpoint")
+                .expect("completed checkpoint")
+                .stage(),
+            DurableApplyCheckpointStage::Completed
+        );
+        assert_eq!(
+            crate::ai_runtime::tool_audit::count_by_run(&state.db, &accepted.run_id)
+                .expect("single dispatch audit"),
+            1
+        );
+        assert!(completed.events.iter().all(|event| {
+            !matches!(
+                event.payload(),
+                RunEventPayload::ProviderSwitched { .. }
+                    | RunEventPayload::ReasoningSummary { .. }
+                    | RunEventPayload::ContentDelta { .. }
+            )
+        }));
+
+        assert!(invoke_control(&webview, request).is_err());
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            crate::ai_runtime::tool_audit::count_by_run(&state.db, &accepted.run_id)
+                .expect("dispatch count after repeated resume"),
+            1
+        );
     }
 }

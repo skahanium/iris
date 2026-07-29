@@ -1325,6 +1325,85 @@ fn durable_apply_checkpoint_persists_only_hashes_and_advances_in_fixed_order() {
 }
 
 #[test]
+fn durable_apply_checkpoint_binding_rejects_a_different_plan_before_dispatch() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key);
+    input.envelope.effort = Effort::Durable;
+    AgentRunRepository::accept(&db, input).expect("accepted durable run");
+    let original = FrozenChangePlan::freeze(FrozenChangePlanInput {
+        confirmation_id: "confirmation-binding".into(),
+        run_id: "run-1".into(),
+        session_id,
+        request_id: "request-binding".into(),
+        tool_call_id: "tool-binding".into(),
+        vault_id: "vault-binding".into(),
+        relative_paths: vec!["notes/a.md".into()],
+        operation: "replace_selection".into(),
+        base_content_hashes: vec![("notes/a.md".into(), "sha256:base".into())],
+        expected_post_content_hashes: vec![("notes/a.md".into(), "sha256:approved".into())],
+        change: serde_json::json!({
+            "base_content_hash": "sha256:base",
+            "range": { "start": 0, "end": 4 },
+            "original_text": "base",
+            "replacement": "approved"
+        }),
+        affected_file_count: 1,
+        rollback_summary: "可撤销".into(),
+        expires_at_unix_ms: i64::MAX,
+    })
+    .expect("original plan");
+    AgentRunRepository::append_checkpoint_step(
+        &db,
+        AppendRunCheckpointInput {
+            run_id: "run-1".into(),
+            state_version: 0,
+            checkpoint: DurableApplyCheckpoint::new(
+                original.confirmation_id(),
+                original.plan_hash(),
+                DurableApplyCheckpointStage::Approved,
+                vec!["sha256:base".into()],
+                vec!["sha256:approved".into()],
+                Vec::new(),
+            )
+            .expect("approved checkpoint"),
+        },
+    )
+    .expect("persist approved checkpoint");
+
+    AgentRunRepository::validate_durable_apply_checkpoint_binding(&db, "run-1", &original)
+        .expect("original plan remains bound");
+
+    let tampered = FrozenChangePlan::freeze(FrozenChangePlanInput {
+        confirmation_id: original.confirmation_id().into(),
+        run_id: "run-1".into(),
+        session_id,
+        request_id: "request-binding".into(),
+        tool_call_id: "tool-binding".into(),
+        vault_id: "vault-binding".into(),
+        relative_paths: vec!["notes/a.md".into()],
+        operation: "replace_selection".into(),
+        base_content_hashes: vec![("notes/a.md".into(), "sha256:base".into())],
+        expected_post_content_hashes: vec![("notes/a.md".into(), "sha256:tampered".into())],
+        change: serde_json::json!({
+            "base_content_hash": "sha256:base",
+            "range": { "start": 0, "end": 4 },
+            "original_text": "base",
+            "replacement": "tampered"
+        }),
+        affected_file_count: 1,
+        rollback_summary: "可撤销".into(),
+        expires_at_unix_ms: i64::MAX,
+    })
+    .expect("tampered plan");
+    assert_eq!(
+        AgentRunRepository::validate_durable_apply_checkpoint_binding(&db, "run-1", &tampered)
+            .expect_err("different post hash and plan hash must fail closed")
+            .to_string(),
+        "agent_run_confirmation_expired"
+    );
+}
+
+#[test]
 fn non_durable_active_run_cannot_persist_checkpoint() {
     let (db, session_id, session_key) = setup();
     AgentRunRepository::accept(&db, accept_input(session_id, session_key)).expect("accepted run");

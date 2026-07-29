@@ -8,7 +8,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rusqlite::OptionalExtension;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::ai_runtime::agent_evidence_repository::AgentEvidenceRepository;
 use crate::ai_runtime::agent_run_repository::{
@@ -600,8 +600,8 @@ impl RunEventSink for NoopRunEventSink {
 }
 
 /// Tauri adapter for the sole persisted Agent Run event channel.
-pub(crate) struct TauriRunEventSink<'a> {
-    app_handle: &'a AppHandle,
+pub(crate) struct TauriRunEventSink<'a, R: Runtime> {
+    app_handle: &'a AppHandle<R>,
 }
 
 struct PresentationClock {
@@ -653,13 +653,13 @@ fn next_presentation_event(
     Ok(event)
 }
 
-impl<'a> TauriRunEventSink<'a> {
-    pub(crate) fn new(app_handle: &'a AppHandle) -> Self {
+impl<'a, R: Runtime> TauriRunEventSink<'a, R> {
+    pub(crate) fn new(app_handle: &'a AppHandle<R>) -> Self {
         Self { app_handle }
     }
 }
 
-impl RunEventSink for TauriRunEventSink<'_> {
+impl<R: Runtime> RunEventSink for TauriRunEventSink<'_, R> {
     fn emit(&self, event: &crate::ai_runtime::run_contract::AssistantRunEvent) -> AppResult<()> {
         self.app_handle
             .emit("assistant:run_event", event)

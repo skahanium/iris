@@ -644,6 +644,39 @@ impl AgentRunRepository {
         db.with_read_conn(|conn| latest_durable_apply_checkpoint_in_conn(conn, run_id))
     }
 
+    /// Bind an executable frozen plan to the exact checkpoint created when its
+    /// confirmation was consumed. Only a not-yet-applied stage may dispatch.
+    pub(crate) fn validate_durable_apply_checkpoint_binding(
+        db: &Database,
+        run_id: &str,
+        plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+    ) -> AppResult<()> {
+        let checkpoint = Self::latest_durable_apply_checkpoint(db, run_id)?
+            .ok_or_else(|| AppError::msg("agent_run_confirmation_expired"))?;
+        let base_content_hashes = plan
+            .base_content_hashes()
+            .iter()
+            .map(|(_, hash)| hash.clone())
+            .collect::<Vec<_>>();
+        let expected_post_content_hashes = plan
+            .expected_post_content_hashes()
+            .iter()
+            .map(|(_, hash)| hash.clone())
+            .collect::<Vec<_>>();
+        if checkpoint.confirmation_id != plan.confirmation_id()
+            || checkpoint.plan_hash != plan.plan_hash()
+            || checkpoint.base_content_hashes != base_content_hashes
+            || checkpoint.expected_post_content_hashes != expected_post_content_hashes
+            || !matches!(
+                checkpoint.stage,
+                DurableApplyCheckpointStage::Approved | DurableApplyCheckpointStage::Dispatching
+            )
+        {
+            return Err(AppError::msg("agent_run_confirmation_expired"));
+        }
+        Ok(())
+    }
+
     /// Atomically persist final output, terminal Run state, and completed event.
     pub(crate) fn finalize(db: &Database, input: FinalizeRunInput) -> AppResult<String> {
         if input.content.trim().is_empty() || input.content.chars().count() > 32_000 {
