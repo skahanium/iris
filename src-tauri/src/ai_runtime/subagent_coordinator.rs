@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai_runtime::model_gateway::ToolCall;
 
+pub(crate) const MAX_SUBAGENT_BATCH_TASKS: usize = 3;
+const MAX_SUBAGENT_SUMMARY_CHARS: usize = 1_500;
+
 /// Resource access requested by a subagent task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -31,11 +34,8 @@ pub struct ResourceLock {
 }
 
 impl ResourceLock {
-    fn conflicts_with(&self, other: &Self) -> bool {
-        self.resource_type == other.resource_type
-            && self.resource_id == other.resource_id
-            && self.access == ResourceAccess::Write
-            && other.access == ResourceAccess::Write
+    fn rejects_read_only_child_run(&self) -> bool {
+        self.access == ResourceAccess::Write
     }
 }
 
@@ -54,6 +54,7 @@ pub struct SubAgentTaskSpec {
 }
 
 impl SubAgentTaskSpec {
+    /// Build the legacy single-task contract.
     pub fn from_tool_call(
         parent_request_id: &str,
         tool_call: &ToolCall,
@@ -64,10 +65,90 @@ impl SubAgentTaskSpec {
     ) -> Self {
         let args: serde_json::Value =
             serde_json::from_str(&tool_call.function.arguments).unwrap_or(serde_json::Value::Null);
+        Self::from_task_args(
+            subagent_call_id(parent_request_id, tool_call),
+            &args,
+            note_path,
+            input_evidence_ids,
+            inherited_allowed_tools,
+            token_budget,
+        )
+        .unwrap_or_else(|_| Self {
+            id: subagent_call_id(parent_request_id, tool_call),
+            role: "subagent".to_string(),
+            task: "subagent task".to_string(),
+            allowed_tools: Vec::new(),
+            input_evidence_ids: Vec::new(),
+            output_schema: "SubagentReport".to_string(),
+            resource_locks: Vec::new(),
+            token_budget,
+            failure_behavior: "report_error".to_string(),
+        })
+    }
+
+    pub(crate) fn batch_from_tool_call(
+        parent_request_id: &str,
+        tool_call: &ToolCall,
+        args: &serde_json::Value,
+        note_path: Option<&str>,
+        input_evidence_ids: Vec<String>,
+        inherited_allowed_tools: Vec<String>,
+        token_budget: Option<u32>,
+    ) -> Result<Vec<Self>, &'static str> {
+        let single_task = args.get("task");
+        let batch_tasks = args.get("tasks");
+        match (single_task, batch_tasks) {
+            (Some(_), Some(_)) => Err("child_run_task_and_tasks_mutually_exclusive"),
+            (None, None) => Err("child_run_task_required"),
+            (Some(_), None) => Ok(vec![Self::from_task_args(
+                subagent_call_id(parent_request_id, tool_call),
+                args,
+                note_path,
+                input_evidence_ids,
+                inherited_allowed_tools,
+                token_budget,
+            )?]),
+            (None, Some(tasks)) => {
+                let tasks = tasks.as_array().ok_or("child_run_batch_tasks_invalid")?;
+                if tasks.is_empty() {
+                    return Err("child_run_batch_empty");
+                }
+                if tasks.len() > MAX_SUBAGENT_BATCH_TASKS {
+                    return Err("child_run_batch_limit_exceeded");
+                }
+                let base_id = subagent_call_id(parent_request_id, tool_call);
+                tasks
+                    .iter()
+                    .enumerate()
+                    .map(|(index, task_args)| {
+                        Self::from_task_args(
+                            format!("{base_id}:{}", index + 1),
+                            task_args,
+                            note_path,
+                            input_evidence_ids.clone(),
+                            inherited_allowed_tools.clone(),
+                            token_budget,
+                        )
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    fn from_task_args(
+        id: String,
+        args: &serde_json::Value,
+        note_path: Option<&str>,
+        input_evidence_ids: Vec<String>,
+        inherited_allowed_tools: Vec<String>,
+        token_budget: Option<u32>,
+    ) -> Result<Self, &'static str> {
         let task = args
             .get("task")
             .and_then(|value| value.as_str())
-            .unwrap_or("subagent task")
+            .map(str::trim)
+            .filter(|task| !task.is_empty())
+            .ok_or("child_run_task_invalid")?
             .to_string();
         let role = args
             .get("role")
@@ -93,7 +174,7 @@ impl SubAgentTaskSpec {
                 .filter(|tool| inherited_allowed_tools.contains(tool))
                 .collect()
         };
-        let resource_locks = parse_resource_locks(&args).unwrap_or_else(|| {
+        let resource_locks = parse_resource_locks(args).unwrap_or_else(|| {
             note_path
                 .map(|path| {
                     vec![ResourceLock {
@@ -105,12 +186,8 @@ impl SubAgentTaskSpec {
                 .unwrap_or_default()
         });
 
-        Self {
-            id: if tool_call.id.is_empty() {
-                format!("{parent_request_id}:subagent")
-            } else {
-                tool_call.id.clone()
-            },
+        Ok(Self {
+            id,
             role,
             task,
             allowed_tools,
@@ -119,7 +196,15 @@ impl SubAgentTaskSpec {
             resource_locks,
             token_budget,
             failure_behavior: "report_error".to_string(),
-        }
+        })
+    }
+}
+
+fn subagent_call_id(parent_request_id: &str, tool_call: &ToolCall) -> String {
+    if tool_call.id.is_empty() {
+        format!("{parent_request_id}:subagent")
+    } else {
+        tool_call.id.clone()
     }
 }
 
@@ -163,7 +248,7 @@ fn parse_resource_locks(args: &serde_json::Value) -> Option<Vec<ResourceLock>> {
     Some(locks)
 }
 
-/// Resource conflict detected before launching subagents.
+/// Read-only policy violation detected before launching subagents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoordinationIssue {
     pub subagent_id: String,
@@ -172,25 +257,43 @@ pub struct CoordinationIssue {
     pub message: String,
 }
 
-/// Concurrency decision for a batch of subagents.
+/// Read-only admission decision for a batch of subagents.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CoordinationPlan {
     pub can_run_concurrently: bool,
     pub conflicts: Vec<CoordinationIssue>,
 }
 
+/// Harness-generated budget usage for one bounded ChildRun.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentBudgetUsage {
+    pub model_turns: u32,
+    pub tool_calls: u32,
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
 /// Unified subagent report surfaced to the parent harness.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SubagentReport {
     pub subagent_id: String,
-    pub role: String,
-    pub task: String,
     pub summary: String,
     pub findings: Vec<String>,
     pub evidence_ids: Vec<String>,
     pub confidence: f64,
     pub open_questions: Vec<String>,
     pub errors: Vec<String>,
+    pub budget: SubagentBudgetUsage,
+}
+
+/// Request-ordered reports for one bounded ChildRun batch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentBatchReport {
+    pub items: Vec<SubagentReport>,
 }
 
 /// Stateless coordinator helpers for subagent launch and report normalization.
@@ -231,32 +334,20 @@ impl SubAgentCoordinator {
     }
 
     pub fn plan(specs: &[SubAgentTaskSpec]) -> CoordinationPlan {
-        let mut conflicts = Vec::new();
-        for (left_index, left) in specs.iter().enumerate() {
-            for right in specs.iter().skip(left_index + 1) {
-                for left_lock in &left.resource_locks {
-                    for right_lock in &right.resource_locks {
-                        if left_lock.conflicts_with(right_lock) {
-                            let message =
-                                "subagent_resource_lock_conflict: same resource write lock"
-                                    .to_string();
-                            conflicts.push(CoordinationIssue {
-                                subagent_id: left.id.clone(),
-                                resource_type: left_lock.resource_type.clone(),
-                                resource_id: left_lock.resource_id.clone(),
-                                message: message.clone(),
-                            });
-                            conflicts.push(CoordinationIssue {
-                                subagent_id: right.id.clone(),
-                                resource_type: right_lock.resource_type.clone(),
-                                resource_id: right_lock.resource_id.clone(),
-                                message,
-                            });
-                        }
-                    }
-                }
-            }
-        }
+        let mut conflicts = specs
+            .iter()
+            .flat_map(|spec| {
+                spec.resource_locks
+                    .iter()
+                    .filter(|lock| lock.rejects_read_only_child_run())
+                    .map(|lock| CoordinationIssue {
+                        subagent_id: spec.id.clone(),
+                        resource_type: lock.resource_type.clone(),
+                        resource_id: lock.resource_id.clone(),
+                        message: "child_run_write_lock_forbidden".to_string(),
+                    })
+            })
+            .collect::<Vec<_>>();
         conflicts.sort_by(|a, b| {
             a.subagent_id
                 .cmp(&b.subagent_id)
@@ -276,41 +367,49 @@ impl SubAgentCoordinator {
     pub fn report_success(
         spec: &SubAgentTaskSpec,
         summary: String,
-        citation_valid: bool,
-        harness_rounds: u32,
+        mut evidence_ids: Vec<String>,
+        budget: SubagentBudgetUsage,
     ) -> SubagentReport {
+        evidence_ids.extend(spec.input_evidence_ids.iter().cloned());
+        evidence_ids.sort();
+        evidence_ids.dedup();
+        let summary = summary
+            .trim()
+            .chars()
+            .take(MAX_SUBAGENT_SUMMARY_CHARS)
+            .collect();
         SubagentReport {
             subagent_id: spec.id.clone(),
-            role: spec.role.clone(),
-            task: spec.task.clone(),
-            summary: summary.clone(),
-            findings: if summary.is_empty() {
-                Vec::new()
-            } else {
-                vec![summary]
-            },
-            evidence_ids: spec.input_evidence_ids.clone(),
-            confidence: if citation_valid { 0.75 } else { 0.5 },
-            open_questions: if harness_rounds == 0 {
-                vec!["subagent returned without completing a harness round".to_string()]
-            } else {
-                Vec::new()
-            },
+            summary,
+            findings: Vec::new(),
+            confidence: if evidence_ids.is_empty() { 0.5 } else { 0.75 },
+            evidence_ids,
+            open_questions: Vec::new(),
             errors: Vec::new(),
+            budget,
         }
     }
 
+    /// Build a structured failure without copying provider text into the report.
     pub fn report_error(spec: &SubAgentTaskSpec, error: impl Into<String>) -> SubagentReport {
+        Self::report_error_with_budget(spec, error, SubagentBudgetUsage::default())
+    }
+
+    /// Build a structured failure while retaining the budget already consumed.
+    pub(crate) fn report_error_with_budget(
+        spec: &SubAgentTaskSpec,
+        error: impl Into<String>,
+        budget: SubagentBudgetUsage,
+    ) -> SubagentReport {
         SubagentReport {
             subagent_id: spec.id.clone(),
-            role: spec.role.clone(),
-            task: spec.task.clone(),
             summary: String::new(),
             findings: Vec::new(),
             evidence_ids: spec.input_evidence_ids.clone(),
             confidence: 0.0,
             open_questions: Vec::new(),
             errors: vec![error.into()],
+            budget,
         }
     }
 
@@ -328,11 +427,14 @@ impl SubAgentCoordinator {
     }
 
     pub fn tool_output_for_report(report: &SubagentReport) -> serde_json::Value {
+        Self::tool_output_for_batch(&SubagentBatchReport {
+            items: vec![report.clone()],
+        })
+    }
+
+    pub(crate) fn tool_output_for_batch(report: &SubagentBatchReport) -> serde_json::Value {
         serde_json::json!({
-            "content": report.summary,
-            "citation_valid": report.errors.is_empty(),
-            "harness_rounds": 0,
-            "subagent_report": report,
+            "subagentBatchReport": report,
         })
     }
 }
@@ -386,6 +488,49 @@ mod tests {
     }
 
     #[test]
+    fn batch_parser_requires_exactly_one_bounded_task_shape() {
+        let inherited = vec!["read_note".to_string()];
+        let parse = |arguments: &str| {
+            let call = subagent_call(arguments);
+            let args: serde_json::Value = serde_json::from_str(arguments).expect("arguments");
+            SubAgentTaskSpec::batch_from_tool_call(
+                "parent",
+                &call,
+                &args,
+                None,
+                Vec::new(),
+                inherited.clone(),
+                Some(2_000),
+            )
+        };
+
+        assert_eq!(
+            parse(r#"{"task":"one","tasks":[{"task":"two"}]}"#)
+                .expect_err("task and tasks must be exclusive"),
+            "child_run_task_and_tasks_mutually_exclusive"
+        );
+        assert_eq!(
+            parse(r#"{"tasks":[]}"#).expect_err("empty batch"),
+            "child_run_batch_empty"
+        );
+        assert_eq!(
+            parse(r#"{"tasks":[{"task":"one"},{"task":"two"},{"task":"three"},{"task":"four"}]}"#)
+                .expect_err("bounded batch"),
+            "child_run_batch_limit_exceeded"
+        );
+
+        let specs = parse(r#"{"tasks":[{"task":"one"},{"task":"two"},{"task":"three"}]}"#)
+            .expect("bounded batch");
+        assert_eq!(
+            specs
+                .iter()
+                .map(|spec| spec.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["call-sub:1", "call-sub:2", "call-sub:3"]
+        );
+    }
+
+    #[test]
     fn child_tool_surface_never_contains_mutation_or_recursive_harness_controls() {
         let tools = SubAgentCoordinator::child_tool_surface(&[
             "read_note".to_string(),
@@ -397,5 +542,32 @@ mod tests {
         ]);
 
         assert_eq!(tools, vec!["read_note", "web_search"]);
+    }
+
+    #[test]
+    fn spawn_subagent_catalog_declares_single_or_bounded_batch_tasks() {
+        let entry = crate::ai_runtime::tool_catalog::catalog_find("spawn_subagent")
+            .expect("spawn_subagent catalog entry");
+        let properties = entry.input_schema["properties"]
+            .as_object()
+            .expect("object properties");
+        let tasks = properties
+            .get("tasks")
+            .expect("batch tasks property")
+            .as_object()
+            .expect("tasks schema");
+
+        assert!(properties.contains_key("task"));
+        assert_eq!(tasks.get("type"), Some(&serde_json::json!("array")));
+        assert_eq!(tasks.get("maxItems"), Some(&serde_json::json!(3)));
+        assert_eq!(
+            tasks["items"]["required"],
+            serde_json::json!(["task"]),
+            "each batch item must carry its own task"
+        );
+        assert!(
+            entry.input_schema.get("required").is_none(),
+            "task and tasks are mutually exclusive alternatives, so neither is globally required"
+        );
     }
 }

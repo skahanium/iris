@@ -11,6 +11,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use futures_util::future::join_all;
+
 use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
 };
@@ -162,6 +164,76 @@ impl RunWebBudget {
     }
 }
 
+#[derive(Debug, Default)]
+struct RunWebEvidenceState {
+    evidence_ids: Vec<i64>,
+    domains: BTreeSet<String>,
+    has_official_source: bool,
+    slots_in_use: usize,
+}
+
+struct WebEvidenceReservation {
+    shared: Arc<Mutex<RunWebEvidenceState>>,
+    capacity: usize,
+    finalized: bool,
+}
+
+impl WebEvidenceReservation {
+    fn reserve(
+        shared: Arc<Mutex<RunWebEvidenceState>>,
+    ) -> AppResult<Option<WebEvidenceReservation>> {
+        let capacity = {
+            let mut state = shared
+                .lock()
+                .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?;
+            let remaining = MAX_WEB_EVIDENCE_PER_RUN.saturating_sub(state.slots_in_use);
+            let capacity = remaining.min(INITIAL_WEB_SEARCH_RESULTS);
+            if capacity == 0 {
+                return Ok(None);
+            }
+            state.slots_in_use = state.slots_in_use.saturating_add(capacity);
+            capacity
+        };
+        Ok(Some(Self {
+            shared,
+            capacity,
+            finalized: false,
+        }))
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn commit(mut self, evidence_ids: &[i64]) -> AppResult<()> {
+        if evidence_ids.len() > self.capacity {
+            return Err(AppError::msg("agent_run_evidence_budget_exceeded"));
+        }
+        let mut state = self
+            .shared
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?;
+        state.slots_in_use = state
+            .slots_in_use
+            .saturating_sub(self.capacity)
+            .saturating_add(evidence_ids.len());
+        state.evidence_ids.extend(evidence_ids.iter().copied());
+        self.finalized = true;
+        Ok(())
+    }
+}
+
+impl Drop for WebEvidenceReservation {
+    fn drop(&mut self) {
+        if self.finalized {
+            return;
+        }
+        if let Ok(mut state) = self.shared.lock() {
+            state.slots_in_use = state.slots_in_use.saturating_sub(self.capacity);
+        }
+    }
+}
+
 /// Concrete normal-domain executor for the model tool loop.
 ///
 /// It owns no policy decisions: every call re-enters the catalog, permission
@@ -180,16 +252,15 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     retrieval_scope: crate::ai_runtime::retrieval_scope::RetrievalScope,
     cold_start_packets: Vec<crate::ai_runtime::ContextPacket>,
     runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot>,
-    evidence_ids: Mutex<Vec<i64>>,
-    web_evidence_domains: Mutex<BTreeSet<String>>,
-    web_evidence_has_official_source: Mutex<bool>,
-    web_failure: Mutex<Option<WebFailure>>,
-    web_attempt_count: Mutex<u32>,
-    web_budget: RunWebBudget,
-    web_degradation_emitted: Mutex<bool>,
+    local_evidence_ids: Mutex<Vec<i64>>,
+    run_web_evidence: Arc<Mutex<RunWebEvidenceState>>,
+    web_failure: Arc<Mutex<Option<WebFailure>>>,
+    web_attempt_count: Arc<Mutex<u32>>,
+    web_budget: Arc<RunWebBudget>,
+    web_degradation_emitted: Arc<Mutex<bool>>,
     required_web_provider_snapshots:
         Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
-    web_preferred_provider_id: Mutex<Option<String>>,
+    web_preferred_provider_id: Arc<Mutex<Option<String>>>,
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
     /// The ChildRun retains the parent Run identity and persistence boundary.
     child_run_provider: Option<&'a dyn ToolLoopProvider>,
@@ -226,15 +297,14 @@ impl<'a> NormalRunToolExecutor<'a> {
             retrieval_scope: context.retrieval_scope.clone(),
             cold_start_packets: context.local_retrieval_packets.clone(),
             runtime_documents: Vec::new(),
-            evidence_ids: Mutex::new(Vec::new()),
-            web_evidence_domains: Mutex::new(BTreeSet::new()),
-            web_evidence_has_official_source: Mutex::new(false),
-            web_failure: Mutex::new(None),
-            web_attempt_count: Mutex::new(0),
-            web_budget: RunWebBudget::default(),
-            web_degradation_emitted: Mutex::new(false),
+            local_evidence_ids: Mutex::new(Vec::new()),
+            run_web_evidence: Arc::new(Mutex::new(RunWebEvidenceState::default())),
+            web_failure: Arc::new(Mutex::new(None)),
+            web_attempt_count: Arc::new(Mutex::new(0)),
+            web_budget: Arc::new(RunWebBudget::default()),
+            web_degradation_emitted: Arc::new(Mutex::new(false)),
             required_web_provider_snapshots,
-            web_preferred_provider_id: Mutex::new(None),
+            web_preferred_provider_id: Arc::new(Mutex::new(None)),
             child_run_provider: None,
             budget_policy,
             child_runs_started: Mutex::new(0),
@@ -263,6 +333,16 @@ impl<'a> NormalRunToolExecutor<'a> {
 
     fn at_subagent_depth(mut self, depth: u32) -> Self {
         self.subagent_depth = depth;
+        self
+    }
+
+    fn with_parent_run_web_state(mut self, parent: &Self) -> Self {
+        self.run_web_evidence = Arc::clone(&parent.run_web_evidence);
+        self.web_failure = Arc::clone(&parent.web_failure);
+        self.web_attempt_count = Arc::clone(&parent.web_attempt_count);
+        self.web_budget = Arc::clone(&parent.web_budget);
+        self.web_degradation_emitted = Arc::clone(&parent.web_degradation_emitted);
+        self.web_preferred_provider_id = Arc::clone(&parent.web_preferred_provider_id);
         self
     }
 
@@ -296,8 +376,9 @@ impl<'a> NormalRunToolExecutor<'a> {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let remaining = MAX_WEB_EVIDENCE_PER_RUN.saturating_sub(self.evidence_ids().len());
-        if remaining == 0 {
+        let Some(evidence_reservation) =
+            WebEvidenceReservation::reserve(Arc::clone(&self.run_web_evidence))?
+        else {
             self.set_web_failure(Some(WebFailure::new(
                 SafeRunErrorCode::WebEvidenceInvalid,
                 false,
@@ -306,7 +387,8 @@ impl<'a> NormalRunToolExecutor<'a> {
                 WEB_TOOL_NAME,
                 "web_evidence_budget_exhausted",
             ));
-        }
+        };
+        let remaining = evidence_reservation.capacity();
         // Model web calls share MODEL_WEB_EVIDENCE_DEADLINE (20s). MCP search alone
         // commonly takes ~4s; scheduling deep page fetches (WEB_FETCH_TURN_BUDGET=8s)
         // after that exceeds the outer timeout and discards already-usable search
@@ -421,10 +503,11 @@ impl<'a> NormalRunToolExecutor<'a> {
             ));
         }
         self.set_web_failure(None)?;
-        self.evidence_ids
+        self.local_evidence_ids
             .lock()
             .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?
             .extend(evidence_ids.iter().copied());
+        evidence_reservation.commit(&evidence_ids)?;
         self.record_web_evidence_quality(&packed_items)?;
         let packets = crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets_with_excerpt_limit(
             query,
@@ -744,6 +827,11 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 Ok(outcome) => outcome,
                 Err(_) => return Err(AppError::msg("tool_permission_check_failed")),
             };
+            if call.function.name == "spawn_subagent" && gate_outcome.tool_result.is_none() {
+                let result = self.execute_child_run_batch(run_id, call, &args).await?;
+                audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+                return Ok(result);
+            }
             let state_version = match append_model_tool_started(
                 &self.state.db,
                 self.accepted,
@@ -756,12 +844,6 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
             };
             let result = if let Some(result) = gate_outcome.tool_result {
                 result
-            } else if call.function.name == "spawn_subagent" {
-                if self.subagent_depth != 0 {
-                    failed_tool_call(&call.function.name, "subagent_depth_exceeded")
-                } else {
-                    self.execute_child_run(run_id, call, &args).await?
-                }
             } else if entry.requires_confirmation {
                 self.request_change_confirmation(
                     call,
@@ -821,10 +903,17 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn evidence_ids(&self) -> Vec<i64> {
-        self.evidence_ids
-            .lock()
-            .map(|ids| ids.clone())
-            .unwrap_or_default()
+        if self.subagent_depth == 0 {
+            self.run_web_evidence
+                .lock()
+                .map(|state| state.evidence_ids.clone())
+                .unwrap_or_default()
+        } else {
+            self.local_evidence_ids
+                .lock()
+                .map(|ids| ids.clone())
+                .unwrap_or_default()
+        }
     }
 
     fn has_web_evidence(&self) -> bool {
@@ -838,16 +927,11 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         if !self.requires_corroborated_web_evidence() {
             return true;
         }
-        let has_official = self
-            .web_evidence_has_official_source
+        let (has_official, independent_domains) = self
+            .run_web_evidence
             .lock()
-            .map(|value| *value)
-            .unwrap_or(false);
-        let independent_domains = self
-            .web_evidence_domains
-            .lock()
-            .map(|domains| domains.len())
-            .unwrap_or(0);
+            .map(|state| (state.has_official_source, state.domains.len()))
+            .unwrap_or((false, 0));
         corroborated_source_threshold_met(has_official, independent_domains)
     }
 
@@ -884,12 +968,8 @@ impl NormalRunToolExecutor<'_> {
         &self,
         items: &[crate::ai_runtime::web_evidence_broker::WebEvidenceItem],
     ) -> AppResult<()> {
-        let mut domains = self
-            .web_evidence_domains
-            .lock()
-            .map_err(|_| AppError::msg("agent_run_web_evidence_lock_failed"))?;
-        let mut has_official = self
-            .web_evidence_has_official_source
+        let mut state = self
+            .run_web_evidence
             .lock()
             .map_err(|_| AppError::msg("agent_run_web_evidence_lock_failed"))?;
         for item in items {
@@ -899,32 +979,24 @@ impl NormalRunToolExecutor<'_> {
                 && bounded_page_evidence(item).is_some()
             {
                 if !item.domain.trim().is_empty() {
-                    domains.insert(item.domain.to_ascii_lowercase());
+                    state.domains.insert(item.domain.to_ascii_lowercase());
                 }
-                *has_official |= item.source_rank == WebSourceRank::Official;
+                state.has_official_source |= item.source_rank == WebSourceRank::Official;
             }
         }
         Ok(())
     }
 
-    /// Execute one bounded ChildRun inside the parent Run's provider, policy,
-    /// evidence and audit boundary. There is intentionally no child task table
-    /// or child lifecycle: only the parent Run may persist an effect or ask the
-    /// user for confirmation.
-    async fn execute_child_run(
+    /// Execute one request-ordered batch of bounded ChildRuns. Lifecycle events
+    /// are persisted around the whole concurrent section so completion timing
+    /// cannot reorder parent-visible reports.
+    async fn execute_child_run_batch(
         &self,
         run_id: &str,
         call: &crate::ai_runtime::ToolCall,
-        _args: &serde_json::Value,
+        args: &serde_json::Value,
     ) -> AppResult<ToolCallResult> {
         let started = Instant::now();
-        let Some(provider) = self.child_run_provider else {
-            return Ok(failed_tool_call(
-                &call.function.name,
-                "child_run_provider_unavailable",
-            ));
-        };
-
         let registry = ToolRegistry::new();
         let parent_surface = ToolRegistry::constrain_for_explicit_references(
             registry.tools_for_authorized_capabilities(&self.authorized_capabilities, true),
@@ -939,73 +1011,203 @@ impl NormalRunToolExecutor<'_> {
             crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::child_tool_surface(
                 &inherited_tool_names,
             );
-        let spec = crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::from_tool_call(
-            run_id,
-            call,
-            self.context
-                .materials
-                .first()
-                .map(|material| material.source_path.as_str()),
-            self.evidence_ids()
-                .into_iter()
-                .map(|id| id.to_string())
-                .collect(),
-            inherited_tool_names,
-            Some(self.budget_policy.child_input_tokens_per_turn),
-        );
-        if spec.resource_locks.iter().any(|lock| {
-            lock.access == crate::ai_runtime::subagent_coordinator::ResourceAccess::Write
-        }) {
-            let report = crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
-                &spec,
-                "child_run_write_lock_forbidden",
-            );
-            return Ok(child_report_tool_result(
+        let specs =
+            match crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::batch_from_tool_call(
+                run_id,
+                call,
+                args,
+                self.context
+                    .materials
+                    .first()
+                    .map(|material| material.source_path.as_str()),
+                self.evidence_ids()
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .collect(),
+                inherited_tool_names,
+                Some(self.budget_policy.child_input_tokens_per_turn),
+            ) {
+                Ok(specs) => specs,
+                Err(error) => {
+                    let state_version = append_model_tool_started(
+                        &self.state.db,
+                        self.accepted,
+                        self.sink,
+                        &call.function.name,
+                        &call.id,
+                    )?;
+                    let result = failed_tool_call_with_duration(
+                        &call.function.name,
+                        error,
+                        started.elapsed(),
+                    );
+                    append_model_tool_completed(
+                        &self.state.db,
+                        self.accepted,
+                        state_version,
+                        self.sink,
+                        &call.function.name,
+                        &call.id,
+                        "子任务请求无效",
+                        result.duration_ms,
+                        false,
+                    )?;
+                    return Ok(result);
+                }
+            };
+        let mut state_versions = Vec::with_capacity(specs.len());
+        for spec in &specs {
+            state_versions.push(append_model_tool_started(
+                &self.state.db,
+                self.accepted,
+                self.sink,
                 &call.function.name,
-                report,
-                0,
-                started.elapsed(),
-            ));
+                &spec.id,
+            )?);
         }
-        if spec.allowed_tools.is_empty() {
-            let report = crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
-                &spec,
-                "child_run_no_safe_authorized_tools",
-            );
-            return Ok(child_report_tool_result(
-                &call.function.name,
-                report,
-                0,
-                started.elapsed(),
-            ));
-        }
-        let child_run_reserved = {
-            let mut child_runs_started = self
-                .child_runs_started
-                .lock()
-                .map_err(|_| AppError::msg("agent_run_child_budget_lock_failed"))?;
-            if *child_runs_started >= self.budget_policy.max_child_runs {
-                false
-            } else {
-                *child_runs_started = child_runs_started.saturating_add(1);
-                true
-            }
+
+        let write_rejected = specs
+            .iter()
+            .map(|spec| {
+                spec.resource_locks.iter().any(|lock| {
+                    lock.access == crate::ai_runtime::subagent_coordinator::ResourceAccess::Write
+                })
+            })
+            .collect::<Vec<_>>();
+        let runnable_count = specs
+            .iter()
+            .zip(&write_rejected)
+            .filter(|(spec, write_rejected)| !**write_rejected && !spec.allowed_tools.is_empty())
+            .count();
+        let provider_available = self.child_run_provider.is_some();
+        let depth_allowed = self.subagent_depth == 0;
+        let child_budget_reserved = if provider_available && depth_allowed {
+            self.reserve_child_runs(runnable_count)?
+        } else {
+            false
         };
-        if !child_run_reserved {
-            let report = crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
-                &spec,
-                "child_run_limit_exceeded",
-            );
-            return Ok(child_report_tool_result(
+        let provider = self.child_run_provider;
+        let write_rejected = &write_rejected;
+        let parent_surface = &parent_surface;
+        let outcomes = join_all(specs.iter().enumerate().map(|(index, spec)| async move {
+            if !depth_allowed {
+                return (
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                        spec,
+                        "subagent_depth_exceeded",
+                    ),
+                    Duration::ZERO,
+                );
+            }
+            if !provider_available {
+                return (
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                        spec,
+                        "child_run_provider_unavailable",
+                    ),
+                    Duration::ZERO,
+                );
+            }
+            if write_rejected[index] {
+                return (
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                        spec,
+                        "child_run_write_lock_forbidden",
+                    ),
+                    Duration::ZERO,
+                );
+            }
+            if spec.allowed_tools.is_empty() {
+                return (
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                        spec,
+                        "child_run_no_safe_authorized_tools",
+                    ),
+                    Duration::ZERO,
+                );
+            }
+            if !child_budget_reserved {
+                return (
+                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                        spec,
+                        "child_run_limit_exceeded",
+                    ),
+                    Duration::ZERO,
+                );
+            }
+            self.execute_one_child_run(
+                run_id,
+                spec,
+                provider.expect("provider availability checked"),
+                parent_surface,
+            )
+            .await
+        }))
+        .await;
+        for ((spec, state_version), (report, duration)) in
+            specs.iter().zip(state_versions).zip(outcomes.iter())
+        {
+            append_model_tool_completed(
+                &self.state.db,
+                self.accepted,
+                state_version,
+                self.sink,
                 &call.function.name,
-                report,
-                0,
-                started.elapsed(),
-            ));
+                &spec.id,
+                if report.errors.is_empty() {
+                    "子任务完成"
+                } else {
+                    "子任务未完成"
+                },
+                bounded_duration_ms(*duration),
+                report.errors.is_empty(),
+            )?;
         }
-        let tools = parent_surface
+        let reports = outcomes
             .into_iter()
+            .map(|(report, _)| report)
+            .collect::<Vec<_>>();
+        Ok(child_batch_tool_result(
+            &call.function.name,
+            reports,
+            started.elapsed(),
+        ))
+    }
+
+    fn reserve_child_runs(&self, count: usize) -> AppResult<bool> {
+        if count == 0 {
+            return Ok(true);
+        }
+        let requested =
+            u32::try_from(count).map_err(|_| AppError::msg("agent_run_child_budget_invalid"))?;
+        let mut child_runs_started = self
+            .child_runs_started
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_child_budget_lock_failed"))?;
+        if child_runs_started.saturating_add(requested) > self.budget_policy.max_child_runs {
+            return Ok(false);
+        }
+        *child_runs_started = child_runs_started.saturating_add(requested);
+        Ok(true)
+    }
+
+    /// Execute one bounded ChildRun inside the parent Run's provider, policy,
+    /// evidence and audit boundary.
+    async fn execute_one_child_run(
+        &self,
+        run_id: &str,
+        spec: &crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec,
+        provider: &dyn ToolLoopProvider,
+        parent_surface: &[crate::ai_runtime::ToolSpec],
+    ) -> (
+        crate::ai_runtime::subagent_coordinator::SubagentReport,
+        Duration,
+    ) {
+        let started = Instant::now();
+        let tools = parent_surface
+            .iter()
             .filter(|tool| spec.allowed_tools.contains(&tool.name))
+            .cloned()
             .collect::<Vec<_>>();
         let messages = vec![
             LlmMessage {
@@ -1038,46 +1240,61 @@ impl NormalRunToolExecutor<'_> {
             self.required_web_provider_snapshots.clone(),
         )
         .with_skill_activation_plan(self.skill_activation_plan.clone())
+        .with_parent_run_web_state(self)
         .at_subagent_depth(1);
         let mut observer = ChildRunStreamObserver;
+        let provider_run_id =
+            crate::ai_runtime::agent_tool_loop::scoped_child_provider_run_id(run_id, &spec.id);
+        let mut child_usage = crate::ai_runtime::agent_tool_loop::AgentToolLoopUsage::default();
         let outcome = AgentToolLoop::from_child_policy(&self.budget_policy)
-            .execute(
+            .execute_child(
                 provider,
                 &child_executor,
                 run_id,
+                &provider_run_id,
                 messages,
                 tools,
                 &mut observer,
+                &mut child_usage,
             )
             .await;
         let result = match outcome {
             Ok(outcome) => {
-                let citation_valid = !child_executor.evidence_ids().is_empty()
-                    || !spec.input_evidence_ids.is_empty();
-                let report =
-                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
-                        &spec,
-                        outcome.content,
-                        citation_valid,
-                        outcome.model_turns,
-                    );
-                child_report_tool_result(
-                    &call.function.name,
-                    report,
-                    outcome.model_turns,
-                    started.elapsed(),
+                let evidence_ids = child_executor
+                    .evidence_ids()
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .collect();
+                let budget = crate::ai_runtime::subagent_coordinator::SubagentBudgetUsage {
+                    model_turns: outcome.model_turns,
+                    tool_calls: outcome.tool_calls,
+                    prompt_tokens: outcome.prompt_tokens,
+                    completion_tokens: outcome.completion_tokens,
+                    total_tokens: outcome.total_tokens,
+                };
+                crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
+                    spec,
+                    outcome.content,
+                    evidence_ids,
+                    budget,
                 )
             }
             Err(error) => {
-                let report =
-                    crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
-                        &spec,
-                        sanitize_child_run_error(&error),
-                    );
-                child_report_tool_result(&call.function.name, report, 0, started.elapsed())
+                let budget = crate::ai_runtime::subagent_coordinator::SubagentBudgetUsage {
+                    model_turns: child_usage.model_turns,
+                    tool_calls: child_usage.tool_calls,
+                    prompt_tokens: child_usage.prompt_tokens,
+                    completion_tokens: child_usage.completion_tokens,
+                    total_tokens: child_usage.total_tokens,
+                };
+                crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error_with_budget(
+                    spec,
+                    sanitize_child_run_error(&error),
+                    budget,
+                )
             }
         };
-        Ok(result)
+        (result, started.elapsed())
     }
 
     fn has_capability(&self, required: &str) -> bool {
@@ -1420,23 +1637,20 @@ impl StreamEventObserver for ChildRunStreamObserver {
     }
 }
 
-fn child_report_tool_result(
+fn child_batch_tool_result(
     tool_name: &str,
-    report: crate::ai_runtime::subagent_coordinator::SubagentReport,
-    harness_rounds: u32,
+    reports: Vec<crate::ai_runtime::subagent_coordinator::SubagentReport>,
     duration: Duration,
 ) -> ToolCallResult {
-    let success = report.errors.is_empty();
-    let error = (!success).then(|| "child_run_failed".to_string());
+    let success = reports.iter().any(|report| report.errors.is_empty());
+    let error = (!success).then(|| "child_run_batch_failed".to_string());
+    let report = crate::ai_runtime::subagent_coordinator::SubagentBatchReport { items: reports };
     ToolCallResult {
         tool_name: tool_name.to_string(),
         success,
-        output: serde_json::json!({
-            "content": report.summary,
-            "citation_valid": report.errors.is_empty(),
-            "harness_rounds": harness_rounds,
-            "subagent_report": report,
-        }),
+        output: crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::tool_output_for_batch(
+            &report,
+        ),
         duration_ms: bounded_duration_ms(duration),
         tokens_used: None,
         error,
@@ -2024,7 +2238,9 @@ mod tests {
     use std::collections::VecDeque;
     use std::future::Future;
     use std::pin::Pin;
-    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use super::{
         corroborated_source_threshold_met, emit_deferred_web_degradation,
@@ -2047,7 +2263,7 @@ mod tests {
     use crate::app::AppState;
     use crate::error::AppResult;
     use crate::storage::db::Database;
-    use std::sync::Arc;
+    use tokio::sync::Barrier;
 
     #[derive(Default)]
     struct RecordingSink {
@@ -2133,6 +2349,59 @@ mod tests {
         }
     }
 
+    struct ConcurrentChildProvider {
+        barrier: Barrier,
+        active: AtomicUsize,
+        max_active: AtomicUsize,
+        provider_run_ids: Mutex<Vec<String>>,
+    }
+
+    impl ToolLoopProvider for ConcurrentChildProvider {
+        fn answer_turn<'a>(
+            &'a self,
+            run_id: &'a str,
+            messages: &'a [LlmMessage],
+            _tools: &'a [ToolSpec],
+            _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
+            _observer: &'a mut dyn StreamEventObserver,
+        ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>> {
+            let task = messages
+                .last()
+                .and_then(|message| message.content.as_str())
+                .unwrap_or_default()
+                .to_string();
+            self.provider_run_ids
+                .lock()
+                .expect("provider run ids")
+                .push(run_id.to_string());
+            Box::pin(async move {
+                let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+                self.max_active.fetch_max(active, Ordering::SeqCst);
+                self.barrier.wait().await;
+                let delay_ms = match task.as_str() {
+                    "slow" => 30,
+                    "middle" => 15,
+                    _ => 0,
+                };
+                tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                self.active.fetch_sub(1, Ordering::SeqCst);
+                Ok(GatewayResponse {
+                    content: (task != "middle").then(|| format!("{task} 完成")),
+                    tool_calls: Vec::new(),
+                    usage: crate::ai_types::TokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 4,
+                        total_tokens: 14,
+                        ..Default::default()
+                    },
+                    finish_reason: "stop".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                })
+            })
+        }
+    }
+
     fn request() -> AssistantRunStartRequest {
         AssistantRunStartRequest {
             client_request_id: "deferred-web-client".to_string(),
@@ -2154,6 +2423,91 @@ mod tests {
 
     fn web_failure() -> super::WebFailure {
         super::WebFailure::new(SafeRunErrorCode::WebProviderTimeout, true)
+    }
+
+    #[test]
+    fn concurrent_child_web_reservations_share_the_parent_run_limit() {
+        let shared = Arc::new(Mutex::new(super::RunWebEvidenceState::default()));
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let handles = (0..3)
+            .map(|_| {
+                let shared = Arc::clone(&shared);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    super::WebEvidenceReservation::reserve(shared).expect("reservation")
+                })
+            })
+            .collect::<Vec<_>>();
+        let reservations = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("reservation thread"))
+            .collect::<Vec<_>>();
+        let reserved = reservations
+            .iter()
+            .flatten()
+            .map(super::WebEvidenceReservation::capacity)
+            .sum::<usize>();
+
+        assert_eq!(reserved, super::MAX_WEB_EVIDENCE_PER_RUN);
+        assert_eq!(
+            shared.lock().expect("shared evidence").slots_in_use,
+            super::MAX_WEB_EVIDENCE_PER_RUN
+        );
+    }
+
+    #[test]
+    fn child_web_evidence_is_local_to_its_report_and_visible_to_the_parent_run() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("context");
+        let sink = RecordingSink::default();
+        let parent = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+        let child = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("web.search")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_parent_run_web_state(&parent)
+        .at_subagent_depth(1);
+        let reservation =
+            super::WebEvidenceReservation::reserve(Arc::clone(&child.run_web_evidence))
+                .expect("reservation")
+                .expect("capacity");
+        child
+            .local_evidence_ids
+            .lock()
+            .expect("local evidence")
+            .push(41);
+        reservation.commit(&[41]).expect("commit evidence");
+
+        assert_eq!(child.evidence_ids(), vec![41]);
+        assert_eq!(parent.evidence_ids(), vec![41]);
+        assert!(Arc::ptr_eq(
+            &child.run_web_evidence,
+            &parent.run_web_evidence
+        ));
     }
 
     #[tokio::test]
@@ -2272,7 +2626,7 @@ mod tests {
             result.error, result.output
         );
         assert_eq!(
-            result.output["subagent_report"]["summary"],
+            result.output["subagentBatchReport"]["items"][0]["summary"],
             "子任务已读取当前时间。"
         );
         {
@@ -2324,9 +2678,10 @@ mod tests {
             .expect("bounded child rejection");
         assert!(!rejected.success);
         assert_eq!(
-            rejected.output["subagent_report"]["errors"][0],
+            rejected.output["subagentBatchReport"]["items"][0]["errors"][0],
             "child_run_limit_exceeded"
         );
+        assert_eq!(rejected.error.as_deref(), Some("child_run_batch_failed"));
         assert_eq!(
             provider.tool_surfaces.lock().expect("surfaces").len(),
             4,
@@ -2344,6 +2699,171 @@ mod tests {
             })
             .expect("child audit");
         assert_eq!(child_depth, 1);
+    }
+
+    #[tokio::test]
+    async fn child_run_batch_executes_concurrently_and_persists_ordered_lifecycle() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
+        let mut start = request();
+        start.web_enabled = false;
+        start.turn.message = "请并行委派三个子任务。".to_string();
+        let accepted = RunIntake::start(&state.db, start).expect("accepted");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试并行 ChildRun".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running");
+        let provider = ConcurrentChildProvider {
+            barrier: Barrier::new(3),
+            active: AtomicUsize::new(0),
+            max_active: AtomicUsize::new(0),
+            provider_run_ids: Mutex::new(Vec::new()),
+        };
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![
+                CapabilityId::new("runtime.read"),
+                CapabilityId::new("harness.child_run"),
+            ],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_child_run_provider(&provider);
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            executor.execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "parent-batch",
+                    "spawn_subagent",
+                    r#"{"tasks":[{"task":"slow"},{"task":"fast"},{"task":"middle"}]}"#,
+                ),
+                1,
+            ),
+        )
+        .await
+        .expect("batch execution must not serialize at the first child")
+        .expect("batch execution result");
+
+        assert!(result.success, "batch report: {}", result.output);
+        assert_eq!(provider.max_active.load(Ordering::SeqCst), 3);
+        let provider_run_ids = provider.provider_run_ids.lock().expect("provider run ids");
+        assert_eq!(
+            provider_run_ids
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            3,
+            "concurrent ChildRuns must not share Provider continuation state"
+        );
+        assert!(provider_run_ids
+            .iter()
+            .all(|provider_run_id| provider_run_id != &accepted.run_id));
+        assert!(provider_run_ids.iter().all(|provider_run_id| {
+            crate::ai_runtime::agent_tool_loop::parent_run_id_for_provider_scope(provider_run_id)
+                == accepted.run_id
+        }));
+        drop(provider_run_ids);
+        let items = result.output["subagentBatchReport"]["items"]
+            .as_array()
+            .expect("batch items");
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[0]["subagentId"], "parent-batch:1");
+        assert_eq!(items[1]["subagentId"], "parent-batch:2");
+        assert_eq!(items[2]["subagentId"], "parent-batch:3");
+        assert_eq!(items[0]["summary"], "slow 完成");
+        assert_eq!(items[1]["summary"], "fast 完成");
+        assert_eq!(items[2]["summary"], "");
+        assert_eq!(items[2]["errors"][0], "child_run_failed");
+        assert_eq!(items[0]["findings"], serde_json::json!([]));
+        assert_eq!(items[0]["evidenceIds"], serde_json::json!([]));
+        assert_eq!(items[0]["confidence"], serde_json::json!(0.5));
+        assert_eq!(items[0]["openQuestions"], serde_json::json!([]));
+        assert_eq!(items[0]["errors"], serde_json::json!([]));
+        assert_eq!(
+            items[0]["budget"],
+            serde_json::json!({
+                "modelTurns": 1,
+                "toolCalls": 0,
+                "promptTokens": 10,
+                "completionTokens": 4,
+                "totalTokens": 14
+            })
+        );
+        assert_eq!(
+            items[2]["budget"],
+            serde_json::json!({
+                "modelTurns": 1,
+                "toolCalls": 0,
+                "promptTokens": 10,
+                "completionTokens": 4,
+                "totalTokens": 14
+            }),
+            "failed ChildRuns must retain the budget already consumed"
+        );
+
+        let lifecycle = sink
+            .events
+            .lock()
+            .expect("events")
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event["type"].as_str(),
+                    Some("tool_started" | "tool_completed")
+                )
+            })
+            .map(|event| {
+                (
+                    event["type"].as_str().unwrap_or_default().to_string(),
+                    event["payload"]["toolCallId"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lifecycle,
+            vec![
+                ("tool_started".to_string(), "parent-batch:1".to_string()),
+                ("tool_started".to_string(), "parent-batch:2".to_string()),
+                ("tool_started".to_string(), "parent-batch:3".to_string()),
+                ("tool_completed".to_string(), "parent-batch:1".to_string()),
+                ("tool_completed".to_string(), "parent-batch:2".to_string()),
+                ("tool_completed".to_string(), "parent-batch:3".to_string()),
+            ]
+        );
     }
 
     #[tokio::test]
@@ -2417,10 +2937,70 @@ mod tests {
 
         assert!(!result.success);
         assert_eq!(
-            result.output["subagent_report"]["errors"][0],
+            result.output["subagentBatchReport"]["items"][0]["errors"][0],
             "child_run_write_lock_forbidden"
         );
+        assert_eq!(result.error.as_deref(), Some("child_run_batch_failed"));
         assert!(provider.tool_surfaces.lock().expect("surfaces").is_empty());
+
+        provider
+            .responses
+            .lock()
+            .expect("responses")
+            .push_back(GatewayResponse {
+                content: Some("只读子任务完成。".to_string()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            });
+        let partial = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "parent-spawn-partial",
+                    "spawn_subagent",
+                    r#"{"tasks":[{"task":"拒绝写入","resource_locks":[{"resource_id":"note.md","access":"write"}]},{"task":"只读检查","allowed_tools":["system_time_now"]}]}"#,
+                ),
+                2,
+            )
+            .await
+            .expect("partial batch result");
+        assert!(
+            partial.success,
+            "one successful child keeps the parent moving"
+        );
+        let items = partial.output["subagentBatchReport"]["items"]
+            .as_array()
+            .expect("partial reports");
+        assert_eq!(items[0]["errors"][0], "child_run_write_lock_forbidden");
+        assert_eq!(items[1]["summary"], "只读子任务完成。");
+        assert_eq!(
+            provider.tool_surfaces.lock().expect("surfaces").len(),
+            1,
+            "the rejected write child must not reach the model"
+        );
+
+        let all_failed = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "parent-spawn-all-failed",
+                    "spawn_subagent",
+                    r#"{"tasks":[{"task":"写一","resource_locks":[{"resource_id":"a.md","access":"write"}]},{"task":"写二","resource_locks":[{"resource_id":"b.md","access":"write"}]}]}"#,
+                ),
+                3,
+            )
+            .await
+            .expect("all-failed batch result");
+        assert!(!all_failed.success);
+        assert_eq!(all_failed.error.as_deref(), Some("child_run_batch_failed"));
+        assert!(all_failed.output["subagentBatchReport"]["items"]
+            .as_array()
+            .expect("all-failed reports")
+            .iter()
+            .all(|item| item["errors"][0] == "child_run_write_lock_forbidden"));
     }
 
     fn capability_degraded_count(events: &[serde_json::Value]) -> usize {

@@ -41,6 +41,41 @@ describe("mapChatToolCallsForUi", () => {
     expect(out?.[0]?.result_summary).toContain("法规");
   });
 
+  it("summarizes request-ordered subagent batch reports", () => {
+    const out = mapChatToolCallsForUi(
+      [
+        {
+          id: "batch1",
+          function: {
+            name: "spawn_subagent",
+            arguments: '{"tasks":[{"task":"核验 A"},{"task":"核验 B"}]}',
+          },
+        },
+      ],
+      [
+        {
+          tool_call_id: "batch1",
+          status: "completed",
+          result: {
+            subagentBatchReport: {
+              items: [
+                { summary: "A 已核验", errors: [] },
+                {
+                  summary: "",
+                  errors: ["child_run_web_evidence_required"],
+                },
+              ],
+            },
+          },
+        },
+      ],
+    );
+
+    expect(out?.[0]?.result_summary).toBe(
+      "A 已核验\nchild_run_web_evidence_required",
+    );
+  });
+
   it("keeps pending confirmation tools", () => {
     const out = mapChatToolCallsForUi(
       [

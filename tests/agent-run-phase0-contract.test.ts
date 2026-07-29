@@ -31,7 +31,10 @@ describe("阶段 0：Agent Run 契约基线", () => {
     const routingDocs = read("docs/llm-routing.md");
     const runContract = read("src-tauri/src/ai_runtime/run_contract.rs");
     const runIntake = read("src-tauri/src/ai_runtime/run_intake.rs");
-    const runEngine = read("src-tauri/src/ai_runtime/run_engine.rs");
+    const runEngine = [
+      read("src-tauri/src/ai_runtime/run_engine/mod.rs"),
+      read("src-tauri/src/ai_runtime/run_engine/recovery.rs"),
+    ].join("\n");
     const classifiedSession = read(
       "src-tauri/src/ai_runtime/classified_session.rs",
     );

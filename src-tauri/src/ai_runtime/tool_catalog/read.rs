@@ -184,11 +184,44 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "spawn_subagent",
-            description: "将复杂子任务委派给独立 agent 并行执行。适用于需要独立推理、交叉验证、长任务拆分或草稿协作的子问题；普通搜索并行由工具执行层自动处理。",
+            description: "将复杂只读子任务委派给独立 agent。可提交单个 task，或用 tasks 一次提交最多 3 个并发子任务；适用于独立推理、交叉验证或长任务拆分。",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "task": {"type": "string", "description": "子任务完整描述"},
+                    "tasks": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "description": "按请求顺序排列的子任务；与 task 互斥",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "task": {"type": "string", "description": "子任务完整描述"},
+                                "role": {"type": "string", "description": "子 agent 角色，例如 researcher / verifier / writer"},
+                                "context_hint": {"type": "string", "description": "可选额外上下文"},
+                                "allowed_tools": {
+                                    "type": "array",
+                                    "items": {"type": "string"},
+                                    "description": "允许子 agent 使用的工具子集；只能收窄当前可用工具面"
+                                },
+                                "resource_locks": {
+                                    "type": "array",
+                                    "description": "可选只读资源声明；任何 write 请求都会被拒绝，不提供写入协调",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "resource_type": {"type": "string", "default": "note"},
+                                            "resource_id": {"type": "string"},
+                                            "access": {"type": "string", "enum": ["read", "write"], "default": "read"}
+                                        },
+                                        "required": ["resource_id"]
+                                    }
+                                }
+                            },
+                            "required": ["task"]
+                        }
+                    },
                     "role": {"type": "string", "description": "子 agent 角色，例如 researcher / verifier / writer"},
                     "context_hint": {"type": "string", "description": "可选额外上下文"},
                     "max_rounds": {"type": "integer", "description": "子任务最大轮次", "default": 2},
@@ -199,7 +232,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                     },
                     "resource_locks": {
                         "type": "array",
-                        "description": "子任务需要的资源锁；同一 note 的多个 write 锁会被协调器拒绝",
+                        "description": "可选只读资源声明；任何 write 请求都会被拒绝，不提供写入协调",
                         "items": {
                             "type": "object",
                             "properties": {
@@ -210,8 +243,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                             "required": ["resource_id"]
                         }
                     }
-                },
-                "required": ["task"]
+                }
             }),
             access_level: ToolAccessLevel::ReadIndex,
             requires_confirmation: false,

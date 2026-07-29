@@ -17,10 +17,21 @@ use crate::storage::db::Database;
 
 const MAX_REPEAT_CALLS: u32 = 2;
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
+const CHILD_PROVIDER_SCOPE_SEPARATOR: &str = "::child-provider-scope::";
 /// Web evidence is deliberately allowed a larger envelope than generic tool
 /// output. Eight compact evidence excerpts need materially more room than a
 /// normal tool response, but the budget remains bounded per tool turn.
 pub(crate) const MAX_WEB_TOOL_RESULT_CHARS: usize = 32_000;
+
+pub(crate) fn scoped_child_provider_run_id(parent_run_id: &str, child_id: &str) -> String {
+    format!("{parent_run_id}{CHILD_PROVIDER_SCOPE_SEPARATOR}{child_id}")
+}
+
+pub(crate) fn parent_run_id_for_provider_scope(run_id: &str) -> &str {
+    run_id
+        .split_once(CHILD_PROVIDER_SCOPE_SEPARATOR)
+        .map_or(run_id, |(parent_run_id, _)| parent_run_id)
+}
 
 /// Result of a fully bounded model/tool exchange.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +42,22 @@ pub(crate) struct AgentToolLoopOutcome {
     pub(crate) model_turns: u32,
     /// Number of concrete tool dispatch attempts made by this Run.
     pub(crate) tool_calls: u32,
+    /// Provider-reported input tokens consumed across all model turns.
+    pub(crate) prompt_tokens: u32,
+    /// Provider-reported output tokens consumed across all model turns.
+    pub(crate) completion_tokens: u32,
+    /// Provider-reported total tokens consumed across all model turns.
+    pub(crate) total_tokens: u32,
+}
+
+/// Budget consumed so far, including execution paths that end in an error.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct AgentToolLoopUsage {
+    pub(crate) model_turns: u32,
+    pub(crate) tool_calls: u32,
+    pub(crate) prompt_tokens: u32,
+    pub(crate) completion_tokens: u32,
+    pub(crate) total_tokens: u32,
 }
 
 /// Per-model-turn limits that the provider must forward into `GatewayRequest`.
@@ -131,8 +158,37 @@ impl AgentToolLoop {
         tools: Vec<ToolSpec>,
         observer: &mut dyn StreamEventObserver,
     ) -> AppResult<AgentToolLoopOutcome> {
-        self.execute_internal(provider, executor, run_id, messages, tools, observer, None)
-            .await
+        self.execute_internal(
+            provider, executor, run_id, run_id, messages, tools, observer, None, None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_child(
+        &self,
+        provider: &(impl ToolLoopProvider + ?Sized),
+        executor: &impl ToolLoopExecutor,
+        parent_run_id: &str,
+        provider_run_id: &str,
+        messages: Vec<LlmMessage>,
+        tools: Vec<ToolSpec>,
+        observer: &mut dyn StreamEventObserver,
+        usage: &mut AgentToolLoopUsage,
+    ) -> AppResult<AgentToolLoopOutcome> {
+        *usage = AgentToolLoopUsage::default();
+        self.execute_internal(
+            provider,
+            executor,
+            parent_run_id,
+            provider_run_id,
+            messages,
+            tools,
+            observer,
+            None,
+            Some(usage),
+        )
+        .await
     }
 
     /// Evaluation-only seam that observes the real bounded loop without
@@ -152,10 +208,12 @@ impl AgentToolLoop {
             provider,
             executor,
             run_id,
+            run_id,
             messages,
             tools,
             observer,
             Some(telemetry),
+            None,
         )
         .await
     }
@@ -166,10 +224,12 @@ impl AgentToolLoop {
         provider: &(impl ToolLoopProvider + ?Sized),
         executor: &impl ToolLoopExecutor,
         run_id: &str,
+        provider_run_id: &str,
         mut messages: Vec<LlmMessage>,
         tools: Vec<ToolSpec>,
         observer: &mut dyn StreamEventObserver,
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
+        mut usage: Option<&mut AgentToolLoopUsage>,
     ) -> AppResult<AgentToolLoopOutcome> {
         let allowed_tools = tools
             .iter()
@@ -177,15 +237,35 @@ impl AgentToolLoop {
             .collect::<HashSet<_>>();
         let mut model_turns = 0;
         let mut tool_calls = 0;
+        let mut prompt_tokens = 0_u32;
+        let mut completion_tokens = 0_u32;
+        let mut total_tokens = 0_u32;
         let mut fingerprints = HashMap::<String, u32>::new();
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
             model_turns += 1;
+            if let Some(usage) = usage.as_deref_mut() {
+                usage.model_turns = model_turns;
+            }
             let model_started_at = std::time::Instant::now();
             let response = provider
-                .answer_turn(run_id, &messages, &tools, self.turn_budget, observer)
+                .answer_turn(
+                    provider_run_id,
+                    &messages,
+                    &tools,
+                    self.turn_budget,
+                    observer,
+                )
                 .await?;
+            prompt_tokens = prompt_tokens.saturating_add(response.usage.prompt_tokens);
+            completion_tokens = completion_tokens.saturating_add(response.usage.completion_tokens);
+            total_tokens = total_tokens.saturating_add(response.usage.total_tokens);
+            if let Some(usage) = usage.as_deref_mut() {
+                usage.prompt_tokens = prompt_tokens;
+                usage.completion_tokens = completion_tokens;
+                usage.total_tokens = total_tokens;
+            }
             if let Some(telemetry) = telemetry {
                 telemetry.record_model_turn(&response, model_started_at);
             }
@@ -202,6 +282,9 @@ impl AgentToolLoop {
                     content,
                     model_turns,
                     tool_calls,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
                 });
             }
 
@@ -219,6 +302,9 @@ impl AgentToolLoop {
             for call in &response.tool_calls {
                 ensure_run_not_cancelled(run_id)?;
                 tool_calls += 1;
+                if let Some(usage) = usage.as_deref_mut() {
+                    usage.tool_calls = tool_calls;
+                }
                 let result = if !allowed_tools.contains(call.function.name.as_str()) {
                     rejected_result(call, "tool_not_in_run_surface")
                 } else if !valid_call_arguments(call) {

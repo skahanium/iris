@@ -22,7 +22,7 @@ fn task(id: &str, access: ResourceAccess, note_path: &str) -> SubAgentTaskSpec {
 }
 
 #[test]
-fn subagent_coordinator_allows_concurrent_reads_and_blocks_same_note_writes() {
+fn subagent_coordinator_allows_reads_and_rejects_every_write_request() {
     let read_a = task("sub-a", ResourceAccess::Read, "Notes/Market.md");
     let read_b = task("sub-b", ResourceAccess::Read, "Notes/Market.md");
 
@@ -31,12 +31,15 @@ fn subagent_coordinator_allows_concurrent_reads_and_blocks_same_note_writes() {
     assert!(read_plan.conflicts.is_empty());
 
     let write_a = task("sub-c", ResourceAccess::Write, "Notes/Market.md");
-    let write_b = task("sub-d", ResourceAccess::Write, "Notes/Market.md");
 
-    let write_plan = SubAgentCoordinator::plan(&[write_a, write_b]);
+    let write_plan = SubAgentCoordinator::plan(&[write_a]);
     assert!(!write_plan.can_run_concurrently);
-    assert_eq!(write_plan.conflicts.len(), 2);
+    assert_eq!(write_plan.conflicts.len(), 1);
     assert_eq!(write_plan.conflicts[0].resource_id, "Notes/Market.md");
+    assert_eq!(
+        write_plan.conflicts[0].message,
+        "child_run_write_lock_forbidden"
+    );
 }
 
 #[test]
@@ -51,13 +54,15 @@ fn subagent_error_reports_do_not_become_parent_findings() {
 
     let parent_payload = SubAgentCoordinator::tool_output_for_report(&report);
     assert_eq!(
-        parent_payload["subagent_report"]["subagent_id"],
+        parent_payload["subagentBatchReport"]["items"][0]["subagentId"],
         "sub-error"
     );
-    assert!(parent_payload["subagent_report"]["findings"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    assert!(
+        parent_payload["subagentBatchReport"]["items"][0]["findings"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

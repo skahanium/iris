@@ -74,12 +74,14 @@ describe("Assistant Run IPC contract", () => {
   it("uses one durable replayable Run event channel", () => {
     const events = read("src/lib/ipc-events.ts");
     const ipc = read("src/lib/ipc.ts");
-    const engine = read("src-tauri/src/ai_runtime/run_engine.rs");
+    const engineObserver = read(
+      "src-tauri/src/ai_runtime/run_engine/observer.rs",
+    );
 
     expect(events).toContain('ASSISTANT_RUN_EVENT: "assistant:run_event"');
     expect(ipc).toContain("listenAssistantRunEvent");
     expect(ipc).toContain("IPC_EVENTS.ASSISTANT_RUN_EVENT");
-    expect(engine).toContain('emit("assistant:run_event"');
+    expect(engineObserver).toContain('emit("assistant:run_event"');
 
     for (const removed of [
       "LLM_TOKEN",

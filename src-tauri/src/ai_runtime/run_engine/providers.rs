@@ -537,11 +537,14 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
         >,
     > {
         Box::pin(async move {
+            let provider_state_key = run_id;
+            let parent_run_id =
+                crate::ai_runtime::agent_tool_loop::parent_run_id_for_provider_scope(run_id);
             let stored_continuation = self
                 .continuations
                 .lock()
                 .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
-                .get(run_id)
+                .get(provider_state_key)
                 .cloned();
             let mut selected_index = stored_continuation
                 .as_ref()
@@ -550,7 +553,7 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                     self.selected_indices
                         .lock()
                         .ok()
-                        .and_then(|indices| indices.get(run_id).copied())
+                        .and_then(|indices| indices.get(provider_state_key).copied())
                 })
                 .unwrap_or(0);
             let continuation = stored_continuation.map(|state| state.continuation);
@@ -582,7 +585,7 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                         continuation.clone(),
                     )?;
                 match provider
-                    .answer_turn(run_id, messages, tools, budget, observer)
+                    .answer_turn(provider_state_key, messages, tools, budget, observer)
                     .await
                 {
                     Ok(response) => {
@@ -596,34 +599,34 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                             .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?;
                         if let Some(next) = response.continuation.clone() {
                             continuations.insert(
-                                run_id.to_string(),
+                                provider_state_key.to_string(),
                                 SelectedResponseContinuation {
                                     selected_index,
                                     continuation: next,
                                 },
                             );
                         } else {
-                            continuations.remove(run_id);
+                            continuations.remove(provider_state_key);
                         }
                         drop(continuations);
                         if response.tool_calls.is_empty() {
                             self.selected_indices
                                 .lock()
                                 .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
-                                .remove(run_id);
+                                .remove(provider_state_key);
                             self.tool_bound_runs
                                 .lock()
                                 .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
-                                .remove(run_id);
+                                .remove(provider_state_key);
                         } else {
                             self.selected_indices
                                 .lock()
                                 .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
-                                .insert(run_id.to_string(), selected_index);
+                                .insert(provider_state_key.to_string(), selected_index);
                             self.tool_bound_runs
                                 .lock()
                                 .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
-                                .insert(run_id.to_string());
+                                .insert(provider_state_key.to_string());
                         }
                         return Ok(response);
                     }
@@ -636,7 +639,7 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                                 .tool_bound_runs
                                 .lock()
                                 .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
-                                .contains(run_id);
+                                .contains(provider_state_key);
                         let failure = classify_failover_failure(&error);
                         if !may_failover_after_model_attempt(
                             failure,
@@ -667,13 +670,13 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                         let snapshot = AgentRunRepository::get_for_session(
                             self.db,
                             &self.session.session_key,
-                            run_id,
+                            parent_run_id,
                         )?
                         .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
                         let switched = AgentRunRepository::append_event(
                             self.db,
                             AppendRunEventInput {
-                                run_id: run_id.to_string(),
+                                run_id: parent_run_id.to_string(),
                                 state_version: snapshot.run.state_version,
                                 event_type: RunEventType::ProviderSwitched,
                                 payload: RunEventPayload::ProviderSwitched {
