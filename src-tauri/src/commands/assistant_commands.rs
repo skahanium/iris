@@ -447,6 +447,17 @@ pub async fn assistant_run_control(
                     session,
                     run_id,
                 ),
+                (
+                    NormalRunControlOutcome::RecoveryResumed { confirmation_id },
+                    crate::ai_runtime::run_contract::RunControlAction::Resume,
+                ) => spawn_confirmed_change_execution(
+                    Arc::clone(&state),
+                    app_handle,
+                    session,
+                    run_id,
+                    confirmation_id,
+                    state.vault_path().ok(),
+                ),
                 _ => {}
             }
             Ok(())

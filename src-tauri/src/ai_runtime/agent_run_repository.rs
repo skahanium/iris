@@ -9,8 +9,8 @@ use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::run_contract::{
     transition_to, AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse,
     AssistantRunSnapshot, AssistantSessionRef, CapabilityId, ConfirmationTargetSummary, Effect,
-    ExecutionEnvelope, ExplicitAction, RiskClass, RunEventPayload, RunEventType, RunState,
-    SecurityDomain,
+    Effort, ExecutionEnvelope, ExplicitAction, RiskClass, RunEventPayload, RunEventType,
+    RunRecoveryKind, RunState, SecurityDomain,
 };
 use crate::ai_types::{
     ContentPart, ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan,
@@ -18,20 +18,13 @@ use crate::ai_types::{
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use rusqlite::{params_from_iter, types::Value as SqlValue, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 const MAX_SAFE_EVENT_TEXT_CHARS: usize = 2_000;
 const MAX_REASONING_SUMMARY_CHARS: usize = 1_500;
-
-#[cfg(test)]
-const MAX_CHECKPOINT_STRING_CHARS: usize = 512;
-#[cfg(test)]
-const MAX_CHECKPOINT_SAFE_STATE_DEPTH: usize = 4;
-#[cfg(test)]
-const MAX_CHECKPOINT_SAFE_STATE_ITEMS: usize = 64;
 
 /// Facts Request Intake must atomically write before any execution work.
 #[derive(Debug, Clone)]
@@ -84,24 +77,120 @@ pub(crate) struct AppendRunEventInput {
     pub(crate) payload: RunEventPayload,
 }
 
-/// One durable, summary-shaped checkpoint for a recoverable Run Step.
-#[cfg(test)]
+/// Fixed recovery stage for one consumed Durable Apply confirmation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DurableApplyCheckpointStage {
+    Approved,
+    Dispatching,
+    Applied,
+    Completed,
+}
+
+impl DurableApplyCheckpointStage {
+    fn follows(self, previous: Self) -> bool {
+        matches!(
+            (previous, self),
+            (Self::Approved, Self::Dispatching)
+                | (Self::Dispatching, Self::Applied)
+                | (Self::Applied, Self::Completed)
+        )
+    }
+}
+
+/// Body-free recovery identity for a consumed Durable Apply confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DurableApplyCheckpoint {
+    schema_version: u8,
+    confirmation_id: String,
+    plan_hash: String,
+    stage: DurableApplyCheckpointStage,
+    base_content_hashes: Vec<String>,
+    expected_post_content_hashes: Vec<String>,
+    evidence_ids: Vec<i64>,
+}
+
+impl DurableApplyCheckpoint {
+    /// Construct a bounded checkpoint that contains identities only.
+    pub(crate) fn new(
+        confirmation_id: impl Into<String>,
+        plan_hash: impl Into<String>,
+        stage: DurableApplyCheckpointStage,
+        base_content_hashes: Vec<String>,
+        expected_post_content_hashes: Vec<String>,
+        evidence_ids: Vec<i64>,
+    ) -> AppResult<Self> {
+        let checkpoint = Self {
+            schema_version: 1,
+            confirmation_id: confirmation_id.into(),
+            plan_hash: plan_hash.into(),
+            stage,
+            base_content_hashes,
+            expected_post_content_hashes,
+            evidence_ids,
+        };
+        checkpoint.validate()?;
+        Ok(checkpoint)
+    }
+
+    fn validate(&self) -> AppResult<()> {
+        let safe_identity = |value: &str| {
+            !value.trim().is_empty()
+                && value.chars().count() <= 256
+                && !value.chars().any(char::is_control)
+        };
+        if self.schema_version != 1
+            || !safe_identity(&self.confirmation_id)
+            || !safe_identity(&self.plan_hash)
+            || self.base_content_hashes.len() != self.expected_post_content_hashes.len()
+            || self.base_content_hashes.len() > 32
+            || self
+                .base_content_hashes
+                .iter()
+                .chain(&self.expected_post_content_hashes)
+                .any(|hash| !safe_identity(hash))
+            || self.evidence_ids.len() > 64
+            || self
+                .evidence_ids
+                .iter()
+                .any(|evidence_id| *evidence_id <= 0)
+        {
+            return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
+        }
+        Ok(())
+    }
+
+    pub(crate) const fn stage(&self) -> DurableApplyCheckpointStage {
+        self.stage
+    }
+
+    pub(crate) fn confirmation_id(&self) -> &str {
+        &self.confirmation_id
+    }
+
+    pub(crate) fn plan_hash(&self) -> &str {
+        &self.plan_hash
+    }
+
+    pub(crate) fn base_content_hashes(&self) -> &[String] {
+        &self.base_content_hashes
+    }
+
+    pub(crate) fn expected_post_content_hashes(&self) -> &[String] {
+        &self.expected_post_content_hashes
+    }
+}
+
+/// One durable checkpoint append for a recoverable Apply step.
 #[derive(Debug, Clone)]
 pub(crate) struct AppendRunCheckpointInput {
     /// Owning Run identifier.
     pub(crate) run_id: String,
     /// Version the Run Engine observed before persisting the checkpoint.
     pub(crate) state_version: u64,
-    /// Stable executor step kind.
-    pub(crate) kind: String,
-    /// Safe executor-facing step status.
-    pub(crate) status: String,
-    /// Bounded summary of the safe input already consumed.
-    pub(crate) input_summary: String,
-    /// Bounded summary of the safe output already produced.
-    pub(crate) output_summary: String,
-    /// Versioned and validated resume data; never a raw Harness snapshot.
-    pub(crate) checkpoint: Value,
+    /// Versioned body-free recovery data.
+    pub(crate) checkpoint: DurableApplyCheckpoint,
 }
 
 /// Facts that must commit with a Run's successful terminal transition.
@@ -457,14 +546,12 @@ impl AgentRunRepository {
         })
     }
 
-    /// Persist a validated checkpoint only for a durable or safely blocked Run.
-    #[cfg(test)]
+    /// Persist the next body-free Durable Apply checkpoint.
     pub(crate) fn append_checkpoint_step(
         db: &Database,
         input: AppendRunCheckpointInput,
     ) -> AppResult<()> {
-        let evidence_ids = validate_checkpoint_schema(&input.checkpoint)?;
-        validate_checkpoint_step_input(&input)?;
+        input.checkpoint.validate()?;
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
                 let (status, stored_state_version, effort, session_id): (String, u64, String, i64) =
@@ -483,12 +570,31 @@ impl AgentRunRepository {
                     return Err(AppError::msg("agent_run_state_version_conflict"));
                 }
                 let effort = parse_wire::<crate::ai_runtime::run_contract::Effort>(&effort)?;
-                let checkpoint_allowed = effort == crate::ai_runtime::run_contract::Effort::Durable
-                    || matches!(state, RunState::Paused | RunState::AwaitingConfirmation);
-                if !checkpoint_allowed {
+                if effort != crate::ai_runtime::run_contract::Effort::Durable {
                     return Err(AppError::msg("agent_run_checkpoint_not_durable"));
                 }
-                ensure_evidence_ids_belong_to_session(conn, session_id, &evidence_ids)?;
+                ensure_evidence_ids_belong_to_session(
+                    conn,
+                    session_id,
+                    &input.checkpoint.evidence_ids,
+                )?;
+                let latest = latest_durable_apply_checkpoint_in_conn(conn, &input.run_id)?;
+                if let Some(latest) = latest {
+                    if latest == input.checkpoint {
+                        return Ok(());
+                    }
+                    if latest.confirmation_id != input.checkpoint.confirmation_id
+                        || latest.plan_hash != input.checkpoint.plan_hash
+                        || latest.base_content_hashes != input.checkpoint.base_content_hashes
+                        || latest.expected_post_content_hashes
+                            != input.checkpoint.expected_post_content_hashes
+                        || !input.checkpoint.stage.follows(latest.stage)
+                    {
+                        return Err(AppError::msg("agent_run_checkpoint_stage_conflict"));
+                    }
+                } else if input.checkpoint.stage != DurableApplyCheckpointStage::Approved {
+                    return Err(AppError::msg("agent_run_checkpoint_stage_conflict"));
+                }
                 let step_seq: i64 = conn.query_row(
                     "SELECT COALESCE(MAX(step_seq), 0) + 1
                      FROM agent_run_steps WHERE run_id = ?1",
@@ -504,12 +610,16 @@ impl AgentRunRepository {
                     rusqlite::params![
                         input.run_id,
                         step_seq,
-                        input.kind,
-                        input.status,
-                        input.input_summary,
-                        input.output_summary,
+                        "durable_apply",
+                        serde_json::to_value(input.checkpoint.stage)?
+                            .as_str()
+                            .ok_or_else(|| {
+                                AppError::msg("agent_run_checkpoint_invalid_schema")
+                            })?,
+                        "",
+                        "",
                         serde_json::to_string(&input.checkpoint)?,
-                        serde_json::to_string(&evidence_ids)?,
+                        serde_json::to_string(&input.checkpoint.evidence_ids)?,
                         now,
                     ],
                 )?;
@@ -524,6 +634,14 @@ impl AgentRunRepository {
                 Ok(())
             })
         })
+    }
+
+    /// Read the latest persisted Durable Apply checkpoint for startup recovery.
+    pub(crate) fn latest_durable_apply_checkpoint(
+        db: &Database,
+        run_id: &str,
+    ) -> AppResult<Option<DurableApplyCheckpoint>> {
+        db.with_read_conn(|conn| latest_durable_apply_checkpoint_in_conn(conn, run_id))
     }
 
     /// Atomically persist final output, terminal Run state, and completed event.
@@ -951,12 +1069,12 @@ impl AgentRunRepository {
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .map_err(not_found_or_db)?;
-                let confirmation_status: String = conn
+                let (confirmation_status, plan_json): (String, String) = conn
                     .query_row(
-                        "SELECT status FROM agent_run_confirmations
+                        "SELECT status, plan_json FROM agent_run_confirmations
                          WHERE confirmation_id = ?1 AND run_id = ?2 AND plan_hash = ?3",
                         rusqlite::params![confirmation_id, run_id, plan_hash],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .map_err(|error| match error {
                         rusqlite::Error::QueryReturnedNoRows => {
@@ -987,7 +1105,148 @@ impl AgentRunRepository {
                 if consumed != 1 {
                     return Err(AppError::msg("agent_run_confirmation_expired"));
                 }
+                let plan =
+                    crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
+                        &plan_json,
+                    )?;
+                if plan.confirmation_id() != confirmation_id
+                    || plan.run_id() != run_id
+                    || plan.plan_hash() != plan_hash
+                {
+                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                }
+                let checkpoint = DurableApplyCheckpoint::new(
+                    confirmation_id,
+                    plan_hash,
+                    DurableApplyCheckpointStage::Approved,
+                    plan.base_content_hashes()
+                        .iter()
+                        .map(|(_, hash)| hash.clone())
+                        .collect(),
+                    plan.expected_post_content_hashes()
+                        .iter()
+                        .map(|(_, hash)| hash.clone())
+                        .collect(),
+                    Vec::new(),
+                )?;
+                let step_seq: i64 = conn.query_row(
+                    "SELECT COALESCE(MAX(step_seq), 0) + 1
+                     FROM agent_run_steps WHERE run_id = ?1",
+                    [run_id],
+                    |row| row.get(0),
+                )?;
                 let next_state_version = stored_state_version + 1;
+                let updated = conn.execute(
+                    "UPDATE agent_runs
+                     SET status = 'running', state_version = ?1, updated_at = ?2
+                     WHERE run_id = ?3 AND state_version = ?4",
+                    rusqlite::params![next_state_version, now, run_id, stored_state_version],
+                )?;
+                if updated != 1 {
+                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                }
+                conn.execute(
+                    "INSERT INTO agent_run_steps
+                     (run_id, step_seq, kind, status, input_summary, output_summary,
+                      resume_state_json, evidence_refs_json, created_at, updated_at)
+                     VALUES (?1, ?2, 'durable_apply', 'approved', '', '', ?3, '[]', ?4, ?4)",
+                    rusqlite::params![
+                        run_id,
+                        step_seq,
+                        serde_json::to_string(&checkpoint)?,
+                        now,
+                    ],
+                )?;
+                let event_seq: u64 = conn.query_row(
+                    "SELECT COALESCE(MAX(event_seq), 0) + 1
+                     FROM agent_run_events WHERE run_id = ?1",
+                    [run_id],
+                    |row| row.get(0),
+                )?;
+                let event = AssistantRunEvent::new(
+                    run_id,
+                    event_seq,
+                    next_state_version,
+                    RunEventType::Resumed,
+                    &now,
+                    RunEventPayload::Resumed {
+                        reason: "已确认变更计划，正在继续处理".to_string(),
+                    },
+                )
+                .map_err(AppError::msg)?;
+                insert_event(conn, &event)?;
+                Ok(FrozenConfirmationApproval::Resumed(event))
+            })
+        })
+    }
+
+    /// Resume one startup-classified Durable Apply with optimistic concurrency.
+    pub(crate) fn resume_durable_apply(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+        expected_state_version: u64,
+    ) -> AppResult<(AssistantRunEvent, String)> {
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                let (status, stored_state_version, effort, effect): (String, u64, String, String) =
+                    conn.query_row(
+                        "SELECT r.status, r.state_version, r.effort, r.effect
+                         FROM agent_runs r
+                         JOIN sessions s ON s.id = r.session_id
+                         WHERE r.run_id = ?1 AND s.session_key = ?2",
+                        rusqlite::params![run_id, session_key],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .map_err(not_found_or_db)?;
+                if stored_state_version != expected_state_version {
+                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                }
+                if parse_wire::<RunState>(&status)? != RunState::Paused
+                    || parse_wire::<Effort>(&effort)? != Effort::Durable
+                    || parse_wire::<Effect>(&effect)? != Effect::Apply
+                {
+                    return Err(AppError::msg("agent_run_control_not_available"));
+                }
+                let payload_json: String = conn
+                    .query_row(
+                        "SELECT payload_json FROM agent_run_events
+                         WHERE run_id = ?1 ORDER BY event_seq DESC LIMIT 1",
+                        [run_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(not_found_or_db)?;
+                if !matches!(
+                    serde_json::from_str::<RunEventPayload>(&payload_json)?,
+                    RunEventPayload::Paused {
+                        recovery: Some(RunRecoveryKind::ResumeAvailable),
+                        ..
+                    }
+                ) {
+                    return Err(AppError::msg("agent_run_control_not_available"));
+                }
+                let confirmation_id: String = conn
+                    .query_row(
+                        "SELECT confirmation_id FROM agent_run_confirmations
+                         WHERE run_id = ?1 AND status = 'consumed'
+                         ORDER BY created_at DESC LIMIT 1",
+                        [run_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|_| AppError::msg("agent_run_control_not_available"))?;
+                let checkpoint = latest_durable_apply_checkpoint_in_conn(conn, run_id)?
+                    .ok_or_else(|| AppError::msg("agent_run_control_not_available"))?;
+                if checkpoint.confirmation_id != confirmation_id
+                    || !matches!(
+                        checkpoint.stage,
+                        DurableApplyCheckpointStage::Approved
+                            | DurableApplyCheckpointStage::Dispatching
+                    )
+                {
+                    return Err(AppError::msg("agent_run_control_not_available"));
+                }
+                let next_state_version = stored_state_version + 1;
+                let now = chrono::Utc::now().to_rfc3339();
                 let updated = conn.execute(
                     "UPDATE agent_runs
                      SET status = 'running', state_version = ?1, updated_at = ?2
@@ -1010,12 +1269,12 @@ impl AgentRunRepository {
                     RunEventType::Resumed,
                     &now,
                     RunEventPayload::Resumed {
-                        reason: "已确认变更计划，正在继续处理".to_string(),
+                        reason: "已重新校验恢复条件，正在继续已确认的变更".into(),
                     },
                 )
                 .map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
-                Ok(FrozenConfirmationApproval::Resumed(event))
+                Ok((event, confirmation_id))
             })
         })
     }
@@ -1278,6 +1537,14 @@ impl AgentRunRepository {
                 )
                 .collect::<AppResult<Vec<_>>>()?;
             let pending_confirmation = pending_confirmation_summary(conn, &run_id, state)?;
+            let recovery = (state == RunState::Paused)
+                .then(|| {
+                    events.last().and_then(|event| match event.payload() {
+                        RunEventPayload::Paused { recovery, .. } => *recovery,
+                        _ => None,
+                    })
+                })
+                .flatten();
             Ok(Some(AssistantRunGetResponse {
                 run: AssistantRunSnapshot {
                     run_id,
@@ -1290,7 +1557,7 @@ impl AgentRunRepository {
                     state_version,
                     final_message_id: final_message_id.map(|id| id.to_string()),
                     pending_confirmation,
-                    recovery: None,
+                    recovery,
                 },
                 events,
             }))
@@ -1894,44 +2161,6 @@ fn validate_tool_call_lifecycle(
     Ok(())
 }
 
-#[cfg(test)]
-fn validate_checkpoint_step_input(input: &AppendRunCheckpointInput) -> AppResult<()> {
-    for value in [&input.kind, &input.status] {
-        if value.trim().is_empty() || value.chars().count() > 120 {
-            return Err(AppError::msg("agent_run_invalid_checkpoint_step"));
-        }
-    }
-    for summary in [&input.input_summary, &input.output_summary] {
-        if !is_safe_checkpoint_summary(summary) {
-            return Err(AppError::msg("agent_run_invalid_checkpoint_step"));
-        }
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn is_safe_checkpoint_summary(summary: &str) -> bool {
-    if summary.chars().count() > MAX_SAFE_EVENT_TEXT_CHARS || summary.lines().count() > 3 {
-        return false;
-    }
-    let normalized = summary.to_ascii_lowercase();
-    ![
-        "authorization:",
-        "bearer ",
-        "api_key",
-        "api key",
-        "access token",
-        "refresh token",
-        "password",
-        "secret",
-        "system prompt",
-        "user prompt",
-        "-----begin",
-    ]
-    .iter()
-    .any(|forbidden| normalized.contains(forbidden))
-}
-
 fn ensure_evidence_ids_belong_to_session(
     conn: &Connection,
     session_id: i64,
@@ -1950,189 +2179,29 @@ fn ensure_evidence_ids_belong_to_session(
     Ok(())
 }
 
-#[cfg(test)]
-fn validate_checkpoint_schema(checkpoint: &Value) -> AppResult<Vec<i64>> {
-    let object = checkpoint
-        .as_object()
-        .ok_or_else(|| AppError::msg("agent_run_checkpoint_invalid_schema"))?;
-    const REQUIRED_FIELDS: [&str; 11] = [
-        "schemaVersion",
-        "executor",
-        "goalSummary",
-        "completedStepIds",
-        "pendingStepId",
-        "evidenceIds",
-        "requiredCapabilities",
-        "requiredPermissions",
-        "pendingConfirmationId",
-        "budgetRemaining",
-        "safeState",
-    ];
-    if object.len() != REQUIRED_FIELDS.len()
-        || REQUIRED_FIELDS
-            .iter()
-            .any(|field| !object.contains_key(*field))
-        || object
-            .keys()
-            .any(|field| !REQUIRED_FIELDS.contains(&field.as_str()))
-        || object.get("schemaVersion").and_then(Value::as_u64) != Some(1)
-    {
-        return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-    }
-    validate_checkpoint_string(object, "executor", false)?;
-    validate_checkpoint_string(object, "goalSummary", false)?;
-    validate_checkpoint_optional_string(object, "pendingStepId")?;
-    validate_checkpoint_optional_string(object, "pendingConfirmationId")?;
-    validate_checkpoint_string_array(object, "completedStepIds")?;
-    let evidence_ids = validate_checkpoint_evidence_id_array(object, "evidenceIds")?;
-    validate_checkpoint_string_array(object, "requiredCapabilities")?;
-    validate_checkpoint_string_array(object, "requiredPermissions")?;
-
-    let budget = object
-        .get("budgetRemaining")
-        .and_then(Value::as_object)
-        .ok_or_else(|| AppError::msg("agent_run_checkpoint_invalid_schema"))?;
-    if budget.len() != 2
-        || budget.get("modelCalls").and_then(Value::as_u64).is_none()
-        || budget.get("toolCalls").and_then(Value::as_u64).is_none()
-    {
-        return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-    }
-
-    let safe_state = object
-        .get("safeState")
-        .and_then(Value::as_object)
-        .ok_or_else(|| AppError::msg("agent_run_checkpoint_invalid_schema"))?;
-    validate_checkpoint_safe_value(&Value::Object(safe_state.clone()), 0)?;
-    Ok(evidence_ids)
-}
-
-#[cfg(test)]
-fn validate_checkpoint_string(
-    object: &serde_json::Map<String, Value>,
-    field: &str,
-    optional: bool,
-) -> AppResult<()> {
-    let Some(value) = object.get(field) else {
-        return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-    };
-    if optional && value.is_null() {
-        return Ok(());
-    }
-    let Some(text) = value.as_str() else {
-        return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-    };
-    if (!optional && text.trim().is_empty()) || text.chars().count() > MAX_CHECKPOINT_STRING_CHARS {
-        return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-fn validate_checkpoint_optional_string(
-    object: &serde_json::Map<String, Value>,
-    field: &str,
-) -> AppResult<()> {
-    validate_checkpoint_string(object, field, true)
-}
-
-#[cfg(test)]
-fn validate_checkpoint_string_array(
-    object: &serde_json::Map<String, Value>,
-    field: &str,
-) -> AppResult<Vec<String>> {
-    let items = object
-        .get(field)
-        .and_then(Value::as_array)
-        .ok_or_else(|| AppError::msg("agent_run_checkpoint_invalid_schema"))?;
-    if items.len() > MAX_CHECKPOINT_SAFE_STATE_ITEMS {
-        return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-    }
-    items
-        .iter()
-        .map(|item| {
-            let Some(value) = item.as_str() else {
-                return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-            };
-            if value.trim().is_empty() || value.chars().count() > MAX_CHECKPOINT_STRING_CHARS {
-                return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-            }
-            Ok(value.to_owned())
+fn latest_durable_apply_checkpoint_in_conn(
+    conn: &Connection,
+    run_id: &str,
+) -> AppResult<Option<DurableApplyCheckpoint>> {
+    let stored = conn
+        .query_row(
+            "SELECT resume_state_json
+             FROM agent_run_steps
+             WHERE run_id = ?1 AND kind = 'durable_apply'
+             ORDER BY step_seq DESC
+             LIMIT 1",
+            [run_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    stored
+        .map(|stored| {
+            let checkpoint: DurableApplyCheckpoint = serde_json::from_str(&stored)
+                .map_err(|_| AppError::msg("agent_run_checkpoint_invalid_schema"))?;
+            checkpoint.validate()?;
+            Ok(checkpoint)
         })
-        .collect()
-}
-
-#[cfg(test)]
-fn validate_checkpoint_evidence_id_array(
-    object: &serde_json::Map<String, Value>,
-    field: &str,
-) -> AppResult<Vec<i64>> {
-    let items = object
-        .get(field)
-        .and_then(Value::as_array)
-        .ok_or_else(|| AppError::msg("agent_run_checkpoint_invalid_schema"))?;
-    if items.len() > MAX_CHECKPOINT_SAFE_STATE_ITEMS {
-        return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-    }
-    items
-        .iter()
-        .map(|item| {
-            item.as_i64()
-                .filter(|evidence_id| *evidence_id > 0)
-                .ok_or_else(|| AppError::msg("agent_run_checkpoint_invalid_schema"))
-        })
-        .collect()
-}
-
-#[cfg(test)]
-fn validate_checkpoint_safe_value(value: &Value, depth: usize) -> AppResult<()> {
-    if depth > MAX_CHECKPOINT_SAFE_STATE_DEPTH {
-        return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-    }
-    match value {
-        Value::Object(map) => {
-            if map.len() > MAX_CHECKPOINT_SAFE_STATE_ITEMS {
-                return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-            }
-            for (key, nested) in map {
-                let normalized = key.to_ascii_lowercase();
-                if [
-                    "api",
-                    "key",
-                    "token",
-                    "secret",
-                    "password",
-                    "authorization",
-                    "header",
-                    "prompt",
-                    "body",
-                    "content",
-                    "excerpt",
-                    "response",
-                    "parameter",
-                ]
-                .iter()
-                .any(|unsafe_key| normalized.contains(unsafe_key))
-                {
-                    return Err(AppError::msg("agent_run_checkpoint_unsafe_key"));
-                }
-                validate_checkpoint_safe_value(nested, depth + 1)?;
-            }
-            Ok(())
-        }
-        Value::Array(items) => {
-            if items.len() > MAX_CHECKPOINT_SAFE_STATE_ITEMS {
-                return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
-            }
-            for item in items {
-                validate_checkpoint_safe_value(item, depth + 1)?;
-            }
-            Ok(())
-        }
-        Value::String(text) if text.chars().count() <= MAX_CHECKPOINT_STRING_CHARS => Ok(()),
-        Value::String(_) => Err(AppError::msg("agent_run_checkpoint_invalid_schema")),
-        Value::Null | Value::Bool(_) | Value::Number(_) => Ok(()),
-    }
+        .transpose()
 }
 
 fn not_found_or_db(error: rusqlite::Error) -> AppError {

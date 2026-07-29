@@ -2,12 +2,13 @@ use super::run_contract::{
     AssistantRunControlRequest, AssistantRunStartRequest, AssistantTurnDraft, ContextMode,
     DisplayMention, DisplayMentionKind, DisplayMentionRange, Effect, Effort, ExplicitAction,
     ExplicitTarget, Freshness, RiskClass, RunControlAction, RunEventPayload, RunEventType,
-    RunState, SecurityDomain, SelectionSnapshot, VerificationRequirement, WebDecisionReason,
+    RunRecoveryKind, RunState, SecurityDomain, SelectionSnapshot, VerificationRequirement,
+    WebDecisionReason,
 };
 use super::run_engine::RunEventSink;
 use super::run_intake::RunIntake;
 use super::{
-    agent_run_repository::{AgentRunRepository, AppendRunEventInput},
+    agent_run_repository::{AgentRunRepository, AppendRunEventInput, DurableApplyCheckpointStage},
     frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput},
 };
 use crate::error::AppResult;
@@ -828,6 +829,7 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
         relative_paths: vec!["notes/a.md".to_string()],
         operation: "note.apply_patch".to_string(),
         base_content_hashes: vec![("notes/a.md".to_string(), "hash-a".to_string())],
+        expected_post_content_hashes: vec![("notes/a.md".to_string(), "hash-after".to_string())],
         change: serde_json::json!({ "replacement": "新内容" }),
         affected_file_count: 1,
         rollback_summary: "可撤销".to_string(),
@@ -890,6 +892,13 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
         "resumed"
     );
     assert_eq!(approved.run.state_version, 4);
+    assert_eq!(
+        AgentRunRepository::latest_durable_apply_checkpoint(&db, &accepted.run_id)
+            .expect("latest checkpoint")
+            .expect("approval checkpoint")
+            .stage(),
+        DurableApplyCheckpointStage::Approved
+    );
 
     RunIntake::control(
         &db,
@@ -973,6 +982,89 @@ fn rejection_consumes_the_owned_frozen_plan_without_dispatching_it() {
     );
 }
 
+#[test]
+fn resume_is_cas_guarded_and_only_available_for_paused_durable_apply() {
+    let (db, accepted, confirmation_id, awaiting_state_version) =
+        accepted_run_awaiting_frozen_change_confirmation();
+    let plan_hash: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT plan_hash FROM agent_run_confirmations WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("plan hash");
+    RunIntake::control(
+        &db,
+        AssistantRunControlRequest {
+            session: accepted.session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: awaiting_state_version,
+            action: RunControlAction::ApproveChange {
+                confirmation_id,
+                plan_hash,
+            },
+        },
+    )
+    .expect("approve plan");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET effort = 'durable', effect = 'apply' WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("make durable apply fixture");
+    let running = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("running replay")
+        .expect("run");
+    let paused = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: running.run.state_version,
+            event_type: RunEventType::Paused,
+            payload: RunEventPayload::Paused {
+                reason: "可安全继续".into(),
+                recovery: Some(RunRecoveryKind::ResumeAvailable),
+            },
+        },
+    )
+    .expect("paused");
+
+    RunIntake::control(
+        &db,
+        AssistantRunControlRequest {
+            session: accepted.session.clone(),
+            run_id: accepted.run_id.clone(),
+            expected_state_version: event_state_version(&paused),
+            action: RunControlAction::Resume,
+        },
+    )
+    .expect("resume durable apply");
+    let resumed = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("resumed replay")
+        .expect("run");
+    assert_eq!(resumed.run.state, RunState::Running);
+    assert!(resumed.run.recovery.is_none());
+    assert_eq!(
+        RunIntake::control(
+            &db,
+            AssistantRunControlRequest {
+                session: accepted.session.clone(),
+                run_id: accepted.run_id.clone(),
+                expected_state_version: event_state_version(&paused),
+                action: RunControlAction::Resume,
+            },
+        )
+        .expect_err("stale repeated resume must not dispatch twice")
+        .to_string(),
+        "agent_run_state_version_conflict"
+    );
+}
+
 fn accepted_run_awaiting_frozen_change_confirmation() -> (
     Database,
     super::run_contract::AssistantRunAccepted,
@@ -1027,6 +1119,7 @@ fn accepted_run_awaiting_frozen_change_confirmation() -> (
         relative_paths: vec!["notes/a.md".to_string()],
         operation: "note.apply_patch".to_string(),
         base_content_hashes: vec![("notes/a.md".to_string(), "hash-a".to_string())],
+        expected_post_content_hashes: vec![("notes/a.md".to_string(), "hash-after".to_string())],
         change: serde_json::json!({ "replacement": "新内容" }),
         affected_file_count: 1,
         rollback_summary: "可撤销".to_string(),

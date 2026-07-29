@@ -32,6 +32,7 @@ import type {
   AssistantRunStartRequest,
   AssistantSessionRef,
   PendingConfirmation,
+  RunRecoveryKind,
   RunState,
 } from "@/types/ai";
 
@@ -55,6 +56,7 @@ export interface AssistantRunSnapshot {
   runState: AssistantRunState;
   activityHint: string | null;
   currentRun: ActiveAssistantRun | null;
+  recovery: RunRecoveryKind | null;
 }
 
 export interface AssistantRunConfirmation extends PendingConfirmation {
@@ -117,9 +119,11 @@ export function useAssistantRun() {
 
   const runState: AssistantRunState = currentRun?.state ?? "idle";
   const activityHint = eventState?.stage ?? null;
+  const recovery =
+    currentRun?.state === "paused" ? (eventState?.recovery ?? null) : null;
   const snapshot: AssistantRunSnapshot = useMemo(
-    () => ({ runState, activityHint, currentRun }),
-    [activityHint, currentRun, runState],
+    () => ({ runState, activityHint, currentRun, recovery }),
+    [activityHint, currentRun, recovery, runState],
   );
   const isBusy = deriveRunOutputting(
     currentRun ? { runId: currentRun.runId, state: currentRun.state } : null,
@@ -401,6 +405,18 @@ export function useAssistantRun() {
     });
   }, [currentRun, pendingConfirmation]);
 
+  const resume = useCallback(async () => {
+    const run = currentRun;
+    if (!run || run.state !== "paused" || recovery !== "resume_available")
+      return;
+    await assistantRunControl({
+      session: run.session,
+      runId: run.runId,
+      expectedStateVersion: run.stateVersion,
+      action: { type: "resume" },
+    });
+  }, [currentRun, recovery]);
+
   const recover = useCallback((persisted: AssistantRunGetResponse) => {
     const run: ActiveAssistantRun = {
       runId: persisted.run.runId,
@@ -448,11 +464,13 @@ export function useAssistantRun() {
     eventState,
     presentationState,
     pendingConfirmation,
+    recovery,
     start,
     retryWebVerification,
     cancel,
     approveChange,
     rejectChange,
+    resume,
     recover,
     reset,
   };

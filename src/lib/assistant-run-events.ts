@@ -4,6 +4,7 @@ import type {
   Freshness,
   PendingConfirmation,
   ProviderSwitchReasonCode,
+  RunRecoveryKind,
   RunState,
   WebDecisionReason,
 } from "@/types/ai";
@@ -30,6 +31,7 @@ export interface AssistantRunEventState {
     { kind: "web_verification_failed" }
   > | null;
   pendingConfirmation: PendingConfirmation | null;
+  recovery: RunRecoveryKind | null;
   provider: {
     providerId: string;
     modelId: string | null;
@@ -67,6 +69,7 @@ export function createAssistantRunEventState(
     capabilityDegradation: null,
     webVerificationFailure: null,
     pendingConfirmation: null,
+    recovery: null,
     provider: null,
     reasoningSummaries: [],
     content: "",
@@ -237,6 +240,15 @@ function applyEvent(
             payload.kind === "cancelled"
           ? null
           : state.pendingConfirmation,
+    recovery:
+      payload.kind === "paused"
+        ? (payload.recovery ?? null)
+        : payload.kind === "resumed" ||
+            payload.kind === "completed" ||
+            payload.kind === "failed" ||
+            payload.kind === "cancelled"
+          ? null
+          : state.recovery,
     provider:
       payload.kind === "provider_switched"
         ? {

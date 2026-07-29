@@ -1,7 +1,7 @@
 use super::agent_evidence_repository::{AgentEvidenceRepository, LocalEvidenceInput, MaterialRole};
 use super::agent_run_repository::{
     AcceptRunInput, AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput,
-    FinalizeRunInput, RetryRunInput,
+    DurableApplyCheckpoint, DurableApplyCheckpointStage, FinalizeRunInput, RetryRunInput,
 };
 use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
 use super::normal_session_repository::NormalSessionRepository;
@@ -1012,6 +1012,7 @@ fn frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption() {
         relative_paths: vec!["notes/a.md".to_string()],
         operation: "note.apply_patch".to_string(),
         base_content_hashes: vec![("notes/a.md".to_string(), "hash-a".to_string())],
+        expected_post_content_hashes: vec![("notes/a.md".to_string(), "hash-after".to_string())],
         change: serde_json::json!({ "replacement": "new" }),
         affected_file_count: 1,
         rollback_summary: "可撤销".to_string(),
@@ -1096,6 +1097,7 @@ fn atomic_confirmation_request_binds_the_pending_plan_to_awaiting_state() {
         relative_paths: vec!["application://memory/profile".to_string()],
         operation: "memory_write".to_string(),
         base_content_hashes: vec![],
+        expected_post_content_hashes: vec![],
         change: serde_json::json!({ "key": "profile", "content": "approved" }),
         affected_file_count: 1,
         rollback_summary: "can update later".to_string(),
@@ -1169,6 +1171,7 @@ fn frozen_confirmation_cannot_be_saved_for_a_different_session() {
         relative_paths: vec!["notes/a.md".to_string()],
         operation: "note.apply_patch".to_string(),
         base_content_hashes: vec![("notes/a.md".to_string(), "hash-a".to_string())],
+        expected_post_content_hashes: vec![("notes/a.md".to_string(), "hash-after".to_string())],
         change: serde_json::json!({ "replacement": "new" }),
         affected_file_count: 1,
         rollback_summary: "可撤销".to_string(),
@@ -1185,7 +1188,7 @@ fn frozen_confirmation_cannot_be_saved_for_a_different_session() {
 }
 
 #[test]
-fn durable_checkpoint_persists_only_validated_schema_and_evidence_ids() {
+fn durable_apply_checkpoint_persists_only_hashes_and_advances_in_fixed_order() {
     let (db, session_id, session_key) = setup();
     let mut input = accept_input(session_id, session_key);
     input.envelope.effort = Effort::Durable;
@@ -1197,7 +1200,7 @@ fn durable_checkpoint_persists_only_validated_schema_and_evidence_ids() {
             run_id: "run-1".to_string(),
             message_seq_first: 1,
             material_role: MaterialRole::Reference,
-            title: "可恢复步骤的依据".to_string(),
+            title: "Durable Apply 的依据".to_string(),
             source_path: "notes/checkpoint.md".to_string(),
             source_span_start: 0,
             source_span_end: 12,
@@ -1214,23 +1217,15 @@ fn durable_checkpoint_persists_only_validated_schema_and_evidence_ids() {
         AppendRunCheckpointInput {
             run_id: "run-1".to_string(),
             state_version: 0,
-            kind: "official_drafting".to_string(),
-            status: "paused_safe".to_string(),
-            input_summary: "已完成提纲".to_string(),
-            output_summary: "等待继续起草".to_string(),
-            checkpoint: serde_json::json!({
-                "schemaVersion": 1,
-                "executor": "official_drafting",
-                "goalSummary": "起草会议通知",
-                "completedStepIds": ["outline"],
-                "pendingStepId": "draft",
-                "evidenceIds": [evidence.evidence_id],
-                "requiredCapabilities": ["vault.search", "note.propose_patch"],
-                "requiredPermissions": [],
-                "pendingConfirmationId": null,
-                "budgetRemaining": { "modelCalls": 2, "toolCalls": 8 },
-                "safeState": { "outlineReady": true }
-            }),
+            checkpoint: DurableApplyCheckpoint::new(
+                "confirmation-1",
+                "sha256:plan",
+                DurableApplyCheckpointStage::Approved,
+                vec!["sha256:base".to_string()],
+                vec!["sha256:after".to_string()],
+                vec![evidence.evidence_id],
+            )
+            .expect("safe checkpoint"),
         },
     )
     .expect("persist safe checkpoint");
@@ -1244,97 +1239,88 @@ fn durable_checkpoint_persists_only_validated_schema_and_evidence_ids() {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )?;
         assert_eq!(step_seq, 1);
-        assert!(checkpoint_json.contains("official_drafting"));
+        assert!(checkpoint_json.contains("\"stage\":\"approved\""));
+        assert!(!checkpoint_json.contains("notes/checkpoint.md"));
+        assert!(!checkpoint_json.contains("body"));
+        assert!(!checkpoint_json.contains("args"));
+        assert!(!checkpoint_json.contains("credential"));
         assert_eq!(evidence_refs_json, format!("[{}]", evidence.evidence_id));
         Ok(())
     })
     .expect("safe checkpoint row");
 
-    let unsafe_checkpoint = AgentRunRepository::append_checkpoint_step(
+    AgentRunRepository::append_checkpoint_step(
         &db,
         AppendRunCheckpointInput {
             run_id: "run-1".to_string(),
             state_version: 0,
-            kind: "official_drafting".to_string(),
-            status: "paused_safe".to_string(),
-            input_summary: "".to_string(),
-            output_summary: "".to_string(),
-            checkpoint: serde_json::json!({
-                "schemaVersion": 1,
-                "executor": "official_drafting",
-                "goalSummary": "起草会议通知",
-                "completedStepIds": [],
-                "pendingStepId": null,
-                "evidenceIds": [],
-                "requiredCapabilities": [],
-                "requiredPermissions": [],
-                "pendingConfirmationId": null,
-                "budgetRemaining": { "modelCalls": 2, "toolCalls": 8 },
-                "safeState": { "apiKey": "不得持久化" }
-            }),
+            checkpoint: DurableApplyCheckpoint::new(
+                "confirmation-1",
+                "sha256:plan",
+                DurableApplyCheckpointStage::Dispatching,
+                vec!["sha256:base".to_string()],
+                vec!["sha256:after".to_string()],
+                vec![evidence.evidence_id],
+            )
+            .expect("dispatching checkpoint"),
+        },
+    )
+    .expect("advance to dispatching");
+
+    let latest = AgentRunRepository::latest_durable_apply_checkpoint(&db, "run-1")
+        .expect("read latest checkpoint")
+        .expect("latest checkpoint");
+    assert_eq!(latest.stage(), DurableApplyCheckpointStage::Dispatching);
+
+    let skipped_stage = AgentRunRepository::append_checkpoint_step(
+        &db,
+        AppendRunCheckpointInput {
+            run_id: "run-1".to_string(),
+            state_version: 0,
+            checkpoint: DurableApplyCheckpoint::new(
+                "confirmation-1",
+                "sha256:plan",
+                DurableApplyCheckpointStage::Completed,
+                vec!["sha256:base".to_string()],
+                vec!["sha256:after".to_string()],
+                vec![evidence.evidence_id],
+            )
+            .expect("completed checkpoint"),
         },
     );
     assert_eq!(
-        unsafe_checkpoint.unwrap_err().to_string(),
-        "agent_run_checkpoint_unsafe_key"
+        skipped_stage.unwrap_err().to_string(),
+        "agent_run_checkpoint_stage_conflict"
     );
 
-    let missing_evidence = AgentRunRepository::append_checkpoint_step(
-        &db,
-        AppendRunCheckpointInput {
-            run_id: "run-1".to_string(),
-            state_version: 0,
-            kind: "official_drafting".to_string(),
-            status: "paused_safe".to_string(),
-            input_summary: "".to_string(),
-            output_summary: "".to_string(),
-            checkpoint: serde_json::json!({
-                "schemaVersion": 1,
-                "executor": "official_drafting",
-                "goalSummary": "起草会议通知",
-                "completedStepIds": [],
-                "pendingStepId": null,
-                "evidenceIds": [999],
-                "requiredCapabilities": [],
-                "requiredPermissions": [],
-                "pendingConfirmationId": null,
-                "budgetRemaining": { "modelCalls": 2, "toolCalls": 8 },
-                "safeState": {}
-            }),
-        },
-    );
+    for stage in [
+        DurableApplyCheckpointStage::Applied,
+        DurableApplyCheckpointStage::Completed,
+    ] {
+        AgentRunRepository::append_checkpoint_step(
+            &db,
+            AppendRunCheckpointInput {
+                run_id: "run-1".to_string(),
+                state_version: 0,
+                checkpoint: DurableApplyCheckpoint::new(
+                    "confirmation-1",
+                    "sha256:plan",
+                    stage,
+                    vec!["sha256:base".to_string()],
+                    vec!["sha256:after".to_string()],
+                    vec![evidence.evidence_id],
+                )
+                .expect("ordered checkpoint"),
+            },
+        )
+        .expect("fixed stage advance");
+    }
     assert_eq!(
-        missing_evidence.unwrap_err().to_string(),
-        "agent_run_evidence_not_found"
-    );
-
-    let secret_summary = AgentRunRepository::append_checkpoint_step(
-        &db,
-        AppendRunCheckpointInput {
-            run_id: "run-1".to_string(),
-            state_version: 0,
-            kind: "official_drafting".to_string(),
-            status: "paused_safe".to_string(),
-            input_summary: "Authorization: Bearer token-value".to_string(),
-            output_summary: "等待继续".to_string(),
-            checkpoint: serde_json::json!({
-                "schemaVersion": 1,
-                "executor": "official_drafting",
-                "goalSummary": "起草会议通知",
-                "completedStepIds": [],
-                "pendingStepId": null,
-                "evidenceIds": [],
-                "requiredCapabilities": [],
-                "requiredPermissions": [],
-                "pendingConfirmationId": null,
-                "budgetRemaining": { "modelCalls": 2, "toolCalls": 8 },
-                "safeState": {}
-            }),
-        },
-    );
-    assert_eq!(
-        secret_summary.unwrap_err().to_string(),
-        "agent_run_invalid_checkpoint_step"
+        AgentRunRepository::latest_durable_apply_checkpoint(&db, "run-1")
+            .expect("latest completed checkpoint")
+            .expect("completed checkpoint")
+            .stage(),
+        DurableApplyCheckpointStage::Completed
     );
 }
 
@@ -1348,23 +1334,15 @@ fn non_durable_active_run_cannot_persist_checkpoint() {
         AppendRunCheckpointInput {
             run_id: "run-1".to_string(),
             state_version: 0,
-            kind: "direct_answer".to_string(),
-            status: "running".to_string(),
-            input_summary: "".to_string(),
-            output_summary: "".to_string(),
-            checkpoint: serde_json::json!({
-                "schemaVersion": 1,
-                "executor": "direct_answer",
-                "goalSummary": "回答问题",
-                "completedStepIds": [],
-                "pendingStepId": null,
-                "evidenceIds": [],
-                "requiredCapabilities": [],
-                "requiredPermissions": [],
-                "pendingConfirmationId": null,
-                "budgetRemaining": { "modelCalls": 1, "toolCalls": 0 },
-                "safeState": {}
-            }),
+            checkpoint: DurableApplyCheckpoint::new(
+                "confirmation-1",
+                "sha256:plan",
+                DurableApplyCheckpointStage::Approved,
+                vec!["sha256:base".to_string()],
+                vec!["sha256:after".to_string()],
+                vec![],
+            )
+            .expect("checkpoint"),
         },
     );
     assert_eq!(

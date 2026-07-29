@@ -11,6 +11,7 @@ fn input(diff: serde_json::Value) -> FrozenChangePlanInput {
         relative_paths: vec!["notes/a.md".to_string()],
         operation: "note.apply_patch".to_string(),
         base_content_hashes: vec![("notes/a.md".to_string(), "hash-a".to_string())],
+        expected_post_content_hashes: vec![("notes/a.md".to_string(), "hash-after".to_string())],
         change: diff,
         affected_file_count: 1,
         rollback_summary: "可通过版本历史撤销".to_string(),
@@ -57,6 +58,11 @@ fn expired_plan_cannot_be_approved() {
             .to_string(),
         "agent_run_confirmation_expired"
     );
+    assert!(
+        plan.validate_consumed_identity("confirmation-1", plan.plan_hash())
+            .is_ok(),
+        "consumed confirmation recovery must not recheck TTL"
+    );
 }
 
 #[test]
@@ -70,9 +76,13 @@ fn persisted_plan_recomputes_the_hash_and_rejects_tampered_arguments() {
     assert_eq!(restored.plan_hash(), plan.plan_hash());
     assert_eq!(restored.operation(), "note.apply_patch");
     assert_eq!(restored.change()["replacement"], "approved");
+    assert_eq!(
+        restored.expected_post_content_hashes(),
+        &[("notes/a.md".to_string(), "hash-after".to_string())]
+    );
 
     let mut tampered: serde_json::Value = serde_json::from_str(&persisted).expect("plan json");
-    tampered["change"]["replacement"] = serde_json::json!("tampered");
+    tampered["expectedPostContentHashes"][0][1] = serde_json::json!("tampered");
     let tampered = FrozenChangePlan::from_persisted_plan_json(
         &serde_json::to_string(&tampered).expect("tampered json"),
     )

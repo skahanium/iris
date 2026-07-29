@@ -344,6 +344,8 @@ export type RunState =
   | "failed"
   | "cancelled";
 
+export type RunRecoveryKind = "resume_available" | "manual_review_required";
+
 export type RunEventType =
   | "accepted"
   | "stage_changed"
@@ -527,7 +529,7 @@ export type AssistantRunEventPayload =
       attempt?: number;
     }
   | { kind: "evidence_registered"; evidenceId: string }
-  | { kind: "paused"; reason: string }
+  | { kind: "paused"; reason: string; recovery?: RunRecoveryKind | null }
   | { kind: "resumed"; reason: string }
   | { kind: "completed"; messageId: string | null }
   | { kind: "failed"; code: AssistantRunErrorCode; message: string }
@@ -580,10 +582,7 @@ export interface AssistantRunSnapshot {
   stateVersion: number;
   finalMessageId?: string | null;
   pendingConfirmation?: PendingConfirmation | null;
-  recovery?: {
-    code: AssistantRunErrorCode;
-    message: string;
-  } | null;
+  recovery?: RunRecoveryKind | null;
 }
 
 export interface AssistantRunGetResponse {

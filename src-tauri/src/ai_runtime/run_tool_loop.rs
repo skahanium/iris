@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
 };
-use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+use crate::ai_runtime::agent_run_repository::{
+    AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
+    DurableApplyCheckpointStage,
+};
 use crate::ai_runtime::agent_tool_loop::{
     AgentToolLoop, ToolLoopExecutor, ToolLoopProvider, MAX_WEB_TOOL_RESULT_CHARS,
 };
@@ -473,6 +476,13 @@ impl<'a> NormalRunToolExecutor<'a> {
     ) -> AppResult<crate::ai_runtime::frozen_change_plan::FrozenChangePlan> {
         let relative_paths = frozen_relative_paths(entry.name, args, self.context);
         let base_content_hashes = frozen_base_content_hashes(args, self.context, &relative_paths);
+        let expected_post_content_hashes = expected_post_content_hashes(
+            self.state.as_ref(),
+            entry.name,
+            args,
+            &relative_paths,
+            &base_content_hashes,
+        )?;
         let vault_id = self
             .state
             .vault_path()
@@ -490,6 +500,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 relative_paths,
                 operation: entry.name.to_string(),
                 base_content_hashes,
+                expected_post_content_hashes,
                 change: args.clone(),
                 rollback_summary: rollback_summary(entry.name),
                 expires_at_unix_ms: chrono::Utc::now().timestamp_millis()
@@ -506,11 +517,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         if plan.run_id() != self.accepted.run_id || plan.session_id() != self.context.session_id {
             return Err(AppError::msg("agent_run_confirmation_expired"));
         }
-        plan.validate_approval(
-            plan.confirmation_id(),
-            plan.plan_hash(),
-            chrono::Utc::now().timestamp_millis(),
-        )?;
+        plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
         let entry = catalog_find(plan.operation())
             .filter(|entry| {
                 entry.requires_confirmation
@@ -547,7 +554,32 @@ impl<'a> NormalRunToolExecutor<'a> {
         let result = if let Some(result) = gate_outcome.tool_result {
             result
         } else {
-            self.dispatch_non_web_tool(entry.name, args).await
+            AgentRunRepository::append_checkpoint_step(
+                &self.state.db,
+                AppendRunCheckpointInput {
+                    run_id: self.accepted.run_id.clone(),
+                    state_version: snapshot.run.state_version,
+                    checkpoint: durable_apply_checkpoint(
+                        plan,
+                        DurableApplyCheckpointStage::Dispatching,
+                    )?,
+                },
+            )?;
+            let result = self.dispatch_non_web_tool(entry.name, args).await;
+            if result.success {
+                AgentRunRepository::append_checkpoint_step(
+                    &self.state.db,
+                    AppendRunCheckpointInput {
+                        run_id: self.accepted.run_id.clone(),
+                        state_version: snapshot.run.state_version,
+                        checkpoint: durable_apply_checkpoint(
+                            plan,
+                            DurableApplyCheckpointStage::Applied,
+                        )?,
+                    },
+                )?;
+            }
+            result
         };
         audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
         append_model_tool_completed(
@@ -1180,6 +1212,26 @@ impl NormalRunToolExecutor<'_> {
     }
 }
 
+fn durable_apply_checkpoint(
+    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+    stage: DurableApplyCheckpointStage,
+) -> AppResult<DurableApplyCheckpoint> {
+    DurableApplyCheckpoint::new(
+        plan.confirmation_id(),
+        plan.plan_hash(),
+        stage,
+        plan.base_content_hashes()
+            .iter()
+            .map(|(_, hash)| hash.clone())
+            .collect(),
+        plan.expected_post_content_hashes()
+            .iter()
+            .map(|(_, hash)| hash.clone())
+            .collect(),
+        Vec::new(),
+    )
+}
+
 fn frozen_relative_paths(
     tool_name: &str,
     args: &serde_json::Value,
@@ -1241,6 +1293,79 @@ fn frozen_base_content_hashes(
         }
     }
     hashes.into_iter().collect()
+}
+
+fn expected_post_content_hashes(
+    state: &AppState,
+    tool_name: &str,
+    args: &serde_json::Value,
+    relative_paths: &[String],
+    base_content_hashes: &[(String, String)],
+) -> AppResult<Vec<(String, String)>> {
+    if !matches!(tool_name, "insert_text_at_cursor" | "replace_selection") {
+        return Ok(Vec::new());
+    }
+    let path = relative_paths
+        .first()
+        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+    let base_hash = base_content_hashes
+        .iter()
+        .find_map(|(candidate, hash)| (candidate == path).then_some(hash))
+        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+    let range = args
+        .get("range")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|range| {
+            Some(crate::ai_types::SourceSpan {
+                start: usize::try_from(range.get("start")?.as_u64()?).ok()?,
+                end: usize::try_from(range.get("end")?.as_u64()?).ok()?,
+            })
+        })
+        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+    let replacement_key = if tool_name == "insert_text_at_cursor" {
+        "text"
+    } else {
+        "replacement"
+    };
+    let replacement_text = args
+        .get(replacement_key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+    let original_text = args
+        .get("original_text")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| args.get("selection").and_then(serde_json::Value::as_str))
+        .unwrap_or("");
+    let vault = state
+        .vault_path()
+        .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+    let resolved = crate::storage::paths::resolve_vault_path(&vault, path)
+        .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+    let current = std::fs::read_to_string(resolved)
+        .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+    if crate::cas::hash::content_hash_str(&current) != *base_hash {
+        return Err(AppError::msg("agent_run_invalid_change_plan"));
+    }
+    let applied = crate::cas::patch::apply_patch(
+        &crate::ai_types::PatchProposal {
+            id: "frozen-change-preview".to_string(),
+            target_path: path.clone(),
+            base_content_hash: base_hash.clone(),
+            range,
+            original_text: original_text.to_string(),
+            replacement_text: replacement_text.to_string(),
+            evidence_packet_ids: Vec::new(),
+            risk_level: crate::ai_types::RiskLevel::Low,
+            warnings: Vec::new(),
+            created_at: String::new(),
+        },
+        &current,
+    )
+    .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+    Ok(vec![(
+        path.clone(),
+        crate::cas::hash::content_hash_str(&applied),
+    )])
 }
 
 fn rollback_summary(tool_name: &str) -> String {
@@ -1871,9 +1996,9 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        corroborated_source_threshold_met, emit_deferred_web_degradation, mcp_failover_events,
-        web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
-        NormalRunToolExecutor, RunWebBudget,
+        corroborated_source_threshold_met, emit_deferred_web_degradation,
+        expected_post_content_hashes, mcp_failover_events, web_search_result_limit,
+        DeferredWebDegradationInput, McpFailoverEvent, NormalRunToolExecutor, RunWebBudget,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -1906,6 +2031,45 @@ mod tests {
                 .push(serde_json::to_value(event)?);
             Ok(())
         }
+    }
+
+    #[test]
+    fn frozen_note_patch_precomputes_expected_post_hash_without_writing() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let note = vault.join("note.md");
+        std::fs::write(&note, "base").expect("base note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault).expect("activate vault");
+        let base_hash = crate::cas::hash::content_hash_str("base");
+
+        let hashes = expected_post_content_hashes(
+            &state,
+            "replace_selection",
+            &serde_json::json!({
+                "base_content_hash": base_hash,
+                "range": { "start": 0, "end": 4 },
+                "original_text": "base",
+                "replacement": "after"
+            }),
+            &["note.md".into()],
+            &[("note.md".into(), crate::cas::hash::content_hash_str("base"))],
+        )
+        .expect("precompute expected hash");
+
+        assert_eq!(
+            hashes,
+            vec![(
+                "note.md".into(),
+                crate::cas::hash::content_hash_str("after")
+            )]
+        );
+        assert_eq!(
+            std::fs::read_to_string(note).expect("note remains readable"),
+            "base",
+            "freezing the plan must not apply the write"
+        );
     }
 
     struct ScriptedChildProvider {

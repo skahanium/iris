@@ -70,6 +70,7 @@ export function UnifiedAssistantPanel({
   const [lastError, setLastError] = useState<string | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [confirming, setConfirming] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const [retryingWebVerification, setRetryingWebVerification] = useState(false);
   const [classifiedContextRef, setClassifiedContextRef] = useState<
     string | null
@@ -193,7 +194,8 @@ export function UnifiedAssistantPanel({
     composerDisabled:
       streaming ||
       assistantRun.isBusy ||
-      assistantRun.pendingConfirmation !== null,
+      assistantRun.pendingConfirmation !== null ||
+      assistantRun.recovery !== null,
     session: runSession,
     contextReferences: bubbleSelection.contextReferences,
     oneShotContextReference,
@@ -242,7 +244,8 @@ export function UnifiedAssistantPanel({
     streaming ||
     assistantRun.isBusy ||
     isStarting ||
-    assistantRun.pendingConfirmation !== null;
+    assistantRun.pendingConfirmation !== null ||
+    assistantRun.recovery !== null;
   const displayRunState = deriveDisplayRunState(
     assistantRun.runState,
     streaming || assistantRun.isBusy,
@@ -313,6 +316,16 @@ export function UnifiedAssistantPanel({
       })
       .finally(() => setRetryingWebVerification(false));
   }, [appendAcceptedRetry, assistantRun]);
+  const handleRecoveryResume = useCallback(() => {
+    setResuming(true);
+    setLastError(null);
+    void assistantRun
+      .resume()
+      .catch(() => {
+        setLastError("恢复请求未能提交；已确认的修改不会自动重放。");
+      })
+      .finally(() => setResuming(false));
+  }, [assistantRun]);
 
   return (
     <div
@@ -356,6 +369,36 @@ export function UnifiedAssistantPanel({
           onApprove={() => handleConfirmation("approve")}
           onReject={() => handleConfirmation("reject")}
         />
+      ) : null}
+      {assistantRun.recovery ? (
+        <section
+          className="border-b border-warning/30 bg-warning-bg px-3 py-2"
+          data-testid="assistant-run-recovery"
+          aria-live="polite"
+        >
+          <p className="text-xs font-medium">
+            {assistantRun.recovery === "resume_available"
+              ? "已暂停，可安全继续"
+              : "需要手动检查"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {assistantRun.recovery === "resume_available"
+              ? "目标仍与已确认计划的基础版本一致。继续前会再次校验权限、目标和内容哈希，不会再次调用模型。"
+              : "目标内容已变化或多个目标状态不一致。Iris 未自动重放写入，请先检查笔记内容。"}
+          </p>
+          {assistantRun.recovery === "resume_available" ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="brand"
+              className="mt-2 h-7 text-xs"
+              disabled={resuming}
+              onClick={handleRecoveryResume}
+            >
+              {resuming ? "正在恢复…" : "继续已确认的修改"}
+            </Button>
+          ) : null}
+        </section>
       ) : null}
       {import.meta.env.DEV && assistantRun.eventState?.provider ? (
         <p

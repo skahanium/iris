@@ -19,6 +19,7 @@ pub(crate) struct FrozenChangePlanInput {
     pub(crate) relative_paths: Vec<String>,
     pub(crate) operation: String,
     pub(crate) base_content_hashes: Vec<(String, String)>,
+    pub(crate) expected_post_content_hashes: Vec<(String, String)>,
     pub(crate) change: Value,
     pub(crate) affected_file_count: usize,
     pub(crate) rollback_summary: String,
@@ -35,6 +36,10 @@ pub(crate) struct FrozenChangePlan {
 impl FrozenChangePlan {
     /// Validate and freeze an approval payload before it can reach dispatch.
     pub(crate) fn freeze(input: FrozenChangePlanInput) -> AppResult<Self> {
+        let hashes_required = matches!(
+            input.operation.as_str(),
+            "insert_text_at_cursor" | "replace_selection"
+        );
         if input.confirmation_id.trim().is_empty()
             || input.run_id.trim().is_empty()
             || input.request_id.trim().is_empty()
@@ -43,6 +48,16 @@ impl FrozenChangePlan {
             || input.operation.trim().is_empty()
             || input.relative_paths.is_empty()
             || input.affected_file_count != input.relative_paths.len()
+            || !hash_pairs_match_paths(
+                &input.base_content_hashes,
+                &input.relative_paths,
+                hashes_required,
+            )
+            || !hash_pairs_match_paths(
+                &input.expected_post_content_hashes,
+                &input.relative_paths,
+                hashes_required,
+            )
             || input.rollback_summary.trim().is_empty()
         {
             return Err(AppError::msg("agent_run_invalid_change_plan"));
@@ -66,6 +81,10 @@ impl FrozenChangePlan {
 
     pub(crate) fn run_id(&self) -> &str {
         &self.input.run_id
+    }
+
+    pub(crate) fn vault_id(&self) -> &str {
+        &self.input.vault_id
     }
 
     pub(crate) const fn session_id(&self) -> i64 {
@@ -101,7 +120,8 @@ impl FrozenChangePlan {
             vault_id: required_string(&value, "vaultId")?,
             relative_paths: required_string_array(&value, "relativePaths")?,
             operation: required_string(&value, "operation")?,
-            base_content_hashes: required_hash_pairs(&value)?,
+            base_content_hashes: required_hash_pairs(&value, "baseContentHashes")?,
+            expected_post_content_hashes: required_hash_pairs(&value, "expectedPostContentHashes")?,
             change: value
                 .get("change")
                 .cloned()
@@ -122,6 +142,7 @@ impl FrozenChangePlan {
     }
 
     /// Validate approval identity, exact plan hash, and expiry before dispatch.
+    #[cfg(test)]
     pub(crate) fn validate_approval(
         &self,
         confirmation_id: &str,
@@ -132,6 +153,21 @@ impl FrozenChangePlan {
             || plan_hash != self.plan_hash
             || now_unix_ms > self.input.expires_at_unix_ms
         {
+            return Err(AppError::msg("agent_run_confirmation_expired"));
+        }
+        Ok(())
+    }
+
+    /// Validate a plan that was already consumed while it was unexpired.
+    ///
+    /// Recovery must recheck immutable identity, policy, target and content
+    /// hashes, but must not retroactively expire an approval already consumed.
+    pub(crate) fn validate_consumed_identity(
+        &self,
+        confirmation_id: &str,
+        plan_hash: &str,
+    ) -> AppResult<()> {
+        if confirmation_id != self.input.confirmation_id || plan_hash != self.plan_hash {
             return Err(AppError::msg("agent_run_confirmation_expired"));
         }
         Ok(())
@@ -161,6 +197,11 @@ impl FrozenChangePlan {
     pub(crate) fn base_content_hashes(&self) -> &[(String, String)] {
         &self.input.base_content_hashes
     }
+
+    /// Expected target content identities after the exact frozen operation.
+    pub(crate) fn expected_post_content_hashes(&self) -> &[(String, String)] {
+        &self.input.expected_post_content_hashes
+    }
 }
 
 fn required_string(value: &Value, field: &str) -> AppResult<String> {
@@ -188,9 +229,9 @@ fn required_string_array(value: &Value, field: &str) -> AppResult<Vec<String>> {
         .collect()
 }
 
-fn required_hash_pairs(value: &Value) -> AppResult<Vec<(String, String)>> {
+fn required_hash_pairs(value: &Value, field: &str) -> AppResult<Vec<(String, String)>> {
     let pairs = value
-        .get("baseContentHashes")
+        .get(field)
         .and_then(Value::as_array)
         .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
     pairs
@@ -213,6 +254,17 @@ fn required_hash_pairs(value: &Value) -> AppResult<Vec<(String, String)>> {
         .collect()
 }
 
+fn hash_pairs_match_paths(pairs: &[(String, String)], paths: &[String], required: bool) -> bool {
+    (!required && pairs.is_empty())
+        || (pairs.len() == paths.len()
+            && pairs
+                .iter()
+                .zip(paths)
+                .all(|((path, hash), expected_path)| {
+                    path == expected_path && !hash.trim().is_empty()
+                }))
+}
+
 fn plan_value(input: &FrozenChangePlanInput) -> Value {
     serde_json::json!({
         "confirmationId": input.confirmation_id,
@@ -224,6 +276,7 @@ fn plan_value(input: &FrozenChangePlanInput) -> Value {
         "relativePaths": input.relative_paths,
         "operation": input.operation,
         "baseContentHashes": input.base_content_hashes,
+        "expectedPostContentHashes": input.expected_post_content_hashes,
         "change": input.change,
         "affectedFileCount": input.affected_file_count,
         "rollbackSummary": input.rollback_summary,

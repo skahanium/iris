@@ -20,11 +20,12 @@ const MAX_USER_MESSAGE_CHARS: usize = 16_000;
 
 /// Outcome of one normal-domain control request after its durable event is written.
 /// Commands use this to start post-approval execution exactly once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NormalRunControlOutcome {
     Applied,
     ConfirmationApproved,
     ConfirmationRejected,
+    RecoveryResumed { confirmation_id: String },
     Noop,
 }
 
@@ -471,7 +472,18 @@ impl RunIntake {
                     }
                 }
             }
-            RunControlAction::Resume => Err(AppError::msg("agent_run_control_not_available")),
+            RunControlAction::Resume => {
+                let (event, confirmation_id) = AgentRunRepository::resume_durable_apply(
+                    db,
+                    &request.session.session_key,
+                    &request.run_id,
+                    request.expected_state_version,
+                )?;
+                Ok((
+                    NormalRunControlOutcome::RecoveryResumed { confirmation_id },
+                    Some(event),
+                ))
+            }
         }
     }
 }

@@ -8,13 +8,14 @@ use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
 use super::conversation_memory::ConversationMemory;
 use super::domain_executor::{AuthorizedDomainMaterial, DomainExecutor, DomainMaterialRole};
+use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
 use super::normal_session_repository::NormalSessionRepository;
 use super::policy_decision_engine::RunPolicyDecision;
 use super::run_context::RunContextAssembler;
 use super::run_contract::CapabilityId;
 use super::run_contract::{
-    AssistantRunStartRequest, RunEventPayload, RunEventType, RunState, SafeRunErrorCode,
-    SecurityDomain,
+    AssistantRunStartRequest, Effect, ExplicitAction, ExplicitTarget, RunEventPayload,
+    RunEventType, RunRecoveryKind, RunState, SafeRunErrorCode, SecurityDomain,
 };
 use super::run_engine::{
     direct_gateway_request, AgentRunStreamObserver, DirectAnswerProvider, RunEngine, RunEventSink,
@@ -24,7 +25,10 @@ use super::run_intake::RunIntake;
 use crate::ai_runtime::agent_evidence_repository::{
     AgentEvidenceRepository, LocalEvidenceInput, MaterialRole, WebEvidenceInput,
 };
-use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
+use crate::ai_runtime::agent_run_repository::{
+    AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
+    DurableApplyCheckpointStage,
+};
 use crate::ai_runtime::model_gateway::{
     StreamEvent, StreamEventData, StreamEventObserver, StreamEventType, StreamSurface,
 };
@@ -1015,6 +1019,516 @@ fn startup_recovery_terminalizes_interrupted_direct_runs_for_replay() {
             ["payload"]["message"],
         "运行因应用关闭而中断，请重新提交请求"
     );
+}
+
+#[test]
+fn startup_recovery_terminalizes_an_interrupted_tool_loop_without_replaying_it() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET effort = 'tool_loop' WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("make tool-loop fixture");
+
+    RunEngine::recover_interrupted_runs(&db).expect("recover interrupted tool loop");
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert!(replay.run.recovery.is_none());
+}
+
+fn durable_apply_interrupted_after_consumed_confirmation() -> (
+    Database,
+    super::run_contract::AssistantRunAccepted,
+    std::path::PathBuf,
+) {
+    durable_apply_interrupted_after_consumed_confirmation_with_expiry(i64::MAX)
+}
+
+fn durable_apply_interrupted_after_consumed_confirmation_with_expiry(
+    expires_at_unix_ms: i64,
+) -> (
+    Database,
+    super::run_contract::AssistantRunAccepted,
+    std::path::PathBuf,
+) {
+    let vault =
+        std::env::temp_dir().join(format!("iris-durable-recovery-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(vault.join("notes")).expect("create recovery vault");
+    std::fs::write(vault.join("notes/a.md"), "base").expect("write base note");
+    let base_hash = crate::cas::hash::content_hash_str("base");
+    let expected_hash = crate::cas::hash::content_hash_str("after");
+    let db = Database::open_in_memory().expect("database");
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('vault_path', ?1)",
+            [serde_json::to_string(vault.to_string_lossy().as_ref())?],
+        )?;
+        Ok(())
+    })
+    .expect("persist vault setting");
+    let mut durable = request();
+    durable.client_request_id = format!("durable-recovery-{}", uuid::Uuid::new_v4());
+    durable.turn.message = "将已确认的修改应用到笔记".into();
+    durable
+        .turn
+        .explicit_references
+        .push(crate::ai_types::ContextReferenceWire {
+            id: "target-note".into(),
+            kind: crate::ai_types::ContextReferenceKind::Note,
+            file_path: Some("notes/a.md".into()),
+            content_hash: Some(base_hash.clone()),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        });
+    durable.explicit_action = Some(ExplicitAction {
+        effect: Effect::Apply,
+        target: Some(ExplicitTarget {
+            reference_id: "target-note".into(),
+            content_hash: base_hash.clone(),
+        }),
+        selection_snapshot: None,
+    });
+    let accepted = RunIntake::start(&db, durable).expect("accepted durable apply");
+    let session_id = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT session_id FROM agent_runs WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("session id");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在生成变更预览".into(),
+            },
+        },
+    )
+    .expect("running");
+    let plan = FrozenChangePlan::freeze(FrozenChangePlanInput {
+        confirmation_id: format!("confirmation-{}", accepted.run_id),
+        run_id: accepted.run_id.clone(),
+        session_id,
+        request_id: accepted.run_id.clone(),
+        tool_call_id: format!("tool-{}", accepted.run_id),
+        vault_id: crate::cas::hash::content_hash_str(&vault.to_string_lossy()),
+        relative_paths: vec!["notes/a.md".into()],
+        operation: "replace_selection".into(),
+        base_content_hashes: vec![("notes/a.md".into(), base_hash)],
+        expected_post_content_hashes: vec![("notes/a.md".into(), expected_hash)],
+        change: serde_json::json!({
+            "target_path": "notes/a.md",
+            "base_content_hash": crate::cas::hash::content_hash_str("base"),
+            "range": { "start": 0, "end": 4 },
+            "original_text": "base",
+            "replacement": "after"
+        }),
+        affected_file_count: 1,
+        rollback_summary: "可通过版本历史撤销".into(),
+        expires_at_unix_ms,
+    })
+    .expect("frozen plan");
+    let awaiting = AgentRunRepository::request_frozen_confirmation(
+        &db,
+        &plan,
+        running.state_version(),
+        "等待确认：更新 1 个目标",
+    )
+    .expect("await confirmation");
+    AgentRunRepository::approve_frozen_confirmation(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+        plan.confirmation_id(),
+        plan.plan_hash(),
+        awaiting.state_version(),
+        0,
+    )
+    .expect("consume confirmation");
+    (db, accepted, vault)
+}
+
+#[test]
+fn startup_recovery_offers_resume_only_when_consumed_target_is_still_at_base_hash() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover durable apply"),
+        1
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Paused);
+    assert_eq!(replay.run.recovery, Some(RunRecoveryKind::ResumeAvailable));
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn startup_recovery_does_not_recheck_ttl_after_confirmation_was_consumed() {
+    let (db, accepted, vault) =
+        durable_apply_interrupted_after_consumed_confirmation_with_expiry(0);
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover expired consumed plan"),
+        1
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Paused);
+    assert_eq!(replay.run.recovery, Some(RunRecoveryKind::ResumeAvailable));
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn startup_recovery_completes_an_already_written_consumed_plan_without_replaying_it() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    std::fs::write(vault.join("notes/a.md"), "after").expect("simulate committed write");
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover written durable apply"),
+        1
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Completed);
+    assert_eq!(
+        AgentRunRepository::latest_durable_apply_checkpoint(&db, &accepted.run_id)
+            .expect("checkpoint")
+            .expect("completed checkpoint")
+            .stage(),
+        super::agent_run_repository::DurableApplyCheckpointStage::Completed
+    );
+    assert_eq!(
+        std::fs::read_to_string(vault.join("notes/a.md")).expect("read recovered note"),
+        "after"
+    );
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn startup_recovery_requires_manual_review_when_consumed_target_diverged() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    std::fs::write(vault.join("notes/a.md"), "third-party").expect("simulate divergence");
+
+    RunEngine::recover_interrupted_runs(&db).expect("recover diverged durable apply");
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Paused);
+    assert_eq!(
+        replay.run.recovery,
+        Some(RunRecoveryKind::ManualReviewRequired)
+    );
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn startup_recovery_requires_manual_review_for_mixed_multi_target_hashes() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    std::fs::write(vault.join("notes/b.md"), "post-b").expect("write mixed second target");
+    let (confirmation_id, session_id): (String, i64) = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT c.confirmation_id, r.session_id
+                 FROM agent_run_confirmations c
+                 JOIN agent_runs r ON r.run_id = c.run_id
+                 WHERE c.run_id = ?1",
+                [&accepted.run_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(Into::into)
+        })
+        .expect("recovery identities");
+    let base_a = crate::cas::hash::content_hash_str("base");
+    let base_b = crate::cas::hash::content_hash_str("base-b");
+    let expected_a = crate::cas::hash::content_hash_str("after-a");
+    let expected_b = crate::cas::hash::content_hash_str("post-b");
+    let mixed_plan = FrozenChangePlan::freeze(FrozenChangePlanInput {
+        confirmation_id,
+        run_id: accepted.run_id.clone(),
+        session_id,
+        request_id: accepted.run_id.clone(),
+        tool_call_id: format!("tool-mixed-{}", accepted.run_id),
+        vault_id: crate::cas::hash::content_hash_str(&vault.to_string_lossy()),
+        relative_paths: vec!["notes/a.md".into(), "notes/b.md".into()],
+        operation: "replace_selection".into(),
+        base_content_hashes: vec![
+            ("notes/a.md".into(), base_a.clone()),
+            ("notes/b.md".into(), base_b.clone()),
+        ],
+        expected_post_content_hashes: vec![
+            ("notes/a.md".into(), expected_a.clone()),
+            ("notes/b.md".into(), expected_b.clone()),
+        ],
+        change: serde_json::json!({
+            "target_path": "notes/a.md",
+            "new_path": "notes/b.md",
+            "base_content_hash": base_a,
+            "range": { "start": 0, "end": 4 },
+            "original_text": "base",
+            "replacement": "after-a"
+        }),
+        affected_file_count: 2,
+        rollback_summary: "可通过版本历史撤销".into(),
+        expires_at_unix_ms: i64::MAX,
+    })
+    .expect("mixed frozen plan");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_run_confirmations
+             SET plan_hash = ?1, plan_json = ?2
+             WHERE run_id = ?3",
+            rusqlite::params![
+                mixed_plan.plan_hash(),
+                mixed_plan.persisted_plan_json()?,
+                accepted.run_id,
+            ],
+        )?;
+        conn.execute(
+            "DELETE FROM agent_run_steps WHERE run_id = ?1 AND kind = 'durable_apply'",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("replace consumed plan fixture");
+    let state_version = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay before recovery")
+        .expect("run")
+        .run
+        .state_version;
+    AgentRunRepository::append_checkpoint_step(
+        &db,
+        AppendRunCheckpointInput {
+            run_id: accepted.run_id.clone(),
+            state_version,
+            checkpoint: DurableApplyCheckpoint::new(
+                mixed_plan.confirmation_id(),
+                mixed_plan.plan_hash(),
+                DurableApplyCheckpointStage::Approved,
+                vec![base_a, base_b],
+                vec![expected_a, expected_b],
+                Vec::new(),
+            )
+            .expect("mixed checkpoint"),
+        },
+    )
+    .expect("persist mixed checkpoint");
+
+    RunEngine::recover_interrupted_runs(&db).expect("recover mixed targets");
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Paused);
+    assert_eq!(
+        replay.run.recovery,
+        Some(RunRecoveryKind::ManualReviewRequired)
+    );
+    assert_eq!(
+        std::fs::read_to_string(vault.join("notes/a.md")).expect("read first target"),
+        "base"
+    );
+    assert_eq!(
+        std::fs::read_to_string(vault.join("notes/b.md")).expect("read second target"),
+        "post-b"
+    );
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn startup_recovery_leaves_a_pending_confirmation_awaiting_user_input() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_run_confirmations
+             SET status = 'pending', consumed_at = NULL
+             WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        conn.execute(
+            "DELETE FROM agent_run_steps WHERE run_id = ?1 AND kind = 'durable_apply'",
+            [&accepted.run_id],
+        )?;
+        conn.execute(
+            "UPDATE agent_runs
+             SET status = 'awaiting_confirmation', state_version = 3
+             WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("simulate pending-confirmation restart");
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover pending confirmation"),
+        0
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::AwaitingConfirmation);
+    assert!(replay.run.pending_confirmation.is_some());
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn startup_recovery_completes_a_rejected_confirmation_as_not_modified() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_run_confirmations
+             SET status = 'rejected', consumed_at = NULL
+             WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        conn.execute(
+            "DELETE FROM agent_run_steps WHERE run_id = ?1 AND kind = 'durable_apply'",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("simulate rejected confirmation before terminalization");
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover rejected confirmation"),
+        1
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Completed);
+    let message: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT content FROM session_messages
+                 WHERE session_id = 1 AND role = 'assistant'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("fixed rejection message");
+    assert_eq!(message, "已取消该变更，未作任何修改。");
+    assert_eq!(
+        std::fs::read_to_string(vault.join("notes/a.md")).expect("read untouched note"),
+        "base"
+    );
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn startup_recovery_fails_durable_apply_without_a_consumed_confirmation() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    db.with_conn(|conn| {
+        conn.execute(
+            "DELETE FROM agent_run_confirmations WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        conn.execute(
+            "DELETE FROM agent_run_steps WHERE run_id = ?1 AND kind = 'durable_apply'",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("simulate interruption before confirmation consumption");
+
+    RunEngine::recover_interrupted_runs(&db).expect("recover unconfirmed durable apply");
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Failed);
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn paused_recovery_kind_is_replayed_from_the_durable_event() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备".into(),
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: preparing.state_version(),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在处理".into(),
+            },
+        },
+    )
+    .expect("running");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: running.state_version(),
+            event_type: RunEventType::Paused,
+            payload: RunEventPayload::Paused {
+                reason: "恢复前需要确认".into(),
+                recovery: Some(RunRecoveryKind::ResumeAvailable),
+            },
+        },
+    )
+    .expect("paused");
+
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.recovery, Some(RunRecoveryKind::ResumeAvailable));
 }
 
 #[test]

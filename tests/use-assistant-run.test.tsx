@@ -300,6 +300,52 @@ describe("useAssistantRun", () => {
       },
     });
   });
+
+  it("replays durable recovery kind and resumes with the persisted state version", async () => {
+    mockAssistantRunGet.mockResolvedValue(null);
+    mockListenAssistantRunEvent.mockResolvedValue(() => undefined);
+    mockListenAssistantRunPresentation.mockResolvedValue(() => undefined);
+    mountProbe();
+
+    act(() => {
+      runApi?.recover({
+        run: {
+          runId: "run-recovery",
+          turnId: "turn-recovery",
+          session: { domain: "normal", sessionKey: "session-recovery" },
+          state: "paused",
+          stateVersion: 8,
+          recovery: "resume_available",
+        },
+        events: [
+          {
+            runId: "run-recovery",
+            seq: 1,
+            stateVersion: 8,
+            timestamp: "2026-07-29T00:00:00.000Z",
+            type: "paused",
+            payload: {
+              kind: "paused",
+              reason: "可安全继续",
+              recovery: "resume_available",
+            },
+          },
+        ],
+      });
+    });
+
+    expect(runApi?.recovery).toBe("resume_available");
+    await act(async () => {
+      await runApi?.resume();
+    });
+    expect(mockAssistantRunControl).toHaveBeenCalledWith({
+      session: { domain: "normal", sessionKey: "session-recovery" },
+      runId: "run-recovery",
+      expectedStateVersion: 8,
+      action: { type: "resume" },
+    });
+  });
+
   it("reduces replayable events to the authoritative Run state and version", async () => {
     let emit:
       | ((

@@ -31,6 +31,7 @@ export type {
   AssistantRunGetResponse,
   AssistantRunRetryRequest,
   AssistantRunStartRequest,
+  RunRecoveryKind,
   ClassifiedDocumentContext,
   ClassifiedRunResultRequest,
   AssistantSessionListRequest,

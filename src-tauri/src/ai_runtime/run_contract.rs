@@ -468,14 +468,14 @@ pub(crate) struct ConfirmationTargetSummary {
     pub(crate) risk: RiskClass,
 }
 
-/// Safe recovery information returned by a Run snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SafeRunRecovery {
-    /// Stable safe error code.
-    pub(crate) code: SafeRunErrorCode,
-    /// User-safe recovery message.
-    pub(crate) message: String,
+/// Safe recovery classification returned by a paused Durable Apply Run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunRecoveryKind {
+    /// The exact consumed plan may be revalidated and resumed without a model turn.
+    ResumeAvailable,
+    /// The target diverged or cannot be classified safely; automatic replay is forbidden.
+    ManualReviewRequired,
 }
 
 /// Safe persisted state returned by `assistant_run_get`.
@@ -500,7 +500,7 @@ pub struct AssistantRunSnapshot {
     pub(crate) pending_confirmation: Option<PendingConfirmationSummary>,
     /// Safe recovery information, if applicable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) recovery: Option<SafeRunRecovery>,
+    pub(crate) recovery: Option<RunRecoveryKind>,
 }
 
 /// Snapshot plus persisted events returned by `assistant_run_get`.
@@ -756,6 +756,9 @@ pub(crate) enum RunEventPayload {
     Paused {
         /// User-safe reason for pausing.
         reason: String,
+        /// Durable Apply recovery classification, absent for historical pauses.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recovery: Option<RunRecoveryKind>,
     },
     /// A resume summary.
     Resumed {
