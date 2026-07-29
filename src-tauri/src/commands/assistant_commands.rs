@@ -682,12 +682,25 @@ async fn execute_confirmed_change_with_sink(
         state: crate::ai_runtime::run_contract::RunState::Running,
         state_version: 0,
     };
+    let budget_policy =
+        match crate::ai_runtime::agent_run_repository::AgentRunRepository::budget_policy_for_session(
+            &db,
+            &session.session_key,
+            &run_id,
+        ) {
+            Ok(Some(policy)) => policy,
+            Ok(None) | Err(_) => {
+                fail();
+                return;
+            }
+        };
     let executor = NormalRunToolExecutor::new(
         &state,
         None,
         &accepted,
         &context,
         authorized_capabilities,
+        budget_policy,
         sink,
         Vec::new(),
     );
@@ -863,6 +876,7 @@ fn spawn_classified_direct_run(
                         &accepted.run_id,
                         crate::ai_runtime::run_contract::RunState::Preparing,
                         "preparing_classified_document",
+                        crate::ai_runtime::run_contract::RunStageCode::ClassifiedPreparing,
                     )
                     .ok()
             });
@@ -880,6 +894,7 @@ fn spawn_classified_direct_run(
                         &accepted.run_id,
                         crate::ai_runtime::run_contract::RunState::Running,
                         "analyzing_current_classified_document",
+                        crate::ai_runtime::run_contract::RunStageCode::ClassifiedAnalyzing,
                     )
                     .ok()
             });
@@ -1144,6 +1159,7 @@ mod normal_run_desktop_adapter_tests {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Preparing,
                     stage: "正在准备".into(),
+                    stage_code: None,
                 },
             },
         )
@@ -1157,6 +1173,7 @@ mod normal_run_desktop_adapter_tests {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
                     stage: "正在生成变更预览".into(),
+                    stage_code: None,
                 },
             },
         )
@@ -1443,6 +1460,14 @@ mod normal_run_desktop_adapter_tests {
     #[test]
     fn production_resume_command_completes_without_model_and_repeated_resume_does_not_dispatch() {
         let (directory, state, accepted, _plan) = durable_apply_fixture();
+        let frozen_budget = AgentRunRepository::budget_policy_for_session(
+            &state.db,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("read frozen budget")
+        .expect("frozen budget");
+        assert_eq!(frozen_budget.post_confirmation_max_model_turns, 0);
         RunEngine::recover_interrupted_runs(&state.db).expect("startup classification");
         let paused = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
             .expect("paused replay")
@@ -1497,14 +1522,19 @@ mod normal_run_desktop_adapter_tests {
                 .expect("single dispatch audit"),
             1
         );
-        assert!(completed.events.iter().all(|event| {
-            !matches!(
-                event.payload(),
-                RunEventPayload::ProviderSwitched { .. }
-                    | RunEventPayload::ReasoningSummary { .. }
-                    | RunEventPayload::ContentDelta { .. }
-            )
-        }));
+        let post_confirmation_model_event_count = completed
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.payload(),
+                    RunEventPayload::ProviderSwitched { .. }
+                        | RunEventPayload::ReasoningSummary { .. }
+                        | RunEventPayload::ContentDelta { .. }
+                )
+            })
+            .count();
+        assert_eq!(post_confirmation_model_event_count, 0);
 
         assert!(invoke_control(&webview, request).is_err());
         std::thread::sleep(Duration::from_millis(20));

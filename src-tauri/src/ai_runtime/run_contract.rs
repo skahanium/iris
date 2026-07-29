@@ -125,6 +125,36 @@ pub(crate) enum Effort {
     Durable,
 }
 
+/// Frozen execution-budget profile selected once during Request Intake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RunBudgetProfile {
+    /// One tool-free model turn.
+    Direct,
+    /// The ordinary bounded model/tool loop.
+    Standard,
+    /// The ordinary parent loop plus explicitly authorized depth-one ChildRuns.
+    Delegated,
+    /// A bounded pre-confirmation loop followed by model-free confirmed execution.
+    DurableApply,
+}
+
+/// Immutable model, tool and ChildRun limits persisted with one accepted Run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RunBudgetPolicy {
+    pub(crate) schema_version: u8,
+    pub(crate) profile: RunBudgetProfile,
+    pub(crate) max_model_turns: u32,
+    pub(crate) max_tool_calls: u32,
+    pub(crate) max_child_runs: u32,
+    pub(crate) child_max_model_turns: u32,
+    pub(crate) child_max_tool_calls: u32,
+    pub(crate) child_input_tokens_per_turn: u32,
+    pub(crate) child_output_tokens_per_turn: u32,
+    pub(crate) post_confirmation_max_model_turns: u32,
+}
+
 /// Physical storage and capability isolation boundary for a Run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -212,6 +242,85 @@ pub(crate) struct ExecutionEnvelope {
     pub(crate) required_capabilities: Vec<CapabilityId>,
     /// Explicit constraints that remain binding throughout the Run.
     pub(crate) explicit_constraints: Vec<ExplicitConstraint>,
+}
+
+impl RunBudgetPolicy {
+    /// Resolve the only supported frozen budget profile from an accepted envelope.
+    pub(crate) fn for_envelope(envelope: &ExecutionEnvelope) -> Self {
+        let profile = if envelope.effect == Effect::Apply && envelope.effort == Effort::Durable {
+            RunBudgetProfile::DurableApply
+        } else if envelope
+            .required_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == "harness.child_run")
+        {
+            RunBudgetProfile::Delegated
+        } else if envelope.effort == Effort::Direct {
+            RunBudgetProfile::Direct
+        } else {
+            RunBudgetProfile::Standard
+        };
+        Self::for_profile(profile)
+    }
+
+    /// Standard bounded policy for isolated evaluation harnesses without an accepted Run row.
+    #[cfg(test)]
+    pub(crate) fn standard() -> Self {
+        Self::for_profile(RunBudgetProfile::Standard)
+    }
+
+    fn for_profile(profile: RunBudgetProfile) -> Self {
+        match profile {
+            RunBudgetProfile::Direct => Self {
+                schema_version: 1,
+                profile,
+                max_model_turns: 1,
+                max_tool_calls: 0,
+                max_child_runs: 0,
+                child_max_model_turns: 0,
+                child_max_tool_calls: 0,
+                child_input_tokens_per_turn: 0,
+                child_output_tokens_per_turn: 0,
+                post_confirmation_max_model_turns: 0,
+            },
+            RunBudgetProfile::Standard => Self {
+                schema_version: 1,
+                profile,
+                max_model_turns: 8,
+                max_tool_calls: 24,
+                max_child_runs: 0,
+                child_max_model_turns: 0,
+                child_max_tool_calls: 0,
+                child_input_tokens_per_turn: 0,
+                child_output_tokens_per_turn: 0,
+                post_confirmation_max_model_turns: 0,
+            },
+            RunBudgetProfile::Delegated => Self {
+                schema_version: 1,
+                profile,
+                max_model_turns: 8,
+                max_tool_calls: 24,
+                max_child_runs: 3,
+                child_max_model_turns: 2,
+                child_max_tool_calls: 6,
+                child_input_tokens_per_turn: 2_000,
+                child_output_tokens_per_turn: 1_024,
+                post_confirmation_max_model_turns: 0,
+            },
+            RunBudgetProfile::DurableApply => Self {
+                schema_version: 1,
+                profile,
+                max_model_turns: 8,
+                max_tool_calls: 24,
+                max_child_runs: 0,
+                child_max_model_turns: 0,
+                child_max_tool_calls: 0,
+                child_input_tokens_per_turn: 0,
+                child_output_tokens_per_turn: 0,
+                post_confirmation_max_model_turns: 0,
+            },
+        }
+    }
 }
 
 /// Origin category of a registered evidence item.
@@ -609,6 +718,19 @@ pub(crate) enum RunEventType {
     Cancelled,
 }
 
+/// Stable, locale-independent code for common Run progress stages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RunStageCode {
+    Preparing,
+    PreparingTools,
+    Recovering,
+    ModelAndTools,
+    GeneratingAnswer,
+    ClassifiedPreparing,
+    ClassifiedAnalyzing,
+}
+
 /// Safe, UI-oriented payloads carried by a Run event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -636,6 +758,9 @@ pub(crate) enum RunEventPayload {
         state: RunState,
         /// User-visible status text without internal planning details.
         stage: String,
+        /// Optional stable presentation key. Historical events contain only `stage`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stage_code: Option<RunStageCode>,
     },
     /// A bounded provider-generated summary that is safe to show and replay.
     ///

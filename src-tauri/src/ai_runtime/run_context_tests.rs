@@ -1224,6 +1224,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
             payload: crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
                 state: crate::ai_runtime::run_contract::RunState::Preparing,
                 stage: "正在准备".into(),
+                stage_code: None,
             },
         },
     )
@@ -1237,6 +1238,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
             payload: crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
                 state: crate::ai_runtime::run_contract::RunState::Running,
                 stage: "正在回答".into(),
+                stage_code: None,
             },
         },
     )
@@ -1511,6 +1513,7 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
                 payload: crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
                     state,
                     stage: "history fixture".into(),
+                    stage_code: None,
                 },
             },
         )
@@ -1728,6 +1731,7 @@ fn previous_run_safety_does_not_treat_local_evidence_as_web_success() {
                 payload: crate::ai_runtime::run_contract::RunEventPayload::StageChanged {
                     state,
                     stage: "local evidence fixture".into(),
+                    stage_code: None,
                 },
             },
         )

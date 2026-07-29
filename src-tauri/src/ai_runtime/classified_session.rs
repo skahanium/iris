@@ -697,6 +697,7 @@ pub(crate) fn classified_run_mark_preparing(
         RunEventPayload::StageChanged {
             state: RunState::Preparing,
             stage: "正在准备".into(),
+            stage_code: None,
         },
     )
 }
@@ -719,6 +720,7 @@ pub(crate) fn classified_run_mark_running(
         RunEventPayload::StageChanged {
             state: RunState::Running,
             stage: "正在生成答复".into(),
+            stage_code: None,
         },
     )
 }

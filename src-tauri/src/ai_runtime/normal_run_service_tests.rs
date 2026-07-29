@@ -278,6 +278,7 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在调用模型和工具".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -288,6 +289,7 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
         &accepted,
         &context,
         vec![CapabilityId::new("runtime.read")],
+        super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
         &sink,
         Vec::new(),
     );
@@ -359,6 +361,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         &accepted,
         &context,
         capabilities,
+        super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
         &sink,
         vec![provider_snapshot],
     );

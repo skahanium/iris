@@ -346,6 +346,15 @@ export type RunState =
 
 export type RunRecoveryKind = "resume_available" | "manual_review_required";
 
+export type RunStageCode =
+  | "preparing"
+  | "preparing_tools"
+  | "recovering"
+  | "model_and_tools"
+  | "generating_answer"
+  | "classified_preparing"
+  | "classified_analyzing";
+
 export type RunEventType =
   | "accepted"
   | "stage_changed"
@@ -450,7 +459,13 @@ export type AssistantRunEventPayload =
       freshness?: Freshness;
       webReason?: WebDecisionReason;
     }
-  | { kind: "stage_changed"; state: RunState; stage: string }
+  | {
+      kind: "stage_changed";
+      state: RunState;
+      stage: string;
+      /** Stable presentation key; absent on historical events. */
+      stageCode?: RunStageCode;
+    }
   /** Provider explicitly supplied a safe, user-visible reasoning summary. */
   | {
       kind: "reasoning_summary";

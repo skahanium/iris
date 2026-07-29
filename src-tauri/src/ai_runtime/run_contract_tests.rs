@@ -3,7 +3,7 @@ use super::run_contract::{
     AssistantRunEvent, AssistantRunGetRequest, AssistantRunStartRequest, AssistantSessionRef,
     CapabilityId, ContextMode, Effect, Effort, EvidenceRef, EvidenceSourceKind, ExecutionEnvelope,
     Freshness, MaterialNeed, RiskClass, RunControlAction, RunEventPayload, RunEventType,
-    RunPresentationEvent, RunPresentationPayload, RunState, RunStateTransitionError,
+    RunPresentationEvent, RunPresentationPayload, RunStageCode, RunState, RunStateTransitionError,
     SafeRunErrorCode, SecurityDomain, WebDecisionReason,
 };
 
@@ -457,6 +457,7 @@ fn run_event_exposes_its_persisted_state_version_without_serialization() {
         RunEventPayload::StageChanged {
             state: RunState::Running,
             stage: "正在生成答复".into(),
+            stage_code: None,
         },
     )
     .expect("valid event");
@@ -533,6 +534,7 @@ fn stage_changed_events_carry_the_exact_state_for_replay_without_guessing() {
     let payload = RunEventPayload::StageChanged {
         state: RunState::Preparing,
         stage: "正在准备上下文".into(),
+        stage_code: Some(RunStageCode::Preparing),
     };
 
     assert_eq!(
@@ -541,8 +543,23 @@ fn stage_changed_events_carry_the_exact_state_for_replay_without_guessing() {
             "kind": "stage_changed",
             "state": "preparing",
             "stage": "正在准备上下文",
+            "stageCode": "preparing",
         })
     );
+
+    let legacy = serde_json::from_value::<RunEventPayload>(serde_json::json!({
+        "kind": "stage_changed",
+        "state": "preparing",
+        "stage": "旧版自定义阶段",
+    }))
+    .expect("legacy event remains readable");
+    assert!(matches!(
+        legacy,
+        RunEventPayload::StageChanged {
+            stage_code: None,
+            ..
+        }
+    ));
 }
 
 #[test]

@@ -6,9 +6,10 @@ use super::agent_run_repository::{
 use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_contract::{
-    AssistantRunEvent, ContextMode, DisplayMention, DisplayMentionKind, DisplayMentionRange,
-    Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed, Modality,
-    RiskClass, RunEventPayload, RunEventType, RunState, SecurityDomain, WebDecisionReason,
+    AssistantRunEvent, CapabilityId, ContextMode, DisplayMention, DisplayMentionKind,
+    DisplayMentionRange, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness,
+    MaterialNeed, Modality, RiskClass, RunBudgetProfile, RunEventPayload, RunEventType, RunState,
+    SecurityDomain, WebDecisionReason,
 };
 use crate::ai_types::{ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan};
 use crate::storage::db::Database;
@@ -132,6 +133,105 @@ fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
         Ok(())
     })
     .expect("read accepted facts");
+}
+
+#[test]
+fn accepted_and_retried_runs_keep_the_frozen_budget_policy() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key.clone());
+    input.envelope.effort = Effort::ToolLoop;
+    input
+        .envelope
+        .required_capabilities
+        .push(CapabilityId::new("harness.child_run"));
+    AgentRunRepository::accept(&db, input).expect("accepted delegated run");
+
+    let accepted_policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("read accepted budget")
+        .expect("accepted budget");
+    assert_eq!(accepted_policy.profile, RunBudgetProfile::Delegated);
+    assert_eq!(accepted_policy.max_child_runs, 3);
+
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs
+             SET envelope_json = json_set(envelope_json, '$.effort', 'direct'),
+                 status = 'failed'
+             WHERE run_id = 'run-1'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("simulate later configuration/envelope drift");
+    AgentRunRepository::accept_retry(
+        &db,
+        RetryRunInput {
+            session_key: session_key.clone(),
+            source_run_id: "run-1".into(),
+            client_request_id: "retry-frozen-budget".into(),
+            run_id: "run-2".into(),
+        },
+    )
+    .expect("accepted retry");
+
+    let retry_policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-2")
+        .expect("read retry budget")
+        .expect("retry budget");
+    assert_eq!(retry_policy, accepted_policy);
+}
+
+#[test]
+fn legacy_empty_budget_is_materialized_for_retry_and_active_execution() {
+    let (db, session_id, session_key) = setup();
+    let mut input = accept_input(session_id, session_key.clone());
+    input.envelope.effort = Effort::ToolLoop;
+    input
+        .envelope
+        .required_capabilities
+        .push(CapabilityId::new("harness.child_run"));
+    AgentRunRepository::accept(&db, input).expect("accepted legacy fixture");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs
+             SET budget_policy_json = '{}', status = 'failed'
+             WHERE run_id = 'run-1'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("simulate pre-budget accepted run");
+
+    AgentRunRepository::accept_retry(
+        &db,
+        RetryRunInput {
+            session_key: session_key.clone(),
+            source_run_id: "run-1".into(),
+            client_request_id: "retry-legacy-budget".into(),
+            run_id: "run-2".into(),
+        },
+    )
+    .expect("legacy retry is accepted");
+    let retry_policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-2")
+        .expect("read retry budget")
+        .expect("retry budget");
+    assert_eq!(retry_policy.profile, RunBudgetProfile::Delegated);
+
+    let active_policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("materialize active legacy budget")
+        .expect("active legacy budget");
+    assert_eq!(active_policy, retry_policy);
+    db.with_read_conn(|conn| {
+        let budgets = conn
+            .prepare(
+                "SELECT budget_policy_json FROM agent_runs
+                 WHERE run_id IN ('run-1', 'run-2') ORDER BY run_id",
+            )?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert!(budgets.iter().all(|budget| budget != "{}"));
+        Ok(())
+    })
+    .expect("legacy budgets are frozen once");
 }
 
 #[test]
@@ -370,6 +470,7 @@ fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "Preparing".into(),
+                stage_code: None,
             },
         },
     )
@@ -383,6 +484,7 @@ fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "Running".into(),
+                stage_code: None,
             },
         },
     )
@@ -610,6 +712,7 @@ fn append_event_assigns_strict_sequence_and_safe_reader_replays_in_order() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -627,6 +730,7 @@ fn append_event_assigns_strict_sequence_and_safe_reader_replays_in_order() {
         RunEventPayload::StageChanged {
             state: RunState::Preparing,
             stage: "正在准备".to_string(),
+            stage_code: None,
         },
     )
     .expect("expected event");
@@ -672,6 +776,7 @@ fn session_history_process_lookup_batches_safe_events_by_latest_turn_run() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".into(),
+                stage_code: None,
             },
         },
     )
@@ -749,6 +854,7 @@ fn repository_refuses_second_completed_event_for_terminal_run() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "终态后不得继续".to_string(),
+                stage_code: None,
             },
         },
     );
@@ -772,6 +878,7 @@ fn generic_event_append_cannot_complete_a_run_without_final_message_transaction(
                 payload: RunEventPayload::StageChanged {
                     state,
                     stage: "推进运行状态".to_string(),
+                    stage_code: None,
                 },
             },
         )
@@ -817,6 +924,7 @@ fn finalization_writes_assistant_message_run_terminal_state_and_event_atomically
                 payload: RunEventPayload::StageChanged {
                     state,
                     stage: "推进运行状态".to_string(),
+                    stage_code: None,
                 },
             },
         )
@@ -871,6 +979,7 @@ fn cancelled_run_can_persist_sanitized_partial_assistant_for_continue() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -884,6 +993,7 @@ fn cancelled_run_can_persist_sanitized_partial_assistant_for_continue() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在生成答复".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1057,6 +1167,7 @@ fn atomic_confirmation_request_binds_the_pending_plan_to_awaiting_state() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "preparing".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1070,6 +1181,7 @@ fn atomic_confirmation_request_binds_the_pending_plan_to_awaiting_state() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "running".to_string(),
+                stage_code: None,
             },
         },
     )

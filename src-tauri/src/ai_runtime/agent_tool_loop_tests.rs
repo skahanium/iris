@@ -5,12 +5,19 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use super::agent_capacity_eval::EvaluationTelemetryTap;
-use super::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
+use super::agent_tool_loop::{
+    AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
+};
 use super::model_gateway::{StreamEventObserver, StreamSurface};
+use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
 use crate::ai_runtime::{
     FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec,
 };
 use crate::error::AppResult;
+
+fn standard_tool_loop() -> AgentToolLoop {
+    AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
+}
 
 struct ScriptedProvider {
     responses: Mutex<VecDeque<super::model_gateway::GatewayResponse>>,
@@ -24,6 +31,7 @@ impl ToolLoopProvider for ScriptedProvider {
         _run_id: &'a str,
         messages: &'a [LlmMessage],
         _tools: &'a [ToolSpec],
+        _budget: AgentModelTurnBudget,
         _observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<Box<dyn Future<Output = AppResult<super::model_gateway::GatewayResponse>> + Send + 'a>>
     {
@@ -264,7 +272,7 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
         capability_affinity: Vec::new(),
     }];
 
-    let outcome = AgentToolLoop::default()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &executor,
@@ -327,7 +335,7 @@ async fn online_mode_accepts_a_direct_answer_without_forcing_web_search() {
         capability_affinity: Vec::new(),
     }];
 
-    let outcome = AgentToolLoop::default()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &executor,
@@ -365,7 +373,7 @@ async fn web_required_rejects_a_final_answer_without_registered_evidence() {
         second_turn_messages: Mutex::new(Vec::new()),
     };
     let mut observer = NoopObserver;
-    let error = AgentToolLoop::default()
+    let error = standard_tool_loop()
         .execute(
             &provider,
             &RequiredWebExecutor,
@@ -392,7 +400,7 @@ async fn cancelled_run_never_starts_a_model_or_tool_turn() {
     };
     let mut observer = NoopObserver;
     crate::ai_runtime::model_gateway::request_abort("run-cancelled-loop");
-    let result = AgentToolLoop::default()
+    let result = standard_tool_loop()
         .execute(
             &provider,
             &executor,
@@ -450,7 +458,7 @@ async fn online_mode_continues_after_a_failed_web_tool_with_the_model_answer() {
         capability_affinity: Vec::new(),
     }];
 
-    let outcome = AgentToolLoop::default()
+    let outcome = standard_tool_loop()
         .execute(
             &provider,
             &FailingWebExecutor,
@@ -531,7 +539,7 @@ async fn evaluation_tool_loop_tap_records_turns_usage_tools_and_truncation_in_me
         capability_affinity: Vec::new(),
     }];
 
-    AgentToolLoop::default()
+    standard_tool_loop()
         .execute_with_eval_telemetry(
             &provider,
             &LargeResultExecutor,
@@ -582,7 +590,7 @@ async fn web_tool_results_use_the_web_specific_budget_without_losing_the_tail() 
         second_turn_messages: Mutex::new(Vec::new()),
     };
     let mut observer = NoopObserver;
-    AgentToolLoop::default()
+    standard_tool_loop()
         .execute(
             &provider,
             &LargeWebResultExecutor,
@@ -640,7 +648,7 @@ async fn oversized_web_tool_results_fail_closed_with_valid_json() {
         second_turn_messages: Mutex::new(Vec::new()),
     };
     let mut observer = NoopObserver;
-    AgentToolLoop::default()
+    standard_tool_loop()
         .execute(
             &provider,
             &OversizedWebResultExecutor,
@@ -673,4 +681,217 @@ async fn oversized_web_tool_results_fail_closed_with_valid_json() {
     let parsed: serde_json::Value = serde_json::from_str(&tool_payload).expect("valid JSON packet");
     assert_eq!(parsed["success"], false);
     assert_eq!(parsed["error"], "web_evidence_pack_overflow");
+}
+
+#[tokio::test]
+async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: None,
+            tool_calls: vec![tool_call()],
+            usage: Default::default(),
+            finish_reason: "tool_calls".into(),
+            reasoning_content: None,
+            continuation: None,
+        }])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let policy = RunBudgetPolicy {
+        schema_version: 1,
+        profile: RunBudgetProfile::Direct,
+        max_model_turns: 1,
+        max_tool_calls: 0,
+        max_child_runs: 0,
+        child_max_model_turns: 0,
+        child_max_tool_calls: 0,
+        child_input_tokens_per_turn: 0,
+        child_output_tokens_per_turn: 0,
+        post_confirmation_max_model_turns: 0,
+    };
+    let mut observer = NoopObserver;
+
+    let error = AgentToolLoop::from_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-direct-budget",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect_err("a direct policy must reject every tool call");
+
+    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+struct BudgetRecordingProvider {
+    budgets: Mutex<Vec<AgentModelTurnBudget>>,
+}
+
+impl ToolLoopProvider for BudgetRecordingProvider {
+    fn answer_turn<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _messages: &'a [LlmMessage],
+        _tools: &'a [ToolSpec],
+        budget: AgentModelTurnBudget,
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<Box<dyn Future<Output = AppResult<super::model_gateway::GatewayResponse>> + Send + 'a>>
+    {
+        self.budgets.lock().expect("budget lock").push(budget);
+        Box::pin(async {
+            Ok(super::model_gateway::GatewayResponse {
+                content: Some("child answer".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn child_policy_reaches_every_provider_turn_with_gateway_token_limits() {
+    let provider = BudgetRecordingProvider {
+        budgets: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let policy = RunBudgetPolicy {
+        schema_version: 1,
+        profile: RunBudgetProfile::Delegated,
+        max_model_turns: 8,
+        max_tool_calls: 24,
+        max_child_runs: 3,
+        child_max_model_turns: 2,
+        child_max_tool_calls: 6,
+        child_input_tokens_per_turn: 2_000,
+        child_output_tokens_per_turn: 1_024,
+        post_confirmation_max_model_turns: 0,
+    };
+    let mut observer = NoopObserver;
+
+    AgentToolLoop::from_child_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-child-budget",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect("child loop result");
+
+    assert_eq!(
+        provider.budgets.lock().expect("budget lock").as_slice(),
+        [AgentModelTurnBudget {
+            input_token_budget: Some(2_000),
+            max_output_tokens: Some(1_024),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
+    let tool_calls = (0..6)
+        .map(|index| ToolCall {
+            id: format!("child-tool-{index}"),
+            call_type: "function".into(),
+            function: FunctionCall {
+                name: "system_time_now".into(),
+                arguments: serde_json::json!({ "index": index }).to_string(),
+            },
+        })
+        .collect();
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls,
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![ToolCall {
+                    id: "child-tool-6".into(),
+                    call_type: "function".into(),
+                    function: FunctionCall {
+                        name: "system_time_now".into(),
+                        arguments: serde_json::json!({ "index": 6 }).to_string(),
+                    },
+                }],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let policy = RunBudgetPolicy {
+        schema_version: 1,
+        profile: RunBudgetProfile::Delegated,
+        max_model_turns: 8,
+        max_tool_calls: 24,
+        max_child_runs: 3,
+        child_max_model_turns: 2,
+        child_max_tool_calls: 6,
+        child_input_tokens_per_turn: 2_000,
+        child_output_tokens_per_turn: 1_024,
+        post_confirmation_max_model_turns: 0,
+    };
+    let mut observer = NoopObserver;
+
+    let error = AgentToolLoop::from_child_policy(&policy)
+        .execute(
+            &provider,
+            &executor,
+            "run-child-tool-budget",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect_err("the seventh child tool call must exceed the frozen budget");
+
+    assert_eq!(error.to_string(), "agent_run_tool_loop_limit");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 6);
 }

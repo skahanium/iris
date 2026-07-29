@@ -338,6 +338,37 @@ describe("Assistant Run 前端合同", () => {
 });
 
 describe("Assistant Run 事件归约", () => {
+  it("优先按稳定 stageCode 映射文案并兼容旧事件", () => {
+    const coded = reduce([
+      event(1, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "provider-specific text",
+        stageCode: "generating_answer",
+      }),
+    ]);
+    expect(coded.stage).toBe("正在生成答复");
+
+    const legacy = reduce([
+      event(1, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "旧版阶段文案",
+      }),
+    ]);
+    expect(legacy.stage).toBe("旧版阶段文案");
+
+    const future = reduce([
+      event(1, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "未来版本阶段文案",
+        stageCode: "future_stage" as "generating_answer",
+      }),
+    ]);
+    expect(future.stage).toBe("未来版本阶段文案");
+  });
+
   it("实时临时 delta 不进入可重放序列，并由验证后的 durable delta 替换", () => {
     const running = reduce([
       event(1, "accepted", {

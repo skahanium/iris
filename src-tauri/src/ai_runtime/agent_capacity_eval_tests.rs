@@ -1522,7 +1522,13 @@ async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary()
     let mut observer = CapacityNoopStreamObserver;
 
     let response = provider
-        .answer_turn(&accepted.run_id, &messages, &[], &mut observer)
+        .answer_turn(
+            &accepted.run_id,
+            &messages,
+            &[],
+            crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget::default(),
+            &mut observer,
+        )
         .await
         .expect("retryable first failure must dispatch the selected fallback");
     let primary_calls = primary.finish().await.unwrap();

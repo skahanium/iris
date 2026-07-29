@@ -9,13 +9,12 @@ use std::future::Future;
 use std::pin::Pin;
 
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
+use crate::ai_runtime::run_contract::RunBudgetPolicy;
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
-const MAX_MODEL_TURNS: u32 = 8;
-const MAX_TOOL_CALLS: u32 = 24;
 const MAX_REPEAT_CALLS: u32 = 2;
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
 /// Web evidence is deliberately allowed a larger envelope than generic tool
@@ -34,6 +33,13 @@ pub(crate) struct AgentToolLoopOutcome {
     pub(crate) tool_calls: u32,
 }
 
+/// Per-model-turn limits that the provider must forward into `GatewayRequest`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct AgentModelTurnBudget {
+    pub(crate) input_token_budget: Option<u32>,
+    pub(crate) max_output_tokens: Option<u32>,
+}
+
 /// Provider-facing side of a model/tool loop.
 pub(crate) trait ToolLoopProvider: Send + Sync {
     /// Execute one model turn against the current canonical transcript.
@@ -42,6 +48,7 @@ pub(crate) trait ToolLoopProvider: Send + Sync {
         run_id: &'a str,
         messages: &'a [LlmMessage],
         tools: &'a [ToolSpec],
+        budget: AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>>;
 }
@@ -89,25 +96,28 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
 pub(crate) struct AgentToolLoop {
     max_model_turns: u32,
     max_tool_calls: u32,
-}
-
-impl Default for AgentToolLoop {
-    fn default() -> Self {
-        Self {
-            max_model_turns: MAX_MODEL_TURNS,
-            max_tool_calls: MAX_TOOL_CALLS,
-        }
-    }
+    turn_budget: AgentModelTurnBudget,
 }
 
 impl AgentToolLoop {
-    /// Build a bounded loop for a nested harness operation. Zero is never a
-    /// meaningful limit: clamp it to one so callers fail deterministically
-    /// after a real bounded attempt instead of silently doing no work.
-    pub(crate) fn with_limits(max_model_turns: u32, max_tool_calls: u32) -> Self {
+    /// Build the exact parent-loop limits frozen at Request Intake.
+    pub(crate) fn from_policy(policy: &RunBudgetPolicy) -> Self {
         Self {
-            max_model_turns: max_model_turns.clamp(1, MAX_MODEL_TURNS),
-            max_tool_calls: max_tool_calls.clamp(1, MAX_TOOL_CALLS),
+            max_model_turns: policy.max_model_turns,
+            max_tool_calls: policy.max_tool_calls,
+            turn_budget: AgentModelTurnBudget::default(),
+        }
+    }
+
+    /// Build the fixed depth-one ChildRun limits frozen in a delegated parent policy.
+    pub(crate) fn from_child_policy(policy: &RunBudgetPolicy) -> Self {
+        Self {
+            max_model_turns: policy.child_max_model_turns,
+            max_tool_calls: policy.child_max_tool_calls,
+            turn_budget: AgentModelTurnBudget {
+                input_token_budget: Some(policy.child_input_tokens_per_turn),
+                max_output_tokens: Some(policy.child_output_tokens_per_turn),
+            },
         }
     }
 
@@ -174,7 +184,7 @@ impl AgentToolLoop {
             model_turns += 1;
             let model_started_at = std::time::Instant::now();
             let response = provider
-                .answer_turn(run_id, &messages, &tools, observer)
+                .answer_turn(run_id, &messages, &tools, self.turn_budget, observer)
                 .await?;
             if let Some(telemetry) = telemetry {
                 telemetry.record_model_turn(&response, model_started_at);

@@ -64,7 +64,7 @@ impl RunIntake {
             ],
         );
         let do_not_modify = contains_any(
-            &message,
+            &directive_text,
             &[
                 "do not modify",
                 "don't modify",
@@ -89,7 +89,7 @@ impl RunIntake {
             ContextMode::ExplicitReferences
         } else if has_retrieval_scope(request) {
             ContextMode::ExplicitScope
-        } else if is_novel_writing_request(&message) || request.session.is_some() {
+        } else if is_novel_writing_request(&directive_text) || request.session.is_some() {
             ContextMode::Conversation
         } else {
             ContextMode::None
@@ -106,7 +106,7 @@ impl RunIntake {
                 || has_images
                 || has_retrieval_scope(request)
                 || child_run_requested
-                || needs_offline_vault_tool_loop(request, &message) =>
+                || needs_offline_vault_tool_loop(request, &directive_text) =>
             {
                 Effort::ToolLoop
             }
@@ -120,10 +120,10 @@ impl RunIntake {
         if !request.turn.explicit_references.is_empty() {
             material_needs.push(MaterialNeed::Reference);
         }
-        if is_official_writing_request(&message) {
+        if is_official_writing_request(&directive_text) {
             material_needs.push(MaterialNeed::Exemplar);
         }
-        if needs_authority_material(&message) {
+        if needs_authority_material(&directive_text) {
             material_needs.push(MaterialNeed::Authority);
         }
         if freshness != Freshness::Offline {
@@ -157,7 +157,7 @@ impl RunIntake {
             required_capabilities.push(CapabilityId::new("context.read"));
             if allow_implicit_vault_for_run(
                 request.security_domain,
-                &message,
+                &directive_text,
                 !request.turn.explicit_references.is_empty() || has_retrieval_scope(request),
             ) {
                 required_capabilities.push(CapabilityId::new("vault.read"));
@@ -522,7 +522,7 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
     }
     validate_display_mentions(request)?;
     let user_disables_apply = contains_any(
-        &request.turn.message.to_ascii_lowercase(),
+        &strip_quoted_segments(&request.turn.message.to_ascii_lowercase()),
         &[
             "do not modify",
             "don't modify",
@@ -701,7 +701,7 @@ impl ExclusionClassifier {
             if is_trusted_runtime_request(directive_text) {
                 return offline(WebDecisionReason::TrustedRuntimeFact);
             }
-            if is_local_transformation_request(message)
+            if is_local_transformation_request(directive_text)
                 && is_material_bound_transformation(request, message, directive_text)
             {
                 return offline(WebDecisionReason::LocalTransformation);

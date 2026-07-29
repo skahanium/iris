@@ -14,7 +14,8 @@ use crate::ai_runtime::classified_document_policy_repository::load_classified_po
 use crate::ai_runtime::policy_decision_engine::{CapabilityDecision, DocumentCapability};
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse, AssistantRunSnapshot,
-    AssistantSessionRef, RunEventPayload, RunEventType, RunState, SafeRunErrorCode, SecurityDomain,
+    AssistantSessionRef, RunEventPayload, RunEventType, RunStageCode, RunState, SafeRunErrorCode,
+    SecurityDomain,
 };
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
@@ -186,6 +187,7 @@ impl ClassifiedEphemeralStore {
         run_id: &str,
         state: RunState,
         stage: &str,
+        stage_code: RunStageCode,
     ) -> AppResult<AssistantRunEvent> {
         let run = self.run_mut(run_id)?;
         run.state = state;
@@ -199,6 +201,7 @@ impl ClassifiedEphemeralStore {
             RunEventPayload::StageChanged {
                 state,
                 stage: stage.to_string(),
+                stage_code: Some(stage_code),
             },
         )
         .map_err(AppError::msg)?;

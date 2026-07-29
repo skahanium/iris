@@ -11,10 +11,11 @@ use std::time::Duration;
 
 use tauri::AppHandle;
 
+use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, Effort, Freshness, Modality, SafeRunErrorCode, VerificationRequirement,
-    WebEvidenceFailureReason,
+    AssistantRunAccepted, Effort, Freshness, Modality, RunBudgetPolicy, SafeRunErrorCode,
+    VerificationRequirement, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingDirectAnswerProvider, FailoverStreamingToolLoopProvider, RunEngine,
@@ -90,6 +91,23 @@ async fn execute_normal_run_internal(
         Ok(true) => {}
         Ok(false) | Err(_) => return,
     }
+    let budget_policy = match AgentRunRepository::budget_policy_for_session(
+        &db,
+        &accepted.session.session_key,
+        &accepted.run_id,
+    ) {
+        Ok(Some(policy)) => policy,
+        Ok(None) | Err(_) => {
+            let _ = RunEngine::fail_before_dispatch_with_sink(
+                &db,
+                &accepted.session,
+                &accepted.run_id,
+                SafeRunErrorCode::PersistenceFailed,
+                sink,
+            );
+            return;
+        }
+    };
     let authorized_capabilities = match crate::ai_runtime::agent_run_repository::AgentRunRepository::persist_authorization_snapshot(
         &db,
         &accepted.session.session_key,
@@ -170,6 +188,7 @@ async fn execute_normal_run_internal(
         &domain_plan,
         &evidence_ids,
         &authorized_capabilities,
+        &budget_policy,
         vault.as_deref(),
         sink,
         telemetry,
@@ -322,6 +341,7 @@ async fn dispatch_normal_run_after_context(
     domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
     registered_evidence_ids: &[i64],
     authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
+    budget_policy: &RunBudgetPolicy,
     vault: Option<&std::path::Path>,
     sink: &impl RunEventSink,
     telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
@@ -357,6 +377,7 @@ async fn dispatch_normal_run_after_context(
             &mut messages,
             &evidence_ids,
             authorized_capabilities,
+            budget_policy,
             active_skills.plan,
             sink,
             telemetry,
@@ -426,6 +447,7 @@ async fn dispatch_normal_run_after_context(
             accepted,
             context,
             authorized_capabilities.to_vec(),
+            budget_policy.clone(),
             sink,
             required_web_provider_snapshots,
         )
@@ -537,6 +559,7 @@ async fn dispatch_required_web_verified_run(
     messages: &mut Vec<LlmMessage>,
     registered_evidence_ids: &[i64],
     authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
+    budget_policy: &RunBudgetPolicy,
     skill_plan: Option<SkillActivationPlanSummary>,
     sink: &impl RunEventSink,
     telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
@@ -573,6 +596,7 @@ async fn dispatch_required_web_verified_run(
         accepted,
         context,
         authorized_capabilities.to_vec(),
+        budget_policy.clone(),
         sink,
         provider_snapshots,
     )

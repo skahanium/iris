@@ -18,8 +18,8 @@ use super::run_contract::{
     RunEventType, RunRecoveryKind, RunState, SafeRunErrorCode, SecurityDomain,
 };
 use super::run_engine::{
-    direct_gateway_request, AgentRunStreamObserver, DirectAnswerProvider, RunEngine, RunEventSink,
-    StreamingDirectAnswerProvider,
+    apply_model_turn_budget, direct_gateway_request, AgentRunStreamObserver, DirectAnswerProvider,
+    RunEngine, RunEventSink, StreamingDirectAnswerProvider,
 };
 use super::run_intake::RunIntake;
 use crate::ai_runtime::agent_evidence_repository::{
@@ -37,6 +37,32 @@ use crate::ai_types::{
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
+
+#[test]
+fn child_turn_limits_are_written_into_the_gateway_request() {
+    let mut request = direct_gateway_request(
+        ProviderConfig {
+            name: "budget-provider".into(),
+            base_url: "https://api.example.com".into(),
+            api_key: None,
+            model: "budget-model".into(),
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        "bounded child prompt",
+        8_192,
+    );
+
+    apply_model_turn_budget(
+        &mut request,
+        crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
+            input_token_budget: Some(2_000),
+            max_output_tokens: Some(1_024),
+        },
+    );
+
+    assert_eq!(request.input_token_budget, Some(2_000));
+    assert_eq!(request.max_tokens, Some(1_024));
+}
 
 struct MockProvider {
     calls: Cell<u32>,
@@ -316,6 +342,7 @@ impl ToolLoopProvider for MetaAnalysisToolLoopProvider {
         _run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
         _tools: &'a [ToolSpec],
+        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         _observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<
@@ -345,6 +372,7 @@ impl ToolLoopProvider for ScriptedToolLoopProvider {
         _run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
         _tools: &'a [ToolSpec],
+        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         _observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<
@@ -482,6 +510,12 @@ fn request() -> AssistantRunStartRequest {
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     }
+}
+
+fn standard_tool_loop_request() -> AssistantRunStartRequest {
+    let mut request = request();
+    request.turn.message = "根据本地项目笔记调用工具后回答".to_string();
+    request
 }
 
 #[test]
@@ -968,6 +1002,7 @@ fn background_failure_guard_terminalizes_a_running_run_without_exposing_its_caus
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".into(),
+                stage_code: None,
             },
         },
     )
@@ -981,6 +1016,7 @@ fn background_failure_guard_terminalizes_a_running_run_without_exposing_its_caus
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在处理".into(),
+                stage_code: None,
             },
         },
     )
@@ -1119,6 +1155,7 @@ fn durable_apply_interrupted_after_consumed_confirmation_with_expiry(
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".into(),
+                stage_code: None,
             },
         },
     )
@@ -1132,6 +1169,7 @@ fn durable_apply_interrupted_after_consumed_confirmation_with_expiry(
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在生成变更预览".into(),
+                stage_code: None,
             },
         },
     )
@@ -1494,6 +1532,7 @@ fn paused_recovery_kind_is_replayed_from_the_durable_event() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".into(),
+                stage_code: None,
             },
         },
     )
@@ -1507,6 +1546,7 @@ fn paused_recovery_kind_is_replayed_from_the_durable_event() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在处理".into(),
+                stage_code: None,
             },
         },
     )
@@ -1544,6 +1584,7 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1557,6 +1598,7 @@ fn run_stream_observer_buffers_tokens_until_a_stable_flush() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在生成答复".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1618,6 +1660,7 @@ fn evaluation_stream_tap_observes_first_visible_token_without_persisting_measure
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1631,6 +1674,7 @@ fn evaluation_stream_tap_observes_first_visible_token_without_persisting_measure
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在生成答复".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1744,6 +1788,7 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备工具执行".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1757,6 +1802,7 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在调用模型和工具".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1875,6 +1921,7 @@ fn tool_loop_observer_defers_generating_stage_until_after_later_tool_rounds() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备工具执行".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1888,6 +1935,7 @@ fn tool_loop_observer_defers_generating_stage_until_after_later_tool_rounds() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在调用模型和工具".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1938,6 +1986,7 @@ fn tool_loop_observer_resets_provisional_answer_when_tools_restart() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备工具执行".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1951,6 +2000,7 @@ fn tool_loop_observer_resets_provisional_answer_when_tools_restart() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在调用模型和工具".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -2039,6 +2089,7 @@ fn run_stream_observer_replays_only_safe_reasoning_summaries_after_turn_done() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".into(),
+                stage_code: None,
             },
         },
     )
@@ -2052,6 +2103,7 @@ fn run_stream_observer_replays_only_safe_reasoning_summaries_after_turn_done() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在生成答复".into(),
+                stage_code: None,
             },
         },
     )
@@ -2166,6 +2218,7 @@ fn run_stream_observer_flushes_long_validated_content_in_safe_chunks() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -2179,6 +2232,7 @@ fn run_stream_observer_flushes_long_validated_content_in_safe_chunks() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在生成答复".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -2666,7 +2720,7 @@ async fn tool_loop_engine_never_persists_a_meta_analysis_prefix() {
 #[tokio::test]
 async fn tool_success_followed_by_oversized_output_has_one_precise_safe_terminal() {
     let db = Database::open_in_memory().expect("database");
-    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let accepted = RunIntake::start(&db, standard_tool_loop_request()).expect("accepted");
     let provider = scripted_tool_loop_provider("过长".repeat(16_001));
     let executor = SuccessfulToolLoopExecutor {
         calls: AtomicU32::new(0),
@@ -2712,7 +2766,7 @@ async fn tool_success_followed_by_oversized_output_has_one_precise_safe_terminal
 #[tokio::test]
 async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
     let db = Database::open_in_memory().expect("database");
-    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let accepted = RunIntake::start(&db, standard_tool_loop_request()).expect("accepted");
     let provider = scripted_tool_loop_provider("工具后的回答".to_string());
     let executor = SuccessfulToolLoopExecutor {
         calls: AtomicU32::new(0),

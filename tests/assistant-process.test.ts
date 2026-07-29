@@ -141,12 +141,14 @@ describe("Assistant Run 处理过程投影", () => {
       event(2, "stage_changed", {
         kind: "stage_changed",
         state: "preparing",
-        stage: "正在准备工具执行",
+        stage: "provider preparing",
+        stageCode: "preparing_tools",
       }),
       event(3, "stage_changed", {
         kind: "stage_changed",
         state: "running",
-        stage: "正在调用模型和工具",
+        stage: "provider running",
+        stageCode: "model_and_tools",
       }),
       event(4, "reasoning_summary", {
         kind: "reasoning_summary",

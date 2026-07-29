@@ -9,8 +9,8 @@ use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::run_contract::{
     transition_to, AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse,
     AssistantRunSnapshot, AssistantSessionRef, CapabilityId, ConfirmationTargetSummary, Effect,
-    Effort, ExecutionEnvelope, ExplicitAction, RiskClass, RunEventPayload, RunEventType,
-    RunRecoveryKind, RunState, SecurityDomain,
+    Effort, ExecutionEnvelope, ExplicitAction, RiskClass, RunBudgetPolicy, RunEventPayload,
+    RunEventType, RunRecoveryKind, RunState, SecurityDomain,
 };
 use crate::ai_types::{
     ContentPart, ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan,
@@ -279,6 +279,8 @@ impl AgentRunRepository {
                 let context_scope_json = serde_json::to_string(&input.context_scope)?;
                 let display_mentions_json = serde_json::to_string(&input.display_mentions)?;
                 let envelope_json = serde_json::to_string(&input.envelope)?;
+                let budget_policy_json =
+                    serde_json::to_string(&RunBudgetPolicy::for_envelope(&input.envelope))?;
                 let explicit_action_json = input
                     .explicit_action
                     .as_ref()
@@ -318,9 +320,9 @@ impl AgentRunRepository {
                     "INSERT INTO agent_runs
                  (run_id, client_request_id, session_id, turn_id, status, state_version,
                   effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                  goal_summary, intake_fingerprint, prompt_profile_snapshot_json,
+                  goal_summary, budget_policy_json, intake_fingerprint, prompt_profile_snapshot_json,
                   prompt_contract_version, prompt_contract_hash, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
+                 VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)",
                     rusqlite::params![
                         input.run_id,
                         input.client_request_id,
@@ -333,6 +335,7 @@ impl AgentRunRepository {
                         envelope_json,
                         explicit_action_json,
                         goal_summary,
+                        budget_policy_json,
                         intake_fingerprint,
                         prompt_profile_snapshot_json,
                         prompt_contract_version,
@@ -393,6 +396,7 @@ impl AgentRunRepository {
                     .query_row(
                         "SELECT r.session_id, r.turn_id, r.effect, r.effort, r.security_domain, r.risk,
                                 r.envelope_json, r.explicit_action_json, r.goal_summary,
+                                r.budget_policy_json,
                                 r.prompt_profile_snapshot_json, r.prompt_contract_version,
                                 r.prompt_contract_hash
                          FROM agent_runs r
@@ -418,25 +422,28 @@ impl AgentRunRepository {
                             row.get::<_, String>(2)?, row.get::<_, String>(3)?,
                             row.get::<_, String>(4)?, row.get::<_, String>(5)?,
                             row.get::<_, String>(6)?, row.get::<_, Option<String>>(7)?,
-                            row.get::<_, String>(8)?, row.get::<_, Option<String>>(9)?,
-                            row.get::<_, Option<i64>>(10)?, row.get::<_, Option<String>>(11)?,
+                            row.get::<_, String>(8)?, row.get::<_, String>(9)?,
+                            row.get::<_, Option<String>>(10)?, row.get::<_, Option<i64>>(11)?,
+                            row.get::<_, Option<String>>(12)?,
                         )),
                     )
                     .optional()?;
-                let Some((session_id, turn_id, effect, effort, security_domain, risk, envelope_json, explicit_action_json, goal_summary, prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash)) = source else {
+                let Some((session_id, turn_id, effect, effort, security_domain, risk, envelope_json, explicit_action_json, goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash)) = source else {
                     return Err(AppError::msg("agent_run_retry_not_available"));
                 };
+                let (_, budget_policy_json) =
+                    materialize_budget_policy(&budget_policy_json, &envelope_json)?;
                 let now = chrono::Utc::now().to_rfc3339();
                 conn.execute(
                     "INSERT INTO agent_runs
                      (run_id, client_request_id, session_id, turn_id, status, state_version,
                       effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                      goal_summary, prompt_profile_snapshot_json, prompt_contract_version,
+                      goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version,
                       prompt_contract_hash, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
+                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
                     rusqlite::params![input.run_id, input.client_request_id, session_id, turn_id,
                         effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                        goal_summary, prompt_profile_snapshot_json, prompt_contract_version,
+                        goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version,
                         prompt_contract_hash, now],
                 )?;
                 let envelope: crate::ai_runtime::run_contract::ExecutionEnvelope =
@@ -1781,6 +1788,43 @@ impl AgentRunRepository {
             }))
         })
     }
+    /// Read the immutable execution budget only when the normal-domain session matches.
+    ///
+    /// Legacy `{}` rows are deterministically materialized once from the
+    /// persisted execution envelope before the policy is returned.
+    pub(crate) fn budget_policy_for_session(
+        db: &Database,
+        session_key: &str,
+        run_id: &str,
+    ) -> AppResult<Option<RunBudgetPolicy>> {
+        db.with_conn(|conn| {
+            let stored = conn
+                .query_row(
+                    "SELECT r.budget_policy_json, r.envelope_json
+                     FROM agent_runs r
+                     JOIN sessions s ON s.id = r.session_id
+                     WHERE r.run_id = ?1 AND s.session_key = ?2",
+                    rusqlite::params![run_id, session_key],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()?;
+            let Some((stored_policy, envelope_json)) = stored else {
+                return Ok(None);
+            };
+            let (policy, normalized_policy) =
+                materialize_budget_policy(&stored_policy, &envelope_json)?;
+            if normalized_policy != stored_policy {
+                conn.execute(
+                    "UPDATE agent_runs
+                     SET budget_policy_json = ?1
+                     WHERE run_id = ?2 AND budget_policy_json = ?3",
+                    rusqlite::params![normalized_policy, run_id, stored_policy],
+                )?;
+            }
+            Ok(Some(policy))
+        })
+    }
+
     /// Read a Run only when its opaque normal-domain session key matches.
     pub(crate) fn get_for_session(
         db: &Database,
@@ -1789,6 +1833,23 @@ impl AgentRunRepository {
     ) -> AppResult<Option<AssistantRunGetResponse>> {
         Self::get_scoped(db, run_id, Some(session_key))
     }
+}
+
+fn materialize_budget_policy(
+    stored_policy: &str,
+    envelope_json: &str,
+) -> AppResult<(RunBudgetPolicy, String)> {
+    if stored_policy.trim() == "{}" {
+        let envelope: ExecutionEnvelope = serde_json::from_str(envelope_json)
+            .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
+        let policy = RunBudgetPolicy::for_envelope(&envelope);
+        let normalized = serde_json::to_string(&policy)
+            .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
+        return Ok((policy, normalized));
+    }
+    let policy = serde_json::from_str(stored_policy)
+        .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
+    Ok((policy, stored_policy.to_string()))
 }
 
 /// Persisted explicit-reference facts that may be resolved for one Run.

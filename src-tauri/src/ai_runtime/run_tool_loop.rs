@@ -24,8 +24,8 @@ use crate::ai_runtime::agent_tool_loop::{
 use crate::ai_runtime::model_gateway::{StreamEvent, StreamEventObserver};
 use crate::ai_runtime::run_context::RunContext;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, CapabilityId, RunEventPayload, RunEventType, SafeRunErrorCode,
-    WebDecisionReason, WebEvidenceFailureReason,
+    AssistantRunAccepted, CapabilityId, RunBudgetPolicy, RunEventPayload, RunEventType,
+    SafeRunErrorCode, WebDecisionReason, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::tool_audit::record_web_query_taint_witness;
@@ -193,18 +193,23 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
     /// The ChildRun retains the parent Run identity and persistence boundary.
     child_run_provider: Option<&'a dyn ToolLoopProvider>,
+    /// Frozen parent/child execution limits persisted at Request Intake.
+    budget_policy: RunBudgetPolicy,
+    child_runs_started: Mutex<u32>,
     /// Audit depth of this executor. Only `0` may launch a ChildRun.
     subagent_depth: u32,
 }
 
 impl<'a> NormalRunToolExecutor<'a> {
     /// Create a Run-bound executor for the already-authorized normal domain.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         state: &'a Arc<AppState>,
         app_handle: Option<tauri::AppHandle>,
         accepted: &'a AssistantRunAccepted,
         context: &'a RunContext,
         authorized_capabilities: Vec<CapabilityId>,
+        budget_policy: RunBudgetPolicy,
         sink: &'a dyn RunEventSink,
         required_web_provider_snapshots: Vec<
             crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
@@ -231,6 +236,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             required_web_provider_snapshots,
             web_preferred_provider_id: Mutex::new(None),
             child_run_provider: None,
+            budget_policy,
+            child_runs_started: Mutex::new(0),
             subagent_depth: 0,
         }
     }
@@ -908,7 +915,7 @@ impl NormalRunToolExecutor<'_> {
         &self,
         run_id: &str,
         call: &crate::ai_runtime::ToolCall,
-        args: &serde_json::Value,
+        _args: &serde_json::Value,
     ) -> AppResult<ToolCallResult> {
         let started = Instant::now();
         let Some(provider) = self.child_run_provider else {
@@ -944,7 +951,7 @@ impl NormalRunToolExecutor<'_> {
                 .map(|id| id.to_string())
                 .collect(),
             inherited_tool_names,
-            Some(2_000),
+            Some(self.budget_policy.child_input_tokens_per_turn),
         );
         if spec.resource_locks.iter().any(|lock| {
             lock.access == crate::ai_runtime::subagent_coordinator::ResourceAccess::Write
@@ -972,16 +979,34 @@ impl NormalRunToolExecutor<'_> {
                 started.elapsed(),
             ));
         }
+        let child_run_reserved = {
+            let mut child_runs_started = self
+                .child_runs_started
+                .lock()
+                .map_err(|_| AppError::msg("agent_run_child_budget_lock_failed"))?;
+            if *child_runs_started >= self.budget_policy.max_child_runs {
+                false
+            } else {
+                *child_runs_started = child_runs_started.saturating_add(1);
+                true
+            }
+        };
+        if !child_run_reserved {
+            let report = crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_error(
+                &spec,
+                "child_run_limit_exceeded",
+            );
+            return Ok(child_report_tool_result(
+                &call.function.name,
+                report,
+                0,
+                started.elapsed(),
+            ));
+        }
         let tools = parent_surface
             .into_iter()
             .filter(|tool| spec.allowed_tools.contains(&tool.name))
             .collect::<Vec<_>>();
-        let max_rounds = args
-            .get("max_rounds")
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|value| u32::try_from(value).ok())
-            .unwrap_or(2)
-            .clamp(1, 2);
         let messages = vec![
             LlmMessage {
                 role: MessageRole::System,
@@ -1008,13 +1033,14 @@ impl NormalRunToolExecutor<'_> {
             self.accepted,
             self.context,
             self.authorized_capabilities.clone(),
+            self.budget_policy.clone(),
             self.sink,
             self.required_web_provider_snapshots.clone(),
         )
         .with_skill_activation_plan(self.skill_activation_plan.clone())
         .at_subagent_depth(1);
         let mut observer = ChildRunStreamObserver;
-        let outcome = AgentToolLoop::with_limits(max_rounds, 6)
+        let outcome = AgentToolLoop::from_child_policy(&self.budget_policy)
             .execute(
                 provider,
                 &child_executor,
@@ -2011,7 +2037,7 @@ mod tests {
     use crate::ai_runtime::run_context::RunContextAssembler;
     use crate::ai_runtime::run_contract::{
         AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId,
-        RunEventPayload, RunEventType, RunState, SafeRunErrorCode, SecurityDomain,
+        RunBudgetPolicy, RunEventPayload, RunEventType, RunState, SafeRunErrorCode, SecurityDomain,
     };
     use crate::ai_runtime::run_engine::{RunEngine, RunEventSink};
     use crate::ai_runtime::run_intake::RunIntake;
@@ -2080,6 +2106,7 @@ mod tests {
     struct ScriptedChildProvider {
         responses: Mutex<VecDeque<GatewayResponse>>,
         tool_surfaces: Mutex<Vec<Vec<String>>>,
+        budgets: Mutex<Vec<crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget>>,
     }
 
     impl ToolLoopProvider for ScriptedChildProvider {
@@ -2088,12 +2115,14 @@ mod tests {
             _run_id: &'a str,
             _messages: &'a [LlmMessage],
             tools: &'a [ToolSpec],
+            budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
             _observer: &'a mut dyn StreamEventObserver,
         ) -> Pin<Box<dyn Future<Output = AppResult<GatewayResponse>> + Send + 'a>> {
             self.tool_surfaces
                 .lock()
                 .expect("tool surfaces")
                 .push(tools.iter().map(|tool| tool.name.clone()).collect());
+            self.budgets.lock().expect("child budgets").push(budget);
             Box::pin(async move {
                 self.responses
                     .lock()
@@ -2159,6 +2188,7 @@ mod tests {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
                     stage: "测试 ChildRun".to_string(),
+                    stage_code: None,
                 },
             },
         )
@@ -2188,8 +2218,25 @@ mod tests {
                     reasoning_content: None,
                     continuation: None,
                 },
+                GatewayResponse {
+                    content: Some("第二个子任务完成。".to_string()),
+                    tool_calls: Vec::new(),
+                    usage: Default::default(),
+                    finish_reason: "stop".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                },
+                GatewayResponse {
+                    content: Some("第三个子任务完成。".to_string()),
+                    tool_calls: Vec::new(),
+                    usage: Default::default(),
+                    finish_reason: "stop".to_string(),
+                    reasoning_content: None,
+                    continuation: None,
+                },
             ])),
             tool_surfaces: Mutex::new(Vec::new()),
+            budgets: Mutex::new(Vec::new()),
         };
         let executor = NormalRunToolExecutor::new(
             &state,
@@ -2201,6 +2248,7 @@ mod tests {
                 CapabilityId::new("harness.child_run"),
                 CapabilityId::new("memory.write"),
             ],
+            RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
         )
@@ -2227,16 +2275,63 @@ mod tests {
             result.output["subagent_report"]["summary"],
             "子任务已读取当前时间。"
         );
-        let surfaces = provider.tool_surfaces.lock().expect("surfaces");
+        {
+            let surfaces = provider.tool_surfaces.lock().expect("surfaces");
+            assert_eq!(
+                surfaces.len(),
+                2,
+                "child must make a real continuation turn"
+            );
+            assert!(surfaces[0].contains(&"system_time_now".to_string()));
+            assert!(!surfaces[0].contains(&"web_search".to_string()));
+            assert!(!surfaces[0].contains(&"memory_write".to_string()));
+            assert!(!surfaces[0].contains(&"spawn_subagent".to_string()));
+        }
+        let child_budget = crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
+            input_token_budget: Some(2_000),
+            max_output_tokens: Some(1_024),
+        };
         assert_eq!(
-            surfaces.len(),
-            2,
-            "child must make a real continuation turn"
+            provider.budgets.lock().expect("child budgets").as_slice(),
+            &[child_budget, child_budget]
         );
-        assert!(surfaces[0].contains(&"system_time_now".to_string()));
-        assert!(!surfaces[0].contains(&"web_search".to_string()));
-        assert!(!surfaces[0].contains(&"memory_write".to_string()));
-        assert!(!surfaces[0].contains(&"spawn_subagent".to_string()));
+        for child_index in 2..=3 {
+            let result = executor
+                .execute(
+                    &accepted.run_id,
+                    &ToolCall::new(
+                        format!("parent-spawn-{child_index}"),
+                        "spawn_subagent",
+                        r#"{"task":"继续读取当前时间","allowed_tools":["system_time_now"]}"#,
+                    ),
+                    child_index,
+                )
+                .await
+                .expect("bounded child result");
+            assert!(result.success);
+        }
+        let rejected = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "parent-spawn-4",
+                    "spawn_subagent",
+                    r#"{"task":"第四个子任务","allowed_tools":["system_time_now"]}"#,
+                ),
+                4,
+            )
+            .await
+            .expect("bounded child rejection");
+        assert!(!rejected.success);
+        assert_eq!(
+            rejected.output["subagent_report"]["errors"][0],
+            "child_run_limit_exceeded"
+        );
+        assert_eq!(
+            provider.tool_surfaces.lock().expect("surfaces").len(),
+            4,
+            "the fourth ChildRun must stop before a model turn"
+        );
         let child_depth = state
             .db
             .with_read_conn(|conn| {
@@ -2283,6 +2378,7 @@ mod tests {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
                     stage: "测试 ChildRun".to_string(),
+                    stage_code: None,
                 },
             },
         )
@@ -2290,6 +2386,7 @@ mod tests {
         let provider = ScriptedChildProvider {
             responses: Mutex::new(VecDeque::new()),
             tool_surfaces: Mutex::new(Vec::new()),
+            budgets: Mutex::new(Vec::new()),
         };
         let executor = NormalRunToolExecutor::new(
             &state,
@@ -2300,6 +2397,7 @@ mod tests {
                 CapabilityId::new("runtime.read"),
                 CapabilityId::new("harness.child_run"),
             ],
+            RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
         )
@@ -2535,6 +2633,7 @@ mod tests {
             &accepted,
             &context,
             vec![CapabilityId::new("note.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
         )

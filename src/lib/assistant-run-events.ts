@@ -9,6 +9,26 @@ import type {
   WebDecisionReason,
 } from "@/types/ai";
 
+const STAGE_TEXT_BY_CODE = {
+  preparing: "正在准备",
+  preparing_tools: "正在准备工具执行",
+  recovering: "正在恢复运行状态",
+  model_and_tools: "正在调用模型和工具",
+  generating_answer: "正在生成答复",
+  classified_preparing: "正在准备涉密文档",
+  classified_analyzing: "正在分析当前涉密文档",
+} as const;
+
+/** Resolve stable stage codes first while retaining historical free-text fallback. */
+export function stageTextForPayload(
+  payload: Extract<AssistantRunEventPayload, { kind: "stage_changed" }>,
+): string {
+  return (
+    (payload.stageCode ? STAGE_TEXT_BY_CODE[payload.stageCode] : undefined) ??
+    payload.stage
+  );
+}
+
 /** Reducer state reconstructed exclusively from persisted or streamed Run events. */
 export interface AssistantRunEventState {
   runId: string;
@@ -209,7 +229,10 @@ function applyEvent(
     lastSeq: event.seq,
     stateVersion: Math.max(state.stateVersion, event.stateVersion),
     state: nextState,
-    stage: payload.kind === "stage_changed" ? payload.stage : state.stage,
+    stage:
+      payload.kind === "stage_changed"
+        ? stageTextForPayload(payload)
+        : state.stage,
     summary: summaryForPayload(payload) ?? state.summary,
     freshness:
       payload.kind === "accepted" && payload.freshness

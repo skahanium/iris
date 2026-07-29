@@ -7135,6 +7135,7 @@ impl crate::ai_runtime::agent_tool_loop::ToolLoopProvider for BoundaryToolProvid
         _run_id: &'a str,
         messages: &'a [crate::ai_runtime::LlmMessage],
         _tools: &'a [crate::ai_runtime::ToolSpec],
+        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         _observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> std::pin::Pin<
         Box<
@@ -7307,16 +7308,18 @@ async fn probe_model_turn_limit(
     };
     let executor = BoundaryToolExecutor::default();
     let mut observer = BoundaryStreamObserver;
-    let result = crate::ai_runtime::agent_tool_loop::AgentToolLoop::default()
-        .execute(
-            &provider,
-            &executor,
-            "boundary-model-turns",
-            boundary_messages(),
-            vec![boundary_tool_spec()],
-            &mut observer,
-        )
-        .await;
+    let result = crate::ai_runtime::agent_tool_loop::AgentToolLoop::from_policy(
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .execute(
+        &provider,
+        &executor,
+        "boundary-model-turns",
+        boundary_messages(),
+        vec![boundary_tool_spec()],
+        &mut observer,
+    )
+    .await;
     let calls = provider.calls.load(std::sync::atomic::Ordering::SeqCst);
     Ok(if should_complete {
         result.is_ok_and(|outcome| outcome.model_turns == requested_turns)
@@ -7345,16 +7348,18 @@ async fn probe_tool_call_limit(
     };
     let executor = BoundaryToolExecutor::default();
     let mut observer = BoundaryStreamObserver;
-    let result = crate::ai_runtime::agent_tool_loop::AgentToolLoop::default()
-        .execute(
-            &provider,
-            &executor,
-            "boundary-tool-calls",
-            boundary_messages(),
-            vec![boundary_tool_spec()],
-            &mut observer,
-        )
-        .await;
+    let result = crate::ai_runtime::agent_tool_loop::AgentToolLoop::from_policy(
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .execute(
+        &provider,
+        &executor,
+        "boundary-tool-calls",
+        boundary_messages(),
+        vec![boundary_tool_spec()],
+        &mut observer,
+    )
+    .await;
     let executed = executor.calls.load(std::sync::atomic::Ordering::SeqCst);
     Ok(if should_complete {
         result.is_ok_and(|outcome| outcome.tool_calls == requested_calls)
@@ -7380,17 +7385,19 @@ async fn probe_tool_payload_truncation() -> Result<bool, EvalContractError> {
     };
     let telemetry = EvaluationTelemetryTap::default();
     let mut observer = BoundaryStreamObserver;
-    let result = crate::ai_runtime::agent_tool_loop::AgentToolLoop::default()
-        .execute_with_eval_telemetry(
-            &provider,
-            &executor,
-            "boundary-tool-payload",
-            boundary_messages(),
-            vec![boundary_tool_spec()],
-            &mut observer,
-            &telemetry,
-        )
-        .await;
+    let result = crate::ai_runtime::agent_tool_loop::AgentToolLoop::from_policy(
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .execute_with_eval_telemetry(
+        &provider,
+        &executor,
+        "boundary-tool-payload",
+        boundary_messages(),
+        vec![boundary_tool_spec()],
+        &mut observer,
+        &telemetry,
+    )
+    .await;
     let observed_chars = provider
         .observed_tool_message_chars
         .load(std::sync::atomic::Ordering::SeqCst);
@@ -8575,17 +8582,19 @@ async fn probe_combined_tool_loop() -> Result<bool, EvalContractError> {
     };
     let telemetry = EvaluationTelemetryTap::default();
     let mut observer = BoundaryStreamObserver;
-    let outcome = crate::ai_runtime::agent_tool_loop::AgentToolLoop::default()
-        .execute_with_eval_telemetry(
-            &provider,
-            &executor,
-            "combined-tool-loop",
-            boundary_messages(),
-            vec![boundary_tool_spec()],
-            &mut observer,
-            &telemetry,
-        )
-        .await;
+    let outcome = crate::ai_runtime::agent_tool_loop::AgentToolLoop::from_policy(
+        &crate::ai_runtime::run_contract::RunBudgetPolicy::standard(),
+    )
+    .execute_with_eval_telemetry(
+        &provider,
+        &executor,
+        "combined-tool-loop",
+        boundary_messages(),
+        vec![boundary_tool_spec()],
+        &mut observer,
+        &telemetry,
+    )
+    .await;
     Ok(
         outcome.is_ok_and(|outcome| outcome.model_turns == 8 && outcome.tool_calls == 24)
             && executor.calls.load(std::sync::atomic::Ordering::SeqCst) == 24

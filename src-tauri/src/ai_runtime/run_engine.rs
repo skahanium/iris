@@ -15,7 +15,9 @@ use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
     DurableApplyCheckpointStage, FinalizeRunInput,
 };
-use crate::ai_runtime::agent_tool_loop::{AgentToolLoop, ToolLoopExecutor, ToolLoopProvider};
+use crate::ai_runtime::agent_tool_loop::{
+    AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
+};
 use crate::ai_runtime::citation_linkify::{bind_current_run_citations, linkify_web_citations};
 use crate::ai_runtime::conversation_memory::ConversationMemory;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
@@ -23,7 +25,7 @@ use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, Effect, Effort, PresentationProcessKind, PresentationProcessStatus,
     RunEventPayload, RunEventType, RunPresentationEvent, RunPresentationPayload, RunRecoveryKind,
-    RunState, SafeRunErrorCode, WebEvidenceFailureReason,
+    RunStageCode, RunState, SafeRunErrorCode, WebEvidenceFailureReason,
 };
 use crate::ai_types::CitationBinding;
 use crate::error::{AppError, AppResult};
@@ -160,6 +162,7 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
         run_id: &'a str,
         messages: &'a [crate::ai_runtime::LlmMessage],
         tools: &'a [crate::ai_runtime::ToolSpec],
+        budget: AgentModelTurnBudget,
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
         Box<
@@ -176,6 +179,7 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
             self.thinking,
             self.reasoning,
         );
+        apply_model_turn_budget(&mut request, budget);
         request.continuation = self.continuation.clone();
         Box::pin(async move {
             self.gateway
@@ -402,6 +406,7 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
         run_id: &'a str,
         messages: &'a [crate::ai_runtime::LlmMessage],
         tools: &'a [crate::ai_runtime::ToolSpec],
+        budget: AgentModelTurnBudget,
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
         Box<
@@ -456,7 +461,7 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                         continuation.clone(),
                     )?;
                 match provider
-                    .answer_turn(run_id, messages, tools, observer)
+                    .answer_turn(run_id, messages, tools, budget, observer)
                     .await
                 {
                     Ok(response) => {
@@ -797,6 +802,7 @@ mod presentation_clock_tests {
             RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".to_string(),
+                stage_code: None,
             },
         )
         .expect("preparing event");
@@ -811,6 +817,7 @@ mod presentation_clock_tests {
             RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在调用模型和工具".to_string(),
+                stage_code: None,
             },
         )
         .expect("running event");
@@ -1022,6 +1029,7 @@ impl AgentRunStreamObserver<'_> {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
                     stage: "正在生成答复".to_string(),
+                    stage_code: Some(RunStageCode::GeneratingAnswer),
                 },
             },
         )?;
@@ -1382,6 +1390,7 @@ fn fail_interrupted_run(
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Preparing,
                     stage: "正在恢复运行状态".into(),
+                    stage_code: Some(RunStageCode::Recovering),
                 },
             },
         )?
@@ -1859,6 +1868,7 @@ impl RunEngine {
                         payload: RunEventPayload::StageChanged {
                             state: RunState::Preparing,
                             stage: "正在准备".to_string(),
+                            stage_code: Some(RunStageCode::Preparing),
                         },
                     },
                 )?;
@@ -1955,6 +1965,7 @@ impl RunEngine {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Preparing,
                     stage: "正在准备".to_string(),
+                    stage_code: Some(RunStageCode::Preparing),
                 },
             },
         )?;
@@ -2106,6 +2117,7 @@ impl RunEngine {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Preparing,
                     stage: "正在准备".to_string(),
+                    stage_code: Some(RunStageCode::Preparing),
                 },
             },
         )?;
@@ -2119,6 +2131,7 @@ impl RunEngine {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
                     stage: "正在生成答复".to_string(),
+                    stage_code: Some(RunStageCode::GeneratingAnswer),
                 },
             },
         )?;
@@ -2409,6 +2422,9 @@ impl RunEngine {
             }
             return Err(AppError::msg("agent_run_terminal_state"));
         }
+        let budget_policy =
+            AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
+                .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
@@ -2421,6 +2437,7 @@ impl RunEngine {
                         payload: RunEventPayload::StageChanged {
                             state: RunState::Preparing,
                             stage: "正在准备工具执行".to_string(),
+                            stage_code: Some(RunStageCode::PreparingTools),
                         },
                     },
                 )?;
@@ -2438,6 +2455,7 @@ impl RunEngine {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
                     stage: "正在调用模型和工具".to_string(),
+                    stage_code: Some(RunStageCode::ModelAndTools),
                 },
             },
         )?;
@@ -2464,7 +2482,7 @@ impl RunEngine {
             )
         };
         let outcome = if let Some(telemetry) = telemetry {
-            AgentToolLoop::default()
+            AgentToolLoop::from_policy(&budget_policy)
                 .execute_with_eval_telemetry(
                     provider,
                     executor,
@@ -2476,7 +2494,7 @@ impl RunEngine {
                 )
                 .await
         } else {
-            AgentToolLoop::default()
+            AgentToolLoop::from_policy(&budget_policy)
                 .execute(provider, executor, run_id, messages, tools, &mut observer)
                 .await
         };
@@ -2742,6 +2760,7 @@ impl RunEngine {
                             } else {
                                 "正在准备".to_string()
                             },
+                            stage_code: Some(RunStageCode::Preparing),
                         },
                     },
                 )?;
@@ -2759,6 +2778,7 @@ impl RunEngine {
                 payload: RunEventPayload::StageChanged {
                     state: RunState::Running,
                     stage: "正在生成答复".to_string(),
+                    stage_code: Some(RunStageCode::GeneratingAnswer),
                 },
             },
         )?;
@@ -3503,6 +3523,18 @@ pub(crate) fn direct_gateway_request(
         false,
         crate::ai_types::ResolvedReasoningRequest::disabled(),
     )
+}
+
+pub(crate) fn apply_model_turn_budget(
+    request: &mut crate::ai_runtime::model_gateway::GatewayRequest,
+    budget: AgentModelTurnBudget,
+) {
+    if let Some(max_output_tokens) = budget.max_output_tokens {
+        request.max_tokens = Some(request.max_tokens.map_or(max_output_tokens, |configured| {
+            configured.min(max_output_tokens)
+        }));
+    }
+    request.input_token_budget = budget.input_token_budget;
 }
 
 /// Construct the stable system boundary and one transient user prompt for a Run.

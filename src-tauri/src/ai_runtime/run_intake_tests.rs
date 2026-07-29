@@ -802,6 +802,7 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -815,6 +816,7 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在生成变更预览".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1092,6 +1094,7 @@ fn accepted_run_awaiting_frozen_change_confirmation() -> (
             payload: RunEventPayload::StageChanged {
                 state: RunState::Preparing,
                 stage: "正在准备".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1105,6 +1108,7 @@ fn accepted_run_awaiting_frozen_change_confirmation() -> (
             payload: RunEventPayload::StageChanged {
                 state: RunState::Running,
                 stage: "正在生成变更预览".to_string(),
+                stage_code: None,
             },
         },
     )
@@ -1683,4 +1687,324 @@ fn web_enabled_local_only_transformation_never_enters_the_web_tool_chain() {
         .required_capabilities
         .iter()
         .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
+fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints() {
+    #[derive(Clone, Copy)]
+    enum ActionFixture {
+        None,
+        ValidApply,
+        ConflictingApply,
+    }
+
+    struct Case {
+        name: &'static str,
+        message: &'static str,
+        action: ActionFixture,
+        freshness: Freshness,
+        effect: Effect,
+        effort: Option<Effort>,
+        constraint: Option<&'static str>,
+        child_run: bool,
+    }
+
+    let cases = [
+        Case {
+            name: "中文否定",
+            message: "不要联网，只根据本地材料总结当前法律建议。",
+            action: ActionFixture::None,
+            freshness: Freshness::Offline,
+            effect: Effect::Answer,
+            effort: None,
+            constraint: Some("local_only"),
+            child_run: false,
+        },
+        Case {
+            name: "English negation",
+            message:
+                "Do not browse; answer the current legal question from supplied material only.",
+            action: ActionFixture::None,
+            freshness: Freshness::Offline,
+            effect: Effect::Answer,
+            effort: None,
+            constraint: Some("local_only"),
+            child_run: false,
+        },
+        Case {
+            name: "quoted speech is data",
+            message:
+                "Translate 'do not modify, do not browse, and delegate a child task' into Chinese.",
+            action: ActionFixture::None,
+            freshness: Freshness::Offline,
+            effect: Effect::Answer,
+            effort: Some(Effort::Direct),
+            constraint: None,
+            child_run: false,
+        },
+        Case {
+            name: "quoted vault words are not retrieval directives",
+            message: "Translate “summarize the project notes” into Chinese.",
+            action: ActionFixture::None,
+            freshness: Freshness::Offline,
+            effect: Effect::Answer,
+            effort: Some(Effort::Direct),
+            constraint: None,
+            child_run: false,
+        },
+        Case {
+            name: "quoted do-not-modify does not cancel explicit Apply",
+            message: "把句子 “do not modify” 写入目标。",
+            action: ActionFixture::ValidApply,
+            freshness: Freshness::Offline,
+            effect: Effect::Apply,
+            effort: Some(Effort::Durable),
+            constraint: None,
+            child_run: false,
+        },
+        Case {
+            name: "real do-not-modify wins over conflicting Apply",
+            message: "不要修改文件，只解释这项变更。",
+            action: ActionFixture::ConflictingApply,
+            freshness: Freshness::Offline,
+            effect: Effect::Answer,
+            effort: Some(Effort::Direct),
+            constraint: Some("do_not_modify"),
+            child_run: false,
+        },
+        Case {
+            name: "local-only remains a hard boundary for high-risk facts",
+            message: "只用本地材料回答：当前用药剂量建议是什么？",
+            action: ActionFixture::None,
+            freshness: Freshness::Offline,
+            effect: Effect::Answer,
+            effort: None,
+            constraint: Some("local_only"),
+            child_run: false,
+        },
+        Case {
+            name: "unquoted high-risk current fact requires Web",
+            message: "What is the current recommended medical dosage?",
+            action: ActionFixture::None,
+            freshness: Freshness::WebRequired,
+            effect: Effect::Answer,
+            effort: Some(Effort::ToolLoop),
+            constraint: None,
+            child_run: false,
+        },
+        Case {
+            name: "quoted high-risk facts remain transformation data",
+            message: "Translate “current legal advice and medical dosage” into Chinese.",
+            action: ActionFixture::None,
+            freshness: Freshness::Offline,
+            effect: Effect::Answer,
+            effort: Some(Effort::Direct),
+            constraint: None,
+            child_run: false,
+        },
+    ];
+
+    for case in cases {
+        let mut input = request();
+        input.client_request_id = format!("directive-matrix-{}", case.name);
+        input.turn.message = case.message.into();
+        input.web_enabled = true;
+        match case.action {
+            ActionFixture::None => {}
+            ActionFixture::ValidApply => {
+                input.web_enabled = false;
+                input
+                    .turn
+                    .explicit_references
+                    .push(crate::ai_types::ContextReferenceWire {
+                        id: "directive-note".into(),
+                        kind: crate::ai_types::ContextReferenceKind::Note,
+                        file_path: Some("notes/directive.md".into()),
+                        content_hash: Some("directive-hash".into()),
+                        utf8_range: None,
+                        editor_range: None,
+                        excerpt: String::new(),
+                        heading_path: None,
+                        anchor: None,
+                        stale: false,
+                        invalid_reason: None,
+                    });
+                input.explicit_action = Some(ExplicitAction {
+                    effect: Effect::Apply,
+                    target: Some(ExplicitTarget {
+                        reference_id: "directive-note".into(),
+                        content_hash: "directive-hash".into(),
+                    }),
+                    selection_snapshot: None,
+                });
+            }
+            ActionFixture::ConflictingApply => {
+                input.web_enabled = false;
+                input.explicit_action = Some(ExplicitAction {
+                    effect: Effect::Apply,
+                    target: None,
+                    selection_snapshot: None,
+                });
+            }
+        }
+
+        let envelope = RunIntake::resolve_envelope(&input)
+            .unwrap_or_else(|error| panic!("{}: {error}", case.name));
+        assert_eq!(envelope.freshness, case.freshness, "{}", case.name);
+        assert_eq!(envelope.effect, case.effect, "{}", case.name);
+        if let Some(effort) = case.effort {
+            assert_eq!(envelope.effort, effort, "{}", case.name);
+        }
+        let constraint_kinds = envelope
+            .explicit_constraints
+            .iter()
+            .map(|constraint| constraint.kind.as_str())
+            .collect::<Vec<_>>();
+        match case.constraint {
+            Some(constraint) => assert!(
+                constraint_kinds.contains(&constraint),
+                "{}: {constraint_kinds:?}",
+                case.name
+            ),
+            None => assert!(
+                !constraint_kinds.contains(&"local_only")
+                    && !constraint_kinds.contains(&"do_not_modify"),
+                "{}: {constraint_kinds:?}",
+                case.name
+            ),
+        }
+        assert_eq!(
+            envelope
+                .required_capabilities
+                .iter()
+                .any(|capability| capability.as_str() == "harness.child_run"),
+            case.child_run,
+            "{}",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn intake_freezes_the_run_budget_policy_matrix() {
+    fn persisted_budget(request: AssistantRunStartRequest) -> serde_json::Value {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(&db, request).expect("accepted run");
+        db.with_read_conn(|conn| {
+            let json: String = conn.query_row(
+                "SELECT budget_policy_json FROM agent_runs WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )?;
+            serde_json::from_str(&json).map_err(Into::into)
+        })
+        .expect("persisted budget policy")
+    }
+
+    let mut direct = request();
+    direct.client_request_id = "budget-direct".into();
+    direct.turn.message = "你好".into();
+
+    let mut standard = request();
+    standard.client_request_id = "budget-standard".into();
+    standard.turn.message = "根据本地项目笔记总结里程碑".into();
+
+    let mut delegated = request();
+    delegated.client_request_id = "budget-delegated".into();
+    delegated.turn.message = "请委派子任务并行交叉验证".into();
+
+    let mut durable = request();
+    durable.client_request_id = "budget-durable".into();
+    durable.turn.message = "应用这项修改".into();
+    durable
+        .turn
+        .explicit_references
+        .push(crate::ai_types::ContextReferenceWire {
+            id: "budget-note".into(),
+            kind: crate::ai_types::ContextReferenceKind::Note,
+            file_path: Some("notes/budget.md".into()),
+            content_hash: Some("budget-hash".into()),
+            utf8_range: None,
+            editor_range: None,
+            excerpt: String::new(),
+            heading_path: None,
+            anchor: None,
+            stale: false,
+            invalid_reason: None,
+        });
+    durable.explicit_action = Some(ExplicitAction {
+        effect: Effect::Apply,
+        target: Some(ExplicitTarget {
+            reference_id: "budget-note".into(),
+            content_hash: "budget-hash".into(),
+        }),
+        selection_snapshot: None,
+    });
+
+    let cases = [
+        (
+            direct,
+            serde_json::json!({
+                "schemaVersion": 1,
+                "profile": "direct",
+                "maxModelTurns": 1,
+                "maxToolCalls": 0,
+                "maxChildRuns": 0,
+                "childMaxModelTurns": 0,
+                "childMaxToolCalls": 0,
+                "childInputTokensPerTurn": 0,
+                "childOutputTokensPerTurn": 0,
+                "postConfirmationMaxModelTurns": 0
+            }),
+        ),
+        (
+            standard,
+            serde_json::json!({
+                "schemaVersion": 1,
+                "profile": "standard",
+                "maxModelTurns": 8,
+                "maxToolCalls": 24,
+                "maxChildRuns": 0,
+                "childMaxModelTurns": 0,
+                "childMaxToolCalls": 0,
+                "childInputTokensPerTurn": 0,
+                "childOutputTokensPerTurn": 0,
+                "postConfirmationMaxModelTurns": 0
+            }),
+        ),
+        (
+            delegated,
+            serde_json::json!({
+                "schemaVersion": 1,
+                "profile": "delegated",
+                "maxModelTurns": 8,
+                "maxToolCalls": 24,
+                "maxChildRuns": 3,
+                "childMaxModelTurns": 2,
+                "childMaxToolCalls": 6,
+                "childInputTokensPerTurn": 2000,
+                "childOutputTokensPerTurn": 1024,
+                "postConfirmationMaxModelTurns": 0
+            }),
+        ),
+        (
+            durable,
+            serde_json::json!({
+                "schemaVersion": 1,
+                "profile": "durable_apply",
+                "maxModelTurns": 8,
+                "maxToolCalls": 24,
+                "maxChildRuns": 0,
+                "childMaxModelTurns": 0,
+                "childMaxToolCalls": 0,
+                "childInputTokensPerTurn": 0,
+                "childOutputTokensPerTurn": 0,
+                "postConfirmationMaxModelTurns": 0
+            }),
+        ),
+    ];
+
+    for (request, expected) in cases {
+        assert_eq!(persisted_budget(request), expected);
+    }
 }

@@ -3,6 +3,7 @@ import {
   ANSWER_COMPLETE_PROCESS_ID,
   ANSWER_COMPLETE_PROCESS_LABEL,
 } from "@/lib/assistant-presentation";
+import { stageTextForPayload } from "@/lib/assistant-run-events";
 import type { AssistantRunEvent } from "@/types/ai";
 
 /** A safe, presentation-only item rendered inside one assistant message. */
@@ -47,18 +48,20 @@ export function projectAssistantProcessEvents(
   for (const event of events) {
     const createdAt = timestampMs(event.timestamp);
     switch (event.payload.kind) {
-      case "stage_changed":
-        if (isInternalPreparingStage(event.payload.stage)) {
+      case "stage_changed": {
+        const stage = stageTextForPayload(event.payload);
+        if (isInternalPreparingStage(stage)) {
           break;
         }
         items.push({
           id: `stage:${event.seq}`,
           kind: "stage",
-          label: event.payload.stage,
+          label: stage,
           status: "completed",
           createdAt,
         });
         break;
+      }
       case "reasoning_summary":
         items.push({
           id: `reasoning:${event.payload.summaryId}`,
