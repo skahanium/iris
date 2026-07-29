@@ -63,6 +63,54 @@ struct WebFailure {
     reason: WebEvidenceFailureReason,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct McpFailoverEvent {
+    from_provider_id: String,
+    provider_id: String,
+    model_id: String,
+    reason_code: String,
+    attempt: u32,
+}
+
+fn mcp_failover_events(
+    snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+    winner_provider_id: &str,
+) -> Vec<McpFailoverEvent> {
+    let Some(winner_index) = snapshots
+        .iter()
+        .position(|snapshot| snapshot.id == winner_provider_id)
+    else {
+        return Vec::new();
+    };
+    snapshots
+        .windows(2)
+        .take(winner_index)
+        .enumerate()
+        .map(|(index, pair)| McpFailoverEvent {
+            from_provider_id: pair[0].id.clone(),
+            provider_id: pair[1].id.clone(),
+            model_id: mcp_mapping_tool_name(pair[1].web_search_mapping_json.as_deref()),
+            reason_code: "mcp_provider_failed".into(),
+            attempt: (index + 2) as u32,
+        })
+        .collect()
+}
+
+fn mcp_mapping_tool_name(mapping_json: Option<&str>) -> String {
+    mapping_json
+        .and_then(|mapping| serde_json::from_str::<serde_json::Value>(mapping).ok())
+        .and_then(|mapping| {
+            mapping
+                .get("tool")
+                .or_else(|| mapping.get("tool_name"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|tool| !tool.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_default()
+}
+
 impl WebFailure {
     const fn new(code: SafeRunErrorCode, retryable: bool) -> Self {
         Self {
@@ -136,8 +184,9 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     web_attempt_count: Mutex<u32>,
     web_budget: RunWebBudget,
     web_degradation_emitted: Mutex<bool>,
-    required_web_provider_snapshot:
-        Option<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
+    required_web_provider_snapshots:
+        Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
+    web_preferred_provider_id: Mutex<Option<String>>,
     /// The parent Run's provider, used only for a bounded depth-one ChildRun.
     /// The ChildRun retains the parent Run identity and persistence boundary.
     child_run_provider: Option<&'a dyn ToolLoopProvider>,
@@ -154,7 +203,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         context: &'a RunContext,
         authorized_capabilities: Vec<CapabilityId>,
         sink: &'a dyn RunEventSink,
-        required_web_provider_snapshot: Option<
+        required_web_provider_snapshots: Vec<
             crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
         >,
     ) -> Self {
@@ -176,7 +225,8 @@ impl<'a> NormalRunToolExecutor<'a> {
             web_attempt_count: Mutex::new(0),
             web_budget: RunWebBudget::default(),
             web_degradation_emitted: Mutex::new(false),
-            required_web_provider_snapshot,
+            required_web_provider_snapshots,
+            web_preferred_provider_id: Mutex::new(None),
             child_run_provider: None,
             subagent_depth: 0,
         }
@@ -251,13 +301,14 @@ impl<'a> NormalRunToolExecutor<'a> {
         // commonly takes ~4s; scheduling deep page fetches (WEB_FETCH_TURN_BUDGET=8s)
         // after that exceeds the outer timeout and discards already-usable search
         // snippets. Prefer registering search snippets first.
+        let provider_snapshots = self.ordered_web_provider_snapshots();
         let broker_input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.to_owned(),
             urls,
             enabled: self.has_capability("web.search"),
             max_search_results: web_search_result_limit(remaining, 1),
             max_fetches: 0,
-            provider_snapshot: self.required_web_provider_snapshot.clone(),
+            provider_snapshots: provider_snapshots.clone(),
             provider_selection_frozen: true,
         };
         let budget_started = self.web_budget.started()?;
@@ -324,6 +375,8 @@ impl<'a> NormalRunToolExecutor<'a> {
                     remaining_model_web_budget_ms(budget_started.elapsed()),
                 ));
             };
+        self.remember_web_provider_winner(&output.usage)?;
+        self.emit_mcp_failover_events(&provider_snapshots, &output.usage)?;
         let packed_items =
             match pack_web_evidence_for_model(query, &output.items, remaining, &output.usage) {
                 Ok(items) if !items.is_empty() => items,
@@ -919,7 +972,7 @@ impl NormalRunToolExecutor<'_> {
             self.context,
             self.authorized_capabilities.clone(),
             self.sink,
-            self.required_web_provider_snapshot.clone(),
+            self.required_web_provider_snapshots.clone(),
         )
         .with_skill_activation_plan(self.skill_activation_plan.clone())
         .at_subagent_depth(1);
@@ -968,6 +1021,82 @@ impl NormalRunToolExecutor<'_> {
         self.authorized_capabilities
             .iter()
             .any(|capability| capability.as_str() == required)
+    }
+
+    fn ordered_web_provider_snapshots(
+        &self,
+    ) -> Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary> {
+        let preferred = self
+            .web_preferred_provider_id
+            .lock()
+            .ok()
+            .and_then(|value| value.clone());
+        let mut snapshots = self.required_web_provider_snapshots.clone();
+        if let Some(preferred) = preferred {
+            if let Some(index) = snapshots
+                .iter()
+                .position(|snapshot| snapshot.id == preferred)
+            {
+                let winner = snapshots.remove(index);
+                snapshots.insert(0, winner);
+            }
+        }
+        snapshots
+    }
+
+    fn remember_web_provider_winner(
+        &self,
+        usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
+    ) -> AppResult<()> {
+        let Some(winner) = usage.providers.iter().find_map(|provider| {
+            (provider.successful_search_requests > 0).then(|| provider.provider_id.clone())
+        }) else {
+            return Ok(());
+        };
+        *self
+            .web_preferred_provider_id
+            .lock()
+            .map_err(|_| AppError::msg("agent_run_web_provider_lock_failed"))? = Some(winner);
+        Ok(())
+    }
+
+    fn emit_mcp_failover_events(
+        &self,
+        provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+        usage: &crate::ai_runtime::web_evidence_broker::WebEvidenceUsage,
+    ) -> AppResult<()> {
+        let Some(winner) = usage.providers.iter().find_map(|provider| {
+            (provider.successful_search_requests > 0).then_some(provider.provider_id.as_str())
+        }) else {
+            return Ok(());
+        };
+        for event in mcp_failover_events(provider_snapshots, winner) {
+            let snapshot = AgentRunRepository::get_for_session(
+                &self.state.db,
+                &self.accepted.session.session_key,
+                &self.accepted.run_id,
+            )?
+            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            let persisted = AgentRunRepository::append_event(
+                &self.state.db,
+                AppendRunEventInput {
+                    run_id: self.accepted.run_id.clone(),
+                    state_version: snapshot.run.state_version,
+                    event_type: RunEventType::ProviderSwitched,
+                    payload: RunEventPayload::ProviderSwitched {
+                        capability: "web.search".into(),
+                        from_provider_id: event.from_provider_id,
+                        provider_id: event.provider_id,
+                        // MCP web mappings name tools rather than models.
+                        model_id: event.model_id,
+                        reason_code: event.reason_code,
+                        attempt: event.attempt,
+                    },
+                },
+            )?;
+            self.sink.emit(&persisted)?;
+        }
+        Ok(())
     }
 
     /// Emit `capability_degraded` once after a successful tool loop when Web attempts
@@ -1742,8 +1871,9 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        corroborated_source_threshold_met, emit_deferred_web_degradation, web_search_result_limit,
-        DeferredWebDegradationInput, NormalRunToolExecutor, RunWebBudget,
+        corroborated_source_threshold_met, emit_deferred_web_degradation, mcp_failover_events,
+        web_search_result_limit, DeferredWebDegradationInput, McpFailoverEvent,
+        NormalRunToolExecutor, RunWebBudget,
     };
     use crate::ai_runtime::agent_run_repository::{AgentRunRepository, AppendRunEventInput};
     use crate::ai_runtime::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
@@ -1903,7 +2033,7 @@ mod tests {
                 CapabilityId::new("memory.write"),
             ],
             &sink,
-            None,
+            Vec::new(),
         )
         .with_child_run_provider(&provider);
         let result = executor
@@ -2002,7 +2132,7 @@ mod tests {
                 CapabilityId::new("harness.child_run"),
             ],
             &sink,
-            None,
+            Vec::new(),
         )
         .with_child_run_provider(&provider);
         let result = executor
@@ -2031,6 +2161,41 @@ mod tests {
             .iter()
             .filter(|event| event["type"] == "capability_degraded")
             .count()
+    }
+
+    #[test]
+    fn mcp_failover_events_describe_only_provider_route_metadata() {
+        let snapshots = vec![
+            crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
+                id: "primary".into(),
+                kind: "mcp".into(),
+                transport_kind: "https".into(),
+                provider_config_hash: "config-a".into(),
+                web_search_mapping_json: Some(r#"{"tool":"primary_search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+            crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary {
+                id: "backup".into(),
+                kind: "mcp".into(),
+                transport_kind: "https".into(),
+                provider_config_hash: "config-b".into(),
+                web_search_mapping_json: Some(r#"{"tool":"backup_search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+        ];
+
+        let events = mcp_failover_events(&snapshots, "backup");
+
+        assert!(matches!(
+            events.as_slice(),
+            [McpFailoverEvent { from_provider_id, provider_id, model_id, reason_code, attempt }]
+                if from_provider_id == "primary"
+                    && provider_id == "backup"
+                    && model_id == "backup_search"
+                    && reason_code == "mcp_provider_failed"
+                    && *attempt == 2
+        ));
+        assert!(mcp_failover_events(&snapshots, "primary").is_empty());
     }
 
     #[test]
@@ -2202,7 +2367,7 @@ mod tests {
             &context,
             vec![CapabilityId::new("note.read")],
             &sink,
-            None,
+            Vec::new(),
         )
         .with_skill_activation_plan(Some(plan));
 

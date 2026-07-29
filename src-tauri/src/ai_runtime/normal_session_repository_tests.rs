@@ -178,6 +178,115 @@ fn normal_session_history_restores_new_turn_metadata_and_defaults_legacy_rows_to
 }
 
 #[test]
+fn prompt_history_and_memory_projection_exclude_failed_modern_turns() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    db.with_conn(|conn| {
+        for (run_id, request_id, turn_id, status) in [
+            ("failed-run", "failed-request", "failed-turn", "failed"),
+            (
+                "completed-run",
+                "completed-request",
+                "completed-turn",
+                "completed",
+            ),
+            (
+                "cancelled-run",
+                "cancelled-request",
+                "cancelled-turn",
+                "cancelled",
+            ),
+        ] {
+            conn.execute(
+                "INSERT INTO agent_runs
+                 (run_id, client_request_id, session_id, turn_id, status, state_version,
+                  effect, effort, security_domain, risk, envelope_json, goal_summary,
+                  created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, 'answer', 'direct', 'normal', 'read_only',
+                         '{}', '', '2026-07-28T00:00:00Z', '2026-07-28T00:00:00Z')",
+                rusqlite::params![run_id, request_id, session.session_id, turn_id, status],
+            )?;
+        }
+        for (seq, role, content, turn_id) in [
+            (1, "user", "legacy visible context", None),
+            (2, "user", "failed user must be hidden", Some("failed-turn")),
+            (3, "user", "completed user remains", Some("completed-turn")),
+            (
+                4,
+                "assistant",
+                "completed assistant remains",
+                Some("completed-turn"),
+            ),
+            (
+                5,
+                "user",
+                "cancelled user with partial remains",
+                Some("cancelled-turn"),
+            ),
+            (
+                6,
+                "assistant",
+                "cancelled partial remains",
+                Some("cancelled-turn"),
+            ),
+        ] {
+            conn.execute(
+                "INSERT INTO session_messages
+                 (session_id, seq, role, content, turn_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, '2026-07-28T00:00:00Z')",
+                rusqlite::params![session.session_id, seq, role, content, turn_id],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("seed modern and legacy turns");
+
+    let projected = NormalSessionRepository::recent_messages(&db, session.session_id, 20)
+        .expect("committed prompt projection");
+    assert_eq!(
+        projected
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "legacy visible context",
+            "completed user remains",
+            "completed assistant remains",
+            "cancelled user with partial remains",
+            "cancelled partial remains",
+        ]
+    );
+
+    let before_current =
+        NormalSessionRepository::recent_messages_before(&db, session.session_id, 99, 20)
+            .expect("committed Run context projection");
+    assert_eq!(
+        before_current
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>(),
+        projected
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+    );
+
+    ConversationMemory::refresh_for_session(
+        &db,
+        session.session_id,
+        super::conversation_memory::ConversationMemoryPolicy {
+            minimum_messages: 3,
+            recent_message_limit: 1,
+        },
+    )
+    .expect("refresh only committed projection");
+    let memory = ConversationMemory::latest_for_session(&db, session.session_id)
+        .expect("memory lookup")
+        .expect("committed conversation is long enough");
+    assert!(!memory.goal_summary.contains("failed user"));
+}
+
+#[test]
 fn retract_clears_conversation_memory_when_remaining_history_fits_the_recent_window() {
     let db = Database::open_in_memory().expect("database");
     let session = NormalSessionRepository::create(&db).expect("session");

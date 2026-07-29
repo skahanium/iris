@@ -13,7 +13,13 @@ import {
   getWebSearchAvailability,
   type WebSearchProviderOption,
 } from "@/lib/web-search-provider-state";
-import { settingsGet, settingsSet, webEvidenceProvidersList } from "@/lib/ipc";
+import {
+  settingsGet,
+  settingsSet,
+  webEvidenceProvidersList,
+  webSearchRouteGet,
+  webSearchRouteSet,
+} from "@/lib/ipc";
 import {
   EMPTY_ASSISTANT_CHROME,
   type AssistantChromeSnapshot,
@@ -64,14 +70,12 @@ export function useAiSidecarBridge({
 
   const refreshWebSearchProviders = useCallback(async () => {
     try {
-      const [providers, selectedProviderId] = await Promise.all([
+      const [providers, route] = await Promise.all([
         webEvidenceProvidersList(),
-        settingsGet<string | null>("web_search_provider_id"),
+        webSearchRouteGet(),
       ]);
       setWebSearchProviders(providers);
-      setWebSearchProviderIdState(
-        typeof selectedProviderId === "string" ? selectedProviderId : null,
-      );
+      setWebSearchProviderIdState(route.candidateProviderIds[0] ?? null);
     } catch {
       setWebSearchProviders([]);
       setWebSearchProviderIdState(null);
@@ -83,14 +87,14 @@ export function useAiSidecarBridge({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [enabled, providers, selectedProviderId] = await Promise.all([
+      const [enabled, providers, route] = await Promise.all([
         settingsGet<boolean>("web_search_enabled").catch(() => false),
         webEvidenceProvidersList().catch(() => []),
-        settingsGet<string | null>("web_search_provider_id").catch(() => null),
+        webSearchRouteGet().catch(() => ({ candidateProviderIds: [] })),
       ]);
       if (cancelled) return;
       const normalizedSelectedProviderId =
-        typeof selectedProviderId === "string" ? selectedProviderId : null;
+        route.candidateProviderIds[0] ?? null;
       const availability = getWebSearchAvailability(
         providers,
         normalizedSelectedProviderId,
@@ -144,7 +148,9 @@ export function useAiSidecarBridge({
   const setWebSearchProviderId = useCallback((providerId: string | null) => {
     const normalized = providerId?.trim() || null;
     setWebSearchProviderIdState(normalized);
-    void settingsSet("web_search_provider_id", normalized);
+    void webSearchRouteSet({
+      candidateProviderIds: normalized ? [normalized] : [],
+    });
   }, []);
 
   const sendSelectionToAi = useCallback(

@@ -52,6 +52,7 @@ pub(crate) mod normal_session_repository;
 mod normal_session_repository_tests;
 pub mod permission_decision;
 pub(crate) mod policy_decision_engine;
+pub(crate) mod prompt_contract;
 pub mod prompt_profile;
 pub(crate) mod provider_router;
 pub mod retrieval_broker;

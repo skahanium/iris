@@ -232,6 +232,8 @@ pub fn run() {
             commands::ai_commands::skills_list,
             commands::ai_commands::web_evidence_provider_upsert,
             commands::ai_commands::web_evidence_providers_list,
+            commands::ai_commands::web_search_route_get,
+            commands::ai_commands::web_search_route_set,
             commands::ai_commands::web_evidence_provider_toggle,
             commands::ai_commands::web_evidence_provider_delete,
             commands::ai_commands::web_evidence_provider_diagnostics,

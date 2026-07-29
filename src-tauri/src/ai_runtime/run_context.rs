@@ -19,6 +19,7 @@ use crate::ai_runtime::domain_executor::{
     AuthorizedDomainMaterial, DomainExecutionPlan, DomainExecutor, DomainMaterialRole,
 };
 use crate::ai_runtime::normal_session_repository::NormalSessionMessage;
+use crate::ai_runtime::prompt_contract::{CompiledPrompt, PromptContractV2};
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
@@ -102,22 +103,26 @@ impl RunContext {
 
     /// Render a prompt using one already-resolved domain plan for the same Run.
     pub(crate) fn prompt_with_domain_plan(&self, plan: &DomainExecutionPlan) -> String {
-        let mut prompt = plan.prompt_instructions.clone();
-        prompt.push_str("\n\n用户请求：\n");
-        prompt.push_str(&self.user_message);
-        if !plan.rendered_context.is_empty() {
-            prompt.push_str("\n\n");
-            prompt.push_str(&plan.rendered_context);
-        }
-        prompt
+        self.compile_prompt(plan, "").current_user_prompt
     }
 
     /// Build the provider-facing messages without dropping an attached image.
+    #[cfg(test)]
     pub(crate) fn messages_with_domain_plan(
         &self,
         plan: &DomainExecutionPlan,
     ) -> Vec<crate::ai_runtime::LlmMessage> {
-        let prompt = self.prompt_with_domain_plan(plan);
+        self.messages_with_domain_plan_and_skills(plan, "")
+    }
+
+    /// Build every provider-facing message through the versioned prompt compiler.
+    pub(crate) fn messages_with_domain_plan_and_skills(
+        &self,
+        plan: &DomainExecutionPlan,
+        activated_skills: &str,
+    ) -> Vec<crate::ai_runtime::LlmMessage> {
+        let compiled = self.compile_prompt(plan, activated_skills);
+        let prompt = compiled.current_user_prompt;
         let content = match &self.content_parts {
             Some(parts)
                 if parts
@@ -134,32 +139,9 @@ impl RunContext {
             }
             _ => crate::ai_types::MessageContent::Text(prompt),
         };
-        let mut system_prompt = self.system_prompt();
-        if let Some(memory) = &self.conversation_memory {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&memory.to_prompt_fragment());
-        }
-        if let Some(summary) = &self.previous_run_summary {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(summary);
-        }
-        if self.interrupted_assistant_continue {
-            system_prompt.push_str(
-                "\n\n## InterruptedAssistantDraft\n\
-                 The previous assistant message may be incomplete because the user stopped generation. \
-                 Only when the user clearly asks to continue or finish that draft, continue from it \
-                 without repeating the already written text. For a new unrelated request, ignore the draft.",
-            );
-        }
-        let profile = self.prompt_profile.to_system_prompt_fragment();
-        if !profile.is_empty() {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&profile);
-        }
-
         let mut messages = vec![crate::ai_runtime::LlmMessage {
             role: crate::ai_runtime::MessageRole::System,
-            content: crate::ai_types::MessageContent::Text(system_prompt),
+            content: crate::ai_types::MessageContent::Text(compiled.system_prompt),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -191,6 +173,24 @@ impl RunContext {
             reasoning_content: None,
         });
         messages
+    }
+
+    fn compile_prompt(&self, plan: &DomainExecutionPlan, activated_skills: &str) -> CompiledPrompt {
+        let conversation_memory = self
+            .conversation_memory
+            .as_ref()
+            .map(ConversationMemory::to_prompt_fragment);
+        PromptContractV2::compile(
+            &self.system_prompt(),
+            &self.prompt_profile,
+            &plan.prompt_instructions,
+            activated_skills,
+            conversation_memory.as_deref(),
+            self.previous_run_summary.as_deref(),
+            self.interrupted_assistant_continue,
+            &self.user_message,
+            &plan.rendered_context,
+        )
     }
 
     fn system_prompt(&self) -> String {
@@ -270,7 +270,12 @@ impl RunContextAssembler {
                 RECENT_CONVERSATION_MESSAGE_LIMIT,
             )?;
         let conversation_memory = ConversationMemory::latest_for_session(db, input.session_id)?;
-        let prompt_profile = PromptProfile::load(db)?;
+        // v2 Runs must retain the identity configuration accepted with their
+        // user turn. Legacy rows have no snapshot and remain read-compatible.
+        let prompt_profile = input
+            .prompt_profile_snapshot
+            .clone()
+            .unwrap_or(PromptProfile::load(db)?);
         let previous_run_summary =
             load_previous_run_safety_summary(db, input.session_id, input.message_seq_first)?;
         let interrupted_assistant_continue =

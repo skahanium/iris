@@ -135,6 +135,47 @@ fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
 }
 
 #[test]
+fn accept_freezes_normalized_prompt_profile_contract_metadata() {
+    let (db, session_id, session_key) = setup();
+    crate::ai_runtime::prompt_profile::PromptProfile::save(
+        &db,
+        &crate::ai_runtime::prompt_profile::PromptProfile {
+            display_name: " Iris ".into(),
+            persona: "稳定身份".into(),
+            ..Default::default()
+        },
+    )
+    .expect("save profile");
+
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted run");
+
+    db.with_read_conn(|conn| {
+        let (snapshot, version, hash): (String, i64, String) = conn.query_row(
+            "SELECT prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash
+             FROM agent_runs WHERE run_id = 'run-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert!(snapshot.contains("\"display_name\":\"Iris\""));
+        assert_eq!(version, 2);
+        assert!(!hash.is_empty());
+        Ok(())
+    })
+    .expect("frozen prompt metadata");
+    let prompt_input = AgentRunRepository::prompt_input_for_session(&db, &session_key, "run-1")
+        .expect("prompt input")
+        .expect("accepted Run");
+    assert_eq!(
+        prompt_input
+            .prompt_profile_snapshot
+            .expect("v2 snapshot")
+            .display_name,
+        "Iris"
+    );
+}
+
+#[test]
 fn accept_persists_immutable_scope_and_display_mentions_for_prompt_and_history_consumers() {
     let (db, session_id, session_key) = setup();
     let mut input = accept_input(session_id, session_key.clone());
@@ -264,7 +305,6 @@ fn accept_is_idempotent_for_client_request_id_without_duplicate_message_or_event
     let mut retry = accept_input(session_id, session_key);
     retry.run_id = "must-not-be-used".to_string();
     retry.turn_id = "must-not-be-used".to_string();
-    retry.message = "重试不能新增第二条用户消息".to_string();
     let second = AgentRunRepository::accept(&db, retry).expect("idempotent retry");
 
     assert_eq!(second, first);
@@ -284,6 +324,34 @@ fn accept_is_idempotent_for_client_request_id_without_duplicate_message_or_event
         Ok(())
     })
     .expect("idempotency facts");
+}
+
+#[test]
+fn accept_rejects_reused_client_request_id_when_request_fingerprint_differs() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("first accepted run");
+
+    let mut conflicting = accept_input(session_id, session_key);
+    conflicting.run_id = "must-not-be-used".to_string();
+    conflicting.turn_id = "must-not-be-used".to_string();
+    conflicting.message = "同一幂等键不能绑定另一条用户消息".to_string();
+
+    assert_eq!(
+        AgentRunRepository::accept(&db, conflicting)
+            .expect_err("a different request must not reuse the accepted Run")
+            .to_string(),
+        "agent_run_idempotency_conflict"
+    );
+    db.with_read_conn(|conn| {
+        let messages: i64 = conn.query_row("SELECT COUNT(*) FROM session_messages", [], |row| {
+            row.get(0)
+        })?;
+        let runs: i64 = conn.query_row("SELECT COUNT(*) FROM agent_runs", [], |row| row.get(0))?;
+        assert_eq!((messages, runs), (1, 1));
+        Ok(())
+    })
+    .expect("conflicting intake must not write facts");
 }
 
 #[test]
@@ -350,7 +418,7 @@ fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
     )
     .expect("terminal source");
 
-    let retry = AgentRunRepository::accept_web_retry(
+    let retry = AgentRunRepository::accept_retry(
         &db,
         RetryRunInput {
             session_key: session_key.clone(),
@@ -374,9 +442,68 @@ fn web_retry_reuses_the_original_turn_without_duplicate_user_message() {
         )?;
         assert_eq!(messages, 1);
         assert_eq!(retry_turn, "turn-1");
+        let (source_snapshot, retry_snapshot): (String, String) = conn.query_row(
+            "SELECT
+                 (SELECT prompt_profile_snapshot_json FROM agent_runs WHERE run_id = 'run-1'),
+                 (SELECT prompt_profile_snapshot_json FROM agent_runs WHERE run_id = 'run-2')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(retry_snapshot, source_snapshot);
         Ok(())
     })
     .expect("retry persistence facts");
+}
+
+#[test]
+fn failed_run_retry_reuses_only_the_latest_failed_turn() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("accepted source run");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET status = 'failed' WHERE run_id = 'run-1'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("failed source without web verification");
+
+    let retry = AgentRunRepository::accept_retry(
+        &db,
+        RetryRunInput {
+            session_key: session_key.clone(),
+            source_run_id: "run-1".into(),
+            client_request_id: "retry-any-failure".into(),
+            run_id: "run-2".into(),
+        },
+    )
+    .expect("latest failed Run is retryable");
+    assert_eq!(retry.turn_id, "turn-1");
+
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO session_messages (session_id, seq, role, content, created_at)
+             VALUES (?1, 2, 'user', 'newer turn makes the old failure ineligible', ?2)",
+            rusqlite::params![session_id, "2026-07-28T00:00:01Z"],
+        )?;
+        Ok(())
+    })
+    .expect("persist newer message");
+    assert_eq!(
+        AgentRunRepository::accept_retry(
+            &db,
+            RetryRunInput {
+                session_key,
+                source_run_id: "run-1".into(),
+                client_request_id: "retry-old-failure".into(),
+                run_id: "run-3".into(),
+            },
+        )
+        .expect_err("an old failed Run must not be retried")
+        .to_string(),
+        "agent_run_retry_not_available"
+    );
 }
 
 #[test]

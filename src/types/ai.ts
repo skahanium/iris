@@ -224,6 +224,10 @@ export interface AssistantSessionMessage {
   runId?: string;
   /** Shared user/assistant turn identity, absent for legacy history rows. */
   turnId?: string;
+  /** Latest durable state for this Run-owned turn. */
+  turnState?: RunState;
+  /** Whether this failed user turn can safely be retried without another user row. */
+  retryable?: boolean;
   /** Safe, persisted process events for this assistant message only. */
   processEvents?: AssistantRunEvent[];
   contentParts?: unknown;
@@ -406,6 +410,11 @@ export type ProviderSwitchReasonCode =
   | "transient_failure"
   | "provider_timeout"
   | "rate_limited"
+  | "connection_failure"
+  | "provider_http_failure"
+  | "temporarily_unavailable"
+  | "invalid_response"
+  | "provider_failure"
   | "health_circuit_open"
   | "capability_fallback"
   | "manual_override_rejected"
@@ -503,6 +512,10 @@ export type AssistantRunEventPayload =
     }
   | {
       kind: "provider_switched";
+      /** Capability whose execution route moved to a fallback. */
+      capability?: string;
+      /** Previous provider identifier; absent on historical events. */
+      fromProviderId?: string;
       providerId: string;
       /** Absent on events emitted by pre-maturity backends. */
       modelId?: string;
@@ -510,6 +523,8 @@ export type AssistantRunEventPayload =
       reasonCode?: ProviderSwitchReasonCode;
       /** Kept while older backends still emit unstructured switch reasons. */
       reason?: string;
+      /** One-based fallback attempt within the owning Run. */
+      attempt?: number;
     }
   | { kind: "evidence_registered"; evidenceId: string }
   | { kind: "paused"; reason: string }

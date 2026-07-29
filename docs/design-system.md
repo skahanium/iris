@@ -89,6 +89,8 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 brand tint；过程区脚注感（`assistant-process-footnote`）；折叠摘要末项在 Run `completed` 后为「答复完毕」。
 
+Agent 提交状态必须区分本地与远端事实：`已保存`、`正在连接模型`、`模型响应中`、`已完成`，以及失败后的「未完成，未纳入后续上下文」。只有 SQLite intake 回执成功才能显示“已保存”；它不得暗示 LLM 已收到请求。未知提交结果的重放沿用同一请求 ID，界面不重复插入用户气泡。安全终态失败的最新轮可显示“重试”，旧轮在已有后续对话时只显示“已跳过”。
+
 ### Web 引用（联网来源）
 
 - **行内**：仅显示数字上标徽章（`sup.ai-citation-wrap` + `a.ai-citation`），字号 `--text-caption`，浅底、`--ai-citation` 前景，**无下划线**；与正文 `--prose-link` 外链区分。模型仍可输出 `[N]` / `[citation:N]`，渲染层统一为徽章。
@@ -104,6 +106,7 @@ AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 bra
 - AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
 - 二级/三级详情页顶栏采用「左侧弱化返回按钮（`rounded-full` + `border-border-subtle` + `text-muted-foreground` + `aria-label="返回 X"`）+ 跨行居中标题/副标题」结构；返回按钮与主标题视觉分层，不再左对齐混排。
 - 进入 MCP 第三级（`managementCenterProviderId` 非空）时，二级「联网搜索」PanelSection（当前搜索提供方、联网已开启）整体隐藏，仅保留 `McpProfilesPanel` 详情；返回列表时恢复。
+- LLM 与联网搜索路由分别显示有序“主服务、备用 1、备用 2”，使用现有无障碍按钮上移/下移配置；不得把健康度排序伪装成用户顺序。输入框显式指定固定模型时，在该轮旁说明“不自动切换”。
 
 ## 交互规则
 
@@ -151,6 +154,8 @@ TaskPlan 体验遵循 Markdown-first：助手对话先形成可读 Markdown 草�
 ### AI 能力降级状态
 
 `capability_degraded` 是对话内的轻量、非终态状态：使用中性色或弱警示色，显示能力名称、用户安全说明和可重试提示，不遮挡已生成内容，也不触发全局红色错误条。只有模型完全不可用、权限拒绝、持久化失败或非法请求等整轮无法回答的故障使用红色终态错误。降级状态必须可由键盘和读屏器感知，并与最终 `completed` 状态同时成立。
+
+主模型或搜索服务在尚未产生可见输出时切换备用，应在过程区显示「主模型/搜索服务不可用，已切换到备用」的中性可访问状态；不显示 provider endpoint、模型凭据、搜索词、URL 或原始错误。已产生可见 token、工具调用或 provider continuation 后不显示“自动切换”，而按当前 Run 的安全终态处理。
 
 ### AI 过程流
 

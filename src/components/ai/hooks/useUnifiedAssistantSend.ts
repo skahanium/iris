@@ -54,6 +54,14 @@ export interface UnifiedAssistantSendOptions {
   setError: (message: string | null) => void;
 }
 
+interface PendingStart {
+  draftKey: string;
+  request: AssistantRunStartRequest;
+  images: ImageAttachment[];
+  displayMentions: DisplayMention[];
+  consumesOneShotReference: boolean;
+}
+
 async function referencesForFileMentions(
   mentions: readonly DisplayMention[],
   getFileSignature: (path: string) => Promise<FileSignatureResult>,
@@ -151,6 +159,7 @@ export function useUnifiedAssistantSend({
 }: UnifiedAssistantSendOptions) {
   const [isStarting, setIsStarting] = useState(false);
   const startingRef = useRef(false);
+  const pendingStartRef = useRef<PendingStart | null>(null);
 
   const send = useCallback(async () => {
     const draft = trimMentionDraft(input, displayMentions);
@@ -183,6 +192,24 @@ export function useUnifiedAssistantSend({
       }
     }
 
+    const draftKey = JSON.stringify({
+      aiDomain,
+      message,
+      images: images.map(({ id, mimeType, dataBase64 }) => ({
+        id,
+        mimeType,
+        dataBase64,
+      })),
+      session,
+      contextReferences,
+      displayMentions: draft.displayMentions,
+      retrievalScope,
+      webSearch,
+      modelOverride,
+      classifiedContextRef,
+    });
+    const pending = pendingStartRef.current;
+    const reusable = pending?.draftKey === draftKey ? pending : null;
     const explicitReferences = contextReferences.filter(
       (reference) => !reference.stale && !reference.invalidReason,
     );
@@ -201,55 +228,74 @@ export function useUnifiedAssistantSend({
     ) {
       explicitReferences.push(oneShotReference);
     }
-    const currentImages = images;
-    const clientRequestId = crypto.randomUUID();
     startingRef.current = true;
     setIsStarting(true);
     setError(null);
 
     try {
-      const mentionReferences =
-        aiDomain === "classified"
-          ? []
-          : await referencesForFileMentions(
-              draft.displayMentions,
-              getFileSignature,
-            );
-      const turnScope =
-        aiDomain === "classified"
-          ? { paths: [], pathPrefixes: [], requiredTags: [] }
-          : mentionsToContextScope(draft.displayMentions);
+      let pendingStart = reusable;
+      if (!pendingStart) {
+        const mentionReferences =
+          aiDomain === "classified"
+            ? []
+            : await referencesForFileMentions(
+                draft.displayMentions,
+                getFileSignature,
+              );
+        const turnScope =
+          aiDomain === "classified"
+            ? { paths: [], pathPrefixes: [], requiredTags: [] }
+            : mentionsToContextScope(draft.displayMentions);
+        pendingStart = {
+          draftKey,
+          request: {
+            clientRequestId: crypto.randomUUID(),
+            ...(session ? { session } : {}),
+            turn: {
+              message,
+              ...(images.length > 0
+                ? { contentParts: contentPartsForImages(message, images) }
+                : {}),
+              explicitReferences:
+                aiDomain === "classified"
+                  ? []
+                  : [...explicitReferences, ...mentionReferences],
+              retrievalScope: turnScope,
+              displayMentions:
+                aiDomain === "classified" ? [] : draft.displayMentions,
+            },
+            webEnabled: aiDomain === "classified" ? false : webSearch,
+            securityDomain: aiDomain,
+            ...(aiDomain === "classified" && classifiedContextRef
+              ? { classifiedContextRef }
+              : {}),
+            ...(modelOverride ? { modelOverride } : {}),
+          },
+          images,
+          displayMentions: draft.displayMentions,
+          consumesOneShotReference: oneShotReference !== null,
+        };
+        pendingStartRef.current = pendingStart;
+      }
       setActivityHint("正在提交请求…");
-      const accepted = await start({
-        clientRequestId,
-        ...(session ? { session } : {}),
-        turn: {
-          message,
-          ...(currentImages.length > 0
-            ? { contentParts: contentPartsForImages(message, currentImages) }
-            : {}),
-          explicitReferences:
-            aiDomain === "classified"
-              ? []
-              : [...explicitReferences, ...mentionReferences],
-          retrievalScope: turnScope,
-          displayMentions:
-            aiDomain === "classified" ? [] : draft.displayMentions,
-        },
-        webEnabled: aiDomain === "classified" ? false : webSearch,
-        securityDomain: aiDomain,
-        ...(aiDomain === "classified" && classifiedContextRef
-          ? { classifiedContextRef }
-          : {}),
-        ...(modelOverride ? { modelOverride } : {}),
-      });
-      const boundAcceptance = { ...accepted, clientRequestId };
-      if (oneShotReference) consumeOneShotContextReference?.();
+      let accepted: AssistantRunAccepted;
+      try {
+        accepted = await start(pendingStart.request);
+      } catch {
+        accepted = await start(pendingStart.request);
+      }
+      const boundAcceptance = {
+        ...accepted,
+        clientRequestId: pendingStart.request.clientRequestId,
+      };
+      pendingStartRef.current = null;
+      if (pendingStart.consumesOneShotReference)
+        consumeOneShotContextReference?.();
       commitAcceptedTurn(
         message,
         boundAcceptance,
-        currentImages,
-        draft.displayMentions,
+        pendingStart.images,
+        pendingStart.displayMentions,
       );
       setStreaming(true);
       setSession(aiDomain === "classified" ? null : accepted.session);

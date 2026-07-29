@@ -35,6 +35,12 @@ pub(crate) struct NormalSessionMessage {
     pub(crate) tool_calls: Option<serde_json::Value>,
     /// Unified Run turn identity when the row belongs to a modern Run.
     pub(crate) turn_id: Option<String>,
+    /// Latest Run identity for the turn, absent for legacy history.
+    pub(crate) run_id: Option<String>,
+    /// Latest durable Run state for the turn, absent for legacy history.
+    pub(crate) turn_state: Option<String>,
+    /// Whether this visible failed user turn can safely be retried in place.
+    pub(crate) retryable: bool,
     pub(crate) context_scope: serde_json::Value,
     pub(crate) display_mentions: Vec<serde_json::Value>,
     pub(crate) web_citations: Vec<crate::ai_types::WebCitationEntry>,
@@ -125,11 +131,25 @@ impl NormalSessionRepository {
             .ok_or_else(|| AppError::msg("assistant session not found"))?;
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
-                        context_scope_json, display_mentions_json, citation_map_json
-                 FROM session_messages
-                 WHERE session_id = ?1
-                 ORDER BY seq DESC
+                "SELECT m.seq, m.role, m.content, m.content_parts, m.tool_calls, m.created_at, m.turn_id,
+                        m.context_scope_json, m.display_mentions_json, m.citation_map_json,
+                        (SELECT r.run_id FROM agent_runs r
+                         WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id
+                         ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1),
+                        (SELECT r.status FROM agent_runs r
+                         WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id
+                         ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1),
+                        CASE WHEN m.role = 'user'
+                                  AND (SELECT r.status FROM agent_runs r
+                                       WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id
+                                       ORDER BY r.created_at DESC, r.rowid DESC LIMIT 1) = 'failed'
+                                  AND NOT EXISTS (SELECT 1 FROM session_messages later
+                                                  WHERE later.session_id = m.session_id
+                                                    AND later.seq > m.seq)
+                             THEN 1 ELSE 0 END
+                 FROM session_messages m
+                 WHERE m.session_id = ?1
+                 ORDER BY m.seq DESC
                  LIMIT ?2",
             )?;
             let rows =
@@ -144,6 +164,9 @@ impl NormalSessionRepository {
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         created_at: row.get(5)?,
                         turn_id: row.get(6)?,
+                        run_id: row.get(10)?,
+                        turn_state: row.get(11)?,
+                        retryable: row.get::<_, i64>(12)? != 0,
                         context_scope: parse_json_value_or_empty_array(row.get(7)?),
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
                         web_citations:
@@ -170,11 +193,31 @@ impl NormalSessionRepository {
     ) -> AppResult<Vec<NormalSessionMessage>> {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
-                        context_scope_json, display_mentions_json, citation_map_json
-                 FROM session_messages
-                 WHERE session_id = ?1
-                 ORDER BY seq DESC
+                "SELECT m.seq, m.role, m.content, m.content_parts, m.tool_calls, m.created_at, m.turn_id,
+                        m.context_scope_json, m.display_mentions_json, m.citation_map_json,
+                        NULL, NULL, 0
+                 FROM session_messages m
+                 WHERE m.session_id = ?1
+                   AND (m.turn_id IS NULL
+                        OR NOT EXISTS (SELECT 1 FROM agent_runs r
+                                       WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id)
+                        OR EXISTS (SELECT 1 FROM agent_runs r
+                                   WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id
+                                     AND r.rowid = (SELECT latest.rowid FROM agent_runs latest
+                                                    WHERE latest.session_id = m.session_id
+                                                      AND latest.turn_id = m.turn_id
+                                                    ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)
+                                     AND ((r.status = 'completed'
+                                           AND EXISTS (SELECT 1 FROM session_messages paired
+                                                       WHERE paired.session_id = m.session_id
+                                                         AND paired.turn_id = m.turn_id
+                                                         AND paired.role = 'assistant'))
+                                          OR (r.status = 'cancelled'
+                                              AND EXISTS (SELECT 1 FROM session_messages paired
+                                                          WHERE paired.session_id = m.session_id
+                                                            AND paired.turn_id = m.turn_id
+                                                            AND paired.role = 'assistant')))))
+                 ORDER BY m.seq DESC
                  LIMIT ?2",
             )?;
             let rows = statement.query_map(rusqlite::params![session_id, limit], |row| {
@@ -188,6 +231,9 @@ impl NormalSessionRepository {
                         .and_then(|value| serde_json::from_str(&value).ok()),
                     created_at: row.get(5)?,
                     turn_id: row.get(6)?,
+                    run_id: row.get(10)?,
+                    turn_state: row.get(11)?,
+                    retryable: row.get::<_, i64>(12)? != 0,
                     context_scope: parse_json_value_or_empty_array(row.get(7)?),
                     display_mentions: parse_json_array_or_empty(row.get(8)?),
                     web_citations: crate::ai_runtime::citation_linkify::parse_web_citation_entries(
@@ -214,11 +260,31 @@ impl NormalSessionRepository {
     ) -> AppResult<Vec<NormalSessionMessage>> {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
-                "SELECT seq, role, content, content_parts, tool_calls, created_at, turn_id,
-                        context_scope_json, display_mentions_json, citation_map_json
-                 FROM session_messages
-                 WHERE session_id = ?1 AND seq < ?2 AND role IN ('user', 'assistant')
-                 ORDER BY seq DESC
+                "SELECT m.seq, m.role, m.content, m.content_parts, m.tool_calls, m.created_at, m.turn_id,
+                        m.context_scope_json, m.display_mentions_json, m.citation_map_json,
+                        NULL, NULL, 0
+                 FROM session_messages m
+                 WHERE m.session_id = ?1 AND m.seq < ?2 AND m.role IN ('user', 'assistant')
+                   AND (m.turn_id IS NULL
+                        OR NOT EXISTS (SELECT 1 FROM agent_runs r
+                                       WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id)
+                        OR EXISTS (SELECT 1 FROM agent_runs r
+                                   WHERE r.session_id = m.session_id AND r.turn_id = m.turn_id
+                                     AND r.rowid = (SELECT latest.rowid FROM agent_runs latest
+                                                    WHERE latest.session_id = m.session_id
+                                                      AND latest.turn_id = m.turn_id
+                                                    ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)
+                                     AND ((r.status = 'completed'
+                                           AND EXISTS (SELECT 1 FROM session_messages paired
+                                                       WHERE paired.session_id = m.session_id
+                                                         AND paired.turn_id = m.turn_id
+                                                         AND paired.role = 'assistant'))
+                                          OR (r.status = 'cancelled'
+                                              AND EXISTS (SELECT 1 FROM session_messages paired
+                                                          WHERE paired.session_id = m.session_id
+                                                            AND paired.turn_id = m.turn_id
+                                                            AND paired.role = 'assistant')))))
+                 ORDER BY m.seq DESC
                  LIMIT ?3",
             )?;
             let rows =
@@ -233,6 +299,9 @@ impl NormalSessionRepository {
                             .and_then(|value| serde_json::from_str(&value).ok()),
                         created_at: row.get(5)?,
                         turn_id: row.get(6)?,
+                        run_id: row.get(10)?,
+                        turn_state: row.get(11)?,
+                        retryable: row.get::<_, i64>(12)? != 0,
                         context_scope: parse_json_value_or_empty_array(row.get(7)?),
                         display_mentions: parse_json_array_or_empty(row.get(8)?),
                         web_citations:

@@ -289,7 +289,7 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
         &context,
         vec![CapabilityId::new("runtime.read")],
         &sink,
-        None,
+        Vec::new(),
     );
 
     let result = executor
@@ -360,7 +360,7 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         &context,
         capabilities,
         &sink,
-        Some(provider_snapshot),
+        vec![provider_snapshot],
     );
 
     RunEngine::execute_tool_loop_with_sink(

@@ -242,6 +242,8 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
+                let from_provider_id = dispatch.provider.name.clone();
+                let from_model_id = dispatch.provider.model.clone();
                 #[cfg(test)]
                 let gateway = match &self.test_streaming_client {
                     Some(client) => crate::ai_runtime::model_gateway::ModelGateway::new(
@@ -259,10 +261,41 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
                         .clone()])?;
                 let provider =
                     ModelGatewayStreamingDirectAnswerProvider::from_dispatch(&gateway, dispatch)?;
-                match provider.answer_streaming(run_id, messages, observer).await {
-                    Ok(response) => return Ok(response),
+                let response = provider
+                    .answer_streaming(run_id, messages, observer)
+                    .await
+                    .and_then(|response| {
+                        (response
+                            .content
+                            .as_deref()
+                            .is_some_and(|content| !content.trim().is_empty())
+                            || !response.tool_calls.is_empty())
+                        .then_some(response)
+                        .ok_or_else(|| AppError::msg("agent_run_invalid_model_response"))
+                    });
+                match response {
+                    Ok(response) => {
+                        crate::ai_runtime::circuit_breaker::record_llm_success(
+                            &from_provider_id,
+                            &from_model_id,
+                        );
+                        return Ok(response);
+                    }
                     Err(error) => {
                         let failure = classify_failover_failure(&error);
+                        if !may_failover_after_model_attempt(
+                            failure,
+                            observer.has_visible_content(),
+                            false,
+                        ) {
+                            return Err(error);
+                        }
+                        if failure.is_retryable() {
+                            crate::ai_runtime::circuit_breaker::record_llm_failure(
+                                &from_provider_id,
+                                &from_model_id,
+                            );
+                        }
                         let Some(next_index) =
                             self.route.next_selected_index_after_for_requirements(
                                 self.requirements,
@@ -272,9 +305,9 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
                         else {
                             return Err(error);
                         };
-                        let provider_id = self
+                        let (provider_id, model_id) = self
                             .route
-                            .selected_provider_id_for_requirements(self.requirements, next_index)
+                            .selected_provider_model_for_requirements(self.requirements, next_index)
                             .ok_or_else(|| AppError::msg("agent_run_no_capable_model"))?;
                         let snapshot = AgentRunRepository::get_for_session(
                             self.db,
@@ -289,8 +322,12 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
                                 state_version: snapshot.run.state_version,
                                 event_type: RunEventType::ProviderSwitched,
                                 payload: RunEventPayload::ProviderSwitched {
+                                    capability: "model.respond".to_string(),
+                                    from_provider_id,
                                     provider_id: provider_id.to_string(),
-                                    reason: failover_reason(failure).to_string(),
+                                    model_id: model_id.to_string(),
+                                    reason_code: failover_reason(failure).to_string(),
+                                    attempt: (next_index + 1) as u32,
                                 },
                             },
                         )?;
@@ -313,6 +350,8 @@ pub(crate) struct FailoverStreamingToolLoopProvider<'a> {
     session: &'a AssistantSessionRef,
     sink: &'a dyn RunEventSink,
     continuations: Mutex<HashMap<String, SelectedResponseContinuation>>,
+    selected_indices: Mutex<HashMap<String, usize>>,
+    tool_bound_runs: Mutex<HashSet<String>>,
     #[cfg(test)]
     test_streaming_client: Option<reqwest::Client>,
 }
@@ -338,6 +377,8 @@ impl<'a> FailoverStreamingToolLoopProvider<'a> {
             session,
             sink,
             continuations: Mutex::new(HashMap::new()),
+            selected_indices: Mutex::new(HashMap::new()),
+            tool_bound_runs: Mutex::new(HashSet::new()),
             #[cfg(test)]
             test_streaming_client: None,
         }
@@ -377,12 +418,20 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
             let mut selected_index = stored_continuation
                 .as_ref()
                 .map(|state| state.selected_index)
+                .or_else(|| {
+                    self.selected_indices
+                        .lock()
+                        .ok()
+                        .and_then(|indices| indices.get(run_id).copied())
+                })
                 .unwrap_or(0);
             let continuation = stored_continuation.map(|state| state.continuation);
             loop {
                 let dispatch = self
                     .route
                     .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
+                let from_provider_id = dispatch.provider.name.clone();
+                let from_model_id = dispatch.provider.model.clone();
                 #[cfg(test)]
                 let gateway = match &self.test_streaming_client {
                     Some(client) => crate::ai_runtime::model_gateway::ModelGateway::new(
@@ -409,6 +458,10 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                     .await
                 {
                     Ok(response) => {
+                        crate::ai_runtime::circuit_breaker::record_llm_success(
+                            &from_provider_id,
+                            &from_model_id,
+                        );
                         let mut continuations = self
                             .continuations
                             .lock()
@@ -424,16 +477,52 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                         } else {
                             continuations.remove(run_id);
                         }
+                        drop(continuations);
+                        if response.tool_calls.is_empty() {
+                            self.selected_indices
+                                .lock()
+                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .remove(run_id);
+                            self.tool_bound_runs
+                                .lock()
+                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .remove(run_id);
+                        } else {
+                            self.selected_indices
+                                .lock()
+                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .insert(run_id.to_string(), selected_index);
+                            self.tool_bound_runs
+                                .lock()
+                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .insert(run_id.to_string());
+                        }
                         return Ok(response);
                     }
                     Err(error) => {
                         // A Responses continuation is cryptographically/provider-bound.
                         // Retrying it against a different candidate would either fail or
                         // lose tool context, so it is deliberately never failed over.
-                        if continuation.is_some() {
+                        let provider_bound = continuation.is_some()
+                            || self
+                                .tool_bound_runs
+                                .lock()
+                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .contains(run_id);
+                        let failure = classify_failover_failure(&error);
+                        if !may_failover_after_model_attempt(
+                            failure,
+                            observer.has_visible_content(),
+                            provider_bound,
+                        ) {
                             return Err(error);
                         }
-                        let failure = classify_failover_failure(&error);
+                        if failure.is_retryable() {
+                            crate::ai_runtime::circuit_breaker::record_llm_failure(
+                                &from_provider_id,
+                                &from_model_id,
+                            );
+                        }
                         let Some(next_index) =
                             self.route.next_selected_index_after_for_requirements(
                                 self.requirements,
@@ -443,9 +532,9 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                         else {
                             return Err(error);
                         };
-                        let provider_id = self
+                        let (provider_id, model_id) = self
                             .route
-                            .selected_provider_id_for_requirements(self.requirements, next_index)
+                            .selected_provider_model_for_requirements(self.requirements, next_index)
                             .ok_or_else(|| AppError::msg("agent_run_no_capable_model"))?;
                         let snapshot = AgentRunRepository::get_for_session(
                             self.db,
@@ -460,8 +549,12 @@ impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
                                 state_version: snapshot.run.state_version,
                                 event_type: RunEventType::ProviderSwitched,
                                 payload: RunEventPayload::ProviderSwitched {
+                                    capability: "model.respond".to_string(),
+                                    from_provider_id,
                                     provider_id: provider_id.to_string(),
-                                    reason: failover_reason(failure).to_string(),
+                                    model_id: model_id.to_string(),
+                                    reason_code: failover_reason(failure).to_string(),
+                                    attempt: (next_index + 1) as u32,
                                 },
                             },
                         )?;
@@ -628,6 +721,17 @@ fn presentation_payload_for_durable_event(
             },
             duration_ms: *duration_ms,
         }),
+        RunEventPayload::ProviderSwitched { capability, .. } => {
+            Some(RunPresentationPayload::ProcessStarted {
+                item_id: format!("provider-switch:{}", event.seq()),
+                item_kind: PresentationProcessKind::Stage,
+                label: if capability == "model.respond" {
+                    "主模型不可用，已切换到备用模型".to_string()
+                } else {
+                    "服务不可用，已切换到备用服务".to_string()
+                },
+            })
+        }
         RunEventPayload::Failed { .. }
         | RunEventPayload::Cancelled { .. }
         | RunEventPayload::Completed { .. } => Some(RunPresentationPayload::AnswerComplete),
@@ -863,6 +967,12 @@ impl AgentRunStreamObserver<'_> {
             return self.presentation_content.clone();
         }
         self.transient_content.clone()
+    }
+
+    /// Whether this model attempt has already produced user-visible tokens.
+    /// A fallback after this point would splice two providers into one answer.
+    pub(crate) fn has_visible_content(&self) -> bool {
+        !self.presentation_content.is_empty()
     }
 
     /// Allow a later final turn to emit AnswerDelta after tool rounds stayed private.
@@ -1205,6 +1315,10 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
         self.enable_deferred_visible_deltas();
         self.reset_provisional_answer_if_any();
         Ok(())
+    }
+
+    fn has_visible_content(&self) -> bool {
+        self.has_visible_content()
     }
 }
 
@@ -2917,11 +3031,46 @@ fn failover_reason(failure: crate::ai_runtime::provider_router::ProviderFailure)
         ProviderFailure::HttpStatus(429) => "rate_limited",
         ProviderFailure::HttpStatus(500..=599) => "provider_http_failure",
         ProviderFailure::TemporarilyUnavailable => "temporarily_unavailable",
+        ProviderFailure::InvalidResponse => "invalid_response",
         ProviderFailure::Unauthorized
         | ProviderFailure::Forbidden
         | ProviderFailure::Cancelled
         | ProviderFailure::Unknown
         | ProviderFailure::HttpStatus(_) => "provider_failure",
+    }
+}
+
+fn may_failover_after_model_attempt(
+    failure: crate::ai_runtime::provider_router::ProviderFailure,
+    has_visible_output: bool,
+    provider_bound_continuation_or_tool: bool,
+) -> bool {
+    !has_visible_output
+        && !provider_bound_continuation_or_tool
+        && failure.permits_cross_provider_failover()
+}
+
+#[cfg(test)]
+mod llm_failover_guard_tests {
+    use super::may_failover_after_model_attempt;
+    use crate::ai_runtime::provider_router::ProviderFailure;
+
+    #[test]
+    fn visible_partial_output_never_fails_over_to_a_second_model() {
+        assert!(!may_failover_after_model_attempt(
+            ProviderFailure::Timeout,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn responses_continuation_never_crosses_provider_boundaries() {
+        assert!(!may_failover_after_model_attempt(
+            ProviderFailure::TemporarilyUnavailable,
+            false,
+            true,
+        ));
     }
 }
 

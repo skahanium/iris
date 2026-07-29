@@ -15,6 +15,7 @@ import type {
   ContentPart,
   CitationBinding,
   DisplayMention,
+  RunState,
   ToolCallInfo,
   WebCitationEntry,
 } from "@/types/ai";
@@ -35,6 +36,8 @@ export interface ChatLine {
   clientRequestId?: string;
   runId?: string;
   turnId?: string;
+  turnState?: RunState;
+  retryable?: boolean;
   /** Reference to full content when React state only keeps a bounded projection. */
   contentRef?: AiPayloadRef;
   /** 多模态原始数据（传给后端）；纯文本时为 undefined */
@@ -474,13 +477,21 @@ export const AiMessageList = memo(function AiMessageList({
               }
             />
           </div>
-          <AiMessageBubble
-            role="user"
-            content={userContent}
-            selected={isSelected}
-            images={m.images}
-            displayMentions={m.displayMentions}
-          />
+          <div className="flex min-w-0 flex-col items-end gap-1">
+            <AiMessageBubble
+              role="user"
+              content={userContent}
+              selected={isSelected}
+              images={m.images}
+              displayMentions={m.displayMentions}
+            />
+            {m.turnState === "failed" ? (
+              <p className="text-[10px] text-muted-foreground">
+                本次请求未完成，未纳入后续对话上下文。
+                {m.retryable ? " 可重试。" : ""}
+              </p>
+            ) : null}
+          </div>
         </div>
       );
     }

@@ -17,13 +17,13 @@ describe("model routing and Run execution contracts", () => {
     expect(llmTypes).toContain("EndpointFamily");
   });
 
-  it("renders provider configuration and the global model-pool default", () => {
+  it("renders provider configuration and the ordered model-pool route", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
 
     expect(section).toContain('data-section="llm-model-pool"');
-    expect(section).toContain(
-      "defaultModel: { providerId: parsed[0], modelId: parsed[1] }",
-    );
+    expect(section).toContain("candidateOrder: normalizeCandidateOrder(");
+    expect(section).toContain("schemaVersion: 6");
+    expect(section).toContain("第一项是主模型，后两项是备用模型");
     expect(section).toContain("AddModelWizard");
     expect(section).toContain("addProviderModel");
     expect(section).toContain("removeProviderModel");
@@ -55,7 +55,8 @@ describe("model routing and Run execution contracts", () => {
     const sender = read("src/components/ai/hooks/useUnifiedAssistantSend.ts");
     const run = read("src/hooks/useAssistantRun.ts");
 
-    expect(sender).toContain("start({");
+    expect(sender).toContain("start(pendingStart.request)");
+    expect(sender).toContain("clientRequestId: crypto.randomUUID()");
     expect(sender).toContain("explicitReferences");
     expect(sender).toContain("securityDomain: aiDomain");
     expect(run).toContain("assistantRunStart");

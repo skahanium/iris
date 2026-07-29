@@ -1,7 +1,6 @@
 //! Unified network evidence broker for research workflows.
 
 use chrono::Utc;
-use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
@@ -15,6 +14,7 @@ use crate::storage::db::Database;
 
 const FETCH_EXCERPT_MAX_CHARS: usize = 12_000;
 const WEB_PACKET_EXCERPT_MAX_CHARS: usize = 4_000;
+#[cfg(test)]
 const MERGED_FETCH_MAX_CHARS: usize = 12_000;
 const WEB_CONTEXT_TRUNCATION_MARKER: &str = "\n...（网页正文已按上下文预算截断）";
 const WEB_FETCH_TURN_BUDGET: Duration = Duration::from_secs(8);
@@ -39,8 +39,8 @@ pub struct WebEvidenceBrokerInput {
     pub max_fetches: usize,
     /// Optional immutable Run-local provider/mapping snapshot. When supplied,
     /// the broker fails closed if that provider changes before a request.
-    pub provider_snapshot:
-        Option<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
+    pub provider_snapshots:
+        Vec<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary>,
     /// Distinguishes a deliberately frozen absence from legacy callers that
     /// have not yet supplied a Run-local provider decision.
     pub provider_selection_frozen: bool,
@@ -139,7 +139,7 @@ async fn collect_web_evidence_with_queries(
             db,
             planned_queries,
             input.max_search_results,
-            input.provider_snapshot.as_ref(),
+            &input.provider_snapshots,
             input.provider_selection_frozen,
         )
         .await
@@ -170,7 +170,7 @@ async fn collect_web_evidence_with_queries(
         db,
         items,
         input.max_fetches,
-        input.provider_snapshot.as_ref(),
+        input.provider_snapshots.first(),
     )
     .await?;
     Ok(WebEvidenceBrokerOutput { items, usage })
@@ -428,79 +428,156 @@ enum SearchProviderCandidate {
 
 fn search_provider_candidates(
     db: &Database,
-    provider_snapshot: Option<
-        &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
-    >,
+    provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     provider_selection_frozen: bool,
 ) -> AppResult<Vec<SearchProviderCandidate>> {
-    let provider = match provider_snapshot {
-        Some(snapshot) => snapshot.clone(),
-        None if provider_selection_frozen => {
-            return Err(AppError::msg("web_search_provider_missing"));
+    let providers = if !provider_snapshots.is_empty() {
+        provider_snapshots.to_vec()
+    } else {
+        match provider_selection_frozen {
+            true => return Err(AppError::msg("web_search_provider_missing")),
+            false => {
+                crate::ai_runtime::mcp_runtime_registry::resolve_web_search_provider_route(db)?
+            }
         }
-        None => crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)?,
     };
-    Ok(vec![SearchProviderCandidate::Mcp(provider.id)])
+    Ok(providers
+        .into_iter()
+        .take(3)
+        .map(|provider| SearchProviderCandidate::Mcp(provider.id))
+        .collect())
 }
 
-async fn collect_planned_query_fetches(
-    db: &Database,
-    planned_queries: Vec<String>,
-    max_search_results: usize,
-    provider_snapshot: Option<
-        &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
-    >,
-    provider_selection_frozen: bool,
-) -> Vec<Result<SearchProviderFetch, String>> {
-    let futures = planned_queries.iter().map(|query| {
-        collect_search_provider_fetches(
-            db,
-            query,
-            max_search_results,
-            provider_snapshot,
-            provider_selection_frozen,
-        )
-    });
-    flatten_planned_query_fetch_results(join_all(futures).await)
+fn expected_search_provider_snapshot<'a>(
+    provider_snapshots: &'a [crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+    provider_id: &str,
+) -> Option<&'a crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary> {
+    provider_snapshots
+        .iter()
+        .find(|snapshot| snapshot.id == provider_id)
 }
 
-fn flatten_planned_query_fetch_results(
-    batches: Vec<Vec<Result<SearchProviderFetch, String>>>,
-) -> Vec<Result<SearchProviderFetch, String>> {
-    batches.into_iter().flatten().collect()
+fn search_provider_timeout(position: usize, started: Instant) -> Duration {
+    const TOTAL: Duration = Duration::from_secs(20);
+    const PLANNED: [Duration; 3] = [
+        Duration::from_secs(10),
+        Duration::from_secs(6),
+        Duration::from_secs(4),
+    ];
+    let remaining = TOTAL.saturating_sub(started.elapsed());
+    PLANNED
+        .get(position)
+        .copied()
+        .unwrap_or(Duration::ZERO)
+        .min(remaining)
 }
 
 async fn collect_search_provider_fetches(
     db: &Database,
     query: &str,
     max_search_results: usize,
-    provider_snapshot: Option<
-        &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
-    >,
+    provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
     provider_selection_frozen: bool,
 ) -> Vec<Result<SearchProviderFetch, String>> {
     let candidates =
-        match search_provider_candidates(db, provider_snapshot, provider_selection_frozen) {
+        match search_provider_candidates(db, provider_snapshots, provider_selection_frozen) {
             Ok(candidates) => candidates,
             Err(error) => return vec![Err(error.to_string())],
         };
-    let futures = candidates.into_iter().map(|candidate| async move {
-        match candidate {
-            SearchProviderCandidate::Mcp(provider_id) => {
-                collect_mcp_search_provider_fetch(
+    let started = Instant::now();
+    let has_backup = candidates.len() > 1;
+    let mut failures = Vec::new();
+    for (position, candidate) in candidates.into_iter().enumerate() {
+        let SearchProviderCandidate::Mcp(provider_id) = candidate;
+        let timeout = search_provider_timeout(position, started);
+        if timeout.is_zero() {
+            failures.push(Err("agent_run_web_provider_timeout".into()));
+            break;
+        }
+        let expected_snapshot = expected_search_provider_snapshot(provider_snapshots, &provider_id);
+        let result = collect_mcp_search_provider_fetch(
+            db,
+            query,
+            &provider_id,
+            max_search_results,
+            expected_snapshot,
+            timeout,
+        )
+        .await;
+        match result {
+            Ok(fetch) if fetch.failure_reason.is_none() => return vec![Ok(fetch)],
+            Ok(fetch) => failures.push(Ok(fetch)),
+            Err(error) => failures.push(Err(error.to_string())),
+        }
+        // With a route the next provider is the retry. Preserve the legacy
+        // short backoff only for a single configured provider.
+        if !has_backup && position == 0 && is_retryable_search_failure_result(failures.last()) {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let retry_timeout = search_provider_timeout(position, started);
+            if !retry_timeout.is_zero() {
+                let retry = collect_mcp_search_provider_fetch(
                     db,
                     query,
                     &provider_id,
                     max_search_results,
-                    provider_snapshot,
+                    expected_snapshot,
+                    retry_timeout,
                 )
                 .await
+                .map_err(|error| error.to_string());
+                if matches!(&retry, Ok(fetch) if fetch.failure_reason.is_none()) {
+                    return vec![retry];
+                }
+                failures.push(retry);
             }
         }
-        .map_err(|err| err.to_string())
-    });
-    join_all(futures).await
+    }
+    failures
 }
+
+fn is_retryable_search_failure_result(
+    result: Option<&Result<SearchProviderFetch, String>>,
+) -> bool {
+    match result {
+        Some(Err(error)) => is_transient_provider_error(&AppError::msg(error.clone())),
+        Some(Ok(fetch)) => fetch
+            .failure_reason
+            .as_deref()
+            .is_some_and(|reason| is_transient_provider_error(&AppError::msg(reason.to_string()))),
+        None => false,
+    }
+}
+
+async fn collect_planned_query_fetches(
+    db: &Database,
+    planned_queries: Vec<String>,
+    max_search_results: usize,
+    provider_snapshots: &[crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary],
+    provider_selection_frozen: bool,
+) -> Vec<Result<SearchProviderFetch, String>> {
+    let mut results = Vec::new();
+    for query in &planned_queries {
+        results.extend(
+            collect_search_provider_fetches(
+                db,
+                query,
+                max_search_results,
+                provider_snapshots,
+                provider_selection_frozen,
+            )
+            .await,
+        );
+    }
+    results
+}
+
+#[cfg(test)]
+fn flatten_planned_query_fetch_results(
+    batches: Vec<Vec<Result<SearchProviderFetch, String>>>,
+) -> Vec<Result<SearchProviderFetch, String>> {
+    batches.into_iter().flatten().collect()
+}
+
 async fn collect_mcp_search_provider_fetch(
     db: &Database,
     query: &str,
@@ -509,6 +586,7 @@ async fn collect_mcp_search_provider_fetch(
     expected_snapshot: Option<
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
+    request_timeout: Duration,
 ) -> AppResult<SearchProviderFetch> {
     ensure_provider_circuit_allows(provider_id)?;
     let (provider, mapping_json) =
@@ -519,7 +597,7 @@ async fn collect_mcp_search_provider_fetch(
         &mapping_json,
         query,
         max_search_results,
-        Duration::from_secs(15),
+        request_timeout,
         true,
     )
     .await;
@@ -1574,27 +1652,18 @@ async fn fetch_url_with_providers(
         &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderMappingSummary,
     >,
 ) -> AppResult<PageProviderFetch> {
-    let futures = fetch_provider_candidates(db, provider_snapshot)
-        .into_iter()
-        .map(|candidate| async move {
-            match candidate {
-                FetchProviderCandidate::Mcp(provider_id) => {
-                    collect_mcp_page_fetch(db, url, &provider_id, provider_snapshot).await
-                }
-                FetchProviderCandidate::Native => collect_native_page_fetch(db, url).await,
-            }
-        });
-    let results = join_all(futures).await;
     let mut failures = Vec::new();
-    let mut successes = Vec::new();
-    for result in results {
+    for candidate in fetch_provider_candidates(db, provider_snapshot) {
+        let result = match candidate {
+            FetchProviderCandidate::Mcp(provider_id) => {
+                collect_mcp_page_fetch(db, url, &provider_id, provider_snapshot).await
+            }
+            FetchProviderCandidate::Native => collect_native_page_fetch(db, url).await,
+        };
         match result {
-            Ok(fetch) => successes.push(fetch),
+            Ok(fetch) => return Ok(fetch),
             Err(error) => failures.push(error.to_string()),
         }
-    }
-    if !successes.is_empty() {
-        return Ok(merge_page_provider_fetches(url, successes));
     }
     Err(AppError::msg(if failures.is_empty() {
         "no fetch providers available".into()
@@ -1603,6 +1672,7 @@ async fn fetch_url_with_providers(
     }))
 }
 
+#[cfg(test)]
 fn merge_page_provider_fetches(url: &str, fetches: Vec<PageProviderFetch>) -> PageProviderFetch {
     let mut titles = Vec::new();
     let mut texts = Vec::new();
@@ -1639,6 +1709,7 @@ fn merge_page_provider_fetches(url: &str, fetches: Vec<PageProviderFetch>) -> Pa
     }
 }
 
+#[cfg(test)]
 fn push_unique_string(values: &mut Vec<String>, value: String) {
     if value.trim().is_empty() {
         return;
@@ -1954,7 +2025,7 @@ mod tests {
                 enabled: false,
                 max_search_results: 5,
                 max_fetches: 0,
-                provider_snapshot: None,
+                provider_snapshots: Vec::new(),
                 provider_selection_frozen: false,
             },
         )
@@ -2154,7 +2225,7 @@ mod tests {
     fn search_provider_candidates_require_mcp_provider() {
         let db = Database::open_in_memory().unwrap();
 
-        let err = search_provider_candidates(&db, None, false).unwrap_err();
+        let err = search_provider_candidates(&db, &[], false).unwrap_err();
 
         assert!(err.to_string().contains("web_search_provider_missing"));
     }
@@ -2163,7 +2234,7 @@ mod tests {
     fn frozen_absent_search_provider_never_reselects_mid_run() {
         let db = Database::open_in_memory().unwrap();
 
-        let error = search_provider_candidates(&db, None, true)
+        let error = search_provider_candidates(&db, &[], true)
             .expect_err("a frozen absence must not dynamically select a later provider");
 
         assert_eq!(error.to_string(), "web_search_provider_missing");
@@ -2216,7 +2287,7 @@ mod tests {
     }
 
     #[test]
-    fn search_provider_candidates_use_selected_mcp_only() {
+    fn search_provider_candidates_preserve_ordered_mcp_failover_route() {
         let db = Database::open_in_memory().unwrap();
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
             &db,
@@ -2248,17 +2319,22 @@ mod tests {
             },
         )
         .unwrap();
-        crate::ai_runtime::mcp_runtime_registry::save_selected_web_search_provider_id(
+        crate::ai_runtime::mcp_runtime_registry::save_web_search_route_config(
             &db,
-            Some("brave"),
+            &crate::ai_runtime::mcp_runtime_registry::WebSearchRouteConfig {
+                candidate_provider_ids: vec!["brave".into(), "anysearch".into()],
+            },
         )
         .unwrap();
 
-        let candidates = search_provider_candidates(&db, None, false).unwrap();
+        let candidates = search_provider_candidates(&db, &[], false).unwrap();
 
         assert_eq!(
             candidates,
-            vec![SearchProviderCandidate::Mcp("brave".into())]
+            vec![
+                SearchProviderCandidate::Mcp("brave".into()),
+                SearchProviderCandidate::Mcp("anysearch".into()),
+            ]
         );
     }
 
@@ -2281,7 +2357,7 @@ mod tests {
         )
         .unwrap();
 
-        let candidates = search_provider_candidates(&db, None, false).unwrap();
+        let candidates = search_provider_candidates(&db, &[], false).unwrap();
 
         assert_eq!(
             candidates,

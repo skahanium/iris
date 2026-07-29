@@ -24,7 +24,7 @@ use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall};
-use crate::ai_types::{AgentIntent, MessageContent, SkillActivationPlanSummary};
+use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -312,22 +312,6 @@ fn skill_intent_for_run(
     }
 }
 
-fn append_skill_overlay_to_system_message(
-    messages: &mut [crate::ai_runtime::LlmMessage],
-    overlay: &str,
-) {
-    if overlay.is_empty() {
-        return;
-    }
-    let Some(system) = messages.first_mut() else {
-        return;
-    };
-    if let MessageContent::Text(content) = &mut system.content {
-        content.push_str("\n\n");
-        content.push_str(overlay);
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_normal_run_after_context(
     state: &Arc<AppState>,
@@ -344,8 +328,8 @@ async fn dispatch_normal_run_after_context(
 ) -> AppResult<()> {
     let active_skills =
         build_cached_skill_activation(state, vault, context, authorized_capabilities)?;
-    let mut messages = context.messages_with_domain_plan(domain_plan);
-    append_skill_overlay_to_system_message(&mut messages, &active_skills.prompt_overlay);
+    let mut messages =
+        context.messages_with_domain_plan_and_skills(domain_plan, &active_skills.prompt_overlay);
     let routing_prompt = context.prompt_with_domain_plan(domain_plan);
     let mut evidence_ids = registered_evidence_ids.to_vec();
     evidence_ids.sort_unstable();
@@ -385,15 +369,14 @@ async fn dispatch_normal_run_after_context(
     let needs_follow_up_tools =
         matches!(context.envelope.effort, Effort::ToolLoop | Effort::Durable);
     if needs_follow_up_tools {
-        let required_web_provider_snapshot = authorized_capabilities
+        let required_web_provider_snapshots = authorized_capabilities
             .iter()
             .any(|capability| capability.as_str() == "web.search")
-            .then(|| {
-                crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)
-            })
+            .then(|| crate::ai_runtime::mcp_runtime_registry::resolve_web_search_provider_route(db))
             .transpose()
             .ok()
-            .flatten();
+            .flatten()
+            .unwrap_or_default();
         let registry = ToolRegistry::new();
         let tools = ToolRegistry::constrain_for_explicit_references(
             registry.tools_for_authorized_capabilities(
@@ -444,7 +427,7 @@ async fn dispatch_normal_run_after_context(
             context,
             authorized_capabilities.to_vec(),
             sink,
-            required_web_provider_snapshot,
+            required_web_provider_snapshots,
         )
         .with_skill_activation_plan(active_skills.plan.clone())
         .with_child_run_provider(&provider);
@@ -562,9 +545,9 @@ async fn dispatch_required_web_verified_run(
     // Do not turn a resolver failure into `None`: a frozen empty selection is
     // indistinguishable from a later provider outage and previously produced a
     // misleading generic result after the tool stage had already begun.
-    let provider_snapshot =
-        match crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db) {
-            Ok(snapshot) => snapshot,
+    let provider_snapshots =
+        match crate::ai_runtime::mcp_runtime_registry::resolve_web_search_provider_route(db) {
+            Ok(snapshots) => snapshots,
             Err(_) => {
                 let _ = RunEngine::fail_web_verification_with_sink(
                     db,
@@ -591,7 +574,7 @@ async fn dispatch_required_web_verified_run(
         context,
         authorized_capabilities.to_vec(),
         sink,
-        Some(provider_snapshot),
+        provider_snapshots,
     )
     .with_skill_activation_plan(skill_plan);
     let query = required_web_query(context);
@@ -866,21 +849,32 @@ fn resolve_normal_route(
     needs_tools: bool,
     sink: &impl RunEventSink,
 ) -> AppResult<crate::ai_runtime::direct_provider_route::DirectProviderRoute> {
-    let route = crate::llm::config::resolve_model_pool_for_requirements_without_secret(
-        db,
-        crate::llm::config::ModelPoolRequirements {
-            context_tokens,
-            has_images,
-            needs_tools,
-            needs_reasoning: false,
-        },
-    )
-    .and_then(crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route)
-    .map(|route| {
-        context.model_override().map_or(route.clone(), |override_| {
-            route.with_model_override(override_.provider_id, override_.model_id)
-        })
-    });
+    let requirements = crate::llm::config::ModelPoolRequirements {
+        context_tokens,
+        has_images,
+        needs_tools,
+        needs_reasoning: false,
+    };
+    let route = match context.model_override() {
+        Some(model) => crate::llm::config::resolve_model_override_for_requirements_without_secret(
+            db,
+            &crate::llm::config::ModelReference {
+                provider_id: model.provider_id,
+                model_id: model.model_id,
+            },
+            requirements,
+        )
+        .map(|resolved| crate::llm::config::ResolvedModelPool {
+            resolved,
+            failover_candidates: Vec::new(),
+        }),
+        None => {
+            crate::llm::config::resolve_model_pool_for_requirements_without_secret(db, requirements)
+        }
+    }
+    .and_then(
+        crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route,
+    );
     match route {
         Ok(route) => Ok(route),
         Err(error) => {

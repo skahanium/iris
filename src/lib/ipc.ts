@@ -832,6 +832,10 @@ export interface WebEvidenceProviderDiagnostics {
   canUseForFetch: boolean;
 }
 
+export interface WebSearchRouteConfig {
+  candidateProviderIds: string[];
+}
+
 export interface SkillDraftScopeRule {
   kind: string;
   pattern: string;
@@ -862,6 +866,16 @@ export async function webEvidenceProvidersList(): Promise<
   WebEvidenceProviderSummary[]
 > {
   return invoke<WebEvidenceProviderSummary[]>("web_evidence_providers_list");
+}
+
+export async function webSearchRouteGet(): Promise<WebSearchRouteConfig> {
+  return invoke<WebSearchRouteConfig>("web_search_route_get");
+}
+
+export async function webSearchRouteSet(
+  route: WebSearchRouteConfig,
+): Promise<WebSearchRouteConfig> {
+  return invoke<WebSearchRouteConfig>("web_search_route_set", { route });
 }
 
 export async function webEvidenceProviderToggle(

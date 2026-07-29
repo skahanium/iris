@@ -160,7 +160,9 @@ describe("management center contract", () => {
     expect(mcpPanel).toContain("webEvidenceProviderDiagnostics");
     expect(mcpPanel.toLowerCase()).not.toContain(removedDdg);
     expect(mcpPanel).not.toContain("原生托底");
-    expect(mcpPanel).toContain("当前选择");
+    expect(mcpPanel).toContain("联网搜索主备顺序");
+    expect(mcpPanel).toContain("webSearchRouteGet");
+    expect(mcpPanel).toContain("webSearchRouteSet");
     expect(center).toContain("onManagementCenterProviderIdChange");
     expect(center).toContain("managementCenterProviderId");
     expect(mcpPanel).toContain("McpProviderDetail");

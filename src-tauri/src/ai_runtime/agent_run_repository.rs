@@ -4,6 +4,8 @@
 //! dispatch providers, emit IPC events, or provide a compatibility path for
 //! the legacy Harness. Stage 4 owns those responsibilities.
 
+use crate::ai_runtime::prompt_contract::PROMPT_CONTRACT_VERSION;
+use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::run_contract::{
     transition_to, AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse,
     AssistantRunSnapshot, AssistantSessionRef, CapabilityId, ConfirmationTargetSummary, Effect,
@@ -157,14 +159,21 @@ impl AgentRunRepository {
         if input.envelope.security_domain != SecurityDomain::Normal {
             return Err(AppError::msg("agent_run_classified_domain_not_supported"));
         }
+        let intake_fingerprint = intake_fingerprint(&input)?;
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
-                if let Some(existing) = accepted_for_client_request(conn, &input.client_request_id)?
+                if let Some((existing, stored_fingerprint)) =
+                    accepted_for_client_request(conn, &input.client_request_id)?
                 {
+                    if stored_fingerprint.is_some_and(|stored| stored != intake_fingerprint) {
+                        return Err(AppError::msg("agent_run_idempotency_conflict"));
+                    }
                     return Ok(existing);
                 }
 
                 ensure_normal_session(conn, input.session_id, &input.session_key)?;
+                let (prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash) =
+                    load_prompt_contract_snapshot(conn)?;
                 let now = chrono::Utc::now().to_rfc3339();
                 let content_parts_json = input
                     .content_parts
@@ -220,8 +229,9 @@ impl AgentRunRepository {
                     "INSERT INTO agent_runs
                  (run_id, client_request_id, session_id, turn_id, status, state_version,
                   effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                  goal_summary, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                  goal_summary, intake_fingerprint, prompt_profile_snapshot_json,
+                  prompt_contract_version, prompt_contract_hash, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)",
                     rusqlite::params![
                         input.run_id,
                         input.client_request_id,
@@ -234,6 +244,10 @@ impl AgentRunRepository {
                         envelope_json,
                         explicit_action_json,
                         goal_summary,
+                        intake_fingerprint,
+                        prompt_profile_snapshot_json,
+                        prompt_contract_version,
+                        prompt_contract_hash,
                         now,
                     ],
                 )?;
@@ -272,40 +286,55 @@ impl AgentRunRepository {
         })
     }
 
-    /// Atomically create a retry Run for the same persisted user turn.
+    /// Atomically create a retry Run for the same most-recent failed user turn.
     ///
-    /// The source must already have exhausted required Web verification. This
-    /// deliberately does not insert a second `session_messages` record.
-    pub(crate) fn accept_web_retry(
+    /// This deliberately does not insert a second `session_messages` record.
+    /// A newer visible message makes the historical failure ineligible, so a
+    /// late provider response can never be inserted into a newer conversation.
+    pub(crate) fn accept_retry(
         db: &Database,
         input: RetryRunInput,
     ) -> AppResult<AssistantRunAccepted> {
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
-                if let Some(existing) = accepted_for_client_request(conn, &input.client_request_id)? {
+                if let Some((existing, _)) = accepted_for_client_request(conn, &input.client_request_id)? {
                     return Ok(existing);
                 }
                 let source = conn
                     .query_row(
                         "SELECT r.session_id, r.turn_id, r.effect, r.effort, r.security_domain, r.risk,
-                                r.envelope_json, r.explicit_action_json, r.goal_summary
+                                r.envelope_json, r.explicit_action_json, r.goal_summary,
+                                r.prompt_profile_snapshot_json, r.prompt_contract_version,
+                                r.prompt_contract_hash
                          FROM agent_runs r
                          JOIN sessions s ON s.id = r.session_id
                          WHERE r.run_id = ?1 AND s.session_key = ?2 AND r.status = 'failed'
-                           AND EXISTS (SELECT 1 FROM agent_run_events e
-                                       WHERE e.run_id = r.run_id
-                                         AND e.event_type = 'web_verification_failed')",
+                           AND r.rowid = (SELECT latest.rowid FROM agent_runs latest
+                                          WHERE latest.session_id = r.session_id
+                                            AND latest.turn_id = r.turn_id
+                                          ORDER BY latest.created_at DESC, latest.rowid DESC LIMIT 1)
+                           AND NOT EXISTS (
+                               SELECT 1 FROM session_messages later
+                               WHERE later.session_id = r.session_id
+                                 AND later.seq > (
+                                     SELECT MAX(turn_message.seq)
+                                     FROM session_messages turn_message
+                                     WHERE turn_message.session_id = r.session_id
+                                       AND turn_message.turn_id = r.turn_id
+                                 )
+                           )",
                         rusqlite::params![input.source_run_id, input.session_key],
                         |row| Ok((
                             row.get::<_, i64>(0)?, row.get::<_, String>(1)?,
                             row.get::<_, String>(2)?, row.get::<_, String>(3)?,
                             row.get::<_, String>(4)?, row.get::<_, String>(5)?,
                             row.get::<_, String>(6)?, row.get::<_, Option<String>>(7)?,
-                            row.get::<_, String>(8)?,
+                            row.get::<_, String>(8)?, row.get::<_, Option<String>>(9)?,
+                            row.get::<_, Option<i64>>(10)?, row.get::<_, Option<String>>(11)?,
                         )),
                     )
                     .optional()?;
-                let Some((session_id, turn_id, effect, effort, security_domain, risk, envelope_json, explicit_action_json, goal_summary)) = source else {
+                let Some((session_id, turn_id, effect, effort, security_domain, risk, envelope_json, explicit_action_json, goal_summary, prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash)) = source else {
                     return Err(AppError::msg("agent_run_retry_not_available"));
                 };
                 let now = chrono::Utc::now().to_rfc3339();
@@ -313,11 +342,13 @@ impl AgentRunRepository {
                     "INSERT INTO agent_runs
                      (run_id, client_request_id, session_id, turn_id, status, state_version,
                       effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                      goal_summary, created_at, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                      goal_summary, prompt_profile_snapshot_json, prompt_contract_version,
+                      prompt_contract_hash, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, 'accepted', 0, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)",
                     rusqlite::params![input.run_id, input.client_request_id, session_id, turn_id,
                         effect, effort, security_domain, risk, envelope_json, explicit_action_json,
-                        goal_summary, now],
+                        goal_summary, prompt_profile_snapshot_json, prompt_contract_version,
+                        prompt_contract_hash, now],
                 )?;
                 let envelope: crate::ai_runtime::run_contract::ExecutionEnvelope =
                     serde_json::from_str(&envelope_json)?;
@@ -1404,7 +1435,8 @@ impl AgentRunRepository {
             let stored = conn
                 .query_row(
                     "SELECT r.session_id, m.seq, m.content, m.content_parts,
-                            m.explicit_references_json, m.context_scope_json, r.explicit_action_json
+                            m.explicit_references_json, m.context_scope_json, r.explicit_action_json,
+                            r.prompt_profile_snapshot_json
                      FROM agent_runs r
                      JOIN sessions s ON s.id = r.session_id
                      JOIN session_messages m ON m.session_id = r.session_id AND m.turn_id = r.turn_id
@@ -1418,12 +1450,12 @@ impl AgentRunRepository {
                             row.get::<_, Option<String>>(3)?,
                             row.get::<_, String>(4)?,
                             row.get::<_, String>(5)?,
-                            row.get::<_, Option<String>>(6)?,
+                            row.get::<_, Option<String>>(6)?, row.get::<_, Option<String>>(7)?,
                         ))
                     },
                 )
                 .optional()?;
-            let Some((session_id, message_seq_first, message, content_parts_json, references_json, context_scope_json, explicit_action_json)) = stored else {
+            let Some((session_id, message_seq_first, message, content_parts_json, references_json, context_scope_json, explicit_action_json, prompt_profile_snapshot_json)) = stored else {
                 return Ok(None);
             };
             let explicit_references = serde_json::from_str(&references_json)
@@ -1442,6 +1474,10 @@ impl AgentRunRepository {
                     .map(|value| serde_json::from_str(&value))
                     .transpose()
                     .map_err(|_| AppError::msg("agent_run_invalid_request"))?,
+                prompt_profile_snapshot: prompt_profile_snapshot_json
+                    .map(|value| serde_json::from_str(&value))
+                    .transpose()
+                    .map_err(|_| AppError::msg("agent_run_invalid_prompt_profile_snapshot"))?,
             }))
         })
     }
@@ -1478,6 +1514,9 @@ pub(crate) struct RunPromptInput {
     pub(crate) explicit_references: Vec<StoredExplicitReference>,
     pub(crate) retrieval_scope: crate::ai_runtime::retrieval_scope::ContextScopeDto,
     pub(crate) explicit_action: Option<ExplicitAction>,
+    /// Frozen, normalized profile for the exact accepted Run. `None` is only
+    /// for rows created before the v2 contract migration.
+    pub(crate) prompt_profile_snapshot: Option<PromptProfile>,
 }
 
 #[derive(Serialize)]
@@ -1550,6 +1589,26 @@ fn ensure_normal_session(conn: &Connection, session_id: i64, session_key: &str) 
     } else {
         Err(AppError::msg("agent_run_session_not_found"))
     }
+}
+
+/// Build the immutable, non-secret prompt-profile metadata in the same intake
+/// transaction that writes the user message and Run ledger row.
+fn load_prompt_contract_snapshot(conn: &Connection) -> AppResult<(String, i64, String)> {
+    let profile_json = conn
+        .query_row(
+            "SELECT value FROM user_profile WHERE key = 'ai_prompt_profile'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let profile = profile_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<PromptProfile>(json).ok())
+        .unwrap_or_default();
+    let snapshot_json = profile.snapshot_json()?;
+    let contract_hash =
+        crate::cas::hash::content_hash_str(&format!("{PROMPT_CONTRACT_VERSION}:{snapshot_json}"));
+    Ok((snapshot_json, PROMPT_CONTRACT_VERSION, contract_hash))
 }
 
 fn pending_confirmation_summary(
@@ -1633,9 +1692,10 @@ fn bounded_confirmation_target_label(path: &str) -> String {
 fn accepted_for_client_request(
     conn: &Connection,
     client_request_id: &str,
-) -> AppResult<Option<AssistantRunAccepted>> {
+) -> AppResult<Option<(AssistantRunAccepted, Option<String>)>> {
     let result = conn.query_row(
-        "SELECT r.client_request_id, r.run_id, r.turn_id, s.session_key, r.status, r.state_version
+        "SELECT r.client_request_id, r.run_id, r.turn_id, s.session_key, r.status, r.state_version,
+                r.intake_fingerprint
          FROM agent_runs r JOIN sessions s ON s.id = r.session_id
          WHERE r.client_request_id = ?1",
         [client_request_id],
@@ -1647,12 +1707,21 @@ fn accepted_for_client_request(
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
                 row.get::<_, u64>(5)?,
+                row.get::<_, Option<String>>(6)?,
             ))
         },
     );
     match result {
-        Ok((client_request_id, run_id, turn_id, session_key, status, state_version)) => {
-            Ok(Some(AssistantRunAccepted {
+        Ok((
+            client_request_id,
+            run_id,
+            turn_id,
+            session_key,
+            status,
+            state_version,
+            intake_fingerprint,
+        )) => Ok(Some((
+            AssistantRunAccepted {
                 client_request_id,
                 run_id,
                 turn_id,
@@ -1662,11 +1731,39 @@ fn accepted_for_client_request(
                 },
                 state: parse_wire::<RunState>(&status)?,
                 state_version,
-            }))
-        }
+            },
+            intake_fingerprint,
+        ))),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(error) => Err(error.into()),
     }
+}
+
+fn intake_fingerprint(input: &AcceptRunInput) -> AppResult<String> {
+    #[derive(Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct IntakeFingerprint<'a> {
+        session_key: &'a str,
+        message: &'a str,
+        content_parts: &'a Option<Vec<ContentPart>>,
+        explicit_references: &'a [ContextReferenceWire],
+        context_scope: &'a crate::ai_runtime::retrieval_scope::ContextScopeDto,
+        display_mentions: &'a [crate::ai_runtime::run_contract::DisplayMention],
+        explicit_action: &'a Option<ExplicitAction>,
+        envelope: &'a ExecutionEnvelope,
+    }
+
+    let canonical = serde_json::to_vec(&IntakeFingerprint {
+        session_key: &input.session_key,
+        message: &input.message,
+        content_parts: &input.content_parts,
+        explicit_references: &input.explicit_references,
+        context_scope: &input.context_scope,
+        display_mentions: &input.display_mentions,
+        explicit_action: &input.explicit_action,
+        envelope: &input.envelope,
+    })?;
+    Ok(hex::encode(Sha256::digest(canonical)))
 }
 
 fn insert_event(conn: &Connection, event: &AssistantRunEvent) -> AppResult<()> {

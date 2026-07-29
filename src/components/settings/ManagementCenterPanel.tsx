@@ -658,7 +658,7 @@ export function ManagementCenterPanel({
           title="关于 Iris"
           detail={
             <>
-              版本 1.2.17 · GNU Affero General Public License v3.0 · Source:
+              版本 1.2.18 · GNU Affero General Public License v3.0 · Source:
               <span className="ml-1 font-mono">
                 https://github.com/skahanium/iris
               </span>

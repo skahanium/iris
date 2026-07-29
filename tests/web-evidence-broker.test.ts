@@ -11,6 +11,24 @@ const removedVendor = ["mini", "max"].join("");
 const removedVendorCredential = ["MINI", "MAX", "_CREDENTIAL_SERVICE"].join("");
 
 describe("web evidence broker contract", () => {
+  it("exposes a typed ordered MCP search route instead of generic settings writes", () => {
+    const ipc = read("src/lib/ipc.ts");
+    const commands = read("src-tauri/src/commands/ai_commands.rs");
+    const lib = read("src-tauri/src/lib.rs");
+
+    expect(ipc).toContain("interface WebSearchRouteConfig");
+    expect(ipc).toContain(
+      'invoke<WebSearchRouteConfig>("web_search_route_get"',
+    );
+    expect(ipc).toContain(
+      'invoke<WebSearchRouteConfig>("web_search_route_set"',
+    );
+    expect(commands).toContain("pub async fn web_search_route_get");
+    expect(commands).toContain("pub async fn web_search_route_set");
+    expect(lib).toContain("commands::ai_commands::web_search_route_get");
+    expect(lib).toContain("commands::ai_commands::web_search_route_set");
+  });
+
   it("defines a unified broker and keeps low-level fetch details out of chat UI", () => {
     const broker = read("src-tauri/src/ai_runtime/web_evidence_broker.rs");
 

@@ -39,6 +39,8 @@ function toChatLines(messages: AssistantSessionMessage[]): ChatLine[] {
     content: message.content,
     ...(message.runId ? { runId: message.runId } : {}),
     ...(message.turnId ? { turnId: message.turnId } : {}),
+    ...(message.turnState ? { turnState: message.turnState } : {}),
+    ...(message.retryable ? { retryable: true } : {}),
     ...(message.role === "assistant" && message.processEvents?.length
       ? {
           processItems: ensureTerminalAnswerComplete(

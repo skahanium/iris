@@ -424,14 +424,14 @@ pub struct AssistantRunGetRequest {
     pub(crate) run_id: Option<String>,
 }
 
-/// Start a fresh attempt from one terminal Web-verification failure without
+/// Start a fresh attempt from the latest terminal failed Run without
 /// duplicating the user turn in the persisted conversation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssistantRunRetryRequest {
     /// Session that owns the failed Run.
     pub(crate) session: AssistantSessionRef,
-    /// Terminal Run that emitted `web_verification_failed`.
+    /// Latest terminal failed Run for the persisted user turn.
     pub(crate) source_run_id: String,
     /// Fresh idempotency key for this retry attempt.
     pub(crate) client_request_id: String,
@@ -729,10 +729,23 @@ pub(crate) enum RunEventPayload {
     },
     /// A safe Provider fallback summary.
     ProviderSwitched {
-        /// Actual provider identifier, never an endpoint or credential.
+        /// Capability whose execution route changed.
+        #[serde(default)]
+        capability: String,
+        /// Previous provider identifier, never an endpoint or credential.
+        #[serde(default)]
+        from_provider_id: String,
+        /// Actual fallback provider identifier, never an endpoint or credential.
         provider_id: String,
+        /// Actual fallback model identifier.
+        #[serde(default)]
+        model_id: String,
         /// Stable failure classification for the previous candidate.
-        reason: String,
+        #[serde(default, alias = "reason")]
+        reason_code: String,
+        /// One-based fallback attempt number within this Run.
+        #[serde(default)]
+        attempt: u32,
     },
     /// Evidence registration metadata.
     EvidenceRegistered {

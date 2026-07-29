@@ -88,6 +88,9 @@ pub struct AssistantSessionMessage {
     pub run_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_state: Option<String>,
+    pub retryable: bool,
     /// Safe, replayable process events for one historical assistant message only.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub process_events: Vec<AssistantRunEvent>,
@@ -196,8 +199,12 @@ pub async fn assistant_session_load(
                         seq: item.seq,
                         role: item.role,
                         content: item.content,
-                        run_id: process.map(|value| value.run_id.clone()),
+                        run_id: item
+                            .run_id
+                            .or_else(|| process.map(|value| value.run_id.clone())),
                         turn_id: item.turn_id,
+                        turn_state: item.turn_state,
+                        retryable: item.retryable,
                         process_events: process
                             .map(|value| value.events.clone())
                             .unwrap_or_default(),
@@ -384,7 +391,7 @@ pub async fn assistant_run_start(
     }
 }
 
-/// Retry one terminal web-verification failure without duplicating its user turn.
+/// Retry the latest terminal failed Run without duplicating its user turn.
 #[tauri::command]
 pub async fn assistant_run_retry(
     state: State<'_, Arc<AppState>>,
@@ -650,7 +657,7 @@ fn spawn_confirmed_change_execution(
             &context,
             authorized_capabilities,
             &sink,
-            None,
+            Vec::new(),
         );
         match executor.execute_confirmed_frozen_change(&plan).await {
             Ok(result) if result.success => {

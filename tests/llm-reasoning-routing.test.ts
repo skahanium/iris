@@ -20,14 +20,15 @@ describe("model-level reasoning contract", () => {
     expect(types).not.toContain("ReasoningSlotConfig");
   });
 
-  it("persists only providers and a global default model", () => {
+  it("persists providers and their ordered primary-to-fallback candidates", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
     const types = read("src/types/llm.ts");
 
-    expect(section).toContain("defaultModel: normalized.defaultModel ?? null");
+    expect(section).toContain("candidateOrder: normalizeCandidateOrder(");
+    expect(section).toContain("defaultModel: null");
     expect(section).not.toContain("contextStrategy");
     expect(section).not.toContain("routing.slots");
-    expect(types).toContain("defaultModel?: ModelReference | null");
+    expect(types).toContain("candidateOrder: ModelReference[]");
     expect(types).not.toContain("SlotRoute");
   });
 });

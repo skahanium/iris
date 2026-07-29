@@ -18,6 +18,7 @@ vi.mock("@/lib/ipc", () => ({
   settingsGet: vi.fn(async () => false),
   settingsSet: vi.fn(async () => undefined),
   webEvidenceProvidersList: vi.fn(async () => []),
+  webSearchRouteGet: vi.fn(async () => ({ candidateProviderIds: [] })),
 }));
 
 const mockFileSignature = vi.mocked(fileSignature);

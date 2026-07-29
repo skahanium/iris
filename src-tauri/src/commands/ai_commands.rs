@@ -181,6 +181,24 @@ pub async fn web_evidence_providers_list(
     })
 }
 
+/// Read the ordered MCP route used for `web.search` failover.
+#[tauri::command]
+pub async fn web_search_route_get(
+    state: State<'_, Arc<AppState>>,
+) -> AppResult<crate::ai_runtime::mcp_runtime_registry::WebSearchRouteConfig> {
+    crate::ai_runtime::mcp_runtime_registry::get_web_search_route_config(&state.db)
+}
+
+/// Persist the ordered MCP route used for `web.search` failover.
+#[tauri::command]
+pub async fn web_search_route_set(
+    state: State<'_, Arc<AppState>>,
+    route: crate::ai_runtime::mcp_runtime_registry::WebSearchRouteConfig,
+) -> AppResult<crate::ai_runtime::mcp_runtime_registry::WebSearchRouteConfig> {
+    crate::ai_runtime::mcp_runtime_registry::save_web_search_route_config(&state.db, &route)?;
+    crate::ai_runtime::mcp_runtime_registry::get_web_search_route_config(&state.db)
+}
+
 #[tauri::command]
 pub async fn web_evidence_provider_toggle(
     state: State<'_, Arc<AppState>>,

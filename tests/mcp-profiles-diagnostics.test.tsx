@@ -14,6 +14,8 @@ const ipcMocks = vi.hoisted(() => ({
   webEvidenceProvidersList: vi.fn(),
   webEvidenceProviderToggle: vi.fn(),
   webEvidenceProviderUpsert: vi.fn(),
+  webSearchRouteGet: vi.fn(),
+  webSearchRouteSet: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -121,6 +123,12 @@ describe("McpProfilesPanel 实时诊断", () => {
     ipcMocks.webEvidenceProvidersList.mockResolvedValue([provider]);
     ipcMocks.webEvidenceProviderToggle.mockResolvedValue(undefined);
     ipcMocks.webEvidenceProviderUpsert.mockResolvedValue(undefined);
+    ipcMocks.webSearchRouteGet.mockResolvedValue({
+      candidateProviderIds: [provider.id],
+    });
+    ipcMocks.webSearchRouteSet.mockResolvedValue({
+      candidateProviderIds: [provider.id],
+    });
   });
 
   it("将诊断 IPC 固定为指定提供方的实时检查，不再暴露静态检查开关", () => {

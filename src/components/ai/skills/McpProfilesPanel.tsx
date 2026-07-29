@@ -12,6 +12,8 @@ import {
   webEvidenceProvidersList,
   webEvidenceProviderToggle,
   webEvidenceProviderUpsert,
+  webSearchRouteGet,
+  webSearchRouteSet,
   type WebEvidenceProviderDiagnostics,
   type WebEvidenceProviderInput,
   type WebEvidenceProviderSummary,
@@ -181,6 +183,7 @@ export function McpProfilesPanel({
   onProviderChromeChange,
 }: McpProfilesPanelProps) {
   const [providers, setProviders] = useState<WebEvidenceProviderSummary[]>([]);
+  const [searchRouteIds, setSearchRouteIds] = useState<string[]>([]);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsByProvider>({});
   const [credentialConfiguredByService, setCredentialConfiguredByService] =
     useState<Record<string, boolean>>({});
@@ -241,8 +244,14 @@ export function McpProfilesPanel({
     setMessage(null);
     invalidateDiagnostics();
     try {
-      const nextProviders = await webEvidenceProvidersList();
+      const [nextProviders, route] = await Promise.all([
+        webEvidenceProvidersList(),
+        Promise.resolve()
+          .then(() => webSearchRouteGet())
+          .catch(() => ({ candidateProviderIds: [] })),
+      ]);
       setProviders(nextProviders);
+      setSearchRouteIds(route?.candidateProviderIds ?? []);
       await refreshCredentialStatuses(nextProviders);
     } catch (error) {
       setMessage(invokeErrorMessage(error));
@@ -260,6 +269,47 @@ export function McpProfilesPanel({
     () => providers.filter((provider) => provider.providerKind === "mcp"),
     [providers],
   );
+
+  const orderedSearchProviders = useMemo(() => {
+    const eligible = mcpProviders.filter(
+      (provider) => provider.enabled && provider.hasSearchMapping,
+    );
+    const byId = new Map(eligible.map((provider) => [provider.id, provider]));
+    const ordered = searchRouteIds
+      .map((id) => byId.get(id))
+      .filter((provider): provider is WebEvidenceProviderSummary => !!provider);
+    for (const provider of eligible) {
+      if (!ordered.some((item) => item.id === provider.id))
+        ordered.push(provider);
+    }
+    return ordered.slice(0, 3);
+  }, [mcpProviders, searchRouteIds]);
+
+  const moveSearchRouteProvider = async (
+    providerId: string,
+    direction: -1 | 1,
+  ) => {
+    const from = orderedSearchProviders.findIndex(
+      (provider) => provider.id === providerId,
+    );
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= orderedSearchProviders.length) return;
+    const next = [...orderedSearchProviders];
+    [next[from], next[to]] = [next[to]!, next[from]!];
+    setSaving(true);
+    setMessage(null);
+    try {
+      const route = await webSearchRouteSet({
+        candidateProviderIds: next.map((provider) => provider.id),
+      });
+      setSearchRouteIds(route.candidateProviderIds);
+      onProvidersChanged?.();
+    } catch (error) {
+      setMessage(invokeErrorMessage(error));
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const saveProvider = async (
     input: WebEvidenceProviderInput,
@@ -398,8 +448,7 @@ export function McpProfilesPanel({
       {!detailProvider ? (
         <div className="flex flex-wrap items-start justify-between gap-3">
           <p className="max-w-xl text-xs text-muted-foreground">
-            将 MCP 显式接入 web.search / web.fetch；联网搜索只使用当前选择的 MCP
-            提供方。
+            将 MCP 显式接入 web.search / web.fetch；联网搜索按下列主备顺序切换。
           </p>
           <Button
             type="button"
@@ -415,6 +464,49 @@ export function McpProfilesPanel({
           >
             添加 MCP 提供方
           </Button>
+        </div>
+      ) : null}
+
+      {!activeDetailId && orderedSearchProviders.length > 0 ? (
+        <div
+          className="space-y-1 rounded-md border border-border/60 p-2"
+          data-testid="web-search-route"
+        >
+          <p className="px-1 text-xs font-medium">联网搜索主备顺序</p>
+          {orderedSearchProviders.map((provider, index) => (
+            <div
+              key={provider.id}
+              className="flex items-center justify-between gap-2 px-1 py-1 text-xs"
+            >
+              <span>
+                {index === 0 ? "主服务" : `备用 ${index}`} · {provider.name}
+              </span>
+              <span className="flex gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2"
+                  disabled={saving || index === 0}
+                  onClick={() => void moveSearchRouteProvider(provider.id, -1)}
+                >
+                  上移
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2"
+                  disabled={
+                    saving || index === orderedSearchProviders.length - 1
+                  }
+                  onClick={() => void moveSearchRouteProvider(provider.id, 1)}
+                >
+                  下移
+                </Button>
+              </span>
+            </div>
+          ))}
         </div>
       ) : null}
 

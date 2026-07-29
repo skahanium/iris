@@ -325,7 +325,7 @@ impl RunIntake {
         Ok(accepted)
     }
 
-    /// Accept a fresh Web-verification retry while preserving the original user turn.
+    /// Accept a fresh retry for the latest failed user turn without duplicating it.
     pub(crate) fn retry_with_sink(
         db: &Database,
         request: AssistantRunRetryRequest,
@@ -338,7 +338,7 @@ impl RunIntake {
         {
             return Err(AppError::msg("agent_run_invalid_request"));
         }
-        let accepted = AgentRunRepository::accept_web_retry(
+        let accepted = AgentRunRepository::accept_retry(
             db,
             RetryRunInput {
                 session_key: request.session.session_key,

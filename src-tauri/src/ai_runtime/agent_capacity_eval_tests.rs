@@ -2491,7 +2491,12 @@ fn live_pilot_llm_scripts() -> Vec<HttpResponseScript> {
                 scenario.evidence_group(),
                 EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
             );
-            let needs_web_tool = scenario.web_state() == WebState::Online && needs_web;
+            // The loopback pilot normalizes Offline Web-required rows to its
+            // available local transport so it can prove credential isolation
+            // and protocol dispatch. Keep its scripted model response on the
+            // same deterministic branch; dedicated fault tests cover the
+            // production Offline denial separately.
+            let needs_web_tool = needs_web;
             let mut parts = Vec::new();
             if needs_local {
                 parts.push(format!(
@@ -2501,16 +2506,13 @@ fn live_pilot_llm_scripts() -> Vec<HttpResponseScript> {
                     scenario.case_id()
                 ));
             }
-            if needs_web && scenario.web_state() == WebState::Online {
+            if needs_web {
                 parts.push(format!(
                     "fact-web-{}=value-{} [cite:web-{}]",
                     scenario.case_id(),
                     scenario.case_id(),
                     scenario.case_id()
                 ));
-            }
-            if needs_web && scenario.web_state() == WebState::Offline {
-                parts.push("degraded:web-offline-uncertainty".to_string());
             }
             if parts.is_empty() {
                 parts.push("synthetic bounded answer".to_string());
@@ -2713,7 +2715,7 @@ async fn serve_live_pilot_mcp_request(
     }
     let result = match method.as_str() {
         "initialize" => serde_json::json!({
-            "protocolVersion": "2025-03-26",
+            "protocolVersion": "2025-06-18",
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "iris-live-pilot-loopback", "version": "1"}
         }),
@@ -2745,20 +2747,39 @@ fn live_pilot_mcp_case_id(request: &serde_json::Value) -> Result<u32, String> {
     request
         .pointer("/params/arguments/query")
         .and_then(serde_json::Value::as_str)
-        .and_then(|query| query.strip_prefix("agent-live-pilot-case:"))
+        .and_then(|query| {
+            query.strip_prefix("agent-live-pilot-case:").or_else(|| {
+                query
+                    .rsplit_once("[agent-live-pilot-case:")
+                    .and_then(|(_, marker)| marker.split_once(']').map(|(value, _)| value))
+            })
+        })
         .and_then(|value| value.parse::<u32>().ok())
         .filter(|ordinal| (1..=48).contains(ordinal))
         .ok_or_else(|| "live MCP controlled case id missing".to_string())
 }
 
+#[test]
+fn live_pilot_mcp_fixture_extracts_case_id_from_strict_run_query() {
+    let request = serde_json::json!({
+        "params": {
+            "arguments": {
+                "query": "请检索当前公开状态。\n\n[agent-live-pilot-case:26]"
+            }
+        }
+    });
+
+    assert_eq!(live_pilot_mcp_case_id(&request), Ok(26));
+}
+
 fn live_pilot_mcp_evidence_text(case_id: u32) -> String {
-    let claims = [26_u32, 36, 38, 46]
+    let claims = [25_u32, 26, 36, 37, 38, 46]
         .into_iter()
         .map(|ordinal| format!("fact-web-{ordinal}=value-{ordinal}"))
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "[1] title: Contract\nurl: https://source.invalid/contract\nsnippet: controlled request-case-{case_id} {claims}"
+        "[1] title: Contract A\nurl: https://source.invalid/contract\nsnippet: controlled request-case-{case_id} {claims}\n\n[2] title: Contract B\nurl: https://source-b.invalid/contract\nsnippet: independently corroborated controlled request-case-{case_id} {claims}"
     )
 }
 
@@ -2930,8 +2951,8 @@ fn approved_live_profile_is_copied_to_an_isolated_temporary_state_without_status
     assert_eq!(routing.providers.len(), 1);
     assert_eq!(
         routing
-            .default_model
-            .as_ref()
+            .candidate_order
+            .first()
             .map(|model| model.model_id.as_str()),
         Some("sensitive-model-name")
     );
@@ -3734,7 +3755,8 @@ async fn approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_rea
     let mut unbound_session = preflight_live_profiles(vec![local_transport_live_candidate(
         &unbound_llm.base_url,
         "http://127.0.0.1:1/mcp",
-    )])
+    )
+    .without_test_mcp_credentials()])
     .expect("anonymous unbound preflight");
     let unbound_profile_id = unbound_session.report().profile_ids()[0].to_string();
     let unbound_approval =
@@ -3751,9 +3773,10 @@ async fn approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_rea
     .expect("unbound pilot returns closed failures");
     drop(unbound_llm);
     assert_eq!(unbound_result.completed_case_count(), 0);
+    let unbound_accessed = crate::credentials::credential_access_probe_snapshot();
     assert!(
-        crate::credentials::credential_access_probe_snapshot().is_empty(),
-        "an unbound loopback candidate must not read a selected LLM credential"
+        unbound_accessed.is_empty(),
+        "an unbound loopback candidate must not read credentials: {unbound_accessed:?}"
     );
 
     crate::credentials::credential_access_probe_reset();
@@ -3816,7 +3839,8 @@ async fn approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_rea
     assert_eq!(
         result.completed_case_count(),
         12,
-        "closed failed case ids={failed_case_ids:?}; LLM request count is {}; LLM shapes={:?}; MCP methods={:?}",
+        "closed failed case ids={failed_case_ids:?}; terminal errors={:?}; LLM request count is {}; LLM shapes={:?}; MCP methods={:?}",
+        result.terminal_error_codes(),
         llm.request_count(),
         llm.request_shape_summary(),
         mcp_captures

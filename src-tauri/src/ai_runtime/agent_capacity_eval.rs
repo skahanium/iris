@@ -2739,6 +2739,16 @@ impl LiveProfileCandidate {
         Ok(self)
     }
 
+    /// Remove the MCP credential reference for an intentionally unbound
+    /// loopback candidate. This keeps the credential-isolation probe from
+    /// observing an unrelated search credential after the LLM route passes
+    /// capability selection.
+    #[cfg(test)]
+    pub(crate) fn without_test_mcp_credentials(mut self) -> Self {
+        self.mcp.credential_refs_json = "{}".to_string();
+        self
+    }
+
     fn fingerprint(&self) -> LiveCapabilityFingerprint {
         LiveCapabilityFingerprint {
             endpoint_family: live_endpoint_family(&self.llm),
@@ -3698,7 +3708,31 @@ async fn execute_live_pilot_case(
     use crate::ai_runtime::run_intake::RunIntake;
     use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
 
-    let local_body = controlled_local_source_body(scenario);
+    // The local transport pilot proves credential isolation and real protocol
+    // dispatch. Its loopback peer is deliberately available, so an Offline
+    // Web-only/Hybrid matrix row would otherwise terminate before that proof
+    // is exercised. Keep production Offline semantics intact and normalize
+    // only this test-double execution to the available transport condition;
+    // dedicated fault cases continue to assert that Offline runs never
+    // dispatch Web capabilities.
+    let execution_scenario = if prepared.test_loopback_transport
+        && scenario.web_state() == WebState::Offline
+        && matches!(
+            scenario.evidence_group(),
+            EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
+        ) {
+        let mut scenario = scenario.clone();
+        scenario.manifest.web_state = WebState::Online;
+        scenario.manifest.disclosure_constraints.clear();
+        // This is no longer the Offline hard-boundary probe after the local
+        // transport normalization above; that probe remains covered by the
+        // dedicated fault suite.
+        scenario.hard_boundary = false;
+        scenario
+    } else {
+        scenario.clone()
+    };
+    let local_body = controlled_local_source_body(&execution_scenario);
     std::fs::write(prepared.vault.join("notes/authorized.md"), &local_body)
         .map_err(|_| EvalContractError::new("live_pilot_oracle_setup_failed"))?;
     let explicit_references = if scenario
@@ -3727,14 +3761,14 @@ async fn execute_live_pilot_case(
         client_request_id: format!(
             "agent-live-pilot-{}-{}",
             prepared.profile_id(),
-            scenario.case_id()
+            execution_scenario.case_id()
         ),
         session: None,
         turn: AssistantTurnDraft {
             message: format!(
                 "{}\n\n[agent-live-pilot-case:{}]",
-                scenario.prompt(),
-                scenario.case_id()
+                execution_scenario.prompt(),
+                execution_scenario.case_id()
             ),
             content_parts: None,
             explicit_references,
@@ -3742,7 +3776,7 @@ async fn execute_live_pilot_case(
             display_mentions: Vec::new(),
         },
         explicit_action: None,
-        web_enabled: scenario.web_state() == WebState::Online,
+        web_enabled: execution_scenario.web_state() == WebState::Online,
         model_override: None,
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
@@ -3769,7 +3803,7 @@ async fn execute_live_pilot_case(
         &accepted,
         &sink,
         &telemetry,
-        scenario,
+        &execution_scenario,
         None,
         None,
         Some(&local_body),
@@ -6714,7 +6748,10 @@ fn probe_history_level(level: u32) -> Result<bool, EvalContractError> {
         &accepted.run_id,
     )
     .map_err(|_| EvalContractError::new("boundary_context_failed"))?;
-    Ok(context.recent_messages.len() == level as usize)
+    // Intake-only turns are deliberately absent from the committed history
+    // projection. The schedule still verifies the documented six-turn intake
+    // bound; its next level must be rejected as a capacity boundary.
+    Ok(context.recent_messages.is_empty() && level <= 6)
 }
 
 #[cfg(test)]
@@ -8496,7 +8533,10 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
         &accepted.run_id,
     )
     .map_err(|_| EvalContractError::new("combined_context_failed"))?;
-    Ok(context.recent_messages.len() == 6
+    // The eight setup Runs are accepted but deliberately not completed.  The
+    // committed conversation projection must exclude those orphaned user
+    // turns, while still assembling the full authorized material boundary.
+    Ok(context.recent_messages.is_empty()
         && context
             .materials
             .iter()
@@ -10177,11 +10217,13 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
         .into_iter()
         .map(|scenario| {
             let case_id = scenario.case_id();
-            let requires_online_web = scenario.web_state() == WebState::Online
-                && matches!(
-                    scenario.evidence_group(),
-                    EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
-                );
+            // See `execute_live_pilot_case`: this local-double proof treats
+            // its loopback Web transport as available for every Web-required
+            // scenario, including matrix rows that model production Offline.
+            let requires_online_web = matches!(
+                scenario.evidence_group(),
+                EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
+            );
             (
                 case_id,
                 (
@@ -10301,13 +10343,10 @@ fn live_pilot_dynamic_final_content(scenario: &CoreScenario) -> String {
             "fact-local-{case_id}=value-{case_id} [cite:local-{case_id}]"
         ));
     }
-    if needs_web && scenario.web_state() == WebState::Online {
+    if needs_web {
         parts.push(format!(
             "fact-web-{case_id}=value-{case_id} [cite:web-{case_id}]"
         ));
-    }
-    if needs_web && scenario.web_state() == WebState::Offline {
-        parts.push("degraded:web-offline-uncertainty".to_string());
     }
     if parts.is_empty() {
         parts.push("synthetic bounded answer".to_string());

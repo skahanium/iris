@@ -7,13 +7,14 @@ function read(path: string): string {
 }
 
 describe("model pool settings contract", () => {
-  it("renders one global model pool and default model selector", () => {
+  it("renders one global model pool with primary-to-fallback ordering", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
 
     expect(section).toContain('data-section="llm-model-pool"');
-    expect(section).toContain("模型池与默认模型");
-    expect(section).toContain("选择默认模型");
-    expect(section).toContain("defaultModel");
+    expect(section).toContain("模型池与主备顺序");
+    expect(section).toContain("第一项是主模型，后两项是备用模型");
+    expect(section).toContain("candidateOrder");
+    expect(section).toContain("moveCandidate");
     expect(section).not.toContain("能力槽模型路由");
     expect(section).not.toContain("Agent tools");
     expect(section).not.toContain("llm-capability-routing");
@@ -27,7 +28,7 @@ describe("model pool settings contract", () => {
     expect(section).toContain("llmConfigTestProvider");
     expect(section).toContain("llmModelRegistryRefresh");
     expect(section).toContain("llmModelValidate");
-    expect(section).toContain("模型池与默认模型");
+    expect(section).toContain("模型池与主备顺序");
     expect(section).toContain("modelSupportsVision");
     expect(section).not.toContain("modelSupportsSlot");
     expect(section).not.toContain("llmModelConfirmCapability");
@@ -35,13 +36,12 @@ describe("model pool settings contract", () => {
     expect(types).not.toContain("userConfirmedCapabilities");
   });
 
-  it("prevents removing the selected default model or its provider", () => {
+  it("prevents deleting a provider while it remains in the ordered model pool", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
     const rust = read("src-tauri/src/commands/llm_config_commands.rs");
 
-    expect(section).toContain("是当前默认模型，请先选择其他默认模型");
-    expect(section).toContain("包含当前默认模型，请先选择其他默认模型");
-    expect(rust).toContain("current default model provider");
+    expect(section).toContain("仍在主备模型池中，请先移除其模型");
+    expect(rust).toContain("ordered model pool");
     expect(section).not.toContain("usedSlots");
   });
 

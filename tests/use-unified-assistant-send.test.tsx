@@ -274,9 +274,39 @@ describe("useUnifiedAssistantSend", () => {
 
     await act(async () => api?.send());
 
-    expect(start).toHaveBeenCalledTimes(1);
+    expect(start).toHaveBeenCalledTimes(2);
     expect(commitAcceptedTurn).not.toHaveBeenCalled();
     expect(consumeOneShotContextReference).not.toHaveBeenCalled();
+  });
+
+  it("replays an uncertain acceptance once with the original client request id", async () => {
+    const commitAcceptedTurn = vi.fn();
+    start
+      .mockRejectedValueOnce(
+        new Error("transport closed after request dispatch"),
+      )
+      .mockResolvedValueOnce({
+        runId: "run-replayed",
+        turnId: "turn-replayed",
+        session: { domain: "normal", sessionKey: "session-1" },
+        state: "accepted",
+        stateVersion: 0,
+      });
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        commitAcceptedTurn,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(start.mock.calls[1]?.[0].clientRequestId).toBe(
+      start.mock.calls[0]?.[0].clientRequestId,
+    );
+    expect(commitAcceptedTurn).toHaveBeenCalledTimes(1);
   });
 
   it("accepts at most one Run when send is invoked twice in the same tick", async () => {

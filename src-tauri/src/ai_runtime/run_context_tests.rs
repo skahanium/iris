@@ -1460,7 +1460,12 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
         interrupted_assistant_continue: false,
     };
 
-    let prompt = context.prompt_with_domain_plan(&context.domain_plan());
+    let prompt = context
+        .messages_with_domain_plan(&context.domain_plan())
+        .into_iter()
+        .map(|message| message.content.text_content())
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(prompt.contains("内容依据"));
     assert!(prompt.contains("写法参考"));
     assert!(prompt.contains("role=\"reference\""));

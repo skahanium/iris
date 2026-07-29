@@ -12,6 +12,15 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 pub const WEB_SEARCH_PROVIDER_ID_SETTING: &str = "web_search_provider_id";
+pub const WEB_SEARCH_ROUTE_SETTING: &str = "web_search_route";
+
+/// Ordered MCP providers used for `web.search`. The first enabled mapping is
+/// the primary provider; later entries are bounded failover candidates.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchRouteConfig {
+    pub candidate_provider_ids: Vec<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -756,41 +765,105 @@ pub fn save_selected_web_search_provider_id(
     })
 }
 
-pub fn resolve_selected_web_search_provider(
+fn enabled_search_route_ids(
     db: &Database,
-) -> AppResult<WebEvidenceProviderMappingSummary> {
-    let providers = list_enabled_web_search_provider_mappings(db)?;
+    requested_ids: impl IntoIterator<Item = String>,
+) -> AppResult<Vec<String>> {
+    let enabled = list_enabled_web_search_provider_mappings(db)?;
+    let mut route = Vec::new();
+    for requested in requested_ids {
+        let requested = requested.trim();
+        if requested.is_empty() || route.iter().any(|id| id == requested) {
+            continue;
+        }
+        if enabled.iter().any(|provider| provider.id == requested) {
+            route.push(requested.to_string());
+        }
+        if route.len() == 3 {
+            return Ok(route);
+        }
+    }
+    Ok(route)
+}
+
+/// Return the persisted route, migrating a legacy single-provider choice in
+/// memory when no ordered route has been saved yet.
+pub fn get_web_search_route_config(db: &Database) -> AppResult<WebSearchRouteConfig> {
+    let saved = db.with_read_conn(|conn| {
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                [WEB_SEARCH_ROUTE_SETTING],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(raw
+            .and_then(|value| serde_json::from_str::<WebSearchRouteConfig>(&value).ok())
+            .map(|route| route.candidate_provider_ids)
+            .unwrap_or_default())
+    })?;
+    let requested = if saved.is_empty() {
+        let mut legacy = read_selected_web_search_provider_id(db)?
+            .into_iter()
+            .collect::<Vec<_>>();
+        legacy.extend(
+            list_enabled_web_search_provider_mappings(db)?
+                .into_iter()
+                .map(|provider| provider.id),
+        );
+        legacy
+    } else {
+        saved
+    };
+    Ok(WebSearchRouteConfig {
+        candidate_provider_ids: enabled_search_route_ids(db, requested)?,
+    })
+}
+
+/// Persist a normalized, ordered route. Disabled, unknown, duplicate, and
+/// excess candidates are ignored so stored routing state remains safe.
+pub fn save_web_search_route_config(db: &Database, route: &WebSearchRouteConfig) -> AppResult<()> {
+    let normalized = WebSearchRouteConfig {
+        candidate_provider_ids: enabled_search_route_ids(db, route.candidate_provider_ids.clone())?,
+    };
+    let json = serde_json::to_string(&normalized)?;
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![WEB_SEARCH_ROUTE_SETTING, json],
+        )?;
+        Ok(())
+    })
+}
+
+/// Resolve at most three enabled MCP search providers in user-defined order.
+pub fn resolve_web_search_provider_route(
+    db: &Database,
+) -> AppResult<Vec<WebEvidenceProviderMappingSummary>> {
+    let route = get_web_search_route_config(db)?;
+    let enabled = list_enabled_web_search_provider_mappings(db)?;
+    let providers = route
+        .candidate_provider_ids
+        .into_iter()
+        .filter_map(|id| enabled.iter().find(|provider| provider.id == id).cloned())
+        .take(3)
+        .collect::<Vec<_>>();
     if providers.is_empty() {
         return Err(AppError::msg(
             "web_search_provider_missing: no enabled MCP web.search provider is configured",
         ));
     }
+    Ok(providers)
+}
 
-    if let Some(selected_id) = read_selected_web_search_provider_id(db)? {
-        if let Some(provider) = providers
-            .iter()
-            .find(|provider| provider.id == selected_id)
-            .cloned()
-        {
-            return Ok(provider);
-        }
-        // Selected id is stale or disabled — fall through to auto-pick rather than fail closed.
+pub fn resolve_selected_web_search_provider(
+    db: &Database,
+) -> AppResult<WebEvidenceProviderMappingSummary> {
+    if let Some(provider) = resolve_web_search_provider_route(db)?.into_iter().next() {
+        return Ok(provider);
     }
-
-    // No usable explicit selection: prefer the first circuit-healthy provider, else the first listed.
-    let preferred_id = providers
-        .iter()
-        .find(|provider| {
-            crate::ai_runtime::circuit_breaker::inspect_readiness(&provider.id).request_allowed
-        })
-        .or_else(|| providers.first())
-        .map(|provider| provider.id.clone())
-        .expect("providers non-empty after earlier check");
-
-    Ok(providers
-        .into_iter()
-        .find(|provider| provider.id == preferred_id)
-        .expect("preferred id came from providers"))
+    unreachable!("non-empty route is guaranteed by resolve_web_search_provider_route")
 }
 
 pub fn toggle_web_evidence_provider(
@@ -1162,6 +1235,56 @@ mod tests {
         let selected = resolve_selected_web_search_provider(&db).unwrap();
 
         assert_eq!(selected.id, "anysearch");
+    }
+
+    #[test]
+    fn web_search_route_migrates_legacy_selection_then_appends_enabled_providers() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        let mut second = provider();
+        second.id = "brave".into();
+        second.name = "Brave Search".into();
+        second.web_search_mapping_json = Some(r#"{"tool":"brave_web_search"}"#.into());
+        upsert_web_evidence_provider(&db, &second).unwrap();
+        save_selected_web_search_provider_id(&db, Some("brave")).unwrap();
+
+        let route = get_web_search_route_config(&db).unwrap();
+
+        assert_eq!(route.candidate_provider_ids, vec!["brave", "anysearch"]);
+    }
+
+    #[test]
+    fn web_search_route_normalizes_duplicate_and_unknown_candidates() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        let mut second = provider();
+        second.id = "brave".into();
+        second.name = "Brave Search".into();
+        upsert_web_evidence_provider(&db, &second).unwrap();
+
+        save_web_search_route_config(
+            &db,
+            &WebSearchRouteConfig {
+                candidate_provider_ids: vec![
+                    "brave".into(),
+                    "brave".into(),
+                    "missing".into(),
+                    "anysearch".into(),
+                ],
+            },
+        )
+        .unwrap();
+
+        let route = get_web_search_route_config(&db).unwrap();
+        assert_eq!(route.candidate_provider_ids, vec!["brave", "anysearch"]);
+        let snapshots = resolve_web_search_provider_route(&db).unwrap();
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["brave", "anysearch"]
+        );
     }
 
     #[test]
