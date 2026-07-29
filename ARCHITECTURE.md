@@ -43,6 +43,8 @@ React 19 UI
 
 `assistant_run_start`、`assistant_run_control` 和 `assistant_run_get` 是唯一执行、控制和恢复入口。每个 Run 先持久化 accepted，再进行策略、上下文、路由与 provider 调度；`assistant:run_event` 是唯一的前端生命周期事件，断流使用 `assistant_run_get` 回放。
 
+`agent_run_events` 是追加式、安全的过程回放日志，而不是可据以重建全部 Run 的执行日志：事件不包含工具参数或原始输出，只保存稳定 capability、调用 ID、受限摘要、状态和安全错误码。`assistant_run_get` 的回放仅恢复安全快照与过程展示；Direct 与 ToolLoop 不支持进程级续跑，进程中断后不会从事件重新执行模型或工具。只有 Durable Run 才具有暂停与检查点语义，且其可恢复写入闭环仍须通过冻结计划、确认和内容 hash 复核。
+
 会话通过不透明 `AssistantSessionRef` 寻址，并按 normal/classified 安全域物理隔离。当前编辑器、活动 tab、scene、intent、旧 task ID 和笔记正文不进入隐式请求上下文；只有用户明确提交的引用和一次性 action snapshot 可以进入 Run。`Apply` 还必须把确认计划、模型工具参数和真实写入绑定到同一个显式目标与基准 hash；取消信号会进入 provider、工具调度和写盘前提交检查。
 
 旧 `assistant_execute`、`ai_send_message`、`context_assemble`、`tool_confirm`、`session_*`、`agent_task_*`、`harness_*` 与独立领域执行入口均已移除。不会保留兼容 facade、第二状态机或双写。
@@ -51,7 +53,7 @@ React 19 UI
 
 普通搜索和 AI 检索均在 Rust 侧执行。Run 仅按显式引用和获授权范围请求材料；显式材料在读取/送模前、工具读取在打开文件前、Markdown 提交在写盘前都会复核文档策略。检索结果通过证据 ID 与安全展示元数据进入账本，不将证据正文作为系统指令。
 
-模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
+模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。MCP 当前只承载 Web capability mapping，不提供通用 discovery 工具面，也不开放由模型自行选择的外部读写能力。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
 
 ## 凭据安全
 

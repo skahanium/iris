@@ -32,8 +32,9 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 ## Agent Run 契约
 
 - 发起请求只能使用 `assistant_run_start`。请求包含显式会话、显式引用、可选的一次性 `explicitAction` 和安全域；当前编辑器、活动 tab、scene、intent、旧任务 ID 和笔记正文都不是隐式输入。
-- 生命周期事件只有 `assistant:run_event`。事件先持久化再发送；前端断流后使用 `assistant_run_get` 回放，不订阅 `llm:*`、`ai:*`、Harness 或工具确认事件。
+- 生命周期事件只有 `assistant:run_event`。事件先持久化再发送；前端断流后使用 `assistant_run_get` 回放，不订阅 `llm:*`、`ai:*`、Harness 或工具确认事件。回放日志不包含工具参数或原始输出，只返回安全快照和受限过程展示。
 - `assistant_run_control` 以预期 state version 进行幂等控制；取消、确认和恢复不使用平行的 task/harness API。
+- `assistant_run_get` 的断流回放不是进程级执行恢复：Direct 与 ToolLoop 不支持进程级续跑，进程中断后不能由事件重新发起模型或工具。Durable Run 的暂停与检查点仅在其冻结计划、用户确认和内容 hash 复核均满足时才可进入恢复路径。
 - 会话 ID 对前端是不透明的 `AssistantSessionRef`，不能用数据库主键、文档路径或涉密文件路径寻址。
 - 已移除 `assistant_execute`、`ai_send_message`、`context_assemble`、`tool_confirm`、`session_*`、`agent_task_*`、`harness_*` 以及独立 writing/citation/organize/chapter/document/research 执行入口；不得恢复兼容封装。
 
@@ -51,4 +52,4 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 
 Skills are prompt-only；`SKILL.md` scope is the fact source。`skills_*` 不安装依赖、不执行脚本、不暴露外部运行时。
 
-联网证据由 `webEvidenceProvidersList`、`webEvidenceProviderDiagnostics` 与相关 provider IPC 管理。普通 LLM provider 不作为联网证据后端；只有被显式映射并通过诊断的 Web provider 才能进入 `WebEvidenceBroker`。
+联网证据由 `webEvidenceProvidersList`、`webEvidenceProviderDiagnostics` 与相关 provider IPC 管理。普通 LLM provider 不作为联网证据后端；只有被显式映射并通过诊断的 Web provider 才能进入 `WebEvidenceBroker`。MCP 当前只承载 Web capability mapping，不作为通用 MCP discovery 或任意外部工具调用的 IPC 面。

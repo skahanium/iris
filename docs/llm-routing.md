@@ -36,6 +36,8 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 助手只通过 `web_search` 语义入口请求外网证据。严格事实回答使用 Run-local `[W1]…[Wn]` 标注，界面会渲染为上标徽章，并在消息底部「来源」列出对应 HTTPS 标题（见 [design-system.md](./design-system.md) Web 引用契约）。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。非严格工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider；严格路径先验证证据 provider，再选择无工具回答模型。普通证据详情只展示引用、标题、安全 URL/域名、摘录和冲突说明；provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
 
+MCP 当前只承载 Web capability mapping：只有显式配置的 `web.search` / `web.fetch` 映射能被 `WebEvidenceBroker` 调度。它不是通用 MCP discovery、任意工具透传或外部副作用入口；联网开关仍是这条能力链唯一的授权源。
+
 ## 严格事实核验（v1.2.16）
 
 联网开关只授予 `web_search` 能力；开启后，除本机运行时事实、对话元问题、用户已提供材料的变换与纯创作外，所有外部事实请求都使用 `web_required`。每次完成都必须绑定本 Run 的 HTTPS Web 证据；会话历史、摘要和旧引用不能充当新一轮的核验结果。模型可见、Run 关联和最终引用都来自同一份最多 8 条的证据包：单条摘录最多 2,000 字符，Web 工具结果专用上限为 32,000 字符，超过预算必须重新打包或拒绝，绝不静默截断。引用使用 Run-local 的 `[W1]…[Wn]`，不复用会话级编号。联网未开启、来源不足或来源冲突时，Run 以可重试的安全终态结束，不给出事实结论。
