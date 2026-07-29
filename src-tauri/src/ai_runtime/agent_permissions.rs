@@ -7,6 +7,8 @@
 use crate::ai_runtime::tool_catalog::ToolCatalogEntry;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
@@ -619,7 +621,7 @@ fn safe_fragment(value: &str) -> String {
 /// Conservative guard used by audit tests and future insertion paths.
 pub fn audit_contains_sensitive_summary(summary: &str) -> bool {
     let lower = summary.to_lowercase();
-    [
+    let contains_labeled_secret = [
         "api_key",
         "apikey",
         "api-key",
@@ -648,7 +650,64 @@ pub fn audit_contains_sensitive_summary(summary: &str) -> bool {
         "external file body",
     ]
     .iter()
-    .any(|needle| lower.contains(needle))
+    .any(|needle| lower.contains(needle));
+
+    contains_labeled_secret
+        || contains_prefixed_credential(summary, "ghp_", 20, |character| {
+            character.is_ascii_alphanumeric()
+        })
+        || contains_prefixed_credential(summary, "xoxb-", 20, |character| {
+            character.is_ascii_alphanumeric() || character == '-'
+        })
+        || contains_prefixed_credential(summary, "AIza", 20, |character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+        })
+        || contains_jwt_shape(summary)
+}
+
+fn contains_prefixed_credential(
+    value: &str,
+    prefix: &str,
+    minimum_suffix_chars: usize,
+    allowed_suffix: impl Fn(char) -> bool,
+) -> bool {
+    value.match_indices(prefix).any(|(index, _)| {
+        value[index + prefix.len()..]
+            .chars()
+            .take_while(|character| allowed_suffix(*character))
+            .count()
+            >= minimum_suffix_chars
+    })
+}
+
+fn contains_jwt_shape(value: &str) -> bool {
+    value
+        .split(|character: char| {
+            !(character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
+        })
+        .any(|candidate| {
+            let segments = candidate.split('.').collect::<Vec<_>>();
+            let compact_shape = segments.len() == 3
+                && segments[0].len() >= 2
+                && segments[1].len() >= 2
+                && segments.iter().all(|segment| {
+                    segment.chars().all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '_' | '-')
+                    })
+                });
+            compact_shape
+                && (segments[0].starts_with("eyJ")
+                    || (jwt_segment_is_json_object(segments[0])
+                        && jwt_segment_is_json_object(segments[1])))
+        })
+}
+
+fn jwt_segment_is_json_object(segment: &str) -> bool {
+    URL_SAFE_NO_PAD
+        .decode(segment)
+        .ok()
+        .and_then(|decoded| serde_json::from_slice::<serde_json::Value>(&decoded).ok())
+        .is_some_and(|value| value.is_object())
 }
 
 fn validate_permission_storage_value(value: Option<&str>) -> AppResult<()> {

@@ -799,7 +799,8 @@ describe("Assistant Run 事件归约", () => {
     const report = {
       items: [
         {
-          subagentId: "parent-batch:1",
+          subagentId:
+            "subagent:36fc790c1960e5ab36fc790c1960e5ab36fc790c1960e5ab36fc790c1960e5ab:1",
           summary: "核验完成",
           findings: [],
           evidenceIds: ["42"],
@@ -825,12 +826,14 @@ describe("Assistant Run 事件归约", () => {
       event(2, "tool_started", {
         kind: "tool_started",
         capability: "spawn_subagent",
-        toolCallId: "parent-batch:1",
+        toolCallId:
+          "subagent:36fc790c1960e5ab36fc790c1960e5ab36fc790c1960e5ab36fc790c1960e5ab:1",
       }),
       event(3, "tool_completed", {
         kind: "tool_completed",
         capability: "spawn_subagent",
-        toolCallId: "parent-batch:1",
+        toolCallId:
+          "subagent:36fc790c1960e5ab36fc790c1960e5ab36fc790c1960e5ab36fc790c1960e5ab:1",
         summary: "子任务完成",
         durationMs: 12,
         success: true,
@@ -851,6 +854,63 @@ describe("Assistant Run 事件归约", () => {
     if (completed?.payload.kind !== "tool_completed") {
       throw new Error("expected replayed tool_completed event");
     }
+    expect(completed.payload.subagentBatchReport).toEqual(report);
+  });
+
+  it("可重放参数无效的子任务批报告与完成生命周期", () => {
+    const report = {
+      items: [
+        {
+          subagentId:
+            "subagent:8e61758e726b8cfb8e61758e726b8cfb8e61758e726b8cfb8e61758e726b8cfb",
+          summary: "",
+          findings: [],
+          evidenceIds: [],
+          confidence: 0,
+          openQuestions: [],
+          errors: ["tool_arguments_invalid"],
+          budget: {
+            modelTurns: 0,
+            toolCalls: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+          },
+        },
+      ],
+    };
+    const replayed = replayAssistantRunEvents(runId, [
+      event(3, "tool_completed", {
+        kind: "tool_completed",
+        capability: "spawn_subagent",
+        toolCallId:
+          "subagent:8e61758e726b8cfb8e61758e726b8cfb8e61758e726b8cfb8e61758e726b8cfb",
+        summary: "子任务请求无效",
+        durationMs: 0,
+        success: false,
+        subagentBatchReport: report,
+      }),
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-key-001",
+      }),
+      event(2, "tool_started", {
+        kind: "tool_started",
+        capability: "spawn_subagent",
+        toolCallId:
+          "subagent:8e61758e726b8cfb8e61758e726b8cfb8e61758e726b8cfb8e61758e726b8cfb",
+      }),
+    ]);
+    const completed = replayed.events.find(
+      (candidate) => candidate.type === "tool_completed",
+    );
+
+    expect(completed?.payload.kind).toBe("tool_completed");
+    if (completed?.payload.kind !== "tool_completed") {
+      throw new Error("expected replayed invalid child batch completion");
+    }
+    expect(completed.payload.success).toBe(false);
     expect(completed.payload.subagentBatchReport).toEqual(report);
   });
 });

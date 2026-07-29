@@ -1184,6 +1184,98 @@ fn tool_call_identifiers_are_unique_and_must_start_before_completion() {
 }
 
 #[test]
+fn spawn_subagent_lifecycle_rejects_raw_ids_and_sensitive_summaries_at_repository_boundary() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key)).expect("accepted run");
+
+    let raw_id = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: 0,
+            event_type: RunEventType::ToolStarted,
+            payload: RunEventPayload::ToolStarted {
+                capability: "spawn_subagent".to_string(),
+                tool_call_id: "ghp_REDACTED".to_string(),
+            },
+        },
+    )
+    .expect_err("repository must reject raw provider IDs for ChildRun lifecycle");
+    assert_eq!(raw_id.to_string(), "agent_run_invalid_subagent_lifecycle");
+
+    let synthetic_id = "subagent:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: 0,
+            event_type: RunEventType::ToolStarted,
+            payload: RunEventPayload::ToolStarted {
+                capability: "spawn_subagent".to_string(),
+                tool_call_id: synthetic_id.to_string(),
+            },
+        },
+    )
+    .expect("synthetic ChildRun lifecycle start");
+    let sensitive_summary = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: 0,
+            event_type: RunEventType::ToolCompleted,
+            payload: RunEventPayload::ToolCompleted {
+                capability: "spawn_subagent".to_string(),
+                tool_call_id: synthetic_id.to_string(),
+                summary: "JWT_REDACTED".to_string(),
+                duration_ms: Some(0),
+                success: Some(false),
+                subagent_batch_report: None,
+            },
+        },
+    )
+    .expect_err("repository must reject credential-shaped ChildRun summaries");
+    assert_eq!(
+        sensitive_summary.to_string(),
+        "agent_run_invalid_subagent_lifecycle"
+    );
+
+    let sensitive_error = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: "run-1".to_string(),
+            state_version: 0,
+            event_type: RunEventType::ToolCompleted,
+            payload: RunEventPayload::ToolCompleted {
+                capability: "spawn_subagent".to_string(),
+                tool_call_id: synthetic_id.to_string(),
+                summary: "子任务未完成".to_string(),
+                duration_ms: Some(0),
+                success: Some(false),
+                subagent_batch_report: Some(
+                    crate::ai_runtime::subagent_coordinator::SubagentBatchReport {
+                        items: vec![crate::ai_runtime::subagent_coordinator::SubagentReport {
+                            subagent_id: synthetic_id.to_string(),
+                            summary: String::new(),
+                            findings: Vec::new(),
+                            evidence_ids: Vec::new(),
+                            confidence: 0,
+                            open_questions: Vec::new(),
+                            errors: vec!["ghp_REDACTED".to_string()],
+                            budget: Default::default(),
+                        }],
+                    },
+                ),
+            },
+        },
+    )
+    .expect_err("repository must apply the strong guard to report error text");
+    assert_eq!(
+        sensitive_error.to_string(),
+        "agent_run_invalid_subagent_batch_report"
+    );
+}
+
+#[test]
 fn frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption() {
     let (db, session_id, session_key) = setup();
     AgentRunRepository::accept(&db, accept_input(session_id, session_key)).expect("accepted run");

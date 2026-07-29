@@ -52,15 +52,20 @@ fn subagent_error_reports_do_not_become_parent_findings() {
     assert_eq!(report.errors, vec!["child model failed".to_string()]);
 
     let parent_payload = SubAgentCoordinator::tool_output_for_report(&report);
-    assert_eq!(
-        parent_payload["subagentBatchReport"]["items"][0]["subagentId"],
-        "sub-error"
-    );
+    let persisted_id = parent_payload["subagentBatchReport"]["items"][0]["subagentId"]
+        .as_str()
+        .expect("synthetic subagent id");
+    assert!(persisted_id.starts_with("subagent:"));
+    assert!(!persisted_id.contains("sub-error"));
     assert!(
         parent_payload["subagentBatchReport"]["items"][0]["findings"]
             .as_array()
             .unwrap()
             .is_empty()
+    );
+    assert_eq!(
+        parent_payload["subagentBatchReport"]["items"][0]["errors"][0],
+        "child_run_failed"
     );
 }
 

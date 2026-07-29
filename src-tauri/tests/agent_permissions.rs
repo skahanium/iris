@@ -99,6 +99,19 @@ fn audit_sensitive_summary_detector_flags_forbidden_material() {
     assert!(audit_contains_sensitive_summary("api_key=sk-test"));
     assert!(audit_contains_sensitive_summary("clipboard body: hello"));
     assert!(audit_contains_sensitive_summary("screenshot content bytes"));
+    for credential in [
+        "ghp_REDACTED",
+        "xoxb-REDACTED",
+        "AIzaREDACTED",
+        "JWT_REDACTED",
+        "JWT_REDACTED",
+        "JWT_REDACTED",
+    ] {
+        assert!(
+            audit_contains_sensitive_summary(credential),
+            "bare credential shape must be rejected: {credential}"
+        );
+    }
     assert!(!audit_contains_sensitive_summary(
         "permission=vault.write.patch, path=notes/a.md, risk=medium"
     ));

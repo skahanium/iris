@@ -6,6 +6,8 @@ use crate::ai_runtime::model_gateway::ToolCall;
 
 pub(crate) const MAX_SUBAGENT_BATCH_TASKS: usize = 3;
 const MAX_SUBAGENT_SUMMARY_CHARS: usize = 600;
+const MAX_SUBAGENT_FREE_TEXT_CHARS: usize = 500;
+const REDACTED_REPORT_TEXT: &str = "敏感内容已隐藏";
 
 /// Resource access requested by a subagent task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +55,12 @@ pub struct SubAgentTaskSpec {
 }
 
 impl SubAgentTaskSpec {
+    /// Derive the bounded durable identity for one provider tool call without
+    /// persisting the provider-supplied identifier itself.
+    pub(crate) fn persisted_call_id(parent_request_id: &str, tool_call: &ToolCall) -> String {
+        subagent_call_id(parent_request_id, tool_call)
+    }
+
     /// Build the legacy single-task contract.
     pub fn from_tool_call(
         parent_request_id: &str,
@@ -186,29 +194,56 @@ impl SubAgentTaskSpec {
 }
 
 fn subagent_call_id(parent_request_id: &str, tool_call: &ToolCall) -> String {
-    let raw = if tool_call.id.is_empty() {
-        format!("{parent_request_id}:subagent")
+    let provider_id = if tool_call.id.is_empty() {
+        "missing-provider-call-id"
     } else {
-        tool_call.id.clone()
+        tool_call.id.as_str()
     };
-    bounded_subagent_id(raw)
+    bounded_subagent_id(format!("{parent_request_id}\0{provider_id}"))
 }
 
 fn bounded_subagent_id(raw: String) -> String {
-    if raw.chars().count() <= 160
-        && !raw.chars().any(char::is_control)
-        && !crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(&raw)
-    {
+    if is_persisted_subagent_id(&raw) {
         raw
     } else {
         format!("subagent:{}", crate::cas::hash::content_hash_str(&raw))
     }
 }
 
+pub(crate) fn is_persisted_subagent_id(value: &str) -> bool {
+    if value.chars().count() > 160
+        || value.chars().any(char::is_control)
+        || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(value)
+    {
+        return false;
+    }
+    let Some(suffix) = value.strip_prefix("subagent:") else {
+        return false;
+    };
+    let mut parts = suffix.split(':');
+    let Some(hash) = parts.next() else {
+        return false;
+    };
+    if hash.len() != 64 || !hash.chars().all(|character| character.is_ascii_hexdigit()) {
+        return false;
+    }
+    match (parts.next(), parts.next()) {
+        (None, None) => true,
+        (Some(index), None) => index
+            .parse::<usize>()
+            .is_ok_and(|index| (1..=MAX_SUBAGENT_BATCH_TASKS).contains(&index)),
+        _ => false,
+    }
+}
+
 fn safe_report_summary(value: &str) -> String {
+    safe_report_text(value, MAX_SUBAGENT_SUMMARY_CHARS)
+}
+
+fn safe_report_text(value: &str, max_chars: usize) -> String {
     let trimmed = value.trim();
     if crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(trimmed) {
-        return "敏感内容已隐藏".to_string();
+        return REDACTED_REPORT_TEXT.to_string();
     }
     trimmed
         .chars()
@@ -219,8 +254,23 @@ fn safe_report_summary(value: &str) -> String {
                 character
             }
         })
-        .take(MAX_SUBAGENT_SUMMARY_CHARS)
+        .take(max_chars)
         .collect()
+}
+
+fn safe_report_error(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > 96
+        || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(trimmed)
+        || !trimmed.chars().all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
+        })
+    {
+        "child_run_failed".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn parse_resource_locks(args: &serde_json::Value) -> Option<Vec<ResourceLock>> {
@@ -450,6 +500,7 @@ impl SubAgentCoordinator {
         subagent_id: impl Into<String>,
         error: impl Into<String>,
     ) -> SubagentBatchReport {
+        let error = safe_report_error(&error.into());
         SubagentBatchReport {
             items: vec![SubagentReport {
                 subagent_id: bounded_subagent_id(subagent_id.into()),
@@ -458,16 +509,50 @@ impl SubAgentCoordinator {
                 evidence_ids: Vec::new(),
                 confidence: 0,
                 open_questions: Vec::new(),
-                errors: vec![error.into()],
+                errors: vec![error],
                 budget: SubagentBudgetUsage::default(),
             }],
         }
     }
 
     pub(crate) fn tool_output_for_batch(report: &SubagentBatchReport) -> serde_json::Value {
+        let report = Self::safe_batch_report_for_persistence(report);
         serde_json::json!({
             "subagentBatchReport": report,
         })
+    }
+
+    pub(crate) fn safe_batch_report_for_persistence(
+        report: &SubagentBatchReport,
+    ) -> SubagentBatchReport {
+        SubagentBatchReport {
+            items: report
+                .items
+                .iter()
+                .map(|item| SubagentReport {
+                    subagent_id: bounded_subagent_id(item.subagent_id.clone()),
+                    summary: safe_report_summary(&item.summary),
+                    findings: item
+                        .findings
+                        .iter()
+                        .map(|value| safe_report_text(value, MAX_SUBAGENT_FREE_TEXT_CHARS))
+                        .collect(),
+                    evidence_ids: item.evidence_ids.clone(),
+                    confidence: item.confidence,
+                    open_questions: item
+                        .open_questions
+                        .iter()
+                        .map(|value| safe_report_text(value, MAX_SUBAGENT_FREE_TEXT_CHARS))
+                        .collect(),
+                    errors: item
+                        .errors
+                        .iter()
+                        .map(|value| safe_report_error(value))
+                        .collect(),
+                    budget: item.budget.clone(),
+                })
+                .collect(),
+        }
     }
 }
 
@@ -595,6 +680,12 @@ mod tests {
             r#"{"token" : "plain-secret"}"#,
             "x-api-key: plain-secret",
             "client_secret: plain-secret",
+            "ghp_REDACTED",
+            "xoxb-REDACTED",
+            "AIzaREDACTED",
+            "JWT_REDACTED",
+            "JWT_REDACTED",
+            "JWT_REDACTED",
         ] {
             let report = SubAgentCoordinator::report_success(
                 &spec,
@@ -608,6 +699,49 @@ mod tests {
                 .expect("serialize report")
                 .contains("plain-secret"));
         }
+
+        let safe = SubAgentCoordinator::report_success(
+            &spec,
+            "已完成三项只读核验，未发现异常。".to_string(),
+            Vec::new(),
+            SubagentBudgetUsage::default(),
+        );
+        assert_eq!(safe.summary, "已完成三项只读核验，未发现异常。");
+    }
+
+    #[test]
+    fn every_report_free_text_field_is_redacted_before_serialization() {
+        let report = SubagentBatchReport {
+            items: vec![SubagentReport {
+                subagent_id: "subagent:safe-id".to_string(),
+                summary: "safe summary".to_string(),
+                findings: vec![
+                    "ghp_REDACTED".to_string(),
+                    "safe finding".to_string(),
+                ],
+                evidence_ids: Vec::new(),
+                confidence: 50,
+                open_questions: vec![
+                    "xoxb-REDACTED".to_string()
+                ],
+                errors: Vec::new(),
+                budget: SubagentBudgetUsage::default(),
+            }],
+        };
+
+        let output = SubAgentCoordinator::tool_output_for_batch(&report);
+        let serialized = serde_json::to_string(&output).expect("serialize report");
+
+        assert!(!serialized.contains("ghp_"));
+        assert!(!serialized.contains("xoxb-"));
+        assert_eq!(
+            output["subagentBatchReport"]["items"][0]["findings"][0],
+            "敏感内容已隐藏"
+        );
+        assert_eq!(
+            output["subagentBatchReport"]["items"][0]["openQuestions"][0],
+            "敏感内容已隐藏"
+        );
     }
 
     #[test]
@@ -648,8 +782,15 @@ mod tests {
                 .iter()
                 .map(|spec| spec.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["call-sub:1", "call-sub:2", "call-sub:3"]
+            vec![
+                format!("{}:1", subagent_call_id("parent", &subagent_call("{}"))),
+                format!("{}:2", subagent_call_id("parent", &subagent_call("{}"))),
+                format!("{}:3", subagent_call_id("parent", &subagent_call("{}"))),
+            ]
         );
+        assert!(specs
+            .iter()
+            .all(|spec| !spec.id.contains("call-sub") && spec.id.len() <= 160));
     }
 
     #[test]

@@ -894,11 +894,33 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 Ok(outcome) => outcome,
                 Err(_) => return Err(AppError::msg("tool_permission_check_failed")),
             };
+            if call.function.name == "spawn_subagent"
+                && gate_outcome
+                    .tool_result
+                    .as_ref()
+                    .and_then(|result| result.error.as_deref())
+                    == Some("tool_arguments_invalid")
+            {
+                let result = self.invalid_child_batch_result(
+                    call,
+                    "tool_arguments_invalid",
+                    Duration::ZERO,
+                )?;
+                audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+                return Ok(result);
+            }
             if call.function.name == "spawn_subagent" && gate_outcome.tool_result.is_none() {
                 let result = self.execute_child_run_batch(run_id, call, &args).await?;
                 audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
                 return Ok(result);
             }
+            let persisted_tool_call_id = if call.function.name == "spawn_subagent" {
+                crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::persisted_call_id(
+                    run_id, call,
+                )
+            } else {
+                call.id.clone()
+            };
             let state_version = if self.child_tool_events.is_some() {
                 AgentRunRepository::get_for_session(
                     &self.state.db,
@@ -914,7 +936,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     self.accepted,
                     self.sink,
                     &call.function.name,
-                    &call.id,
+                    &persisted_tool_call_id,
                 ) {
                     Ok(version) => version,
                     Err(_) => return Err(AppError::msg("tool_event_persistence_failed")),
@@ -964,7 +986,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     state_version,
                     self.sink,
                     &call.function.name,
-                    &call.id,
+                    &persisted_tool_call_id,
                     summary,
                     result.duration_ms,
                     result.success,
@@ -1049,16 +1071,22 @@ impl NormalRunToolExecutor<'_> {
         error: &'static str,
         duration: Duration,
     ) -> AppResult<ToolCallResult> {
+        let persisted_call_id =
+            crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::persisted_call_id(
+                &self.accepted.run_id,
+                call,
+            );
         let report =
             crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::invalid_batch_report(
-                &call.id, error,
+                &persisted_call_id,
+                error,
             );
         let state_version = append_model_tool_started(
             &self.state.db,
             self.accepted,
             self.sink,
             &call.function.name,
-            &call.id,
+            &persisted_call_id,
         )?;
         let result = child_batch_tool_result(&call.function.name, report.items.clone(), duration);
         append_model_tool_completed_with_report(
@@ -1067,7 +1095,7 @@ impl NormalRunToolExecutor<'_> {
             state_version,
             self.sink,
             &call.function.name,
-            &call.id,
+            &persisted_call_id,
             "子任务请求无效",
             result.duration_ms,
             false,
@@ -1934,6 +1962,9 @@ fn append_model_tool_completed_with_report(
     success: bool,
     subagent_batch_report: Option<crate::ai_runtime::subagent_coordinator::SubagentBatchReport>,
 ) -> AppResult<()> {
+    let subagent_batch_report = subagent_batch_report.as_ref().map(
+        crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::safe_batch_report_for_persistence,
+    );
     let event = AgentRunRepository::append_event(
         db,
         AppendRunEventInput {
@@ -2409,6 +2440,7 @@ mod tests {
     use std::time::Duration;
 
     use super::{
+        append_model_tool_completed_with_report, append_model_tool_started,
         corroborated_source_threshold_met, emit_deferred_web_degradation,
         expected_post_content_hashes, mcp_failover_events, web_search_result_limit,
         DeferredWebDegradationInput, McpFailoverEvent, NormalRunToolExecutor, RunWebBudget,
@@ -3006,12 +3038,13 @@ mod tests {
         )
         .with_child_run_provider(&provider);
 
+        let provider_call_id = "ghp_REDACTED";
         let result = tokio::time::timeout(
             Duration::from_secs(1),
             executor.execute(
                 &accepted.run_id,
                 &ToolCall::new(
-                    "parent-batch",
+                    provider_call_id,
                     "spawn_subagent",
                     r#"{"tasks":[{"task":"slow"},{"task":"fast"},{"task":"middle"}]}"#,
                 ),
@@ -3046,10 +3079,23 @@ mod tests {
         let items = result.output["subagentBatchReport"]["items"]
             .as_array()
             .expect("batch items");
+        let persisted_batch_id =
+            crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::from_tool_call(
+                &accepted.run_id,
+                &ToolCall::new(
+                    provider_call_id,
+                    "spawn_subagent",
+                    r#"{"task":"placeholder"}"#,
+                ),
+                None,
+                Vec::new(),
+                None,
+            )
+            .id;
         assert_eq!(items.len(), 3);
-        assert_eq!(items[0]["subagentId"], "parent-batch:1");
-        assert_eq!(items[1]["subagentId"], "parent-batch:2");
-        assert_eq!(items[2]["subagentId"], "parent-batch:3");
+        assert_eq!(items[0]["subagentId"], format!("{persisted_batch_id}:1"));
+        assert_eq!(items[1]["subagentId"], format!("{persisted_batch_id}:2"));
+        assert_eq!(items[2]["subagentId"], format!("{persisted_batch_id}:3"));
         assert_eq!(items[0]["summary"], "slow 完成");
         assert_eq!(items[1]["summary"], "fast 完成");
         assert_eq!(items[2]["summary"], "");
@@ -3108,43 +3154,62 @@ mod tests {
         assert_eq!(
             lifecycle,
             vec![
-                ("tool_started".to_string(), "parent-batch:1".to_string()),
-                ("tool_started".to_string(), "parent-batch:2".to_string()),
-                ("tool_started".to_string(), "parent-batch:3".to_string()),
                 (
                     "tool_started".to_string(),
-                    format!("parent-batch:1::tool-step-1::{child_tool_suffix}"),
+                    format!("{persisted_batch_id}:1"),
+                ),
+                (
+                    "tool_started".to_string(),
+                    format!("{persisted_batch_id}:2"),
+                ),
+                (
+                    "tool_started".to_string(),
+                    format!("{persisted_batch_id}:3"),
+                ),
+                (
+                    "tool_started".to_string(),
+                    format!("{persisted_batch_id}:1::tool-step-1::{child_tool_suffix}"),
                 ),
                 (
                     "tool_completed".to_string(),
-                    format!("parent-batch:1::tool-step-1::{child_tool_suffix}"),
-                ),
-                ("tool_completed".to_string(), "parent-batch:1".to_string()),
-                (
-                    "tool_started".to_string(),
-                    format!("parent-batch:2::tool-step-1::{child_tool_suffix}"),
+                    format!("{persisted_batch_id}:1::tool-step-1::{child_tool_suffix}"),
                 ),
                 (
                     "tool_completed".to_string(),
-                    format!("parent-batch:2::tool-step-1::{child_tool_suffix}"),
+                    format!("{persisted_batch_id}:1"),
                 ),
-                ("tool_completed".to_string(), "parent-batch:2".to_string()),
                 (
                     "tool_started".to_string(),
-                    format!("parent-batch:3::tool-step-1::{child_tool_suffix}"),
+                    format!("{persisted_batch_id}:2::tool-step-1::{child_tool_suffix}"),
                 ),
                 (
                     "tool_completed".to_string(),
-                    format!("parent-batch:3::tool-step-1::{child_tool_suffix}"),
+                    format!("{persisted_batch_id}:2::tool-step-1::{child_tool_suffix}"),
                 ),
-                ("tool_completed".to_string(), "parent-batch:3".to_string()),
+                (
+                    "tool_completed".to_string(),
+                    format!("{persisted_batch_id}:2"),
+                ),
+                (
+                    "tool_started".to_string(),
+                    format!("{persisted_batch_id}:3::tool-step-1::{child_tool_suffix}"),
+                ),
+                (
+                    "tool_completed".to_string(),
+                    format!("{persisted_batch_id}:3::tool-step-1::{child_tool_suffix}"),
+                ),
+                (
+                    "tool_completed".to_string(),
+                    format!("{persisted_batch_id}:3"),
+                ),
             ]
         );
         assert!(
-            lifecycle
-                .iter()
-                .all(|(_, tool_call_id)| !tool_call_id.contains(raw_provider_tool_id)),
-            "raw provider tool-call IDs must remain in memory/transcript only"
+            lifecycle.iter().all(|(_, tool_call_id)| {
+                !tool_call_id.contains(raw_provider_tool_id)
+                    && !tool_call_id.contains(provider_call_id)
+            }),
+            "all raw provider tool-call IDs must remain in memory/transcript only"
         );
         assert!(
             items
@@ -3165,12 +3230,32 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             persisted_report_ids,
-            vec!["parent-batch:1", "parent-batch:2", "parent-batch:3"],
+            vec![
+                format!("{persisted_batch_id}:1"),
+                format!("{persisted_batch_id}:2"),
+                format!("{persisted_batch_id}:3"),
+            ],
             "durable reports must follow request order, not completion order"
+        );
+        let serialized_events =
+            serde_json::to_string(&*sink.events.lock().expect("events")).expect("serialize events");
+        assert!(
+            !serialized_events.contains(provider_call_id),
+            "provider call ID credentials must never enter durable lifecycle events"
         );
 
         for (index, (arguments, expected_error)) in [
             ("{", "tool_arguments_invalid"),
+            (r#"{"tasks":"not-an-array"}"#, "tool_arguments_invalid"),
+            (r#"{"task":7}"#, "tool_arguments_invalid"),
+            (
+                r#"{"task":"check","allowed_tools":"web_search"}"#,
+                "tool_arguments_invalid",
+            ),
+            (
+                r#"{"tasks":[{"task":"check","allowed_tools":"web_search"}]}"#,
+                "tool_arguments_invalid",
+            ),
             (
                 r#"{"task":"one","tasks":[{"task":"two"}]}"#,
                 "child_run_task_and_tasks_mutually_exclusive",
@@ -3214,7 +3299,98 @@ mod tests {
                 persisted["payload"]["subagentBatchReport"]["items"][0]["errors"][0],
                 expected_error
             );
+            assert!(
+                !persisted["payload"]["toolCallId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("invalid-child-batch"),
+                "invalid requests must also persist only synthetic lifecycle IDs"
+            );
         }
+
+        let report_id = "subagent:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let report_state_version =
+            append_model_tool_started(&state.db, &accepted, &sink, "spawn_subagent", report_id)
+                .expect("report lifecycle start");
+        append_model_tool_completed_with_report(
+            &state.db,
+            &accepted,
+            report_state_version,
+            &sink,
+            "spawn_subagent",
+            report_id,
+            "子任务完成",
+            0,
+            true,
+            Some(
+                crate::ai_runtime::subagent_coordinator::SubagentBatchReport {
+                    items: vec![crate::ai_runtime::subagent_coordinator::SubagentReport {
+                        subagent_id: report_id.to_string(),
+                        summary: "AIzaREDACTED".to_string(),
+                        findings: vec!["ghp_REDACTED".to_string()],
+                        evidence_ids: Vec::new(),
+                        confidence: 50,
+                        open_questions: vec![
+                            "xoxb-REDACTED".to_string(),
+                        ],
+                        errors: Vec::new(),
+                        budget: Default::default(),
+                    }],
+                },
+            ),
+        )
+        .expect("sensitive report text is redacted before repository validation");
+        let redacted = sink
+            .events
+            .lock()
+            .expect("events")
+            .last()
+            .cloned()
+            .expect("redacted report completion");
+        let redacted_item = &redacted["payload"]["subagentBatchReport"]["items"][0];
+        assert_eq!(redacted_item["summary"], "敏感内容已隐藏");
+        assert_eq!(redacted_item["findings"][0], "敏感内容已隐藏");
+        assert_eq!(redacted_item["openQuestions"][0], "敏感内容已隐藏");
+
+        let denied_executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            Vec::new(),
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+        let denied = denied_executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "provider-denied-call",
+                    "spawn_subagent",
+                    r#"{"task":"check"}"#,
+                ),
+                99,
+            )
+            .await
+            .expect("capability denial remains a normal safe rejection");
+        assert!(!denied.success);
+        assert!(denied.output.get("subagentBatchReport").is_none());
+        let persisted_denial = sink
+            .events
+            .lock()
+            .expect("events")
+            .last()
+            .cloned()
+            .expect("persisted denial");
+        assert_eq!(
+            persisted_denial["payload"]["subagentBatchReport"],
+            serde_json::Value::Null
+        );
+        assert!(!persisted_denial["payload"]["toolCallId"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("provider-denied-call"));
     }
 
     #[tokio::test]

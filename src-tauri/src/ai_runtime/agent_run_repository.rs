@@ -2188,6 +2188,32 @@ fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
             return Err(AppError::msg("agent_run_invalid_reasoning_summary"));
         }
     }
+    match payload {
+        RunEventPayload::ToolStarted {
+            capability,
+            tool_call_id,
+        } if capability == "spawn_subagent"
+            && !crate::ai_runtime::subagent_coordinator::is_persisted_subagent_id(tool_call_id) =>
+        {
+            return Err(AppError::msg("agent_run_invalid_subagent_lifecycle"));
+        }
+        RunEventPayload::ToolCompleted {
+            capability,
+            tool_call_id,
+            summary,
+            ..
+        } if capability == "spawn_subagent"
+            && (!crate::ai_runtime::subagent_coordinator::is_persisted_subagent_id(
+                tool_call_id,
+            ) || summary.chars().count() > 600
+                || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(
+                    summary,
+                )) =>
+        {
+            return Err(AppError::msg("agent_run_invalid_subagent_lifecycle"));
+        }
+        _ => {}
+    }
     if let RunEventPayload::ToolCompleted {
         capability,
         subagent_batch_report: Some(report),
@@ -2199,10 +2225,7 @@ fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
             || report.items.len()
                 > crate::ai_runtime::subagent_coordinator::MAX_SUBAGENT_BATCH_TASKS
             || report.items.iter().any(|item| {
-                item.subagent_id.trim().is_empty()
-                    || item.subagent_id.chars().count() > 256
-                    || item.subagent_id.chars().any(char::is_control)
-                    || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(
+                !crate::ai_runtime::subagent_coordinator::is_persisted_subagent_id(
                         &item.subagent_id,
                     )
                     || item.summary.chars().count() > 600
@@ -2235,6 +2258,9 @@ fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
                     || item.errors.iter().any(|value| {
                         value.trim().is_empty()
                             || value.chars().count() > 96
+                            || crate::ai_runtime::agent_permissions::audit_contains_sensitive_summary(
+                                value,
+                            )
                             || !value.chars().all(|character| {
                                 character.is_ascii_lowercase()
                                     || character.is_ascii_digit()
