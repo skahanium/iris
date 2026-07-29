@@ -31,6 +31,7 @@ export type {
   AssistantRunGetResponse,
   AssistantRunRetryRequest,
   AssistantRunStartRequest,
+  ExternalToolGrantRef,
   RunRecoveryKind,
   ClassifiedDocumentContext,
   ClassifiedRunResultRequest,
@@ -833,6 +834,49 @@ export interface WebEvidenceProviderDiagnostics {
   canUseForFetch: boolean;
 }
 
+export interface McpReadOnlyToolCandidate {
+  name: string;
+  inputSchema: Record<string, unknown>;
+  riskClass: "read_only";
+  readOnly: true;
+}
+
+export interface McpReadOnlyToolDiscovery {
+  providerId: string;
+  tools: McpReadOnlyToolCandidate[];
+  rejectedCount: number;
+}
+
+export interface McpCapabilityBindingInput {
+  id?: string;
+  providerId: string;
+  mcpToolName: string;
+  inputSchema: Record<string, unknown>;
+  argumentMapping: Record<string, string>;
+  riskClass: "read_only";
+  readOnly: true;
+  userTrusted: true;
+}
+
+export interface McpCapabilityBindingSummary {
+  id: string;
+  providerId: string;
+  exposedName: string;
+  mcpToolName: string;
+  inputSchema: Record<string, unknown>;
+  argumentMapping: Record<string, string>;
+  outputPolicy: {
+    mode: "text_or_json";
+    maxModelChars: number;
+    maxEvidenceChars: number;
+  };
+  providerConfigHash: string;
+  bindingConfigHash: string;
+  providerEnabled: boolean;
+  configMatches: boolean;
+  userTrusted: boolean;
+}
+
 export interface WebSearchRouteConfig {
   candidateProviderIds: string[];
 }
@@ -899,6 +943,36 @@ export async function webEvidenceProviderDiagnostics(
     "web_evidence_provider_diagnostics",
     { providerId },
   );
+}
+
+export async function mcpReadOnlyToolsDiscover(
+  providerId: string,
+): Promise<McpReadOnlyToolDiscovery> {
+  return invoke<McpReadOnlyToolDiscovery>("mcp_read_only_tools_discover", {
+    providerId,
+  });
+}
+
+export async function mcpCapabilityBindingUpsert(
+  input: McpCapabilityBindingInput,
+): Promise<McpCapabilityBindingSummary> {
+  return invoke<McpCapabilityBindingSummary>("mcp_capability_binding_upsert", {
+    input,
+  });
+}
+
+export async function mcpCapabilityBindingsList(
+  providerId?: string,
+): Promise<McpCapabilityBindingSummary[]> {
+  return invoke<McpCapabilityBindingSummary[]>("mcp_capability_bindings_list", {
+    providerId,
+  });
+}
+
+export async function mcpCapabilityBindingDelete(
+  bindingId: string,
+): Promise<void> {
+  return invoke("mcp_capability_binding_delete", { bindingId });
 }
 
 export async function skillsCreateDraft(

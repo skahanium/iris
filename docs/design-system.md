@@ -106,6 +106,7 @@ Agent 提交状态必须区分本地与远端事实：`已保存`、`正在连�
 - AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
 - 二级/三级详情页顶栏采用「左侧弱化返回按钮（`rounded-full` + `border-border-subtle` + `text-muted-foreground` + `aria-label="返回 X"`）+ 跨行居中标题/副标题」结构；返回按钮与主标题视觉分层，不再左对齐混排。
 - 进入 MCP 第三级（`managementCenterProviderId` 非空）时，二级「联网搜索」PanelSection（当前搜索提供方、联网已开启）整体隐藏，仅保留 `McpProfilesPanel` 详情；返回列表时恢复。
+- MCP 详情页的「外部只读工具」只承担 discovery、只读审查、显式信任 binding 与诊断：候选必须显示为“服务端声明只读、待用户审核”，副作用或不支持的 Schema 只汇总拒绝数量，不展示服务端原始 description。绑定操作必须二次确认精确 provider/tool/schema，并明确说明服务端 `readOnlyHint` 不是 Iris 对第三方行为的证明；取消确认不得调用 Upsert。启用 provider 或保存 binding 不等于授权；Composer 以 Run-local chip 单独勾选已审核 binding，发送后清空本次选择。classified 与 local-only 状态不得显示或提交这些 grant。
 - LLM 与联网搜索路由分别显示有序“主服务、备用 1、备用 2”，使用现有无障碍按钮上移/下移配置；不得把健康度排序伪装成用户顺序。输入框显式指定固定模型时，在该轮旁说明“不自动切换”。
 
 ## 交互规则

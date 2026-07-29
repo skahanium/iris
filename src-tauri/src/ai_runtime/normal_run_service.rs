@@ -398,7 +398,7 @@ async fn dispatch_normal_run_after_context(
             .ok()
             .flatten()
             .unwrap_or_default();
-        let registry = ToolRegistry::new();
+        let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
         let tools = ToolRegistry::constrain_for_explicit_references(
             registry.tools_for_authorized_capabilities(
                 authorized_capabilities,
@@ -706,7 +706,7 @@ async fn dispatch_required_web_verified_run(
         .filter(|capability| LOCAL_FOLLOW_UP_CAPABILITIES.contains(&capability.as_str()))
         .cloned()
         .collect::<Vec<_>>();
-    let registry = ToolRegistry::new();
+    let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
     let tools = ToolRegistry::constrain_for_explicit_references(
         registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
         context.envelope.context,

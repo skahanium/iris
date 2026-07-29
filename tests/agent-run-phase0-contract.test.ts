@@ -55,10 +55,18 @@ describe("阶段 0：Agent Run 契约基线", () => {
 
     expect(architecture).toContain("不包含工具参数或原始输出");
     expect(architecture).toContain("Direct 与 ToolLoop 不支持进程级续跑");
-    expect(architecture).toContain("MCP 当前只承载 Web capability mapping");
+    expect(architecture).toContain(
+      "通用 MCP 只开放另一条独立的 `external.read` 边界",
+    );
     expect(ipcDocs).toContain("不包含工具参数或原始输出");
     expect(ipcDocs).toContain("Direct 与 ToolLoop 不支持进程级续跑");
-    expect(routingDocs).toContain("MCP 当前只承载 Web capability mapping");
+    expect(ipcDocs).toContain("AssistantRunStartRequest.externalToolGrants");
+    expect(routingDocs).toContain(
+      "通用 MCP 只读工具走独立的 `external.read` 路径",
+    );
+    expect(routingDocs).toContain(
+      "Composer 必须逐 Run 显式提交 binding ID/hash",
+    );
 
     expect(roadmap).toContain("六阶段受控演进验收矩阵");
     expect(roadmap).toContain("阶段 0：契约校准与回归基线");

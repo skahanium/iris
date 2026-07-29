@@ -28,9 +28,262 @@ fn request() -> AssistantRunStartRequest {
         explicit_action: None,
         web_enabled: false,
         model_override: None,
+        external_tool_grants: Vec::new(),
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     }
+}
+
+#[test]
+fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
+    use super::mcp_external_tools::{
+        list_bindings, load_run_snapshots, review_discovered_tool, upsert_binding,
+        McpCapabilityBindingInput,
+    };
+    use super::mcp_runtime_registry::{
+        list_web_evidence_providers, upsert_web_evidence_provider, WebEvidenceProviderInput,
+    };
+    use super::run_contract::ExternalToolGrantRef;
+
+    let db = Database::open_in_memory().expect("database");
+    upsert_web_evidence_provider(
+        &db,
+        &WebEvidenceProviderInput {
+            id: "readonly".into(),
+            name: "Read Only".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
+            transport_config_json: r#"{"command":"/bin/true"}"#.into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: None,
+            web_fetch_mapping_json: None,
+        },
+    )
+    .expect("provider");
+    let binding_input = McpCapabilityBindingInput {
+        id: None,
+        provider_id: "readonly".into(),
+        mcp_tool_name: "read_record".into(),
+        input_schema: serde_json::json!({
+            "type":"object",
+            "properties":{"id":{"type":"string","description":"untrusted"}},
+            "required":["id"],
+            "additionalProperties":false
+        }),
+        argument_mapping: serde_json::json!({"id":"record_id"}),
+        risk_class: "read_only".into(),
+        read_only: true,
+        user_trusted: true,
+    };
+    let reviewed = review_discovered_tool(
+        &binding_input.mcp_tool_name,
+        &binding_input.input_schema,
+        Some(true),
+    )
+    .expect("read-only attestation");
+    let reviewed_provider_hash = list_web_evidence_providers(&db)
+        .expect("providers")
+        .into_iter()
+        .find(|provider| provider.id == binding_input.provider_id)
+        .expect("reviewed provider")
+        .provider_config_hash;
+    let binding =
+        upsert_binding(&db, &binding_input, &reviewed, &reviewed_provider_hash).expect("binding");
+    assert_eq!(list_bindings(&db, None).expect("list").len(), 1);
+
+    let mut granted_request = request();
+    granted_request.external_tool_grants = vec![ExternalToolGrantRef {
+        binding_id: binding.id.clone(),
+        binding_config_hash: binding.binding_config_hash.clone(),
+    }];
+    let envelope = RunIntake::resolve_envelope(&granted_request).expect("envelope");
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "external.read"));
+
+    let accepted = RunIntake::start(&db, granted_request).expect("accepted");
+    let snapshots = load_run_snapshots(&db, &accepted.run_id).expect("snapshots");
+    assert_eq!(snapshots.len(), 1);
+    assert_eq!(snapshots[0].binding_id, binding.id);
+    assert_eq!(
+        snapshots[0].provider_config_hash,
+        binding.provider_config_hash
+    );
+    assert!(snapshots[0]
+        .input_schema
+        .to_string()
+        .find("untrusted")
+        .is_none());
+
+    let registry =
+        super::tool_executor::ToolRegistry::for_run(&db, &accepted.run_id).expect("registry");
+    let visible = registry.tools_for_authorized_capabilities(
+        &[super::run_contract::CapabilityId::new("external.read")],
+        true,
+    );
+    let tool = visible
+        .iter()
+        .find(|tool| tool.name == binding.exposed_name)
+        .expect("granted external tool");
+    assert!(tool.description.contains("用户已显式信任"));
+    assert!(!tool.description.contains("untrusted"));
+
+    let mut ungranted = request();
+    ungranted.client_request_id = "intake-ungranted-external".into();
+    let ungranted = RunIntake::start(&db, ungranted).expect("ungranted run");
+    let ungranted_registry =
+        super::tool_executor::ToolRegistry::for_run(&db, &ungranted.run_id).expect("registry");
+    assert!(ungranted_registry
+        .tools_for_authorized_capabilities(
+            &[super::run_contract::CapabilityId::new("external.read")],
+            true,
+        )
+        .iter()
+        .all(|tool| tool.name != binding.exposed_name));
+
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_run_mcp_tool_snapshots
+             SET exposed_name = 'external_tampered_snapshot'
+             WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("tamper frozen snapshot");
+    let registry_error = super::tool_executor::ToolRegistry::for_run(&db, &accepted.run_id)
+        .err()
+        .expect("registry must validate snapshot integrity before exposure");
+    assert_eq!(
+        registry_error.to_string(),
+        "external_tool_binding_config_changed"
+    );
+}
+
+#[test]
+fn provider_config_drift_rolls_back_run_acceptance() {
+    use super::mcp_external_tools::{
+        review_discovered_tool, upsert_binding, McpCapabilityBindingInput,
+    };
+    use super::mcp_runtime_registry::{
+        list_web_evidence_providers, upsert_web_evidence_provider, WebEvidenceProviderInput,
+    };
+    use super::run_contract::ExternalToolGrantRef;
+
+    let db = Database::open_in_memory().expect("database");
+    upsert_web_evidence_provider(
+        &db,
+        &WebEvidenceProviderInput {
+            id: "drifted".into(),
+            name: "Drifted".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
+            transport_config_json: r#"{"command":"/bin/true"}"#.into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: None,
+            web_fetch_mapping_json: None,
+        },
+    )
+    .expect("provider");
+    let binding_input = McpCapabilityBindingInput {
+        id: None,
+        provider_id: "drifted".into(),
+        mcp_tool_name: "read_record".into(),
+        input_schema: serde_json::json!({"type":"object"}),
+        argument_mapping: serde_json::json!({}),
+        risk_class: "read_only".into(),
+        read_only: true,
+        user_trusted: true,
+    };
+    let reviewed = review_discovered_tool(
+        &binding_input.mcp_tool_name,
+        &binding_input.input_schema,
+        Some(true),
+    )
+    .expect("read-only attestation");
+    let reviewed_provider_hash = list_web_evidence_providers(&db)
+        .expect("providers")
+        .into_iter()
+        .find(|provider| provider.id == binding_input.provider_id)
+        .expect("reviewed provider")
+        .provider_config_hash;
+    let binding =
+        upsert_binding(&db, &binding_input, &reviewed, &reviewed_provider_hash).expect("binding");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE web_evidence_providers
+             SET provider_config_hash = 'changed' WHERE id = 'drifted'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("drift provider");
+    let mut request = request();
+    request.external_tool_grants = vec![ExternalToolGrantRef {
+        binding_id: binding.id,
+        binding_config_hash: binding.binding_config_hash,
+    }];
+    assert_eq!(
+        RunIntake::start(&db, request)
+            .expect_err("drift must fail")
+            .to_string(),
+        "external_tool_provider_config_changed"
+    );
+    db.with_read_conn(|conn| {
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM agent_runs", [], |row| row
+                .get::<_, i64>(0))?,
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM session_messages", [], |row| {
+                row.get::<_, i64>(0)
+            })?,
+            0
+        );
+        Ok(())
+    })
+    .expect("accept rollback");
+}
+
+#[test]
+fn classified_run_rejects_external_tool_grants() {
+    use super::run_contract::ExternalToolGrantRef;
+
+    let mut request = request();
+    request.security_domain = SecurityDomain::Classified;
+    request.external_tool_grants = vec![ExternalToolGrantRef {
+        binding_id: "binding".into(),
+        binding_config_hash: "hash".into(),
+    }];
+    assert_eq!(
+        RunIntake::resolve_envelope(&request)
+            .expect_err("classified grant must be rejected")
+            .to_string(),
+        "agent_run_invalid_request"
+    );
+}
+
+#[test]
+fn local_only_request_rejects_external_tool_grants_before_acceptance() {
+    use super::run_contract::ExternalToolGrantRef;
+
+    let mut request = request();
+    request.turn.message = "仅用本地资料回答，不要联网".into();
+    request.external_tool_grants = vec![ExternalToolGrantRef {
+        binding_id: "binding".into(),
+        binding_config_hash: "hash".into(),
+    }];
+    assert_eq!(
+        RunIntake::resolve_envelope(&request)
+            .expect_err("local-only external grant must fail")
+            .to_string(),
+        "agent_run_external_tool_local_only_conflict"
+    );
 }
 
 #[derive(Default)]

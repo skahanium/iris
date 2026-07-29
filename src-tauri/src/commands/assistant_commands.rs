@@ -346,6 +346,7 @@ pub async fn assistant_run_start(
                 || !request.turn.display_mentions.is_empty()
                 || request.turn.content_parts.is_some()
                 || request.explicit_action.is_some()
+                || !request.external_tool_grants.is_empty()
             {
                 return Err(AppError::msg("agent_run_invalid_request"));
             }
@@ -1054,6 +1055,7 @@ mod normal_run_desktop_adapter_tests {
                 explicit_action: None,
                 web_enabled: false,
                 model_override: None,
+                external_tool_grants: Vec::new(),
                 security_domain: SecurityDomain::Normal,
                 classified_context_ref: None,
             },
@@ -1124,6 +1126,7 @@ mod normal_run_desktop_adapter_tests {
                 }),
                 web_enabled: false,
                 model_override: None,
+                external_tool_grants: Vec::new(),
                 security_domain: SecurityDomain::Normal,
                 classified_context_ref: None,
             },

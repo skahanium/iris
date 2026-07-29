@@ -32,6 +32,8 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 | 阶段 4：白名单、逐 Run 授权的通用 MCP 只读工具 | 绑定/快照、外部只读 capability 与受限输出审计                                          | migration up/down、配置漂移、授权和输出净化测试                      |
 | 阶段 5：可信且可解释的 Skills 激活             | 增量索引、受限检索/重排、确定性回退与激活解释                                          | 索引增量、回退、相关性和不增权评测                                   |
 
+阶段 4 的产品边界是“管理中心审查、用户显式信任并绑定，Composer 逐 Run 授权”：MCP 的 `readOnlyHint` 只是候选前提，不是第三方实现确实无副作用的证明；工具还必须通过本地名称/Schema 审查，并由用户确认精确 provider/tool/schema 后进入白名单，Accept 再按冻结 transport/config 执行。它不是启用 provider 后自动授权；Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程或 secret 的工具，但无法独立验证已信任服务端是否忠实实现声明。联网开关仍只控制 `web.search`，不隐式授予 `external.read`。
+
 ## v1.2.17 — macOS 更新与状态继承（进行中）
 
 - macOS 已安装的 `Iris.app` 将运行时状态、缓存、临时目录、Skills 与更新缓存置于 Tauri Application Support 目录，不再写入应用包内部，确保更新安装临时目录不妨碍替换 `.app`。

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use futures_util::future::join_all;
 
 use crate::ai_runtime::agent_evidence_repository::{
-    AgentEvidenceRepository, MaterialRole, WebEvidenceInput,
+    AgentEvidenceRepository, ExternalToolEvidenceInput, MaterialRole, WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
@@ -30,7 +30,7 @@ use crate::ai_runtime::run_contract::{
     SafeRunErrorCode, WebDecisionReason, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::RunEventSink;
-use crate::ai_runtime::tool_audit::record_web_query_taint_witness;
+use crate::ai_runtime::tool_audit::{record_audit, record_web_query_taint_witness, ToolAuditInput};
 use crate::ai_runtime::tool_catalog::catalog_find;
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
 use crate::ai_runtime::tool_execution_pipeline::{
@@ -43,6 +43,7 @@ use crate::ai_types::WebSourceRank;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
+use sha2::{Digest, Sha256};
 
 const WEB_TOOL_NAME: &str = "web_search";
 const MAX_WEB_EVIDENCE_PER_RUN: usize = 8;
@@ -262,6 +263,8 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     cold_start_packets: Vec<crate::ai_runtime::ContextPacket>,
     runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot>,
     local_evidence_ids: Mutex<Vec<i64>>,
+    external_evidence_ids: Arc<Mutex<Vec<i64>>>,
+    external_tool_snapshots: Vec<crate::ai_runtime::mcp_external_tools::FrozenMcpToolSnapshot>,
     run_web_evidence: Arc<Mutex<RunWebEvidenceState>>,
     web_failure: Arc<Mutex<Option<WebFailure>>>,
     web_attempt_count: Arc<Mutex<u32>>,
@@ -312,6 +315,12 @@ impl<'a> NormalRunToolExecutor<'a> {
             cold_start_packets: context.local_retrieval_packets.clone(),
             runtime_documents: Vec::new(),
             local_evidence_ids: Mutex::new(Vec::new()),
+            external_evidence_ids: Arc::new(Mutex::new(Vec::new())),
+            external_tool_snapshots: crate::ai_runtime::mcp_external_tools::load_run_snapshots(
+                &state.db,
+                &accepted.run_id,
+            )
+            .unwrap_or_default(),
             run_web_evidence: Arc::new(Mutex::new(RunWebEvidenceState::default())),
             web_failure: Arc::new(Mutex::new(None)),
             web_attempt_count: Arc::new(Mutex::new(0)),
@@ -403,6 +412,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         self.web_budget = Arc::clone(&parent.web_budget);
         self.web_degradation_emitted = Arc::clone(&parent.web_degradation_emitted);
         self.web_preferred_provider_id = Arc::clone(&parent.web_preferred_provider_id);
+        self.external_evidence_ids = Arc::clone(&parent.external_evidence_ids);
         self
     }
 
@@ -850,6 +860,243 @@ fn web_search_result_limit(remaining: usize, attempt_count: u32) -> usize {
     }
 }
 
+impl NormalRunToolExecutor<'_> {
+    fn external_snapshot(
+        &self,
+        tool_name: &str,
+    ) -> Option<&crate::ai_runtime::mcp_external_tools::FrozenMcpToolSnapshot> {
+        self.external_tool_snapshots
+            .iter()
+            .find(|snapshot| snapshot.exposed_name == tool_name)
+    }
+
+    async fn execute_external_tool(
+        &self,
+        call: &crate::ai_runtime::ToolCall,
+        arguments: &serde_json::Value,
+        step: u32,
+    ) -> AppResult<ToolCallResult> {
+        let snapshot = self
+            .external_snapshot(&call.function.name)
+            .ok_or_else(|| AppError::msg("tool_not_in_run_surface"))?;
+        let started = Instant::now();
+        let persisted_tool_call_id = {
+            let digest = crate::cas::hash::content_hash_str(&format!(
+                "{}:{}:{}:{}",
+                self.accepted.run_id, step, call.function.name, call.id
+            ));
+            format!("external-tool:{step}:{}", &digest[..24])
+        };
+        let state_version = if self.child_tool_events.is_some() {
+            AgentRunRepository::get_for_session(
+                &self.state.db,
+                &self.accepted.session.session_key,
+                &self.accepted.run_id,
+            )?
+            .ok_or_else(|| AppError::msg("agent_run_not_found"))?
+            .run
+            .state_version
+        } else {
+            append_model_tool_started(
+                &self.state.db,
+                self.accepted,
+                self.sink,
+                &call.function.name,
+                &persisted_tool_call_id,
+            )?
+        };
+        let result = if !self.has_capability("external.read") {
+            failed_tool_call_with_duration(
+                &call.function.name,
+                "external_tool_grant_missing",
+                started.elapsed(),
+            )
+        } else if !crate::ai_runtime::mcp_external_tools::snapshot_contract_is_valid(snapshot) {
+            failed_tool_call_with_duration(
+                &call.function.name,
+                "external_tool_binding_config_changed",
+                started.elapsed(),
+            )
+        } else if !crate::ai_runtime::mcp_external_tools::provider_is_current(
+            &self.state.db,
+            snapshot,
+        )? {
+            failed_tool_call_with_duration(
+                &call.function.name,
+                "external_tool_provider_config_changed",
+                started.elapsed(),
+            )
+        } else {
+            match crate::ai_runtime::mcp_external_tools::validate_and_map_arguments(
+                snapshot, arguments,
+            ) {
+                Err(_) => failed_tool_call_with_duration(
+                    &call.function.name,
+                    "external_tool_arguments_schema_mismatch",
+                    started.elapsed(),
+                ),
+                Ok(mapped_arguments) => {
+                    let provider =
+                        crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider {
+                            capability: "external.read".into(),
+                            provider_kind: "mcp".into(),
+                            profile_id: snapshot.provider_id.clone(),
+                            tool_name: snapshot.mcp_tool_name.clone(),
+                            schema_hash: snapshot.binding_config_hash.clone(),
+                            requires_confirmation: false,
+                        };
+                    let options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+                        request_timeout: Duration::from_secs(20),
+                        max_stdout_line_bytes: 64 * 1024,
+                        max_stderr_bytes: 8 * 1024,
+                        cwd: None,
+                        stdio_session_pool: true,
+                        stdio_session_idle_timeout:
+                            crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
+                    };
+                    let frozen_provider =
+                        crate::ai_runtime::mcp_external_tools::frozen_provider_config(snapshot);
+                    match crate::ai_runtime::mcp_host_runtime::call_frozen_provider_tool(
+                        &self.state.db,
+                        &provider,
+                        &frozen_provider,
+                        mapped_arguments,
+                        options,
+                    )
+                    .await
+                    {
+                        Err(error) => failed_tool_call_with_duration(
+                            &call.function.name,
+                            safe_external_tool_failure(&error),
+                            started.elapsed(),
+                        ),
+                        Ok(call_result) => {
+                            match crate::ai_runtime::mcp_external_tools::normalize_external_output(
+                                &call_result.result,
+                            ) {
+                                Err(error) => failed_tool_call_with_duration(
+                                    &call.function.name,
+                                    safe_external_tool_failure(&error),
+                                    started.elapsed(),
+                                ),
+                                Ok(output) => {
+                                    let raw_result_hash =
+                                        hex::encode(Sha256::digest(call_result.result.to_string()));
+                                    let excerpt = output
+                                        .chars()
+                                        .take(
+                                            crate::ai_runtime::mcp_external_tools::MAX_EXTERNAL_EVIDENCE_CHARS,
+                                        )
+                                        .collect::<String>();
+                                    match AgentEvidenceRepository::register_external_tool(
+                                        &self.state.db,
+                                        ExternalToolEvidenceInput {
+                                            session_id: self.context.session_id,
+                                            run_id: self.accepted.run_id.clone(),
+                                            message_seq_first: self.context.message_seq_first,
+                                            title: snapshot.exposed_name.clone(),
+                                            provider_id: snapshot.provider_id.clone(),
+                                            provider_config_hash: snapshot
+                                                .provider_config_hash
+                                                .clone(),
+                                            binding_id: snapshot.binding_id.clone(),
+                                            raw_result_hash,
+                                            retrieved_at: chrono::Utc::now().to_rfc3339(),
+                                            bounded_excerpt: excerpt,
+                                        },
+                                    ) {
+                                        Err(_) => failed_tool_call_with_duration(
+                                            &call.function.name,
+                                            "external_tool_evidence_failed",
+                                            started.elapsed(),
+                                        ),
+                                        Ok(evidence) => {
+                                            self.external_evidence_ids
+                                                .lock()
+                                                .map_err(|_| {
+                                                    AppError::msg("agent_run_evidence_lock_failed")
+                                                })?
+                                                .push(evidence.evidence_id);
+                                            ToolCallResult {
+                                                tool_name: call.function.name.clone(),
+                                                success: true,
+                                                output: serde_json::Value::String(output),
+                                                duration_ms: bounded_duration_ms(started.elapsed()),
+                                                tokens_used: None,
+                                                error: None,
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+        record_audit(
+            &self.state.db,
+            &ToolAuditInput {
+                run_id: &self.accepted.run_id,
+                run_step: step,
+                tool_name: &call.function.name,
+                arguments,
+                result: &result.output,
+                error: result.error.as_deref(),
+                success: result.success,
+                duration_ms: result.duration_ms,
+                subagent_depth: self.subagent_depth,
+            },
+        )?;
+        let summary = if result.success {
+            "外部只读工具调用完成"
+        } else {
+            "外部只读工具调用未完成"
+        };
+        if !self.buffer_child_tool_lifecycle(
+            &call.function.name,
+            &call.id,
+            step,
+            summary,
+            &result,
+        )? {
+            append_model_tool_completed(
+                &self.state.db,
+                self.accepted,
+                state_version,
+                self.sink,
+                &call.function.name,
+                &persisted_tool_call_id,
+                summary,
+                result.duration_ms,
+                result.success,
+            )?;
+        }
+        Ok(result)
+    }
+}
+
+fn safe_external_tool_failure(error: &AppError) -> &'static str {
+    let code = error.to_string();
+    if code.starts_with("external_tool_output_too_large") || code.starts_with("output_too_large") {
+        "external_tool_output_too_large"
+    } else if code.starts_with("external_tool_output_empty") {
+        "external_tool_output_empty"
+    } else if code.starts_with("external_tool_output_unsupported")
+        || code.starts_with("invalid_response")
+    {
+        "external_tool_output_unsupported"
+    } else if code.starts_with("timeout") {
+        "external_tool_provider_timeout"
+    } else if code.starts_with("auth_missing") || code.starts_with("auth_failed") {
+        "external_tool_provider_authentication"
+    } else if code.starts_with("tool_not_found") || code.starts_with("schema_mismatch") {
+        "external_tool_provider_contract_changed"
+    } else {
+        "external_tool_provider_unavailable"
+    }
+}
+
 impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     fn execute<'a>(
         &'a self,
@@ -858,6 +1105,19 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         Box::pin(async move {
+            if self.external_snapshot(&call.function.name).is_some() {
+                let arguments =
+                    match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
+                        Ok(value) if value.is_object() => value,
+                        _ => {
+                            return Ok(failed_tool_call(
+                                &call.function.name,
+                                "external_tool_arguments_schema_mismatch",
+                            ))
+                        }
+                    };
+                return self.execute_external_tool(call, &arguments, step).await;
+            }
             let Some(entry) = catalog_find(&call.function.name) else {
                 return Ok(failed_tool_call(
                     &call.function.name,
@@ -1011,7 +1271,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn evidence_ids(&self) -> Vec<i64> {
-        if self.subagent_depth == 0 {
+        let mut evidence_ids = if self.subagent_depth == 0 {
             self.run_web_evidence
                 .lock()
                 .map(|state| state.evidence_ids.clone())
@@ -1021,7 +1281,16 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 .lock()
                 .map(|ids| ids.clone())
                 .unwrap_or_default()
-        }
+        };
+        evidence_ids.extend(
+            self.external_evidence_ids
+                .lock()
+                .map(|ids| ids.clone())
+                .unwrap_or_default(),
+        );
+        evidence_ids.sort_unstable();
+        evidence_ids.dedup();
+        evidence_ids
     }
 
     fn has_web_evidence(&self) -> bool {
@@ -1144,7 +1413,7 @@ impl NormalRunToolExecutor<'_> {
         args: &serde_json::Value,
     ) -> AppResult<ToolCallResult> {
         let started = Instant::now();
-        let registry = ToolRegistry::new();
+        let registry = ToolRegistry::for_run(&self.state.db, run_id)?;
         let parent_surface = ToolRegistry::constrain_for_explicit_references(
             registry.tools_for_authorized_capabilities(&self.authorized_capabilities, true),
             self.context.envelope.context,
@@ -2451,7 +2720,8 @@ mod tests {
     use crate::ai_runtime::run_context::RunContextAssembler;
     use crate::ai_runtime::run_contract::{
         AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId,
-        RunBudgetPolicy, RunEventPayload, RunEventType, RunState, SafeRunErrorCode, SecurityDomain,
+        ExternalToolGrantRef, RunBudgetPolicy, RunEventPayload, RunEventType, RunState,
+        SafeRunErrorCode, SecurityDomain,
     };
     use crate::ai_runtime::run_engine::{RunEngine, RunEventSink};
     use crate::ai_runtime::run_intake::RunIntake;
@@ -2643,8 +2913,42 @@ mod tests {
             explicit_action: None,
             web_enabled: true,
             model_override: None,
+            external_tool_grants: Vec::new(),
             security_domain: SecurityDomain::Normal,
             classified_context_ref: None,
+        }
+    }
+
+    fn external_stdio_transport_config() -> serde_json::Value {
+        if cfg!(windows) {
+            serde_json::json!({
+                "command": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                "args": [
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    format!(
+                        "{}\\tests\\fixtures\\agent-capacity-mcp-stdio.ps1",
+                        env!("CARGO_MANIFEST_DIR")
+                    ),
+                    "search-only",
+                    "1"
+                ]
+            })
+        } else {
+            serde_json::json!({
+                "command": "/bin/sh",
+                "args": [
+                    format!(
+                        "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+                        env!("CARGO_MANIFEST_DIR")
+                    ),
+                    "search-only",
+                    "1"
+                ]
+            })
         }
     }
 
@@ -2761,6 +3065,248 @@ mod tests {
             failed_report.evidence_ids,
             vec!["41"],
             "failure after child-local registration must retain that evidence"
+        );
+    }
+
+    #[tokio::test]
+    async fn external_read_tool_crosses_transport_and_persists_only_bounded_safe_artifacts() {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &state.db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "external-read-fixture".into(),
+                name: "External read fixture".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: external_stdio_transport_config().to_string(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: None,
+                web_fetch_mapping_json: None,
+            },
+        )
+        .expect("provider");
+        let binding_input = crate::ai_runtime::mcp_external_tools::McpCapabilityBindingInput {
+            id: None,
+            provider_id: "external-read-fixture".into(),
+            mcp_tool_name: "search".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string" },
+                    "max_results": { "type": "integer" }
+                },
+                "required": ["query"],
+                "additionalProperties": false
+            }),
+            argument_mapping: serde_json::json!({}),
+            risk_class: "read_only".into(),
+            read_only: true,
+            user_trusted: true,
+        };
+        let discovery_options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+            request_timeout: Duration::from_secs(20),
+            max_stdout_line_bytes: 64 * 1024,
+            max_stderr_bytes: 8 * 1024,
+            cwd: None,
+            stdio_session_pool: true,
+            stdio_session_idle_timeout:
+                crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
+        };
+        let (discovery, reviewed_provider_hash) =
+            crate::ai_runtime::mcp_host_runtime::
+                discover_provider_tools_without_recording_with_config_hash(
+                    &state.db,
+                    &binding_input.provider_id,
+                    discovery_options,
+                )
+                .await
+                .expect("attested provider discovery");
+        let discovered_tool = discovery
+            .tools
+            .iter()
+            .find(|tool| tool.name == binding_input.mcp_tool_name)
+            .expect("discovered search tool");
+        let reviewed = crate::ai_runtime::mcp_external_tools::review_discovered_tool(
+            &discovered_tool.name,
+            &discovered_tool.input_schema,
+            discovered_tool.read_only_hint,
+        )
+        .expect("read-only attestation");
+        let binding = crate::ai_runtime::mcp_external_tools::upsert_binding(
+            &state.db,
+            &binding_input,
+            &reviewed,
+            &reviewed_provider_hash,
+        )
+        .expect("binding");
+
+        let mut start = request();
+        start.web_enabled = false;
+        start.turn.message = "请使用本次显式授权的外部只读工具查询记录。".into();
+        start.external_tool_grants = vec![ExternalToolGrantRef {
+            binding_id: binding.id,
+            binding_config_hash: binding.binding_config_hash,
+        }];
+        let accepted = RunIntake::start(&state.db, start).expect("accepted");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            None,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "测试外部只读工具".into(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running");
+        let snapshot =
+            crate::ai_runtime::mcp_external_tools::load_run_snapshots(&state.db, &accepted.run_id)
+                .expect("snapshots")
+                .pop()
+                .expect("frozen binding");
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("external.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+        let private_query = "external-query-body-must-not-persist";
+        let provider_output = "fact-web-1=value-1";
+        let private_call_id = "provider-call-id-must-not-persist";
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    private_call_id,
+                    snapshot.exposed_name.clone(),
+                    serde_json::json!({ "query": private_query }).to_string(),
+                ),
+                1,
+            )
+            .await
+            .expect("external execution");
+        assert!(result.success, "external result: {result:?}");
+        assert!(result
+            .output
+            .as_str()
+            .is_some_and(|output| output.contains(provider_output)));
+
+        let (
+            evidence_count,
+            evidence_run_id,
+            evidence_provider_id,
+            evidence_method,
+            evidence_excerpt,
+            evidence_retrieved_at,
+            evidence_hash,
+            run_evidence_count,
+            event_payloads,
+            audit_arguments,
+            audit_result,
+            checkpoint_count,
+        ) = state
+            .db
+            .with_read_conn(|conn| {
+                let evidence = conn.query_row(
+                    "SELECT COUNT(*), origin_run_id, provider_id, extraction_method,
+                            bounded_excerpt, retrieved_at, raw_result_hash
+                     FROM session_evidence
+                     WHERE origin_run_id = ?1 AND extraction_method = 'mcp_tool_output_v1'",
+                    [&accepted.run_id],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?,
+                        ))
+                    },
+                )?;
+                let run_evidence_count = conn.query_row(
+                    "SELECT COUNT(*) FROM agent_run_evidence
+                     WHERE run_id = ?1 AND registration_source = 'external_tool'",
+                    [&accepted.run_id],
+                    |row| row.get::<_, i64>(0),
+                )?;
+                let event_payloads = conn.query_row(
+                    "SELECT COALESCE(group_concat(payload_json, '|'), '')
+                     FROM agent_run_events WHERE run_id = ?1",
+                    [&accepted.run_id],
+                    |row| row.get::<_, String>(0),
+                )?;
+                let (audit_arguments, audit_result) = conn.query_row(
+                    "SELECT COALESCE(arguments_summary, ''), COALESCE(result_summary, '')
+                     FROM tool_audit WHERE run_id = ?1 AND tool_name = ?2",
+                    rusqlite::params![accepted.run_id, snapshot.exposed_name],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )?;
+                let checkpoint_count = conn.query_row(
+                    "SELECT COUNT(*) FROM agent_run_steps WHERE run_id = ?1",
+                    [&accepted.run_id],
+                    |row| row.get::<_, i64>(0),
+                )?;
+                Ok((
+                    evidence.0,
+                    evidence.1,
+                    evidence.2,
+                    evidence.3,
+                    evidence.4,
+                    evidence.5,
+                    evidence.6,
+                    run_evidence_count,
+                    event_payloads,
+                    audit_arguments,
+                    audit_result,
+                    checkpoint_count,
+                ))
+            })
+            .expect("persisted external artifacts");
+        assert_eq!(evidence_count, 1);
+        assert_eq!(evidence_run_id, accepted.run_id);
+        assert_eq!(evidence_provider_id, "external-read-fixture");
+        assert_eq!(evidence_method, "mcp_tool_output_v1");
+        assert!(evidence_excerpt.contains(provider_output));
+        assert!(evidence_excerpt.chars().count() <= 2_000);
+        assert!(!evidence_retrieved_at.trim().is_empty());
+        assert!(!evidence_hash.trim().is_empty());
+        assert_eq!(run_evidence_count, 1);
+        assert_eq!(audit_arguments, "shape=object, keys=1");
+        assert_eq!(audit_result, "shape=string");
+        assert!(!event_payloads.contains(private_query));
+        assert!(!event_payloads.contains(provider_output));
+        assert!(!event_payloads.contains(private_call_id));
+        assert!(!audit_arguments.contains(private_query));
+        assert!(!audit_result.contains(provider_output));
+        assert_eq!(
+            checkpoint_count, 0,
+            "normal external reads must not create durable checkpoints"
         );
     }
 

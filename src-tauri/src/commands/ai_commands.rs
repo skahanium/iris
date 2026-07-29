@@ -247,6 +247,112 @@ pub async fn web_evidence_provider_diagnostics(
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpReadOnlyToolDiscovery {
+    pub provider_id: String,
+    pub tools: Vec<crate::ai_runtime::mcp_external_tools::McpReadOnlyToolCandidate>,
+    pub rejected_count: usize,
+}
+
+/// Discover only reviewable read-only candidates. Server descriptions, titles
+/// and output schemas never cross this management IPC boundary.
+#[tauri::command]
+pub async fn mcp_read_only_tools_discover(
+    state: State<'_, Arc<AppState>>,
+    provider_id: String,
+) -> AppResult<McpReadOnlyToolDiscovery> {
+    let options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+        request_timeout: Duration::from_secs(20),
+        max_stdout_line_bytes: 64 * 1024,
+        max_stderr_bytes: 8 * 1024,
+        cwd: None,
+        stdio_session_pool: true,
+        stdio_session_idle_timeout:
+            crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
+    };
+    let discovery = crate::ai_runtime::mcp_host_runtime::discover_provider_tools_without_recording(
+        &state.db,
+        &provider_id,
+        options,
+    )
+    .await?;
+    let discovered_count = discovery.tools.len();
+    let tools = discovery
+        .tools
+        .iter()
+        .filter_map(|tool| {
+            crate::ai_runtime::mcp_external_tools::review_discovered_tool(
+                &tool.name,
+                &tool.input_schema,
+                tool.read_only_hint,
+            )
+            .ok()
+        })
+        .collect::<Vec<_>>();
+    Ok(McpReadOnlyToolDiscovery {
+        provider_id,
+        rejected_count: discovered_count.saturating_sub(tools.len()),
+        tools,
+    })
+}
+
+#[tauri::command]
+pub async fn mcp_capability_binding_upsert(
+    state: State<'_, Arc<AppState>>,
+    input: crate::ai_runtime::mcp_external_tools::McpCapabilityBindingInput,
+) -> AppResult<crate::ai_runtime::mcp_external_tools::McpCapabilityBindingSummary> {
+    let options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+        request_timeout: Duration::from_secs(20),
+        max_stdout_line_bytes: 64 * 1024,
+        max_stderr_bytes: 8 * 1024,
+        cwd: None,
+        stdio_session_pool: true,
+        stdio_session_idle_timeout:
+            crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
+    };
+    let (discovery, reviewed_provider_config_hash) =
+        crate::ai_runtime::mcp_host_runtime::
+            discover_provider_tools_without_recording_with_config_hash(
+                &state.db,
+                &input.provider_id,
+                options,
+            )
+            .await?;
+    let tool = discovery
+        .tools
+        .iter()
+        .find(|tool| tool.name == input.mcp_tool_name)
+        .ok_or_else(|| AppError::msg("external_tool_discovery_changed"))?;
+    let reviewed = crate::ai_runtime::mcp_external_tools::review_discovered_tool(
+        &tool.name,
+        &tool.input_schema,
+        tool.read_only_hint,
+    )?;
+    crate::ai_runtime::mcp_external_tools::upsert_binding(
+        &state.db,
+        &input,
+        &reviewed,
+        &reviewed_provider_config_hash,
+    )
+}
+
+#[tauri::command]
+pub async fn mcp_capability_bindings_list(
+    state: State<'_, Arc<AppState>>,
+    provider_id: Option<String>,
+) -> AppResult<Vec<crate::ai_runtime::mcp_external_tools::McpCapabilityBindingSummary>> {
+    crate::ai_runtime::mcp_external_tools::list_bindings(&state.db, provider_id.as_deref())
+}
+
+#[tauri::command]
+pub async fn mcp_capability_binding_delete(
+    state: State<'_, Arc<AppState>>,
+    binding_id: String,
+) -> AppResult<()> {
+    crate::ai_runtime::mcp_external_tools::delete_binding(&state.db, &binding_id)
+}
+
 fn provider_mapping_status(has_search_mapping: bool, has_fetch_mapping: bool) -> String {
     match (has_search_mapping, has_fetch_mapping) {
         (true, true) => "complete".into(),

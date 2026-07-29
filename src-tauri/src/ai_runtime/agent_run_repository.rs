@@ -244,11 +244,24 @@ impl AgentRunRepository {
     ///
     /// A repeated `client_request_id` returns the original accepted identity
     /// without adding another user message or event.
+    #[allow(
+        dead_code,
+        reason = "test fixtures accept Runs without external grants"
+    )]
     pub(crate) fn accept(db: &Database, input: AcceptRunInput) -> AppResult<AssistantRunAccepted> {
+        Self::accept_with_external_grants(db, input, &[])
+    }
+
+    /// Atomically persist the accepted Run and its explicit MCP snapshots.
+    pub(crate) fn accept_with_external_grants(
+        db: &Database,
+        input: AcceptRunInput,
+        external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
+    ) -> AppResult<AssistantRunAccepted> {
         if input.envelope.security_domain != SecurityDomain::Normal {
             return Err(AppError::msg("agent_run_classified_domain_not_supported"));
         }
-        let intake_fingerprint = intake_fingerprint(&input)?;
+        let intake_fingerprint = intake_fingerprint(&input, external_tool_grants)?;
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
                 if let Some((existing, stored_fingerprint)) =
@@ -342,6 +355,11 @@ impl AgentRunRepository {
                         prompt_contract_hash,
                         now,
                     ],
+                )?;
+                crate::ai_runtime::mcp_external_tools::freeze_run_grants(
+                    conn,
+                    &input.run_id,
+                    external_tool_grants,
                 )?;
                 let event = AssistantRunEvent::new(
                     &input.run_id,
@@ -2103,7 +2121,10 @@ fn accepted_for_client_request(
     }
 }
 
-fn intake_fingerprint(input: &AcceptRunInput) -> AppResult<String> {
+fn intake_fingerprint(
+    input: &AcceptRunInput,
+    external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
+) -> AppResult<String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct IntakeFingerprint<'a> {
@@ -2115,6 +2136,7 @@ fn intake_fingerprint(input: &AcceptRunInput) -> AppResult<String> {
         display_mentions: &'a [crate::ai_runtime::run_contract::DisplayMention],
         explicit_action: &'a Option<ExplicitAction>,
         envelope: &'a ExecutionEnvelope,
+        external_tool_grants: &'a [crate::ai_runtime::run_contract::ExternalToolGrantRef],
     }
 
     let canonical = serde_json::to_vec(&IntakeFingerprint {
@@ -2126,6 +2148,7 @@ fn intake_fingerprint(input: &AcceptRunInput) -> AppResult<String> {
         display_mentions: &input.display_mentions,
         explicit_action: &input.explicit_action,
         envelope: &input.envelope,
+        external_tool_grants,
     })?;
     Ok(hex::encode(Sha256::digest(canonical)))
 }

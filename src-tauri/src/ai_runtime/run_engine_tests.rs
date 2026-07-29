@@ -507,6 +507,7 @@ fn request() -> AssistantRunStartRequest {
         explicit_action: None,
         web_enabled: false,
         model_override: None,
+        external_tool_grants: Vec::new(),
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     }

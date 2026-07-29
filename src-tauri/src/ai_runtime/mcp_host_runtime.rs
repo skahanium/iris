@@ -113,6 +113,35 @@ pub struct McpHostRuntimeOptions {
     pub stdio_session_idle_timeout: Duration,
 }
 
+/// Immutable, non-secret provider launch facts frozen during one Run's Accept
+/// transaction. Credential values are still resolved from the secure runtime
+/// store, but their named references and every endpoint/process argument are
+/// fixed here so dispatch never reloads mutable provider configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FrozenMcpProviderConfig {
+    pub(crate) provider_id: String,
+    pub(crate) transport_kind: String,
+    pub(crate) transport_config_json: String,
+    pub(crate) credential_refs_json: String,
+    pub(crate) provider_launch_hash: String,
+}
+
+pub(crate) fn frozen_provider_launch_hash(
+    provider_id: &str,
+    transport_kind: &str,
+    transport_config_json: &str,
+    credential_refs_json: &str,
+) -> String {
+    let value = serde_json::json!({
+        "providerId": provider_id,
+        "providerKind": "mcp",
+        "transportKind": transport_kind,
+        "transportConfigJson": transport_config_json,
+        "credentialRefsJson": credential_refs_json,
+    });
+    hex::encode(&sha2::Sha256::digest(value.to_string().as_bytes())[..12])
+}
+
 pub const DEFAULT_STDIO_SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 /// Bound retained stdio children across providers. Active calls temporarily
 /// remove their entry from this cache, so the cap only governs idle reuse.
@@ -242,6 +271,7 @@ pub struct McpToolDefinition {
     pub name: String,
     pub title: Option<String>,
     pub description: Option<String>,
+    pub read_only_hint: Option<bool>,
     pub input_schema: serde_json::Value,
     pub output_schema: Option<serde_json::Value>,
 }
@@ -331,6 +361,10 @@ fn rmcp_client_info() -> ClientInfo {
 
 fn mcp_tool_definition_from_rmcp(tool: Tool) -> McpToolDefinition {
     let input_schema = tool.schema_as_json_value();
+    let read_only_hint = tool
+        .annotations
+        .as_ref()
+        .and_then(|annotations| annotations.read_only_hint);
     let output_schema = tool
         .output_schema
         .as_ref()
@@ -339,6 +373,7 @@ fn mcp_tool_definition_from_rmcp(tool: Tool) -> McpToolDefinition {
         name: tool.name.to_string(),
         title: tool.title,
         description: tool.description.map(|value| value.to_string()),
+        read_only_hint,
         input_schema,
         output_schema,
     }
@@ -1105,6 +1140,49 @@ fn load_remote_provider(db: &Database, provider_id: &str) -> AppResult<StoredRem
     })
 }
 
+fn load_frozen_remote_provider(
+    db: &Database,
+    frozen: &FrozenMcpProviderConfig,
+) -> AppResult<StoredRemoteProvider> {
+    if frozen.transport_kind != "https"
+        || frozen.provider_launch_hash
+            != frozen_provider_launch_hash(
+                &frozen.provider_id,
+                &frozen.transport_kind,
+                &frozen.transport_config_json,
+                &frozen.credential_refs_json,
+            )
+    {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            "frozen MCP provider launch contract changed",
+        ));
+    }
+    crate::ai_runtime::mcp_runtime_registry::validate_mcp_runtime_transport_security(
+        &frozen.transport_kind,
+        &frozen.transport_config_json,
+        &frozen.credential_refs_json,
+    )?;
+    let config: serde_json::Value = serde_json::from_str(&frozen.transport_config_json)?;
+    let url = config_string(&config, "url").ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::InvalidResponse,
+            "frozen MCP HTTPS provider has no URL",
+        )
+    })?;
+    let allow_localhost_dev = config
+        .get("allow_localhost_dev")
+        .and_then(|value| value.as_bool())
+        == Some(true);
+    validate_mcp_http_runtime_url(&url, allow_localhost_dev)?;
+    let headers = resolve_http_header_bindings(db, &frozen.credential_refs_json)?;
+    Ok(StoredRemoteProvider {
+        url,
+        headers,
+        allow_localhost_dev,
+    })
+}
+
 pub(crate) fn provider_http_auth_header_present(
     db: &Database,
     provider_id: &str,
@@ -1227,6 +1305,103 @@ fn load_stdio_provider(db: &Database, provider_id: &str) -> AppResult<StoredStdi
             args: parse_stdio_args(&args_json)?,
             env: Vec::new(),
         })
+    })
+}
+
+fn load_current_frozen_provider(
+    db: &Database,
+    provider_id: &str,
+) -> AppResult<(FrozenMcpProviderConfig, String)> {
+    db.with_read_conn(|conn| {
+        let (
+            kind,
+            enabled,
+            provider_config_hash,
+            transport_kind,
+            transport_config_json,
+            credential_refs_json,
+        ): (String, i64, String, String, String, String) = conn.query_row(
+            "SELECT kind, enabled, provider_config_hash, transport_kind,
+                    transport_config_json, credential_refs_json
+             FROM web_evidence_providers WHERE id = ?1",
+            [provider_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        if kind != "mcp" || enabled != 1 {
+            return Err(runtime_error(
+                McpRuntimeFailureKind::PolicyDenied,
+                "MCP provider is unavailable",
+            ));
+        }
+        let transport_kind = transport_kind.trim().to_ascii_lowercase();
+        crate::ai_runtime::mcp_runtime_registry::validate_mcp_runtime_transport_security(
+            &transport_kind,
+            &transport_config_json,
+            &credential_refs_json,
+        )?;
+        let provider_launch_hash = frozen_provider_launch_hash(
+            provider_id,
+            &transport_kind,
+            &transport_config_json,
+            &credential_refs_json,
+        );
+        Ok((
+            FrozenMcpProviderConfig {
+                provider_id: provider_id.to_string(),
+                transport_kind,
+                transport_config_json,
+                credential_refs_json,
+                provider_launch_hash,
+            },
+            provider_config_hash,
+        ))
+    })
+}
+
+fn load_frozen_stdio_provider(frozen: &FrozenMcpProviderConfig) -> AppResult<StoredStdioProvider> {
+    if frozen.transport_kind != "stdio"
+        || frozen.provider_launch_hash
+            != frozen_provider_launch_hash(
+                &frozen.provider_id,
+                &frozen.transport_kind,
+                &frozen.transport_config_json,
+                &frozen.credential_refs_json,
+            )
+    {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            "frozen MCP provider launch contract changed",
+        ));
+    }
+    crate::ai_runtime::mcp_runtime_registry::validate_mcp_runtime_transport_security(
+        &frozen.transport_kind,
+        &frozen.transport_config_json,
+        &frozen.credential_refs_json,
+    )?;
+    let config: serde_json::Value = serde_json::from_str(&frozen.transport_config_json)?;
+    let command = config_string(&config, "command").ok_or_else(|| {
+        runtime_error(
+            McpRuntimeFailureKind::InvalidResponse,
+            "frozen MCP provider has no stdio command",
+        )
+    })?;
+    let args_json = config
+        .get("args")
+        .map(serde_json::Value::to_string)
+        .unwrap_or_else(|| "[]".to_string());
+    Ok(StoredStdioProvider {
+        command: PathBuf::from(command),
+        args: parse_stdio_args(&args_json)?,
+        env: Vec::new(),
     })
 }
 
@@ -1973,6 +2148,72 @@ pub async fn call_provider_tool(
     }
 }
 
+/// Dispatch one Run-frozen MCP tool without reloading mutable provider
+/// endpoint/process configuration by provider ID.
+pub(crate) async fn call_frozen_provider_tool(
+    db: &Database,
+    provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
+    frozen: &FrozenMcpProviderConfig,
+    arguments: serde_json::Value,
+    options: McpHostRuntimeOptions,
+) -> AppResult<McpToolCallResult> {
+    if provider.provider_kind != "mcp" || provider.profile_id != frozen.provider_id {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            "resolved provider does not match the frozen MCP launch",
+        ));
+    }
+    let (result, stderr_summary) = match frozen.transport_kind.as_str() {
+        "stdio" => {
+            let loaded = load_frozen_stdio_provider(frozen)?;
+            let launch = McpStdioToolCallLaunch {
+                command: loaded.command,
+                args: loaded.args,
+                env: loaded.env,
+                cwd: options.cwd,
+                request_timeout: options.request_timeout,
+                max_stdout_line_bytes: options.max_stdout_line_bytes,
+                max_stderr_bytes: options.max_stderr_bytes,
+                tool_name: provider.tool_name.clone(),
+                arguments,
+            };
+            if options.stdio_session_pool {
+                call_stdio_tool_pooled(launch, options.stdio_session_idle_timeout).await?
+            } else {
+                call_stdio_tool_with_rmcp(launch).await?
+            }
+        }
+        "https" => {
+            let loaded = load_frozen_remote_provider(db, frozen)?;
+            let result = call_http_tool(
+                McpHttpLaunch {
+                    url: loaded.url,
+                    headers: loaded.headers,
+                    request_timeout: options.request_timeout,
+                    max_response_bytes: options.max_stdout_line_bytes,
+                    allow_localhost_dev: loaded.allow_localhost_dev,
+                },
+                provider.tool_name.clone(),
+                arguments,
+            )
+            .await?;
+            (result, None)
+        }
+        _ => {
+            return Err(runtime_error(
+                McpRuntimeFailureKind::PolicyDenied,
+                "frozen MCP provider has an unsupported transport",
+            ))
+        }
+    };
+    Ok(McpToolCallResult {
+        provider_id: provider.profile_id.clone(),
+        tool_name: provider.tool_name.clone(),
+        result,
+        stderr_summary,
+    })
+}
+
 pub async fn call_required_capability(
     db: &Database,
     capability: &str,
@@ -2084,30 +2325,78 @@ pub async fn discover_provider_tools_without_recording(
     discover_provider_tools_with_observation(db, provider_id, options, false).await
 }
 
+/// Discover against one atomically loaded provider launch and return the exact
+/// provider config hash used for that transport. Binding creation must compare
+/// this hash inside its write transaction so a management edit cannot attach
+/// an old read-only review to a new endpoint.
+pub(crate) async fn discover_provider_tools_without_recording_with_config_hash(
+    db: &Database,
+    provider_id: &str,
+    options: McpHostRuntimeOptions,
+) -> AppResult<(McpStdioDiscovery, String)> {
+    discover_provider_tools_with_config_hash_and_observation(db, provider_id, options, false).await
+}
+
 async fn discover_provider_tools_with_observation(
     db: &Database,
     provider_id: &str,
     options: McpHostRuntimeOptions,
     record_observation: bool,
 ) -> AppResult<McpStdioDiscovery> {
+    discover_provider_tools_with_config_hash_and_observation(
+        db,
+        provider_id,
+        options,
+        record_observation,
+    )
+    .await
+    .map(|(discovery, _)| discovery)
+}
+
+async fn discover_provider_tools_with_config_hash_and_observation(
+    db: &Database,
+    provider_id: &str,
+    options: McpHostRuntimeOptions,
+    record_observation: bool,
+) -> AppResult<(McpStdioDiscovery, String)> {
     let started = Instant::now();
-    let result = match load_provider_transport(db, provider_id)?.as_str() {
-        "stdio" => discover_provider_stdio_tools(db, provider_id, options).await,
-        "https" => {
-            let provider = load_remote_provider(db, provider_id)?;
-            discover_http_tools(McpHttpLaunch {
-                url: provider.url,
-                headers: provider.headers,
-                request_timeout: options.request_timeout,
-                max_response_bytes: options.max_stdout_line_bytes,
-                allow_localhost_dev: provider.allow_localhost_dev,
-            })
-            .await
+    let (result, provider_config_hash) = match load_current_frozen_provider(db, provider_id) {
+        Ok((frozen, provider_config_hash)) => {
+            let result = match frozen.transport_kind.as_str() {
+                "stdio" => {
+                    let provider = load_frozen_stdio_provider(&frozen)?;
+                    discover_stdio_tools_with_rmcp(
+                        McpStdioLaunch {
+                            command: provider.command,
+                            args: provider.args,
+                            cwd: options.cwd,
+                            request_timeout: options.request_timeout,
+                            max_stdout_line_bytes: options.max_stdout_line_bytes,
+                            max_stderr_bytes: options.max_stderr_bytes,
+                        },
+                        provider.env,
+                    )
+                    .await
+                }
+                "https" => {
+                    let provider = load_frozen_remote_provider(db, &frozen)?;
+                    discover_http_tools(McpHttpLaunch {
+                        url: provider.url,
+                        headers: provider.headers,
+                        request_timeout: options.request_timeout,
+                        max_response_bytes: options.max_stdout_line_bytes,
+                        allow_localhost_dev: provider.allow_localhost_dev,
+                    })
+                    .await
+                }
+                other => Err(runtime_error(
+                    McpRuntimeFailureKind::PolicyDenied,
+                    format!("unsupported_transport: {other}"),
+                )),
+            };
+            (result, Some(provider_config_hash))
         }
-        other => Err(runtime_error(
-            McpRuntimeFailureKind::PolicyDenied,
-            format!("unsupported_transport: {other}"),
-        )),
+        Err(error) => (Err(error), None),
     };
     observe_provider_discovery_result(
         db,
@@ -2116,7 +2405,10 @@ async fn discover_provider_tools_with_observation(
         &result,
         record_observation,
     )?;
-    result
+    let discovery = result?;
+    let provider_config_hash = provider_config_hash
+        .ok_or_else(|| runtime_error(McpRuntimeFailureKind::InvalidResponse, "missing hash"))?;
+    Ok((discovery, provider_config_hash))
 }
 
 fn observe_provider_discovery_result(
@@ -2644,6 +2936,7 @@ mod tests {
                 name: "search".into(),
                 title: None,
                 description: None,
+                read_only_hint: None,
                 input_schema: serde_json::json!({"type":"object"}),
                 output_schema: None,
             }],
@@ -2743,5 +3036,52 @@ mod tests {
 
         assert!(Arc::ptr_eq(&first, &second));
         assert!(!Arc::ptr_eq(&first, &other));
+    }
+
+    #[test]
+    fn frozen_stdio_launch_does_not_reload_drifted_provider_config() {
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "frozen-provider".into(),
+                name: "Frozen provider".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: r#"{"command":"/old/read-only","args":["old"]}"#.into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: None,
+                web_fetch_mapping_json: None,
+            },
+        )
+        .unwrap();
+        let frozen = FrozenMcpProviderConfig {
+            provider_id: "frozen-provider".into(),
+            transport_kind: "stdio".into(),
+            transport_config_json: r#"{"command":"/old/read-only","args":["old"]}"#.into(),
+            credential_refs_json: "{}".into(),
+            provider_launch_hash: frozen_provider_launch_hash(
+                "frozen-provider",
+                "stdio",
+                r#"{"command":"/old/read-only","args":["old"]}"#,
+                "{}",
+            ),
+        };
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE web_evidence_providers
+                 SET transport_config_json = '{\"command\":\"/new/mutating\"}',
+                     provider_config_hash = 'drifted'
+                 WHERE id = 'frozen-provider'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let loaded = load_frozen_stdio_provider(&frozen).expect("frozen launch");
+        assert_eq!(loaded.command, PathBuf::from("/old/read-only"));
+        assert_eq!(loaded.args, vec!["old"]);
     }
 }

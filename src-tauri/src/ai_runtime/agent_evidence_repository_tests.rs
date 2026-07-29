@@ -1,5 +1,6 @@
 use super::agent_evidence_repository::{
-    AgentEvidenceRepository, LocalEvidenceInput, MaterialRole, WebEvidenceInput,
+    AgentEvidenceRepository, ExternalToolEvidenceInput, LocalEvidenceInput, MaterialRole,
+    WebEvidenceInput,
 };
 use super::agent_run_repository::{AcceptRunInput, AgentRunRepository};
 use super::normal_session_repository::NormalSessionRepository;
@@ -9,20 +10,24 @@ use super::run_contract::{
 };
 use crate::storage::db::Database;
 
-fn setup_run() -> (Database, i64, String) {
-    let db = Database::open_in_memory().expect("database");
-    let session = NormalSessionRepository::create(&db).expect("normal session");
-    let session_id = session.session_id;
-    let session_key = session.session_key;
+fn accept_test_run(
+    db: &Database,
+    session_id: i64,
+    session_key: &str,
+    client_request_id: &str,
+    run_id: &str,
+    turn_id: &str,
+    message: &str,
+) {
     AgentRunRepository::accept(
-        &db,
+        db,
         AcceptRunInput {
             session_id,
-            session_key: session_key.clone(),
-            client_request_id: "evidence-client-request".to_string(),
-            run_id: "evidence-run".to_string(),
-            turn_id: "evidence-turn".to_string(),
-            message: "为证据账本建立可追溯运行".to_string(),
+            session_key: session_key.to_string(),
+            client_request_id: client_request_id.to_string(),
+            run_id: run_id.to_string(),
+            turn_id: turn_id.to_string(),
+            message: message.to_string(),
             content_parts: None,
             explicit_references: vec![],
             context_scope: Default::default(),
@@ -49,6 +54,22 @@ fn setup_run() -> (Database, i64, String) {
         },
     )
     .expect("accepted run");
+}
+
+fn setup_run() -> (Database, i64, String) {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("normal session");
+    let session_id = session.session_id;
+    let session_key = session.session_key;
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-client-request",
+        "evidence-run",
+        "evidence-turn",
+        "为证据账本建立可追溯运行",
+    );
     (db, session_id, session_key)
 }
 
@@ -160,6 +181,125 @@ fn web_evidence_persists_only_a_bounded_excerpt_and_returns_a_safe_reference() {
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].label, "[W1]");
     assert_eq!(links[0].url, "https://example.test/rules");
+}
+
+#[test]
+fn external_tool_evidence_is_run_owned_and_persists_only_bounded_output() {
+    let (db, session_id, session_key) = setup_run();
+    let evidence = AgentEvidenceRepository::register_external_tool(
+        &db,
+        ExternalToolEvidenceInput {
+            session_id,
+            run_id: "evidence-run".into(),
+            message_seq_first: 1,
+            title: "external_read_record_deadbeef".into(),
+            provider_id: "readonly".into(),
+            provider_config_hash: "provider-hash".into(),
+            binding_id: "binding-id".into(),
+            raw_result_hash: "result-hash".into(),
+            retrieved_at: "2026-07-30T00:00:00Z".into(),
+            bounded_excerpt: "bounded external result".into(),
+        },
+    )
+    .expect("external evidence");
+
+    db.with_read_conn(|conn| {
+        let stored: (String, String, String, String, String, String) = conn.query_row(
+            "SELECT provider_id, provider_kind, raw_result_hash, retrieved_at,
+                    bounded_excerpt, extraction_method
+             FROM session_evidence WHERE id = ?1",
+            [evidence.evidence_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )?;
+        assert_eq!(
+            stored,
+            (
+                "readonly".into(),
+                "mcp".into(),
+                "result-hash".into(),
+                "2026-07-30T00:00:00Z".into(),
+                "bounded external result".into(),
+                "mcp_tool_output_v1".into(),
+            )
+        );
+        let source: String = conn.query_row(
+            "SELECT registration_source FROM agent_run_evidence
+             WHERE run_id = 'evidence-run' AND evidence_id = ?1",
+            [evidence.evidence_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(source, "external_tool");
+        Ok(())
+    })
+    .expect("external evidence metadata");
+
+    accept_test_run(
+        &db,
+        session_id,
+        &session_key,
+        "evidence-second-client",
+        "evidence-second-run",
+        "evidence-second-turn",
+        "再次获取同一外部结果",
+    );
+    let repeated = AgentEvidenceRepository::register_external_tool(
+        &db,
+        ExternalToolEvidenceInput {
+            session_id,
+            run_id: "evidence-second-run".into(),
+            message_seq_first: 2,
+            title: "external_read_record_deadbeef".into(),
+            provider_id: "readonly".into(),
+            provider_config_hash: "provider-hash".into(),
+            binding_id: "binding-id".into(),
+            raw_result_hash: "result-hash".into(),
+            retrieved_at: "2026-07-30T00:01:00Z".into(),
+            bounded_excerpt: "bounded external result".into(),
+        },
+    )
+    .expect("second Run gets its own acquisition");
+    assert_ne!(repeated.evidence_id, evidence.evidence_id);
+    db.with_read_conn(|conn| {
+        let second: (String, String) = conn.query_row(
+            "SELECT origin_run_id, retrieved_at
+             FROM session_evidence WHERE id = ?1",
+            [repeated.evidence_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(
+            second,
+            ("evidence-second-run".into(), "2026-07-30T00:01:00Z".into())
+        );
+        Ok(())
+    })
+    .expect("second acquisition ownership");
+
+    let error = AgentEvidenceRepository::register_external_tool(
+        &db,
+        ExternalToolEvidenceInput {
+            session_id,
+            run_id: "another-run".into(),
+            message_seq_first: 1,
+            title: "external_read_record_deadbeef".into(),
+            provider_id: "readonly".into(),
+            provider_config_hash: "provider-hash".into(),
+            binding_id: "binding-id".into(),
+            raw_result_hash: "result-hash-2".into(),
+            retrieved_at: "2026-07-30T00:00:00Z".into(),
+            bounded_excerpt: "must not persist".into(),
+        },
+    )
+    .expect_err("different Run");
+    assert_eq!(error.to_string(), "agent_evidence_run_not_found");
 }
 
 #[test]

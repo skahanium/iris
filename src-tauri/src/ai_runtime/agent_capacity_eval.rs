@@ -3778,6 +3778,7 @@ async fn execute_live_pilot_case(
         explicit_action: None,
         web_enabled: execution_scenario.web_state() == WebState::Online,
         model_override: None,
+        external_tool_grants: Vec::new(),
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     };
@@ -5331,6 +5332,7 @@ async fn execute_headless_core_case_with_local_body(
         explicit_action: None,
         web_enabled: scenario.web_state() == WebState::Online,
         model_override: None,
+        external_tool_grants: Vec::new(),
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     };
@@ -6683,6 +6685,7 @@ fn boundary_request(
         explicit_action: None,
         web_enabled,
         model_override: None,
+        external_tool_grants: Vec::new(),
         security_domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
         classified_context_ref: None,
     }

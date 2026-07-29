@@ -13,6 +13,7 @@ import {
   assistantClassifiedContextClear,
   assistantClassifiedContextOpen,
   assistantClassifiedRunTakeResult,
+  mcpCapabilityBindingsList,
   openExternalHttpsUrl,
 } from "@/lib/ipc";
 import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
@@ -36,6 +37,7 @@ import { useAssistantRunTranscript } from "./hooks/useAssistantRunTranscript";
 import { useAssistantPresentationPlayback } from "./hooks/useAssistantPresentationPlayback";
 import { useUnifiedAssistantSend } from "./hooks/useUnifiedAssistantSend";
 import type { UnifiedAssistantPanelProps } from "./types";
+import type { McpCapabilityBindingSummary } from "@/lib/ipc";
 
 /** Production assistant panel: one opaque conversation API and one Run lifecycle. */
 export function UnifiedAssistantPanel({
@@ -69,6 +71,12 @@ export function UnifiedAssistantPanel({
   const [activityHint, setActivityHint] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [externalBindings, setExternalBindings] = useState<
+    McpCapabilityBindingSummary[]
+  >([]);
+  const [selectedExternalBindingIds, setSelectedExternalBindingIds] = useState<
+    string[]
+  >([]);
   const [confirming, setConfirming] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [retryingWebVerification, setRetryingWebVerification] = useState(false);
@@ -142,6 +150,44 @@ export function UnifiedAssistantPanel({
     };
   }, [aiDomain, classifiedPath]);
 
+  useEffect(() => {
+    let active = true;
+    if (aiDomain !== "normal") {
+      setExternalBindings([]);
+      setSelectedExternalBindingIds([]);
+      return () => {
+        active = false;
+      };
+    }
+    if (typeof mcpCapabilityBindingsList !== "function") {
+      return () => {
+        active = false;
+      };
+    }
+    void mcpCapabilityBindingsList()
+      .then((bindings) => {
+        if (!active) return;
+        const available = bindings.filter(
+          (binding) => binding.providerEnabled && binding.configMatches,
+        );
+        setExternalBindings(available);
+        setSelectedExternalBindingIds((selected) =>
+          selected.filter((id) =>
+            available.some((binding) => binding.id === id),
+          ),
+        );
+      })
+      .catch(() => {
+        if (active) {
+          setExternalBindings([]);
+          setSelectedExternalBindingIds([]);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [aiDomain]);
+
   const {
     displayMentions,
     handleCompositionEnd,
@@ -204,6 +250,13 @@ export function UnifiedAssistantPanel({
     retrievalScope,
     webSearch,
     modelOverride,
+    externalToolGrants: externalBindings
+      .filter((binding) => selectedExternalBindingIds.includes(binding.id))
+      .map((binding) => ({
+        bindingId: binding.id,
+        bindingConfigHash: binding.bindingConfigHash,
+      })),
+    clearExternalToolGrants: () => setSelectedExternalBindingIds([]),
     start: assistantRun.start,
     commitAcceptedTurn,
     clearContextReferences: bubbleSelection.clearContextReferences,
@@ -275,6 +328,7 @@ export function UnifiedAssistantPanel({
   const resetAssistantSessionState = useCallback(() => {
     resetAssistantRun();
     setLastError(null);
+    setSelectedExternalBindingIds([]);
     handleNewChat();
     refreshClassifiedContext();
   }, [handleNewChat, refreshClassifiedContext, resetAssistantRun]);
@@ -465,11 +519,20 @@ export function UnifiedAssistantPanel({
         mentionPrefix={mentionPrefix}
         mentionQuery={mentionQuery}
         streaming={streaming}
+        externalBindings={externalBindings}
+        selectedExternalBindingIds={selectedExternalBindingIds}
         textareaRef={textareaRef}
         onComposerKeyDown={handleComposerKeyDown}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         onImagesChange={setImages}
+        onExternalBindingToggle={(bindingId) =>
+          setSelectedExternalBindingIds((selected) =>
+            selected.includes(bindingId)
+              ? selected.filter((id) => id !== bindingId)
+              : [...selected, bindingId],
+          )
+        }
         onMentionHighlight={setMentionHighlight}
         onMentionSelect={selectMention}
         onSelect={syncMentionFromInput}

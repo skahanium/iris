@@ -462,6 +462,14 @@ pub(crate) struct AssistantTurnDraft {
     pub(crate) display_mentions: Vec<DisplayMention>,
 }
 
+/// One explicit, normal-domain grant for a reviewed read-only MCP binding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ExternalToolGrantRef {
+    pub(crate) binding_id: String,
+    pub(crate) binding_config_hash: String,
+}
+
 /// Request accepted by `assistant_run_start`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -481,6 +489,9 @@ pub struct AssistantRunStartRequest {
     /// Optional provider/model override, revalidated against the Run route.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) model_override: Option<ModelOverride>,
+    /// Reviewed read-only MCP bindings explicitly granted for this Run only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) external_tool_grants: Vec<ExternalToolGrantRef>,
     /// Domain in which this Run must execute and persist.
     pub(crate) security_domain: SecurityDomain,
     /// Opaque, one-document classified context capability. It is required only

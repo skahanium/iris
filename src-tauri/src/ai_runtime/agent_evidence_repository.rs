@@ -101,6 +101,21 @@ pub(crate) struct WebEvidenceInput {
     pub(crate) failure_reason: Option<String>,
 }
 
+/// Bounded text or JSON returned by one explicitly granted MCP read tool.
+#[derive(Debug, Clone)]
+pub(crate) struct ExternalToolEvidenceInput {
+    pub(crate) session_id: i64,
+    pub(crate) run_id: String,
+    pub(crate) message_seq_first: i64,
+    pub(crate) title: String,
+    pub(crate) provider_id: String,
+    pub(crate) provider_config_hash: String,
+    pub(crate) binding_id: String,
+    pub(crate) raw_result_hash: String,
+    pub(crate) retrieved_at: String,
+    pub(crate) bounded_excerpt: String,
+}
+
 /// Lossless ledger identifier plus the UI-safe reference shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RegisteredEvidence {
@@ -226,6 +241,69 @@ impl AgentEvidenceRepository {
                         registered_by_id(conn, conn.last_insert_rowid())?
                     };
                 record_run_evidence_use(conn, &input.run_id, registered.evidence_id, "web_search")?;
+                Ok(registered)
+            })
+        })
+    }
+
+    /// Register the exact bounded external-tool excerpt used by this Run.
+    pub(crate) fn register_external_tool(
+        db: &Database,
+        input: ExternalToolEvidenceInput,
+    ) -> AppResult<RegisteredEvidence> {
+        validate_external_tool_input(&input)?;
+        db.with_conn(|conn| {
+            in_immediate_transaction(conn, |conn| {
+                ensure_normal_run_ownership(conn, input.session_id, &input.run_id)?;
+                ensure_reference_message(conn, input.session_id, input.message_seq_first)?;
+                let packet_key = format!(
+                    "external:{}:{}:{}:{}:{}:{}",
+                    input.run_id.trim(),
+                    input.provider_id.trim(),
+                    input.binding_id.trim(),
+                    input.provider_config_hash.trim(),
+                    input.raw_result_hash.trim(),
+                    crate::cas::hash::content_hash_str(&format!(
+                        "{}:{}",
+                        input.retrieved_at.trim(),
+                        uuid::Uuid::new_v4()
+                    ))
+                );
+                let citation = next_citation(conn, input.session_id)?;
+                let now = chrono::Utc::now().to_rfc3339();
+                conn.execute(
+                    "INSERT INTO session_evidence
+                             (session_id, citation_index, citation_label, packet_key,
+                              message_seq_first, source_type, title, content_hash,
+                              retrieval_reason, retrieved_at, provider_id, provider_kind,
+                              raw_result_hash, extraction_method, origin_run_id,
+                              material_role, stale, bounded_excerpt, created_at)
+                             VALUES (?1, ?2, ?3, ?4, ?5, 'web', ?6, ?7,
+                                     'external.read', ?8, ?9, 'mcp', ?10,
+                                     'mcp_tool_output_v1', ?11, 'lookup', 0, ?12, ?13)",
+                    params![
+                        input.session_id,
+                        citation.index,
+                        citation.label,
+                        packet_key,
+                        input.message_seq_first,
+                        input.title,
+                        input.raw_result_hash,
+                        input.retrieved_at,
+                        input.provider_id,
+                        input.raw_result_hash,
+                        input.run_id,
+                        input.bounded_excerpt,
+                        now,
+                    ],
+                )?;
+                let registered = registered_by_id(conn, conn.last_insert_rowid())?;
+                record_run_evidence_use(
+                    conn,
+                    &input.run_id,
+                    registered.evidence_id,
+                    "external_tool",
+                )?;
                 Ok(registered)
             })
         })
@@ -586,6 +664,34 @@ fn validate_web_input(input: &WebEvidenceInput) -> AppResult<()> {
     validate_optional_metadata(&input.retrieval_reason)?;
     validate_optional_metadata(&input.conflict_group)?;
     validate_optional_metadata(&input.failure_reason)
+}
+
+fn validate_external_tool_input(input: &ExternalToolEvidenceInput) -> AppResult<()> {
+    validate_common(
+        input.session_id,
+        &input.run_id,
+        input.message_seq_first,
+        &input.title,
+    )?;
+    for value in [
+        &input.provider_id,
+        &input.provider_config_hash,
+        &input.binding_id,
+        &input.raw_result_hash,
+        &input.retrieved_at,
+    ] {
+        if value.trim().is_empty() || value.chars().count() > MAX_METADATA_CHARS {
+            return Err(AppError::msg("agent_evidence_invalid_external_metadata"));
+        }
+    }
+    let excerpt_length = input.bounded_excerpt.chars().count();
+    if excerpt_length == 0 {
+        return Err(AppError::msg("agent_evidence_empty_excerpt"));
+    }
+    if excerpt_length > MAX_BOUNDED_WEB_EXCERPT_CHARS {
+        return Err(AppError::msg("agent_evidence_excerpt_too_large"));
+    }
+    Ok(())
 }
 
 fn validate_common(

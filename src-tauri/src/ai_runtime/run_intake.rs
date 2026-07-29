@@ -63,6 +63,9 @@ impl RunIntake {
                 "\u{4ec5}\u{7528}\u{672c}\u{5730}",
             ],
         );
+        if local_only && !request.external_tool_grants.is_empty() {
+            return Err(AppError::msg("agent_run_external_tool_local_only_conflict"));
+        }
         let do_not_modify = contains_any(
             &directive_text,
             &[
@@ -105,6 +108,7 @@ impl RunIntake {
             _ if freshness != Freshness::Offline
                 || has_images
                 || has_retrieval_scope(request)
+                || !request.external_tool_grants.is_empty()
                 || child_run_requested
                 || needs_offline_vault_tool_loop(request, &directive_text) =>
             {
@@ -172,6 +176,9 @@ impl RunIntake {
         if child_run_requested {
             required_capabilities.push(CapabilityId::new("harness.child_run"));
         }
+        if !request.external_tool_grants.is_empty() {
+            required_capabilities.push(CapabilityId::new("external.read"));
+        }
         let mut explicit_constraints = Vec::new();
         if local_only {
             explicit_constraints.push(ExplicitConstraint {
@@ -230,7 +237,8 @@ impl RunIntake {
             return Err(AppError::msg("agent_run_classified_domain_not_supported"));
         }
         let session = resolve_normal_session(db, request.session.as_ref())?;
-        AgentRunRepository::accept(
+        let external_tool_grants = request.external_tool_grants.clone();
+        AgentRunRepository::accept_with_external_grants(
             db,
             AcceptRunInput {
                 session_id: session.session_id,
@@ -246,6 +254,7 @@ impl RunIntake {
                 explicit_action: request.explicit_action,
                 envelope,
             },
+            &external_tool_grants,
         )
     }
 
@@ -509,7 +518,8 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
         && (!request.turn.explicit_references.is_empty()
             || has_retrieval_scope(request)
             || !request.turn.display_mentions.is_empty()
-            || request.turn.content_parts.is_some())
+            || request.turn.content_parts.is_some()
+            || !request.external_tool_grants.is_empty())
     {
         return Err(AppError::msg("agent_run_invalid_request"));
     }

@@ -41,6 +41,7 @@ pub(crate) mod frozen_change_plan;
 #[cfg(test)]
 mod frozen_change_plan_tests;
 pub mod guardrails;
+pub mod mcp_external_tools;
 pub mod mcp_host_runtime;
 pub mod mcp_runtime_registry;
 pub mod model_gateway;

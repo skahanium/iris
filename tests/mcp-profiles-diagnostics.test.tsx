@@ -9,6 +9,10 @@ const ipcMocks = vi.hoisted(() => ({
   credentialDelete: vi.fn(),
   credentialSet: vi.fn(),
   credentialStatus: vi.fn(),
+  mcpCapabilityBindingDelete: vi.fn(),
+  mcpCapabilityBindingsList: vi.fn(),
+  mcpCapabilityBindingUpsert: vi.fn(),
+  mcpReadOnlyToolsDiscover: vi.fn(),
   webEvidenceProviderDelete: vi.fn(),
   webEvidenceProviderDiagnostics: vi.fn(),
   webEvidenceProvidersList: vi.fn(),
@@ -117,6 +121,38 @@ describe("McpProfilesPanel 实时诊断", () => {
       state: "available",
       configured: true,
       checkedAt: new Date().toISOString(),
+    });
+    ipcMocks.mcpCapabilityBindingDelete.mockResolvedValue(undefined);
+    ipcMocks.mcpCapabilityBindingsList.mockResolvedValue([]);
+    ipcMocks.mcpCapabilityBindingUpsert.mockResolvedValue({
+      id: "binding-1",
+      providerId: provider.id,
+      exposedName: "external_read_record_deadbeef",
+      mcpToolName: "read_record",
+      inputSchema: { type: "object" },
+      argumentMapping: {},
+      outputPolicy: {
+        mode: "text_or_json",
+        maxModelChars: 8000,
+        maxEvidenceChars: 2000,
+      },
+      providerConfigHash: "provider-hash",
+      bindingConfigHash: "binding-hash",
+      providerEnabled: true,
+      configMatches: true,
+      userTrusted: true,
+    });
+    ipcMocks.mcpReadOnlyToolsDiscover.mockResolvedValue({
+      providerId: provider.id,
+      tools: [
+        {
+          name: "read_record",
+          inputSchema: { type: "object" },
+          riskClass: "read_only",
+          readOnly: true,
+        },
+      ],
+      rejectedCount: 2,
     });
     ipcMocks.webEvidenceProviderDelete.mockResolvedValue(undefined);
     ipcMocks.webEvidenceProviderDiagnostics.mockResolvedValue(liveDiagnostics);
@@ -260,6 +296,39 @@ describe("McpProfilesPanel 实时诊断", () => {
     await flush();
 
     expect(host.textContent).not.toContain("实时可用性");
+  });
+
+  it("只展示清洗后的只读发现结果并建立逐 Run 绑定", async () => {
+    await act(async () => {
+      root.render(<McpProfilesPanel open />);
+    });
+    await flush();
+    await openFirstMcpProviderDetail(host);
+
+    await act(async () => {
+      button(host, "发现只读工具").click();
+    });
+    await flush();
+
+    expect(ipcMocks.mcpReadOnlyToolsDiscover).toHaveBeenCalledWith(provider.id);
+    expect(host.textContent).toContain("read_record");
+    expect(host.textContent).toContain("2 个副作用或不受支持工具已排除");
+
+    await act(async () => {
+      vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+      button(host, "审核并信任为只读").click();
+    });
+    await flush();
+    expect(ipcMocks.mcpCapabilityBindingUpsert).toHaveBeenCalledWith({
+      providerId: provider.id,
+      mcpToolName: "read_record",
+      inputSchema: { type: "object" },
+      argumentMapping: {},
+      riskClass: "read_only",
+      readOnly: true,
+      userTrusted: true,
+    });
+    expect(host.textContent).toContain("仍需在 Composer 为每个 Run 单独授权");
   });
 
   it("清除已保存 Key 会删除加密凭据并使实时诊断失效", async () => {

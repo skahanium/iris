@@ -307,6 +307,12 @@ export interface AssistantTurnDraft {
   displayMentions: DisplayMention[];
 }
 
+/** One reviewed read-only MCP binding explicitly granted to one Run. */
+export interface ExternalToolGrantRef {
+  bindingId: string;
+  bindingConfigHash: string;
+}
+
 export interface AssistantRunStartRequest {
   clientRequestId: string;
   session?: AssistantSessionRef;
@@ -317,6 +323,7 @@ export interface AssistantRunStartRequest {
     selectionSnapshot?: SelectionSnapshot;
   };
   webEnabled: boolean;
+  externalToolGrants?: ExternalToolGrantRef[];
   securityDomain: SecurityDomain;
   /** Opaque, current-document capability for one classified request only. */
   classifiedContextRef?: string;

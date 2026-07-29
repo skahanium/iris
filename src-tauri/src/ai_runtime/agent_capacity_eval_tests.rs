@@ -214,6 +214,7 @@ fn retry_run_request() -> AssistantRunStartRequest {
         explicit_action: None,
         web_enabled: false,
         model_override: None,
+        external_tool_grants: Vec::new(),
         security_domain: RunSecurityDomain::Normal,
         classified_context_ref: None,
     }
@@ -1191,6 +1192,7 @@ fn mcp_transport_contract_rejects_manual_discovery_and_deserialization() {
             name: "search".into(),
             title: None,
             description: None,
+            read_only_hint: None,
             input_schema: serde_json::json!({"type": "object"}),
             output_schema: None,
         }],

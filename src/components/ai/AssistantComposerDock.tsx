@@ -8,8 +8,10 @@ import type {
 } from "react";
 
 import { AiComposer } from "@/components/ui/ai-composer";
+import { Button } from "@/components/ui/button";
 import type { MentionCandidate, MentionTextEdit } from "@/lib/ai-context-scope";
 import type { DisplayMention } from "@/types/ai";
+import type { McpCapabilityBindingSummary } from "@/lib/ipc";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
@@ -27,11 +29,14 @@ interface AssistantComposerDockProps {
   mentionPrefix: "@" | "#";
   mentionQuery: string;
   streaming: boolean;
+  externalBindings: McpCapabilityBindingSummary[];
+  selectedExternalBindingIds: string[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onComposerKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onCompositionStart: (e: CompositionEvent<HTMLTextAreaElement>) => void;
   onCompositionEnd: (e: CompositionEvent<HTMLTextAreaElement>) => void;
   onImagesChange: Dispatch<SetStateAction<ImageAttachment[]>>;
+  onExternalBindingToggle: (bindingId: string) => void;
   onMentionHighlight: (index: number) => void;
   onMentionSelect: (candidate: MentionCandidate) => void;
   onSubmit: () => void;
@@ -52,11 +57,14 @@ export function AssistantComposerDock({
   mentionPrefix,
   mentionQuery,
   streaming,
+  externalBindings,
+  selectedExternalBindingIds,
   textareaRef,
   onComposerKeyDown,
   onCompositionStart,
   onCompositionEnd,
   onImagesChange,
+  onExternalBindingToggle,
   onMentionHighlight,
   onMentionSelect,
   onSubmit,
@@ -66,6 +74,39 @@ export function AssistantComposerDock({
 }: AssistantComposerDockProps) {
   return (
     <div data-testid="ai-input">
+      {externalBindings.length > 0 ? (
+        <div
+          className="border-t border-border-subtle px-3 py-2"
+          data-testid="external-tool-grant-boundary"
+        >
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-foreground">
+              本次外部只读工具
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              发送后自动清除授权
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {externalBindings.map((binding) => {
+              const selected = selectedExternalBindingIds.includes(binding.id);
+              return (
+                <Button
+                  key={binding.id}
+                  type="button"
+                  size="sm"
+                  variant={selected ? "secondary" : "outline"}
+                  disabled={composerDisabled || streaming}
+                  aria-pressed={selected}
+                  onClick={() => onExternalBindingToggle(binding.id)}
+                >
+                  {binding.mcpToolName}
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       <AiComposerContextMenu
         textareaRef={textareaRef}
         value={input}

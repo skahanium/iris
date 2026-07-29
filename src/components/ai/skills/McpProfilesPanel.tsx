@@ -7,6 +7,10 @@ import {
   credentialDelete,
   credentialSet,
   credentialStatus,
+  mcpCapabilityBindingDelete,
+  mcpCapabilityBindingsList,
+  mcpCapabilityBindingUpsert,
+  mcpReadOnlyToolsDiscover,
   webEvidenceProviderDelete,
   webEvidenceProviderDiagnostics,
   webEvidenceProvidersList,
@@ -17,6 +21,8 @@ import {
   type WebEvidenceProviderDiagnostics,
   type WebEvidenceProviderInput,
   type WebEvidenceProviderSummary,
+  type McpCapabilityBindingSummary,
+  type McpReadOnlyToolCandidate,
 } from "@/lib/ipc";
 
 import { McpProfileCard, type McpCredentialSave } from "./McpProfileCard";
@@ -190,6 +196,13 @@ export function McpProfilesPanel({
   const [draft, setDraft] = useState<WebEvidenceProviderSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [externalBindings, setExternalBindings] = useState<
+    McpCapabilityBindingSummary[]
+  >([]);
+  const [discoveredReadTools, setDiscoveredReadTools] = useState<
+    McpReadOnlyToolCandidate[]
+  >([]);
+  const [externalToolsBusy, setExternalToolsBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [localSelectedProviderId, setLocalSelectedProviderId] = useState<
     string | null
@@ -410,6 +423,93 @@ export function McpProfilesPanel({
       ? draft
       : mcpProviders.find((item) => item.id === activeDetailId);
 
+  const refreshExternalBindings = useCallback(async (providerId: string) => {
+    if (typeof mcpCapabilityBindingsList !== "function") return;
+    const bindings = await mcpCapabilityBindingsList(providerId);
+    setExternalBindings(bindings);
+  }, []);
+
+  useEffect(() => {
+    setDiscoveredReadTools([]);
+    if (!open || !detailProvider || (draft && draft.id === detailProvider.id)) {
+      setExternalBindings([]);
+      return;
+    }
+    void refreshExternalBindings(detailProvider.id).catch(() =>
+      setExternalBindings([]),
+    );
+  }, [detailProvider, draft, open, refreshExternalBindings]);
+
+  const discoverReadOnlyTools = async (providerId: string) => {
+    if (typeof mcpReadOnlyToolsDiscover !== "function") return;
+    setExternalToolsBusy(true);
+    setMessage(null);
+    try {
+      const result = await mcpReadOnlyToolsDiscover(providerId);
+      setDiscoveredReadTools(result.tools);
+      setMessage(
+        result.rejectedCount > 0
+          ? `已发现 ${result.tools.length} 个可审查只读工具；另有 ${result.rejectedCount} 个副作用或不受支持工具已排除。`
+          : `已发现 ${result.tools.length} 个可审查只读工具。`,
+      );
+    } catch (error) {
+      setMessage(invokeErrorMessage(error));
+    } finally {
+      setExternalToolsBusy(false);
+    }
+  };
+
+  const bindReadOnlyTool = async (
+    providerId: string,
+    tool: McpReadOnlyToolCandidate,
+  ) => {
+    if (typeof mcpCapabilityBindingUpsert !== "function") return;
+    if (
+      !window.confirm(
+        "仅当你信任此 MCP 提供方，并已独立确认该工具不会写入、发送、删除、修改日历、启动进程或读取秘密时继续。服务端的只读标记只是声明，Iris 无法验证其实现。确认将它加入外部只读白名单？",
+      )
+    ) {
+      return;
+    }
+    setExternalToolsBusy(true);
+    setMessage(null);
+    try {
+      await mcpCapabilityBindingUpsert({
+        providerId,
+        mcpToolName: tool.name,
+        inputSchema: tool.inputSchema,
+        argumentMapping: {},
+        riskClass: tool.riskClass,
+        readOnly: tool.readOnly,
+        userTrusted: true,
+      });
+      await refreshExternalBindings(providerId);
+      setMessage("只读工具绑定已保存；仍需在 Composer 为每个 Run 单独授权。");
+    } catch (error) {
+      setMessage(invokeErrorMessage(error));
+    } finally {
+      setExternalToolsBusy(false);
+    }
+  };
+
+  const deleteReadOnlyBinding = async (
+    providerId: string,
+    bindingId: string,
+  ) => {
+    if (typeof mcpCapabilityBindingDelete !== "function") return;
+    setExternalToolsBusy(true);
+    setMessage(null);
+    try {
+      await mcpCapabilityBindingDelete(bindingId);
+      await refreshExternalBindings(providerId);
+      setMessage("只读工具绑定已删除。");
+    } catch (error) {
+      setMessage(invokeErrorMessage(error));
+    } finally {
+      setExternalToolsBusy(false);
+    }
+  };
+
   const providerChromePayload = useMemo((): ManagementProviderChrome | null => {
     if (!detailProvider) return null;
     return {
@@ -511,38 +611,119 @@ export function McpProfilesPanel({
       ) : null}
 
       {detailProvider ? (
-        <McpProviderDetail
-          provider={detailProvider}
-          diagnostics={diagnostics[detailProvider.id]}
-          credentialConfiguredByService={credentialConfiguredByService}
-          saving={saving}
-          persisted={!(draft && draft.id === detailProvider.id)}
-          onSave={saveProvider}
-          onToggle={(enabled) => {
-            if (draft && draft.id === detailProvider.id) {
-              invalidateDiagnostics();
-              setDraft((current) =>
-                current ? { ...current, enabled } : current,
+        <>
+          <McpProviderDetail
+            provider={detailProvider}
+            diagnostics={diagnostics[detailProvider.id]}
+            credentialConfiguredByService={credentialConfiguredByService}
+            saving={saving}
+            persisted={!(draft && draft.id === detailProvider.id)}
+            onSave={saveProvider}
+            onToggle={(enabled) => {
+              if (draft && draft.id === detailProvider.id) {
+                invalidateDiagnostics();
+                setDraft((current) =>
+                  current ? { ...current, enabled } : current,
+                );
+                return;
+              }
+              void toggleProvider(detailProvider.id, enabled);
+            }}
+            onDelete={() => {
+              if (draft && draft.id === detailProvider.id) {
+                invalidateDiagnostics();
+                setDraft(null);
+                setSelectedProvider(null);
+                return;
+              }
+              void deleteProvider(detailProvider.id).then(() =>
+                setSelectedProvider(null),
               );
-              return;
-            }
-            void toggleProvider(detailProvider.id, enabled);
-          }}
-          onDelete={() => {
-            if (draft && draft.id === detailProvider.id) {
-              invalidateDiagnostics();
-              setDraft(null);
-              setSelectedProvider(null);
-              return;
-            }
-            void deleteProvider(detailProvider.id).then(() =>
-              setSelectedProvider(null),
-            );
-          }}
-          onClearCredential={clearCredential}
-          onDiagnostics={() => void runDiagnostics(detailProvider.id)}
-          onConfigurationChanged={invalidateDiagnostics}
-        />
+            }}
+            onClearCredential={clearCredential}
+            onDiagnostics={() => void runDiagnostics(detailProvider.id)}
+            onConfigurationChanged={invalidateDiagnostics}
+          />
+          {!(draft && draft.id === detailProvider.id) ? (
+            <div
+              className="space-y-3 rounded-md border border-border/60 p-3"
+              data-testid="mcp-read-only-tool-bindings"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-medium">逐 Run 外部只读工具</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    这里只建立由你审核并信任的 external.read
+                    白名单；服务端只读标记不是安全证明。启用提供方不会自动授权，Composer
+                    会在发送后清除本次选择。
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={
+                    externalToolsBusy || !detailProvider.enabled || saving
+                  }
+                  onClick={() => void discoverReadOnlyTools(detailProvider.id)}
+                >
+                  发现只读工具
+                </Button>
+              </div>
+              {externalBindings.map((binding) => (
+                <div
+                  key={binding.id}
+                  className="flex items-center justify-between gap-3 rounded-md border border-border-subtle px-2 py-1.5 text-xs"
+                >
+                  <div>
+                    <p className="font-medium">{binding.mcpToolName}</p>
+                    <p className="text-muted-foreground">
+                      external.read · 参数同名映射 ·{" "}
+                      {binding.providerEnabled && binding.configMatches
+                        ? "诊断通过"
+                        : "配置已漂移或提供方停用"}
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={externalToolsBusy}
+                    onClick={() =>
+                      void deleteReadOnlyBinding(detailProvider.id, binding.id)
+                    }
+                  >
+                    删除绑定
+                  </Button>
+                </div>
+              ))}
+              {discoveredReadTools.map((tool) => {
+                const bound = externalBindings.some(
+                  (binding) => binding.mcpToolName === tool.name,
+                );
+                return (
+                  <div
+                    key={tool.name}
+                    className="flex items-center justify-between gap-3 text-xs"
+                  >
+                    <span>{tool.name}</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={externalToolsBusy || bound}
+                      onClick={() =>
+                        void bindReadOnlyTool(detailProvider.id, tool)
+                      }
+                    >
+                      {bound ? "已绑定" : "审核并信任为只读"}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+        </>
       ) : activeDetailId ? (
         <div className="space-y-2 rounded-md border border-border/55 bg-background/60 p-3 text-xs text-muted-foreground">
           <p>找不到该 MCP 提供方，可能已被删除。</p>

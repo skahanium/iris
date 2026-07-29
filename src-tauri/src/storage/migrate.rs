@@ -151,6 +151,10 @@ const MIGRATION_057_DOWN: &str = include_str!("../../migrations/057_agent_run_ev
 const MIGRATION_058_UP: &str = include_str!("../../migrations/058_agent_reliability_contract.sql");
 const MIGRATION_058_DOWN: &str =
     include_str!("../../migrations/058_agent_reliability_contract.down.sql");
+const MIGRATION_059_UP: &str =
+    include_str!("../../migrations/059_agent_mcp_capability_bindings.sql");
+const MIGRATION_059_DOWN: &str =
+    include_str!("../../migrations/059_agent_mcp_capability_bindings.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -625,6 +629,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_058_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "059_agent_mcp_capability_bindings",
+        MIGRATION_059_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -636,6 +646,11 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(
+        conn,
+        "059_agent_mcp_capability_bindings",
+        MIGRATION_059_DOWN,
+    );
     rollback_migration(conn, "058_agent_reliability_contract", MIGRATION_058_DOWN);
     rollback_migration(conn, "057_agent_run_evidence", MIGRATION_057_DOWN);
     rollback_migration(
@@ -2025,6 +2040,95 @@ mod tests {
             0
         );
     }
+    #[test]
+    fn migration_059_creates_read_only_mcp_binding_snapshots_with_rollback() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["mcp_capability_bindings", "agent_run_mcp_tool_snapshots"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "missing {table}");
+        }
+
+        let snapshot_columns = conn
+            .prepare("PRAGMA table_info(agent_run_mcp_tool_snapshots)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        for column in [
+            "binding_config_hash",
+            "provider_config_hash",
+            "provider_launch_hash",
+            "transport_kind",
+            "transport_config_json",
+            "credential_refs_json",
+            "input_schema_json",
+            "argument_mapping_json",
+            "output_policy_json",
+            "user_trusted",
+        ] {
+            assert!(
+                snapshot_columns.contains(&column.to_string()),
+                "missing snapshot column {column}"
+            );
+        }
+
+        conn.execute(
+            "INSERT INTO sessions
+             (session_key, retention_policy, created_at, updated_at)
+             VALUES ('migration-059-session', 'user_clearable', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO session_evidence
+             (session_id, citation_index, citation_label, packet_key,
+              message_seq_first, source_type, title, content_hash, retrieved_at,
+              provider_id, provider_kind, raw_result_hash, extraction_method,
+              material_role, stale, bounded_excerpt, created_at)
+             VALUES (1, 1, '[E1]', 'external:migration', 1, 'web',
+                     'external_read', 'hash', datetime('now'), 'provider',
+                     'mcp', 'hash', 'mcp_tool_output_v1', 'lookup', 0,
+                     'bounded', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(MIGRATION_059_DOWN).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM session_evidence
+                 WHERE extraction_method = 'mcp_tool_output_v1'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0,
+            "rollback must remove external MCP evidence introduced by 059"
+        );
+
+        migrate_down(&conn).unwrap();
+        for table in ["mcp_capability_bindings", "agent_run_mcp_tool_snapshots"] {
+            let exists: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master
+                     WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 0, "{table} should be removed by rollback");
+        }
+    }
+
     #[test]
     fn migration_registry_covers_all_sql_files() {
         use std::collections::BTreeSet;

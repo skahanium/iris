@@ -47,9 +47,30 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
     }
 
     if ($line.Contains('"method":"tools/list"')) {
-        $tools = @(@{ name = "search"; inputSchema = @{ type = "object" } })
+        $tools = @(@{
+            name = "search"
+            annotations = @{ readOnlyHint = $true }
+            inputSchema = @{
+                type = "object"
+                properties = @{
+                    query = @{ type = "string" }
+                    max_results = @{ type = "integer" }
+                }
+                required = @("query")
+                additionalProperties = $false
+            }
+        })
         if ($Mode -eq "search-fetch") {
-            $tools += @{ name = "fetch"; inputSchema = @{ type = "object" } }
+            $tools += @{
+                name = "fetch"
+                annotations = @{ readOnlyHint = $true }
+                inputSchema = @{
+                    type = "object"
+                    properties = @{ url = @{ type = "string" } }
+                    required = @("url")
+                    additionalProperties = $false
+                }
+            }
         }
         Write-McpResponse $id @{ tools = $tools }
         continue

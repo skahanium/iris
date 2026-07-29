@@ -17,6 +17,7 @@ import type {
   ContextReference,
   ContextScope,
   DisplayMention,
+  ExternalToolGrantRef,
   SecurityDomain,
 } from "@/types/ai";
 import type { FileSignatureResult } from "@/types/ipc";
@@ -37,6 +38,8 @@ export interface UnifiedAssistantSendOptions {
   retrievalScope: ContextScope;
   webSearch: boolean;
   modelOverride?: AgentModelOverride | null;
+  externalToolGrants?: ExternalToolGrantRef[];
+  clearExternalToolGrants?: () => void;
   start: (request: AssistantRunStartRequest) => Promise<AssistantRunAccepted>;
   getFileSignature?: (path: string) => Promise<FileSignatureResult>;
   commitAcceptedTurn: (
@@ -146,6 +149,8 @@ export function useUnifiedAssistantSend({
   retrievalScope,
   webSearch,
   modelOverride,
+  externalToolGrants = [],
+  clearExternalToolGrants,
   start,
   getFileSignature = fileSignature,
   commitAcceptedTurn,
@@ -185,7 +190,8 @@ export function useUnifiedAssistantSend({
         contextReferences.length > 0 ||
         draft.displayMentions.length > 0 ||
         hasRetrievalScope(retrievalScope) ||
-        webSearch
+        webSearch ||
+        externalToolGrants.length > 0
       ) {
         setError("涉密分析仅支持当前文档文本，不支持图片、其他引用或联网。");
         return;
@@ -206,6 +212,7 @@ export function useUnifiedAssistantSend({
       retrievalScope,
       webSearch,
       modelOverride,
+      externalToolGrants,
       classifiedContextRef,
     });
     const pending = pendingStartRef.current;
@@ -265,6 +272,9 @@ export function useUnifiedAssistantSend({
                 aiDomain === "classified" ? [] : draft.displayMentions,
             },
             webEnabled: aiDomain === "classified" ? false : webSearch,
+            ...(aiDomain === "normal" && externalToolGrants.length > 0
+              ? { externalToolGrants }
+              : {}),
             securityDomain: aiDomain,
             ...(aiDomain === "classified" && classifiedContextRef
               ? { classifiedContextRef }
@@ -302,6 +312,7 @@ export function useUnifiedAssistantSend({
       setInput("");
       setImages([]);
       clearContextReferences();
+      clearExternalToolGrants?.();
       if (aiDomain === "classified") clearClassifiedDocumentConsent?.();
       setActivityHint("正在准备回答…");
     } catch (reason) {
@@ -321,6 +332,7 @@ export function useUnifiedAssistantSend({
     classifiedContextRef,
     commitAcceptedTurn,
     clearContextReferences,
+    clearExternalToolGrants,
     composerDisabled,
     contextReferences,
     oneShotContextReference,
@@ -342,6 +354,7 @@ export function useUnifiedAssistantSend({
     retrievalScope,
     webSearch,
     modelOverride,
+    externalToolGrants,
   ]);
 
   return { isStarting, send };

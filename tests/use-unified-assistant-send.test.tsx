@@ -196,6 +196,40 @@ describe("useUnifiedAssistantSend", () => {
     });
   });
 
+  it("attaches reviewed external tools to exactly one accepted normal Run", async () => {
+    const clearExternalToolGrants = vi.fn();
+    start.mockResolvedValue({
+      runId: "run-external",
+      turnId: "turn-external",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 0,
+    });
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        externalToolGrants: [
+          {
+            bindingId: "binding-1",
+            bindingConfigHash: "binding-hash-1",
+          },
+        ],
+        clearExternalToolGrants,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start.mock.calls[0]?.[0].externalToolGrants).toEqual([
+      {
+        bindingId: "binding-1",
+        bindingConfigHash: "binding-hash-1",
+      },
+    ]);
+    expect(clearExternalToolGrants).toHaveBeenCalledTimes(1);
+  });
+
   it("sends folder and tag mentions only as retrieval scope", async () => {
     start.mockResolvedValue({
       runId: "run-2",

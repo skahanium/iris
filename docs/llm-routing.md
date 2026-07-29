@@ -36,7 +36,7 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 助手只通过 `web_search` 语义入口请求外网证据。严格事实回答使用 Run-local `[W1]…[Wn]` 标注，界面会渲染为上标徽章，并在消息底部「来源」列出对应 HTTPS 标题（见 [design-system.md](./design-system.md) Web 引用契约）。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。非严格工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider；严格路径先验证证据 provider，再选择无工具回答模型。普通证据详情只展示引用、标题、安全 URL/域名、摘录和冲突说明；provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
 
-MCP 当前只承载 Web capability mapping：只有显式配置的 `web.search` / `web.fetch` 映射能被 `WebEvidenceBroker` 调度。它不是通用 MCP discovery、任意工具透传或外部副作用入口；联网开关仍是这条能力链唯一的授权源。
+MCP 的 Web 路径仍只承载显式 `web.search` / `web.fetch` mapping，并只由联网开关授权。通用 MCP 只读工具走独立的 `external.read` 路径：管理中心把服务端 `readOnlyHint` 视为候选声明而非行为证明，只允许名称与递归输入 Schema 通过副作用审查、且用户对精确 provider/tool/schema 二次确认信任的工具进入白名单 binding；Composer 必须逐 Run 显式提交 binding ID/hash，Accept 原子冻结用户信任位、provider transport/config、Schema、映射和输出策略。运行中不重新 discovery，不透传服务端 description，也不允许 Skills、分类域、local-only 或模型自行扩大工具面。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现声明。
 
 ## 严格事实核验（v1.2.16）
 
@@ -50,5 +50,7 @@ MCP 当前只承载 Web capability mapping：只有显式配置的 `web.search` 
 - `llm_model_registry_refresh`、`llm_model_validate`
 - `connectivity_status`
 - `web_evidence_provider_*`
+- `mcp_read_only_tools_discover`
+- `mcp_capability_bindings_list`、`mcp_capability_binding_upsert`、`mcp_capability_binding_delete`
 
 命令参数与返回类型以 `src/types/ipc.ts` 和 `src/lib/ipc.ts` 为准。
