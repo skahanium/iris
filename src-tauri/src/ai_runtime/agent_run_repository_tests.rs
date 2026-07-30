@@ -1226,7 +1226,10 @@ fn spawn_subagent_lifecycle_rejects_raw_ids_and_sensitive_summaries_at_repositor
             payload: RunEventPayload::ToolCompleted {
                 capability: "spawn_subagent".to_string(),
                 tool_call_id: synthetic_id.to_string(),
-                summary: "JWT_REDACTED".to_string(),
+                summary: format!(
+                    "{}{}",
+                    "eyJhbGciOiJIUzI1NiJ9.", "eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"
+                ),
                 duration_ms: Some(0),
                 success: Some(false),
                 subagent_batch_report: None,
