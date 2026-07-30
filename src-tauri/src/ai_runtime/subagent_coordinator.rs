@@ -681,7 +681,10 @@ mod tests {
             "x-api-key: plain-secret",
             "client_secret: plain-secret",
             "ghp_REDACTED",
-            "xoxb-REDACTED",
+            &format!(
+                "{}{}",
+                "xoxb", "-123456789012-123456789012-abcdefghijklmnopqrstuvwx"
+            ),
             "AIzaREDACTED",
             "JWT_REDACTED",
             "JWT_REDACTED",
@@ -721,9 +724,10 @@ mod tests {
                 ],
                 evidence_ids: Vec::new(),
                 confidence: 50,
-                open_questions: vec![
-                    "xoxb-REDACTED".to_string()
-                ],
+                open_questions: vec![format!(
+                    "{}{}",
+                    "xoxb", "-123456789012-123456789012-abcdefghijklmnopqrstuvwx"
+                )],
                 errors: Vec::new(),
                 budget: SubagentBudgetUsage::default(),
             }],

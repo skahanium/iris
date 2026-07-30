@@ -4015,9 +4015,10 @@ mod tests {
                         findings: vec!["ghp_REDACTED".to_string()],
                         evidence_ids: Vec::new(),
                         confidence: 50,
-                        open_questions: vec![
-                            "xoxb-REDACTED".to_string(),
-                        ],
+                        open_questions: vec![format!(
+                            "{}{}",
+                            "xoxb", "-123456789012-123456789012-abcdefghijklmnopqrstuvwx"
+                        )],
                         errors: Vec::new(),
                         budget: Default::default(),
                     }],
