@@ -247,12 +247,12 @@ fn evaluate_normal_run_policy(
 /// refreshes Skills. This function deliberately has no filesystem fallback:
 /// scanning an untrusted vault while executing a Run would make the run
 /// boundary nondeterministic and would bypass the confirmed cache.
-struct CachedSkillActivation {
-    plan: Option<SkillActivationPlanSummary>,
-    prompt_overlay: String,
+pub(crate) struct CachedSkillActivation {
+    pub(crate) plan: Option<SkillActivationPlanSummary>,
+    pub(crate) prompt_overlay: String,
 }
 
-fn build_cached_skill_activation(
+pub(crate) fn build_cached_skill_activation(
     state: &AppState,
     vault: Option<&std::path::Path>,
     context: &crate::ai_runtime::run_context::RunContext,
@@ -268,8 +268,13 @@ fn build_cached_skill_activation(
     // fallback or a Run failure. Vault activation/explicit refresh populates
     // the registry; a transient cache lifecycle gap may only suppress optional
     // prompt-only Skills, never change the Run's tool authority or availability.
-    let skills = state.cached_skills_for_vault(vault)?.unwrap_or_default();
-    let index = crate::ai_runtime::skills::load_activation_index(&state.db)?;
+    let Some((skills, index)) = state.cached_skill_activation_for_vault(vault)? else {
+        return Ok(CachedSkillActivation {
+            plan: None,
+            prompt_overlay: String::new(),
+        });
+    };
+    let embedding_scheduler = state.embedding_scheduler();
     let source_hints = context
         .materials
         .iter()
@@ -282,12 +287,16 @@ fn build_cached_skill_activation(
         )
         .collect::<Vec<_>>();
     let intent = skill_intent_for_run(context, authorized_capabilities);
-    let plan = crate::ai_runtime::skills::build_skill_activation_plan_for_task(
+    let query_embedding = crate::ai_runtime::skills::SKILL_VECTOR_RERANK_DEFAULT_ENABLED
+        .then(|| embedding_scheduler.cached_skill_activation_query(&context.user_message))
+        .flatten();
+    let plan = crate::ai_runtime::skills::build_skill_activation_plan_for_task_with_query_embedding(
         &skills,
         intent,
         &context.user_message,
         &source_hints,
         (!index.is_empty()).then_some(&index),
+        query_embedding.as_deref(),
     );
     let selected = crate::ai_runtime::skills::activated_skills_from_plan(&plan, &skills);
     if selected.is_empty() {

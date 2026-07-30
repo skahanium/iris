@@ -15,6 +15,11 @@ const MAX_COSINE_FALLBACK_CHUNKS: i64 = 8_000;
 
 /// Pinned v2 embedding model and its fixed output dimension.
 pub const EMBEDDING_MODEL_ID: &str = "Xenova/bge-small-zh-v1.5";
+/// Immutable upstream revision pinned by the bundled model manifest.
+pub const EMBEDDING_MODEL_REVISION: &str = "fcecc3c5fef6becfa2b2bdda15c1c938857be534";
+/// Revision-bound identity used by caches that must invalidate on weight changes.
+pub const EMBEDDING_MODEL_FINGERPRINT: &str =
+    "Xenova/bge-small-zh-v1.5@fcecc3c5fef6becfa2b2bdda15c1c938857be534";
 pub const EMBEDDING_DIMENSION: usize = 512;
 const QUERY_INSTRUCTION: &str = "\u{4e3a}\u{8fd9}\u{4e2a}\u{53e5}\u{5b50}\u{751f}\u{6210}\u{8868}\u{793a}\u{4ee5}\u{7528}\u{4e8e}\u{68c0}\u{7d22}\u{76f8}\u{5173}\u{6587}\u{7ae0}\u{ff1a}";
 const BUNDLED_MODEL_SUBDIRECTORY: &str = "models/bge-small-zh-v1.5";

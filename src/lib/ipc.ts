@@ -1001,6 +1001,12 @@ export async function skillsList(): Promise<SkillListEntryDto[]> {
   return invoke<SkillListEntryDto[]>("skills_list");
 }
 
+export async function skillsPrepareActivationQuery(
+  query: string,
+): Promise<void> {
+  return invoke<void>("skills_prepare_activation_query", { query });
+}
+
 export async function promptProfileGet(): Promise<PromptProfileDto> {
   return invoke<PromptProfileDto>("prompt_profile_get");
 }

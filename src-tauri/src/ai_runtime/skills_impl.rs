@@ -32,9 +32,13 @@ mod validation_impl;
 
 pub use activation_impl::{
     activated_skills_from_plan, build_skill_activation_plan_for_task,
+    build_skill_activation_plan_for_task_with_query_embedding,
     build_skill_activation_plan_for_task_with_runtime, enrich_list_with_task,
     filter_skill_content_to_injected_sections, load_activation_index, rank_skills_for_task,
     rebuild_activation_index, rerank_skills_with_vectors, skills_for_task,
+};
+pub(crate) use activation_impl::{
+    activation_embedding_source, SKILL_VECTOR_RERANK_DEFAULT_ENABLED,
 };
 pub use compatibility_impl::{
     blocked_capabilities_for_skill, fallback_guidance, normalize_external_capability,
@@ -739,6 +743,9 @@ Large instruction body."#,
                     description: None,
                     keywords: Some(keywords.to_string()),
                     embedding_json: None,
+                    embedding_source_hash: String::new(),
+                    embedding_model: None,
+                    embedding_dimensions: None,
                 },
             );
         }
@@ -761,6 +768,592 @@ Large instruction body."#,
         assert!(names.contains(&"auxiliary-audit"));
         assert!(!names.contains(&"general"));
         assert!(!names.contains(&"unrelated"));
+    }
+
+    #[test]
+    fn activation_index_incremental_upsert_preserves_unchanged_embedding() {
+        let db = Database::open_in_memory().unwrap();
+        let skill = make_skill("stable-skill", Some("knowledge"), true);
+        rebuild_activation_index(&db, std::slice::from_ref(&skill)).unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skill_activation_index
+                 SET embedding_json = '[0.25,0.75]',
+                     embedding_model = 'test-model',
+                     embedding_dimensions = 2
+                 WHERE skill_name = 'stable-skill' AND scope = 'Vault'",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        rebuild_activation_index(&db, std::slice::from_ref(&skill)).unwrap();
+
+        let stored = db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT embedding_json, embedding_source_hash,
+                            embedding_model, embedding_dimensions
+                     FROM skill_activation_index
+                     WHERE skill_name = 'stable-skill' AND scope = 'Vault'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Option<String>>(2)?,
+                            row.get::<_, Option<i64>>(3)?,
+                        ))
+                    },
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert_eq!(stored.0.as_deref(), Some("[0.25,0.75]"));
+        assert!(!stored.1.is_empty());
+        assert_eq!(stored.2.as_deref(), Some("test-model"));
+        assert_eq!(stored.3, Some(2));
+    }
+
+    #[test]
+    fn activation_index_clears_changed_embedding_and_deletes_only_removed_rows() {
+        let db = Database::open_in_memory().unwrap();
+        let mut changed = make_skill("changed-skill", Some("knowledge"), true);
+        let removed = make_skill("removed-skill", Some("knowledge"), true);
+        rebuild_activation_index(&db, &[changed.clone(), removed]).unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skill_activation_index
+                 SET embedding_json = '[1.0]',
+                     embedding_model = 'test-model',
+                     embedding_dimensions = 1",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        changed.description = "A changed semantic description".into();
+
+        rebuild_activation_index(&db, &[changed]).unwrap();
+
+        db.with_read_conn(|conn| {
+            let changed_row = conn.query_row(
+                "SELECT embedding_json, embedding_model, embedding_dimensions
+                 FROM skill_activation_index
+                 WHERE skill_name = 'changed-skill' AND scope = 'Vault'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                    ))
+                },
+            )?;
+            assert_eq!(changed_row, (None, None, None));
+            assert_eq!(
+                conn.query_row(
+                    "SELECT COUNT(*) FROM skill_activation_index
+                     WHERE skill_name = 'removed-skill' AND scope = 'Vault'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )?,
+                0
+            );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    fn axis_vector(axis: usize) -> Vec<f32> {
+        let mut vector = vec![0.0; crate::embedding::engine::EMBEDDING_DIMENSION];
+        vector[axis] = 1.0;
+        vector
+    }
+
+    fn write_activation_vector(
+        db: &Database,
+        name: &str,
+        vector: &[f32],
+        model: &str,
+        dimensions: i64,
+    ) {
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skill_activation_index
+                 SET embedding_json = ?1,
+                     embedding_model = ?2,
+                     embedding_dimensions = ?3
+                 WHERE skill_name = ?4 AND scope = 'Vault'",
+                rusqlite::params![serde_json::to_string(vector)?, model, dimensions, name,],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn vector_rerank_only_reorders_lexical_candidates_with_matching_metadata() {
+        let db = Database::open_in_memory().unwrap();
+        let mut alpha = make_skill("alpha-assistant", None, true);
+        alpha.description = "assistant release summary".into();
+        let mut beta = make_skill("beta-assistant", None, true);
+        beta.description = "assistant release analysis".into();
+        let mut unrelated = make_skill("garden-guide", None, true);
+        unrelated.description = "gardening and plants".into();
+        let skills = vec![alpha, beta, unrelated];
+        rebuild_activation_index(&db, &skills).unwrap();
+        write_activation_vector(
+            &db,
+            "alpha-assistant",
+            &axis_vector(0),
+            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+            crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+        );
+        write_activation_vector(
+            &db,
+            "beta-assistant",
+            &axis_vector(1),
+            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+            crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+        );
+        write_activation_vector(
+            &db,
+            "garden-guide",
+            &axis_vector(1),
+            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+            crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+        );
+        let index = load_activation_index(&db).unwrap();
+        let lexical = rank_skills_for_task(
+            &skills,
+            AgentIntent::Chat,
+            "launch readiness",
+            &[],
+            Some(&index),
+        );
+
+        let reranked = rerank_skills_with_vectors(lexical, Some(&axis_vector(1)), Some(&index));
+
+        assert_eq!(
+            reranked
+                .iter()
+                .map(|scored| scored.skill.name.as_str())
+                .collect::<Vec<_>>(),
+            ["beta-assistant", "alpha-assistant"]
+        );
+        assert!(
+            reranked
+                .iter()
+                .all(|scored| scored.skill.name != "garden-guide"),
+            "vector similarity must not introduce a zero-lexical-correlation Skill"
+        );
+    }
+
+    #[test]
+    fn vector_model_or_dimension_mismatch_falls_back_to_lexical_order() {
+        let db = Database::open_in_memory().unwrap();
+        let mut alpha = make_skill("alpha-assistant", None, true);
+        alpha.description = "assistant".into();
+        let mut beta = make_skill("beta-assistant", None, true);
+        beta.description = "assistant".into();
+        let skills = vec![alpha, beta];
+        rebuild_activation_index(&db, &skills).unwrap();
+        write_activation_vector(
+            &db,
+            "alpha-assistant",
+            &axis_vector(0),
+            crate::embedding::engine::EMBEDDING_MODEL_ID,
+            crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+        );
+        write_activation_vector(
+            &db,
+            "beta-assistant",
+            &axis_vector(1),
+            crate::embedding::engine::EMBEDDING_MODEL_ID,
+            crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+        );
+        let index = load_activation_index(&db).unwrap();
+        let lexical =
+            rank_skills_for_task(&skills, AgentIntent::Chat, "上线评估", &[], Some(&index));
+        let lexical_names = lexical
+            .iter()
+            .map(|scored| scored.skill.name.as_str())
+            .collect::<Vec<_>>();
+
+        let reranked = rerank_skills_with_vectors(lexical, Some(&axis_vector(1)), Some(&index));
+
+        assert_eq!(
+            reranked
+                .iter()
+                .map(|scored| scored.skill.name.as_str())
+                .collect::<Vec<_>>(),
+            lexical_names
+        );
+
+        write_activation_vector(
+            &db,
+            "alpha-assistant",
+            &axis_vector(0),
+            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+            crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+        );
+        write_activation_vector(
+            &db,
+            "beta-assistant",
+            &axis_vector(1),
+            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+            (crate::embedding::engine::EMBEDDING_DIMENSION - 1) as i64,
+        );
+        let mismatched_dimensions_index = load_activation_index(&db).unwrap();
+        let lexical = rank_skills_for_task(
+            &skills,
+            AgentIntent::Chat,
+            "上线评估",
+            &[],
+            Some(&mismatched_dimensions_index),
+        );
+        let lexical_names = lexical
+            .iter()
+            .map(|scored| scored.skill.name.as_str())
+            .collect::<Vec<_>>();
+
+        let reranked = rerank_skills_with_vectors(
+            lexical,
+            Some(&axis_vector(1)),
+            Some(&mismatched_dimensions_index),
+        );
+
+        assert_eq!(
+            reranked
+                .iter()
+                .map(|scored| scored.skill.name.as_str())
+                .collect::<Vec<_>>(),
+            lexical_names
+        );
+    }
+
+    #[test]
+    fn partial_vector_coverage_falls_back_to_lexical_order() {
+        let db = Database::open_in_memory().unwrap();
+        let mut alpha = make_skill("alpha-assistant", None, true);
+        alpha.description = "assistant".into();
+        let mut beta = make_skill("beta-assistant", None, true);
+        beta.description = "assistant".into();
+        let skills = vec![alpha, beta];
+        rebuild_activation_index(&db, &skills).unwrap();
+        write_activation_vector(
+            &db,
+            "beta-assistant",
+            &axis_vector(1),
+            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+            crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+        );
+        let index = load_activation_index(&db).unwrap();
+        let lexical =
+            rank_skills_for_task(&skills, AgentIntent::Chat, "上线评估", &[], Some(&index));
+        let lexical_names = lexical
+            .iter()
+            .map(|scored| scored.skill.name.as_str())
+            .collect::<Vec<_>>();
+
+        let reranked = rerank_skills_with_vectors(lexical, Some(&axis_vector(1)), Some(&index));
+
+        assert_eq!(
+            reranked
+                .iter()
+                .map(|scored| scored.skill.name.as_str())
+                .collect::<Vec<_>>(),
+            lexical_names
+        );
+    }
+
+    #[test]
+    fn explicit_name_trigger_hint_and_keyword_stay_ahead_of_vector_scores() {
+        let db = Database::open_in_memory().unwrap();
+        let explicit = make_skill("release-review", None, true);
+        let mut hinted = make_skill("hinted-skill", None, true);
+        hinted.metadata.insert(
+            "trigger-hints".into(),
+            serde_json::Value::Array(vec![serde_json::Value::String("混合复盘".into())]),
+        );
+        let mut keyword = make_skill("keyword-skill", None, true);
+        keyword.metadata.insert(
+            "keywords".into(),
+            serde_json::Value::Array(vec![serde_json::Value::String("发布".into())]),
+        );
+        let mut semantic = make_skill("semantic-assistant", None, true);
+        semantic.description = "assistant".into();
+        let skills = vec![explicit, hinted, keyword, semantic];
+        rebuild_activation_index(&db, &skills).unwrap();
+        write_activation_vector(
+            &db,
+            "semantic-assistant",
+            &axis_vector(1),
+            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+            crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+        );
+        let index = load_activation_index(&db).unwrap();
+
+        for (query, expected, reason) in [
+            (
+                "请使用 release-review",
+                "release-review",
+                "explicit_skill_mention",
+            ),
+            ("做一次混合复盘", "hinted-skill", "trigger_hint"),
+            ("发布复盘", "keyword-skill", "keyword_match"),
+        ] {
+            let plan = build_skill_activation_plan_for_task_with_query_embedding(
+                &skills,
+                AgentIntent::Chat,
+                query,
+                &[],
+                Some(&index),
+                Some(&axis_vector(1)),
+            );
+            assert_eq!(plan.activated_skills[0].name, expected, "query {query}");
+            assert_eq!(
+                plan.activated_skills[0].match_reason, reason,
+                "query {query}"
+            );
+        }
+    }
+
+    #[test]
+    fn keyword_match_stays_ahead_of_unbounded_lexical_score() {
+        let db = Database::open_in_memory().unwrap();
+        let mut keyword = make_skill("keyword-skill", None, true);
+        keyword.metadata.insert(
+            "keywords".into(),
+            serde_json::Value::Array(vec![serde_json::Value::String("发布".into())]),
+        );
+        let terms = [
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "theta", "iota", "kappa",
+            "lambda", "sigma", "omega", "vector", "semantic", "ranking",
+        ];
+        let mut lexical = make_skill(&terms.join("-"), None, true);
+        lexical.description = format!("assistant {}", terms.join(" "));
+        let skills = vec![keyword, lexical];
+        rebuild_activation_index(&db, &skills).unwrap();
+        let index = load_activation_index(&db).unwrap();
+        let query = format!("发布 {}", terms.join(" "));
+
+        let plan = build_skill_activation_plan_for_task(
+            &skills,
+            AgentIntent::Chat,
+            &query,
+            &[],
+            Some(&index),
+        );
+
+        assert_eq!(plan.activated_skills[0].name, "keyword-skill");
+        assert_eq!(plan.activated_skills[0].match_reason, "keyword_match");
+    }
+
+    fn skill_activation_eval_skills() -> Vec<SkillEntry> {
+        let mut chinese = make_skill("chinese-summary", None, true);
+        chinese.description = "将中文内容压缩成简短摘要".into();
+        chinese.metadata.insert(
+            "keywords".into(),
+            serde_json::Value::Array(vec![serde_json::Value::String("摘要".into())]),
+        );
+        let mut mixed = make_skill("mixed-review", None, true);
+        mixed.description = "Review bilingual Chinese and English content".into();
+        mixed.metadata.insert(
+            "trigger-hints".into(),
+            serde_json::Value::Array(vec![serde_json::Value::String("bilingual review".into())]),
+        );
+        let mut explicit = make_skill("explicit-audit", None, true);
+        explicit.description = "Audit a document against explicit requirements".into();
+        let mut alpha = make_skill("alpha-general", None, true);
+        alpha.description = "assistant for gardening and plant care".into();
+        let mut beta = make_skill("beta-general", None, true);
+        beta.description = "assistant for financial bookkeeping".into();
+        let mut synonym = make_skill("z-release-readiness", None, true);
+        synonym.description = "assistant for evaluating release readiness and launch risk".into();
+        let mut high_risk = make_skill("destroy-vault", None, true);
+        high_risk.description = "irreversible destructive action".into();
+        high_risk.content = "assistant".into();
+        vec![chinese, mixed, explicit, alpha, beta, synonym, high_risk]
+    }
+
+    const PINNED_SKILL_ACTIVATION_EVAL_MODEL_REVISION: &str =
+        "Xenova/bge-small-zh-v1.5@fcecc3c5fef6becfa2b2bdda15c1c938857be534";
+    const PINNED_SKILL_ACTIVATION_SIMILARITIES: [[f32; 7]; 5] = [
+        [
+            0.5876449, 0.48451254, 0.39956492, 0.44972652, 0.4106296, 0.42367074, 0.35393217,
+        ],
+        [
+            0.48023725, 0.70686156, 0.51498735, 0.46826154, 0.48906836, 0.5178797, 0.43215537,
+        ],
+        [
+            0.44649324, 0.5241725, 0.78972745, 0.4807908, 0.5220992, 0.4969171, 0.49795252,
+        ],
+        [
+            0.37048265, 0.41266617, 0.4126317, 0.34202388, 0.40696642, 0.44630638, 0.36816576,
+        ],
+        [
+            0.33335194, 0.295247, 0.29608002, 0.3597544, 0.2619487, 0.29565835, 0.3024949,
+        ],
+    ];
+
+    fn vector_with_cosine_to_first_axis(similarity: f32) -> Vec<f32> {
+        let mut vector = vec![0.0; crate::embedding::engine::EMBEDDING_DIMENSION];
+        vector[0] = similarity;
+        vector[1] = (1.0 - similarity * similarity).sqrt();
+        vector
+    }
+
+    #[test]
+    #[ignore = "regenerates the pinned BGE similarity fixture on maintainer request"]
+    fn print_pinned_skill_activation_eval_similarities() {
+        let db = Database::open_in_memory().unwrap();
+        let skills = skill_activation_eval_skills();
+        rebuild_activation_index(&db, &skills).unwrap();
+        let index = load_activation_index(&db).unwrap();
+        let sources = skills
+            .iter()
+            .map(|skill| {
+                let row = index
+                    .get(&(skill.name.clone(), skill.scope))
+                    .expect("activation index row");
+                activation_embedding_source(
+                    &skill.name,
+                    &skill.description,
+                    row.keywords.as_deref().unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        let queries = [
+            "写摘要",
+            "请做 bilingual review 混合复盘",
+            "请使用 explicit-audit",
+            "发版前看看能不能上线",
+            "整理旅行照片",
+        ];
+        let mut texts = queries.to_vec();
+        texts.extend(sources.iter().map(String::as_str));
+        let embeddings = crate::embedding::engine::embed_texts_batch(&texts).unwrap();
+        let query_embeddings = &embeddings[..queries.len()];
+        let skill_embeddings = &embeddings[queries.len()..];
+
+        for (query, query_embedding) in queries.iter().zip(query_embeddings) {
+            let similarities = skill_embeddings
+                .iter()
+                .map(|skill_embedding| {
+                    crate::embedding::engine::cosine_similarity(query_embedding, skill_embedding)
+                })
+                .collect::<Vec<_>>();
+            println!("{query}: {similarities:?}");
+        }
+    }
+
+    #[test]
+    fn skill_activation_eval_gates_default_vector_rerank_on_recall_and_high_risk_safety() {
+        let db = Database::open_in_memory().unwrap();
+        let skills = skill_activation_eval_skills();
+        rebuild_activation_index(&db, &skills).unwrap();
+        let cases = [
+            ("中文短查询", "写摘要", Some("chinese-summary")),
+            (
+                "混合语言",
+                "请做 bilingual review 混合复盘",
+                Some("mixed-review"),
+            ),
+            ("显式提及", "请使用 explicit-audit", Some("explicit-audit")),
+            (
+                "同义表达",
+                "发版前看看能不能上线",
+                Some("z-release-readiness"),
+            ),
+            ("高风险误激活", "整理旅行照片", None),
+        ];
+        let mut lexical_recall = 0;
+        let mut vector_recall = 0;
+        let mut lexical_high_risk = 0;
+        let mut vector_high_risk = 0;
+
+        assert_eq!(
+            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+            PINNED_SKILL_ACTIVATION_EVAL_MODEL_REVISION
+        );
+        assert_eq!(
+            crate::embedding::engine::EMBEDDING_MODEL_REVISION,
+            "fcecc3c5fef6becfa2b2bdda15c1c938857be534"
+        );
+        for (case_index, (label, query, expected)) in cases.into_iter().enumerate() {
+            for (skill, similarity) in skills
+                .iter()
+                .zip(PINNED_SKILL_ACTIVATION_SIMILARITIES[case_index])
+            {
+                write_activation_vector(
+                    &db,
+                    &skill.name,
+                    &vector_with_cosine_to_first_axis(similarity),
+                    crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+                    crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+                );
+            }
+            let index = load_activation_index(&db).unwrap();
+            let lexical = build_skill_activation_plan_for_task(
+                &skills,
+                AgentIntent::Chat,
+                query,
+                &[],
+                Some(&index),
+            );
+            let lexical_cohort =
+                rank_skills_for_task(&skills, AgentIntent::Chat, query, &[], Some(&index));
+            let vector = build_skill_activation_plan_for_task_with_query_embedding(
+                &skills,
+                AgentIntent::Chat,
+                query,
+                &[],
+                Some(&index),
+                Some(&axis_vector(0)),
+            );
+            let lexical_names = lexical
+                .activated_skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>();
+            let vector_names = vector
+                .activated_skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>();
+            if let Some(expected) = expected {
+                lexical_recall += usize::from(lexical_names.contains(&expected));
+                vector_recall += usize::from(vector_names.contains(&expected));
+            }
+            lexical_high_risk += usize::from(lexical_names.contains(&"destroy-vault"));
+            vector_high_risk += usize::from(vector_names.contains(&"destroy-vault"));
+            if label == "高风险误激活" {
+                assert!(
+                    lexical_cohort
+                        .iter()
+                        .any(|candidate| candidate.skill.name == "destroy-vault"),
+                    "the high-risk fixture must exercise a real weak lexical candidate"
+                );
+            }
+            assert!(
+                vector.activated_skills.len() <= 2,
+                "{label} may activate only primary + auxiliary"
+            );
+            assert!(vector.requested_tools.is_empty(), "{label}");
+            assert!(vector.confirmation_required_tools.is_empty(), "{label}");
+            assert!(vector.blocked_capabilities.is_empty(), "{label}");
+        }
+
+        let gate_passed = vector_recall > lexical_recall && vector_high_risk <= lexical_high_risk;
+        assert_eq!(
+            SKILL_VECTOR_RERANK_DEFAULT_ENABLED, gate_passed,
+            "default vector rerank must track the activation evaluation gate"
+        );
+        assert_eq!((lexical_recall, vector_recall), (3, 4));
+        assert_eq!((lexical_high_risk, vector_high_risk), (0, 0));
     }
 
     #[test]

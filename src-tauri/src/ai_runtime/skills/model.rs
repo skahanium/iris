@@ -210,6 +210,9 @@ pub struct SkillActivationIndexRow {
     pub description: Option<String>,
     pub keywords: Option<String>,
     pub embedding_json: Option<String>,
+    pub embedding_source_hash: String,
+    pub embedding_model: Option<String>,
+    pub embedding_dimensions: Option<i64>,
 }
 
 pub type ActivationIndexMap = HashMap<(String, SkillScope), SkillActivationIndexRow>;

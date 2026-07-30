@@ -9,7 +9,7 @@ use super::agent_tool_loop::ToolLoopExecutor;
 use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProviderInput};
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
-    execute_normal_run, execute_normal_run_with_eval_telemetry,
+    build_cached_skill_activation, execute_normal_run, execute_normal_run_with_eval_telemetry,
     required_web_query_from_user_history, strict_follow_up_capabilities,
 };
 use super::normal_session_repository::NormalSessionRepository;
@@ -269,6 +269,99 @@ async fn normal_run_injects_cached_confirmed_skill_after_source_file_is_removed(
         .expect("run snapshot")
         .expect("persisted run");
     assert_eq!(response.run.state, RunState::Completed);
+}
+
+#[test]
+fn normal_run_skill_activation_reads_prepared_query_vector_without_embedding_work() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let vault = directory.path().join("vault");
+    std::fs::create_dir_all(&vault).expect("vault directory");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    state.set_vault(vault.clone()).expect("activate vault");
+    for (name, description) in [
+        ("alpha-general", "assistant"),
+        ("beta-general", "assistant"),
+        ("z-release-readiness", "assistant"),
+    ] {
+        let entry = crate::ai_runtime::skills::write_confirmed_skill_content(
+            &vault,
+            &std::path::PathBuf::from(format!("{name}/SKILL.md")),
+            crate::ai_runtime::skills::SkillScope::Vault,
+            &format!(
+                "---\nname: {name}\ndescription: {description}\n---\n\nUse {name} instructions."
+            ),
+        )
+        .expect("write confirmed Skill");
+        state
+            .upsert_cached_skill_for_vault(&vault, entry)
+            .expect("cache Skill");
+    }
+    let scheduler = state.embedding_scheduler();
+    scheduler.reset_for_vault();
+    state
+        .db
+        .with_conn(|conn| {
+            for (name, axis) in [
+                ("alpha-general", 0_usize),
+                ("beta-general", 1_usize),
+                ("z-release-readiness", 2_usize),
+            ] {
+                let mut vector = vec![0.0_f32; crate::embedding::engine::EMBEDDING_DIMENSION];
+                vector[axis] = 1.0;
+                conn.execute(
+                    "UPDATE skill_activation_index
+                     SET embedding_json = ?1,
+                         embedding_model = ?2,
+                         embedding_dimensions = ?3
+                     WHERE skill_name = ?4 AND scope = 'Vault'",
+                    rusqlite::params![
+                        serde_json::to_string(&vector)?,
+                        crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
+                        crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+                        name,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("seed activation vectors");
+    state
+        .refresh_skills_for_vault(&vault)
+        .expect("replace the in-memory activation index");
+    let mut query_vector = vec![0.0_f32; crate::embedding::engine::EMBEDDING_DIMENSION];
+    query_vector[2] = 1.0;
+    scheduler.cache_skill_activation_query_for_test("发版前看看能不能上线", query_vector);
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "prepared-skill-query".into();
+    request.turn.message = "发版前看看能不能上线".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
+    let context = RunContextAssembler::assemble(
+        &state.db,
+        Some(&vault),
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("run context");
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute("DROP TABLE skill_activation_index", [])?;
+            Ok(())
+        })
+        .expect("remove persisted index after the Run context is ready");
+
+    let activation =
+        build_cached_skill_activation(&state, Some(&vault), &context, &[]).expect("activation");
+
+    assert_eq!(
+        activation
+            .plan
+            .expect("prepared vector should activate Skills")
+            .activated_skills[0]
+            .name,
+        "z-release-readiness"
+    );
 }
 
 #[tokio::test]

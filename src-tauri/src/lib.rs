@@ -230,6 +230,7 @@ pub fn run() {
             commands::assistant_commands::assistant_session_retract,
             commands::ai_commands::knowledge_reindex,
             commands::ai_commands::skills_list,
+            commands::ai_commands::skills_prepare_activation_query,
             commands::ai_commands::web_evidence_provider_upsert,
             commands::ai_commands::web_evidence_providers_list,
             commands::ai_commands::web_search_route_get,

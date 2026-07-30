@@ -15,7 +15,9 @@ import {
   assistantClassifiedRunTakeResult,
   mcpCapabilityBindingsList,
   openExternalHttpsUrl,
+  skillsPrepareActivationQuery,
 } from "@/lib/ipc";
+import { trimMentionDraft } from "@/lib/ai-context-scope";
 import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
 import {
   assistantChromeSnapshotsEqual,
@@ -38,6 +40,8 @@ import { useAssistantPresentationPlayback } from "./hooks/useAssistantPresentati
 import { useUnifiedAssistantSend } from "./hooks/useUnifiedAssistantSend";
 import type { UnifiedAssistantPanelProps } from "./types";
 import type { McpCapabilityBindingSummary } from "@/lib/ipc";
+
+const SKILL_QUERY_PREWARM_DELAY_MS = 250;
 
 /** Production assistant panel: one opaque conversation API and one Run lifecycle. */
 export function UnifiedAssistantPanel({
@@ -210,6 +214,16 @@ export function UnifiedAssistantPanel({
     textareaRef,
     runtimeDocumentCandidates,
   });
+
+  useEffect(() => {
+    if (aiDomain !== "normal") return;
+    const query = trimMentionDraft(input, displayMentions).message;
+    if (!query) return;
+    const timer = window.setTimeout(() => {
+      void skillsPrepareActivationQuery(query).catch(() => undefined);
+    }, SKILL_QUERY_PREWARM_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [aiDomain, displayMentions, input]);
 
   useAssistantRunTranscript({
     run: assistantRun.eventState,

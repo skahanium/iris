@@ -155,6 +155,9 @@ const MIGRATION_059_UP: &str =
     include_str!("../../migrations/059_agent_mcp_capability_bindings.sql");
 const MIGRATION_059_DOWN: &str =
     include_str!("../../migrations/059_agent_mcp_capability_bindings.down.sql");
+const MIGRATION_060_UP: &str = include_str!("../../migrations/060_skill_activation_embeddings.sql");
+const MIGRATION_060_DOWN: &str =
+    include_str!("../../migrations/060_skill_activation_embeddings.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -635,6 +638,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_059_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "060_skill_activation_embeddings",
+        MIGRATION_060_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -646,6 +655,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "060_skill_activation_embeddings", MIGRATION_060_DOWN);
     rollback_migration(
         conn,
         "059_agent_mcp_capability_bindings",
@@ -2128,6 +2138,40 @@ mod tests {
                 .unwrap();
             assert_eq!(exists, 0, "{table} should be removed by rollback");
         }
+    }
+
+    #[test]
+    fn migration_060_tracks_skill_embedding_source_model_and_dimensions() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let columns = conn
+            .prepare("PRAGMA table_info(skill_activation_index)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        for column in [
+            "embedding_source_hash",
+            "embedding_model",
+            "embedding_dimensions",
+        ] {
+            assert!(
+                columns.contains(&column.to_string()),
+                "missing skill_activation_index.{column}"
+            );
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM _migrations
+                 WHERE name = '060_skill_activation_embeddings'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
     }
 
     #[test]

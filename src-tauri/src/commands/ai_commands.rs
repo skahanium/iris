@@ -52,6 +52,22 @@ pub async fn skills_list(
     Ok(crate::ai_runtime::skills::skill_list_entries(skills))
 }
 
+/// Best-effort composer prewarm for prompt-only Skill reranking.
+///
+/// The model work runs before an Agent Run exists. Normal Run execution only
+/// reads the bounded in-memory cache and deterministically falls back to lexical
+/// ranking when this command fails or has not completed.
+#[tauri::command]
+pub async fn skills_prepare_activation_query(
+    state: State<'_, Arc<AppState>>,
+    query: String,
+) -> AppResult<()> {
+    let scheduler = state.embedding_scheduler();
+    tauri::async_runtime::spawn_blocking(move || scheduler.prepare_skill_activation_query(&query))
+        .await
+        .map_err(|_| AppError::msg("Skill activation query prewarm unavailable"))?
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebEvidenceProviderInput {

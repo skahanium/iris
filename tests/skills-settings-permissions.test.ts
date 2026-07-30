@@ -159,4 +159,22 @@ describe("Skills settings prompt-only contract", () => {
     );
     expect(ipc).not.toContain("mcpRuntimeProfilesList");
   });
+
+  it("prewarms skill query vectors before Run execution without blocking submit", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const ipc = read("src/lib/ipc.ts");
+    const commands = read("src-tauri/src/commands/ai_commands.rs");
+    const lib = read("src-tauri/src/lib.rs");
+
+    expect(panel).toContain("skillsPrepareActivationQuery");
+    expect(panel).toContain("SKILL_QUERY_PREWARM_DELAY_MS");
+    expect(panel).toContain('aiDomain !== "normal"');
+    expect(panel).toContain("setTimeout");
+    expect(ipc).toContain("export async function skillsPrepareActivationQuery");
+    expect(ipc).toContain('"skills_prepare_activation_query"');
+    expect(commands).toContain("pub async fn skills_prepare_activation_query");
+    expect(lib).toContain(
+      "commands::ai_commands::skills_prepare_activation_query",
+    );
+  });
 });

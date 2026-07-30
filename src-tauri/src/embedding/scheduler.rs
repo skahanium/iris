@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -6,12 +7,17 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use super::engine::{embed_texts_batch, f32_to_bytes, EMBEDDING_DIMENSION, EMBEDDING_MODEL_ID};
+use super::engine::{
+    embed_texts_batch, f32_to_bytes, EMBEDDING_DIMENSION, EMBEDDING_MODEL_FINGERPRINT,
+    EMBEDDING_MODEL_ID,
+};
+use crate::ai_runtime::skills::ActivationIndexMap;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 const LEGACY_MODEL_ID: &str = "fastembed/AllMiniLML6V2";
 const BATCH_SIZE: usize = 16;
+const MAX_SKILL_QUERY_CACHE_ENTRIES: usize = 64;
 const IDLE_DELAY: Duration = Duration::from_secs(30);
 const FAILED_SUMMARY: &str = "Embedding rebuild failed";
 const INTERRUPTED_SUMMARY: &str = "Embedding rebuild interrupted";
@@ -68,6 +74,8 @@ struct RuntimeState {
     initial_index_complete: bool,
     activity_epoch: u64,
     vault_epoch: u64,
+    skill_activation_epoch: Option<u64>,
+    skill_activation_reschedule: bool,
 }
 
 /// The single owner for generation work and incremental vector repairs.
@@ -76,6 +84,8 @@ pub struct EmbeddingScheduler {
     batcher: Arc<dyn EmbeddingBatcher>,
     idle_delay: Duration,
     runtime: Mutex<RuntimeState>,
+    skill_query_embeddings: Mutex<HashMap<String, Vec<f32>>>,
+    skill_activation_index: Mutex<ActivationIndexMap>,
     app_handle: Mutex<Option<AppHandle>>,
     #[cfg(test)]
     emitted_statuses: Mutex<Vec<EmbeddingIndexStatus>>,
@@ -106,6 +116,8 @@ impl EmbeddingScheduler {
                 foreground_busy: true,
                 ..RuntimeState::default()
             }),
+            skill_query_embeddings: Mutex::new(HashMap::new()),
+            skill_activation_index: Mutex::new(ActivationIndexMap::new()),
             app_handle: Mutex::new(None),
             #[cfg(test)]
             emitted_statuses: Mutex::new(Vec::new()),
@@ -126,7 +138,145 @@ impl EmbeddingScheduler {
             runtime.foreground_busy = true;
             runtime.restart_after_pause = false;
             runtime.activity_epoch = runtime.activity_epoch.wrapping_add(1);
+            runtime.skill_activation_epoch = None;
+            runtime.skill_activation_reschedule = false;
         }
+        if let Ok(mut queries) = self.skill_query_embeddings.lock() {
+            queries.clear();
+        }
+        if let Ok(mut index) = self.skill_activation_index.lock() {
+            index.clear();
+        }
+    }
+
+    /// Atomically replace the active vault's in-memory Skill activation index.
+    pub fn replace_skill_activation_index(&self, mut index: ActivationIndexMap) -> AppResult<()> {
+        let mut cached = self
+            .skill_activation_index
+            .lock()
+            .map_err(|_| AppError::msg("Skill activation index cache lock poisoned"))?;
+        for (key, incoming) in &mut index {
+            if incoming.embedding_json.is_some() {
+                continue;
+            }
+            let Some(existing) = cached.get(key) else {
+                continue;
+            };
+            if existing.embedding_source_hash != incoming.embedding_source_hash
+                || existing.embedding_model.as_deref() != Some(EMBEDDING_MODEL_FINGERPRINT)
+                || existing.embedding_dimensions != Some(EMBEDDING_DIMENSION as i64)
+            {
+                continue;
+            }
+            incoming.embedding_json = existing.embedding_json.clone();
+            incoming.embedding_model = existing.embedding_model.clone();
+            incoming.embedding_dimensions = existing.embedding_dimensions;
+        }
+        *cached = index;
+        Ok(())
+    }
+
+    /// Read the active vault's Skill activation index without SQLite access.
+    pub fn cached_skill_activation_index(&self) -> ActivationIndexMap {
+        self.skill_activation_index
+            .lock()
+            .map(|index| index.clone())
+            .unwrap_or_default()
+    }
+
+    /// Start a vault-scoped background repair for missing Skill activation vectors.
+    ///
+    /// Lexical index replacement and the confirmed in-memory registry are
+    /// committed by the caller before this method is invoked. The worker never
+    /// blocks a Run and an old-vault result cannot cross `reset_for_vault`.
+    pub fn schedule_skill_activation_embeddings(self: &Arc<Self>) {
+        let epoch = match self.runtime.lock() {
+            Ok(mut runtime) => {
+                let epoch = runtime.vault_epoch;
+                if runtime.skill_activation_epoch == Some(epoch) {
+                    runtime.skill_activation_reschedule = true;
+                    return;
+                }
+                runtime.skill_activation_epoch = Some(epoch);
+                runtime.skill_activation_reschedule = false;
+                epoch
+            }
+            Err(_) => return,
+        };
+        let scheduler = Arc::clone(self);
+        if thread::Builder::new()
+            .name("iris-skill-activation-embeddings".into())
+            .spawn(move || scheduler.run_skill_activation_generation(epoch))
+            .is_err()
+        {
+            let _ = self.finish_skill_activation_worker(epoch);
+        }
+    }
+
+    /// Precompute one composer query outside the Run execution path.
+    ///
+    /// Production calls this from a best-effort debounced UI request. A cache
+    /// miss or model failure therefore changes only ranking quality: Runs use
+    /// the deterministic lexical order without loading or waiting for a model.
+    pub fn prepare_skill_activation_query(&self, query: &str) -> AppResult<()> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(());
+        }
+        let vault_epoch = self
+            .runtime
+            .lock()
+            .map_err(|_| AppError::msg("Embedding scheduler lock poisoned"))?
+            .vault_epoch;
+        if self.cached_skill_activation_query(query).is_some() {
+            return Ok(());
+        }
+        self.batcher.ensure_available()?;
+        let mut embeddings = self.batcher.embed_batch(&[query])?;
+        if embeddings.len() != 1 {
+            return Err(AppError::Embed(
+                "Skill activation query embedding count mismatch".into(),
+            ));
+        }
+        let embedding = embeddings.remove(0);
+        if embedding.len() != EMBEDDING_DIMENSION {
+            return Err(AppError::Embed(format!(
+                "Skill activation query returned {} dimensions, expected {EMBEDDING_DIMENSION}",
+                embedding.len()
+            )));
+        }
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| AppError::msg("Embedding scheduler lock poisoned"))?;
+        if runtime.vault_epoch != vault_epoch {
+            return Ok(());
+        }
+        let mut cache = self
+            .skill_query_embeddings
+            .lock()
+            .map_err(|_| AppError::msg("Skill query embedding cache lock poisoned"))?;
+        if cache.len() >= MAX_SKILL_QUERY_CACHE_ENTRIES {
+            cache.clear();
+        }
+        cache.insert(query.to_string(), embedding);
+        Ok(())
+    }
+
+    /// Read a prepared query vector without filesystem or model access.
+    pub fn cached_skill_activation_query(&self, query: &str) -> Option<Vec<f32>> {
+        self.skill_query_embeddings
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(query.trim()).cloned())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cache_skill_activation_query_for_test(&self, query: &str, embedding: Vec<f32>) {
+        self.skill_query_embeddings
+            .lock()
+            .expect("Skill query embedding cache")
+            .insert(query.trim().to_string(), embedding);
     }
 
     pub fn status(&self) -> AppResult<EmbeddingIndexStatus> {
@@ -381,6 +531,56 @@ impl EmbeddingScheduler {
         }
     }
 
+    fn run_skill_activation_generation(self: Arc<Self>, vault_epoch: u64) {
+        let mut model_ready = false;
+        loop {
+            if !self.is_current_vault(vault_epoch) {
+                break;
+            }
+            let batch = match self.db.with_read_conn(load_pending_skill_activation_batch) {
+                Ok(batch) => batch,
+                Err(_) => break,
+            };
+            if batch.is_empty() {
+                break;
+            }
+            if !model_ready {
+                if self.batcher.ensure_available().is_err() {
+                    break;
+                }
+                model_ready = true;
+            }
+            let texts = batch
+                .iter()
+                .map(|record| record.text.as_str())
+                .collect::<Vec<_>>();
+            let vectors = match self.batcher.embed_batch(&texts) {
+                Ok(vectors)
+                    if vectors.len() == batch.len()
+                        && vectors
+                            .iter()
+                            .all(|vector| vector.len() == EMBEDDING_DIMENSION) =>
+                {
+                    vectors
+                }
+                _ => break,
+            };
+            if !matches!(
+                self.write_if_current(vault_epoch, |conn| {
+                    commit_skill_activation_batch(conn, &batch, &vectors)
+                }),
+                Ok(true)
+            ) {
+                break;
+            }
+            self.cache_skill_activation_batch(vault_epoch, &batch, &vectors);
+            thread::yield_now();
+        }
+        if self.finish_skill_activation_worker(vault_epoch) {
+            self.schedule_skill_activation_embeddings();
+        }
+    }
+
     fn should_pause(&self) -> bool {
         self.runtime
             .lock()
@@ -445,6 +645,54 @@ impl EmbeddingScheduler {
         }
     }
 
+    fn finish_skill_activation_worker(&self, vault_epoch: u64) -> bool {
+        if let Ok(mut runtime) = self.runtime.lock() {
+            if runtime.skill_activation_epoch == Some(vault_epoch) {
+                runtime.skill_activation_epoch = None;
+                let restart = runtime.skill_activation_reschedule;
+                runtime.skill_activation_reschedule = false;
+                return restart;
+            }
+        }
+        false
+    }
+
+    fn cache_skill_activation_batch(
+        &self,
+        vault_epoch: u64,
+        batch: &[PendingSkillActivationRecord],
+        vectors: &[Vec<f32>],
+    ) {
+        let Ok(runtime) = self.runtime.lock() else {
+            return;
+        };
+        if runtime.vault_epoch != vault_epoch {
+            return;
+        }
+        let Ok(mut index) = self.skill_activation_index.lock() else {
+            return;
+        };
+        for (record, vector) in batch.iter().zip(vectors) {
+            let scope = if record.scope == "Vault" {
+                crate::ai_runtime::skills::SkillScope::Vault
+            } else {
+                crate::ai_runtime::skills::SkillScope::Global
+            };
+            let Some(row) = index.get_mut(&(record.skill_name.clone(), scope)) else {
+                continue;
+            };
+            if row.embedding_source_hash != record.source_hash {
+                continue;
+            }
+            let Ok(embedding_json) = serde_json::to_string(vector) else {
+                continue;
+            };
+            row.embedding_json = Some(embedding_json);
+            row.embedding_model = Some(EMBEDDING_MODEL_FINGERPRINT.into());
+            row.embedding_dimensions = Some(EMBEDDING_DIMENSION as i64);
+        }
+    }
+
     fn handle_worker_spawn_failure(self: &Arc<Self>, vault_epoch: u64) {
         let _ = self.write_if_current(vault_epoch, |conn| {
             mark_failed(
@@ -492,6 +740,93 @@ struct PendingRecord {
     id: i64,
     text: String,
     fingerprint: String,
+}
+
+struct PendingSkillActivationRecord {
+    skill_name: String,
+    scope: String,
+    text: String,
+    source_hash: String,
+}
+
+fn load_pending_skill_activation_batch(
+    conn: &Connection,
+) -> AppResult<Vec<PendingSkillActivationRecord>> {
+    let mut statement = conn.prepare(
+        "SELECT skill_name, scope, COALESCE(description, ''),
+                COALESCE(keywords, ''), embedding_source_hash
+         FROM skill_activation_index
+         WHERE embedding_source_hash <> ''
+           AND (
+               embedding_json IS NULL
+               OR embedding_model IS NULL
+               OR embedding_model <> ?1
+               OR embedding_dimensions IS NULL
+               OR embedding_dimensions <> ?2
+               OR CASE
+                    WHEN json_valid(embedding_json) = 1
+                    THEN json_array_length(embedding_json) <> ?2
+                    ELSE 1
+                  END
+           )
+         ORDER BY scope, skill_name
+         LIMIT ?3",
+    )?;
+    let rows = statement.query_map(
+        rusqlite::params![
+            EMBEDDING_MODEL_FINGERPRINT,
+            EMBEDDING_DIMENSION as i64,
+            BATCH_SIZE as i64
+        ],
+        |row| {
+            let skill_name = row.get::<_, String>(0)?;
+            let scope = row.get::<_, String>(1)?;
+            let description = row.get::<_, String>(2)?;
+            let keywords = row.get::<_, String>(3)?;
+            Ok(PendingSkillActivationRecord {
+                text: crate::ai_runtime::skills::activation_embedding_source(
+                    &skill_name,
+                    &description,
+                    &keywords,
+                ),
+                skill_name,
+                scope,
+                source_hash: row.get(4)?,
+            })
+        },
+    )?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn commit_skill_activation_batch(
+    conn: &Connection,
+    batch: &[PendingSkillActivationRecord],
+    vectors: &[Vec<f32>],
+) -> AppResult<()> {
+    let transaction = conn.unchecked_transaction()?;
+    for (record, vector) in batch.iter().zip(vectors) {
+        let embedding_json = serde_json::to_string(vector)?;
+        transaction.execute(
+            "UPDATE skill_activation_index
+             SET embedding_json = ?1,
+                 embedding_model = ?2,
+                 embedding_dimensions = ?3,
+                 updated_at = datetime('now')
+             WHERE skill_name = ?4
+               AND scope = ?5
+               AND embedding_source_hash = ?6",
+            rusqlite::params![
+                embedding_json,
+                EMBEDDING_MODEL_FINGERPRINT,
+                EMBEDDING_DIMENSION as i64,
+                record.skill_name,
+                record.scope,
+                record.source_hash,
+            ],
+        )?;
+    }
+    transaction.commit()?;
+    Ok(())
 }
 
 pub fn recover_interrupted_generation(conn: &Connection) -> AppResult<()> {
@@ -733,6 +1068,7 @@ mod tests {
     use crate::storage::db::Database;
     use crate::storage::migrate::migrate_up;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
 
     struct ReadyBatcher;
 
@@ -769,9 +1105,28 @@ mod tests {
             Ok(())
         }
 
-        fn embed_batch(&self, _texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+        fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
             self.batch_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(Vec::new())
+            Ok(vec![vec![0.5; EMBEDDING_DIMENSION]; texts.len()])
+        }
+    }
+
+    struct BlockingQueryBatcher {
+        started: Mutex<Option<mpsc::Sender<()>>>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl EmbeddingBatcher for BlockingQueryBatcher {
+        fn ensure_available(&self) -> AppResult<()> {
+            Ok(())
+        }
+
+        fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+            if let Some(started) = self.started.lock().unwrap().take() {
+                started.send(()).unwrap();
+            }
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(vec![vec![0.5; EMBEDDING_DIMENSION]; texts.len()])
         }
     }
 
@@ -841,14 +1196,18 @@ mod tests {
 
     fn wait_for_phase(scheduler: &EmbeddingScheduler, expected: &str) {
         let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        while scheduler.status().unwrap().phase != expected {
-            let current = scheduler.status().unwrap().phase;
+        while !scheduler
+            .emitted_statuses()
+            .iter()
+            .any(|status| status.phase == expected)
+        {
             assert!(
                 std::time::Instant::now() < deadline,
-                "scheduler did not reach {expected} (last phase: {current})"
+                "scheduler did not emit phase {expected}"
             );
             thread::sleep(Duration::from_millis(5));
         }
+        assert_eq!(scheduler.status().unwrap().phase, expected);
     }
 
     #[test]
@@ -1129,5 +1488,303 @@ mod tests {
             failed.last_error.as_deref(),
             Some("Embedding scheduler unavailable")
         );
+    }
+
+    #[test]
+    fn skill_activation_worker_generates_missing_vectors_with_source_metadata() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let skill = crate::ai_runtime::skills::SkillEntry {
+            name: "semantic-skill".into(),
+            description: "Summarize launch readiness".into(),
+            scope: crate::ai_runtime::skills::SkillScope::Vault,
+            enabled: true,
+            confirmation_status: crate::ai_runtime::skills::SkillConfirmationStatus::Confirmed,
+            ..Default::default()
+        };
+        crate::ai_runtime::skills::rebuild_activation_index(&db, std::slice::from_ref(&skill))
+            .unwrap();
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(ReadyBatcher));
+        scheduler
+            .replace_skill_activation_index(
+                crate::ai_runtime::skills::load_activation_index(&db).unwrap(),
+            )
+            .unwrap();
+
+        scheduler.schedule_skill_activation_embeddings();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let stored = db
+                .with_read_conn(|conn| {
+                    conn.query_row(
+                        "SELECT embedding_json, embedding_source_hash,
+                                embedding_model, embedding_dimensions
+                         FROM skill_activation_index
+                         WHERE skill_name = 'semantic-skill' AND scope = 'Vault'",
+                        [],
+                        |row| {
+                            Ok((
+                                row.get::<_, Option<String>>(0)?,
+                                row.get::<_, String>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                                row.get::<_, Option<i64>>(3)?,
+                            ))
+                        },
+                    )
+                    .map_err(Into::into)
+                })
+                .unwrap();
+            if stored.0.is_some() {
+                assert!(!stored.1.is_empty());
+                assert_eq!(stored.2.as_deref(), Some(EMBEDDING_MODEL_FINGERPRINT));
+                assert_eq!(stored.3, Some(EMBEDDING_DIMENSION as i64));
+                let cached = scheduler.cached_skill_activation_index();
+                let cached_row = cached
+                    .get(&(
+                        "semantic-skill".to_string(),
+                        crate::ai_runtime::skills::SkillScope::Vault,
+                    ))
+                    .expect("cached Skill activation row");
+                assert!(cached_row.embedding_json.is_some());
+                assert_eq!(
+                    cached_row.embedding_model.as_deref(),
+                    Some(EMBEDDING_MODEL_FINGERPRINT)
+                );
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "skill activation embedding worker did not finish"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn activation_index_replacement_preserves_matching_background_vector() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let skill = crate::ai_runtime::skills::SkillEntry {
+            name: "concurrent-vector".into(),
+            description: "A stable semantic source".into(),
+            scope: crate::ai_runtime::skills::SkillScope::Vault,
+            enabled: true,
+            confirmation_status: crate::ai_runtime::skills::SkillConfirmationStatus::Confirmed,
+            ..Default::default()
+        };
+        crate::ai_runtime::skills::rebuild_activation_index(&db, std::slice::from_ref(&skill))
+            .unwrap();
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(ReadyBatcher));
+        let missing = crate::ai_runtime::skills::load_activation_index(&db).unwrap();
+        scheduler
+            .replace_skill_activation_index(missing.clone())
+            .unwrap();
+        let row = missing
+            .get(&(
+                "concurrent-vector".to_string(),
+                crate::ai_runtime::skills::SkillScope::Vault,
+            ))
+            .unwrap();
+        let batch = vec![PendingSkillActivationRecord {
+            skill_name: "concurrent-vector".into(),
+            scope: "Vault".into(),
+            text: "unused".into(),
+            source_hash: row.embedding_source_hash.clone(),
+        }];
+        scheduler.cache_skill_activation_batch(0, &batch, &[vec![0.5; EMBEDDING_DIMENSION]]);
+
+        scheduler.replace_skill_activation_index(missing).unwrap();
+
+        let cached = scheduler.cached_skill_activation_index();
+        let row = cached
+            .get(&(
+                "concurrent-vector".to_string(),
+                crate::ai_runtime::skills::SkillScope::Vault,
+            ))
+            .unwrap();
+        assert!(
+            row.embedding_json.is_some(),
+            "a refresh loaded before the worker commit must not erase its matching vector"
+        );
+    }
+
+    #[test]
+    fn prepared_skill_query_embedding_is_cached_without_run_time_model_work() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let batcher = Arc::new(CountingBatcher {
+            ensure_calls: AtomicUsize::new(0),
+            batch_calls: AtomicUsize::new(0),
+        });
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), batcher.clone());
+
+        assert!(scheduler
+            .cached_skill_activation_query("发布准备情况")
+            .is_none());
+        scheduler
+            .prepare_skill_activation_query("发布准备情况")
+            .unwrap();
+
+        assert_eq!(
+            scheduler
+                .cached_skill_activation_query(" 发布准备情况 ")
+                .expect("prepared query vector")
+                .len(),
+            EMBEDDING_DIMENSION
+        );
+        assert_eq!(batcher.ensure_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(batcher.batch_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn vault_reset_discards_in_flight_skill_query_embedding() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let scheduler = EmbeddingScheduler::with_batcher(
+            Arc::clone(&db),
+            Arc::new(BlockingQueryBatcher {
+                started: Mutex::new(Some(started_tx)),
+                release: Mutex::new(release_rx),
+            }),
+        );
+        let worker = {
+            let scheduler = Arc::clone(&scheduler);
+            thread::spawn(move || {
+                scheduler
+                    .prepare_skill_activation_query("old vault query")
+                    .unwrap();
+            })
+        };
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("query embedding started");
+
+        scheduler.reset_for_vault();
+        release_tx.send(()).unwrap();
+        worker.join().unwrap();
+
+        assert!(
+            scheduler
+                .cached_skill_activation_query("old vault query")
+                .is_none(),
+            "an old-vault query must not be inserted after reset clears the cache"
+        );
+    }
+
+    #[test]
+    fn skill_activation_worker_failure_leaves_lexical_index_usable() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let skill = crate::ai_runtime::skills::SkillEntry {
+            name: "knowledge-fallback".into(),
+            description: "Answer questions from notes".into(),
+            scope: crate::ai_runtime::skills::SkillScope::Vault,
+            enabled: true,
+            legacy_trigger: Some("knowledge".into()),
+            confirmation_status: crate::ai_runtime::skills::SkillConfirmationStatus::Confirmed,
+            ..Default::default()
+        };
+        crate::ai_runtime::skills::rebuild_activation_index(&db, std::slice::from_ref(&skill))
+            .unwrap();
+        let scheduler =
+            EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(UnavailableBatcher));
+
+        scheduler.schedule_skill_activation_embeddings();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while scheduler
+            .runtime
+            .lock()
+            .unwrap()
+            .skill_activation_epoch
+            .is_some()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "failed Skill activation worker did not release its epoch"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        let embedding = db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT embedding_json
+                     FROM skill_activation_index
+                     WHERE skill_name = 'knowledge-fallback' AND scope = 'Vault'",
+                    [],
+                    |row| row.get::<_, Option<String>>(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert!(embedding.is_none());
+        let index = crate::ai_runtime::skills::load_activation_index(&db).unwrap();
+
+        let plan = crate::ai_runtime::skills::build_skill_activation_plan_for_task(
+            std::slice::from_ref(&skill),
+            crate::ai_runtime::AgentIntent::AskNotes,
+            "",
+            &[],
+            Some(&index),
+        );
+
+        assert_eq!(plan.activated_skills[0].name, "knowledge-fallback");
+    }
+
+    #[test]
+    fn skill_activation_worker_repairs_malformed_vector_json() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let skill = crate::ai_runtime::skills::SkillEntry {
+            name: "malformed-vector".into(),
+            description: "Repair invalid cached embeddings".into(),
+            scope: crate::ai_runtime::skills::SkillScope::Vault,
+            enabled: true,
+            confirmation_status: crate::ai_runtime::skills::SkillConfirmationStatus::Confirmed,
+            ..Default::default()
+        };
+        crate::ai_runtime::skills::rebuild_activation_index(&db, std::slice::from_ref(&skill))
+            .unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skill_activation_index
+                 SET embedding_json = 'not-json',
+                     embedding_model = ?1,
+                     embedding_dimensions = ?2
+                 WHERE skill_name = 'malformed-vector' AND scope = 'Vault'",
+                rusqlite::params![EMBEDDING_MODEL_FINGERPRINT, EMBEDDING_DIMENSION as i64],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(ReadyBatcher));
+
+        scheduler.schedule_skill_activation_embeddings();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let embedding = db
+                .with_read_conn(|conn| {
+                    conn.query_row(
+                        "SELECT embedding_json
+                         FROM skill_activation_index
+                         WHERE skill_name = 'malformed-vector' AND scope = 'Vault'",
+                        [],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .map_err(Into::into)
+                })
+                .unwrap();
+            if embedding.as_deref() != Some("not-json") {
+                let vector = serde_json::from_str::<Vec<f32>>(
+                    embedding.as_deref().expect("repaired embedding"),
+                )
+                .expect("valid repaired embedding");
+                assert_eq!(vector.len(), EMBEDDING_DIMENSION);
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "malformed Skill activation vector was not repaired"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 }

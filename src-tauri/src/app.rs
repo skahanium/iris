@@ -15,7 +15,7 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
-use crate::ai_runtime::skills::SkillEntry;
+use crate::ai_runtime::skills::{ActivationIndexMap, SkillEntry};
 use crate::ai_types::{AutonomyLevel, SkillActivationPlanSummary};
 use crate::security::brute_force::BruteForceProtection;
 
@@ -195,11 +195,18 @@ impl AiRuntimeState {
         }
     }
 
-    fn replace_skill_registry(&self, vault: PathBuf, skills: Vec<SkillEntry>) -> AppResult<()> {
+    fn replace_skill_activation_snapshot(
+        &self,
+        scheduler: &EmbeddingScheduler,
+        vault: PathBuf,
+        skills: Vec<SkillEntry>,
+        activation_index: ActivationIndexMap,
+    ) -> AppResult<()> {
         let mut registry = self
             .skill_registry
             .lock()
             .map_err(|_| AppError::msg("skill_registry_lock_failed"))?;
+        scheduler.replace_skill_activation_index(activation_index)?;
         registry.insert(vault, skills);
         Ok(())
     }
@@ -212,16 +219,34 @@ impl AiRuntimeState {
         Ok(registry.get(vault).cloned())
     }
 
-    fn upsert_cached_skill(
+    fn cached_skill_activation(
+        &self,
+        scheduler: &EmbeddingScheduler,
+        vault: &std::path::Path,
+    ) -> AppResult<Option<(Vec<SkillEntry>, ActivationIndexMap)>> {
+        let registry = self
+            .skill_registry
+            .lock()
+            .map_err(|_| AppError::msg("skill_registry_lock_failed"))?;
+        let Some(skills) = registry.get(vault) else {
+            return Ok(None);
+        };
+        Ok(Some((
+            skills.clone(),
+            scheduler.cached_skill_activation_index(),
+        )))
+    }
+
+    fn skills_with_upsert(
         &self,
         vault: &std::path::Path,
         skill: SkillEntry,
     ) -> AppResult<Vec<SkillEntry>> {
-        let mut registry = self
+        let registry = self
             .skill_registry
             .lock()
             .map_err(|_| AppError::msg("skill_registry_lock_failed"))?;
-        let skills = registry.entry(vault.to_path_buf()).or_default();
+        let mut skills = registry.get(vault).cloned().unwrap_or_default();
         if let Some(existing) = skills
             .iter_mut()
             .find(|existing| existing.name == skill.name && existing.scope == skill.scope)
@@ -230,7 +255,7 @@ impl AiRuntimeState {
         } else {
             skills.push(skill);
         }
-        Ok(skills.clone())
+        Ok(skills)
     }
 
     fn prune_pending_tool_calls_locked(
@@ -482,7 +507,10 @@ impl AppState {
         // This is an explicit vault activation boundary, not a Run. Refresh the
         // loaded Skill registry here so every later Run can stay I/O-free.
         let skills = crate::ai_runtime::skills::scan_all(&canonical)?;
+        let embedding_scheduler = self.embedding_scheduler();
+        embedding_scheduler.reset_for_vault();
         crate::ai_runtime::skills::rebuild_activation_index(&self.db, &skills)?;
+        let activation_index = crate::ai_runtime::skills::load_activation_index(&self.db)?;
         {
             let mut guard = self.vault.lock().map_err(|_| AppError::msg("Lock error"))?;
             *guard = Some(canonical.clone());
@@ -496,8 +524,13 @@ impl AppState {
             )?;
             Ok(())
         })?;
-        self.embedding_scheduler().reset_for_vault();
-        self.ai.replace_skill_registry(canonical, skills)?;
+        self.ai.replace_skill_activation_snapshot(
+            &embedding_scheduler,
+            canonical,
+            skills,
+            activation_index,
+        )?;
+        embedding_scheduler.schedule_skill_activation_embeddings();
         Ok(())
     }
 
@@ -505,8 +538,15 @@ impl AppState {
     pub fn refresh_skills_for_vault(&self, vault: &std::path::Path) -> AppResult<Vec<SkillEntry>> {
         let skills = crate::ai_runtime::skills::scan_all(vault)?;
         crate::ai_runtime::skills::rebuild_activation_index(&self.db, &skills)?;
-        self.ai
-            .replace_skill_registry(vault.to_path_buf(), skills.clone())?;
+        let activation_index = crate::ai_runtime::skills::load_activation_index(&self.db)?;
+        let embedding_scheduler = self.embedding_scheduler();
+        self.ai.replace_skill_activation_snapshot(
+            &embedding_scheduler,
+            vault.to_path_buf(),
+            skills.clone(),
+            activation_index,
+        )?;
+        embedding_scheduler.schedule_skill_activation_embeddings();
         Ok(skills)
     }
 
@@ -518,14 +558,33 @@ impl AppState {
         self.ai.cached_skills(vault)
     }
 
+    /// Return one lock-consistent Skill registry and activation-index snapshot.
+    pub fn cached_skill_activation_for_vault(
+        &self,
+        vault: &std::path::Path,
+    ) -> AppResult<Option<(Vec<SkillEntry>, ActivationIndexMap)>> {
+        let embedding_scheduler = self.embedding_scheduler();
+        self.ai.cached_skill_activation(&embedding_scheduler, vault)
+    }
+
     /// Update one cached entry after an explicit user-confirmed Skill write.
     pub fn upsert_cached_skill_for_vault(
         &self,
         vault: &std::path::Path,
         skill: SkillEntry,
     ) -> AppResult<()> {
-        let skills = self.ai.upsert_cached_skill(vault, skill)?;
-        crate::ai_runtime::skills::rebuild_activation_index(&self.db, &skills)
+        let skills = self.ai.skills_with_upsert(vault, skill)?;
+        crate::ai_runtime::skills::rebuild_activation_index(&self.db, &skills)?;
+        let activation_index = crate::ai_runtime::skills::load_activation_index(&self.db)?;
+        let embedding_scheduler = self.embedding_scheduler();
+        self.ai.replace_skill_activation_snapshot(
+            &embedding_scheduler,
+            vault.to_path_buf(),
+            skills,
+            activation_index,
+        )?;
+        embedding_scheduler.schedule_skill_activation_embeddings();
+        Ok(())
     }
 
     pub fn vault_path(&self) -> AppResult<PathBuf> {
@@ -566,6 +625,21 @@ impl AppState {
 #[cfg(test)]
 mod document_open_state_tests {
     use super::*;
+
+    struct ReadySkillBatcher;
+
+    impl crate::embedding::scheduler::EmbeddingBatcher for ReadySkillBatcher {
+        fn ensure_available(&self) -> AppResult<()> {
+            Ok(())
+        }
+
+        fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+            Ok(vec![
+                vec![0.5; crate::embedding::engine::EMBEDDING_DIMENSION];
+                texts.len()
+            ])
+        }
+    }
 
     fn pending_tool_call(id: usize, created_at: Instant) -> PendingToolCall {
         PendingToolCall {
@@ -714,5 +788,60 @@ mod document_open_state_tests {
             refreshed.is_empty(),
             "only an explicit refresh may observe removal"
         );
+    }
+
+    #[test]
+    fn confirmed_skill_cache_update_schedules_background_activation_embedding() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let state =
+            AppState::new_with_test_cas_key(directory.path().join("data"), [0xB2; 32]).unwrap();
+        state
+            .ai
+            .embedding_scheduler
+            .set(
+                crate::embedding::scheduler::EmbeddingScheduler::with_batcher(
+                    Arc::clone(&state.db),
+                    Arc::new(ReadySkillBatcher),
+                ),
+            )
+            .ok()
+            .expect("install deterministic embedding scheduler");
+        state.set_vault(vault.clone()).unwrap();
+        let skill = crate::ai_runtime::skills::write_confirmed_skill_content(
+            &vault,
+            &PathBuf::from("background-skill/SKILL.md"),
+            crate::ai_runtime::skills::SkillScope::Vault,
+            "---\nname: background-skill\ndescription: Background semantic activation\n---\n\nUse background instructions.",
+        )
+        .unwrap();
+
+        state.upsert_cached_skill_for_vault(&vault, skill).unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let embedded = state
+                .db
+                .with_read_conn(|conn| {
+                    conn.query_row(
+                        "SELECT embedding_model IS NOT NULL
+                         FROM skill_activation_index
+                         WHERE skill_name = 'background-skill' AND scope = 'Vault'",
+                        [],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(Into::into)
+                })
+                .unwrap();
+            if embedded {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "cache refresh must trigger background Skill embeddings"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }
