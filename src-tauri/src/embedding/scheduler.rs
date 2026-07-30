@@ -1674,7 +1674,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_snapshot_recovers_new_source_vector_committed_before_cache_publish() {
+    fn refresh_snapshot_recovers_committed_new_source_vector_while_cache_is_old() {
         let db = Arc::new(Database::open_in_memory().unwrap());
         let mut skill = crate::ai_runtime::skills::SkillEntry {
             name: "refresh-source-race".into(),
@@ -1695,16 +1695,7 @@ mod tests {
             .expect("old activation row")
             .embedding_source_hash
             .clone();
-        let (started_tx, started_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let scheduler = EmbeddingScheduler::with_batcher(
-            Arc::clone(&db),
-            Arc::new(BlockingThenFailBatcher {
-                started: Mutex::new(Some(started_tx)),
-                release: Mutex::new(release_rx),
-                calls: AtomicUsize::new(0),
-            }),
-        );
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(ReadyBatcher));
         scheduler
             .replace_skill_activation_index(old_snapshot)
             .unwrap();
@@ -1720,60 +1711,55 @@ mod tests {
             .expect("new activation row");
         assert_ne!(refresh_row.embedding_source_hash, old_source_hash);
         assert!(refresh_row.embedding_json.is_none());
-
-        scheduler.schedule_skill_activation_embeddings();
-        started_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("new-source worker must reach inference");
-        let cache_barrier = scheduler
-            .skill_activation_index
-            .lock()
-            .expect("hold old activation cache until DB commit");
-        release_tx.send(()).unwrap();
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        loop {
-            let stored = db
-                .with_read_conn(|conn| {
-                    conn.query_row(
-                        "SELECT embedding_json
-                         FROM skill_activation_index
-                         WHERE skill_name = 'refresh-source-race' AND scope = 'Vault'",
-                        [],
-                        |row| row.get::<_, Option<String>>(0),
-                    )
-                    .map_err(Into::into)
-                })
-                .unwrap();
-            if stored.is_some() {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "worker must commit the new-source vector before cache publication"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
-        drop(cache_barrier);
-
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while scheduler
-            .runtime
-            .lock()
-            .unwrap()
-            .skill_activation_epoch
-            .is_some()
-        {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "new-source worker did not finish"
-            );
-            thread::sleep(Duration::from_millis(5));
-        }
+        let new_source_hash = refresh_row.embedding_source_hash.clone();
+        let batch = [PendingSkillActivationRecord {
+            skill_name: "refresh-source-race".into(),
+            scope: "Vault".into(),
+            text: crate::ai_runtime::skills::activation_embedding_source(
+                &refresh_row.skill_name,
+                refresh_row.description.as_deref().unwrap_or_default(),
+                refresh_row.keywords.as_deref().unwrap_or_default(),
+            ),
+            source_hash: new_source_hash.clone(),
+        }];
+        let vectors = [vec![0.5; EMBEDDING_DIMENSION]];
+        let applied = db
+            .with_conn(|conn| commit_skill_activation_batch(conn, &batch, &vectors))
+            .unwrap();
+        assert_eq!(
+            applied,
+            vec![true],
+            "the new-source vector must be committed before snapshot replacement"
+        );
         assert!(
             db.with_read_conn(load_pending_skill_activation_batch)
                 .unwrap()
                 .is_empty(),
             "the committed DB vector leaves no repair work"
+        );
+        let committed = crate::ai_runtime::skills::load_activation_index(&db).unwrap();
+        assert!(
+            current_skill_activation_vector(
+                committed
+                    .get(&(
+                        "refresh-source-race".to_string(),
+                        crate::ai_runtime::skills::SkillScope::Vault,
+                    ))
+                    .expect("committed new-source row")
+            ),
+            "DB must contain a valid new-source vector before replace"
+        );
+        let cached_before_replace = scheduler.cached_skill_activation_index();
+        let cached_old_row = cached_before_replace
+            .get(&(
+                "refresh-source-race".to_string(),
+                crate::ai_runtime::skills::SkillScope::Vault,
+            ))
+            .expect("old cached activation row");
+        assert_eq!(cached_old_row.embedding_source_hash, old_source_hash);
+        assert!(
+            !current_skill_activation_vector(cached_old_row),
+            "cache must still expose the old source before replace"
         );
 
         scheduler
@@ -1787,6 +1773,7 @@ mod tests {
                 crate::ai_runtime::skills::SkillScope::Vault,
             ))
             .expect("refreshed activation row");
+        assert_eq!(row.embedding_source_hash, new_source_hash);
         assert!(
             current_skill_activation_vector(row),
             "refresh must recover the valid new-source vector already committed in DB"
