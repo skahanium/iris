@@ -1198,6 +1198,19 @@ fn durable_apply_interrupted_after_consumed_confirmation_with_expiry(
         expires_at_unix_ms,
     })
     .expect("frozen plan");
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: running.state_version(),
+            event_type: RunEventType::ToolStarted,
+            payload: RunEventPayload::ToolStarted {
+                capability: plan.operation().to_string(),
+                tool_call_id: plan.tool_call_id().to_string(),
+            },
+        },
+    )
+    .expect("started confirmed tool");
     let awaiting = AgentRunRepository::request_frozen_confirmation(
         &db,
         &plan,
@@ -1276,6 +1289,89 @@ fn startup_recovery_completes_an_already_written_consumed_plan_without_replaying
     assert_eq!(
         std::fs::read_to_string(vault.join("notes/a.md")).expect("read recovered note"),
         "after"
+    );
+    let lifecycle = replay
+        .events
+        .iter()
+        .filter_map(|event| {
+            let event = serde_json::to_value(event).expect("serialize recovery event");
+            matches!(
+                event["type"].as_str(),
+                Some("tool_started" | "confirmation_required" | "tool_completed" | "completed")
+            )
+            .then_some(event)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lifecycle
+            .iter()
+            .map(|event| event["type"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        vec![
+            "tool_started",
+            "confirmation_required",
+            "tool_completed",
+            "completed"
+        ]
+    );
+    let recovered_tool = &lifecycle[2]["payload"];
+    assert_eq!(recovered_tool["capability"], "replace_selection");
+    assert_eq!(
+        recovered_tool["toolCallId"],
+        format!("tool-{}", accepted.run_id)
+    );
+    assert_eq!(recovered_tool["summary"], "已恢复已确认的变更执行状态");
+    assert_eq!(recovered_tool["success"], true);
+    assert!(recovered_tool.get("arguments").is_none());
+    assert!(recovered_tool.get("rawOutput").is_none());
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn startup_recovery_does_not_duplicate_an_already_recovered_tool_completion() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    let state_version = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay before recovered completion")
+        .expect("run")
+        .run
+        .state_version;
+    AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version,
+            event_type: RunEventType::ToolCompleted,
+            payload: RunEventPayload::ToolCompleted {
+                capability: "replace_selection".into(),
+                tool_call_id: format!("tool-{}", accepted.run_id),
+                summary: "已恢复已确认的变更执行状态".into(),
+                duration_ms: None,
+                success: Some(true),
+                subagent_batch_report: None,
+            },
+        },
+    )
+    .expect("persist recovered completion before simulated crash");
+    std::fs::write(vault.join("notes/a.md"), "after").expect("simulate committed write");
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("resume interrupted recovery"),
+        1
+    );
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run");
+    assert_eq!(replay.run.state, RunState::Completed);
+    assert_eq!(
+        replay
+            .events
+            .iter()
+            .filter(|event| {
+                serde_json::to_value(event).expect("serialize event")["type"] == "tool_completed"
+            })
+            .count(),
+        1
     );
 
     std::fs::remove_dir_all(vault).expect("remove recovery vault");

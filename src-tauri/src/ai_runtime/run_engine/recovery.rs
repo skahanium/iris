@@ -108,6 +108,7 @@ impl RunEngine {
                     let Ok(plan) = plan else {
                         return Err(AppError::msg("agent_run_invalid_change_plan"));
                     };
+                    append_recovered_tool_completed_if_needed(db, &run_id, state_version, &plan)?;
                     advance_recovered_checkpoint_to_completed(db, &run_id, state_version, &plan)?;
                     AgentRunRepository::finalize(
                         db,
@@ -424,6 +425,62 @@ fn load_recovery_vault_path(db: &Database) -> AppResult<Option<std::path::PathBu
             })
             .transpose()
     })
+}
+
+fn append_recovered_tool_completed_if_needed(
+    db: &Database,
+    run_id: &str,
+    state_version: u64,
+    plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
+) -> AppResult<()> {
+    let existing = db.with_read_conn(|conn| {
+        let mut statement = conn.prepare(
+            "SELECT payload_json
+             FROM agent_run_events
+             WHERE run_id = ?1 AND event_type = 'tool_completed'
+             ORDER BY event_seq",
+        )?;
+        let payloads = statement
+            .query_map([run_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        for payload_json in payloads {
+            let payload = serde_json::from_str::<RunEventPayload>(&payload_json)?;
+            if let RunEventPayload::ToolCompleted {
+                capability,
+                tool_call_id,
+                success,
+                ..
+            } = payload
+            {
+                if tool_call_id == plan.tool_call_id() {
+                    return Ok(Some((capability, success)));
+                }
+            }
+        }
+        Ok(None)
+    })?;
+    match existing {
+        Some((capability, Some(true))) if capability == plan.operation() => return Ok(()),
+        Some(_) => return Err(AppError::msg("agent_run_recovery_tool_lifecycle_conflict")),
+        None => {}
+    }
+    AgentRunRepository::append_event(
+        db,
+        AppendRunEventInput {
+            run_id: run_id.to_string(),
+            state_version,
+            event_type: RunEventType::ToolCompleted,
+            payload: RunEventPayload::ToolCompleted {
+                capability: plan.operation().to_string(),
+                tool_call_id: plan.tool_call_id().to_string(),
+                summary: "已恢复已确认的变更执行状态".into(),
+                duration_ms: None,
+                success: Some(true),
+                subagent_batch_report: None,
+            },
+        },
+    )?;
+    Ok(())
 }
 
 fn advance_recovered_checkpoint_to_completed(

@@ -263,6 +263,7 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     cold_start_packets: Vec<crate::ai_runtime::ContextPacket>,
     runtime_documents: Vec<crate::ai_runtime::RuntimeDocumentSnapshot>,
     local_evidence_ids: Mutex<Vec<i64>>,
+    local_external_evidence_ids: Mutex<Vec<i64>>,
     external_evidence_ids: Arc<Mutex<Vec<i64>>>,
     external_tool_snapshots: Vec<crate::ai_runtime::mcp_external_tools::FrozenMcpToolSnapshot>,
     run_web_evidence: Arc<Mutex<RunWebEvidenceState>>,
@@ -315,6 +316,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             cold_start_packets: context.local_retrieval_packets.clone(),
             runtime_documents: Vec::new(),
             local_evidence_ids: Mutex::new(Vec::new()),
+            local_external_evidence_ids: Mutex::new(Vec::new()),
             external_evidence_ids: Arc::new(Mutex::new(Vec::new())),
             external_tool_snapshots: crate::ai_runtime::mcp_external_tools::load_run_snapshots(
                 &state.db,
@@ -1011,6 +1013,12 @@ impl NormalRunToolExecutor<'_> {
                                             started.elapsed(),
                                         ),
                                         Ok(evidence) => {
+                                            self.local_external_evidence_ids
+                                                .lock()
+                                                .map_err(|_| {
+                                                    AppError::msg("agent_run_evidence_lock_failed")
+                                                })?
+                                                .push(evidence.evidence_id);
                                             self.external_evidence_ids
                                                 .lock()
                                                 .map_err(|_| {
@@ -1282,8 +1290,13 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 .map(|ids| ids.clone())
                 .unwrap_or_default()
         };
+        let external_evidence_ids = if self.subagent_depth == 0 {
+            &self.external_evidence_ids
+        } else {
+            &self.local_external_evidence_ids
+        };
         evidence_ids.extend(
-            self.external_evidence_ids
+            external_evidence_ids
                 .lock()
                 .map(|ids| ids.clone())
                 .unwrap_or_default(),
@@ -3332,6 +3345,107 @@ mod tests {
         assert_eq!(
             checkpoint_count, 0,
             "normal external reads must not create durable checkpoints"
+        );
+
+        let child_without_evidence = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("external.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_parent_run_web_state(&executor)
+        .at_subagent_depth(1);
+        assert_eq!(
+            child_without_evidence.evidence_ids(),
+            Vec::<i64>::new(),
+            "the parent's earlier external evidence must not raise a child report's confidence"
+        );
+        let child_without_evidence_spec =
+            crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::from_tool_call(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "child-without-evidence",
+                    "spawn_subagent",
+                    r#"{"task":"只根据本子任务证据报告"}"#,
+                ),
+                None,
+                Vec::new(),
+                None,
+            );
+        let child_without_evidence_report =
+            crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::report_success(
+                &child_without_evidence_spec,
+                "未调用证据工具".into(),
+                child_without_evidence
+                    .evidence_ids()
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .collect(),
+                Default::default(),
+            );
+        assert_eq!(child_without_evidence_report.confidence, 50);
+
+        let child_a = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("external.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_parent_run_web_state(&executor)
+        .at_subagent_depth(1);
+        let child_b = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("external.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_parent_run_web_state(&executor)
+        .at_subagent_depth(1);
+        for (child, call_id, query, step) in [
+            (&child_a, "child-a-first", "child-a-first-query", 2),
+            (&child_b, "child-b-only", "child-b-only-query", 3),
+            (&child_a, "child-a-second", "child-a-second-query", 4),
+        ] {
+            let result = child
+                .execute_external_tool(
+                    &ToolCall::new(call_id, snapshot.exposed_name.clone(), "{}"),
+                    &serde_json::json!({ "query": query }),
+                    step,
+                )
+                .await
+                .expect("child external execution");
+            assert!(result.success, "child external result: {result:?}");
+        }
+        let child_a_evidence = child_a.evidence_ids();
+        let child_b_evidence = child_b.evidence_ids();
+        assert_eq!(child_a_evidence.len(), 2);
+        assert_eq!(child_b_evidence.len(), 1);
+        assert!(
+            child_a_evidence
+                .iter()
+                .all(|id| !child_b_evidence.contains(id)),
+            "sibling ChildRun reports must retain independent external evidence order"
+        );
+        assert!(
+            child_a_evidence.windows(2).all(|ids| ids[0] < ids[1]),
+            "each ChildRun report must sort only its own evidence"
+        );
+        assert_eq!(
+            executor.evidence_ids().len(),
+            4,
+            "the parent Run must still aggregate its own and all child external evidence"
         );
     }
 

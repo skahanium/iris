@@ -4,6 +4,7 @@ import { projectAssistantProcessEvents } from "@/lib/assistant-process";
 import {
   createAssistantRunEventState,
   reduceAssistantRunEvent,
+  replayAssistantRunEvents,
 } from "@/lib/assistant-run-events";
 import type { AssistantRunEvent } from "@/types/ai";
 
@@ -110,6 +111,60 @@ describe("Assistant Run 处理过程投影", () => {
         durationMs: 1250,
       },
     ]);
+  });
+
+  it("恢复已落盘的确认变更后不会把工具项留在运行中", () => {
+    const replayed = replayAssistantRunEvents(runId, [
+      event(1, "accepted", {
+        kind: "accepted",
+        turnId: "turn-001",
+        sessionKey: "session-001",
+      }),
+      event(2, "stage_changed", {
+        kind: "stage_changed",
+        state: "preparing",
+        stage: "正在准备",
+      }),
+      event(3, "stage_changed", {
+        kind: "stage_changed",
+        state: "running",
+        stage: "正在调用模型和工具",
+      }),
+      event(4, "tool_started", {
+        kind: "tool_started",
+        capability: "replace_selection",
+        toolCallId: "confirmed-tool-001",
+      }),
+      event(5, "confirmation_required", {
+        kind: "confirmation_required",
+        confirmationId: "confirmation-001",
+        planHash: "plan-hash-001",
+        summary: "等待确认：replace_selection 将修改 1 个目标",
+      }),
+      event(6, "resumed", {
+        kind: "resumed",
+        reason: "已确认变更计划，正在继续处理",
+      }),
+      event(7, "tool_completed", {
+        kind: "tool_completed",
+        capability: "replace_selection",
+        toolCallId: "confirmed-tool-001",
+        summary: "已恢复已确认的变更执行状态",
+        success: true,
+      }),
+      event(8, "completed", {
+        kind: "completed",
+        messageId: "message-001",
+      }),
+    ]);
+    const items = projectAssistantProcessEvents(replayed.events);
+
+    expect(replayed.state).toBe("completed");
+    expect(items.find((item) => item.kind === "tool")).toMatchObject({
+      id: "tool:confirmed-tool-001",
+      status: "completed",
+    });
+    expect(items.every((item) => item.status !== "running")).toBe(true);
   });
 
   it("历史回放优先使用工具完成事件记录的真实耗时", () => {
