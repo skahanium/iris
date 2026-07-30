@@ -1196,7 +1196,7 @@ fn spawn_subagent_lifecycle_rejects_raw_ids_and_sensitive_summaries_at_repositor
             event_type: RunEventType::ToolStarted,
             payload: RunEventPayload::ToolStarted {
                 capability: "spawn_subagent".to_string(),
-                tool_call_id: "ghp_REDACTED".to_string(),
+                tool_call_id: format!("{}{}", "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz"),
             },
         },
     )
@@ -1260,7 +1260,10 @@ fn spawn_subagent_lifecycle_rejects_raw_ids_and_sensitive_summaries_at_repositor
                             evidence_ids: Vec::new(),
                             confidence: 0,
                             open_questions: Vec::new(),
-                            errors: vec!["ghp_REDACTED".to_string()],
+                            errors: vec![format!(
+                                "{}{}",
+                                "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz"
+                            )],
                             budget: Default::default(),
                         }],
                     },

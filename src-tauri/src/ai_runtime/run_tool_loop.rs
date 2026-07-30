@@ -3723,13 +3723,13 @@ mod tests {
         )
         .with_child_run_provider(&provider);
 
-        let provider_call_id = "ghp_REDACTED";
+        let provider_call_id = format!("{}{}", "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz");
         let result = tokio::time::timeout(
             Duration::from_secs(1),
             executor.execute(
                 &accepted.run_id,
                 &ToolCall::new(
-                    provider_call_id,
+                    &provider_call_id,
                     "spawn_subagent",
                     r#"{"tasks":[{"task":"slow"},{"task":"fast"},{"task":"middle"}]}"#,
                 ),
@@ -3768,7 +3768,7 @@ mod tests {
             crate::ai_runtime::subagent_coordinator::SubAgentTaskSpec::from_tool_call(
                 &accepted.run_id,
                 &ToolCall::new(
-                    provider_call_id,
+                    &provider_call_id,
                     "spawn_subagent",
                     r#"{"task":"placeholder"}"#,
                 ),
@@ -3892,7 +3892,7 @@ mod tests {
         assert!(
             lifecycle.iter().all(|(_, tool_call_id)| {
                 !tool_call_id.contains(raw_provider_tool_id)
-                    && !tool_call_id.contains(provider_call_id)
+                    && !tool_call_id.contains(&provider_call_id)
             }),
             "all raw provider tool-call IDs must remain in memory/transcript only"
         );
@@ -3925,7 +3925,7 @@ mod tests {
         let serialized_events =
             serde_json::to_string(&*sink.events.lock().expect("events")).expect("serialize events");
         assert!(
-            !serialized_events.contains(provider_call_id),
+            !serialized_events.contains(&provider_call_id),
             "provider call ID credentials must never enter durable lifecycle events"
         );
 
@@ -4011,8 +4011,11 @@ mod tests {
                 crate::ai_runtime::subagent_coordinator::SubagentBatchReport {
                     items: vec![crate::ai_runtime::subagent_coordinator::SubagentReport {
                         subagent_id: report_id.to_string(),
-                        summary: "AIzaREDACTED".to_string(),
-                        findings: vec!["ghp_REDACTED".to_string()],
+                        summary: format!("{}{}", "AIza", "SyD1234567890abcdefghijklmnopqrst"),
+                        findings: vec![format!(
+                            "{}{}",
+                            "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz"
+                        )],
                         evidence_ids: Vec::new(),
                         confidence: 50,
                         open_questions: vec![format!(

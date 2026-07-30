@@ -680,15 +680,21 @@ mod tests {
             r#"{"token" : "plain-secret"}"#,
             "x-api-key: plain-secret",
             "client_secret: plain-secret",
-            "ghp_REDACTED",
+            &format!("{}{}", "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz"),
             &format!(
                 "{}{}",
                 "xoxb", "-123456789012-123456789012-abcdefghijklmnopqrstuvwx"
             ),
-            "AIzaREDACTED",
-            "JWT_REDACTED",
-            "JWT_REDACTED",
-            "JWT_REDACTED",
+            &format!("{}{}", "AIza", "SyD1234567890abcdefghijklmnopqrst"),
+            &format!(
+                "{}{}",
+                "eyJhbGciOiJIUzI1NiJ9.", "eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"
+            ),
+            &format!("{}{}", "eyJhbGciOiJub25lIn0.", "e30."),
+            &format!(
+                "{}{}",
+                "IHsiYWxnIjoiSFMyNTYifQ.", "eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"
+            ),
         ] {
             let report = SubAgentCoordinator::report_success(
                 &spec,
@@ -719,7 +725,7 @@ mod tests {
                 subagent_id: "subagent:safe-id".to_string(),
                 summary: "safe summary".to_string(),
                 findings: vec![
-                    "ghp_REDACTED".to_string(),
+                    format!("{}{}", "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz"),
                     "safe finding".to_string(),
                 ],
                 evidence_ids: Vec::new(),

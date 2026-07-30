@@ -100,15 +100,21 @@ fn audit_sensitive_summary_detector_flags_forbidden_material() {
     assert!(audit_contains_sensitive_summary("clipboard body: hello"));
     assert!(audit_contains_sensitive_summary("screenshot content bytes"));
     for credential in [
-        "ghp_REDACTED",
+        &format!("{}{}", "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz"),
         &format!(
             "{}{}",
             "xoxb", "-123456789012-123456789012-abcdefghijklmnopqrstuvwx"
         ),
-        "AIzaREDACTED",
-        "JWT_REDACTED",
-        "JWT_REDACTED",
-        "JWT_REDACTED",
+        &format!("{}{}", "AIza", "SyD1234567890abcdefghijklmnopqrst"),
+        &format!(
+            "{}{}",
+            "eyJhbGciOiJIUzI1NiJ9.", "eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"
+        ),
+        &format!("{}{}", "eyJhbGciOiJub25lIn0.", "e30."),
+        &format!(
+            "{}{}",
+            "IHsiYWxnIjoiSFMyNTYifQ.", "eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl"
+        ),
     ] {
         assert!(
             audit_contains_sensitive_summary(credential),
