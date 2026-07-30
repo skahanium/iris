@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -6,6 +7,7 @@ use fastembed::{
     InitOptionsUserDefined, Pooling, TextEmbedding, TokenizerFiles, UserDefinedEmbeddingModel,
 };
 use rusqlite::{Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 
 use crate::ai_types::EmbedBackend;
 use crate::error::{AppError, AppResult};
@@ -17,9 +19,12 @@ const MAX_COSINE_FALLBACK_CHUNKS: i64 = 8_000;
 pub const EMBEDDING_MODEL_ID: &str = "Xenova/bge-small-zh-v1.5";
 /// Immutable upstream revision pinned by the bundled model manifest.
 pub const EMBEDDING_MODEL_REVISION: &str = "fcecc3c5fef6becfa2b2bdda15c1c938857be534";
-/// Revision-bound identity used by caches that must invalidate on weight changes.
+/// SHA-256 of the immutable ONNX artifact pinned by the bundled model manifest.
+pub const EMBEDDING_MODEL_ONNX_SHA256: &str =
+    "69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a";
+/// Revision- and artifact-bound identity used by derived embedding caches.
 pub const EMBEDDING_MODEL_FINGERPRINT: &str =
-    "Xenova/bge-small-zh-v1.5@fcecc3c5fef6becfa2b2bdda15c1c938857be534";
+    "Xenova/bge-small-zh-v1.5@fcecc3c5fef6becfa2b2bdda15c1c938857be534#sha256:69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a";
 pub const EMBEDDING_DIMENSION: usize = 512;
 const QUERY_INSTRUCTION: &str = "\u{4e3a}\u{8fd9}\u{4e2a}\u{53e5}\u{5b50}\u{751f}\u{6210}\u{8868}\u{793a}\u{4ee5}\u{7528}\u{4e8e}\u{68c0}\u{7d22}\u{76f8}\u{5173}\u{6587}\u{7ae0}\u{ff1a}";
 const BUNDLED_MODEL_SUBDIRECTORY: &str = "models/bge-small-zh-v1.5";
@@ -131,6 +136,7 @@ fn validate_bundled_model_directory(directory: &Path) -> AppResult<()> {
             directory.display()
         )));
     }
+    validate_ready_marker_identity(&marker)?;
     for relative_path in REQUIRED_MODEL_FILES {
         let path = directory.join(relative_path);
         if !path.is_file() {
@@ -140,7 +146,79 @@ fn validate_bundled_model_directory(directory: &Path) -> AppResult<()> {
             )));
         }
     }
+    let onnx_path = directory.join("onnx/model.onnx");
+    let actual_digest = sha256_file(&onnx_path)?;
+    if actual_digest != EMBEDDING_MODEL_ONNX_SHA256 {
+        return Err(AppError::Embed(format!(
+            "model artifact onnx/model.onnx failed pinned SHA-256 verification: {}",
+            directory.display()
+        )));
+    }
     Ok(())
+}
+
+fn validate_ready_marker_identity(marker_path: &Path) -> AppResult<()> {
+    let marker_bytes = fs::read(marker_path).map_err(|error| {
+        AppError::Embed(format!(
+            "Failed to read bundled model readiness marker: {error}"
+        ))
+    })?;
+    let marker: serde_json::Value = serde_json::from_slice(&marker_bytes).map_err(|error| {
+        AppError::Embed(format!(
+            "Bundled model readiness marker is invalid JSON: {error}"
+        ))
+    })?;
+    if marker
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+        || marker.get("repository").and_then(serde_json::Value::as_str) != Some(EMBEDDING_MODEL_ID)
+        || marker.get("revision").and_then(serde_json::Value::as_str)
+            != Some(EMBEDDING_MODEL_REVISION)
+    {
+        return Err(AppError::Embed(
+            "Bundled model readiness marker revision does not match the pinned runtime identity"
+                .into(),
+        ));
+    }
+    let marker_onnx_sha = marker
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|files| {
+            files.iter().find_map(|file| {
+                (file.get("path").and_then(serde_json::Value::as_str) == Some("onnx/model.onnx"))
+                    .then(|| file.get("sha256").and_then(serde_json::Value::as_str))
+                    .flatten()
+            })
+        });
+    if marker_onnx_sha != Some(EMBEDDING_MODEL_ONNX_SHA256) {
+        return Err(AppError::Embed(
+            "Bundled model readiness marker does not pin the expected ONNX SHA-256".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn sha256_file(path: &Path) -> AppResult<String> {
+    let mut file = fs::File::open(path).map_err(|error| {
+        AppError::Embed(format!(
+            "Failed to open bundled model artifact for SHA-256 verification: {error}"
+        ))
+    })?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| {
+            AppError::Embed(format!(
+                "Failed to hash bundled model artifact for SHA-256 verification: {error}"
+            ))
+        })?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn read_bundled_model_file(directory: &Path, relative_path: &str) -> AppResult<Vec<u8>> {
@@ -415,7 +493,39 @@ fn truncate_snippet(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{bytes_to_f32, f32_to_bytes, validate_bundled_model_directory};
+    use std::fs;
     use tempfile::tempdir;
+
+    fn write_complete_model_fixture(directory: &std::path::Path, revision: &str) {
+        fs::create_dir_all(directory.join("onnx")).expect("create ONNX fixture directory");
+        fs::write(directory.join("onnx/model.onnx"), b"not-the-pinned-model")
+            .expect("write replacement ONNX fixture");
+        for relative_path in [
+            "tokenizer.json",
+            "config.json",
+            "special_tokens_map.json",
+            "tokenizer_config.json",
+        ] {
+            fs::write(directory.join(relative_path), b"{}").expect("write model fixture artifact");
+        }
+        fs::write(
+            directory.join(".iris-model-ready.json"),
+            serde_json::json!({
+                "schemaVersion": 1,
+                "id": "bge-small-zh-v1.5",
+                "repository": super::EMBEDDING_MODEL_ID,
+                "revision": revision,
+                "license": "MIT",
+                "files": [{
+                    "path": "onnx/model.onnx",
+                    "sha256": "69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a",
+                    "bytes": 20
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write ready marker fixture");
+    }
 
     #[test]
     fn unmigrated_database_is_not_ready_for_v2_semantic_search() {
@@ -455,5 +565,31 @@ mod tests {
             .expect_err("unverified model directory must be rejected");
 
         assert!(matches!(error, crate::error::AppError::Embed(_)));
+    }
+
+    #[test]
+    fn bundled_model_directory_rejects_marker_from_another_revision() {
+        let temp = tempdir().expect("create model fixture directory");
+        write_complete_model_fixture(temp.path(), "0000000000000000000000000000000000000000");
+
+        let error = validate_bundled_model_directory(temp.path())
+            .expect_err("a stale marker revision must not identify the pinned model");
+
+        assert!(
+            matches!(error, crate::error::AppError::Embed(message) if message.contains("revision"))
+        );
+    }
+
+    #[test]
+    fn bundled_model_directory_rejects_replaced_onnx_even_with_pinned_marker() {
+        let temp = tempdir().expect("create model fixture directory");
+        write_complete_model_fixture(temp.path(), super::EMBEDDING_MODEL_REVISION);
+
+        let error = validate_bundled_model_directory(temp.path())
+            .expect_err("the ONNX digest must be verified against the pinned model identity");
+
+        assert!(
+            matches!(error, crate::error::AppError::Embed(message) if message.contains("SHA-256"))
+        );
     }
 }

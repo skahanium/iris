@@ -272,6 +272,71 @@ async fn normal_run_injects_cached_confirmed_skill_after_source_file_is_removed(
 }
 
 #[test]
+fn production_vault_set_keeps_new_vault_skill_available_to_normal_activation() {
+    let directory = tempfile::tempdir().expect("temporary app directory");
+    let vault = directory.path().join("vault");
+    std::fs::create_dir_all(&vault).expect("vault directory");
+    crate::ai_runtime::skills::write_confirmed_skill_content(
+        &vault,
+        &std::path::PathBuf::from("vault-command-skill/SKILL.md"),
+        crate::ai_runtime::skills::SkillScope::Vault,
+        "---\nname: vault-command-skill\ndescription: Apply the production vault command Skill\n---\n\nUse the production vault command instructions.",
+    )
+    .expect("write confirmed Skill before vault activation");
+    let state = AppState::new(directory.path().join("data")).expect("application state");
+    // Exercise the production `vault_set` state-transition order without
+    // starting a platform watcher in the headless test runtime.
+    state
+        .set_vault(vault.clone())
+        .expect("set production vault");
+    let active_vault = state.vault_path().expect("canonical active vault");
+    assert_eq!(
+        state
+            .cached_skills_for_vault(&active_vault)
+            .expect("read new vault registry")
+            .expect("new vault registry")
+            .len(),
+        1,
+        "set_vault must install the lexical registry before transient cleanup"
+    );
+    state.clear_ai_state();
+    assert_eq!(
+        state
+            .cached_skills_for_vault(&active_vault)
+            .expect("read registry after cleanup")
+            .expect("registry after cleanup")
+            .len(),
+        1,
+        "transient vault cleanup must preserve the new registry"
+    );
+
+    let sink = RecordingSink::default();
+    let mut request = direct_request();
+    request.client_request_id = "vault-set-skill-activation".into();
+    request.turn.message = "请使用 vault-command-skill".into();
+    let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
+    let context = RunContextAssembler::assemble(
+        &state.db,
+        Some(&active_vault),
+        &accepted.session.session_key,
+        &accepted.run_id,
+    )
+    .expect("run context");
+
+    let activation = build_cached_skill_activation(&state, Some(&active_vault), &context, &[])
+        .expect("activation");
+
+    assert_eq!(
+        activation
+            .plan
+            .expect("vault_set must leave the lexical registry available")
+            .activated_skills[0]
+            .name,
+        "vault-command-skill"
+    );
+}
+
+#[test]
 fn normal_run_skill_activation_reads_prepared_query_vector_without_embedding_work() {
     let directory = tempfile::tempdir().expect("temporary app directory");
     let vault = directory.path().join("vault");

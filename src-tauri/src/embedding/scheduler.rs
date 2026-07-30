@@ -11,7 +11,7 @@ use super::engine::{
     embed_texts_batch, f32_to_bytes, EMBEDDING_DIMENSION, EMBEDDING_MODEL_FINGERPRINT,
     EMBEDDING_MODEL_ID,
 };
-use crate::ai_runtime::skills::ActivationIndexMap;
+use crate::ai_runtime::skills::{ActivationIndexMap, SkillActivationIndexRow};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -156,15 +156,12 @@ impl EmbeddingScheduler {
             .lock()
             .map_err(|_| AppError::msg("Skill activation index cache lock poisoned"))?;
         for (key, incoming) in &mut index {
-            if incoming.embedding_json.is_some() {
-                continue;
-            }
             let Some(existing) = cached.get(key) else {
                 continue;
             };
             if existing.embedding_source_hash != incoming.embedding_source_hash
-                || existing.embedding_model.as_deref() != Some(EMBEDDING_MODEL_FINGERPRINT)
-                || existing.embedding_dimensions != Some(EMBEDDING_DIMENSION as i64)
+                || current_skill_activation_vector(incoming)
+                || !current_skill_activation_vector(existing)
             {
                 continue;
             }
@@ -565,15 +562,17 @@ impl EmbeddingScheduler {
                 }
                 _ => break,
             };
+            let mut applied = Vec::new();
             if !matches!(
                 self.write_if_current(vault_epoch, |conn| {
-                    commit_skill_activation_batch(conn, &batch, &vectors)
+                    applied = commit_skill_activation_batch(conn, &batch, &vectors)?;
+                    Ok(())
                 }),
                 Ok(true)
             ) {
                 break;
             }
-            self.cache_skill_activation_batch(vault_epoch, &batch, &vectors);
+            self.cache_skill_activation_batch(vault_epoch, &batch, &vectors, &applied);
             thread::yield_now();
         }
         if self.finish_skill_activation_worker(vault_epoch) {
@@ -662,6 +661,7 @@ impl EmbeddingScheduler {
         vault_epoch: u64,
         batch: &[PendingSkillActivationRecord],
         vectors: &[Vec<f32>],
+        applied: &[bool],
     ) {
         let Ok(runtime) = self.runtime.lock() else {
             return;
@@ -672,7 +672,10 @@ impl EmbeddingScheduler {
         let Ok(mut index) = self.skill_activation_index.lock() else {
             return;
         };
-        for (record, vector) in batch.iter().zip(vectors) {
+        for ((record, vector), applied) in batch.iter().zip(vectors).zip(applied) {
+            if !applied {
+                continue;
+            }
             let scope = if record.scope == "Vault" {
                 crate::ai_runtime::skills::SkillScope::Vault
             } else {
@@ -749,6 +752,26 @@ struct PendingSkillActivationRecord {
     source_hash: String,
 }
 
+fn current_skill_activation_vector(row: &SkillActivationIndexRow) -> bool {
+    let expected_source_hash = crate::ai_runtime::skills::activation_embedding_source_hash(
+        &row.skill_name,
+        row.description.as_deref().unwrap_or_default(),
+        row.keywords.as_deref().unwrap_or_default(),
+    );
+    if row.embedding_source_hash != expected_source_hash
+        || row.embedding_model.as_deref() != Some(EMBEDDING_MODEL_FINGERPRINT)
+        || row.embedding_dimensions != Some(EMBEDDING_DIMENSION as i64)
+    {
+        return false;
+    }
+    row.embedding_json
+        .as_deref()
+        .and_then(|json| serde_json::from_str::<Vec<f32>>(json).ok())
+        .is_some_and(|vector| {
+            vector.len() == EMBEDDING_DIMENSION && vector.iter().all(|value| value.is_finite())
+        })
+}
+
 fn load_pending_skill_activation_batch(
     conn: &Connection,
 ) -> AppResult<Vec<PendingSkillActivationRecord>> {
@@ -802,11 +825,12 @@ fn commit_skill_activation_batch(
     conn: &Connection,
     batch: &[PendingSkillActivationRecord],
     vectors: &[Vec<f32>],
-) -> AppResult<()> {
+) -> AppResult<Vec<bool>> {
     let transaction = conn.unchecked_transaction()?;
+    let mut applied = Vec::with_capacity(batch.len());
     for (record, vector) in batch.iter().zip(vectors) {
         let embedding_json = serde_json::to_string(vector)?;
-        transaction.execute(
+        let updated = transaction.execute(
             "UPDATE skill_activation_index
              SET embedding_json = ?1,
                  embedding_model = ?2,
@@ -824,9 +848,10 @@ fn commit_skill_activation_batch(
                 record.source_hash,
             ],
         )?;
+        applied.push(updated == 1);
     }
     transaction.commit()?;
-    Ok(())
+    Ok(applied)
 }
 
 pub fn recover_interrupted_generation(conn: &Connection) -> AppResult<()> {
@@ -1122,6 +1147,29 @@ mod tests {
         }
 
         fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+            if let Some(started) = self.started.lock().unwrap().take() {
+                started.send(()).unwrap();
+            }
+            self.release.lock().unwrap().recv().unwrap();
+            Ok(vec![vec![0.5; EMBEDDING_DIMENSION]; texts.len()])
+        }
+    }
+
+    struct BlockingThenFailBatcher {
+        started: Mutex<Option<mpsc::Sender<()>>>,
+        release: Mutex<mpsc::Receiver<()>>,
+        calls: AtomicUsize,
+    }
+
+    impl EmbeddingBatcher for BlockingThenFailBatcher {
+        fn ensure_available(&self) -> AppResult<()> {
+            Ok(())
+        }
+
+        fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) > 0 {
+                return Err(AppError::Embed("stop after changed-source window".into()));
+            }
             if let Some(started) = self.started.lock().unwrap().take() {
                 started.send(()).unwrap();
             }
@@ -1590,7 +1638,12 @@ mod tests {
             text: "unused".into(),
             source_hash: row.embedding_source_hash.clone(),
         }];
-        scheduler.cache_skill_activation_batch(0, &batch, &[vec![0.5; EMBEDDING_DIMENSION]]);
+        scheduler.cache_skill_activation_batch(
+            0,
+            &batch,
+            &[vec![0.5; EMBEDDING_DIMENSION]],
+            &[true],
+        );
 
         scheduler.replace_skill_activation_index(missing).unwrap();
 
@@ -1604,6 +1657,191 @@ mod tests {
         assert!(
             row.embedding_json.is_some(),
             "a refresh loaded before the worker commit must not erase its matching vector"
+        );
+    }
+
+    #[test]
+    fn activation_index_replacement_prefers_worker_vector_over_malformed_loaded_snapshot() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let skill = crate::ai_runtime::skills::SkillEntry {
+            name: "repair-race".into(),
+            description: "A stable semantic source".into(),
+            scope: crate::ai_runtime::skills::SkillScope::Vault,
+            enabled: true,
+            confirmation_status: crate::ai_runtime::skills::SkillConfirmationStatus::Confirmed,
+            ..Default::default()
+        };
+        crate::ai_runtime::skills::rebuild_activation_index(&db, std::slice::from_ref(&skill))
+            .unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE skill_activation_index
+                 SET embedding_json = 'not-json',
+                     embedding_model = ?1,
+                     embedding_dimensions = ?2
+                 WHERE skill_name = 'repair-race' AND scope = 'Vault'",
+                rusqlite::params![EMBEDDING_MODEL_FINGERPRINT, EMBEDDING_DIMENSION as i64],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        let malformed_snapshot = crate::ai_runtime::skills::load_activation_index(&db).unwrap();
+        let source_hash = malformed_snapshot
+            .get(&(
+                "repair-race".to_string(),
+                crate::ai_runtime::skills::SkillScope::Vault,
+            ))
+            .expect("malformed activation row")
+            .embedding_source_hash
+            .clone();
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(ReadyBatcher));
+        scheduler
+            .replace_skill_activation_index(malformed_snapshot.clone())
+            .unwrap();
+        scheduler.cache_skill_activation_batch(
+            0,
+            &[PendingSkillActivationRecord {
+                skill_name: "repair-race".into(),
+                scope: "Vault".into(),
+                text: "unused".into(),
+                source_hash,
+            }],
+            &[vec![0.5; EMBEDDING_DIMENSION]],
+            &[true],
+        );
+
+        scheduler
+            .replace_skill_activation_index(malformed_snapshot)
+            .unwrap();
+
+        let cached = scheduler.cached_skill_activation_index();
+        let row = cached
+            .get(&(
+                "repair-race".to_string(),
+                crate::ai_runtime::skills::SkillScope::Vault,
+            ))
+            .expect("cached activation row");
+        let vector = serde_json::from_str::<Vec<f32>>(
+            row.embedding_json
+                .as_deref()
+                .expect("worker vector must survive replacement"),
+        )
+        .expect("cached worker vector must remain valid JSON");
+        assert_eq!(vector.len(), EMBEDDING_DIMENSION);
+    }
+
+    #[test]
+    fn activation_index_replacement_rejects_vector_with_forged_source_hash() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let skill = crate::ai_runtime::skills::SkillEntry {
+            name: "source-identity".into(),
+            description: "The canonical activation source".into(),
+            scope: crate::ai_runtime::skills::SkillScope::Vault,
+            enabled: true,
+            confirmation_status: crate::ai_runtime::skills::SkillConfirmationStatus::Confirmed,
+            ..Default::default()
+        };
+        crate::ai_runtime::skills::rebuild_activation_index(&db, &[skill]).unwrap();
+        let mut missing = crate::ai_runtime::skills::load_activation_index(&db).unwrap();
+        let row = missing
+            .get_mut(&(
+                "source-identity".to_string(),
+                crate::ai_runtime::skills::SkillScope::Vault,
+            ))
+            .expect("activation row");
+        row.embedding_source_hash = "forged-source-hash".into();
+        let mut forged_vector = missing.clone();
+        let row = forged_vector
+            .get_mut(&(
+                "source-identity".to_string(),
+                crate::ai_runtime::skills::SkillScope::Vault,
+            ))
+            .expect("forged vector row");
+        row.embedding_json = Some(serde_json::to_string(&vec![0.5; EMBEDDING_DIMENSION]).unwrap());
+        row.embedding_model = Some(EMBEDDING_MODEL_FINGERPRINT.into());
+        row.embedding_dimensions = Some(EMBEDDING_DIMENSION as i64);
+        let scheduler = EmbeddingScheduler::with_batcher(Arc::clone(&db), Arc::new(ReadyBatcher));
+        scheduler
+            .replace_skill_activation_index(forged_vector)
+            .unwrap();
+
+        scheduler.replace_skill_activation_index(missing).unwrap();
+
+        let cached = scheduler.cached_skill_activation_index();
+        assert!(
+            cached
+                .get(&(
+                    "source-identity".to_string(),
+                    crate::ai_runtime::skills::SkillScope::Vault,
+                ))
+                .expect("cached activation row")
+                .embedding_json
+                .is_none(),
+            "a source hash that does not identify the indexed embedding source must degrade to lexical"
+        );
+    }
+
+    #[test]
+    fn changed_source_rejects_old_worker_result_from_memory_cache() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let mut skill = crate::ai_runtime::skills::SkillEntry {
+            name: "changed-source-race".into(),
+            description: "Old activation source".into(),
+            scope: crate::ai_runtime::skills::SkillScope::Vault,
+            enabled: true,
+            confirmation_status: crate::ai_runtime::skills::SkillConfirmationStatus::Confirmed,
+            ..Default::default()
+        };
+        crate::ai_runtime::skills::rebuild_activation_index(&db, std::slice::from_ref(&skill))
+            .unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let scheduler = EmbeddingScheduler::with_batcher(
+            Arc::clone(&db),
+            Arc::new(BlockingThenFailBatcher {
+                started: Mutex::new(Some(started_tx)),
+                release: Mutex::new(release_rx),
+                calls: AtomicUsize::new(0),
+            }),
+        );
+        scheduler
+            .replace_skill_activation_index(
+                crate::ai_runtime::skills::load_activation_index(&db).unwrap(),
+            )
+            .unwrap();
+        scheduler.schedule_skill_activation_embeddings();
+        started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("old-source worker must reach inference");
+
+        skill.description = "Changed activation source".into();
+        crate::ai_runtime::skills::rebuild_activation_index(&db, &[skill]).unwrap();
+        release_tx.send(()).unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while scheduler
+            .runtime
+            .lock()
+            .unwrap()
+            .skill_activation_epoch
+            .is_some()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "changed-source worker did not finish"
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        let cached = scheduler.cached_skill_activation_index();
+        let row = cached
+            .get(&(
+                "changed-source-race".to_string(),
+                crate::ai_runtime::skills::SkillScope::Vault,
+            ))
+            .expect("old lexical snapshot remains until refresh replacement");
+        assert!(
+            row.embedding_json.is_none(),
+            "a DB-rejected old-source result must not be published to memory"
         );
     }
 

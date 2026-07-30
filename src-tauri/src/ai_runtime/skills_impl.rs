@@ -38,7 +38,8 @@ pub use activation_impl::{
     rebuild_activation_index, rerank_skills_with_vectors, skills_for_task,
 };
 pub(crate) use activation_impl::{
-    activation_embedding_source, SKILL_VECTOR_RERANK_DEFAULT_ENABLED,
+    activation_embedding_source, activation_embedding_source_hash,
+    SKILL_VECTOR_RERANK_DEFAULT_ENABLED,
 };
 pub use compatibility_impl::{
     blocked_capabilities_for_skill, fallback_guidance, normalize_external_capability,
@@ -200,6 +201,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::ai_types::AgentIntent;
+    use sha2::{Digest, Sha256};
 
     use super::*;
     // validate_subpath
@@ -1179,8 +1181,19 @@ Large instruction body."#,
         vec![chinese, mixed, explicit, alpha, beta, synonym, high_risk]
     }
 
-    const PINNED_SKILL_ACTIVATION_EVAL_MODEL_REVISION: &str =
-        "Xenova/bge-small-zh-v1.5@fcecc3c5fef6becfa2b2bdda15c1c938857be534";
+    const PINNED_SKILL_ACTIVATION_EVAL_MODEL_FINGERPRINT: &str =
+        "Xenova/bge-small-zh-v1.5@fcecc3c5fef6becfa2b2bdda15c1c938857be534#sha256:69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a";
+    const PINNED_SKILL_ACTIVATION_EVAL_ONNX_SHA256: &str =
+        "69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a";
+    const PINNED_SKILL_ACTIVATION_EVAL_FIXTURE_SOURCE_SHA256: &str =
+        "3a434483c26e46a82a17232f2d4af220346e792f0d401a67d763fedd31380522";
+    const PINNED_SKILL_ACTIVATION_EVAL_QUERIES: [&str; 5] = [
+        "写摘要",
+        "请做 bilingual review 混合复盘",
+        "请使用 explicit-audit",
+        "发版前看看能不能上线",
+        "整理旅行照片",
+    ];
     const PINNED_SKILL_ACTIVATION_SIMILARITIES: [[f32; 7]; 5] = [
         [
             0.5876449, 0.48451254, 0.39956492, 0.44972652, 0.4106296, 0.42367074, 0.35393217,
@@ -1206,6 +1219,31 @@ Large instruction body."#,
         vector
     }
 
+    fn skill_activation_eval_fixture_source_hash(
+        skills: &[SkillEntry],
+        index: &ActivationIndexMap,
+    ) -> String {
+        let sources = skills
+            .iter()
+            .map(|skill| {
+                let row = index
+                    .get(&(skill.name.clone(), skill.scope))
+                    .expect("activation index row");
+                activation_embedding_source(
+                    &skill.name,
+                    &skill.description,
+                    row.keywords.as_deref().unwrap_or(""),
+                )
+            })
+            .collect::<Vec<_>>();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "queries": PINNED_SKILL_ACTIVATION_EVAL_QUERIES,
+            "sources": sources,
+        }))
+        .expect("serialize activation evaluation source");
+        hex::encode(Sha256::digest(payload))
+    }
+
     #[test]
     #[ignore = "regenerates the pinned BGE similarity fixture on maintainer request"]
     fn print_pinned_skill_activation_eval_similarities() {
@@ -1226,13 +1264,7 @@ Large instruction body."#,
                 )
             })
             .collect::<Vec<_>>();
-        let queries = [
-            "写摘要",
-            "请做 bilingual review 混合复盘",
-            "请使用 explicit-audit",
-            "发版前看看能不能上线",
-            "整理旅行照片",
-        ];
+        let queries = PINNED_SKILL_ACTIVATION_EVAL_QUERIES;
         let mut texts = queries.to_vec();
         texts.extend(sources.iter().map(String::as_str));
         let embeddings = crate::embedding::engine::embed_texts_batch(&texts).unwrap();
@@ -1255,34 +1287,48 @@ Large instruction body."#,
         let db = Database::open_in_memory().unwrap();
         let skills = skill_activation_eval_skills();
         rebuild_activation_index(&db, &skills).unwrap();
+        let fixture_index = load_activation_index(&db).unwrap();
         let cases = [
-            ("中文短查询", "写摘要", Some("chinese-summary")),
+            (
+                "中文短查询",
+                PINNED_SKILL_ACTIVATION_EVAL_QUERIES[0],
+                Some("chinese-summary"),
+            ),
             (
                 "混合语言",
-                "请做 bilingual review 混合复盘",
+                PINNED_SKILL_ACTIVATION_EVAL_QUERIES[1],
                 Some("mixed-review"),
             ),
-            ("显式提及", "请使用 explicit-audit", Some("explicit-audit")),
+            (
+                "显式提及",
+                PINNED_SKILL_ACTIVATION_EVAL_QUERIES[2],
+                Some("explicit-audit"),
+            ),
             (
                 "同义表达",
-                "发版前看看能不能上线",
+                PINNED_SKILL_ACTIVATION_EVAL_QUERIES[3],
                 Some("z-release-readiness"),
             ),
-            ("高风险误激活", "整理旅行照片", None),
+            (
+                "高风险误激活",
+                PINNED_SKILL_ACTIVATION_EVAL_QUERIES[4],
+                None,
+            ),
         ];
         let mut lexical_recall = 0;
         let mut vector_recall = 0;
         let mut lexical_high_risk = 0;
         let mut vector_high_risk = 0;
 
-        assert_eq!(
-            crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT,
-            PINNED_SKILL_ACTIVATION_EVAL_MODEL_REVISION
-        );
-        assert_eq!(
-            crate::embedding::engine::EMBEDDING_MODEL_REVISION,
-            "fcecc3c5fef6becfa2b2bdda15c1c938857be534"
-        );
+        let runtime_identity_matches_fixture = crate::embedding::engine::EMBEDDING_MODEL_FINGERPRINT
+            == PINNED_SKILL_ACTIVATION_EVAL_MODEL_FINGERPRINT
+            && crate::embedding::engine::EMBEDDING_MODEL_ONNX_SHA256
+                == PINNED_SKILL_ACTIVATION_EVAL_ONNX_SHA256
+            && crate::embedding::engine::EMBEDDING_MODEL_REVISION
+                == "fcecc3c5fef6becfa2b2bdda15c1c938857be534";
+        let fixture_source_matches =
+            skill_activation_eval_fixture_source_hash(&skills, &fixture_index)
+                == PINNED_SKILL_ACTIVATION_EVAL_FIXTURE_SOURCE_SHA256;
         for (case_index, (label, query, expected)) in cases.into_iter().enumerate() {
             for (skill, similarity) in skills
                 .iter()
@@ -1347,7 +1393,10 @@ Large instruction body."#,
             assert!(vector.blocked_capabilities.is_empty(), "{label}");
         }
 
-        let gate_passed = vector_recall > lexical_recall && vector_high_risk <= lexical_high_risk;
+        let gate_passed = runtime_identity_matches_fixture
+            && fixture_source_matches
+            && vector_recall > lexical_recall
+            && vector_high_risk <= lexical_high_risk;
         assert_eq!(
             SKILL_VECTOR_RERANK_DEFAULT_ENABLED, gate_passed,
             "default vector rerank must track the activation evaluation gate"

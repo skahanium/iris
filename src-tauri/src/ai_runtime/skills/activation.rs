@@ -142,7 +142,11 @@ pub fn rebuild_activation_index(db: &Database, skills: &[SkillEntry]) -> AppResu
     })
 }
 
-fn activation_embedding_source_hash(name: &str, description: &str, keywords: &str) -> String {
+pub(crate) fn activation_embedding_source_hash(
+    name: &str,
+    description: &str,
+    keywords: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(activation_embedding_source(name, description, keywords));
     hex::encode(hasher.finalize())

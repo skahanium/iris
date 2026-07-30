@@ -207,6 +207,7 @@ impl AiRuntimeState {
             .lock()
             .map_err(|_| AppError::msg("skill_registry_lock_failed"))?;
         scheduler.replace_skill_activation_index(activation_index)?;
+        registry.clear();
         registry.insert(vault, skills);
         Ok(())
     }
@@ -278,7 +279,11 @@ impl AiRuntimeState {
         }
     }
 
-    /// Clear in-memory AI state when switching vaults.
+    /// Clear transient in-memory AI state after a vault switch.
+    ///
+    /// `set_vault` has already installed the new vault's lock-consistent Skill
+    /// registry and activation index before this cleanup runs. Clearing that
+    /// snapshot here would leave the first normal Run without lexical Skills.
     pub fn clear(&self) {
         if let Ok(mut pending) = self.pending_tool_calls.lock() {
             pending.clear();
@@ -287,12 +292,9 @@ impl AiRuntimeState {
         if let Ok(mut classified) = self.classified_ephemeral.lock() {
             classified.clear();
         }
-        if let Ok(mut registry) = self.skill_registry.lock() {
-            registry.clear();
-        }
         self.vector_index_ready
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!("vault switch: cleared pending tool calls and vector index");
+        tracing::info!("vault switch: cleared transient AI state and vector readiness");
     }
 }
 
@@ -594,7 +596,7 @@ impl AppState {
             .ok_or_else(|| AppError::msg("绗旇鐩綍鏈厤缃紝璇峰厛閫夋嫨 vault"))
     }
 
-    /// Clear all in-memory AI state when switching vaults.
+    /// Clear transient AI state after `set_vault` installs the new Skill snapshot.
     pub fn clear_ai_state(&self) {
         self.ai.clear();
     }
