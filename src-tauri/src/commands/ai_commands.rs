@@ -251,7 +251,7 @@ pub async fn web_evidence_provider_diagnostics(
 #[serde(rename_all = "camelCase")]
 pub struct McpReadOnlyToolDiscovery {
     pub provider_id: String,
-    pub tools: Vec<crate::ai_runtime::mcp_external_tools::McpReadOnlyToolCandidate>,
+    pub tools: Vec<crate::ai_runtime::mcp_external_tools::McpReadOnlyToolAttestation>,
     pub rejected_count: usize,
 }
 
@@ -271,25 +271,32 @@ pub async fn mcp_read_only_tools_discover(
         stdio_session_idle_timeout:
             crate::ai_runtime::mcp_host_runtime::DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
     };
-    let discovery = crate::ai_runtime::mcp_host_runtime::discover_provider_tools_without_recording(
-        &state.db,
-        &provider_id,
-        options,
-    )
-    .await?;
-    let discovered_count = discovery.tools.len();
-    let tools = discovery
-        .tools
-        .iter()
-        .filter_map(|tool| {
-            crate::ai_runtime::mcp_external_tools::review_discovered_tool(
-                &tool.name,
-                &tool.input_schema,
-                tool.read_only_hint,
+    let (discovery, reviewed_provider_config_hash) =
+        crate::ai_runtime::mcp_host_runtime::
+            discover_provider_tools_without_recording_with_config_hash(
+                &state.db,
+                &provider_id,
+                options,
             )
-            .ok()
-        })
-        .collect::<Vec<_>>();
+            .await?;
+    let discovered_count = discovery.tools.len();
+    let mut tools = Vec::new();
+    for tool in &discovery.tools {
+        let Ok(reviewed) = crate::ai_runtime::mcp_external_tools::review_discovered_tool(
+            &tool.name,
+            &tool.input_schema,
+            tool.read_only_hint,
+        ) else {
+            continue;
+        };
+        tools.push(crate::ai_runtime::mcp_external_tools::attest_reviewed_tool(
+            &state.db,
+            &provider_id,
+            &reviewed,
+            &reviewed_provider_config_hash,
+            &serde_json::json!({}),
+        )?);
+    }
     Ok(McpReadOnlyToolDiscovery {
         provider_id,
         rejected_count: discovered_count.saturating_sub(tools.len()),

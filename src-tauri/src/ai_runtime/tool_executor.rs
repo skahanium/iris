@@ -38,6 +38,9 @@ impl ToolRegistry {
             if !crate::ai_runtime::mcp_external_tools::snapshot_contract_is_valid(&snapshot) {
                 return Err(AppError::msg("external_tool_binding_config_changed"));
             }
+            if !crate::ai_runtime::mcp_external_tools::provider_is_current(db, &snapshot)? {
+                return Err(AppError::msg("external_tool_provider_config_changed"));
+            }
             registry
                 .external_tool_names
                 .insert(snapshot.exposed_name.clone());

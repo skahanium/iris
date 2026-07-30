@@ -421,6 +421,43 @@ impl AgentEvidenceRepository {
                 .map_err(Into::into)
         })
     }
+
+    /// Check that at least one supplied evidence row was registered through an
+    /// explicitly granted MCP read tool by this exact Run.
+    pub(crate) fn has_current_run_external_evidence(
+        db: &Database,
+        run_id: &str,
+        evidence_ids: &[i64],
+    ) -> AppResult<bool> {
+        if evidence_ids.is_empty() {
+            return Ok(false);
+        }
+        let mut evidence_ids = evidence_ids.to_vec();
+        evidence_ids.sort_unstable();
+        evidence_ids.dedup();
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT EXISTS(
+                     SELECT 1
+                     FROM agent_run_evidence run_evidence
+                     JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                     WHERE run_evidence.run_id = ?1
+                       AND run_evidence.evidence_id = ?2
+                       AND run_evidence.registration_source = 'external_tool'
+                       AND evidence.origin_run_id = ?1
+                       AND evidence.provider_kind = 'mcp'
+                       AND evidence.extraction_method = 'mcp_tool_output_v1'
+                       AND evidence.retired_at IS NULL
+                 )",
+            )?;
+            for evidence_id in evidence_ids {
+                if statement.query_row(params![run_id, evidence_id], |row| row.get(0))? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+    }
 }
 
 #[derive(Debug)]

@@ -150,6 +150,9 @@ describe("McpProfilesPanel 实时诊断", () => {
           inputSchema: { type: "object" },
           riskClass: "read_only",
           readOnly: true,
+          providerDisplayName: "AnySearch",
+          providerConfigHash: "provider-config-sha256",
+          bindingConfigHash: "binding-config-sha256",
         },
       ],
       rejectedCount: 2,
@@ -314,11 +317,17 @@ describe("McpProfilesPanel 实时诊断", () => {
     expect(host.textContent).toContain("read_record");
     expect(host.textContent).toContain("2 个副作用或不受支持工具已排除");
 
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(true);
     await act(async () => {
-      vi.spyOn(window, "confirm").mockReturnValueOnce(true);
       button(host, "审核并信任为只读").click();
     });
     await flush();
+    const confirmationText = confirm.mock.calls[0]?.[0] ?? "";
+    expect(confirmationText).toContain("AnySearch");
+    expect(confirmationText).toContain("read_record");
+    expect(confirmationText).toContain('"type": "object"');
+    expect(confirmationText).toContain("provider-config-sha256");
+    expect(confirmationText).toContain("binding-config-sha256");
     expect(ipcMocks.mcpCapabilityBindingUpsert).toHaveBeenCalledWith({
       providerId: provider.id,
       mcpToolName: "read_record",
@@ -327,8 +336,29 @@ describe("McpProfilesPanel 实时诊断", () => {
       riskClass: "read_only",
       readOnly: true,
       userTrusted: true,
+      attestedBindingConfigHash: "binding-config-sha256",
     });
     expect(host.textContent).toContain("仍需在 Composer 为每个 Run 单独授权");
+  });
+
+  it("用户取消精确 attestation 时不会提交 userTrusted 绑定", async () => {
+    await act(async () => {
+      root.render(<McpProfilesPanel open />);
+    });
+    await flush();
+    await openFirstMcpProviderDetail(host);
+    await act(async () => {
+      button(host, "发现只读工具").click();
+    });
+    await flush();
+
+    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+    await act(async () => {
+      button(host, "审核并信任为只读").click();
+    });
+    await flush();
+
+    expect(ipcMocks.mcpCapabilityBindingUpsert).not.toHaveBeenCalled();
   });
 
   it("清除已保存 Key 会删除加密凭据并使实时诊断失效", async () => {

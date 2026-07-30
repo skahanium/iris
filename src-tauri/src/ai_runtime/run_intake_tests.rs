@@ -75,6 +75,7 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
         risk_class: "read_only".into(),
         read_only: true,
         user_trusted: true,
+        attested_binding_config_hash: String::new(),
     };
     let reviewed = review_discovered_tool(
         &binding_input.mcp_tool_name,
@@ -88,6 +89,18 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
         .find(|provider| provider.id == binding_input.provider_id)
         .expect("reviewed provider")
         .provider_config_hash;
+    let attestation = super::mcp_external_tools::attest_reviewed_tool(
+        &db,
+        &binding_input.provider_id,
+        &reviewed,
+        &reviewed_provider_hash,
+        &binding_input.argument_mapping,
+    )
+    .expect("binding attestation");
+    let binding_input = McpCapabilityBindingInput {
+        attested_binding_config_hash: attestation.binding_config_hash,
+        ..binding_input
+    };
     let binding =
         upsert_binding(&db, &binding_input, &reviewed, &reviewed_provider_hash).expect("binding");
     assert_eq!(list_bindings(&db, None).expect("list").len(), 1);
@@ -99,6 +112,11 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
     }];
     let envelope = RunIntake::resolve_envelope(&granted_request).expect("envelope");
     assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(
+        envelope.verification_requirement,
+        VerificationRequirement::CurrentRunExternal
+    );
     assert!(envelope
         .required_capabilities
         .iter()
@@ -146,6 +164,60 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
 
     db.with_conn(|conn| {
         conn.execute(
+            "UPDATE agent_run_mcp_tool_snapshots SET run_id = ?1 WHERE run_id = ?2",
+            [&ungranted.run_id, &accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("move snapshot to a different accepted run");
+    assert_eq!(
+        load_run_snapshots(&db, &ungranted.run_id)
+            .expect_err("snapshot integrity must bind the original run id")
+            .to_string(),
+        "external_tool_snapshot_integrity_failed"
+    );
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_run_mcp_tool_snapshots SET run_id = ?1 WHERE run_id = ?2",
+            [&accepted.run_id, &ungranted.run_id],
+        )?;
+        conn.execute(
+            "UPDATE web_evidence_providers SET enabled = 0 WHERE id = 'readonly'",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("restore snapshot and revoke provider");
+    assert_eq!(
+        super::tool_executor::ToolRegistry::for_run(&db, &accepted.run_id)
+            .err()
+            .expect("registry must fail closed before exposing a revoked provider")
+            .to_string(),
+        "external_tool_provider_config_changed"
+    );
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE web_evidence_providers SET enabled = 1 WHERE id = 'readonly'",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE agent_run_mcp_tool_snapshots
+             SET frozen_at = '2099-01-01 00:00:00'
+             WHERE run_id = ?1",
+            [&accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("tamper frozen timestamp");
+    assert_eq!(
+        load_run_snapshots(&db, &accepted.run_id)
+            .expect_err("all persisted snapshot fields must be integrity bound")
+            .to_string(),
+        "external_tool_snapshot_integrity_failed"
+    );
+
+    db.with_conn(|conn| {
+        conn.execute(
             "UPDATE agent_run_mcp_tool_snapshots
              SET exposed_name = 'external_tampered_snapshot'
              WHERE run_id = ?1",
@@ -159,7 +231,7 @@ fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
         .expect("registry must validate snapshot integrity before exposure");
     assert_eq!(
         registry_error.to_string(),
-        "external_tool_binding_config_changed"
+        "external_tool_snapshot_integrity_failed"
     );
 }
 
@@ -198,6 +270,7 @@ fn provider_config_drift_rolls_back_run_acceptance() {
         risk_class: "read_only".into(),
         read_only: true,
         user_trusted: true,
+        attested_binding_config_hash: String::new(),
     };
     let reviewed = review_discovered_tool(
         &binding_input.mcp_tool_name,
@@ -211,6 +284,18 @@ fn provider_config_drift_rolls_back_run_acceptance() {
         .find(|provider| provider.id == binding_input.provider_id)
         .expect("reviewed provider")
         .provider_config_hash;
+    let attestation = super::mcp_external_tools::attest_reviewed_tool(
+        &db,
+        &binding_input.provider_id,
+        &reviewed,
+        &reviewed_provider_hash,
+        &binding_input.argument_mapping,
+    )
+    .expect("binding attestation");
+    let binding_input = McpCapabilityBindingInput {
+        attested_binding_config_hash: attestation.binding_config_hash,
+        ..binding_input
+    };
     let binding =
         upsert_binding(&db, &binding_input, &reviewed, &reviewed_provider_hash).expect("binding");
     db.with_conn(|conn| {

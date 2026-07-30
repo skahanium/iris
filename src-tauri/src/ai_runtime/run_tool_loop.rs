@@ -1324,6 +1324,18 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 == crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunWeb
     }
 
+    fn requires_external_evidence(&self) -> bool {
+        self.subagent_depth == 0
+            && self.context.envelope.verification_requirement
+                == crate::ai_runtime::run_contract::VerificationRequirement::CurrentRunExternal
+    }
+
+    fn has_external_evidence(&self) -> bool {
+        self.external_evidence_ids
+            .lock()
+            .is_ok_and(|ids| !ids.is_empty())
+    }
+
     fn emit_deferred_web_degradation_if_needed(
         &self,
         db: &Database,
@@ -3104,6 +3116,7 @@ mod tests {
             risk_class: "read_only".into(),
             read_only: true,
             user_trusted: true,
+            attested_binding_config_hash: String::new(),
         };
         let discovery_options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
             request_timeout: Duration::from_secs(20),
@@ -3134,6 +3147,18 @@ mod tests {
             discovered_tool.read_only_hint,
         )
         .expect("read-only attestation");
+        let attestation = crate::ai_runtime::mcp_external_tools::attest_reviewed_tool(
+            &state.db,
+            &binding_input.provider_id,
+            &reviewed,
+            &reviewed_provider_hash,
+            &binding_input.argument_mapping,
+        )
+        .expect("binding attestation");
+        let binding_input = crate::ai_runtime::mcp_external_tools::McpCapabilityBindingInput {
+            attested_binding_config_hash: attestation.binding_config_hash,
+            ..binding_input
+        };
         let binding = crate::ai_runtime::mcp_external_tools::upsert_binding(
             &state.db,
             &binding_input,

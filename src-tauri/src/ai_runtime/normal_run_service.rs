@@ -695,17 +695,12 @@ async fn dispatch_required_web_verified_run(
             reasoning_content: None,
         },
     );
-    // Required Web evidence is prefetched deterministically, but an authorized
-    // local retrieval may still be necessary for a hybrid answer. Keep only
-    // the local vault read surface available while deliberately
-    // withholding `web_search` from the model: the exact Run-local Web
-    // evidence above remains the sole external-fact source for this execution.
-    const LOCAL_FOLLOW_UP_CAPABILITIES: &[&str] = &["vault.read"];
-    let local_follow_up_capabilities = authorized_capabilities
-        .iter()
-        .filter(|capability| LOCAL_FOLLOW_UP_CAPABILITIES.contains(&capability.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
+    // Required Web evidence is prefetched deterministically, but authorized
+    // vault retrieval and explicitly granted external reads may still be
+    // necessary for a hybrid answer. Continue withholding `web_search` from
+    // the model: the exact Run-local Web evidence above remains the mandatory
+    // proof for this execution.
+    let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
     let tools = ToolRegistry::constrain_for_explicit_references(
         registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
@@ -776,6 +771,17 @@ async fn dispatch_required_web_verified_run(
         )
         .await
     }
+}
+
+pub(crate) fn strict_follow_up_capabilities(
+    authorized_capabilities: &[crate::ai_runtime::run_contract::CapabilityId],
+) -> Vec<crate::ai_runtime::run_contract::CapabilityId> {
+    const ALLOWED: &[&str] = &["vault.read", "external.read"];
+    authorized_capabilities
+        .iter()
+        .filter(|capability| ALLOWED.contains(&capability.as_str()))
+        .cloned()
+        .collect()
 }
 
 fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> String {

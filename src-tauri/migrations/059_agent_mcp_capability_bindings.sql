@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS agent_run_mcp_tool_snapshots (
     credential_refs_json    TEXT NOT NULL,
     binding_config_hash     TEXT NOT NULL,
     frozen_at               TEXT NOT NULL,
+    snapshot_integrity_hash TEXT NOT NULL,
     PRIMARY KEY (run_id, binding_id),
     UNIQUE(run_id, exposed_name)
 );

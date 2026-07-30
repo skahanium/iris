@@ -32,6 +32,7 @@ pub struct McpCapabilityBindingInput {
     pub risk_class: String,
     pub read_only: bool,
     pub user_trusted: bool,
+    pub attested_binding_config_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -53,6 +54,7 @@ pub struct McpCapabilityBindingSummary {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FrozenMcpToolSnapshot {
+    pub(crate) run_id: String,
     pub(crate) binding_id: String,
     pub(crate) provider_id: String,
     pub(crate) exposed_name: String,
@@ -66,12 +68,29 @@ pub(crate) struct FrozenMcpToolSnapshot {
     pub(crate) transport_config_json: String,
     pub(crate) credential_refs_json: String,
     pub(crate) binding_config_hash: String,
+    pub(crate) capability: String,
+    pub(crate) risk_class: String,
+    pub(crate) read_only: bool,
     pub(crate) user_trusted: bool,
+    pub(crate) frozen_at: String,
+    pub(crate) snapshot_integrity_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpReadOnlyToolCandidate {
+    pub name: String,
+    pub input_schema: Value,
+    pub risk_class: String,
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpReadOnlyToolAttestation {
+    pub provider_display_name: String,
+    pub provider_config_hash: String,
+    pub binding_config_hash: String,
     pub name: String,
     pub input_schema: Value,
     pub risk_class: String,
@@ -105,6 +124,10 @@ fn safe_error(code: &'static str) -> AppError {
 fn hash_json(value: &Value) -> String {
     let digest = Sha256::digest(value.to_string().as_bytes());
     hex::encode(&digest[..12])
+}
+
+fn full_hash_json(value: &Value) -> String {
+    hex::encode(Sha256::digest(value.to_string().as_bytes()))
 }
 
 fn validate_identifier(value: &str, max_chars: usize) -> bool {
@@ -357,7 +380,30 @@ fn normalized_input_schema(schema: &Value) -> AppResult<Value> {
     Ok(schema)
 }
 
+fn mapping_node_is_safe(value: &Value, depth: usize) -> bool {
+    if depth > 8 {
+        return false;
+    }
+    match value {
+        Value::Object(object) => {
+            object.len() <= 64
+                && object.iter().all(|(key, value)| {
+                    validate_schema_token(key, 64)
+                        && !schema_name_is_forbidden(key)
+                        && mapping_node_is_safe(value, depth + 1)
+                })
+        }
+        Value::String(value) => {
+            validate_schema_token(value, 64) && !schema_name_is_forbidden(value)
+        }
+        _ => false,
+    }
+}
+
 fn normalized_argument_mapping(mapping: &Value) -> AppResult<Value> {
+    if !mapping_node_is_safe(mapping, 0) {
+        return Err(safe_error("external_tool_mapping_invalid"));
+    }
     let object = mapping
         .as_object()
         .ok_or_else(|| safe_error("external_tool_mapping_invalid"))?;
@@ -365,14 +411,11 @@ fn normalized_argument_mapping(mapping: &Value) -> AppResult<Value> {
         return Err(safe_error("external_tool_mapping_invalid"));
     }
     let mut targets = HashSet::new();
-    for (source, target) in object {
+    for target in object.values() {
         let Some(target) = target.as_str() else {
             return Err(safe_error("external_tool_mapping_invalid"));
         };
-        if !validate_schema_token(source, 64)
-            || !validate_schema_token(target, 64)
-            || !targets.insert(target)
-        {
+        if !targets.insert(target) {
             return Err(safe_error("external_tool_mapping_invalid"));
         }
     }
@@ -387,27 +430,152 @@ fn output_policy() -> Value {
     })
 }
 
-fn binding_hash(
-    identity: (&str, &str, &str, &str, &str),
-    contract: (&str, &Value, &Value, &Value),
-) -> String {
-    let (binding_id, provider_id, exposed_name, provider_config_hash, provider_launch_hash) =
-        identity;
+fn binding_hash(provider: (&str, &str, &str), contract: (&str, &Value, &Value, &Value)) -> String {
+    let (provider_id, provider_config_hash, provider_launch_hash) = provider;
     let (mcp_tool_name, input_schema, argument_mapping, output_policy) = contract;
     hash_json(&serde_json::json!({
         "capability": EXTERNAL_READ_CAPABILITY,
         "riskClass": "read_only",
         "readOnly": true,
         "userTrusted": true,
-        "bindingId": binding_id,
         "providerId": provider_id,
-        "exposedName": exposed_name,
         "providerConfigHash": provider_config_hash,
         "providerLaunchHash": provider_launch_hash,
         "mcpToolName": mcp_tool_name,
         "inputSchema": input_schema,
         "argumentMapping": argument_mapping,
         "outputPolicy": output_policy
+    }))
+}
+
+pub(crate) fn attest_reviewed_tool(
+    db: &Database,
+    provider_id: &str,
+    reviewed: &McpReadOnlyToolCandidate,
+    reviewed_provider_config_hash: &str,
+    argument_mapping: &Value,
+) -> AppResult<McpReadOnlyToolAttestation> {
+    let provider_id = provider_id.trim();
+    let argument_mapping = normalized_argument_mapping(argument_mapping)?;
+    let properties = reviewed
+        .input_schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .ok_or_else(|| safe_error("external_tool_schema_invalid"))?;
+    if argument_mapping.as_object().is_some_and(|mapping| {
+        mapping
+            .keys()
+            .any(|source| !properties.contains_key(source))
+    }) {
+        return Err(safe_error("external_tool_mapping_invalid"));
+    }
+    db.with_read_conn(|conn| {
+        let provider: Option<(String, String, i64, String, String, String, String)> = conn
+            .query_row(
+                "SELECT name, kind, enabled, provider_config_hash, transport_kind,
+                        transport_config_json, credential_refs_json
+                 FROM web_evidence_providers WHERE id = ?1",
+                [provider_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((
+            provider_display_name,
+            provider_kind,
+            provider_enabled,
+            provider_config_hash,
+            transport_kind,
+            transport_config_json,
+            credential_refs_json,
+        )) = provider
+        else {
+            return Err(safe_error("external_tool_provider_missing"));
+        };
+        if provider_kind != "mcp" {
+            return Err(safe_error("external_tool_provider_invalid"));
+        }
+        if provider_enabled != 1 {
+            return Err(safe_error("external_tool_provider_disabled"));
+        }
+        if provider_config_hash != reviewed_provider_config_hash {
+            return Err(safe_error("external_tool_provider_config_changed"));
+        }
+        let provider_launch_hash = crate::ai_runtime::mcp_host_runtime::frozen_provider_launch_hash(
+            provider_id,
+            &transport_kind,
+            &transport_config_json,
+            &credential_refs_json,
+        );
+        let output_policy = output_policy();
+        let binding_config_hash = binding_hash(
+            (provider_id, &provider_config_hash, &provider_launch_hash),
+            (
+                &reviewed.name,
+                &reviewed.input_schema,
+                &argument_mapping,
+                &output_policy,
+            ),
+        );
+        Ok(McpReadOnlyToolAttestation {
+            provider_display_name,
+            provider_config_hash,
+            binding_config_hash,
+            name: reviewed.name.clone(),
+            input_schema: reviewed.input_schema.clone(),
+            risk_class: reviewed.risk_class.clone(),
+            read_only: reviewed.read_only,
+        })
+    })
+}
+
+fn snapshot_integrity_hash(
+    identity: (&str, &str, &str, &str, &str),
+    contract: (&str, &str, &str, &str),
+    authorization: (&str, &str, i64, i64),
+    provider: (&str, &str, &str, &str, &str),
+    frozen_at: &str,
+) -> String {
+    let (run_id, binding_id, provider_id, exposed_name, mcp_tool_name) = identity;
+    let (input_schema_json, argument_mapping_json, output_policy_json, binding_config_hash) =
+        contract;
+    let (capability, risk_class, read_only, user_trusted) = authorization;
+    let (
+        provider_config_hash,
+        provider_launch_hash,
+        transport_kind,
+        transport_config_json,
+        credential_refs_json,
+    ) = provider;
+    full_hash_json(&serde_json::json!({
+        "runId": run_id,
+        "bindingId": binding_id,
+        "providerId": provider_id,
+        "exposedName": exposed_name,
+        "mcpToolName": mcp_tool_name,
+        "inputSchemaJson": input_schema_json,
+        "argumentMappingJson": argument_mapping_json,
+        "outputPolicyJson": output_policy_json,
+        "capability": capability,
+        "riskClass": risk_class,
+        "readOnly": read_only,
+        "userTrusted": user_trusted,
+        "providerConfigHash": provider_config_hash,
+        "providerLaunchHash": provider_launch_hash,
+        "transportKind": transport_kind,
+        "transportConfigJson": transport_config_json,
+        "credentialRefsJson": credential_refs_json,
+        "bindingConfigHash": binding_config_hash,
+        "frozenAt": frozen_at
     }))
 }
 
@@ -551,15 +719,12 @@ pub(crate) fn upsert_binding(
             &credential_refs_json,
         );
         let binding_config_hash = binding_hash(
-            (
-                &id,
-                provider_id,
-                &exposed_name,
-                &provider_config_hash,
-                &provider_launch_hash,
-            ),
+            (provider_id, &provider_config_hash, &provider_launch_hash),
             (tool_name, &input_schema, &argument_mapping, &output_policy),
         );
+        if input.attested_binding_config_hash.trim() != binding_config_hash {
+            return Err(safe_error("external_tool_attestation_changed"));
+        }
         conn.execute(
             "INSERT INTO mcp_capability_bindings
              (id, provider_id, exposed_name, mcp_tool_name, input_schema_json,
@@ -740,13 +905,7 @@ pub(crate) fn freeze_run_grants(
             || normalized_argument_mapping(&argument_mapping)? != argument_mapping
             || stored_output_policy != output_policy()
             || binding_hash(
-                (
-                    binding_id,
-                    &provider_id,
-                    &exposed_name,
-                    &binding_provider_hash,
-                    &provider_launch_hash,
-                ),
+                (&provider_id, &binding_provider_hash, &provider_launch_hash),
                 (
                     &mcp_tool_name,
                     &input_schema,
@@ -772,16 +931,42 @@ pub(crate) fn freeze_run_grants(
         if binding_provider_hash != current_provider_hash {
             return Err(safe_error("external_tool_provider_config_changed"));
         }
+        let frozen_at = chrono::Utc::now().to_rfc3339();
+        let snapshot_integrity_hash = snapshot_integrity_hash(
+            (
+                run_id,
+                binding_id,
+                &provider_id,
+                &exposed_name,
+                &mcp_tool_name,
+            ),
+            (
+                &input_schema_json,
+                &argument_mapping_json,
+                &output_policy_json,
+                &binding_config_hash,
+            ),
+            (&capability, &risk_class, read_only, user_trusted),
+            (
+                &binding_provider_hash,
+                &provider_launch_hash,
+                &transport_kind,
+                &transport_config_json,
+                &credential_refs_json,
+            ),
+            &frozen_at,
+        );
         conn.execute(
             "INSERT INTO agent_run_mcp_tool_snapshots
              (run_id, binding_id, provider_id, exposed_name, mcp_tool_name,
               input_schema_json, argument_mapping_json, output_policy_json,
               capability, risk_class, read_only, user_trusted, provider_config_hash,
               provider_launch_hash, transport_kind, transport_config_json,
-              credential_refs_json, binding_config_hash, frozen_at)
+              credential_refs_json, binding_config_hash, frozen_at,
+              snapshot_integrity_hash)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
-                     'external.read', 'read_only', 1, 1, ?9, ?10, ?11, ?12,
-                     ?13, ?14, datetime('now'))",
+                     ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                     ?17, ?18, ?19, ?20)",
             params![
                 run_id,
                 binding_id,
@@ -791,12 +976,18 @@ pub(crate) fn freeze_run_grants(
                 input_schema_json,
                 argument_mapping_json,
                 output_policy_json,
+                capability,
+                risk_class,
+                read_only,
+                user_trusted,
                 binding_provider_hash,
                 provider_launch_hash,
                 transport_kind,
                 transport_config_json,
                 credential_refs_json,
-                binding_config_hash
+                binding_config_hash,
+                frozen_at,
+                snapshot_integrity_hash
             ],
         )?;
     }
@@ -809,37 +1000,90 @@ pub(crate) fn load_run_snapshots(
 ) -> AppResult<Vec<FrozenMcpToolSnapshot>> {
     db.with_read_conn(|conn| {
         let mut statement = conn.prepare(
-            "SELECT binding_id, provider_id, exposed_name, mcp_tool_name,
+            "SELECT run_id, binding_id, provider_id, exposed_name, mcp_tool_name,
                     input_schema_json, argument_mapping_json, output_policy_json,
+                    capability, risk_class, read_only, user_trusted,
                     provider_config_hash, provider_launch_hash, transport_kind,
                     transport_config_json, credential_refs_json,
-                    binding_config_hash, user_trusted
+                    binding_config_hash, frozen_at, snapshot_integrity_hash
              FROM agent_run_mcp_tool_snapshots
              WHERE run_id = ?1
              ORDER BY exposed_name",
         )?;
-        let rows = statement.query_map([run_id], |row| {
-            let input_schema: String = row.get(4)?;
-            let argument_mapping: String = row.get(5)?;
-            let output_policy: String = row.get(6)?;
-            Ok(FrozenMcpToolSnapshot {
-                binding_id: row.get(0)?,
-                provider_id: row.get(1)?,
-                exposed_name: row.get(2)?,
-                mcp_tool_name: row.get(3)?,
-                input_schema: parse_json_column(&input_schema, 4)?,
-                argument_mapping: parse_json_column(&argument_mapping, 5)?,
-                output_policy: parse_json_column(&output_policy, 6)?,
-                provider_config_hash: row.get(7)?,
-                provider_launch_hash: row.get(8)?,
-                transport_kind: row.get(9)?,
-                transport_config_json: row.get(10)?,
-                credential_refs_json: row.get(11)?,
-                binding_config_hash: row.get(12)?,
-                user_trusted: row.get::<_, i64>(13)? != 0,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        let mut rows = statement.query([run_id])?;
+        let mut snapshots = Vec::new();
+        while let Some(row) = rows.next()? {
+            let stored_run_id: String = row.get(0)?;
+            let binding_id: String = row.get(1)?;
+            let provider_id: String = row.get(2)?;
+            let exposed_name: String = row.get(3)?;
+            let mcp_tool_name: String = row.get(4)?;
+            let input_schema_json: String = row.get(5)?;
+            let argument_mapping_json: String = row.get(6)?;
+            let output_policy_json: String = row.get(7)?;
+            let capability: String = row.get(8)?;
+            let risk_class: String = row.get(9)?;
+            let read_only: i64 = row.get(10)?;
+            let user_trusted: i64 = row.get(11)?;
+            let provider_config_hash: String = row.get(12)?;
+            let provider_launch_hash: String = row.get(13)?;
+            let transport_kind: String = row.get(14)?;
+            let transport_config_json: String = row.get(15)?;
+            let credential_refs_json: String = row.get(16)?;
+            let binding_config_hash: String = row.get(17)?;
+            let frozen_at: String = row.get(18)?;
+            let stored_integrity_hash: String = row.get(19)?;
+            let computed_integrity_hash = snapshot_integrity_hash(
+                (
+                    &stored_run_id,
+                    &binding_id,
+                    &provider_id,
+                    &exposed_name,
+                    &mcp_tool_name,
+                ),
+                (
+                    &input_schema_json,
+                    &argument_mapping_json,
+                    &output_policy_json,
+                    &binding_config_hash,
+                ),
+                (&capability, &risk_class, read_only, user_trusted),
+                (
+                    &provider_config_hash,
+                    &provider_launch_hash,
+                    &transport_kind,
+                    &transport_config_json,
+                    &credential_refs_json,
+                ),
+                &frozen_at,
+            );
+            if stored_run_id != run_id || computed_integrity_hash != stored_integrity_hash {
+                return Err(safe_error("external_tool_snapshot_integrity_failed"));
+            }
+            snapshots.push(FrozenMcpToolSnapshot {
+                run_id: stored_run_id,
+                binding_id,
+                provider_id,
+                exposed_name,
+                mcp_tool_name,
+                input_schema: parse_json_column(&input_schema_json, 5)?,
+                argument_mapping: parse_json_column(&argument_mapping_json, 6)?,
+                output_policy: parse_json_column(&output_policy_json, 7)?,
+                provider_config_hash,
+                provider_launch_hash,
+                transport_kind,
+                transport_config_json,
+                credential_refs_json,
+                binding_config_hash,
+                capability,
+                risk_class,
+                read_only: read_only == 1,
+                user_trusted: user_trusted == 1,
+                frozen_at,
+                snapshot_integrity_hash: stored_integrity_hash,
+            });
+        }
+        Ok(snapshots)
     })
 }
 
@@ -954,7 +1198,40 @@ pub(crate) fn snapshot_contract_is_valid(snapshot: &FrozenMcpToolSnapshot) -> bo
         &snapshot.transport_config_json,
         &snapshot.credential_refs_json,
     );
-    validate_identifier(&snapshot.provider_id, 128)
+    let input_schema_json = snapshot.input_schema.to_string();
+    let argument_mapping_json = snapshot.argument_mapping.to_string();
+    let output_policy_json = snapshot.output_policy.to_string();
+    let snapshot_integrity_hash = snapshot_integrity_hash(
+        (
+            &snapshot.run_id,
+            &snapshot.binding_id,
+            &snapshot.provider_id,
+            &snapshot.exposed_name,
+            &snapshot.mcp_tool_name,
+        ),
+        (
+            &input_schema_json,
+            &argument_mapping_json,
+            &output_policy_json,
+            &snapshot.binding_config_hash,
+        ),
+        (
+            &snapshot.capability,
+            &snapshot.risk_class,
+            i64::from(snapshot.read_only),
+            i64::from(snapshot.user_trusted),
+        ),
+        (
+            &snapshot.provider_config_hash,
+            &snapshot.provider_launch_hash,
+            &snapshot.transport_kind,
+            &snapshot.transport_config_json,
+            &snapshot.credential_refs_json,
+        ),
+        &snapshot.frozen_at,
+    );
+    validate_identifier(&snapshot.run_id, 128)
+        && validate_identifier(&snapshot.provider_id, 128)
         && validate_tool_identifier(&snapshot.mcp_tool_name)
         && validate_identifier(&snapshot.exposed_name, 128)
         && snapshot.exposed_name.starts_with("external_")
@@ -964,13 +1241,15 @@ pub(crate) fn snapshot_contract_is_valid(snapshot: &FrozenMcpToolSnapshot) -> bo
         && normalized_argument_mapping(&snapshot.argument_mapping)
             .is_ok_and(|mapping| mapping == snapshot.argument_mapping)
         && snapshot.output_policy == output_policy()
+        && snapshot.capability == EXTERNAL_READ_CAPABILITY
+        && snapshot.risk_class == "read_only"
+        && snapshot.read_only
         && snapshot.user_trusted
+        && snapshot_integrity_hash == snapshot.snapshot_integrity_hash
         && provider_launch_hash == snapshot.provider_launch_hash
         && binding_hash(
             (
-                &snapshot.binding_id,
                 &snapshot.provider_id,
-                &snapshot.exposed_name,
                 &snapshot.provider_config_hash,
                 &snapshot.provider_launch_hash,
             ),
@@ -1066,7 +1345,7 @@ mod tests {
 
     fn upsert_attested(
         db: &Database,
-        input: McpCapabilityBindingInput,
+        mut input: McpCapabilityBindingInput,
     ) -> AppResult<McpCapabilityBindingSummary> {
         let reviewed =
             review_discovered_tool(&input.mcp_tool_name, &input.input_schema, Some(true))?;
@@ -1076,6 +1355,14 @@ mod tests {
                 .find(|provider| provider.id == input.provider_id)
                 .ok_or_else(|| safe_error("external_tool_provider_missing"))?
                 .provider_config_hash;
+        input.attested_binding_config_hash = attest_reviewed_tool(
+            db,
+            &input.provider_id,
+            &reviewed,
+            &provider_config_hash,
+            &input.argument_mapping,
+        )?
+        .binding_config_hash;
         upsert_binding(db, &input, &reviewed, &provider_config_hash)
     }
 
@@ -1106,6 +1393,7 @@ mod tests {
                     risk_class: "read_only".into(),
                     read_only: true,
                     user_trusted: true,
+                    attested_binding_config_hash: String::new(),
                 },
             )
             .unwrap_err();
@@ -1175,6 +1463,7 @@ mod tests {
                     risk_class: "read_only".into(),
                     read_only: true,
                     user_trusted: true,
+                    attested_binding_config_hash: String::new(),
                 },
             )
             .expect_err("unsafe or unsupported schema");
@@ -1186,6 +1475,62 @@ mod tests {
                 "{error}"
             );
         }
+    }
+
+    #[test]
+    fn binding_rejects_side_effect_or_prompt_injection_argument_mapping_targets() {
+        let db = Database::open_in_memory().unwrap();
+        provider(&db);
+        for target in [
+            "command",
+            "delete",
+            "operation",
+            "secret",
+            "pleaseIgnorePreviousInstruction",
+            "safePromptOverride",
+        ] {
+            let error = upsert_attested(
+                &db,
+                McpCapabilityBindingInput {
+                    id: None,
+                    provider_id: "readonly".into(),
+                    mcp_tool_name: "read_record".into(),
+                    input_schema: serde_json::json!({
+                        "type":"object",
+                        "properties":{"query":{"type":"string"}}
+                    }),
+                    argument_mapping: serde_json::json!({"query":target}),
+                    risk_class: "read_only".into(),
+                    read_only: true,
+                    user_trusted: true,
+                    attested_binding_config_hash: String::new(),
+                },
+            )
+            .expect_err("unsafe mapping target must fail closed");
+            assert_eq!(error.to_string(), "external_tool_mapping_invalid");
+        }
+
+        let nested_error = upsert_attested(
+            &db,
+            McpCapabilityBindingInput {
+                id: None,
+                provider_id: "readonly".into(),
+                mcp_tool_name: "read_record".into(),
+                input_schema: serde_json::json!({
+                    "type":"object",
+                    "properties":{"query":{"type":"string"}}
+                }),
+                argument_mapping: serde_json::json!({
+                    "query":{"nestedCommand":"delete"}
+                }),
+                risk_class: "read_only".into(),
+                read_only: true,
+                user_trusted: true,
+                attested_binding_config_hash: String::new(),
+            },
+        )
+        .expect_err("nested mapping keys and values must fail closed");
+        assert_eq!(nested_error.to_string(), "external_tool_mapping_invalid");
     }
 
     #[test]
@@ -1201,6 +1546,7 @@ mod tests {
             risk_class: "read_only".into(),
             read_only: true,
             user_trusted: false,
+            attested_binding_config_hash: String::new(),
         };
         let reviewed =
             review_discovered_tool(&input.mcp_tool_name, &input.input_schema, Some(true))
@@ -1232,6 +1578,68 @@ mod tests {
     }
 
     #[test]
+    fn binding_requires_the_exact_user_reviewed_attestation_hash() {
+        let db = Database::open_in_memory().unwrap();
+        provider(&db);
+        let reviewed = review_discovered_tool(
+            "read_record",
+            &serde_json::json!({
+                "type":"object",
+                "title":"untrusted title",
+                "properties":{
+                    "query":{"type":"string","description":"untrusted description"}
+                }
+            }),
+            Some(true),
+        )
+        .expect("reviewed tool");
+        let provider_config_hash =
+            crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&db)
+                .expect("providers")
+                .into_iter()
+                .find(|provider| provider.id == "readonly")
+                .expect("provider")
+                .provider_config_hash;
+        let attestation = attest_reviewed_tool(
+            &db,
+            "readonly",
+            &reviewed,
+            &provider_config_hash,
+            &serde_json::json!({}),
+        )
+        .expect("attestation");
+        assert_eq!(attestation.provider_display_name, "Read Only");
+        assert_eq!(attestation.name, "read_record");
+        assert_eq!(attestation.provider_config_hash, provider_config_hash);
+        assert!(!attestation.input_schema.to_string().contains("untrusted"));
+
+        let input = McpCapabilityBindingInput {
+            id: None,
+            provider_id: "readonly".into(),
+            mcp_tool_name: "read_record".into(),
+            input_schema: attestation.input_schema.clone(),
+            argument_mapping: serde_json::json!({}),
+            risk_class: "read_only".into(),
+            read_only: true,
+            user_trusted: true,
+            attested_binding_config_hash: "different-review".into(),
+        };
+        assert_eq!(
+            upsert_binding(&db, &input, &reviewed, &provider_config_hash)
+                .expect_err("a stale or substituted confirmation must fail")
+                .to_string(),
+            "external_tool_attestation_changed"
+        );
+
+        let input = McpCapabilityBindingInput {
+            attested_binding_config_hash: attestation.binding_config_hash,
+            ..input
+        };
+        upsert_binding(&db, &input, &reviewed, &provider_config_hash)
+            .expect("the exact reviewed attestation may become user-trusted");
+    }
+
+    #[test]
     fn corrupted_binding_json_fails_closed_instead_of_becoming_null() {
         let db = Database::open_in_memory().unwrap();
         provider(&db);
@@ -1246,6 +1654,7 @@ mod tests {
                 risk_class: "read_only".into(),
                 read_only: true,
                 user_trusted: true,
+                attested_binding_config_hash: String::new(),
             },
         )
         .expect("binding");
@@ -1276,6 +1685,7 @@ mod tests {
             risk_class: "read_only".into(),
             read_only: true,
             user_trusted: true,
+            attested_binding_config_hash: String::new(),
         };
         let reviewed =
             review_discovered_tool(&input.mcp_tool_name, &input.input_schema, Some(true))
@@ -1333,13 +1743,7 @@ mod tests {
             &credential_refs_json,
         );
         let binding_config_hash = binding_hash(
-            (
-                "binding",
-                "readonly",
-                "external_read_record_deadbeef",
-                "provider-hash",
-                &provider_launch_hash,
-            ),
+            ("readonly", "provider-hash", &provider_launch_hash),
             (
                 "read_record",
                 &input_schema,
@@ -1347,21 +1751,60 @@ mod tests {
                 &output_policy,
             ),
         );
+        let run_id = "run".to_string();
+        let binding_id = "binding".to_string();
+        let provider_id = "readonly".to_string();
+        let exposed_name = "external_read_record_deadbeef".to_string();
+        let mcp_tool_name = "read_record".to_string();
+        let provider_config_hash = "provider-hash".to_string();
+        let capability = EXTERNAL_READ_CAPABILITY.to_string();
+        let risk_class = "read_only".to_string();
+        let frozen_at = "2026-07-30T00:00:00+00:00".to_string();
+        let snapshot_integrity_hash = snapshot_integrity_hash(
+            (
+                &run_id,
+                &binding_id,
+                &provider_id,
+                &exposed_name,
+                &mcp_tool_name,
+            ),
+            (
+                &input_schema.to_string(),
+                &argument_mapping.to_string(),
+                &output_policy.to_string(),
+                &binding_config_hash,
+            ),
+            (&capability, &risk_class, 1, 1),
+            (
+                &provider_config_hash,
+                &provider_launch_hash,
+                &transport_kind,
+                &transport_config_json,
+                &credential_refs_json,
+            ),
+            &frozen_at,
+        );
         FrozenMcpToolSnapshot {
-            binding_id: "binding".into(),
-            provider_id: "readonly".into(),
-            exposed_name: "external_read_record_deadbeef".into(),
-            mcp_tool_name: "read_record".into(),
+            run_id,
+            binding_id,
+            provider_id,
+            exposed_name,
+            mcp_tool_name,
             input_schema,
             argument_mapping,
             output_policy,
-            provider_config_hash: "provider-hash".into(),
+            provider_config_hash,
             provider_launch_hash,
             transport_kind,
             transport_config_json,
             credential_refs_json,
             binding_config_hash,
+            capability,
+            risk_class,
+            read_only: true,
             user_trusted: true,
+            frozen_at,
+            snapshot_integrity_hash,
         }
     }
 
@@ -1457,6 +1900,7 @@ mod tests {
                 risk_class: "read_only".into(),
                 read_only: true,
                 user_trusted: true,
+                attested_binding_config_hash: String::new(),
             },
         )
         .expect("binding");
@@ -1482,6 +1926,7 @@ mod tests {
                 risk_class: "read_only".into(),
                 read_only: true,
                 user_trusted: true,
+                attested_binding_config_hash: String::new(),
             },
         )
         .expect("update");

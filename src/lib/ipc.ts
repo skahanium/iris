@@ -835,6 +835,9 @@ export interface WebEvidenceProviderDiagnostics {
 }
 
 export interface McpReadOnlyToolCandidate {
+  providerDisplayName: string;
+  providerConfigHash: string;
+  bindingConfigHash: string;
   name: string;
   inputSchema: Record<string, unknown>;
   riskClass: "read_only";
@@ -856,6 +859,7 @@ export interface McpCapabilityBindingInput {
   riskClass: "read_only";
   readOnly: true;
   userTrusted: true;
+  attestedBindingConfigHash: string;
 }
 
 export interface McpCapabilityBindingSummary {

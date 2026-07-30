@@ -156,7 +156,10 @@ export type RiskClass =
   | "external_side_effect";
 export type Modality = "text" | "image";
 export type MaterialNeed = "exemplar" | "authority" | "reference" | "web";
-export type VerificationRequirement = "none" | "current_run_web";
+export type VerificationRequirement =
+  | "none"
+  | "current_run_web"
+  | "current_run_external";
 export type CapabilityId = string;
 
 export interface ExplicitConstraint {

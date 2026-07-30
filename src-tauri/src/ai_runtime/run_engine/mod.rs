@@ -856,6 +856,25 @@ impl RunEngine {
             &final_evidence_ids,
             sink,
         )?;
+        if executor.requires_external_evidence()
+            && !AgentEvidenceRepository::has_current_run_external_evidence(
+                db,
+                run_id,
+                &executor.evidence_ids(),
+            )?
+        {
+            return fail_finalization_with_sink(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::EvidenceValidation,
+                    SafeRunErrorCode::EvidenceInvalid,
+                    "agent_run_external_evidence_required",
+                ),
+            );
+        }
         content = match validated_final_model_answer_with_telemetry(&content, telemetry) {
             Ok(content) => content,
             Err(failure) => {

@@ -464,9 +464,20 @@ export function McpProfilesPanel({
     tool: McpReadOnlyToolCandidate,
   ) => {
     if (typeof mcpCapabilityBindingUpsert !== "function") return;
+    const sanitizedSchema = JSON.stringify(tool.inputSchema, null, 2);
     if (
       !window.confirm(
-        "仅当你信任此 MCP 提供方，并已独立确认该工具不会写入、发送、删除、修改日历、启动进程或读取秘密时继续。服务端的只读标记只是声明，Iris 无法验证其实现。确认将它加入外部只读白名单？",
+        [
+          "请审核并确认此外部只读工具：",
+          `提供方：${tool.providerDisplayName}`,
+          `真实工具稳定 ID：${tool.name}`,
+          `提供方配置哈希：${tool.providerConfigHash}`,
+          `绑定配置哈希：${tool.bindingConfigHash}`,
+          "清洗后的输入 Schema：",
+          sanitizedSchema,
+          "",
+          "仅当你信任此 MCP 提供方，并已独立确认该工具不会写入、发送、删除、修改日历、启动进程或读取秘密时继续。服务端的只读标记只是声明，Iris 无法验证其实现。确认将它加入外部只读白名单？",
+        ].join("\n"),
       )
     ) {
       return;
@@ -482,6 +493,7 @@ export function McpProfilesPanel({
         riskClass: tool.riskClass,
         readOnly: tool.readOnly,
         userTrusted: true,
+        attestedBindingConfigHash: tool.bindingConfigHash,
       });
       await refreshExternalBindings(providerId);
       setMessage("只读工具绑定已保存；仍需在 Composer 为每个 Run 单独授权。");

@@ -2065,6 +2065,7 @@ mod tests {
             .flatten()
             .collect::<Vec<_>>();
         for column in [
+            "snapshot_integrity_hash",
             "binding_config_hash",
             "provider_config_hash",
             "provider_launch_hash",

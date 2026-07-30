@@ -10,7 +10,7 @@ use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProvi
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
     execute_normal_run, execute_normal_run_with_eval_telemetry,
-    required_web_query_from_user_history,
+    required_web_query_from_user_history, strict_follow_up_capabilities,
 };
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
@@ -98,6 +98,23 @@ fn required_web_query_uses_last_substantive_turn_for_a_retry_instruction() {
         required_web_query_from_user_history("你再试试?", &history),
         "详细讲一下 OpenAI AI 智能体越狱事件\n你再试试?"
     );
+}
+
+#[test]
+fn strict_web_follow_up_surface_keeps_only_vault_and_explicit_external_reads() {
+    let capabilities = strict_follow_up_capabilities(&[
+        CapabilityId::new("runtime.read"),
+        CapabilityId::new("vault.read"),
+        CapabilityId::new("web.search"),
+        CapabilityId::new("external.read"),
+        CapabilityId::new("note.apply_patch"),
+    ]);
+    let names = capabilities
+        .iter()
+        .map(CapabilityId::as_str)
+        .collect::<Vec<_>>();
+
+    assert_eq!(names, ["vault.read", "external.read"]);
 }
 
 fn install_headless_contract_mcp(state: &AppState) {

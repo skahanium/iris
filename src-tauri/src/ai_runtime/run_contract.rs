@@ -75,6 +75,9 @@ pub(crate) enum VerificationRequirement {
     /// A successful `web_search` in this exact Run must register usable HTTPS
     /// evidence before a final answer is accepted.
     CurrentRunWeb,
+    /// A successful explicitly granted `external.read` call in this exact Run
+    /// must register usable evidence before a final answer is accepted.
+    CurrentRunExternal,
 }
 
 /// Stable explanation for the deterministic Web decision attached to a Run.

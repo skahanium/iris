@@ -739,6 +739,15 @@ impl ExclusionClassifier {
         // Every non-excluded factual request is strict. Do not try to infer
         // freshness from keywords such as "latest" or "World Cup": those
         // heuristics are exactly how recently completed events were missed.
+        // An explicit external grant is itself the user's evidence source
+        // selection. It must not silently expand into a Web requirement, but
+        // the final answer still requires evidence from that exact Run.
+        if !request.external_tool_grants.is_empty()
+            && !explicit_web
+            && !contains_any(directive_text, &["http://", "https://"])
+        {
+            return offline_requires_external(WebDecisionReason::StrictExternalFact);
+        }
         if !request.web_enabled {
             return offline_requires_web(WebDecisionReason::UserDisabled);
         }
@@ -901,6 +910,14 @@ fn offline_requires_web(reason: WebDecisionReason) -> WebIntentDecision {
         freshness: Freshness::Offline,
         reason,
         verification_requirement: VerificationRequirement::CurrentRunWeb,
+    }
+}
+
+fn offline_requires_external(reason: WebDecisionReason) -> WebIntentDecision {
+    WebIntentDecision {
+        freshness: Freshness::Offline,
+        reason,
+        verification_requirement: VerificationRequirement::CurrentRunExternal,
     }
 }
 

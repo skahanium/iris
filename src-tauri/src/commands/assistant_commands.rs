@@ -18,6 +18,27 @@ use crate::ai_runtime::run_intake::{NormalRunControlOutcome, RunIntake};
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+
+/// Runtime adapter used by the start command to preserve the real desktop
+/// handle in production while allowing the same IPC path to run headlessly.
+pub trait AssistantRunRuntime: tauri::Runtime {
+    /// Return the concrete desktop handle used by normal-domain tool dispatch.
+    fn normal_run_app_handle(app_handle: &AppHandle<Self>) -> Option<AppHandle>;
+}
+
+impl AssistantRunRuntime for tauri::Wry {
+    fn normal_run_app_handle(app_handle: &AppHandle<Self>) -> Option<AppHandle> {
+        Some(app_handle.clone())
+    }
+}
+
+#[cfg(test)]
+impl AssistantRunRuntime for tauri::test::MockRuntime {
+    fn normal_run_app_handle(_app_handle: &AppHandle<Self>) -> Option<AppHandle> {
+        None
+    }
+}
+
 /// List request for the unified, domain-routed conversation history API.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -317,9 +338,9 @@ pub async fn assistant_session_retract(
 }
 /// Accept and start one normal-domain Agent Run.
 #[tauri::command]
-pub async fn assistant_run_start(
+pub async fn assistant_run_start<R: AssistantRunRuntime>(
     state: State<'_, Arc<AppState>>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     request: AssistantRunStartRequest,
 ) -> AppResult<AssistantRunAccepted> {
     let sink = TauriRunEventSink::new(&app_handle);
@@ -760,9 +781,9 @@ async fn dispatch_normal_run_service<'a, R, S, Execute, Execution>(
     execute(state, accepted, vault, Some(app_handle), sink).await;
 }
 
-fn spawn_normal_direct_run(
+fn spawn_normal_direct_run<R: AssistantRunRuntime>(
     state: Arc<AppState>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     accepted: AssistantRunAccepted,
     vault: Option<std::path::PathBuf>,
 ) {
@@ -774,17 +795,25 @@ fn spawn_normal_direct_run(
             vault,
             app_handle.clone(),
             &sink,
-            crate::ai_runtime::normal_run_service::execute_normal_run,
+            |state, accepted, vault, _, sink| {
+                crate::ai_runtime::normal_run_service::execute_normal_run(
+                    state,
+                    accepted,
+                    vault,
+                    R::normal_run_app_handle(&app_handle),
+                    sink,
+                )
+            },
         )
         .await;
     });
 }
 
 /// Start a volatile, single-document classified execution after acceptance.
-fn spawn_classified_direct_run(
+fn spawn_classified_direct_run<R: tauri::Runtime>(
     state: Arc<AppState>,
     vault: std::path::PathBuf,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     accepted: AssistantRunAccepted,
     model_override: Option<crate::ai_runtime::run_contract::ModelOverride>,
 ) {
@@ -1006,18 +1035,31 @@ mod normal_run_desktop_adapter_tests {
     use std::time::Duration;
 
     use super::{
-        assistant_run_control, dispatch_normal_run_service, evaluate_normal_run_policy,
-        execute_confirmed_change_with_sink,
+        assistant_run_control, assistant_run_start, dispatch_normal_run_service,
+        evaluate_normal_run_policy, execute_confirmed_change_with_sink,
     };
+    use crate::ai_runtime::agent_capacity_eval::{spawn_llm_protocol_double, HttpResponseScript};
     use crate::ai_runtime::agent_run_repository::{
         AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
         DurableApplyCheckpointStage,
     };
     use crate::ai_runtime::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
+    use crate::ai_runtime::mcp_external_tools::{
+        review_discovered_tool, upsert_binding, McpCapabilityBindingInput,
+        McpCapabilityBindingSummary,
+    };
+    use crate::ai_runtime::mcp_host_runtime::{
+        discover_provider_tools_without_recording_with_config_hash, McpHostRuntimeOptions,
+        DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
+    };
+    use crate::ai_runtime::mcp_runtime_registry::{
+        upsert_web_evidence_provider, WebEvidenceProviderInput,
+    };
     use crate::ai_runtime::run_contract::{
         AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent,
         AssistantRunStartRequest, AssistantTurnDraft, Effect, ExplicitAction, ExplicitTarget,
-        RunControlAction, RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain,
+        ExternalToolGrantRef, RunControlAction, RunEventPayload, RunEventType, RunRecoveryKind,
+        RunState, SecurityDomain,
     };
     use crate::ai_runtime::run_engine::RunEngine;
     use crate::ai_runtime::run_engine::RunEventSink;
@@ -1025,6 +1067,7 @@ mod normal_run_desktop_adapter_tests {
     use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
     use crate::app::AppState;
     use crate::error::AppResult;
+    use crate::llm::config::{LlmRoutingConfig, ModelReference, ProviderOverride};
     use tauri::webview::InvokeRequest;
 
     struct NoopSink;
@@ -1077,6 +1120,289 @@ mod normal_run_desktop_adapter_tests {
         .await;
 
         assert!(observed_present.get());
+    }
+
+    async fn install_production_external_binding(state: &AppState) -> McpCapabilityBindingSummary {
+        let fixture = format!(
+            "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        upsert_web_evidence_provider(
+            &state.db,
+            &WebEvidenceProviderInput {
+                id: "assistant-start-external".into(),
+                name: "Assistant Start External".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: serde_json::json!({
+                    "command": "/bin/sh",
+                    "args": [fixture, "search-only"]
+                })
+                .to_string(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: None,
+                web_fetch_mapping_json: None,
+            },
+        )
+        .expect("external MCP provider");
+        let (discovery, provider_config_hash) =
+            discover_provider_tools_without_recording_with_config_hash(
+                &state.db,
+                "assistant-start-external",
+                McpHostRuntimeOptions {
+                    request_timeout: Duration::from_secs(5),
+                    max_stdout_line_bytes: 64 * 1024,
+                    max_stderr_bytes: 8 * 1024,
+                    cwd: None,
+                    stdio_session_pool: true,
+                    stdio_session_idle_timeout: DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
+                },
+            )
+            .await
+            .expect("real stdio MCP discovery");
+        let discovered = discovery
+            .tools
+            .into_iter()
+            .find(|tool| tool.name == "search")
+            .expect("search tool");
+        let reviewed = review_discovered_tool(
+            &discovered.name,
+            &discovered.input_schema,
+            discovered.read_only_hint,
+        )
+        .expect("read-only review");
+        let input = McpCapabilityBindingInput {
+            id: None,
+            provider_id: "assistant-start-external".into(),
+            mcp_tool_name: discovered.name,
+            input_schema: reviewed.input_schema.clone(),
+            argument_mapping: serde_json::json!({}),
+            risk_class: "read_only".into(),
+            read_only: true,
+            user_trusted: true,
+            attested_binding_config_hash: String::new(),
+        };
+        let attestation = crate::ai_runtime::mcp_external_tools::attest_reviewed_tool(
+            &state.db,
+            &input.provider_id,
+            &reviewed,
+            &provider_config_hash,
+            &input.argument_mapping,
+        )
+        .expect("binding attestation");
+        let input = McpCapabilityBindingInput {
+            attested_binding_config_hash: attestation.binding_config_hash,
+            ..input
+        };
+        upsert_binding(&state.db, &input, &reviewed, &provider_config_hash)
+            .expect("trusted binding")
+    }
+
+    fn configure_test_llm(state: &AppState, base_url: String, model_id: &str) {
+        let mut routing = LlmRoutingConfig::default();
+        routing.providers.clear();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some(base_url),
+                enabled_models: Some(vec![model_id.into()]),
+                ..Default::default()
+            },
+        );
+        routing.default_model = Some(ModelReference {
+            provider_id: "custom".into(),
+            model_id: model_id.into(),
+        });
+        crate::llm::config::save(&state.db, &routing).expect("normal service route");
+        state.set_test_streaming_client(reqwest::Client::new());
+    }
+
+    fn invoke_start(
+        webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
+        request: AssistantRunStartRequest,
+    ) -> AssistantRunAccepted {
+        let response = tauri::test::get_ipc_response(
+            webview,
+            InvokeRequest {
+                cmd: "assistant_run_start".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "tauri://localhost".parse().expect("invoke URL"),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "request": request })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.into(),
+            },
+        )
+        .expect("assistant_run_start IPC response");
+        let tauri::ipc::InvokeResponseBody::Json(response) = response else {
+            panic!("assistant_run_start must return JSON");
+        };
+        serde_json::from_str(&response).expect("accepted response")
+    }
+
+    async fn wait_for_terminal(state: &AppState, accepted: &AssistantRunAccepted) -> RunState {
+        for _ in 0..200 {
+            let current = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
+                .expect("poll run")
+                .expect("accepted run");
+            if current.run.state.is_terminal() {
+                return current.run.state;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("assistant run did not reach a terminal state");
+    }
+
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn assistant_run_start_reaches_frozen_stdio_external_tool_and_enforces_exact_run_grant_evidence(
+    ) {
+        let directory = tempfile::tempdir().expect("temporary app directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        let binding = install_production_external_binding(&state).await;
+        let first_tool_packet = serde_json::json!({
+            "choices":[{
+                "delta":{
+                    "tool_calls":[{
+                        "index":0,
+                        "id":"assistant-start-external-call",
+                        "type":"function",
+                        "function":{
+                            "name":binding.exposed_name,
+                            "arguments":"{\"query\":\"synthetic\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let first_tool_sse = format!("data: {first_tool_packet}\n\ndata: [DONE]\n\n");
+        let llm = spawn_llm_protocol_double(vec![
+            HttpResponseScript::sse(&first_tool_sse),
+            HttpResponseScript::sse(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"外部工具事实已核实。\"}}]}\n\ndata: [DONE]\n\n",
+            ),
+        ])
+        .await
+        .expect("local LLM boundary");
+        configure_test_llm(
+            &state,
+            llm.base_url.clone(),
+            "assistant-start-external-model",
+        );
+        let app = tauri::test::mock_builder()
+            .manage(Arc::clone(&state))
+            .invoke_handler(tauri::generate_handler![assistant_run_start])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock application");
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .expect("mock webview");
+        let granted_request = AssistantRunStartRequest {
+            client_request_id: "assistant-start-external-granted".into(),
+            session: None,
+            turn: AssistantTurnDraft {
+                message: "请用我授权的外部只读工具核实 synthetic 事实".into(),
+                content_parts: None,
+                explicit_references: Vec::new(),
+                retrieval_scope: Default::default(),
+                display_mentions: Vec::new(),
+            },
+            explicit_action: None,
+            web_enabled: false,
+            model_override: None,
+            external_tool_grants: vec![ExternalToolGrantRef {
+                binding_id: binding.id.clone(),
+                binding_config_hash: binding.binding_config_hash.clone(),
+            }],
+            security_domain: SecurityDomain::Normal,
+            classified_context_ref: None,
+        };
+        let granted = invoke_start(&webview, granted_request.clone());
+        assert_eq!(
+            wait_for_terminal(&state, &granted).await,
+            RunState::Completed
+        );
+        let calls = llm.finish().await.expect("LLM completion");
+        assert_eq!(calls.len(), 2);
+        let granted_tools = calls[0].body["tools"]
+            .as_array()
+            .expect("granted model tool surface");
+        assert!(granted_tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == binding.exposed_name));
+        assert!(!granted_tools
+            .iter()
+            .any(|tool| tool["function"]["name"] == "web_search"));
+        let external_evidence_count = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM agent_run_evidence
+                     WHERE run_id = ?1 AND registration_source = 'external_tool'",
+                    [&granted.run_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("external evidence count");
+        assert_eq!(external_evidence_count, 1);
+
+        let mut ungranted_request = granted_request.clone();
+        ungranted_request.client_request_id = "assistant-start-external-ungranted".into();
+        ungranted_request.external_tool_grants.clear();
+        let ungranted = invoke_start(&webview, ungranted_request);
+        assert_eq!(
+            wait_for_terminal(&state, &ungranted).await,
+            RunState::Failed
+        );
+        let ungranted_tools =
+            crate::ai_runtime::tool_executor::ToolRegistry::for_run(&state.db, &ungranted.run_id)
+                .expect("ungranted registry")
+                .tools_for_authorized_capabilities(
+                    &[crate::ai_runtime::run_contract::CapabilityId::new(
+                        "external.read",
+                    )],
+                    true,
+                );
+        assert!(ungranted_tools
+            .iter()
+            .all(|tool| tool.name != binding.exposed_name));
+
+        let bypass_llm = spawn_llm_protocol_double(vec![HttpResponseScript::sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"未经工具核实的事实。\"}}]}\n\ndata: [DONE]\n\n",
+        )])
+        .await
+        .expect("bypass LLM boundary");
+        configure_test_llm(
+            &state,
+            bypass_llm.base_url.clone(),
+            "assistant-start-external-bypass-model",
+        );
+        let mut bypass_request = granted_request;
+        bypass_request.client_request_id = "assistant-start-external-bypass".into();
+        let bypass = invoke_start(&webview, bypass_request);
+        assert_eq!(wait_for_terminal(&state, &bypass).await, RunState::Failed);
+        let bypass_calls = bypass_llm.finish().await.expect("bypass LLM completion");
+        assert_eq!(bypass_calls.len(), 1);
+        assert!(bypass_calls[0].body["tools"]
+            .as_array()
+            .expect("bypass tool surface")
+            .iter()
+            .any(|tool| tool["function"]["name"] == binding.exposed_name));
+        let bypass_evidence_count = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row(
+                    "SELECT COUNT(*) FROM agent_run_evidence
+                     WHERE run_id = ?1 AND registration_source = 'external_tool'",
+                    [&bypass.run_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("bypass evidence count");
+        assert_eq!(bypass_evidence_count, 0);
     }
 
     fn durable_apply_fixture() -> (

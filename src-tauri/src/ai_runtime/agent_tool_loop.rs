@@ -106,6 +106,17 @@ pub(crate) trait ToolLoopExecutor: Send + Sync {
         false
     }
 
+    /// Whether a final model answer is invalid until this executor has
+    /// registered evidence from an explicitly granted external read tool.
+    fn requires_external_evidence(&self) -> bool {
+        false
+    }
+
+    /// Whether this Run registered usable evidence through `external.read`.
+    fn has_external_evidence(&self) -> bool {
+        false
+    }
+
     /// Emit a deferred Web degradation notice after the tool loop succeeds.
     /// Returns `true` when a `capability_degraded` event was emitted for this Run.
     /// Default executors have nothing to report.
@@ -273,6 +284,9 @@ impl AgentToolLoop {
             if response.tool_calls.is_empty() {
                 if executor.requires_web_evidence() && !executor.has_web_evidence() {
                     return Err(AppError::msg("agent_run_web_evidence_required"));
+                }
+                if executor.requires_external_evidence() && !executor.has_external_evidence() {
+                    return Err(AppError::msg("agent_run_external_evidence_required"));
                 }
                 let content = response.content.unwrap_or_default();
                 if content.trim().is_empty() {

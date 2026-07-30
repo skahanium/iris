@@ -63,6 +63,7 @@ struct LargeResultExecutor;
 struct LargeWebResultExecutor;
 struct OversizedWebResultExecutor;
 struct RequiredWebExecutor;
+struct RequiredExternalExecutor;
 
 impl ToolLoopExecutor for RequiredWebExecutor {
     fn execute<'a>(
@@ -75,6 +76,21 @@ impl ToolLoopExecutor for RequiredWebExecutor {
     }
 
     fn requires_web_evidence(&self) -> bool {
+        true
+    }
+}
+
+impl ToolLoopExecutor for RequiredExternalExecutor {
+    fn execute<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _call: &'a ToolCall,
+        _step: u32,
+    ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
+        Box::pin(async { unreachable!("external evidence is required before finalization") })
+    }
+
+    fn requires_external_evidence(&self) -> bool {
         true
     }
 }
@@ -449,6 +465,35 @@ async fn web_required_rejects_a_final_answer_without_registered_evidence() {
         .await
         .expect_err("web-required must not silently finalize");
     assert_eq!(error.to_string(), "agent_run_web_evidence_required");
+}
+
+#[tokio::test]
+async fn external_required_rejects_a_final_answer_without_registered_evidence() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: Some("unverified external answer".into()),
+            tool_calls: Vec::new(),
+            usage: Default::default(),
+            finish_reason: "stop".into(),
+            reasoning_content: None,
+            continuation: None,
+        }])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let mut observer = NoopObserver;
+    let error = standard_tool_loop()
+        .execute(
+            &provider,
+            &RequiredExternalExecutor,
+            "run-required-external",
+            Vec::new(),
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect_err("external-required must not silently finalize");
+    assert_eq!(error.to_string(), "agent_run_external_evidence_required");
 }
 
 #[tokio::test]
