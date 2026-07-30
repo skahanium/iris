@@ -99,15 +99,11 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
     expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
   });
 
-  it("renders final assistant content synchronously", () => {
+  it("keeps final assistant history off the main-thread renderer while worker output is pending", () => {
     renderBubble({ content: "**final**", streaming: false });
 
-    expect(renderMarkdownWithProfileMock).toHaveBeenCalledWith(
-      "**final**",
-      "chat_assistant",
-      { streaming: false },
-    );
-    expect(container.innerHTML).toContain("sync-rendered");
+    expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("正在渲染回答…");
   });
 
   it("falls back to synchronous rendering when the streaming worker failed", () => {

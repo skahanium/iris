@@ -19,12 +19,20 @@ describe("editor media rendering contract", () => {
 
     expect(extension).toContain('"iris-editor-media-frame"');
     expect(extension).toContain('"iris-editor-media-image"');
+    expect(extension).toContain("isRemoteGifSrc");
+    expect(extension).toContain("dataset.mediaFit");
     expect(wikiExtension).toContain("iris-editor-media-frame");
     expect(css).toContain(".iris-editor-media-frame");
     expect(css).toContain(".iris-editor-media-image");
     expect(css).toContain("background: hsl(var(--background))");
     expect(css).toContain(".iris-editor-media-frame[data-media-error");
     expect(css).toContain("object-fit: contain");
+    expect(css).toMatch(
+      /\.iris-editor-body[\s\S]*?\.iris-editor-media-frame\[data-media-fit="cover"\][\s\S]*?aspect-ratio: var\(--iris-media-aspect-ratio, 16 \/ 9\)/,
+    );
+    expect(css).toMatch(
+      /\.iris-editor-body[\s\S]*?\.iris-editor-media-image\[data-media-fit="cover"\][\s\S]*?object-fit: cover[\s\S]*?transform: scale\(1\.03\)/,
+    );
 
     // Loaded images follow natural aspect ratio; only placeholder states lock 16:9.
     expect(css).toContain("aspect-ratio: unset");

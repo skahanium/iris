@@ -33,6 +33,24 @@ describe("AI message left rail layout contract", () => {
   });
 
   describe("select/copy/retract controls are outside .ai-message-bubble", () => {
+    it("sizes a short user bubble against the full message row", async () => {
+      await act(async () => {
+        root.render(
+          <AiMessageList
+            messages={[{ role: "user", content: "你好？" }]}
+            streaming={false}
+            selectedIndices={new Set()}
+          />,
+        );
+      });
+
+      const bubble = host.querySelector<HTMLElement>(".ai-message-bubble-user");
+      expect(bubble).not.toBeNull();
+      expect(bubble?.classList.contains("w-fit")).toBe(true);
+      expect(bubble?.classList.contains("w-full")).toBe(false);
+      expect(bubble?.parentElement?.classList.contains("flex-1")).toBe(true);
+    });
+
     it("select control is outside the bubble for user messages", async () => {
       await act(async () => {
         root.render(

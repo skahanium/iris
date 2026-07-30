@@ -5,6 +5,7 @@ import type {
   MarkdownRenderWorkerRequest,
   MarkdownRenderWorkerResponse,
 } from "@/lib/markdown-render-worker-core";
+import { markdownContentHash } from "@/lib/markdown-render-worker-core";
 
 interface UseMarkdownRenderWorkerOptions {
   content: string;
@@ -16,6 +17,7 @@ interface MarkdownWorkerState {
   failed: boolean;
   html: string | null;
   pending: boolean;
+  contentHash: string;
 }
 
 function createMarkdownRenderWorker(): Worker {
@@ -34,29 +36,75 @@ function safeTerminate(worker: Worker | null): void {
   }
 }
 
+type WorkerListener = (response: MarkdownRenderWorkerResponse) => void;
+
+let sharedWorker: Worker | null = null;
+let sharedRequestId = 0;
+let sharedSubscriptions = 0;
+const sharedListeners = new Map<number, WorkerListener>();
+
+function failSharedWorker(worker: Worker | null): void {
+  if (!worker || sharedWorker !== worker) return;
+  safeTerminate(worker);
+  sharedWorker = null;
+  const listeners = Array.from(sharedListeners.values());
+  sharedListeners.clear();
+  for (const listener of listeners) {
+    listener({ type: "error", id: -1, message: "Markdown Worker 不可用" });
+  }
+}
+
+function acquireSharedWorker(): Worker {
+  if (sharedWorker) {
+    sharedSubscriptions += 1;
+    return sharedWorker;
+  }
+  const worker = createMarkdownRenderWorker();
+  worker.onmessage = (event: MessageEvent<MarkdownRenderWorkerResponse>) => {
+    const response = event.data;
+    const listener = sharedListeners.get(response.id);
+    if (!listener) return;
+    sharedListeners.delete(response.id);
+    listener(response);
+  };
+  worker.onerror = () => failSharedWorker(worker);
+  sharedWorker = worker;
+  sharedSubscriptions += 1;
+  return worker;
+}
+
+function releaseSharedWorker(worker: Worker): void {
+  sharedSubscriptions = Math.max(0, sharedSubscriptions - 1);
+  queueMicrotask(() => {
+    if (sharedSubscriptions === 0 && sharedWorker === worker) {
+      safeTerminate(worker);
+      sharedWorker = null;
+    }
+  });
+}
+
 export function useMarkdownRenderWorker({
   content,
   enabled,
   streaming,
 }: UseMarkdownRenderWorkerOptions): MarkdownWorkerState {
-  const workerRef = useRef<Worker | null>(null);
-  const requestIdRef = useRef(0);
   const lastHtmlRef = useRef<string | null>(null);
+  const contentHash = markdownContentHash(content);
   const [state, setState] = useState<MarkdownWorkerState>({
     failed: false,
     html: null,
-    pending: false,
+    pending: enabled,
+    contentHash,
   });
 
   useEffect(() => {
-    if (!enabled || !streaming) {
-      safeTerminate(workerRef.current);
-      workerRef.current = null;
+    if (!enabled) {
       lastHtmlRef.current = null;
       setState({
         failed: false,
         html: null,
         pending: false,
+        contentHash,
       });
       return;
     }
@@ -66,46 +114,39 @@ export function useMarkdownRenderWorker({
       if (disposed) return;
       setState({
         failed: true,
-        html: lastHtmlRef.current,
+        html: null,
         pending: false,
+        contentHash,
       });
     };
 
     if (typeof Worker === "undefined") {
-      safeTerminate(workerRef.current);
-      workerRef.current = null;
-      lastHtmlRef.current = null;
       failRender();
       return () => {
         disposed = true;
       };
     }
 
-    if (!workerRef.current) {
-      try {
-        workerRef.current = createMarkdownRenderWorker();
-      } catch {
-        workerRef.current = null;
-        failRender();
-        return () => {
-          disposed = true;
-        };
-      }
+    let worker: Worker;
+    try {
+      worker = acquireSharedWorker();
+    } catch {
+      failRender();
+      return () => {
+        disposed = true;
+      };
     }
-
-    const worker = workerRef.current;
-    const id = requestIdRef.current + 1;
-    requestIdRef.current = id;
-    setState((prev) => ({
+    const id = sharedRequestId + 1;
+    sharedRequestId = id;
+    setState({
       failed: false,
-      html: prev.html ?? lastHtmlRef.current,
+      html: null,
       pending: true,
-    }));
+      contentHash,
+    });
 
-    worker.onmessage = (event: MessageEvent<MarkdownRenderWorkerResponse>) => {
+    const receive = (response: MarkdownRenderWorkerResponse) => {
       if (disposed) return;
-      const response = event.data;
-      if (response.id !== requestIdRef.current) return;
 
       if (response.type === "rendered") {
         lastHtmlRef.current = response.html;
@@ -113,6 +154,7 @@ export function useMarkdownRenderWorker({
           failed: false,
           html: response.html,
           pending: false,
+          contentHash,
         });
         return;
       }
@@ -126,18 +168,13 @@ export function useMarkdownRenderWorker({
         failed: false,
         html: prev.html ?? lastHtmlRef.current,
         pending: false,
+        contentHash,
       }));
     };
 
-    worker.onerror = () => {
-      failRender();
-      if (workerRef.current === worker) {
-        safeTerminate(workerRef.current);
-        workerRef.current = null;
-      }
-    };
-
-    const renderable = createWorkerRenderableContent(content);
+    const renderable = streaming
+      ? createWorkerRenderableContent(content)
+      : { content };
     const request: MarkdownRenderWorkerRequest = {
       type: "render",
       id,
@@ -147,35 +184,31 @@ export function useMarkdownRenderWorker({
     };
 
     try {
+      sharedListeners.set(id, receive);
       worker.postMessage(request);
     } catch {
+      sharedListeners.delete(id);
       failRender();
-      if (workerRef.current === worker) {
-        safeTerminate(workerRef.current);
-        workerRef.current = null;
-      }
+      failSharedWorker(worker);
     }
 
     return () => {
       disposed = true;
+      sharedListeners.delete(id);
       try {
         worker.postMessage({ type: "abort", id });
       } catch {
-        if (workerRef.current === worker) {
-          safeTerminate(workerRef.current);
-          workerRef.current = null;
-        }
+        failSharedWorker(worker);
       }
+      releaseSharedWorker(worker);
     };
-  }, [content, enabled, streaming]);
+  }, [content, contentHash, enabled, streaming]);
 
-  useEffect(() => {
-    return () => {
-      safeTerminate(workerRef.current);
-      workerRef.current = null;
-      lastHtmlRef.current = null;
-    };
-  }, []);
-
-  return state;
+  if (state.contentHash === contentHash) return state;
+  return {
+    failed: false,
+    html: null,
+    pending: enabled,
+    contentHash,
+  };
 }

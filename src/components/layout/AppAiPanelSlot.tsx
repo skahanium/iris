@@ -5,11 +5,12 @@ import type { AiDomain, ContextReference } from "@/types/ai";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileListItem } from "@/types/ipc";
 
-const UnifiedAssistantPanel = lazy(() =>
+const loadAssistantPanel = () =>
   import("@/components/ai/UnifiedAssistantPanel").then((m) => ({
     default: m.UnifiedAssistantPanel,
-  })),
-);
+  }));
+
+const UnifiedAssistantPanel = lazy(() => loadAssistantPanel());
 
 function AssistantPanelLoading() {
   return (

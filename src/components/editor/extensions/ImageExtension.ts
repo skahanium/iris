@@ -10,6 +10,18 @@ function isSafeImageSrc(src: string): boolean {
   return !/^[a-z][a-z0-9+.-]*:/i.test(trimmed);
 }
 
+function isRemoteGifSrc(src: string): boolean {
+  try {
+    const url = new URL(src.trim());
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.pathname.toLowerCase().endsWith(".gif")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isVaultAssetSrc(src: string): boolean {
   const normalized = src.trim().replace(/\\/g, "/");
   if (!normalized.startsWith("assets/")) return false;
@@ -128,6 +140,13 @@ export const ImageExtension = Node.create<ImageExtensionOptions>({
         frame.draggable = true;
         frame.dataset.irisMediaSrc = src;
         frame.dataset.mediaKind = "image";
+        if (isRemoteGifSrc(src)) {
+          frame.dataset.mediaFit = "cover";
+          img.dataset.mediaFit = "cover";
+        } else {
+          delete frame.dataset.mediaFit;
+          delete img.dataset.mediaFit;
+        }
         img.className = "iris-editor-media-image";
         img.draggable = true;
         img.dataset.irisMediaSrc = src;

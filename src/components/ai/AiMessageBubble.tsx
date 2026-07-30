@@ -426,7 +426,7 @@ const AssistantBody = memo(function AssistantBody({
 
   const workerRender = useMarkdownRenderWorker({
     content: boundedMarkdownContent,
-    enabled: streaming,
+    enabled: true,
     streaming,
   });
 
@@ -449,6 +449,10 @@ const AssistantBody = memo(function AssistantBody({
           return '<p class="text-muted-foreground whitespace-pre-wrap">Rendering...</p>';
         }
       }
+    }
+
+    if (!streaming && !workerRender.failed && workerRender.pending) {
+      return '<p class="text-muted-foreground whitespace-pre-wrap">正在渲染回答…</p>';
     }
 
     // Non-streaming or worker failed: render synchronously.
@@ -681,7 +685,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
     return (
       <div
         className={cn(
-          "ai-message-bubble ai-message-bubble-user ai-message-surface-user self-end",
+          "ai-message-bubble ai-message-bubble-user ai-message-surface-user w-fit self-end",
 
           selected && "ring-1 ring-primary/50",
 

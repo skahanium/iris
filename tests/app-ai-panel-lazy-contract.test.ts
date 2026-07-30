@@ -16,4 +16,18 @@ describe("assistant panel lazy loading contract", () => {
     expect(slot).toContain('import("@/components/ai/UnifiedAssistantPanel")');
     expect(slot).toContain("<Suspense fallback={<AssistantPanelLoading />}");
   });
+
+  it("preloads the lazy panel while the vault gate is visible", () => {
+    const slot = read("src/components/layout/AppAiPanelSlot.tsx");
+    const app = read("src/App.impl.tsx");
+    const preload = read("src/lib/preload-assistant-panel.ts");
+
+    expect(preload).toContain("export function preloadAssistantPanel");
+    expect(preload).toContain(
+      'import("@/components/ai/UnifiedAssistantPanel")',
+    );
+    expect(app).toContain("preloadAssistantPanel");
+    expect(app).toContain("scheduleAssistantPanelPreload");
+    expect(slot).toContain('import("@/components/ai/UnifiedAssistantPanel")');
+  });
 });

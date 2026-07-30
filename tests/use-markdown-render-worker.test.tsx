@@ -4,11 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
 
-function WorkerProbe({ content = "# hi" }: { content?: string }) {
+function WorkerProbe({
+  content = "# hi",
+  streaming = true,
+}: {
+  content?: string;
+  streaming?: boolean;
+}) {
   const state = useMarkdownRenderWorker({
     content,
     enabled: true,
-    streaming: true,
+    streaming,
   });
 
   return (
@@ -126,5 +132,36 @@ describe("useMarkdownRenderWorker", () => {
         ),
     );
     expect(renderRequest?.content.length).toBeLessThanOrEqual(40_000);
+  });
+
+  it("renders finalized history through the worker instead of disabling it", async () => {
+    const posted: unknown[] = [];
+    class CapturingWorker {
+      onerror: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+
+      postMessage(message: unknown) {
+        posted.push(message);
+      }
+
+      terminate() {}
+    }
+    Object.defineProperty(globalThis, "Worker", {
+      configurable: true,
+      writable: true,
+      value: CapturingWorker,
+    });
+
+    await act(async () => {
+      root.render(<WorkerProbe content="**final**" streaming={false} />);
+    });
+
+    expect(posted).toContainEqual(
+      expect.objectContaining({
+        type: "render",
+        content: "**final**",
+        streaming: false,
+      }),
+    );
   });
 });

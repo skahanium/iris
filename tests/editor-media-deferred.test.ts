@@ -15,9 +15,12 @@ vi.mock("@/lib/ipc", () => ({
   mediaRelease: (...args: unknown[]) => mediaRelease(...args),
 }));
 
-function createEditorWithImageMediaMode(mediaLoading: "deferred" | "visible") {
+function createEditorWithImageMediaMode(
+  mediaLoading: "deferred" | "visible",
+  bodyMarkdown = "![diagram](assets/example.png)",
+) {
   const { tipTapHtml } = ingestMarkdownForEditor({
-    bodyMarkdown: "![diagram](assets/example.png)",
+    bodyMarkdown,
   });
   return new Editor({
     extensions: [
@@ -32,6 +35,32 @@ function createEditorWithImageMediaMode(mediaLoading: "deferred" | "visible") {
     ],
     content: tipTapHtml,
     parseOptions: EDITOR_PARSE_OPTIONS,
+  });
+}
+
+function createEditorWithRawImageSrc(
+  mediaLoading: "deferred" | "visible",
+  src: string,
+) {
+  return new Editor({
+    extensions: [
+      StarterKit,
+      ImageExtension.configure({
+        mediaLoading,
+        vaultPath: "/Users/example/Vault",
+      } as Parameters<typeof ImageExtension.configure>[0] & {
+        mediaLoading: "deferred" | "visible";
+      }),
+    ],
+    content: {
+      type: "doc",
+      content: [
+        {
+          type: "image",
+          attrs: { src, alt: "animated asset" },
+        },
+      ],
+    },
   });
 }
 
@@ -83,6 +112,55 @@ describe("editor media deferred loading", () => {
       expect(image?.getAttribute("decoding")).toBe("async");
     } finally {
       editor.destroy();
+    }
+  });
+
+  it("marks only remote GIF URLs for stable cover rendering", () => {
+    const cases = [
+      {
+        src: "https://cdn.example.com/demos/intro.GIF?revision=2",
+        expectedFit: "cover",
+      },
+      { src: "https://cdn.example.com/demos/intro.png", expectedFit: null },
+      {
+        src: "https://cdn.example.com/demos/intro.png?format=.gif",
+        expectedFit: null,
+      },
+      {
+        src: "https://cdn.example.com/demos/intro.gif/preview",
+        expectedFit: null,
+      },
+      { src: "assets/intro.gif", expectedFit: null },
+      { src: "file:///Users/example/intro.gif", expectedFit: null },
+    ];
+
+    for (const { src, expectedFit } of cases) {
+      const editor = createEditorWithImageMediaMode(
+        "visible",
+        `![animated asset](${src})`,
+      );
+      try {
+        const frame = editor.view.dom.querySelector(".iris-editor-media-frame");
+        const image = frame?.querySelector("img");
+
+        expect(frame?.getAttribute("data-media-fit")).toBe(expectedFit);
+        expect(image?.getAttribute("data-media-fit")).toBe(expectedFit);
+      } finally {
+        editor.destroy();
+      }
+    }
+
+    const unsafeEditor = createEditorWithRawImageSrc(
+      "visible",
+      "javascript:alert(1).gif",
+    );
+    try {
+      const frame = unsafeEditor.view.dom.querySelector(
+        ".iris-editor-media-frame",
+      );
+      expect(frame?.getAttribute("data-media-fit")).toBeNull();
+    } finally {
+      unsafeEditor.destroy();
     }
   });
 

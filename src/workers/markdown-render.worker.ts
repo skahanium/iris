@@ -8,6 +8,10 @@ import {
 } from "@/lib/markdown-render-worker-core";
 
 let lastRenderedHash: string | null = null;
+let lastRenderedResponse: Extract<
+  MarkdownRenderWorkerResponse,
+  { type: "rendered" }
+> | null = null;
 const abortedIds = new Set<number>();
 
 function pruneAbortedIds(): void {
@@ -35,6 +39,10 @@ self.onmessage = (event: MessageEvent<MarkdownRenderWorkerRequest>) => {
 
   const contentHash = markdownContentHash(request.content);
   if (contentHash === lastRenderedHash) {
+    if (lastRenderedResponse) {
+      post({ ...lastRenderedResponse, id: request.id });
+      return;
+    }
     post({ type: "skipped", id: request.id, reason: "duplicate" });
     return;
   }
@@ -47,6 +55,7 @@ self.onmessage = (event: MessageEvent<MarkdownRenderWorkerRequest>) => {
 
   if (response.type === "rendered") {
     lastRenderedHash = response.contentHash;
+    lastRenderedResponse = response;
   }
   post(response);
 };

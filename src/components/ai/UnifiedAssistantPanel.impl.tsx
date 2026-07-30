@@ -43,6 +43,17 @@ import type { McpCapabilityBindingSummary } from "@/lib/ipc";
 
 const SKILL_QUERY_PREWARM_DELAY_MS = 250;
 
+function scheduleExternalBindingsLoad(load: () => void): () => void {
+  let timer: number | null = null;
+  const frame = window.requestAnimationFrame(() => {
+    timer = window.setTimeout(load, 0);
+  });
+  return () => {
+    window.cancelAnimationFrame(frame);
+    if (timer !== null) window.clearTimeout(timer);
+  };
+}
+
 /** Production assistant panel: one opaque conversation API and one Run lifecycle. */
 export function UnifiedAssistantPanel({
   aiDomain = "normal",
@@ -168,27 +179,30 @@ export function UnifiedAssistantPanel({
         active = false;
       };
     }
-    void mcpCapabilityBindingsList()
-      .then((bindings) => {
-        if (!active) return;
-        const available = bindings.filter(
-          (binding) => binding.providerEnabled && binding.configMatches,
-        );
-        setExternalBindings(available);
-        setSelectedExternalBindingIds((selected) =>
-          selected.filter((id) =>
-            available.some((binding) => binding.id === id),
-          ),
-        );
-      })
-      .catch(() => {
-        if (active) {
-          setExternalBindings([]);
-          setSelectedExternalBindingIds([]);
-        }
-      });
+    const cancelScheduledLoad = scheduleExternalBindingsLoad(() => {
+      void mcpCapabilityBindingsList()
+        .then((bindings) => {
+          if (!active) return;
+          const available = bindings.filter(
+            (binding) => binding.providerEnabled && binding.configMatches,
+          );
+          setExternalBindings(available);
+          setSelectedExternalBindingIds((selected) =>
+            selected.filter((id) =>
+              available.some((binding) => binding.id === id),
+            ),
+          );
+        })
+        .catch(() => {
+          if (active) {
+            setExternalBindings([]);
+            setSelectedExternalBindingIds([]);
+          }
+        });
+    });
     return () => {
       active = false;
+      cancelScheduledLoad();
     };
   }, [aiDomain]);
 

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
@@ -8,7 +8,7 @@ afterEach(() => {
 });
 
 describe("AssistantCitationFooter", () => {
-  it("lists only citations referenced in the answer body", () => {
+  it("keeps referenced citations collapsed until the source summary is expanded", () => {
     render(
       <AssistantCitationFooter
         content="葡萄牙晋级 [1]，教练辞职 [3]。"
@@ -20,7 +20,14 @@ describe("AssistantCitationFooter", () => {
       />,
     );
 
-    expect(screen.getByText("来源")).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "展开来源" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("2 个来源")).toBeInTheDocument();
+    expect(screen.queryByText("Match report")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Match report")).toBeInTheDocument();
     expect(screen.getByText("Coach news")).toBeInTheDocument();
     expect(screen.queryByText("Unused")).not.toBeInTheDocument();
@@ -38,7 +45,7 @@ describe("AssistantCitationFooter", () => {
       />,
     );
 
-    expect(screen.getByText("来源")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开来源" }));
     expect(screen.getByText("Match report")).toBeInTheDocument();
     expect(screen.getByText("Coach news")).toBeInTheDocument();
     expect(screen.queryByText("Unused")).not.toBeInTheDocument();
@@ -59,6 +66,14 @@ describe("AssistantCitationFooter", () => {
         ]}
       />,
     );
+
+    const toggle = screen.getByRole("button", {
+      name: "展开本轮已核验证据",
+    });
+    expect(screen.getByText("2 项证据")).toBeInTheDocument();
+    expect(screen.queryByText("Verified one")).not.toBeInTheDocument();
+
+    fireEvent.click(toggle);
 
     expect(screen.getByText("本轮已核验证据")).toBeInTheDocument();
     expect(screen.getByText("Verified one")).toBeInTheDocument();

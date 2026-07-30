@@ -1434,6 +1434,15 @@
     overflow: hidden;
   }
 
+  /* Remote GIFs use a fixed crop viewport to hide source canvas sidebars. */
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-frame[data-media-fit="cover"] {
+    min-height: 0;
+    aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9);
+    overflow: hidden;
+  }
+
   .iris-editor-body .ProseMirror .iris-editor-media-frame::before {
     position: absolute;
     inset: 0;
@@ -1478,6 +1487,17 @@
     border: 0;
     border-radius: 0;
     backface-visibility: hidden;
+  }
+
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-image[data-media-fit="cover"] {
+    width: 100%;
+    max-height: none;
+    height: 100%;
+    object-fit: cover;
+    transform: scale(1.03);
+    transform-origin: center;
   }
 
   .iris-editor-body

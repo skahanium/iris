@@ -63,6 +63,8 @@ describe("real TipTap editor markdown round-trip", () => {
       "",
       "![diagram](https://example.com/x.png)",
       "",
+      "![animation](https://cdn.example.com/intro.GIF?revision=2)",
+      "",
       "See [[Architecture Notes]].",
       "",
       "> [!tip] Hint",
@@ -78,6 +80,10 @@ describe("real TipTap editor markdown round-trip", () => {
     expect(out).toContain("| 1 | 2 |");
     expect(out).toContain("#### Deep Heading");
     expect(out).toContain("![diagram](https://example.com/x.png)");
+    expect(out).toContain(
+      "![animation](https://cdn.example.com/intro.GIF?revision=2)",
+    );
+    expect(out).not.toContain("data-media-fit");
     expect(out).toContain("[[Architecture Notes]]");
     expect(out).toContain("[!tip]");
     expect(out).toContain("Optional detail");

@@ -14,6 +14,7 @@ import { AppAiPanelSlot } from "@/components/layout/AppAiPanelSlot";
 import { AppEditorWorkspace } from "@/components/layout/AppEditorWorkspace";
 import { AppOverlays } from "@/components/layout/AppOverlays";
 import { preloadManagementCenter } from "@/lib/preload-overlays";
+import { preloadAssistantPanel } from "@/lib/preload-assistant-panel";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
 import { DesktopFrame } from "@/components/layout/DesktopFrame";
@@ -98,6 +99,14 @@ function scheduleManagementCenterPreload(): () => void {
   const handle = scheduler.setTimeout(() => preloadManagementCenter(), 0);
   return () => scheduler.clearTimeout(handle);
 }
+
+function scheduleAssistantPanelPreload(): () => void {
+  const handle = window.requestAnimationFrame(() => {
+    preloadAssistantPanel();
+  });
+  return () => window.cancelAnimationFrame(handle);
+}
+
 function App() {
   useMacOSWindowChromeSync();
   const {
@@ -148,6 +157,7 @@ function App() {
   const editorReadyForPersistenceRef = useRef(false);
   const overlays = useOverlayManager();
   const { status: connectivityStatus } = useConnectivityStatus();
+  useEffect(() => scheduleAssistantPanelPreload(), []);
   useEffect(() => {
     if (!vaultPath) return undefined;
     return scheduleManagementCenterPreload();

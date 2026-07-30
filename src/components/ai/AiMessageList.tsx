@@ -477,7 +477,7 @@ export const AiMessageList = memo(function AiMessageList({
               }
             />
           </div>
-          <div className="flex min-w-0 flex-col items-end gap-1">
+          <div className="flex min-w-0 flex-1 flex-col items-end gap-1">
             <AiMessageBubble
               role="user"
               content={userContent}

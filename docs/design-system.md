@@ -83,18 +83,22 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 可复用控件应优先使用现有 `OverlayChrome`、`IrisSurfaceMenu`、`CommandListOption`、`Kbd`、`AiComposer`、`AiMessageBubble`、`SurfaceCard`、`Tooltip`、`WorkspaceEmpty` 等原语，不能在业务组件重复实现。
 
+### 编辑器媒体
+
+普通图片与本地媒体以真实比例完整显示。仅对 `http(s)` URL 路径以 `.gif` 结尾的网络动图，编辑器使用稳定的 16:9 裁切视口、`object-fit: cover` 和 3% 居中安全超裁切，避免源 GIF 画布或帧间尺寸差异露出并闪烁两侧黑边；不修改 Markdown 或源文件。没有 `.gif` 后缀的 CDN 动图和动画 WebP 不做推测性裁切，仍按普通图片处理。
+
 空主面：无打开文档时渲染 `WorkspaceEmpty`（顶栏仅右侧搜索 + `brandOutline` 新建；`workspace` 最近笔记卡片：标题 + `fileRead` 派生正文预览 `line-clamp-2` + 相对时间；`vault` 仅 muted「还没有笔记」）。禁止恢复四按钮欢迎工作台与「继续写作」hero 标题。空主面新建用 `variant="brandOutline"`；其余肯定性填充按钮（如发送）用 `variant="brand"`，勿散落 `bg-[hsl(var(--brand))]`。
 
 全库搜索 Overlay：检索模式（关键词 | 智能）为左侧低调分段，选中用弱 brand tint，禁止 `variant="default"` 灰蓝实心 pill；执行「搜索」在右侧用 `brandOutline`。加载态用 `aria-busy` 与文案「搜索中…」，禁止 `disabled`+opacity 闪烁。「智能」即语义向量检索（`searchSemantic`）。
 
-AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 brand tint；过程区脚注感（`assistant-process-footnote`）；折叠摘要末项在 Run `completed` 后为「答复完毕」。
+AI 气泡轻分层：助手近透明弱边；用户 `--ai-user-bg` 为极浅 brand tint；过程区脚注感（`assistant-process-footnote`）；折叠摘要末项在 Run `completed` 后为「答复完毕」。用户气泡以内容 `fit-content` 收缩包裹，并保留对消息行可用宽度 88% 的上限；短中文消息不得因任意断词规则而逐字折行，长文本、URL 与代码仍可在上限内安全换行。默认可见的 AI 侧栏必须在 Vault 选择屏期间预热其独立模块；首帧只初始化可交互壳层，MCP binding discovery 等非必要信息在首帧之后再请求。历史助手 Markdown 必须由共享 Worker 异步生成，等待期间显示轻量占位，不能在主线程逐条解析或高亮。
 
 Agent 提交状态必须区分本地与远端事实：`已保存`、`正在连接模型`、`模型响应中`、`已完成`，以及失败后的「未完成，未纳入后续上下文」。只有 SQLite intake 回执成功才能显示“已保存”；它不得暗示 LLM 已收到请求。未知提交结果的重放沿用同一请求 ID，界面不重复插入用户气泡。安全终态失败的最新轮可显示“重试”，旧轮在已有后续对话时只显示“已跳过”。
 
 ### Web 引用（联网来源）
 
 - **行内**：仅显示数字上标徽章（`sup.ai-citation-wrap` + `a.ai-citation`），字号 `--text-caption`，浅底、`--ai-citation` 前景，**无下划线**；与正文 `--prose-link` 外链区分。模型仍可输出 `[N]` / `[citation:N]`，渲染层统一为徽章。
-- **文末**：助手消息正文下方固定 **「来源」** 区块（`AssistantCitationFooter`），列出本次消息 `citation_map` 中、且在正文被引用过的 HTTPS 来源：`序号 · 标题`（可点击打开系统浏览器）。不展示 snippet、搜索词或工具参数。
+- **文末**：助手消息正文下方固定可折叠 **「来源」** 区块（`AssistantCitationFooter`），默认收起并显示来源数；展开后列出本次消息 `citation_map` 中、且在正文被引用过的 HTTPS 来源：`序号 · 标题`（可点击打开系统浏览器）。未精确绑定行内引用时的证据范围说明也只在展开后显示。不展示 snippet、搜索词或工具参数。
 - **可访问性**：行内 `aria-label="引用来源 N"`；来源链接 `rel="noopener noreferrer"`。若模型在文末重复手写来源列表，产品展示以底部「来源」为准。
 
 ## 管理中心子页与高级折叠
