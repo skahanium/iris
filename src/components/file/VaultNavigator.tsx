@@ -33,27 +33,14 @@ import {
 } from "@/components/ui/select";
 import { TemplateEditor } from "@/components/file/TemplateEditor";
 import {
-  corpusList,
   corpusUpsert,
   fileDelete,
-  fileRename,
   fileSetLock,
-  folderCreate,
   folderDelete,
-  folderList,
-  folderRename,
   knowledgeReindex,
   templateCreate,
   templateList,
-  workspaceList,
 } from "@/lib/ipc";
-import { createDefaultNote } from "@/lib/note-create";
-import {
-  prepareNoteOpenFromContent,
-  type NoteOpenBudgetKind,
-  type PrepareNoteOpenRequest,
-  type PreparedNoteOpen,
-} from "@/lib/note-open-preparation";
 import {
   allocateAvailableNotePath,
   DEFAULT_NEW_DOCUMENT_TITLE,
@@ -63,20 +50,20 @@ import {
 } from "@/lib/note-names";
 import { displayTitleForFileListItem } from "@/lib/note-display";
 import {
+  type NoteOpenBudgetKind,
+  type PrepareNoteOpenRequest,
+  type PreparedNoteOpen,
+} from "@/lib/note-open-preparation";
+import {
   buildVaultTree,
-  folderParentPath,
-  joinVaultChildPath,
   listFilesInFolder,
   type VaultTreeNode,
 } from "@/lib/vault-tree";
 import { cn } from "@/lib/utils";
 import type { NoteOpenSource } from "@/lib/document-open-runtime";
-import type {
-  CorpusListItem,
-  FileListItem,
-  FileWriteIndexStatus,
-  WorkspaceItem,
-} from "@/types/ipc";
+import type { FileListItem } from "@/types/ipc";
+import { useVaultCatalog } from "@/hooks/useVaultCatalog";
+import { useVaultFileActions } from "@/hooks/useVaultFileActions";
 
 import {
   FolderCreateDialog,
@@ -89,10 +76,7 @@ import {
   defaultIntentsForKind,
   displayFolderPath,
   fileNameFromPath,
-  fileParentPath,
   folderNameFromPath,
-  isInvalidFolderName,
-  normalizeDocumentName,
   normalizeFolderPrefix,
   slugFromPath,
   type CorpusKind,
@@ -100,11 +84,7 @@ import {
   type RenameTarget,
 } from "./vault-navigator-model";
 
-type VaultFileItem = FileListItem & {
-  kind?: WorkspaceItem["kind"];
-  mediaKind?: WorkspaceItem["mediaKind"];
-  mimeType?: string | null;
-};
+type VaultFileItem = import("@/hooks/useVaultCatalog").VaultFileItem;
 
 interface VaultNavigatorOpenOptions {
   openBudgetKind?: NoteOpenBudgetKind;
@@ -113,18 +93,6 @@ interface VaultNavigatorOpenOptions {
   preparedNote?: PreparedNoteOpen;
   priority?: "foreground" | "hot" | "warm" | "background";
   titleHint?: string;
-}
-
-function vaultFileItem(item: WorkspaceItem): VaultFileItem {
-  return {
-    isLocked: item.isLocked,
-    kind: item.kind,
-    mediaKind: item.mediaKind,
-    mimeType: item.mimeType,
-    path: item.path,
-    title: item.title,
-    updatedAt: item.updatedAt ?? "",
-  };
 }
 
 function isNoteFile(file: VaultFileItem): boolean {
@@ -150,16 +118,6 @@ function vaultFileIcon(file: VaultFileItem): LucideIcon {
   if (file.mediaKind === "image") return FileImage;
   if (file.mediaKind === "video") return FileVideo;
   return FileText;
-}
-
-function errorMessage(error: unknown, fallback: string): string {
-  if (error instanceof Error && error.message.trim()) return error.message;
-  if (typeof error === "string" && error.trim()) return error;
-  if (error && typeof error === "object" && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string" && message.trim()) return message;
-  }
-  return fallback;
 }
 
 interface VaultNavigatorProps {
@@ -371,10 +329,16 @@ export function VaultNavigatorBody({
   onIndexDegraded,
   onIndexChange,
 }: VaultNavigatorProps) {
-  const [files, setFiles] = useState<VaultFileItem[]>([]);
-  const [folders, setFolders] = useState<string[]>([]);
-  const [corpora, setCorpora] = useState<CorpusListItem[]>([]);
-  const [loading, setLoading] = useState(false);
+  const catalog = useVaultCatalog();
+  const {
+    files,
+    folders,
+    corpora,
+    loading,
+    error: catalogError,
+    refresh,
+  } = catalog;
+  // 单文件动作的错误由共享 controller 持有；此处保留批量/语料库等本地错误。
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [templates, setTemplates] = useState<{ name: string }[]>([]);
@@ -400,12 +364,19 @@ export function VaultNavigatorBody({
     name: string;
   } | null>(null);
 
-  const reportIndexStatus = useCallback(
-    (status: FileWriteIndexStatus) => {
-      if (status === "degraded") onIndexDegraded?.();
-    },
-    [onIndexDegraded],
-  );
+  const fileActions = useVaultFileActions({
+    onOpen,
+    onBeforeFilePathChange,
+    onFilePathChanged,
+    onFilePathChangeFailed,
+    onBeforeFileDelete,
+    onFileDeleted,
+    onBeforeFileLock,
+    onFileLockChanged,
+    onIndexDegraded,
+    onIndexChange,
+    refresh,
+  });
   const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
   const preparedKeysRef = useRef(new Set<string>());
@@ -450,21 +421,6 @@ export function VaultNavigatorBody({
     virtualItems.length > 0
       ? virtualizer.getTotalSize()
       : folderFiles.length * 40;
-
-  const refresh = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    void Promise.all([workspaceList(), folderList(), corpusList()])
-      .then(([nextFiles, nextFolders, nextCorpora]) => {
-        setFiles(nextFiles.map(vaultFileItem));
-        setFolders(nextFolders);
-        setCorpora(nextCorpora);
-      })
-      .catch((e) =>
-        setError(e instanceof Error ? e.message : "加载文件列表失败"),
-      )
-      .finally(() => setLoading(false));
-  }, []);
 
   useEffect(() => {
     if (open) {
@@ -581,191 +537,40 @@ export function VaultNavigatorBody({
 
   const handleFolderCreate = useCallback(
     async (name: string) => {
-      const trimmed = name.trim();
-      if (!trimmed) return;
-      if (isInvalidFolderName(trimmed)) {
-        setError("文件夹名称不能包含路径分隔符或非法字符");
-        return;
-      }
-      const folderPath = joinVaultChildPath(folderCreateParent, trimmed);
-      try {
-        await folderCreate(folderPath);
-        setFolderCreateOpen(false);
-        setFolderCreateParent("");
-        setSelectedFolder(`${folderPath.replace(/\\/g, "/")}/`);
-        setExpanded((prev) =>
-          new Set(prev).add(`${folderPath.replace(/\\/g, "/")}/`),
-        );
-        onIndexChange?.();
-        refresh();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "创建文件夹失败");
-      }
+      const created = await fileActions.createFolder(folderCreateParent, name);
+      if (created === null) return;
+      setFolderCreateOpen(false);
+      setFolderCreateParent("");
+      setSelectedFolder(created);
+      setExpanded((prev) => new Set(prev).add(created));
     },
-    [folderCreateParent, onIndexChange, refresh],
+    [fileActions, folderCreateParent],
   );
 
   const handleRename = useCallback(
     async (name: string) => {
       if (!renameTarget) return;
-      const startedMigrations: string[] = [];
-      try {
-        if (renameTarget.kind === "file") {
-          const parent = fileParentPath(renameTarget.file.path);
-          const nextPath = joinVaultChildPath(
-            parent,
-            normalizeDocumentName(name),
-          );
-          if (nextPath !== renameTarget.file.path) {
-            await onBeforeFilePathChange?.(renameTarget.file.path, nextPath);
-            startedMigrations.push(renameTarget.file.path);
-            const receipt = await fileRename(renameTarget.file.path, nextPath);
-            reportIndexStatus(receipt.indexStatus);
-            onFilePathChanged?.(renameTarget.file.path, nextPath, name);
-          }
-        } else {
-          const parent = folderParentPath(renameTarget.path);
-          const nextPath = buildFolderPath(parent, name);
-          if (nextPath !== renameTarget.path.replace(/\/$/, "")) {
-            const oldPrefix = normalizeFolderPrefix(renameTarget.path);
-            const newPrefix = normalizeFolderPrefix(nextPath);
-            const renamedFiles = files.filter((file) =>
-              file.path.startsWith(oldPrefix),
-            );
-            for (const file of renamedFiles) {
-              const remappedPath = joinVaultChildPath(
-                newPrefix,
-                file.path.slice(oldPrefix.length),
-              );
-              await onBeforeFilePathChange?.(file.path, remappedPath);
-              startedMigrations.push(file.path);
-            }
-            reportIndexStatus(await folderRename(renameTarget.path, nextPath));
-            for (const file of renamedFiles) {
-              const remappedPath = joinVaultChildPath(
-                newPrefix,
-                file.path.slice(oldPrefix.length),
-              );
-              onFilePathChanged?.(
-                file.path,
-                remappedPath,
-                vaultFileTitle(file),
-              );
-            }
-            setSelectedFolder(normalizeFolderPrefix(nextPath));
-          }
-        }
-        setRenameTarget(null);
-        onIndexChange?.();
-        refresh();
-      } catch (e) {
-        startedMigrations.forEach((oldPath) =>
-          onFilePathChangeFailed?.(oldPath),
-        );
-        setError(e instanceof Error ? e.message : "重命名失败");
-      }
+      const folderPrefix = await fileActions.rename(renameTarget, name, {
+        files,
+        fileTitle: vaultFileTitle,
+      });
+      setRenameTarget(null);
+      if (folderPrefix) setSelectedFolder(folderPrefix);
     },
-    [
-      onBeforeFilePathChange,
-      onFilePathChangeFailed,
-      onFilePathChanged,
-      reportIndexStatus,
-      onIndexChange,
-      files,
-      refresh,
-      renameTarget,
-    ],
+    [fileActions, files, renameTarget],
   );
 
   const handleMove = useCallback(
     async (targetFolder: string) => {
       if (!moveTarget) return;
-      const startedMigrations: string[] = [];
-      try {
-        if (moveTarget.kind === "file") {
-          const nextPath = resolveMoveFilePath(moveTarget.file, targetFolder);
-          if (nextPath !== moveTarget.file.path) {
-            await onBeforeFilePathChange?.(moveTarget.file.path, nextPath);
-            startedMigrations.push(moveTarget.file.path);
-            const receipt = await fileRename(moveTarget.file.path, nextPath);
-            reportIndexStatus(receipt.indexStatus);
-            onFilePathChanged?.(
-              moveTarget.file.path,
-              nextPath,
-              vaultFileTitle(moveTarget.file),
-            );
-          }
-        } else if (moveTarget.kind === "files") {
-          const reservedPaths = new Set<string>();
-          for (const file of moveTarget.files) {
-            const nextPath = resolveMoveFilePath(
-              file,
-              targetFolder,
-              reservedPaths,
-            );
-            if (nextPath === file.path) continue;
-            await onBeforeFilePathChange?.(file.path, nextPath);
-            startedMigrations.push(file.path);
-            const receipt = await fileRename(file.path, nextPath);
-            reportIndexStatus(receipt.indexStatus);
-            onFilePathChanged?.(file.path, nextPath, vaultFileTitle(file));
-            reservedPaths.add(nextPath);
-          }
-        } else {
-          const nextPath = buildFolderPath(
-            targetFolder,
-            folderNameFromPath(moveTarget.path),
-          );
-          if (nextPath !== moveTarget.path.replace(/\/$/, "")) {
-            const oldPrefix = normalizeFolderPrefix(moveTarget.path);
-            const newPrefix = normalizeFolderPrefix(nextPath);
-            const movedFiles = files.filter((file) =>
-              file.path.startsWith(oldPrefix),
-            );
-            for (const file of movedFiles) {
-              const remappedPath = joinVaultChildPath(
-                newPrefix,
-                file.path.slice(oldPrefix.length),
-              );
-              await onBeforeFilePathChange?.(file.path, remappedPath);
-              startedMigrations.push(file.path);
-            }
-            reportIndexStatus(await folderRename(moveTarget.path, nextPath));
-            for (const file of movedFiles) {
-              const remappedPath = joinVaultChildPath(
-                newPrefix,
-                file.path.slice(oldPrefix.length),
-              );
-              onFilePathChanged?.(
-                file.path,
-                remappedPath,
-                vaultFileTitle(file),
-              );
-            }
-            setSelectedFolder(normalizeFolderPrefix(nextPath));
-          }
-        }
-        setMoveTarget(null);
-        onIndexChange?.();
-        refresh();
-      } catch (e) {
-        startedMigrations.forEach((oldPath) =>
-          onFilePathChangeFailed?.(oldPath),
-        );
-        setError(errorMessage(e, "移动失败"));
-      }
+      const folderPrefix = await fileActions.move(moveTarget, targetFolder, {
+        files,
+        fileTitle: vaultFileTitle,
+      });
+      setMoveTarget(null);
+      if (folderPrefix) setSelectedFolder(folderPrefix);
     },
-    [
-      files,
-      moveTarget,
-      onBeforeFilePathChange,
-      onFilePathChangeFailed,
-      onFilePathChanged,
-      reportIndexStatus,
-      onIndexChange,
-      refresh,
-      resolveMoveFilePath,
-    ],
+    [fileActions, files, moveTarget],
   );
 
   const handleBatchSetLock = useCallback(
@@ -859,7 +664,7 @@ export function VaultNavigatorBody({
         intents: defaultIntentsForKind(kind),
       });
       await knowledgeReindex();
-      setCorpora(await corpusList());
+      refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "设置语料库失败");
     } finally {
@@ -892,37 +697,13 @@ export function VaultNavigatorBody({
           size="icon"
           variant="outline"
           title="新建笔记"
-          onClick={async () => {
+          onClick={() => {
             if (showTemplates && templates.length > 0) return;
             const trimmed = newName.trim();
-            const created = await createDefaultNote({
+            setNewName("");
+            void fileActions.createNote({
               folderPrefix: selectedFolder,
               ...(trimmed ? { titleHint: trimmed } : {}),
-            });
-            const openStartedAt = performance.now();
-            const openTraceRequest: PrepareNoteOpenRequest = {
-              path: created.path,
-              priority: "hot",
-              source: "new-note",
-              titleHint: created.title,
-            };
-            const preparedNote = await prepareNoteOpenFromContent(
-              openTraceRequest,
-              {
-                content: created.content,
-                isLocked: false,
-              },
-            );
-            setNewName("");
-            onIndexChange?.();
-            refresh();
-            await onOpen(created.path, "file-tree", {
-              openBudgetKind: "hot",
-              openStartedAt,
-              openTraceRequest,
-              preparedNote,
-              priority: "hot",
-              titleHint: created.title,
             });
           }}
         >
@@ -980,6 +761,14 @@ export function VaultNavigatorBody({
         </div>
       )}
       {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
+      {catalogError && (
+        <p className="px-3 py-2 text-xs text-destructive">{catalogError}</p>
+      )}
+      {fileActions.error && (
+        <p className="px-3 py-2 text-xs text-destructive">
+          {fileActions.error}
+        </p>
+      )}
       <div className="task-overlay-results flex min-h-0 flex-1">
         <div className="w-44 shrink-0 overflow-y-auto border-r border-border/60 p-2">
           <button
@@ -1315,13 +1104,9 @@ export function VaultNavigatorBody({
                           size="icon"
                           variant="ghost"
                           title={f.isLocked ? "解锁编辑" : "锁定编辑"}
-                          onClick={async () => {
-                            const next = !f.isLocked;
-                            if (next) await onBeforeFileLock?.(f.path);
-                            await fileSetLock(f.path, next);
-                            onFileLockChanged?.(f.path, next);
-                            refresh();
-                          }}
+                          onClick={() =>
+                            void fileActions.setLock(f.path, !f.isLocked)
+                          }
                         >
                           {f.isLocked ? (
                             <Lock className="h-3 w-3" />
@@ -1381,13 +1166,11 @@ export function VaultNavigatorBody({
         confirmLabel="删除"
         variant="destructive"
         onCancel={() => setDeleteTarget(null)}
-        onConfirm={async () => {
+        onConfirm={() => {
           if (!deleteTarget) return;
-          await onBeforeFileDelete?.(deleteTarget.path);
-          await fileDelete(deleteTarget.path);
-          onFileDeleted?.(deleteTarget.path);
+          const path = deleteTarget.path;
           setDeleteTarget(null);
-          refresh();
+          void fileActions.deleteToRecycleBin(path);
         }}
       />
 
