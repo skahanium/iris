@@ -19,6 +19,7 @@ export type AppShortcutAction =
   | { type: "saveNote" }
   | { type: "closeTab" }
   | { type: "toggleAiPanel" }
+  | { type: "toggleNavigator" }
   | { type: "toggleZen" }
   | { type: "toggleOutline" }
   | { type: "toggleTheme" }
@@ -63,6 +64,12 @@ export function buildAppShortcutItems(
         section: "notes",
         detail: "file-sheet",
       },
+    },
+    {
+      id: "toggle-navigator",
+      disabled: vaultOnly,
+      chord: { key: "\\", mod: true, requireVault: true },
+      action: { type: "toggleNavigator" },
     },
     {
       id: "recycle-bin",

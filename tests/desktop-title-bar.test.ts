@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 
+import { fireEvent } from "@testing-library/react";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +9,10 @@ import {
   DesktopTitleBar,
   type TabItem,
 } from "@/components/layout/DesktopTitleBar";
+import {
+  WorkspaceChromeActionsContext,
+  type WorkspaceChromeActions,
+} from "@/hooks/useWorkspaceChromeActions";
 
 function read(path: string): string {
   try {
@@ -69,6 +74,26 @@ function setTauriRuntime(enabled: boolean): void {
   });
 }
 
+function mockChromeActions(
+  overrides: Partial<WorkspaceChromeActions> = {},
+): WorkspaceChromeActions {
+  return {
+    openAssistant: () => undefined,
+    enterAssistantFocus: () => undefined,
+    exitAssistantFocus: () => undefined,
+    projection: {
+      primarySurface: "document",
+      navigator: "closed",
+      assistant: "sidecar",
+      sidecarWidthPx: 480,
+      pinnedEligible: false,
+    },
+    navigatorOpen: false,
+    toggleNavigator: () => undefined,
+    ...overrides,
+  };
+}
+
 function renderTitleBar(
   tabs: TabItem[] = [
     {
@@ -77,6 +102,7 @@ function renderTitleBar(
       dirty: true,
     },
   ],
+  actions: WorkspaceChromeActions = mockChromeActions(),
 ) {
   setTauriRuntime(true);
   host = document.createElement("div");
@@ -85,13 +111,17 @@ function renderTitleBar(
 
   act(() => {
     root?.render(
-      createElement(DesktopTitleBar, {
-        tabs,
-        activePath: tabs[0]?.path ?? null,
-        onSelect: () => undefined,
-        onClose: () => undefined,
-        onNew: () => undefined,
-      }),
+      createElement(
+        WorkspaceChromeActionsContext.Provider,
+        { value: actions },
+        createElement(DesktopTitleBar, {
+          tabs,
+          activePath: tabs[0]?.path ?? null,
+          onSelect: () => undefined,
+          onClose: () => undefined,
+          onNew: () => undefined,
+        }),
+      ),
     );
   });
 }
@@ -486,5 +516,74 @@ describe("desktop title bar", () => {
     expect(bar).toContain("•");
     expect(bar).toContain("aria-label={`关闭 ${tab.title}`}");
     expect(bar).toContain('aria-label="新建笔记"');
+  });
+
+  it("places the navigator entry after traffic safe area and before the tab rail", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    const css = read("src/styles/globals.css");
+
+    expect(bar).toContain('data-testid="titlebar-navigator-entry"');
+    expect(bar).toContain("FolderTree");
+    expect(bar).toContain(
+      'const label = open ? "关闭笔记库导航" : "打开笔记库导航"',
+    );
+    expect(bar).toContain("aria-label={label}");
+    expect(bar).toContain("title={label}");
+    expect(bar).toContain("aria-pressed={open}");
+    expect(bar).toContain("data-tauri-drag-region-exclude");
+    expect(bar).toContain("useWorkspaceChromeActions");
+    // 打开状态高亮与控件样式同源，不新增装饰 token。
+    expect(css).toContain(
+      '.iris-titlebar-navigator-entry[aria-pressed="true"]',
+    );
+    expect(bar).not.toContain("Back to library");
+    expect(bar).not.toContain('aria-label="文件"');
+  });
+
+  it("renders the navigator entry before the tab rail and toggles via chrome actions", () => {
+    const toggle = vi.fn();
+    renderTitleBar(
+      [{ path: "/vault/a.md", title: "Alpha" }],
+      mockChromeActions({ navigatorOpen: false, toggleNavigator: toggle }),
+    );
+
+    const header = document.querySelector<HTMLElement>(
+      '[data-testid="desktop-title-bar"]',
+    )!;
+    const entry = document.querySelector<HTMLButtonElement>(
+      '[data-testid="titlebar-navigator-entry"]',
+    )!;
+    const rail = document.querySelector<HTMLElement>(
+      ".iris-titlebar-tab-rail",
+    )!;
+    const spacer = document.querySelector<HTMLElement>(
+      ".iris-titlebar-traffic-spacer",
+    )!;
+    const children = Array.from(header.children);
+
+    expect(spacer).not.toBeNull();
+    expect(children.indexOf(entry)).toBeGreaterThan(children.indexOf(spacer));
+    expect(children.indexOf(rail)).toBeGreaterThan(children.indexOf(entry));
+    expect(entry.getAttribute("aria-label")).toBe("打开笔记库导航");
+    expect(entry.getAttribute("title")).toBe("打开笔记库导航");
+    expect(entry.getAttribute("aria-pressed")).toBe("false");
+    expect(entry.getAttribute("data-tauri-drag-region-exclude")).not.toBeNull();
+
+    fireEvent.click(entry);
+    expect(toggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("reflects the open state in the navigator entry label", () => {
+    renderTitleBar(
+      [{ path: "/vault/a.md", title: "Alpha" }],
+      mockChromeActions({ navigatorOpen: true }),
+    );
+
+    const entry = document.querySelector<HTMLButtonElement>(
+      '[data-testid="titlebar-navigator-entry"]',
+    )!;
+    expect(entry.getAttribute("aria-label")).toBe("关闭笔记库导航");
+    expect(entry.getAttribute("title")).toBe("关闭笔记库导航");
+    expect(entry.getAttribute("aria-pressed")).toBe("true");
   });
 });

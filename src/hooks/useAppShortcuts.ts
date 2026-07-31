@@ -4,6 +4,7 @@ import {
   buildAppShortcutItems,
   type AppShortcutItem,
 } from "@/lib/app-shortcuts";
+import { requestWorkspaceNavigatorToggle } from "@/lib/workspace-chrome-events";
 import type {
   ManagementCenterDetail,
   ManagementCenterSection,
@@ -106,6 +107,10 @@ export function useAppShortcuts({
           break;
         case "toggleAiPanel":
           setAiPanelOpen((open) => !open);
+          break;
+        case "toggleNavigator":
+          // AppShell 监听 window 事件切换轻量导航；Ctrl/Cmd+Shift+E 语义保持不变。
+          requestWorkspaceNavigatorToggle();
           break;
         case "toggleZen":
           setZen((z) => !z);

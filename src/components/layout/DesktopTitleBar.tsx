@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   FileImage,
+  FolderTree,
   Lock,
   MoreHorizontal,
   Plus,
@@ -20,6 +21,7 @@ import {
   IrisSurfaceMenuItem,
   IrisSurfaceMenuPanel,
 } from "@/components/ui/iris-surface-menu";
+import { useWorkspaceChromeActions } from "@/hooks/useWorkspaceChromeActions";
 import {
   isMacOSDesktopChrome,
   showCustomWindowControls,
@@ -58,6 +60,31 @@ const TAB_MIN_PX = 72;
 const TAB_GAP_PX = 4;
 const MORE_BUTTON_PX = 32;
 const NEW_BUTTON_PX = 32;
+
+/**
+ * 轻量笔记库导航入口（§6.1）：traffic safe area 之后、Tab rail 之前。
+ * 经 WorkspaceChromeActions 请求切换；打开状态以 aria-pressed 表达。
+ */
+function TitlebarNavigatorEntry() {
+  const chrome = useWorkspaceChromeActions();
+  const open = chrome.navigatorOpen;
+  const label = open ? "关闭笔记库导航" : "打开笔记库导航";
+  return (
+    <button
+      type="button"
+      data-testid="titlebar-navigator-entry"
+      data-tauri-drag-region-exclude
+      className="iris-titlebar-navigator-entry iris-focus-soft inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
+      aria-label={label}
+      aria-pressed={open}
+      title={label}
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={chrome.toggleNavigator}
+    >
+      <FolderTree className="h-4 w-4" />
+    </button>
+  );
+}
 
 export const DesktopTitleBar = memo(function DesktopTitleBar({
   variant = "document",
@@ -270,6 +297,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
         />
       ) : showTabStrip ? (
         <>
+          <TitlebarNavigatorEntry />
           <div
             ref={railRef}
             className="iris-titlebar-tab-rail flex min-w-0 flex-1 items-center gap-1 overflow-x-hidden px-2"
