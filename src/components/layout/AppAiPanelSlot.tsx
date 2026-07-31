@@ -1,6 +1,7 @@
 import { lazy, Suspense, useMemo } from "react";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { useWorkspaceChromeActions } from "@/hooks/useWorkspaceChromeActions";
 import type { AiDomain, ContextReference } from "@/types/ai";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileListItem } from "@/types/ipc";
@@ -67,6 +68,11 @@ export function AppAiPanelSlot({
     [runtimeDocumentCandidates],
   );
 
+  // 布局动作经 AppShell 的 WorkspaceChromeActions 通道显式下发，面板不自行切换 presentation。
+  const chromeActions = useWorkspaceChromeActions();
+  const assistantFocus =
+    chromeActions.projection.primarySurface === "assistant_focus";
+
   return (
     <ErrorBoundary scope="AI面板">
       <Suspense fallback={<AssistantPanelLoading />}>
@@ -83,6 +89,9 @@ export function AppAiPanelSlot({
           onInsertToEditor={
             editorInteractionLocked ? undefined : handleInsertToEditor
           }
+          assistantFocus={assistantFocus}
+          onRequestFocusEnter={chromeActions.enterAssistantFocus}
+          onRequestFocusExit={chromeActions.exitAssistantFocus}
         />
       </Suspense>
     </ErrorBoundary>

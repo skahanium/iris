@@ -208,6 +208,8 @@ export default {
       zIndex: {
         "editor-chrome": "15",
         ai: "10",
+        navigator: "10",
+        "workspace-focus": "20",
         toolbar: "20",
         "slash-command": "25",
         "overlay-scrim": "40",

@@ -880,6 +880,11 @@
     background: var(--iris-focus-soft-bg);
   }
 
+  /* v1.2.19 标题栏笔记库导航入口：打开状态高亮，消费既有 muted/accent 层级。 */
+  .iris-titlebar-navigator-entry[aria-pressed="true"] {
+    @apply bg-muted/60 text-foreground;
+  }
+
   .iris-rail-tab {
     border-radius: 10px;
     flex: 0 0 9rem;
@@ -1945,4 +1950,11 @@
   border-radius: 999px;
   background: hsl(var(--muted-foreground) / 0.34);
   background-clip: padding-box;
+}
+
+/* v1.2.19 Agent 主区阅读内容列：与文档保护宽度一致，随 --prose-measure 变化，不硬编码 832px。 */
+.ai-focus-column {
+  margin-inline: auto;
+  width: 100%;
+  max-width: var(--prose-measure);
 }

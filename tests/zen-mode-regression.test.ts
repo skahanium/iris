@@ -20,4 +20,15 @@ describe("zen mode regression contracts", () => {
     expect(app).toContain("useZenExitKeyboard");
     expect(app).toContain("useZenExitKeyboard({ zen, setZen })");
   });
+
+  it("keeps the Agent subtree mounted while zen hides it via projection", () => {
+    const shell = read("src/components/layout/AppShell.tsx");
+
+    expect(shell).toContain("zenMode: zen");
+    expect(shell).toContain('data-testid="unified-assistant-dock"');
+    expect(shell).toContain(
+      'aria-hidden={projection.assistant === "collapsed" || undefined}',
+    );
+    expect(shell).not.toContain("width: aiPanelOpen ? panelWidth : 0");
+  });
 });

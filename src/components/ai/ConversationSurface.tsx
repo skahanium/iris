@@ -1,5 +1,6 @@
 import { memo, type RefObject } from "react";
 
+import { cn } from "@/lib/utils";
 import { AiMessageList, type ChatLine } from "./AiMessageList";
 import { AiMessageSelectionUi } from "./AiMessageSelectionUi";
 
@@ -15,6 +16,8 @@ interface ConversationSurfaceProps {
     index: number,
     event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
   ) => void;
+  /** Agent 主区阅读：消息列进入最大 52rem 内容列（§7.3）。 */
+  assistantFocus?: boolean;
 }
 
 /**
@@ -32,12 +35,17 @@ export const ConversationSurface = memo(function ConversationSurface({
   onQuoteToInput,
   onRetract,
   onSelect,
+  assistantFocus = false,
 }: ConversationSurfaceProps) {
   return (
     <div
       ref={messageListRef}
       data-testid="ai-message-list"
-      className="ai-sidecar-body relative flex min-h-0 flex-1 flex-col"
+      tabIndex={-1}
+      className={cn(
+        "ai-sidecar-body relative flex min-h-0 flex-1 flex-col focus:outline-none",
+        assistantFocus && "ai-focus-column",
+      )}
     >
       <AiMessageList
         messages={messages}

@@ -5,6 +5,7 @@ import { AssistantRunWebVerificationFailed } from "@/components/ai/AssistantRunC
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
@@ -67,6 +68,9 @@ export function UnifiedAssistantPanel({
   onInsertToEditor,
   onOpenWebVerificationSettings,
   onChromeChange,
+  assistantFocus = false,
+  onRequestFocusEnter,
+  onRequestFocusExit,
 }: UnifiedAssistantPanelProps) {
   const { profile: promptProfile } = usePromptProfile();
   const assistantRun = useAssistantRun();
@@ -104,9 +108,36 @@ export function UnifiedAssistantPanel({
   ] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
+  const assistantPanelRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const chromeSnapshotRef = useRef<AssistantChromeSnapshot>(
     EMPTY_ASSISTANT_CHROME,
   );
+
+  // Agent 主区阅读的焦点管理（§8）：进入时记录原焦点；焦点已在会话区则保持，
+  // 否则聚焦消息流；返回文档时恢复进入前的焦点。不强制进入 Composer。
+  useEffect(() => {
+    if (assistantFocus) {
+      const active = document.activeElement;
+      previousFocusRef.current =
+        active instanceof HTMLElement &&
+        assistantPanelRef.current?.contains(active)
+          ? null
+          : active instanceof HTMLElement
+            ? active
+            : null;
+      const messageList = messageListRef.current;
+      if (messageList && messageList !== document.activeElement) {
+        messageList.focus({ preventScroll: true });
+      }
+    } else {
+      const previous = previousFocusRef.current;
+      previousFocusRef.current = null;
+      if (previous?.isConnected) {
+        previous.focus({ preventScroll: true });
+      }
+    }
+  }, [assistantFocus]);
 
   // Conversation hook still accepts a clear callback; evidence-pack surfaces are gone.
   const clearTaskSurfaces = useCallback(() => undefined, []);
@@ -411,6 +442,7 @@ export function UnifiedAssistantPanel({
 
   return (
     <div
+      ref={assistantPanelRef}
       className="ai-sidecar flex h-full flex-col bg-ai-workspace"
       data-ai-domain={aiDomain}
       data-testid="unified-assistant-panel"
@@ -430,6 +462,11 @@ export function UnifiedAssistantPanel({
         runState={displayRunState}
         webSearch={webSearch}
         webSearchProviderName={webSearchProviderName}
+        assistantFocus={assistantFocus}
+        onRequestFocusToggle={() => {
+          if (assistantFocus) onRequestFocusExit?.();
+          else onRequestFocusEnter?.();
+        }}
       />
       {lastError ? (
         <p className="border-b border-destructive/30 px-3 py-2 text-xs text-destructive">
@@ -445,16 +482,21 @@ export function UnifiedAssistantPanel({
         />
       ) : null}
       {assistantRun.pendingConfirmation ? (
-        <AssistantRunConfirmation
-          confirmation={assistantRun.pendingConfirmation}
-          disabled={confirming}
-          onApprove={() => handleConfirmation("approve")}
-          onReject={() => handleConfirmation("reject")}
-        />
+        <div className={cn("w-full", assistantFocus && "ai-focus-column")}>
+          <AssistantRunConfirmation
+            confirmation={assistantRun.pendingConfirmation}
+            disabled={confirming}
+            onApprove={() => handleConfirmation("approve")}
+            onReject={() => handleConfirmation("reject")}
+          />
+        </div>
       ) : null}
       {assistantRun.recovery ? (
         <section
-          className="border-b border-warning/30 bg-warning-bg px-3 py-2"
+          className={cn(
+            "border-b border-warning/30 bg-warning-bg px-3 py-2",
+            assistantFocus && "ai-focus-column",
+          )}
           data-testid="assistant-run-recovery"
           aria-live="polite"
         >
@@ -497,6 +539,7 @@ export function UnifiedAssistantPanel({
         <ConversationSurface
           messages={messages}
           streaming={streaming}
+          assistantFocus={assistantFocus}
           messageListRef={messageListRef}
           onCitationClick={(ref) => {
             if (isExternalHttpsHref(ref)) {
@@ -510,13 +553,15 @@ export function UnifiedAssistantPanel({
           onQuoteToInput={handleQuoteToInput}
         />
       </ErrorBoundary>
-      <SelectedMessagesActionDock
-        count={bubbleSelection.selected.size}
-        onClear={bubbleSelection.clear}
-        onCopy={handleCopySelected}
-        onExport={handleExportSelected}
-        onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
-      />
+      <div className={cn("w-full", assistantFocus && "ai-focus-column")}>
+        <SelectedMessagesActionDock
+          count={bubbleSelection.selected.size}
+          onClear={bubbleSelection.clear}
+          onCopy={handleCopySelected}
+          onExport={handleExportSelected}
+          onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
+        />
+      </div>
       {aiDomain === "classified" ? (
         <div className="border-t border-border-subtle px-3 py-2">
           <Button
@@ -550,6 +595,7 @@ export function UnifiedAssistantPanel({
         externalBindings={externalBindings}
         selectedExternalBindingIds={selectedExternalBindingIds}
         textareaRef={textareaRef}
+        assistantFocus={assistantFocus}
         onComposerKeyDown={handleComposerKeyDown}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}

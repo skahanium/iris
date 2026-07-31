@@ -1,4 +1,4 @@
-import { MessageSquarePlus } from "lucide-react";
+import { Maximize2, MessageSquarePlus, Minimize2 } from "lucide-react";
 
 import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
 import { AssistantPersonaDisplay } from "@/components/ai/AssistantPersonaDisplay";
@@ -26,6 +26,10 @@ interface AssistantPanelHeaderProps {
   runState: AssistantRunState;
   webSearch: boolean;
   webSearchProviderName?: string | null;
+  /** Agent 主区阅读有效状态：控制“展开阅读/返回文档”按钮文案与图标。 */
+  assistantFocus?: boolean;
+  /** 请求切换主区阅读（进入/返回由布局策略决定）。 */
+  onRequestFocusToggle?: () => void;
 }
 
 /** Header actions use opaque conversation references and the unified Run state only. */
@@ -41,6 +45,8 @@ export function AssistantPanelHeader({
   runState,
   webSearch,
   webSearchProviderName,
+  assistantFocus = false,
+  onRequestFocusToggle,
 }: AssistantPanelHeaderProps) {
   return (
     <header className="ai-sidecar-header shrink-0 border-b border-border-subtle px-3 py-1">
@@ -49,6 +55,21 @@ export function AssistantPanelHeader({
           <AssistantPersonaDisplay profile={profile} />
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 px-0"
+            title={assistantFocus ? "返回文档" : "展开阅读"}
+            aria-label={assistantFocus ? "返回文档" : "展开阅读"}
+            onClick={onRequestFocusToggle}
+          >
+            {assistantFocus ? (
+              <Minimize2 className="h-3.5 w-3.5" />
+            ) : (
+              <Maximize2 className="h-3.5 w-3.5" />
+            )}
+          </Button>
           <AgentStatusBadge
             webSearchEnabled={webSearch}
             webSearchProviderName={webSearchProviderName}

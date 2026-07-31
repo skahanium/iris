@@ -94,4 +94,20 @@ describe("App shell refactor contract", () => {
     expect(app).toContain("<AppAiPanelSlot");
     expect(app).not.toContain("<UnifiedAssistantPanel");
   });
+
+  it("projects shell layout from the chrome strategy without remounting subtrees", () => {
+    const shell = read("src/components/layout/AppShell.tsx");
+    const app = read("src/App.impl.tsx");
+
+    expect(shell).toContain("useWorkspaceChromeLayout");
+    expect(shell).toContain("data-presentation={projection.assistant}");
+    expect(shell).toContain('data-testid="workspace-navigator"');
+    expect(shell).toContain('data-testid="workspace-main"');
+    expect(shell).toContain("aria-hidden={mainHidden || undefined}");
+    expect(shell).toContain("z-workspace-focus");
+    expect(shell).toContain("WorkspaceChromeActionsContext");
+    expect(shell).not.toContain("panelWidth");
+    expect(shell).not.toContain("useState(loadAiPanelWidth");
+    expect(app).toContain("onAiPanelOpenChange={setAiPanelOpen}");
+  });
 });

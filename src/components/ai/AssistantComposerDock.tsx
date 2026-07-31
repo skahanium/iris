@@ -9,6 +9,7 @@ import type {
 
 import { AiComposer } from "@/components/ui/ai-composer";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { MentionCandidate, MentionTextEdit } from "@/lib/ai-context-scope";
 import type { DisplayMention } from "@/types/ai";
 import type { McpCapabilityBindingSummary } from "@/lib/ipc";
@@ -43,6 +44,8 @@ interface AssistantComposerDockProps {
   onValueChange: (value: string, edit?: MentionTextEdit) => void;
   onSelect: () => void;
   onStop: () => void;
+  /** Agent 主区阅读：Composer 与授权边界进入最大 52rem 内容列（§7.3）。 */
+  assistantFocus?: boolean;
 }
 
 export function AssistantComposerDock({
@@ -71,9 +74,13 @@ export function AssistantComposerDock({
   onValueChange,
   onSelect,
   onStop,
+  assistantFocus = false,
 }: AssistantComposerDockProps) {
   return (
-    <div data-testid="ai-input">
+    <div
+      data-testid="ai-input"
+      className={cn("flex flex-col", assistantFocus && "ai-focus-column")}
+    >
       {externalBindings.length > 0 ? (
         <div
           className="border-t border-border-subtle px-3 py-2"
