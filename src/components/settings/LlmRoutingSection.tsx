@@ -1020,38 +1020,43 @@ export function LlmRoutingSection({
     if (!routing) return;
     const additions = parseModelIds(newModelInputs[providerId] ?? "");
     if (additions.length === 0) return;
-    const enabled = enabledModelIdsForProvider(providerId);
-    const nextEnabled = uniqueModelIds([...enabled, ...additions]);
-    const currentProvider =
-      routing.providers[providerId] ?? emptyProviderOverride(providerId);
-    const nextRouting = {
-      ...routing,
-      candidateOrder: normalizeCandidateOrder(
-        {
-          ...routing.providers,
-          [providerId]: {
-            ...currentProvider,
-            enabledModels: nextEnabled,
-          },
-        },
-        [
-          ...routing.candidateOrder,
-          ...additions.map((modelId) => ({ providerId, modelId })),
-        ],
-      ),
+    const nextEnabled = uniqueModelIds([
+      ...enabledModelIdsForProvider(providerId),
+      ...additions,
+    ]);
+    const nextProviders = {
+      ...routing.providers,
+      [providerId]: {
+        ...(routing.providers[providerId] ?? emptyProviderOverride(providerId)),
+        enabledModels: nextEnabled,
+      },
     };
-    updateProviderOverride(providerId, { enabledModels: nextEnabled });
-    applyRouting(nextRouting);
+    applyRouting({
+      ...routing,
+      providers: nextProviders,
+      candidateOrder: normalizeCandidateOrder(nextProviders, [
+        ...routing.candidateOrder,
+        ...additions.map((modelId) => ({ providerId, modelId })),
+      ]),
+    });
     setNewModelInputs((prev) => ({ ...prev, [providerId]: "" }));
   };
 
   const removeProviderModel = (providerId: string, modelId: string) => {
     if (!routing) return;
-    const enabled = enabledModelIdsForProvider(providerId);
-    const nextEnabled = enabled.filter((id) => id !== modelId);
-    updateProviderOverride(providerId, { enabledModels: nextEnabled });
+    const nextEnabled = enabledModelIdsForProvider(providerId).filter(
+      (id) => id !== modelId,
+    );
+    const nextProviders = {
+      ...routing.providers,
+      [providerId]: {
+        ...(routing.providers[providerId] ?? emptyProviderOverride(providerId)),
+        enabledModels: nextEnabled,
+      },
+    };
     applyRouting({
       ...routing,
+      providers: nextProviders,
       candidateOrder: routing.candidateOrder.filter(
         (candidate) =>
           candidate.providerId !== providerId || candidate.modelId !== modelId,

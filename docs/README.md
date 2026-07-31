@@ -11,11 +11,19 @@
 | [ARCHITECTURE.md](../ARCHITECTURE.md)                            | 当前模块、数据流、单向兼容与安全边界 |
 | [ipc-api-reference.md](./ipc-api-reference.md)                   | 当前 Tauri IPC 契约                  |
 | [design-system.md](./design-system.md)                           | 界面 token、组件规范与人工验收       |
+| [adaptive-workspace.md](./adaptive-workspace.md)                 | v1.2.19 自适应工作区状态与交互契约   |
 | [markdown-export.md](./markdown-export.md)                       | 编辑器 Markdown 往返与保留节点语义   |
 | [markdown-indexing-contract.md](./markdown-indexing-contract.md) | 编辑器与索引器的当前解析边界         |
 | [llm-routing.md](./llm-routing.md)                               | LLM 配置、连通性与联网证据           |
 | [testing/](./testing/)                                           | 可执行的手工验收清单                 |
 | [ops/](./ops/)                                                   | 运维、性能与能力降级手册             |
+
+## 当前施工资料
+
+| 文档                                                                                         | 用途                                   |
+| -------------------------------------------------------------------------------------------- | -------------------------------------- |
+| [v1.2.19 自适应工作区实施计划](./superpowers/plans/2026-07-31-v1.2.19-adaptive-workspace.md) | 测试先行任务、文件边界与交付顺序       |
+| [v1.2.19 自适应工作区人工清单](./testing/v1.2.19-adaptive-workspace-manual-checklist.md)     | 分辨率、主题、键盘、生命周期与真机验收 |
 
 ## 保留的评测资料
 
