@@ -565,7 +565,12 @@ pub fn version_preview(state: &AppState, version_id: i64) -> AppResult<String> {
     })?;
 
     let vault = state.vault_path()?;
-    read_version_content(state, &vault, &storage_path)
+    read_version_content(state, &vault, &storage_path).map_err(|error| match error {
+        AppError::CasUnreadable(_) => AppError::CasUnreadable(
+            "版本快照不可读（可能已损坏或加密密钥丢失），该版本无法预览。".into(),
+        ),
+        other => other,
+    })
 }
 
 /// Creates a pre-restore snapshot and returns the selected Markdown.
@@ -640,21 +645,41 @@ pub fn version_cleanup(state: &AppState) -> AppResult<usize> {
         .unwrap_or(Utc::now())
         .to_rfc3339();
 
-    let stale: Vec<(i64, String)> = state.db.with_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, storage_path FROM versions
-             WHERE kind = 'auto_idle' AND is_finalized = 0 AND created_at < ?1",
-        )?;
-        let rows = stmt.query_map([&cutoff], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+    // 收集待清理版本：旧 auto_idle（既有规则）+ 内容不可读的快照（自动降级，
+    // 内容已无法恢复，保留行只留无意义元数据，用户无感知）。
+    let candidates: Vec<(i64, String, String, bool, String)> = state.db.with_conn(|conn| {
+        let mut stmt =
+            conn.prepare("SELECT id, storage_path, kind, is_finalized, created_at FROM versions")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)? != 0,
+                r.get::<_, String>(4)?,
+            ))
         })?;
         Ok(rows.flatten().collect())
     })?;
 
     let mut cleaned = 0;
-    for (id, storage_path) in stale {
-        delete_version_row(state, &vault, id, &storage_path)?;
-        cleaned += 1;
+    for (id, storage_path, kind, is_finalized, created_at) in candidates {
+        let unreadable = matches!(
+            read_version_content(state, &vault, &storage_path),
+            Err(AppError::CasUnreadable(_))
+        );
+        let stale_idle = kind == "auto_idle" && !is_finalized && created_at < cutoff;
+        if unreadable || stale_idle {
+            if unreadable {
+                tracing::warn!(
+                    result_code = "version_cleanup_remove_unreadable",
+                    version_id = id,
+                    "removing version snapshot whose CAS blob is unreadable"
+                );
+            }
+            delete_version_row(state, &vault, id, &storage_path)?;
+            cleaned += 1;
+        }
     }
 
     Ok(cleaned)
@@ -759,6 +784,85 @@ mod tests {
             .expect("manual snapshot");
 
         assert_eq!(entry.kind, VersionKind::Manual);
+    }
+
+    #[test]
+    fn version_cleanup_removes_unreadable_versions_and_stale_idle() {
+        let (_dir, state) = test_state();
+        seed_file_in_db(&state, "note.md", "Note");
+
+        // 可读快照（新，不应被清理）。
+        let entry = version_save_manual(&state, "note.md", "# Keep me")
+            .unwrap()
+            .expect("manual snapshot");
+        let readable_storage: String = state
+            .db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [entry.id],
+                    |r| r.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+
+        // 旧 auto_idle 可读版本（既有规则：应被清理）。
+        let readable_hash = readable_storage.strip_prefix("cas:").unwrap().to_string();
+        let file_id: i64 = state
+            .db
+            .with_conn(|conn| {
+                conn.query_row("SELECT id FROM files WHERE path = 'note.md'", [], |r| {
+                    r.get(0)
+                })
+                .map_err(Into::into)
+            })
+            .unwrap();
+
+        // 不可读版本：finalize + manual，内容已永久不可解（应被自动清理）。
+        let lost_body = b"# Lost forever";
+        let lost_hash = crate::cas::hash::content_hash(lost_body);
+        let lost_path = state.cas_store().unwrap().object_path(&lost_hash).unwrap();
+        let mut buf = b"CASE".to_vec();
+        buf.extend_from_slice(
+            &crate::cas::encryption::encrypt_blob(lost_body, &[0xEE; 32]).unwrap(),
+        );
+        fs::create_dir_all(lost_path.parent().unwrap()).unwrap();
+        fs::write(&lost_path, &buf).unwrap();
+        state.ref_counter().increment(&lost_hash).unwrap();
+
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path)
+                     VALUES (?1, 'lost-1', NULL, ?2, 0, 1, 'manual', '2026-01-01T00:00:00+00:00', ?3)",
+                    rusqlite::params![file_id, lost_hash, format!("cas:{lost_hash}")],
+                )?;
+                conn.execute(
+                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path)
+                     VALUES (?1, 'stale-1', NULL, ?2, 0, 0, 'auto_idle', '2026-01-01T00:00:00+00:00', ?3)",
+                    rusqlite::params![file_id, readable_hash, readable_storage],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(version_preview(&state, entry.id).is_ok());
+        let cleaned = version_cleanup(&state).unwrap();
+        assert_eq!(
+            cleaned, 2,
+            "unreadable + stale auto_idle must both be cleaned"
+        );
+
+        let remaining = version_list(&state, "note.md").unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, entry.id, "readable snapshot must survive");
+        assert_eq!(
+            state.ref_counter().get_count(&lost_hash).unwrap(),
+            0,
+            "unreadable version cleanup must release the CAS reference"
+        );
     }
 
     #[test]

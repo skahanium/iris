@@ -82,6 +82,9 @@ pub enum AppError {
     },
     #[error("{0}")]
     Message(String),
+    /// A CAS blob exists but cannot be decrypted (wrong/retired key or corruption).
+    #[error("{0}")]
+    CasUnreadable(String),
 }
 
 impl AppError {
@@ -127,6 +130,7 @@ impl AppError {
             Self::Embed(_) => "embedding",
             Self::Provider { kind, .. } => kind.as_str(),
             Self::Message(_) => "message",
+            Self::CasUnreadable(_) => "cas_unreadable",
         }
     }
 
@@ -140,6 +144,7 @@ impl AppError {
             Self::Embed(_) => "Embedding error".to_string(),
             Self::Provider { message, .. } => message.clone(),
             Self::Message(s) => s.clone(),
+            Self::CasUnreadable(s) => s.clone(),
         }
     }
 }
@@ -195,6 +200,9 @@ pub fn log_error(error: &AppError) {
         }
         AppError::Message(s) => {
             tracing::error!(kind = "message", detail = %redacted_log_detail(s), "App error")
+        }
+        AppError::CasUnreadable(s) => {
+            tracing::error!(kind = "cas_unreadable", detail = %redacted_log_detail(s), "CAS blob unreadable")
         }
     }
 }

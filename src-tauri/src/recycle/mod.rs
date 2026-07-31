@@ -34,6 +34,10 @@ pub struct TrashVersionMeta {
     pub created_at: String,
     /// File name under `versions/` inside the trash bundle.
     pub trash_file: String,
+    /// `true` 表示该版本快照已不可读（解密失败/损坏），删除时被跳过，
+    /// 回收站 bundle 中不含其内容，恢复时也不会写回。旧 manifest 无此字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unreadable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,7 +163,7 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
     let bundle_dir = trash_root(&vault).join(&trash_id);
     let versions_dir = bundle_dir.join("versions");
 
-    let (title, version_metas) = state.db.with_conn(|conn| {
+    let (title, mut version_metas) = state.db.with_conn(|conn| {
         let file_id = lookup_file_id(conn, path)?;
         let stored_title: Option<String> = if file_id.is_some() {
             conn.query_row(
@@ -188,6 +192,7 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
                     kind: v.entry.kind.as_str().to_string(),
                     created_at: v.entry.created_at.clone(),
                     trash_file: format!("{}.md", v.entry.version_no),
+                    unreadable: None,
                 });
             }
         }
@@ -197,15 +202,27 @@ pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
     with_vault_move_lock(|| {
         fs::create_dir_all(&versions_dir)?;
         let abs = resolve_vault_path(&vault, path)?;
-        for meta in &version_metas {
+        for meta in &mut version_metas {
             let dest = versions_dir.join(&meta.trash_file);
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent)?;
             }
             if crate::version::is_cas_storage_path(&meta.storage_path) {
-                let content =
-                    crate::version::read_version_content(state, &vault, &meta.storage_path)?;
-                fs::write(&dest, content)?;
+                match crate::version::read_version_content(state, &vault, &meta.storage_path) {
+                    Ok(content) => fs::write(&dest, content)?,
+                    Err(error) => {
+                        // 单个快照不可读（损坏/密钥缺失）只跳过该版本，不阻断删除：
+                        // 内容已无法恢复，用户无需为此承担认知负担。
+                        meta.unreadable = Some(true);
+                        tracing::warn!(
+                            result_code = "recycle_trash_skip_unreadable_version",
+                            path = %path,
+                            version_no = %meta.version_no,
+                            error = %error,
+                            "skipping unreadable version snapshot while trashing document"
+                        );
+                    }
+                }
             } else {
                 let src = versions_root(&vault).join(&meta.storage_path);
                 if src.is_file() {
@@ -440,6 +457,15 @@ fn finalize_restore(
 ) -> AppResult<()> {
     let bundle_dir = vault.join(trash_rel);
     for v in &manifest.versions {
+        if v.unreadable == Some(true) {
+            // 删除时已跳过的不可读版本：内容不存在于 bundle，恢复时同样跳过。
+            tracing::warn!(
+                result_code = "recycle_restore_skip_unreadable_version",
+                version_no = %v.version_no,
+                "skipping unreadable version snapshot during restore"
+            );
+            continue;
+        }
         let src = bundle_dir.join("versions").join(&v.trash_file);
         let new_storage = storage_path_for(file_id, &v.version_no);
         let dest_version = versions_root(vault).join(&new_storage);
@@ -784,6 +810,106 @@ mod tests {
                 == snapshot_body
         );
         assert!(crate::version::is_cas_storage_path(&storage_path));
+    }
+
+    #[test]
+    fn trash_skips_unreadable_version_and_restores_readable_only() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("mixed.md");
+        fs::write(&note, "# Mixed\n\nCurrent body").unwrap();
+        state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
+
+        // 一个正常可读版本。
+        let readable_body = "# Mixed\n\nReadable snapshot";
+        version_save_manual(&state, "mixed.md", readable_body).unwrap();
+
+        // 一个不可读版本：blob 用错误密钥加密后手动写入对象存储，并插入版本行。
+        let unreadable_body = b"# Mixed\n\nUnreadable snapshot";
+        let unreadable_hash = crate::cas::hash::content_hash(unreadable_body);
+        let blob_path = state
+            .cas_store()
+            .unwrap()
+            .object_path(&unreadable_hash)
+            .unwrap();
+        let mut buf = b"CASE".to_vec();
+        buf.extend_from_slice(
+            &crate::cas::encryption::encrypt_blob(unreadable_body, &[0xEE; 32]).unwrap(),
+        );
+        std::fs::create_dir_all(blob_path.parent().unwrap()).unwrap();
+        std::fs::write(&blob_path, &buf).unwrap();
+        let file_id: i64 = state
+            .db
+            .with_conn(|conn| {
+                conn.query_row("SELECT id FROM files WHERE path = 'mixed.md'", [], |r| {
+                    r.get(0)
+                })
+                .map_err(Into::into)
+            })
+            .unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO versions (file_id, version_no, label, content_hash, word_count, is_finalized, kind, created_at, storage_path)
+                     VALUES (?1, 'unreadable-1', NULL, ?2, 0, 0, 'manual', '2026-01-01T00:00:00+00:00', ?3)",
+                    rusqlite::params![file_id, unreadable_hash, format!("cas:{unreadable_hash}")],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        assert!(
+            crate::version::version_list(&state, "mixed.md")
+                .unwrap()
+                .len()
+                == 2,
+            "precondition: two version rows"
+        );
+
+        // 删除必须成功：不可读版本被跳过而非阻断整个删除。
+        trash_document(&state, "mixed.md").unwrap();
+        assert!(!note.exists());
+
+        let items = list_recycle(&state).unwrap();
+        let bundle = trash_root(&vault).join(&items[0].id);
+        let manifest: TrashManifest =
+            serde_json::from_str(&fs::read_to_string(bundle.join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest.versions.len(), 2);
+        let unreadable_meta = manifest
+            .versions
+            .iter()
+            .find(|v| v.version_no == "unreadable-1")
+            .expect("unreadable version recorded in manifest");
+        assert_eq!(
+            unreadable_meta.unreadable,
+            Some(true),
+            "skipped version must be marked unreadable in manifest"
+        );
+        let readable_meta = manifest
+            .versions
+            .iter()
+            .find(|v| v.version_no != "unreadable-1")
+            .expect("readable version recorded");
+        assert_ne!(readable_meta.unreadable, Some(true));
+        let copied = fs::read_dir(bundle.join("versions"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .count();
+        assert_eq!(
+            copied, 1,
+            "only the readable snapshot may be copied into the bundle"
+        );
+
+        // 恢复只恢复可读版本。
+        restore_document(&state, &items[0].id).unwrap();
+        let versions = crate::version::version_list(&state, "mixed.md").unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0].version_no, readable_meta.version_no);
+        assert_eq!(
+            crate::version::version_preview(&state, versions[0].id).unwrap(),
+            readable_body
+        );
     }
 
     #[test]

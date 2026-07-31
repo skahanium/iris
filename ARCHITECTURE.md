@@ -69,6 +69,12 @@ React 19 UI
 
 API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解密值由 `Zeroizing` 持有。日志、错误、事件、Run checkpoint 和诊断不包含 API Key、token、笔记正文或涉密路径。完整策略见 [SECURITY.md](./SECURITY.md)。
 
+## CAS 版本快照加密
+
+版本快照经内容寻址存储（`.iris/cas/`）并全程 AES-256-GCM 加密，永不落明文。加密密钥是**版本化密钥环**（`cas/encryption.rs`）：凭证记录保存 `{current, keys}` JSON，blob 头 `CAS2 + 版本号` 记录写入密钥版本，读取按版本取对应密钥；被轮换的旧密钥永久保留在环中，因此显式轮换（`rotate_cas_key`）永远不会让历史快照不可读。旧格式（纯 hex 单密钥 + `CASE` 头）在读取时按版本 0 兼容。
+
+密钥获取 fail-hard：凭证记录存在但解密/解析失败时直接报错，**绝不静默生成新密钥覆盖**——静默轮换会让既有快照永久不可读（历史事故根因）。快照不可读（`AppError::CasUnreadable`，如磁盘损坏或密钥缺失）时系统自动降级：删除文档跳过不可读版本（manifest 标记 `unreadable`）、恢复跳过、`version_cleanup` 周期自动清理不可读版本行并释放 CAS 引用计数；用户全程无感知，事件仅出现在日志与既有健康检查。
+
 ## SQLite 与迁移
 
 当前共有 **60 组**增量迁移（`001` 至 `060`）。

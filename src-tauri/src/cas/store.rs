@@ -4,10 +4,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use crate::error::{AppError, AppResult};
+use super::encryption::{CasKeyRing, KEY_LEN};
+use crate::error::{AppError, AppError::CasUnreadable, AppResult};
 
-const CRYPT_MAGIC: &[u8; 4] = b"CASE";
-const ENC_KEY_LEN: usize = 32;
+/// 版本化 blob 头（v2）：`CAS2` + 1 字节密钥版本 + nonce + 密文 + tag。
+const CRYPT_MAGIC_V2: &[u8; 4] = b"CAS2";
+/// 旧版 blob 头（v0）：`CASE` + nonce + 密文 + tag，读取时按版本 0 解密。
+const CRYPT_MAGIC_LEGACY: &[u8; 4] = b"CASE";
+const VERSION_HEADER_LEN: usize = CRYPT_MAGIC_V2.len() + 1;
 
 /// 对象类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,7 +67,7 @@ pub struct CommitObject {
 #[derive(Clone)]
 pub struct CasObjectStore {
     base_path: PathBuf,
-    enc_key: OnceLock<Option<[u8; ENC_KEY_LEN]>>,
+    enc_ring: OnceLock<Option<CasKeyRing>>,
 }
 
 impl CasObjectStore {
@@ -77,20 +81,23 @@ impl CasObjectStore {
 
         Ok(Self {
             base_path,
-            enc_key: OnceLock::new(),
+            enc_ring: OnceLock::new(),
         })
     }
 
-    /// Enable AES-256-GCM encryption for all future blob writes.
-    /// Existing plaintext blobs remain readable via header detection.
-    /// Call once during initialization; idempotent after the first call.
-    pub fn enable_encryption(&self, key: [u8; ENC_KEY_LEN]) {
-        let _ = self.enc_key.set(Some(key));
+    /// 启用单密钥 AES-256-GCM 加密（等价于单版本环，历史行为；测试与显式单密钥场景使用）。
+    pub fn enable_encryption(&self, key: [u8; KEY_LEN]) {
+        let ring = CasKeyRing::from_keys(vec![key]).expect("single-key ring always valid");
+        let _ = self.enc_ring.set(Some(ring));
     }
 
-    /// Get the encryption key if configured.
-    fn enc_key(&self) -> Option<[u8; ENC_KEY_LEN]> {
-        self.enc_key.get().copied().flatten()
+    /// 启用版本化密钥环。写入用当前版本，读取按 blob 头版本取对应密钥。
+    pub fn enable_encryption_ring(&self, ring: CasKeyRing) {
+        let _ = self.enc_ring.set(Some(ring));
+    }
+
+    fn enc_ring(&self) -> Option<CasKeyRing> {
+        self.enc_ring.get().cloned().flatten()
     }
 
     /// 获取对象文件路径
@@ -117,17 +124,15 @@ impl CasObjectStore {
     }
 
     fn prepare_on_disk(&self, content: &[u8]) -> AppResult<Vec<u8>> {
-        if let Some(key) = self.enc_key() {
-            let encrypted = super::encryption::encrypt_blob(content, &key)?;
-            let mut buf = Vec::with_capacity(CRYPT_MAGIC.len() + encrypted.len());
-            buf.extend_from_slice(CRYPT_MAGIC);
-            buf.extend_from_slice(&encrypted);
-            Ok(buf)
-        } else {
-            Err(AppError::msg(
-                "CAS encryption key is unavailable; refusing to write plaintext object",
-            ))
-        }
+        let ring = self.enc_ring().ok_or_else(|| {
+            AppError::msg("CAS encryption key is unavailable; refusing to write plaintext object")
+        })?;
+        let encrypted = super::encryption::encrypt_blob(content, &ring.current_key())?;
+        let mut buf = Vec::with_capacity(VERSION_HEADER_LEN + encrypted.len());
+        buf.extend_from_slice(CRYPT_MAGIC_V2);
+        buf.push(ring.current_version());
+        buf.extend_from_slice(&encrypted);
+        Ok(buf)
     }
 
     /// 存储 blob 对象。如果启用了加密，写入前加密内容。
@@ -144,7 +149,7 @@ impl CasObjectStore {
         Ok(hash)
     }
 
-    /// 读取 blob 内容。自动检测并解密加密的 blob。
+    /// 读取 blob 内容。自动检测并解密加密的 blob；无法解密的 blob 返回 [`AppError::CasUnreadable`]。
     pub fn read_blob(&self, hash: &str) -> AppResult<Vec<u8>> {
         let path = self.object_path(hash)?;
         if !path.exists() {
@@ -152,13 +157,34 @@ impl CasObjectStore {
         }
         let raw = fs::read(&path)?;
 
-        if raw.len() >= CRYPT_MAGIC.len() && &raw[..CRYPT_MAGIC.len()] == CRYPT_MAGIC {
-            let enc_data = &raw[CRYPT_MAGIC.len()..];
-            let key = self.enc_key().ok_or_else(|| {
-                AppError::msg("encrypted CAS blob detected but no encryption key configured")
+        if raw.starts_with(CRYPT_MAGIC_V2) {
+            if raw.len() < VERSION_HEADER_LEN + super::encryption::NONCE_LEN {
+                return Err(CasUnreadable("CAS blob header is truncated".into()));
+            }
+            let version = raw[CRYPT_MAGIC_V2.len()];
+            let ring = self.enc_ring().ok_or_else(|| {
+                CasUnreadable("encrypted CAS blob detected but no encryption key configured".into())
             })?;
-            super::encryption::decrypt_blob(enc_data, &key)
+            let key = ring.key_for(version).ok_or_else(|| {
+                CasUnreadable(format!(
+                    "CAS blob uses encryption key version {version} which is not in the key ring"
+                ))
+            })?;
+            super::encryption::decrypt_blob(&raw[VERSION_HEADER_LEN..], &key)
+                .map_err(|e| CasUnreadable(format!("CAS decryption failed: {e}")))
+        } else if raw.starts_with(CRYPT_MAGIC_LEGACY) {
+            let ring = self.enc_ring().ok_or_else(|| {
+                CasUnreadable("encrypted CAS blob detected but no encryption key configured".into())
+            })?;
+            let key = ring.key_for(0).ok_or_else(|| {
+                CasUnreadable(
+                    "legacy CAS blob requires the version-0 key which is unavailable".into(),
+                )
+            })?;
+            super::encryption::decrypt_blob(&raw[CRYPT_MAGIC_LEGACY.len()..], &key)
+                .map_err(|e| CasUnreadable(format!("CAS decryption failed: {e}")))
         } else {
+            // 历史明文 blob：头检测无法识别时按原样返回。
             Ok(raw)
         }
     }

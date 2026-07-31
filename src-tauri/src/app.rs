@@ -77,12 +77,12 @@ impl StorageState {
             store.enable_encryption([0xC5; 32]);
             #[cfg(not(test))]
             {
-                let key = crate::cas::encryption::get_or_create_cas_key().map_err(|e| {
+                let ring = crate::cas::encryption::load_or_create_cas_ring().map_err(|e| {
                     AppError::msg(format!(
                         "CAS encryption unavailable; refusing plaintext writes: {e}"
                     ))
                 })?;
-                store.enable_encryption(key);
+                store.enable_encryption_ring(ring);
             }
         }
         let _ = self.cas_store.set(store);
