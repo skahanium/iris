@@ -35,6 +35,14 @@ React 19 UI
 - `src-tauri/src/indexer/`：Markdown/frontmatter、分块、链接、标签和索引更新。
 - `src-tauri/src/storage/`：SQLite、增量迁移、FTS 与可选 sqlite-vec 注册。
 
+## 自适应工作区
+
+布局由纯策略模块 `src/lib/workspace-chrome-layout.ts` 决定：把用户意图（`aiPanelOpen`、`navigatorOpen`、`pinPreferred`、`primarySurface`、`zenMode`）与实测尺寸（内容宽度、根字号、`--prose-measure` 计算值）投影为有效 presentation（`document/assistant_focus` × `closed/peek/pinned` × `sidecar/collapsed/focus`）。resize 只改实测尺寸，不改写用户意图；文档保护宽度（52rem）在任何降级路径都不被突破。`useWorkspaceChromeLayout` 用 ResizeObserver 读取内容区宽度与 `--prose-measure`，只持久化 Agent 宽度（`iris.aiPanelWidth`）、导航固定偏好（`iris.workspaceChrome.navigatorPinPreferred`）与安全目录展开标识（无安全 vault identity 时仅进程内）。
+
+`AppShell` 持有唯一布局实例：Agent 与 editor 始终是同一个 sibling 子树（`sidecar ↔ focus`、zen 进出均不 remount）；`assistant_focus` 时 editor 保持挂载但不可交互（`aria-hidden + invisible + pointer-events-none`），Agent 面板 `absolute inset-0` 覆盖主区；导航 slot 只做 `closed/peek/pinned` placement。布局动作经 `WorkspaceChromeActionsContext`（`useWorkspaceChromeActions`）下发；标题栏入口与 `Ctrl/Cmd+\` 快捷键在 Context 外，经 window CustomEvent（`workspace-chrome-events.ts`）转发。`Ctrl/Cmd+Shift+E` 保持打开管理中心的完整"浏览笔记库"。
+
+文件导航与动作由共享 controller 提供：`useVaultCatalog`（catalog 加载/refresh/外部 watcher epoch/索引降级）与 `useVaultFileActions`（新建、重命名、移动、锁定、移入回收站，全部经 `useNavigatorFileLifecycle` 的 dirty flush 与路径迁移屏障、索引回执与提交回执）。管理中心 `VaultNavigatorBody` 与轻量 `WorkspaceNavigator`（`peek/pinned` placement、单列 folder/file 树、键盘语义、brand marker、`IrisSurfaceMenu` 行操作）共同消费这两个 controller；批量操作、语料库、模板与回收站恢复仍只留在管理中心。Agent 主区阅读（`assistant_focus`）的内容列统一使用 `.ai-focus-column`（最大 `var(--prose-measure)`），消息流、确认区、授权边界、选中消息操作条与 Composer 同列。
+
 ## 数据原则
 
 用户 `.md` 是笔记唯一权威来源。`files`、`chunks`、`links`、FTS 与嵌入索引均可由 Vault 重建；会话、Run、网页缓存和收件箱属于应用状态。应用不会在未确认时改写用户笔记。

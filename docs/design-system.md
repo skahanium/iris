@@ -144,12 +144,14 @@ v1.2.19 在现有 Rail 体系中增加 Workspace Navigator 与 Agent Focus Surfa
 - **Agent 主区阅读**：使用同一 `UnifiedAssistantPanel` 实例，不创建 Agent Tab。主区消息、过程流、确认面与 Composer 居中限制为 `52rem`；点击“返回文档”或任一文档 Tab 退出，编辑器不得卸载或重建。
 - **响应式稳定性**：窗口 resize 可以改变辅助面板的有效 presentation，但不得自动切换当前文档、创建 Tab、取消 Run、清空 Composer 或改写 Markdown。禅模式暂时隐藏导航与 Agent，退出后恢复进入禅模式前的用户意图。
 - **品牌与层级**：导航器当前文件沿用 brand marker；文件夹展开、hover 与焦点使用现有 muted/accent 层级。Agent focus 仍消费 `--ai-*` 与共享 conversation prose，不引入新的聊天主屏视觉语言。
+- **主区内容列**：消息流、确认区、recovery、外部工具授权边界、选中消息操作条与 Composer 统一使用 `.ai-focus-column`（`margin-inline: auto; width: 100%; max-width: var(--prose-measure)`），与文档保护宽度同源，不硬编码 832px。
+- **焦点管理**：进入主区阅读时焦点送到消息流（`tabIndex={-1}`），不强制进入 Composer；返回文档时恢复进入前的焦点位置。`Ctrl/Cmd+\` 打开导航后焦点进入树由导航器接管，关闭后返回标题栏入口。
 
 ### Workspace Navigator 组件边界
 
 - `components/file/` 承担目录树、文件行与文件操作业务；`components/layout/` 只承担抽屉/固定 placement 和窗口宽度协调。
 - 轻量导航器使用单列 folder/file tree，打开时自动显露当前文件。单击文件打开但不关闭抽屉；Esc、再次点击入口或把焦点明确返回编辑区时关闭浮动抽屉。
-- 常用文件操作必须复用现有 catalog 与 `useNavigatorFileLifecycle` 屏障。禁止在轻量导航器内复制 `fileRename`、`fileDelete`、锁定或 dirty flush 的独立流程。
+- 常用文件操作必须复用 `useVaultCatalog` / `useVaultFileActions` 共享 controller 与 `useNavigatorFileLifecycle` 屏障。禁止在轻量导航器内复制 `fileRename`、`fileDelete`、锁定或 dirty flush 的独立流程。
 - 删除文案固定为“移入回收站”，继续使用确认对话框；永久删除不得出现在轻量导航器。
 - 管理中心“浏览笔记库”继续承载双栏管理视图、批量操作、语料库类型和模板；`Ctrl/Cmd+Shift+E` 语义保持为完整库管理。轻量导航器使用 `Ctrl/Cmd+\\` 切换。
 
