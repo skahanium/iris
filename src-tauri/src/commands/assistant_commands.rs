@@ -1034,32 +1034,39 @@ mod normal_run_desktop_adapter_tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    #[cfg(not(windows))]
+    use super::assistant_run_start;
     use super::{
-        assistant_run_control, assistant_run_start, dispatch_normal_run_service,
-        evaluate_normal_run_policy, execute_confirmed_change_with_sink,
+        assistant_run_control, dispatch_normal_run_service, evaluate_normal_run_policy,
+        execute_confirmed_change_with_sink,
     };
+    #[cfg(not(windows))]
     use crate::ai_runtime::agent_capacity_eval::{spawn_llm_protocol_double, HttpResponseScript};
     use crate::ai_runtime::agent_run_repository::{
         AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
         DurableApplyCheckpointStage,
     };
     use crate::ai_runtime::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
+    #[cfg(not(windows))]
     use crate::ai_runtime::mcp_external_tools::{
         review_discovered_tool, upsert_binding, McpCapabilityBindingInput,
         McpCapabilityBindingSummary,
     };
+    #[cfg(not(windows))]
     use crate::ai_runtime::mcp_host_runtime::{
         discover_provider_tools_without_recording_with_config_hash, McpHostRuntimeOptions,
         DEFAULT_STDIO_SESSION_IDLE_TIMEOUT,
     };
+    #[cfg(not(windows))]
     use crate::ai_runtime::mcp_runtime_registry::{
         upsert_web_evidence_provider, WebEvidenceProviderInput,
     };
+    #[cfg(not(windows))]
+    use crate::ai_runtime::run_contract::ExternalToolGrantRef;
     use crate::ai_runtime::run_contract::{
         AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent,
         AssistantRunStartRequest, AssistantTurnDraft, Effect, ExplicitAction, ExplicitTarget,
-        ExternalToolGrantRef, RunControlAction, RunEventPayload, RunEventType, RunRecoveryKind,
-        RunState, SecurityDomain,
+        RunControlAction, RunEventPayload, RunEventType, RunRecoveryKind, RunState, SecurityDomain,
     };
     use crate::ai_runtime::run_engine::RunEngine;
     use crate::ai_runtime::run_engine::RunEventSink;
@@ -1067,6 +1074,7 @@ mod normal_run_desktop_adapter_tests {
     use crate::ai_types::{ContextReferenceKind, ContextReferenceWire};
     use crate::app::AppState;
     use crate::error::AppResult;
+    #[cfg(not(windows))]
     use crate::llm::config::{LlmRoutingConfig, ModelReference, ProviderOverride};
     use tauri::webview::InvokeRequest;
 
@@ -1122,6 +1130,7 @@ mod normal_run_desktop_adapter_tests {
         assert!(observed_present.get());
     }
 
+    #[cfg(not(windows))]
     async fn install_production_external_binding(state: &AppState) -> McpCapabilityBindingSummary {
         let fixture = format!(
             "{}/tests/fixtures/agent-capacity-mcp-stdio.sh",
@@ -1199,6 +1208,7 @@ mod normal_run_desktop_adapter_tests {
             .expect("trusted binding")
     }
 
+    #[cfg(not(windows))]
     fn configure_test_llm(state: &AppState, base_url: String, model_id: &str) {
         let mut routing = LlmRoutingConfig::default();
         routing.providers.clear();
@@ -1218,6 +1228,7 @@ mod normal_run_desktop_adapter_tests {
         state.set_test_streaming_client(reqwest::Client::new());
     }
 
+    #[cfg(not(windows))]
     fn invoke_start(
         webview: &tauri::WebviewWindow<tauri::test::MockRuntime>,
         request: AssistantRunStartRequest,
@@ -1241,6 +1252,7 @@ mod normal_run_desktop_adapter_tests {
         serde_json::from_str(&response).expect("accepted response")
     }
 
+    #[cfg(not(windows))]
     async fn wait_for_terminal(state: &AppState, accepted: &AssistantRunAccepted) -> RunState {
         for _ in 0..200 {
             let current = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
@@ -1778,7 +1790,15 @@ mod normal_run_desktop_adapter_tests {
                 cmd: "assistant_run_control".into(),
                 callback: tauri::ipc::CallbackFn(0),
                 error: tauri::ipc::CallbackFn(1),
-                url: "tauri://localhost".parse().expect("invoke URL"),
+                // Windows/Android 的 wry workaround 使用 http://tauri.localhost，
+                // 其余平台才是 tauri://localhost；用错 URL 会被判定为 remote origin 并触发 ACL 拒绝。
+                url: if cfg!(any(windows, target_os = "android")) {
+                    "http://tauri.localhost"
+                } else {
+                    "tauri://localhost"
+                }
+                .parse()
+                .expect("invoke URL"),
                 body: tauri::ipc::InvokeBody::Json(serde_json::json!({ "request": request })),
                 headers: Default::default(),
                 invoke_key: tauri::test::INVOKE_KEY.into(),
@@ -1821,7 +1841,11 @@ mod normal_run_desktop_adapter_tests {
             .build()
             .expect("mock webview");
 
-        assert!(invoke_control(&webview, request.clone()).is_ok());
+        let control_result = invoke_control(&webview, request.clone());
+        assert!(
+            control_result.is_ok(),
+            "invoke_control failed: {control_result:?}"
+        );
         for _ in 0..100 {
             let completed = RunIntake::get(&state.db, &accepted.session, &accepted.run_id)
                 .expect("poll replay")
