@@ -69,9 +69,9 @@ describe("AI long response memory budget", () => {
       "utf8",
     );
 
-    // 主区阅读内容列与文档保护宽度同源（--prose-measure），不硬编码 832px。
+    // 主区阅读内容列消费独立 --ai-focus-measure token，不硬编码 px。
     expect(css).toContain(".ai-focus-column");
-    expect(css).toContain("max-width: var(--prose-measure)");
+    expect(css).toContain("max-width: var(--ai-focus-measure)");
     // 长回答预算仍作用于 focus 列内的气泡，不因加宽被绕过。
     expect(bubble).toContain("createRenderableAssistantContent");
     expect(bubble).not.toContain("max-width: none");

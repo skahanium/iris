@@ -1952,9 +1952,10 @@
   background-clip: padding-box;
 }
 
-/* v1.2.19 Agent 主区阅读内容列：与文档保护宽度一致，随 --prose-measure 变化，不硬编码 832px。 */
+/* v1.2.19 Agent 主区阅读内容列：消费 --ai-focus-measure（70rem），
+   与文档保护宽度 --prose-measure 分离，不硬编码 px。 */
 .ai-focus-column {
   margin-inline: auto;
   width: 100%;
-  max-width: var(--prose-measure);
+  max-width: var(--ai-focus-measure);
 }

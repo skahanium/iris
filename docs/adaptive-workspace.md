@@ -61,15 +61,15 @@ export type AssistantPresentation = "sidecar" | "collapsed" | "focus";
 
 ## 4. 宽度预算
 
-| 区域             | 约束                                                               |
-| ---------------- | ------------------------------------------------------------------ |
-| 文档保护宽度     | `52rem`，来自现有 `--prose-measure`                                |
-| 文件导航固定宽度 | `18rem`                                                            |
-| 文件导航浮动宽度 | `min(18rem, calc(100% - 3rem))`                                    |
-| Agent 最小宽度   | `25rem`                                                            |
-| Agent 目标宽度   | `30rem`                                                            |
-| Agent 最大宽度   | `45rem`                                                            |
-| Agent 主区内容   | 消息流、确认区与 Composer 的内容容器最大 `52rem`，外层可占满工作区 |
+| 区域             | 约束                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------ |
+| 文档保护宽度     | `52rem`，来自现有 `--prose-measure`                                                        |
+| 文件导航固定宽度 | `18rem`                                                                                    |
+| 文件导航浮动宽度 | `min(18rem, calc(100% - 3rem))`                                                            |
+| Agent 最小宽度   | `25rem`                                                                                    |
+| Agent 目标宽度   | `30rem`                                                                                    |
+| Agent 最大宽度   | `45rem`                                                                                    |
+| Agent 主区内容   | 消息流、确认区与 Composer 的内容容器最大 `70rem`（`--ai-focus-measure`），外层可占满工作区 |
 
 宽度计算使用 AppShell 实际内容宽度，不使用 `window.innerWidth`。根字号变化时必须读取计算后的 `--prose-measure`，不得在业务逻辑中假定永远是 832px。
 
@@ -204,9 +204,9 @@ AppShell 中只存在一个 Agent React 子树。切换 `sidecar ↔ focus` 只�
 ### 7.3 排版
 
 - 主区沿用 `data-prose-surface="conversation"`，不复制 Markdown 渲染器。
-- 消息操作轨、assistant bubble、过程区和 citation footer 位于统一的最大 `52rem` 内容列内。
+- 消息操作轨、assistant bubble、过程区和 citation footer 位于统一的最大 `70rem`（`--ai-focus-measure`）内容列内。
 - Composer、外部工具授权边界和选中消息操作条与消息列同宽。
-- 超宽窗口不得把助手段落铺满整个主区；代码块和表格继续在内容列内安全处理横向内容。
+- 超宽窗口不得把助手段落铺满整个主区；代码块和表格继续在内容列内安全处理横向内容。`--ai-focus-measure` 是主区阅读专用 token，文档与侧车仍消费 `--prose-measure`（52rem）。
 
 ### 7.4 涉密与权限
 

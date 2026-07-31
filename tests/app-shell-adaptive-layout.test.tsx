@@ -262,6 +262,35 @@ describe("AppShell 自适应布局：单实例稳定挂载与投影", () => {
     ).toBe("peek");
   });
 
+  it("focus 时面板与内容容器不残留侧车像素宽度，占满主工作区", () => {
+    const view = renderShell({ aiPanelOpen: true });
+    fireResize(2000);
+    const dock = screen.getByTestId("unified-assistant-dock");
+    expect(dock.getAttribute("data-presentation")).toBe("sidecar");
+    // 侧车：aside 持有侧车像素宽度。
+    expect(dock.style.width).toBe("480px");
+
+    view.rerender(
+      <AppShell
+        tabBar={<Sentinel label="tab" />}
+        editor={<Sentinel label="editor" />}
+        aiPanel={<Sentinel label="agent" />}
+        navigator={<Sentinel label="navigator" />}
+        statusBar={<Sentinel label="status" />}
+        aiPanelOpen
+        primarySurface="assistant_focus"
+      />,
+    );
+    fireResize(2000);
+
+    expect(dock.getAttribute("data-presentation")).toBe("focus");
+    // 回归防护：focus 时 aside 不能被内联 width:0 压制，内容容器不得残留 savedSidecarWidthPx，
+    // 否则面板停留在侧车宽度、右侧大片空白，--ai-focus-measure 内容列永远达不到。
+    expect(dock.style.width).toBe("");
+    const wrapper = dock.firstElementChild as HTMLElement;
+    expect(wrapper.style.width).toBe("");
+  });
+
   it("Agent collapsed 时侧车保持挂载并 aria-hidden", () => {
     renderShell({ aiPanelOpen: true });
     fireResize(2000);

@@ -13,6 +13,9 @@
 
     /* Measure stays 52rem: narrowing felt cramped in real writing. */
     --prose-measure: 52rem;
+    /* Agent 主区阅读内容列专用：文档/侧车仍用 --prose-measure（52rem），
+       focus 独占主区、文档隐藏，允许更宽的内容列以容纳代码与表格。 */
+    --ai-focus-measure: 70rem;
     --prose-size-editor: 1rem;
     --prose-size-chat: 15px;
     --prose-line-height: 1.7;

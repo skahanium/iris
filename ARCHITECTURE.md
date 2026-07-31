@@ -41,7 +41,7 @@ React 19 UI
 
 `AppShell` 持有唯一布局实例：Agent 与 editor 始终是同一个 sibling 子树（`sidecar ↔ focus`、zen 进出均不 remount）；`assistant_focus` 时 editor 保持挂载但不可交互（`aria-hidden + invisible + pointer-events-none`），Agent 面板 `absolute inset-0` 覆盖主区；导航 slot 只做 `closed/peek/pinned` placement。布局动作经 `WorkspaceChromeActionsContext`（`useWorkspaceChromeActions`）下发；标题栏入口与 `Ctrl/Cmd+\` 快捷键在 Context 外，经 window CustomEvent（`workspace-chrome-events.ts`）转发。`Ctrl/Cmd+Shift+E` 保持打开管理中心的完整"浏览笔记库"。
 
-文件导航与动作由共享 controller 提供：`useVaultCatalog`（catalog 加载/refresh/外部 watcher epoch/索引降级）与 `useVaultFileActions`（新建、重命名、移动、锁定、移入回收站，全部经 `useNavigatorFileLifecycle` 的 dirty flush 与路径迁移屏障、索引回执与提交回执）。管理中心 `VaultNavigatorBody` 与轻量 `WorkspaceNavigator`（`peek/pinned` placement、单列 folder/file 树、键盘语义、brand marker、`IrisSurfaceMenu` 行操作）共同消费这两个 controller；批量操作、语料库、模板与回收站恢复仍只留在管理中心。Agent 主区阅读（`assistant_focus`）的内容列统一使用 `.ai-focus-column`（最大 `var(--prose-measure)`），消息流、确认区、授权边界、选中消息操作条与 Composer 同列。
+文件导航与动作由共享 controller 提供：`useVaultCatalog`（catalog 加载/refresh/外部 watcher epoch/索引降级）与 `useVaultFileActions`（新建、重命名、移动、锁定、移入回收站，全部经 `useNavigatorFileLifecycle` 的 dirty flush 与路径迁移屏障、索引回执与提交回执）。管理中心 `VaultNavigatorBody` 与轻量 `WorkspaceNavigator`（`peek/pinned` placement、单列 folder/file 树、键盘语义、brand marker、`IrisSurfaceMenu` 行操作）共同消费这两个 controller；批量操作、语料库、模板与回收站恢复仍只留在管理中心。Agent 主区阅读（`assistant_focus`）的内容列统一使用 `.ai-focus-column`（最大 `var(--ai-focus-measure)`，70rem），消息流、确认区、授权边界、选中消息操作条与 Composer 同列。
 
 ## 数据原则
 

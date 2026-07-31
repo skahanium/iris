@@ -141,10 +141,10 @@ v1.2.19 在现有 Rail 体系中增加 Workspace Navigator 与 Agent Focus Surfa
 - **浮动导航**：默认导航器从工作区左侧以非模态抽屉出现，宽度 `18rem`，窄窗口为 `min(18rem, calc(100% - 3rem))`。抽屉消费 `bg-panel`、`border-border-subtle` 与 `shadow-overlay`，不得做成新的管理中心卡片。
 - **固定导航**：只有布局预算满足时才显示可用的固定操作；固定态参与宽度分配，失去预算后自动退回浮动而不关闭。用户的固定偏好可以持久化，临时开关状态不持久化。
 - **Agent 侧车**：侧车目标宽度为 `30rem`，允许在 `25rem–45rem` 间调整。拖动上限必须同时受文档保护宽度约束；空间不足时显示可见 Agent 入口，打开后进入主区阅读，而不是把正文压到保护线以下。
-- **Agent 主区阅读**：使用同一 `UnifiedAssistantPanel` 实例，不创建 Agent Tab。主区消息、过程流、确认面与 Composer 居中限制为 `52rem`；点击“返回文档”或任一文档 Tab 退出，编辑器不得卸载或重建。
+- **Agent 主区阅读**：使用同一 `UnifiedAssistantPanel` 实例，不创建 Agent Tab。主区消息、过程流、确认面与 Composer 居中限制为 `--ai-focus-measure`（`70rem`）；点击“返回文档”或任一文档 Tab 退出，编辑器不得卸载或重建。
 - **响应式稳定性**：窗口 resize 可以改变辅助面板的有效 presentation，但不得自动切换当前文档、创建 Tab、取消 Run、清空 Composer 或改写 Markdown。禅模式暂时隐藏导航与 Agent，退出后恢复进入禅模式前的用户意图。
 - **品牌与层级**：导航器当前文件沿用 brand marker；文件夹展开、hover 与焦点使用现有 muted/accent 层级。Agent focus 仍消费 `--ai-*` 与共享 conversation prose，不引入新的聊天主屏视觉语言。
-- **主区内容列**：消息流、确认区、recovery、外部工具授权边界、选中消息操作条与 Composer 统一使用 `.ai-focus-column`（`margin-inline: auto; width: 100%; max-width: var(--prose-measure)`），与文档保护宽度同源，不硬编码 832px。
+- **主区内容列**：消息流、确认区、recovery、外部工具授权边界、选中消息操作条与 Composer 统一使用 `.ai-focus-column`（`margin-inline: auto; width: 100%; max-width: var(--ai-focus-measure)`）。`--ai-focus-measure`（`70rem`）是主区阅读专用 token，与文档 `--prose-measure`（`52rem`）分离——focus 独占主区、文档隐藏，允许更宽内容列容纳代码与表格；侧车与文档仍消费 `--prose-measure`。两者都不硬编码 px。
 - **焦点管理**：进入主区阅读时焦点送到消息流（`tabIndex={-1}`），不强制进入 Composer；返回文档时恢复进入前的焦点位置。`Ctrl/Cmd+\` 打开导航后焦点进入树由导航器接管，关闭后返回标题栏入口。
 
 ### Workspace Navigator 组件边界

@@ -63,7 +63,6 @@ export function AppShell({
     enterAssistantFocus,
     exitAssistantFocus,
     projection,
-    savedSidecarWidthPx,
     setAiPanelOpen,
     setNavigatorOpen,
     setPinPreferred,
@@ -293,7 +292,9 @@ export function AppShell({
               width:
                 projection.assistant === "sidecar"
                   ? projection.sidecarWidthPx
-                  : 0,
+                  : projection.assistant === "focus"
+                    ? undefined
+                    : 0,
             }}
           >
             {projection.assistant === "sidecar" ? (
@@ -315,7 +316,7 @@ export function AppShell({
                 width:
                   projection.assistant === "sidecar"
                     ? projection.sidecarWidthPx
-                    : savedSidecarWidthPx,
+                    : undefined,
               }}
             >
               {aiPanel}

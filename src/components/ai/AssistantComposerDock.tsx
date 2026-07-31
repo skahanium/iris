@@ -44,7 +44,7 @@ interface AssistantComposerDockProps {
   onValueChange: (value: string, edit?: MentionTextEdit) => void;
   onSelect: () => void;
   onStop: () => void;
-  /** Agent 主区阅读：Composer 与授权边界进入最大 52rem 内容列（§7.3）。 */
+  /** Agent 主区阅读：Composer 与授权边界进入最大 --ai-focus-measure 内容列（§7.3）。 */
   assistantFocus?: boolean;
 }
 
