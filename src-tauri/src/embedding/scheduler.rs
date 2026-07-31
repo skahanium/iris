@@ -2116,7 +2116,9 @@ mod tests {
 
         scheduler.schedule_skill_activation_embeddings();
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        // 全量测试并行执行时，后台 worker 线程的调度可能被显著延迟；
+        // 单跑约 0.1s 的修复在 5s 窗口下偶发超时，故放宽为 30s 再断言。
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             let embedding = db
                 .with_read_conn(|conn| {
