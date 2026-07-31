@@ -1,4 +1,6 @@
-﻿import { act, useEffect } from "react";
+﻿import { readFileSync } from "node:fs";
+
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -691,5 +693,18 @@ describe("usePreparedNoteOpener", () => {
         }),
       }),
     );
+  });
+
+  it("轻量工作区导航的 hover 预热保持 file-tree source（Task 7 契约）", () => {
+    const navigator = readFileSync(
+      "src/components/file/WorkspaceNavigator.tsx",
+      "utf8",
+    );
+    const opener = readFileSync("src/hooks/usePreparedNoteOpener.ts", "utf8");
+
+    // 导航器把文件行交还给 prepared-note 管线；source 由 prepareVisibleNote 默认值固定为 file-tree。
+    expect(navigator).toContain("onPrepareNote?.({");
+    expect(navigator).toContain("source 保持 file-tree");
+    expect(opener).toContain('source: NoteOpenSource = "file-tree"');
   });
 });

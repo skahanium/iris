@@ -5,6 +5,10 @@ export interface VaultTreeNode {
   path: string;
   kind: "folder" | "file";
   children?: VaultTreeNode[];
+  /** 文件锁定状态（仅 file 节点；由 FileListItem.isLocked 填充）。 */
+  locked?: boolean;
+  /** 用户可见标题（仅 file 节点；由 FileListItem.title 填充，缺省回退 name）。 */
+  title?: string;
 }
 
 /** Normalize a vault folder prefix to `segment/` form with forward slashes. */
@@ -104,6 +108,8 @@ export function buildVaultTree(
       name: fileName,
       path: norm,
       kind: "file",
+      locked: f.isLocked,
+      title: f.title || fileName,
     };
     if (parentPath) {
       const parent = folderMap.get(parentPath);
@@ -138,4 +144,28 @@ export function listFilesInFolder(
   if (!folderPrefix) return files;
   const prefix = normalizeFolderPrefix(folderPrefix);
   return files.filter((f) => f.path.replace(/\\/g, "/").startsWith(prefix));
+}
+
+/** 可见树行：节点 + 深度（键盘 ↑/↓ 导航与当前文件自动显露用）。 */
+export interface VaultTreeRow {
+  node: VaultTreeNode;
+  depth: number;
+}
+
+/** 按展开集合把树展平为可见行序列；未展开的文件夹不进入序列。 */
+export function flattenVaultTree(
+  tree: VaultTreeNode[],
+  expanded: ReadonlySet<string>,
+): VaultTreeRow[] {
+  const rows: VaultTreeRow[] = [];
+  const walk = (nodes: VaultTreeNode[], depth: number) => {
+    for (const node of nodes) {
+      rows.push({ node, depth });
+      if (node.kind === "folder" && expanded.has(node.path) && node.children) {
+        walk(node.children, depth + 1);
+      }
+    }
+  };
+  walk(tree, 0);
+  return rows;
 }

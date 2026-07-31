@@ -44,6 +44,7 @@ import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useOpenNote } from "@/hooks/useOpenNote";
 import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
+import { WorkspaceNavigator } from "@/components/file/WorkspaceNavigator";
 import { useNoteLifecycleIntentActions } from "@/hooks/useNoteLifecycleIntentActions";
 import { useFileConflictResolution } from "@/hooks/useFileConflictResolution";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
@@ -69,19 +70,17 @@ import { isTauriRuntime } from "@/lib/tauri-runtime";
 import type { DocumentPersistenceMoveResult } from "@/lib/document-persistence-coordinator";
 
 function loadOutlineOpen(): boolean {
-  try {
-    return localStorage.getItem("iris-outline-open") !== "false";
-  } catch {
-    return true;
-  }
+  return localStorage.getItem("iris-outline-open") !== "false";
 }
 function saveOutlineOpen(open: boolean): void {
-  try {
-    localStorage.setItem("iris-outline-open", open ? "true" : "false");
-  } catch {
-    return;
-  }
+  localStorage.setItem("iris-outline-open", open ? "true" : "false");
 }
+type FindReplaceMode = "find" | "replace";
+type DiscardNote = (path: string, markdown: string) => Promise<void>;
+type SuppressShellUi = (path: string) => void;
+
+type ConflictStateValue = ConflictState | null;
+
 interface IdlePreloadScheduler {
   requestIdleCallback?: (callback: () => void) => number;
   cancelIdleCallback?: (handle: number) => void;
@@ -117,12 +116,9 @@ function App() {
     error: vaultError,
   } = useVault();
   const { theme, setTheme } = useTheme();
-  const [startupSplashVisible, setStartupSplashVisible] =
-    useState(isTauriRuntime);
+  const [splashVisible, setStartupSplashVisible] = useState(isTauriRuntime);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
-  const [conflictState, setConflictState] = useState<ConflictState | null>(
-    null,
-  );
+  const [conflictState, setConflictState] = useState<ConflictStateValue>(null);
   const {
     editorStats,
     updateEditorStats,
@@ -132,16 +128,13 @@ function App() {
     setActiveEditorSession,
     clearSessionCharDelta,
   } = useEditorStats();
-  // With no restored tab the workspace is empty, not an editor fallback.
-  // Keeping this true also lets the empty workspace read the recovered catalog.
   const [workspaceEmpty, setWorkspaceEmpty] = useState(true);
   const [zen, setZen] = useState(false);
   useZenExitKeyboard({ zen, setZen });
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
   const [findReplaceOpen, setFindReplaceOpen] = useState(false);
-  const [findReplaceMode, setFindReplaceMode] = useState<"find" | "replace">(
-    "find",
-  );
+  const [findReplaceMode, setFindReplaceMode] =
+    useState<FindReplaceMode>("find");
   const [classifiedOpen, setClassifiedOpen] = useState(false);
   const [persistenceBlocker, setPersistenceBlocker] =
     useState<PersistenceBlocker | null>(null);
@@ -171,13 +164,9 @@ function App() {
   const departureInteractionLockedRef = useRef(false);
   const persistBeforeLeaveRef = useRef<PersistBeforeLeave>(async () => null);
   const getLiveMarkdownForTabsRef = useRef<() => string>(() => "");
-  const discardPristineNoteRef = useRef<
-    (path: string, markdown: string) => Promise<void>
-  >(async () => undefined);
+  const discardPristineNoteRef = useRef<DiscardNote>(async () => undefined);
   const clearSuppressShellUiRef = useRef<() => void>(() => undefined);
-  const beginSuppressShellUiRef = useRef<(path: string) => void>(
-    () => undefined,
-  );
+  const beginSuppressShellUiRef = useRef<SuppressShellUi>(() => undefined);
   const {
     tabs,
     activePath,
@@ -276,7 +265,7 @@ function App() {
   tabsRef.current = tabs;
   const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
   const activeDocumentSessionId = useMemo(
-    () => tabs.find((tab) => tab.path === activePath)?.documentSessionId,
+    () => tabs.find((t) => t.path === activePath)?.documentSessionId,
     [activePath, tabs],
   );
   const updateInstallBarrierRef = useRef<() => Promise<void>>(
@@ -305,8 +294,7 @@ function App() {
     setAiStatus,
   });
   const openClassifiedPaths = useMemo(
-    () =>
-      tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
+    () => tabs.filter((t) => isClassifiedVaultPath(t.path)).map((t) => t.path),
     [tabs],
   );
   const {
@@ -353,9 +341,7 @@ function App() {
     vaultPath,
     workspaceEmpty,
   });
-  const currentNoteIsClassified = Boolean(
-    activePath && isClassifiedVaultPath(activePath),
-  );
+  const currentNoteIsClassified = isClassifiedVaultPath(activePath ?? "");
   const {
     activeMediaTab,
     activeNoteIsClassified,
@@ -577,9 +563,7 @@ function App() {
     invalidateDocumentRuntimeState,
   });
   committedPathRenameRef.current = (oldPath, _newPath) => {
-    // The application's own watcher events are deliberately suppressed during
-    // an atomic move. Retire only the old-path warm/runtime caches here; the
-    // active tab and its session-keyed editor have already been rebound.
+    // 原子移动期间应用自身 watcher 事件被抑制；只退役旧路径缓存（活动 Tab 已重绑）。
     handleApplicationPathRenamed(oldPath);
     bumpVaultIndex();
   };
@@ -853,11 +837,11 @@ function App() {
     return <BrowserRuntimeNotice />;
   }
 
-  if (startupSplashVisible || !vaultPath) {
+  if (splashVisible || !vaultPath) {
     return (
       <AppPreVaultGate
         loading={loading}
-        startupSplashVisible={startupSplashVisible}
+        startupSplashVisible={splashVisible}
         vaultError={vaultError}
         vaultPath={vaultPath}
         theme={theme}
@@ -869,11 +853,27 @@ function App() {
     );
   }
 
+  const navigatorBridge = {
+    activePath: activeWorkspacePath,
+    onOpenDocument: guardedOpenNote,
+    onPrepareNote: prepareVisibleNote,
+    fileLifecycle: {
+      handleBeforeFilePathChange,
+      handleFilePathChanged,
+      handleFilePathChangeFailed,
+      handleBeforeFileDelete,
+      handleFileDeleted,
+      handleBeforeFileLock,
+    },
+  };
+
   return (
     <DesktopFrame>
       <AppShell
         aiPanelOpen={aiPanelOpen}
+        onAiPanelOpenChange={setAiPanelOpen}
         zen={zen}
+        navigator={<WorkspaceNavigator {...navigatorBridge} />}
         tabBar={
           <TabBar
             tabs={workspaceTabs}
