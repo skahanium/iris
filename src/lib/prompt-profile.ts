@@ -3,10 +3,32 @@
 import type { PromptProfileDto } from "@/lib/ipc";
 
 export const DEFAULT_DISPLAY_NAME = "砚";
+export const AVATAR_IDS = [
+  "iris",
+  "orbit",
+  "axis",
+  "frame",
+  "lens",
+  "grid",
+  "flow",
+  "signal",
+] as const;
+export type AvatarId = (typeof AVATAR_IDS)[number];
+export const DEFAULT_AVATAR_ID: AvatarId = "iris";
+export const AVATAR_LABELS: Record<AvatarId, string> = {
+  iris: "Iris 标记",
+  orbit: "轨道",
+  axis: "轴线",
+  frame: "方框",
+  lens: "透镜",
+  grid: "网格",
+  flow: "流线",
+  signal: "信号",
+};
 
 export const DEFAULT_PROMPT_PROFILE: PromptProfileDto = {
   display_name: DEFAULT_DISPLAY_NAME,
-  avatar_emoji: null,
+  avatar_id: DEFAULT_AVATAR_ID,
   persona: "",
   writing_style: "",
   custom_rules: [],
@@ -20,28 +42,21 @@ export const PROMPT_PROFILE_CHANGED = "iris-prompt-profile-changed";
 
 export interface AvatarIdentity {
   displayName: string;
-  avatarEmoji: string | null;
+  avatarId: AvatarId;
 }
 
 export function sanitizeDisplayName(value: string): string {
   return value.trim().slice(0, MAX_NAME_LENGTH);
 }
 
-/** 仅保留首个 grapheme（emoji 安全） */
-export function sanitizeAvatarEmoji(
-  value: string | null | undefined,
-): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const [first] = [...trimmed];
-  return first ?? null;
+export function normalizeAvatarId(value: unknown): AvatarId {
+  return typeof value === "string" && AVATAR_IDS.includes(value as AvatarId)
+    ? (value as AvatarId)
+    : DEFAULT_AVATAR_ID;
 }
 
-export function assistantInitial(displayName: string): string {
-  const trimmed = displayName.trim();
-  if (!trimmed) return "砚";
-  return [...trimmed][0] ?? "砚";
+export function avatarLabel(avatarId: AvatarId): string {
+  return AVATAR_LABELS[avatarId];
 }
 
 export function profileToAvatarIdentity(
@@ -51,17 +66,25 @@ export function profileToAvatarIdentity(
     sanitizeDisplayName(profile.display_name) || DEFAULT_DISPLAY_NAME;
   return {
     displayName,
-    avatarEmoji: sanitizeAvatarEmoji(profile.avatar_emoji),
+    avatarId: normalizeAvatarId(profile.avatar_id),
   };
 }
 
 export function normalizePromptProfile(
   profile: Partial<PromptProfileDto> | null | undefined,
 ): PromptProfileDto {
+  const legacyProfile = profile as
+    | (Partial<PromptProfileDto> & {
+        avatar_emoji?: unknown;
+      })
+    | null
+    | undefined;
   return {
     display_name:
       sanitizeDisplayName(profile?.display_name ?? "") || DEFAULT_DISPLAY_NAME,
-    avatar_emoji: sanitizeAvatarEmoji(profile?.avatar_emoji ?? null),
+    avatar_id: normalizeAvatarId(
+      profile?.avatar_id ?? legacyProfile?.avatar_emoji,
+    ),
     persona: profile?.persona?.trim() ?? "",
     writing_style: profile?.writing_style?.trim() ?? "",
     custom_rules: (profile?.custom_rules ?? [])
@@ -104,11 +127,11 @@ export function mergeLegacyAssistantIdentity(profile: PromptProfileDto): {
   }
 
   const legacyName = sanitizeDisplayName(legacy.displayName ?? "");
-  const legacyEmoji = sanitizeAvatarEmoji(legacy.avatarEmoji ?? null);
+  const hasLegacyEmoji = Boolean(legacy.avatarEmoji?.trim());
   const isDefaultDisplay =
     sanitizeDisplayName(profile.display_name) === DEFAULT_DISPLAY_NAME;
 
-  if (!isDefaultDisplay && !legacyName && !legacyEmoji) {
+  if (!isDefaultDisplay && !legacyName && !hasLegacyEmoji) {
     return { profile, migrated: false };
   }
 
@@ -116,10 +139,7 @@ export function mergeLegacyAssistantIdentity(profile: PromptProfileDto): {
     ...profile,
     display_name:
       isDefaultDisplay && legacyName ? legacyName : profile.display_name,
-    avatar_emoji:
-      profile.avatar_emoji == null && legacyEmoji
-        ? legacyEmoji
-        : profile.avatar_emoji,
+    avatar_id: normalizeAvatarId(profile.avatar_id),
   });
 
   return { profile: next, migrated: true };

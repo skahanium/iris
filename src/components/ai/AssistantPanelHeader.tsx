@@ -1,9 +1,7 @@
 import { Maximize2, MessageSquarePlus, Minimize2 } from "lucide-react";
 
-import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
 import { AssistantPersonaDisplay } from "@/components/ai/AssistantPersonaDisplay";
 import { Button } from "@/components/ui/button";
-import type { AssistantRunState } from "@/hooks/useAssistantRun";
 import type { PromptProfileDto } from "@/lib/ipc";
 import type { AiDomain, AssistantSessionRef } from "@/types/ai";
 
@@ -23,9 +21,6 @@ interface AssistantPanelHeaderProps {
     activeRun: import("@/types/ai").AssistantRunGetResponse | null,
   ) => void;
   profile: PromptProfileDto;
-  runState: AssistantRunState;
-  webSearch: boolean;
-  webSearchProviderName?: string | null;
   /** Agent 主区阅读有效状态：控制“展开阅读/返回文档”按钮文案与图标。 */
   assistantFocus?: boolean;
   /** 请求切换主区阅读（进入/返回由布局策略决定）。 */
@@ -42,9 +37,6 @@ export function AssistantPanelHeader({
   onNewChat,
   onSelectSession,
   profile,
-  runState,
-  webSearch,
-  webSearchProviderName,
   assistantFocus = false,
   onRequestFocusToggle,
 }: AssistantPanelHeaderProps) {
@@ -70,12 +62,6 @@ export function AssistantPanelHeader({
               <Maximize2 className="h-3.5 w-3.5" />
             )}
           </Button>
-          <AgentStatusBadge
-            webSearchEnabled={webSearch}
-            webSearchProviderName={webSearchProviderName}
-            runState={runState}
-            disabled={chromeActionsDisabled}
-          />
           {domain === "normal" ? (
             <SessionHistoryDropdown
               currentSession={currentSession}

@@ -13,13 +13,17 @@ const MAX_WRITING_STYLE_CHARS: usize = 800;
 const MAX_CUSTOM_RULES: usize = 20;
 const MAX_CUSTOM_RULE_CHARS: usize = 300;
 const MAX_PROFILE_INSTRUCTION_CHARS: usize = 4_000;
+const DEFAULT_AVATAR_ID: &str = "iris";
+const AVATAR_IDS: [&str; 8] = [
+    "iris", "orbit", "axis", "frame", "lens", "grid", "flow", "signal",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptProfile {
     #[serde(default = "default_display_name")]
     pub display_name: String,
-    #[serde(default)]
-    pub avatar_emoji: Option<String>,
+    #[serde(default = "default_avatar_id", alias = "avatar_emoji")]
+    pub avatar_id: Option<String>,
     #[serde(default)]
     pub persona: String,
     #[serde(default)]
@@ -38,11 +42,23 @@ fn default_language() -> String {
     "zh-CN".to_string()
 }
 
+fn default_avatar_id() -> Option<String> {
+    Some(DEFAULT_AVATAR_ID.to_string())
+}
+
+fn normalize_avatar_id(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|avatar_id| AVATAR_IDS.contains(avatar_id))
+        .unwrap_or(DEFAULT_AVATAR_ID)
+        .to_string()
+}
+
 impl Default for PromptProfile {
     fn default() -> Self {
         Self {
             display_name: default_display_name(),
-            avatar_emoji: None,
+            avatar_id: default_avatar_id(),
             persona: String::new(),
             writing_style: String::new(),
             custom_rules: Vec::new(),
@@ -58,7 +74,7 @@ pub fn preset_templates() -> Vec<(&'static str, PromptProfile)> {
             "学术严谨",
             PromptProfile {
                 display_name: "砚".into(),
-                avatar_emoji: Some("📚".into()),
+                avatar_id: default_avatar_id(),
                 persona: "严谨、客观的学术助手，重视证据与引用。".into(),
                 writing_style: "结构清晰、术语准确、避免口语化。".into(),
                 custom_rules: vec![
@@ -72,7 +88,7 @@ pub fn preset_templates() -> Vec<(&'static str, PromptProfile)> {
             "创意写作",
             PromptProfile {
                 display_name: "砚".into(),
-                avatar_emoji: Some("🖋️".into()),
+                avatar_id: default_avatar_id(),
                 persona: "富有想象力的写作伙伴，善于拓展情节与人物。".into(),
                 writing_style: "生动、有画面感，适度修辞。".into(),
                 custom_rules: vec!["保持与既有设定一致。".into()],
@@ -83,7 +99,7 @@ pub fn preset_templates() -> Vec<(&'static str, PromptProfile)> {
             "简洁高效",
             PromptProfile {
                 display_name: "砚".into(),
-                avatar_emoji: Some("⚡".into()),
+                avatar_id: default_avatar_id(),
                 persona: "高效执行型助手，直达要点。".into(),
                 writing_style: "短句、列表、少废话。".into(),
                 custom_rules: vec!["默认不超过三段。".into()],
@@ -102,7 +118,9 @@ impl PromptProfile {
                 |row| row.get::<_, String>(0),
             );
             match result {
-                Ok(json) => Ok(serde_json::from_str(&json).unwrap_or_default()),
+                Ok(json) => Ok(serde_json::from_str::<Self>(&json)
+                    .map(|profile| profile.normalized())
+                    .unwrap_or_default()),
                 Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Self::default()),
                 Err(e) => Err(e.into()),
             }
@@ -110,8 +128,9 @@ impl PromptProfile {
     }
 
     pub fn save(db: &Database, profile: &Self) -> AppResult<()> {
-        profile.validate()?;
-        let json = serde_json::to_string(profile)?;
+        let normalized = profile.normalized();
+        normalized.validate()?;
+        let json = serde_json::to_string(&normalized)?;
         let now = chrono::Utc::now().to_rfc3339();
         db.with_conn(|conn| {
             conn.execute(
@@ -198,12 +217,7 @@ impl PromptProfile {
             } else {
                 display_name.to_string()
             },
-            avatar_emoji: self
-                .avatar_emoji
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string),
+            avatar_id: Some(normalize_avatar_id(self.avatar_id.as_deref())),
             persona: self.persona.trim().to_string(),
             writing_style: self.writing_style.trim().to_string(),
             custom_rules: self
@@ -258,7 +272,7 @@ mod tests {
     fn default_includes_display_name() {
         let profile = PromptProfile::default();
         assert_eq!(profile.display_name, "砚");
-        assert!(profile.avatar_emoji.is_none());
+        assert_eq!(profile.avatar_id.as_deref(), Some("iris"));
     }
 
     #[test]
@@ -266,8 +280,28 @@ mod tests {
         let json = r#"{"persona":"test","writing_style":"","custom_rules":[],"language":"zh-CN"}"#;
         let profile: PromptProfile = serde_json::from_str(json).unwrap();
         assert_eq!(profile.display_name, "砚");
-        assert!(profile.avatar_emoji.is_none());
+        assert_eq!(profile.avatar_id.as_deref(), Some("iris"));
         assert_eq!(profile.persona, "test");
+    }
+
+    #[test]
+    fn reads_legacy_emoji_profiles_as_the_default_geometric_mark() {
+        let profile: PromptProfile = serde_json::from_str(r#"{"avatar_emoji":"🦉"}"#).unwrap();
+
+        assert_eq!(profile.normalized().avatar_id.as_deref(), Some("iris"));
+    }
+
+    #[test]
+    fn normalizes_unknown_avatar_ids_and_keeps_presets_emoji_free() {
+        let profile = PromptProfile {
+            avatar_id: Some("not-an-avatar".into()),
+            ..PromptProfile::default()
+        };
+
+        assert_eq!(profile.normalized().avatar_id.as_deref(), Some("iris"));
+        assert!(preset_templates()
+            .into_iter()
+            .all(|(_, preset)| preset.avatar_id.as_deref() == Some("iris")));
     }
 
     #[test]

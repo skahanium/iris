@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  deriveDisplayRunState,
-  deriveRunOutputting,
-} from "@/lib/assistant-run-activity";
+import { deriveRunOutputting } from "@/lib/assistant-run-activity";
 
 describe("deriveRunOutputting", () => {
   it("ends outputting when presentation answerComplete arrives before durable completed", () => {
@@ -40,13 +37,5 @@ describe("deriveRunOutputting", () => {
     expect(deriveRunOutputting({ runId: "run-1", state: "failed" }, null)).toBe(
       false,
     );
-  });
-});
-
-describe("deriveDisplayRunState", () => {
-  it("hides busy badge when outputting has ended", () => {
-    expect(deriveDisplayRunState("running", false)).toBe("idle");
-    expect(deriveDisplayRunState("running", true)).toBe("running");
-    expect(deriveDisplayRunState("completed", false)).toBe("completed");
   });
 });

@@ -105,7 +105,7 @@ function FocusActionProbe() {
 
 const PROFILE: PromptProfileDto = {
   display_name: "测试助手",
-  avatar_emoji: null,
+  avatar_id: "iris",
   persona: "test",
   writing_style: "plain",
   custom_rules: [],
@@ -265,7 +265,7 @@ describe("Agent 主区阅读（assistant focus surface）", () => {
   });
 
   describe("Header 展开/返回控件", () => {
-    it("显示展开阅读按钮，aria label 随 focus 状态切换", () => {
+    it("只显示会话操作，不保留空闲状态或联网徽章", () => {
       const onToggle = vi.fn();
       const view = render(
         <AssistantPanelHeader
@@ -275,8 +275,6 @@ describe("Agent 主区阅读（assistant focus surface）", () => {
           onNewChat={() => {}}
           onSelectSession={() => {}}
           profile={PROFILE}
-          runState="idle"
-          webSearch={false}
           assistantFocus={false}
           onRequestFocusToggle={onToggle}
         />,
@@ -284,6 +282,8 @@ describe("Agent 主区阅读（assistant focus surface）", () => {
 
       const button = screen.getByRole("button", { name: "展开阅读" });
       expect(button.getAttribute("title")).toBe("展开阅读");
+      expect(screen.queryByTestId("agent-status-trigger")).toBeNull();
+      expect(screen.queryByText("准备就绪")).toBeNull();
       fireEvent.click(button);
       expect(onToggle).toHaveBeenCalledTimes(1);
 
@@ -295,8 +295,6 @@ describe("Agent 主区阅读（assistant focus surface）", () => {
           onNewChat={() => {}}
           onSelectSession={() => {}}
           profile={PROFILE}
-          runState="idle"
-          webSearch={false}
           assistantFocus
           onRequestFocusToggle={onToggle}
         />,

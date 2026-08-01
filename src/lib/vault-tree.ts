@@ -146,6 +146,148 @@ export function listFilesInFolder(
   return files.filter((f) => f.path.replace(/\\/g, "/").startsWith(prefix));
 }
 
+/** Return only the files directly contained by a folder; descendants are excluded. */
+export function listDirectFilesInFolder<T extends { path: string }>(
+  files: T[],
+  folderPrefix: string,
+): T[] {
+  const selectedFolder = normalizeFolderPrefix(folderPrefix);
+  return files.filter((file) => {
+    const normalized = file.path.replace(/\\/g, "/");
+    const separatorIndex = normalized.lastIndexOf("/");
+    const parent =
+      separatorIndex >= 0 ? normalized.slice(0, separatorIndex + 1) : "";
+    return parent === selectedFolder;
+  });
+}
+
+/** Folder-only node used by the compact workspace navigator. */
+export interface FolderTreeNode {
+  name: string;
+  path: string;
+  children: FolderTreeNode[];
+  /** Markdown files directly inside this folder; descendants are excluded. */
+  directMarkdownCount: number;
+}
+
+export interface FolderSort {
+  key: "name" | "count";
+  direction: "asc" | "desc";
+}
+
+/**
+ * Build a folder-only tree from catalog files plus explicit empty folders.
+ * The caller supplies the Markdown predicate because catalog rows also include media.
+ */
+export function buildFolderTree<T extends { path: string }>(
+  files: T[],
+  folderPrefixes: string[] = [],
+  isMarkdownFile: (file: T) => boolean,
+): FolderTreeNode[] {
+  const root: FolderTreeNode[] = [];
+  const folders = new Map<string, FolderTreeNode>();
+
+  const ensureFolder = (folderPath: string): FolderTreeNode => {
+    const normalized = normalizeFolderPrefix(folderPath);
+    const existing = folders.get(normalized);
+    if (existing) return existing;
+
+    const name = normalized.replace(/\/$/, "").split("/").pop() ?? normalized;
+    const node: FolderTreeNode = {
+      name,
+      path: normalized,
+      children: [],
+      directMarkdownCount: 0,
+    };
+    folders.set(normalized, node);
+
+    const parentPath = folderParentPath(normalized);
+    if (parentPath) ensureFolder(parentPath).children.push(node);
+    else root.push(node);
+    return node;
+  };
+
+  for (const folder of folderPrefixes) {
+    const normalized = normalizeFolderPrefix(folder);
+    if (normalized) ensureFolder(normalized);
+  }
+
+  for (const file of files) {
+    const normalized = file.path.replace(/\\/g, "/");
+    const separatorIndex = normalized.lastIndexOf("/");
+    if (separatorIndex < 0) continue;
+
+    const parent = normalized.slice(0, separatorIndex + 1);
+    const segments = parent.slice(0, -1).split("/").filter(Boolean);
+    let prefix = "";
+    for (const segment of segments) {
+      prefix += `${segment}/`;
+      ensureFolder(prefix);
+    }
+    if (isMarkdownFile(file)) ensureFolder(parent).directMarkdownCount += 1;
+  }
+
+  return sortFolderTree(root, { key: "name", direction: "asc" });
+}
+
+/** Sort each sibling group without flattening or changing hierarchy. */
+export function sortFolderTree(
+  tree: FolderTreeNode[],
+  sort: FolderSort,
+): FolderTreeNode[] {
+  const direction = sort.direction === "asc" ? 1 : -1;
+  const compareName = (left: FolderTreeNode, right: FolderTreeNode) =>
+    left.name.localeCompare(right.name, "zh-Hans-CN");
+  const compare = (left: FolderTreeNode, right: FolderTreeNode) => {
+    if (sort.key === "count") {
+      const countDifference =
+        (left.directMarkdownCount - right.directMarkdownCount) * direction;
+      if (countDifference !== 0) return countDifference;
+      return compareName(left, right);
+    }
+    const nameDifference = compareName(left, right) * direction;
+    if (nameDifference !== 0) return nameDifference;
+    return left.path.localeCompare(right.path, "zh-Hans-CN");
+  };
+
+  return [...tree].sort(compare).map((node) => ({
+    ...node,
+    children: sortFolderTree(node.children, sort),
+  }));
+}
+
+/** Visible folder rows with ancestor continuation data for tree rails. */
+export interface FolderTreeRow {
+  node: FolderTreeNode;
+  depth: number;
+  ancestorHasNextSibling: boolean[];
+}
+
+/** Flatten only expanded folder branches for the navigator's upper tree. */
+export function flattenFolderTree(
+  tree: FolderTreeNode[],
+  expanded: ReadonlySet<string>,
+): FolderTreeRow[] {
+  const rows: FolderTreeRow[] = [];
+  const walk = (
+    nodes: FolderTreeNode[],
+    depth: number,
+    ancestorHasNextSibling: boolean[],
+  ) => {
+    for (const [index, node] of nodes.entries()) {
+      rows.push({ node, depth, ancestorHasNextSibling });
+      if (expanded.has(node.path)) {
+        walk(node.children, depth + 1, [
+          ...ancestorHasNextSibling,
+          index < nodes.length - 1,
+        ]);
+      }
+    }
+  };
+  walk(tree, 0, []);
+  return rows;
+}
+
 /** 可见树行：节点 + 深度（键盘 ↑/↓ 导航与当前文件自动显露用）。 */
 export interface VaultTreeRow {
   node: VaultTreeNode;

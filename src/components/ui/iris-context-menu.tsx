@@ -67,6 +67,7 @@ interface IrisContextMenuProps {
   onSelect: (id: string) => void;
   onClose: () => void;
   className?: string;
+  ariaLabel?: string;
 }
 
 const MENU_MAX_H = 320;
@@ -90,6 +91,7 @@ export function IrisContextMenu({
   onSelect,
   onClose,
   className,
+  ariaLabel = "上下文菜单",
 }: IrisContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -141,7 +143,7 @@ export function IrisContextMenu({
     >
       <IrisSurfaceMenuPanel
         className="max-h-[inherit] min-w-[12.5rem] max-w-[16rem] overflow-auto overscroll-contain"
-        aria-label="上下文菜单"
+        aria-label={ariaLabel}
       >
         {groups.map(({ group, items }) => (
           <IrisSurfaceMenuGroup key={group} title={group}>

@@ -127,21 +127,9 @@ export function RenameItemDialog({
 }) {
   const [name, setName] = useState("");
   const isFile = target?.kind === "file";
-  const parent =
-    target?.kind === "file"
-      ? fileParentPath(target.file.path)
-      : target?.kind === "folder"
-        ? folderParentPath(target.path)
-        : "";
   const trimmed = name.trim();
   const normalizedName = isFile ? normalizeDocumentName(trimmed) : trimmed;
   const invalid = Boolean(trimmed) && isInvalidLeafName(normalizedName);
-  const preview =
-    target && trimmed && !invalid
-      ? target.kind === "file"
-        ? joinVaultChildPath(parent, normalizedName)
-        : buildFolderPrefix(parent, normalizedName)
-      : "";
 
   useEffect(() => {
     if (!target) return;
@@ -167,20 +155,6 @@ export function RenameItemDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 px-4 pb-2">
-          <div className="rounded-lg border border-border/70 bg-surface-inset/40 px-3 py-2 text-xs">
-            <div className="text-[11px] font-medium text-muted-foreground">
-              所在位置
-            </div>
-            <div className="mt-1 break-all font-mono text-foreground">
-              {displayFolderPath(parent)}
-            </div>
-            <div className="mt-2 text-[11px] font-medium text-muted-foreground">
-              新路径
-            </div>
-            <div className="mt-1 break-all font-mono text-foreground">
-              {preview || "输入名称后预览"}
-            </div>
-          </div>
           <label className="block space-y-1">
             <span className="text-xs font-medium text-muted-foreground">
               {isFile ? "文档名称" : "文件夹名称"}

@@ -944,9 +944,6 @@ function App() {
             runtimeDocumentCandidates={assistantRuntimeDocumentCandidates}
             handleInsertToEditor={handleAssistantInsertToEditor}
             webSearch={webSearch}
-            webSearchProviderName={
-              webSearchAvailability.effectiveProvider?.name ?? null
-            }
             onOpenWebVerificationSettings={() =>
               overlays.openManagementCenter("ai", "web-search")
             }

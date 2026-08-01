@@ -41,7 +41,6 @@ interface AppAiPanelSlotProps {
   runtimeDocumentCandidates?: FileListItem[];
   handleInsertToEditor: (content: string) => void;
   webSearch: boolean;
-  webSearchProviderName?: string | null;
   onOpenWebVerificationSettings?: () => void;
   onChromeChange?: (snapshot: AssistantChromeSnapshot) => void;
 }
@@ -56,7 +55,6 @@ export function AppAiPanelSlot({
   runtimeDocumentCandidates = [],
   handleInsertToEditor,
   webSearch,
-  webSearchProviderName = null,
   onOpenWebVerificationSettings,
   onChromeChange,
 }: AppAiPanelSlotProps) {
@@ -83,7 +81,6 @@ export function AppAiPanelSlot({
           consumeOneShotContextReference={consumeEditorSelectionReference}
           runtimeDocumentCandidates={mentionRuntimeCandidates}
           webSearch={webSearch}
-          webSearchProviderName={webSearchProviderName}
           onOpenWebVerificationSettings={onOpenWebVerificationSettings}
           onChromeChange={onChromeChange}
           onInsertToEditor={

@@ -990,7 +990,7 @@ export async function skillsConfirm(draft: SkillDraft): Promise<void> {
 }
 export interface PromptProfileDto {
   display_name: string;
-  avatar_emoji: string | null;
+  avatar_id: string | null;
   persona: string;
   writing_style: string;
   custom_rules: string[];

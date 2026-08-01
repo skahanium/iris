@@ -5,15 +5,16 @@ import {
   describeAssistantSubtitle,
 } from "@/lib/assistant-context-label";
 import {
+  AVATAR_IDS,
+  DEFAULT_AVATAR_ID,
   DEFAULT_DISPLAY_NAME,
   DEFAULT_PROMPT_PROFILE,
   clearPersistedLegacyAssistantIdentity,
   mergeLegacyAssistantIdentity,
+  normalizeAvatarId,
   normalizePromptProfile,
   profileToAvatarIdentity,
-  sanitizeAvatarEmoji,
   sanitizeDisplayName,
-  assistantInitial,
 } from "@/lib/prompt-profile";
 
 describe("prompt profile", () => {
@@ -21,10 +22,21 @@ describe("prompt profile", () => {
     localStorage.clear();
   });
 
-  it("normalizes display name and avatar emoji", () => {
+  it("normalizes display name and accepts only the built-in geometric avatar ids", () => {
     expect(sanitizeDisplayName("  文献助手  ")).toBe("文献助手");
-    expect(sanitizeAvatarEmoji("🦉✨")).toBe("🦉");
-    expect(assistantInitial("小鸢")).toBe("小");
+    expect(AVATAR_IDS).toEqual([
+      "iris",
+      "orbit",
+      "axis",
+      "frame",
+      "lens",
+      "grid",
+      "flow",
+      "signal",
+    ]);
+    expect(normalizeAvatarId("orbit")).toBe("orbit");
+    expect(normalizeAvatarId("🦉")).toBe(DEFAULT_AVATAR_ID);
+    expect(normalizeAvatarId("not-an-avatar")).toBe(DEFAULT_AVATAR_ID);
   });
 
   it("maps profile to avatar identity", () => {
@@ -32,11 +44,11 @@ describe("prompt profile", () => {
       profileToAvatarIdentity({
         ...DEFAULT_PROMPT_PROFILE,
         display_name: "小鸢",
-        avatar_emoji: "🦉",
+        avatar_id: "lens",
       }),
     ).toEqual({
       displayName: "小鸢",
-      avatarEmoji: "🦉",
+      avatarId: "lens",
     });
   });
 
@@ -50,7 +62,7 @@ describe("prompt profile", () => {
     );
     expect(migrated).toBe(true);
     expect(profile.display_name).toBe("Iris");
-    expect(profile.avatar_emoji).toBe("✨");
+    expect(profile.avatar_id).toBe(DEFAULT_AVATAR_ID);
     expect(localStorage.getItem("iris-assistant-identity")).not.toBeNull();
 
     clearPersistedLegacyAssistantIdentity();
@@ -60,13 +72,23 @@ describe("prompt profile", () => {
   it("falls back to default display name when empty", () => {
     const profile = normalizePromptProfile({
       display_name: "   ",
-      avatar_emoji: null,
+      avatar_id: "signal",
       persona: "",
       writing_style: "",
       custom_rules: [],
       language: "zh-CN",
     });
     expect(profile.display_name).toBe(DEFAULT_DISPLAY_NAME);
+    expect(profile.avatar_id).toBe("signal");
+  });
+
+  it("falls back to the Iris mark when a legacy emoji profile is loaded", () => {
+    const profile = normalizePromptProfile({
+      display_name: "砚",
+      avatar_emoji: "🖋️",
+    } as never);
+
+    expect(profile.avatar_id).toBe(DEFAULT_AVATAR_ID);
   });
 });
 

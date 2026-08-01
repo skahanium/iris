@@ -27,7 +27,6 @@ describe("Vite bundle contract", () => {
   it("does not dynamically import the Tauri event API", () => {
     const eventListenerCallSites = [
       "src/App.tsx",
-      "src/components/ai/AgentStatusBadge.tsx",
       "src/components/ai/SkillsPanel.tsx",
       "src/components/ai/UnifiedAssistantPanel.tsx",
       "src/lib/ipc.ts",

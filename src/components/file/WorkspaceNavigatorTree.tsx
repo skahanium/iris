@@ -1,88 +1,77 @@
-import { ChevronRight, FileText, Folder, FolderOpen, Lock } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, Folder, FolderOpen } from "lucide-react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
-import { flattenVaultTree, type VaultTreeNode } from "@/lib/vault-tree";
+import { flattenFolderTree, type FolderTreeNode } from "@/lib/vault-tree";
 import { cn } from "@/lib/utils";
 
 export interface WorkspaceNavigatorTreeProps {
-  tree: VaultTreeNode[];
+  tree: FolderTreeNode[];
   expanded: ReadonlySet<string>;
-  /** 当前打开的文档路径（brand marker + 自动显露祖先）。 */
-  activePath: string | null;
+  selectedFolder: string;
+  rootMarkdownCount?: number;
   onToggleFolder: (path: string) => void;
-  onOpenFile: (node: VaultTreeNode) => void;
-  onPrepareFile: (node: VaultTreeNode) => void;
-  /** 打开行操作菜单（右键 / Shift+F10 / 菜单键）。 */
-  onRowMenu: (node: VaultTreeNode, rowIndex: number) => void;
+  onSelectFolder: (path: string) => void;
+  /** 打开文件夹操作菜单（右键 / Shift+F10 / 菜单键）。 */
+  onRowMenu: (
+    node: FolderTreeNode,
+    rowIndex: number,
+    x?: number,
+    y?: number,
+  ) => void;
 }
 
-/** 当前文档祖先文件夹前缀（`notes/sub/b.md` → `["notes/", "notes/sub/"]`）。 */
-function ancestorFoldersOf(path: string): string[] {
-  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
-  parts.pop();
-  const ancestors: string[] = [];
-  let acc = "";
-  for (const part of parts) {
-    acc += `${part}/`;
-    ancestors.push(acc);
-  }
-  return ancestors;
+interface FolderRow {
+  node: FolderTreeNode | null;
+  path: string;
+  name: string;
+  count: number;
+  depth: number;
+  ancestorHasNextSibling: boolean[];
 }
 
 /**
- * 轻量工作区目录树（v1.2.19 Task 7）。
+ * Workspace Navigator 上层：仅用于定位目录。
  *
- * 单列 folder/file 树：文件夹在文件之前（buildVaultTree 的 zh-CN 排序），
- * 支持 ↑/↓/←/→/Enter/Shift+F10 键盘语义、aria-expanded/treeitem 层级、
- * 当前文件 brand marker 与自动显露。不展示绝对 vault 路径与 reserved roots。
+ * 文件永远不在这个 tree 中渲染；目录名称选择下层范围，箭头和左右键才控制展开。
  */
 export function WorkspaceNavigatorTree({
   tree,
   expanded,
-  activePath,
+  selectedFolder,
+  rootMarkdownCount = 0,
   onToggleFolder,
-  onOpenFile,
-  onPrepareFile,
+  onSelectFolder,
   onRowMenu,
 }: WorkspaceNavigatorTreeProps) {
-  const rows = useMemo(
-    () => flattenVaultTree(tree, expanded),
-    [expanded, tree],
+  const rows = useMemo<FolderRow[]>(
+    () => [
+      {
+        node: null,
+        path: "",
+        name: "根目录",
+        count: rootMarkdownCount,
+        depth: 0,
+        ancestorHasNextSibling: [],
+      },
+      ...flattenFolderTree(tree, expanded).map((row) => ({
+        node: row.node,
+        path: row.node.path,
+        name: row.node.name,
+        count: row.node.directMarkdownCount,
+        depth: row.depth + 1,
+        ancestorHasNextSibling: row.ancestorHasNextSibling,
+      })),
+    ],
+    [expanded, rootMarkdownCount, tree],
   );
   const [focusedIndex, setFocusedIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef(new Map<number, HTMLDivElement>());
-  const lastRevealedActivePathRef = useRef<string | null>(null);
-
-  // 当前文件变化时自动显露：展开缺失的祖先文件夹并滚动到该行。
-  // 用户显式“折叠全部”后不因同一 activePath 的 state 更新立即反弹展开。
-  useEffect(() => {
-    if (!activePath || lastRevealedActivePathRef.current === activePath) return;
-    lastRevealedActivePathRef.current = activePath;
-    for (const ancestor of ancestorFoldersOf(activePath)) {
-      if (!expanded.has(ancestor)) onToggleFolder(ancestor);
-    }
-  }, [activePath, expanded, onToggleFolder]);
-
-  useEffect(() => {
-    if (!activePath) return;
-    const index = rows.findIndex((row) => row.node.path === activePath);
-    if (index >= 0) {
-      setFocusedIndex(index);
-      rowRefs.current.get(index)?.scrollIntoView?.({ block: "nearest" });
-    }
-  }, [activePath, rows]);
-
-  const setRowRef = useCallback((index: number, el: HTMLDivElement | null) => {
-    if (el) rowRefs.current.set(index, el);
-    else rowRefs.current.delete(index);
-  }, []);
 
   const parentIndexOf = useCallback(
     (index: number): number => {
       const depth = rows[index]?.depth ?? 0;
-      for (let i = index - 1; i >= 0; i -= 1) {
-        if ((rows[i]?.depth ?? 0) < depth) return i;
+      for (let candidate = index - 1; candidate >= 0; candidate -= 1) {
+        if ((rows[candidate]?.depth ?? 0) < depth) return candidate;
       }
       return -1;
     },
@@ -91,10 +80,10 @@ export function WorkspaceNavigatorTree({
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
-      if (rows.length === 0) return;
       const row = rows[focusedIndex];
       if (!row) return;
-      const node = row.node;
+      const isFolder = row.node !== null;
+      const isExpanded = isFolder && expanded.has(row.path);
 
       switch (event.key) {
         case "ArrowDown":
@@ -107,40 +96,35 @@ export function WorkspaceNavigatorTree({
           break;
         case "ArrowLeft":
           event.preventDefault();
-          if (node.kind === "folder" && expanded.has(node.path)) {
-            onToggleFolder(node.path);
-          } else {
+          if (isFolder && isExpanded) onToggleFolder(row.path);
+          else {
             const parentIndex = parentIndexOf(focusedIndex);
             if (parentIndex >= 0) setFocusedIndex(parentIndex);
           }
           break;
         case "ArrowRight":
           event.preventDefault();
-          if (node.kind === "folder") {
-            if (!expanded.has(node.path)) {
-              onToggleFolder(node.path);
-            } else if (focusedIndex + 1 < rows.length) {
-              setFocusedIndex(focusedIndex + 1);
-            }
+          if (!isFolder) break;
+          if (!isExpanded) onToggleFolder(row.path);
+          else if (focusedIndex + 1 < rows.length) {
+            setFocusedIndex(focusedIndex + 1);
           }
           break;
         case "Enter":
           event.preventDefault();
-          if (node.kind === "file") {
-            onOpenFile(node);
-          } else {
-            onToggleFolder(node.path);
-          }
+          onSelectFolder(row.path);
           break;
         case "F10":
-          if (event.shiftKey) {
+          if (event.shiftKey && row.node) {
             event.preventDefault();
-            onRowMenu(node, focusedIndex);
+            onRowMenu(row.node, focusedIndex);
           }
           break;
         case "ContextMenu":
-          event.preventDefault();
-          onRowMenu(node, focusedIndex);
+          if (row.node) {
+            event.preventDefault();
+            onRowMenu(row.node, focusedIndex);
+          }
           break;
         default:
           break;
@@ -149,76 +133,62 @@ export function WorkspaceNavigatorTree({
     [
       expanded,
       focusedIndex,
-      onOpenFile,
       onRowMenu,
+      onSelectFolder,
       onToggleFolder,
       parentIndexOf,
       rows,
     ],
   );
 
-  if (rows.length === 0) {
-    return (
-      <p className="px-3 py-2 text-[11px] text-muted-foreground">暂无笔记</p>
-    );
-  }
-
   return (
     <div
       ref={containerRef}
       role="tree"
-      aria-label="笔记库导航"
+      aria-label="文件夹"
       tabIndex={0}
       data-testid="workspace-navigator-tree"
       className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1 focus:outline-none"
       onKeyDown={handleKeyDown}
-      onBlur={() => {
-        // 焦点离开树时回到标题栏入口由入口按钮处理；这里只保持内部索引。
-      }}
     >
-      {rows.map(({ node, depth, ancestorHasNextSibling }, index) => {
-        const isFolder = node.kind === "folder";
-        const isActive = node.path === activePath;
-        const isExpanded = isFolder && expanded.has(node.path);
-        const focused = index === focusedIndex;
+      {rows.map((row, index) => {
+        const isRoot = row.node === null;
+        const isExpanded = !isRoot && expanded.has(row.path);
+        const isSelected = row.path === selectedFolder;
+        const focused = focusedIndex === index;
         return (
           <div
-            key={node.path}
-            ref={(el) => setRowRef(index, el)}
+            key={row.path || "root"}
             role="treeitem"
-            aria-level={depth + 1}
-            aria-expanded={isFolder ? isExpanded : undefined}
-            aria-selected={isActive || undefined}
+            aria-level={row.depth + 1}
+            aria-expanded={isRoot ? undefined : isExpanded}
+            aria-selected={isSelected || undefined}
+            data-selected={isSelected || undefined}
             data-testid={
-              isFolder ? "workspace-tree-folder" : "workspace-tree-file"
+              isRoot ? "workspace-tree-root" : "workspace-tree-folder"
             }
-            data-active={isActive || undefined}
             className={cn(
-              "group relative flex min-h-7 cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs",
-              isFolder ? "text-foreground/90" : "text-muted-foreground",
-              isActive &&
-                "bg-[hsl(var(--brand)/0.12)] text-[hsl(var(--brand))] before:absolute before:inset-y-1.5 before:left-0 before:w-px before:bg-[hsl(var(--brand))]",
+              "group relative flex h-[30px] cursor-pointer items-center gap-1 rounded-md px-1.5 text-[13px] text-muted-foreground transition-colors duration-150 motion-reduce:transition-none",
+              isSelected &&
+                "bg-[hsl(var(--brand)/0.12)] text-[hsl(var(--brand))] before:absolute before:inset-y-1 before:left-0 before:w-px before:bg-[hsl(var(--brand))]",
               focused &&
-                !isActive &&
+                !isSelected &&
                 "ring-1 ring-inset ring-[hsl(var(--brand)/0.35)]",
-              !isActive && "hover:bg-muted/50 hover:text-foreground",
+              !isSelected && "hover:bg-muted/50 hover:text-foreground",
             )}
-            style={{ paddingLeft: `${0.625 + depth * 1.125}rem` }}
+            style={{ paddingLeft: `${0.5 + row.depth * 1.125}rem` }}
             onClick={() => {
-              if (isFolder) onToggleFolder(node.path);
-              else onOpenFile(node);
+              setFocusedIndex(index);
+              onSelectFolder(row.path);
             }}
-            onMouseEnter={() => {
-              if (!isFolder) onPrepareFile(node);
-            }}
-            onFocus={() => setFocusedIndex(index)}
             onContextMenu={(event) => {
+              if (!row.node) return;
               event.preventDefault();
               setFocusedIndex(index);
-              onRowMenu(node, index);
+              onRowMenu(row.node, index, event.clientX, event.clientY);
             }}
           >
-            {ancestorHasNextSibling.map((hasNextSibling, guideDepth) =>
+            {row.ancestorHasNextSibling.map((hasNextSibling, guideDepth) =>
               hasNextSibling ? (
                 <span
                   key={guideDepth}
@@ -229,35 +199,44 @@ export function WorkspaceNavigatorTree({
                 />
               ) : null,
             )}
-            {isFolder ? (
-              <>
+            {isRoot ? (
+              <span className="w-4 shrink-0" aria-hidden="true" />
+            ) : (
+              <button
+                type="button"
+                aria-label={`${isExpanded ? "收起" : "展开"} ${row.name}`}
+                className="iris-focus-soft inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground/70"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleFolder(row.path);
+                }}
+              >
                 <ChevronRight
+                  aria-hidden="true"
                   className={cn(
-                    "h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform duration-fast",
+                    "h-3.5 w-3.5 transition-transform duration-150 motion-reduce:transition-none",
                     isExpanded && "rotate-90",
                   )}
                 />
-                {isExpanded ? (
-                  <FolderOpen
-                    aria-hidden="true"
-                    data-icon="folder-open"
-                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
-                  />
-                ) : (
-                  <Folder
-                    aria-hidden="true"
-                    data-icon="folder-closed"
-                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
-                  />
-                )}
-              </>
-            ) : (
-              <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+              </button>
             )}
-            <span className="min-w-0 truncate">{node.title ?? node.name}</span>
-            {node.locked ? (
-              <Lock className="ml-auto h-3 w-3 shrink-0 text-muted-foreground/50" />
-            ) : null}
+            {isExpanded ? (
+              <FolderOpen
+                aria-hidden="true"
+                data-icon="folder-open"
+                className="h-4 w-4 shrink-0 text-muted-foreground/75"
+              />
+            ) : (
+              <Folder
+                aria-hidden="true"
+                data-icon="folder-closed"
+                className="h-4 w-4 shrink-0 text-muted-foreground/75"
+              />
+            )}
+            <span className="min-w-0 flex-1 truncate">{row.name}</span>
+            <span className="min-w-4 rounded-sm bg-muted/50 px-1 text-right text-[11px] text-muted-foreground">
+              {row.count}
+            </span>
           </div>
         );
       })}

@@ -24,7 +24,6 @@ import {
   assistantChromeSnapshotsEqual,
   buildAssistantChromeSnapshot,
 } from "@/lib/assistant-chrome";
-import { deriveDisplayRunState } from "@/lib/assistant-run-activity";
 import {
   EMPTY_ASSISTANT_CHROME,
   type AssistantChromeSnapshot,
@@ -63,7 +62,6 @@ export function UnifiedAssistantPanel({
   consumeOneShotContextReference,
   runtimeDocumentCandidates = [],
   webSearch = false,
-  webSearchProviderName = null,
   modelOverride = null,
   onInsertToEditor,
   onOpenWebVerificationSettings,
@@ -358,10 +356,6 @@ export function UnifiedAssistantPanel({
     isStarting ||
     assistantRun.pendingConfirmation !== null ||
     assistantRun.recovery !== null;
-  const displayRunState = deriveDisplayRunState(
-    assistantRun.runState,
-    streaming || assistantRun.isBusy,
-  );
   const stopStreaming = useCallback(() => {
     void assistantRun
       .cancel()
@@ -459,9 +453,6 @@ export function UnifiedAssistantPanel({
           else assistantRun.reset();
         }}
         profile={promptProfile}
-        runState={displayRunState}
-        webSearch={webSearch}
-        webSearchProviderName={webSearchProviderName}
         assistantFocus={assistantFocus}
         onRequestFocusToggle={() => {
           if (assistantFocus) onRequestFocusExit?.();

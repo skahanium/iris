@@ -13,15 +13,15 @@ import {
   type PromptProfileDto,
 } from "@/lib/ipc";
 import {
+  AVATAR_IDS,
+  avatarLabel,
   DEFAULT_PROMPT_PROFILE,
+  normalizeAvatarId,
   normalizePromptProfile,
   profileToAvatarIdentity,
-  sanitizeAvatarEmoji,
   sanitizeDisplayName,
 } from "@/lib/prompt-profile";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
-
-const EMOJI_PRESETS = ["✨", "📚", "🦉", "🖋️", "🔍", "🧠", "🌿", "⚖️"] as const;
 
 interface PersonaSettingsPanelProps {
   open: boolean;
@@ -73,7 +73,7 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
     setDraft((prev) => ({
       ...normalized,
       display_name: prev.display_name,
-      avatar_emoji: normalized.avatar_emoji ?? prev.avatar_emoji,
+      avatar_id: prev.avatar_id,
     }));
     setRulesText((normalized.custom_rules ?? []).join("\n"));
   };
@@ -84,7 +84,7 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
       await saveProfile({
         ...draft,
         display_name: sanitizeDisplayName(draft.display_name),
-        avatar_emoji: sanitizeAvatarEmoji(draft.avatar_emoji),
+        avatar_id: normalizeAvatarId(draft.avatar_id),
         custom_rules: rulesText
           .split("\n")
           .map((line) => line.trim())
@@ -122,8 +122,11 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
 
           <section className="space-y-3">
             <h3 className="text-xs font-medium text-foreground">外观</h3>
-            <div className="flex items-center gap-3 rounded-md border border-border bg-surface-inset/30 p-3">
-              <AssistantAvatar identity={avatarIdentity} />
+            <div className="flex items-center gap-3 rounded-md border border-border-subtle bg-surface-inset/30 p-3">
+              <AssistantAvatar
+                identity={avatarIdentity}
+                className="h-10 w-10"
+              />
               <div className="min-w-0 flex-1 space-y-2">
                 <div>
                   <label
@@ -146,57 +149,45 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
                     }
                   />
                 </div>
-                <div>
-                  <label
-                    htmlFor="persona-avatar-emoji"
-                    className="mb-1 block text-[11px] text-muted-foreground"
-                  >
-                    头像（emoji，可选）
-                  </label>
-                  <Input
-                    id="persona-avatar-emoji"
-                    className="h-8 text-base"
-                    value={draft.avatar_emoji ?? ""}
-                    maxLength={8}
-                    placeholder="留空则使用称呼首字"
-                    onChange={(e) =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        avatar_emoji: sanitizeAvatarEmoji(e.target.value),
-                      }))
-                    }
-                  />
-                </div>
               </div>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {EMOJI_PRESETS.map((emoji) => (
-                <Button
-                  key={emoji}
-                  type="button"
-                  size="sm"
-                  variant={draft.avatar_emoji === emoji ? "default" : "outline"}
-                  className="h-8 w-8 px-0 text-base"
-                  aria-label={`头像 ${emoji}`}
-                  onClick={() =>
-                    setDraft((prev) => ({ ...prev, avatar_emoji: emoji }))
-                  }
-                >
-                  {emoji}
-                </Button>
-              ))}
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-8 text-xs"
-                onClick={() =>
-                  setDraft((prev) => ({ ...prev, avatar_emoji: null }))
-                }
-              >
-                使用称呼首字
-              </Button>
-            </div>
+            <fieldset className="space-y-2">
+              <legend className="text-[11px] text-muted-foreground">
+                头像印记
+              </legend>
+              <div className="grid grid-cols-4 gap-1.5">
+                {AVATAR_IDS.map((avatarId) => {
+                  const selected = draft.avatar_id === avatarId;
+                  return (
+                    <Button
+                      key={avatarId}
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className={
+                        selected
+                          ? "h-10 w-full border border-brand/45 bg-brand/10 px-0"
+                          : "h-10 w-full border border-border-subtle bg-transparent px-0 hover:bg-muted/65"
+                      }
+                      aria-label={`头像 ${avatarLabel(avatarId)}`}
+                      aria-pressed={selected}
+                      title={avatarLabel(avatarId)}
+                      onClick={() =>
+                        setDraft((prev) => ({ ...prev, avatar_id: avatarId }))
+                      }
+                    >
+                      <AssistantAvatar
+                        identity={{
+                          displayName: draft.display_name,
+                          avatarId,
+                        }}
+                        className="h-7 w-7"
+                      />
+                    </Button>
+                  );
+                })}
+              </div>
+            </fieldset>
           </section>
 
           {presets.length > 0 ? (

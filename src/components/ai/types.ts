@@ -14,7 +14,6 @@ export interface UnifiedAssistantPanelProps {
   consumeOneShotContextReference?: () => void;
   runtimeDocumentCandidates?: FileListItem[];
   webSearch?: boolean;
-  webSearchProviderName?: string | null;
   /** Per-composer model override. The backend validates all hard capabilities. */
   modelOverride?: AgentModelOverride | null;
   onInsertToEditor?: (content: string) => void;

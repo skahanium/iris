@@ -22,7 +22,6 @@ function testSourceFiles(root: string): string[] {
 }
 
 const checkedUserFacingFiles = [
-  "src/components/ai/AgentStatusBadge.tsx",
   "src/components/ai/SkillsPanel.tsx",
   "src/components/ai/UnifiedAssistantPanel.impl.tsx",
   "src/components/ai/hooks/useAssistantConversation.ts",

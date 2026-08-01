@@ -46,12 +46,3 @@ export function deriveRunOutputting(
   }
   return isActiveOutputRunState(run.state);
 }
-
-/** Header badge should not claim “正在回答” after the answer is visually complete. */
-export function deriveDisplayRunState(
-  runState: RunState | "idle",
-  outputting: boolean,
-): RunState | "idle" {
-  if (!outputting && isActiveOutputRunState(runState)) return "idle";
-  return runState;
-}

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -36,5 +36,18 @@ describe("assistant header localization contract", () => {
     expect(header).not.toContain("Expand to read");
     expect(header).not.toContain("Back to document");
     expect(header).not.toContain('title="Maximize"');
+  });
+
+  it("removes the non-interactive header status badge and its stale bundle contracts", () => {
+    const header = read("src/components/ai/AssistantPanelHeader.tsx");
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const bundleContract = read("tests/vite-bundle-contract.test.ts");
+    const hygieneContract = read("tests/repo-hygiene.test.ts");
+
+    expect(existsSync("src/components/ai/AgentStatusBadge.tsx")).toBe(false);
+    expect(header).not.toContain("AgentStatusBadge");
+    expect(panel).not.toContain("webSearchProviderName");
+    expect(bundleContract).not.toContain("AgentStatusBadge.tsx");
+    expect(hygieneContract).not.toContain("AgentStatusBadge.tsx");
   });
 });

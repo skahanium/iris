@@ -10,10 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceNavigator } from "@/components/file/WorkspaceNavigator";
 import type { WorkspaceNavigatorFileLifecycle } from "@/components/file/WorkspaceNavigator";
 import {
-  WorkspaceChromeActionsContext,
-  type WorkspaceChromeActions,
-} from "@/hooks/useWorkspaceChromeActions";
-import {
   corpusList,
   fileDelete,
   fileRename,
@@ -50,41 +46,54 @@ function lifecycle(): WorkspaceNavigatorFileLifecycle {
 
 const FILES = [
   {
+    path: "root.md",
+    title: "根笔记",
+    updatedAt: "2026-01-01T00:00:00Z",
+    isLocked: false,
+  },
+  {
     path: "notes/a.md",
     title: "A 笔记",
-    updatedAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-02T00:00:00Z",
     isLocked: false,
   },
   {
     path: "notes/locked.md",
     title: "锁定文档",
-    updatedAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-03T00:00:00Z",
     isLocked: true,
   },
   {
     path: "notes/图片.png",
     title: "图片",
-    updatedAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-04T00:00:00Z",
+    isLocked: false,
+  },
+  {
+    path: "notes/sub/b.md",
+    title: "后代文档",
+    updatedAt: "2026-01-05T00:00:00Z",
     isLocked: false,
   },
 ];
 
 describe("WorkspaceNavigator", () => {
   beforeEach(() => {
+    localStorage.clear();
     vi.mocked(workspaceList).mockResolvedValue(
-      FILES.map((f) => ({
+      FILES.map((file) => ({
         attachmentRole: "attachment" as const,
-        isLocked: f.isLocked,
-        kind: f.path.endsWith(".md") ? "note" : "media",
-        mediaKind: null,
+        isLocked: file.isLocked,
+        kind: file.path.endsWith(".md") ? "note" : "media",
+        mediaKind: file.path.endsWith(".png") ? "image" : null,
         mimeType: null,
-        path: f.path,
+        path: file.path,
         sizeBytes: 10,
-        title: f.title,
-        updatedAt: f.updatedAt,
+        title: file.title,
+        updatedAt: file.updatedAt,
       })),
     );
-    vi.mocked(folderList).mockResolvedValue(["notes/"]);
+    vi.mocked(folderList).mockResolvedValue(["notes/", "notes/sub/"]);
     vi.mocked(corpusList).mockResolvedValue([]);
     vi.mocked(listenFileChanged).mockResolvedValue(() => undefined);
     vi.mocked(fileRename).mockResolvedValue({
@@ -108,7 +117,6 @@ describe("WorkspaceNavigator", () => {
       activePath?: string | null;
       onOpenDocument?: (path: string) => void;
       onPrepareNote?: () => void;
-      chromeActions?: WorkspaceChromeActions;
     } = {},
   ) {
     const onOpenDocument = props.onOpenDocument ?? vi.fn();
@@ -120,210 +128,146 @@ describe("WorkspaceNavigator", () => {
         fileLifecycle={lifecycle()}
       />
     );
-    const result = render(
-      props.chromeActions ? (
-        <WorkspaceChromeActionsContext.Provider value={props.chromeActions}>
-          {navigator}
-        </WorkspaceChromeActionsContext.Provider>
-      ) : (
-        navigator
-      ),
-    );
+    const result = render(navigator);
     return { ...result, onOpenDocument };
   }
 
-  it("加载 catalog 后渲染统一 folder/file 树并打开文件不关闭导航器", async () => {
-    const { onOpenDocument } = renderNavigator();
+  it("分层显示：上层只有文件夹，下层只显示根目录直属 Markdown", async () => {
+    renderNavigator();
 
     await screen.findByTestId("workspace-navigator-tree");
-    const folder = screen.getByTestId("workspace-tree-folder");
-    expect(folder.textContent).toContain("notes");
-
-    // 文件夹默认收起；展开后出现文件行（排序沿用 buildVaultTree 的 zh-CN 规则）
-    fireEvent.click(folder);
-    const files = screen.getAllByTestId("workspace-tree-file");
-    expect(new Set(files.map((f) => f.textContent))).toEqual(
-      new Set(["A 笔记", "锁定文档", "图片"]),
+    expect(screen.getByTestId("workspace-tree-root").textContent).toContain(
+      "根目录",
     );
+    expect(screen.getAllByTestId("workspace-tree-folder")).toHaveLength(1);
+    expect(screen.queryByText("A 笔记")).toBeNull();
 
-    fireEvent.click(files.find((f) => f.textContent?.includes("A 笔记"))!);
-    expect(onOpenDocument).toHaveBeenCalledWith("notes/a.md", "A 笔记");
-    // 导航器保持挂载（连续浏览）
-    expect(screen.getByTestId("workspace-navigator-tree")).toBeTruthy();
+    const files = await screen.findByTestId("workspace-navigator-file-list");
+    expect(files.textContent).toContain("根笔记");
+    expect(files.textContent).not.toContain("A 笔记");
   });
 
-  it("当前文件行显示 brand marker，锁定文档显示锁定图标", async () => {
-    renderNavigator({ activePath: "notes/locked.md" });
-
+  it("选择文件夹后下层只展示该目录直属文件，不递归显示后代", async () => {
+    const { onOpenDocument } = renderNavigator();
     await screen.findByTestId("workspace-navigator-tree");
 
-    const locked = screen
-      .getAllByTestId("workspace-tree-file")
-      .find((f) => f.textContent?.includes("锁定文档"));
-    expect(locked?.getAttribute("data-active")).toBe("true");
-    // 祖先文件夹自动展开（activePath 的父目录）
-    expect(
-      screen.getByTestId("workspace-tree-folder").getAttribute("aria-expanded"),
-    ).toBe("true");
+    fireEvent.click(screen.getByRole("treeitem", { name: /notes/ }));
+    const list = screen.getByTestId("workspace-navigator-file-list");
+    expect(list.textContent).toContain("A 笔记");
+    expect(list.textContent).toContain("锁定文档");
+    expect(list.textContent).not.toContain("后代文档");
+
+    fireEvent.click(screen.getByRole("listitem", { name: /A 笔记/ }));
+    expect(onOpenDocument).toHaveBeenCalledWith("notes/a.md", "A 笔记");
   });
 
-  it("顶部工具栏在根目录新建文件夹，并可展开或折叠整个目录树", async () => {
+  it("外部活动文档自动选择并展开其父目录", async () => {
+    renderNavigator({ activePath: "notes/sub/b.md" });
+
+    await screen.findByTestId("workspace-navigator-tree");
+    await waitFor(() =>
+      expect(screen.getByText("sub", { selector: "span" })).toBeTruthy(),
+    );
+    expect(
+      screen
+        .getByRole("treeitem", { name: /notes/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("workspace-navigator-file-list").textContent,
+    ).toContain("后代文档");
+  });
+
+  it("媒体开关、搜索和 Escape 仅影响当前文件夹下层列表", async () => {
     renderNavigator();
     await screen.findByTestId("workspace-navigator-tree");
+    fireEvent.click(screen.getByRole("treeitem", { name: /notes/ }));
 
-    expect(screen.getByRole("button", { name: "新建根目录笔记" })).toBeTruthy();
+    expect(screen.queryByText("图片")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "显示直属媒体文件" }));
+    expect(screen.getByText("图片")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "搜索当前文件夹" }));
+    const search = screen.getByRole("textbox", { name: "搜索当前文件夹文件" });
+    fireEvent.change(search, { target: { value: "锁定" } });
+    expect(screen.getByText("锁定文档")).toBeTruthy();
+    expect(screen.queryByText("A 笔记")).toBeNull();
+    fireEvent.keyDown(search, { key: "Escape" });
     expect(
-      screen.getByRole("button", { name: "新建根目录文件夹" }),
+      screen.queryByRole("textbox", { name: "搜索当前文件夹文件" }),
+    ).toBeNull();
+  });
+
+  it("两层工具栏使用当前目录创建，支持排序和全部展开/折叠", async () => {
+    renderNavigator();
+    await screen.findByTestId("workspace-navigator-tree");
+    fireEvent.click(screen.getByRole("treeitem", { name: /notes/ }));
+
+    expect(
+      screen.getByRole("button", { name: "在当前文件夹新建文件夹" }),
     ).toBeTruthy();
-
+    expect(
+      screen.getByRole("button", { name: "在当前文件夹新建笔记" }),
+    ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "展开全部文件夹" }));
-    expect(screen.getAllByTestId("workspace-tree-file")).toHaveLength(3);
-
+    expect(screen.getByRole("treeitem", { name: /sub/ })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "折叠全部文件夹" }));
-    expect(screen.queryAllByTestId("workspace-tree-file")).toHaveLength(0);
+    expect(screen.queryByRole("treeitem", { name: /sub/ })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "新建根目录文件夹" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "在当前文件夹新建文件夹" }),
+    );
     fireEvent.change(screen.getByRole("textbox", { name: "文件夹名称" }), {
       target: { value: "收件箱" },
     });
     fireEvent.click(screen.getByRole("button", { name: "创建文件夹" }));
-
-    await waitFor(() => expect(folderCreate).toHaveBeenCalledWith("收件箱"));
-  });
-
-  it("全部折叠不会立即重新展开当前文档的祖先目录", async () => {
-    renderNavigator({ activePath: "notes/locked.md" });
-    await screen.findByTestId("workspace-navigator-tree");
-    expect(screen.getAllByTestId("workspace-tree-file")).toHaveLength(3);
-
-    fireEvent.click(screen.getByRole("button", { name: "折叠全部文件夹" }));
-    expect(screen.queryAllByTestId("workspace-tree-file")).toHaveLength(0);
-    expect(
-      screen.getByTestId("workspace-tree-folder").getAttribute("aria-expanded"),
-    ).toBe("false");
-  });
-
-  it("标题行图钉切换固定偏好，并在空间不足时说明会降级为抽屉", async () => {
-    const setPinPreferred = vi.fn();
-    renderNavigator({
-      chromeActions: {
-        enterAssistantFocus: vi.fn(),
-        exitAssistantFocus: vi.fn(),
-        navigatorOpen: true,
-        openAssistant: vi.fn(),
-        pinPreferred: false,
-        projection: {
-          assistant: "sidecar",
-          navigator: "peek",
-          pinnedEligible: false,
-          primarySurface: "document",
-          sidecarWidthPx: 480,
-        },
-        setPinPreferred,
-        toggleNavigator: vi.fn(),
-      },
-    });
-    await screen.findByTestId("workspace-navigator-tree");
-
-    fireEvent.click(screen.getByRole("button", { name: "固定笔记库导航" }));
-    expect(setPinPreferred).toHaveBeenCalledWith(true);
-    expect(screen.getByText("窗口宽度不足时将保持为浮动抽屉")).toBeTruthy();
-  });
-
-  it("catalog 加载失败显示可重试的安全错误，不卸载壳层", async () => {
-    vi.mocked(workspaceList).mockRejectedValueOnce(new Error("IO error"));
-    renderNavigator();
-
-    await screen.findByTestId("workspace-navigator-error");
-    expect(screen.getByTestId("workspace-navigator-error").textContent).toBe(
-      "IO error",
+    await waitFor(() =>
+      expect(folderCreate).toHaveBeenCalledWith("notes/收件箱"),
     );
   });
 
-  it("行菜单提供重命名/移动/锁定/移入回收站，且无批量与永久删除", async () => {
+  it("分隔线可通过键盘调整、双击复位并持久化无路径偏好", async () => {
     renderNavigator();
     await screen.findByTestId("workspace-navigator-tree");
-    fireEvent.click(screen.getByTestId("workspace-tree-folder"));
-
-    const fileRow = screen
-      .getAllByTestId("workspace-tree-file")
-      .find((f) => f.textContent?.includes("A 笔记"))!;
-    fireEvent.contextMenu(fileRow);
-
-    expect(screen.getByRole("menu", { name: "文件操作" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "重命名" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "移动" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "锁定" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "移入回收站" })).toBeTruthy();
-    // 轻量导航不承载批量/永久删除
-    expect(screen.queryByText("批量删除")).toBeNull();
-    expect(screen.queryByText("永久删除")).toBeNull();
+    const separator = screen.getByRole("separator", {
+      name: "调整文件夹与文件列表比例",
+    });
+    expect(separator.getAttribute("aria-valuenow")).toBe("45");
+    fireEvent.keyDown(separator, { key: "ArrowDown" });
+    expect(separator.getAttribute("aria-valuenow")).toBe("50");
+    fireEvent.doubleClick(separator);
+    expect(separator.getAttribute("aria-valuenow")).toBe("45");
+    expect(
+      localStorage.getItem("iris.workspaceNavigator.preferences"),
+    ).not.toContain("notes/");
   });
 
-  it("移入回收站需确认，确认后走 fileDelete 与生命周期屏障", async () => {
+  it("标题行只保留笔记库名称，不显示图钉或快捷键提示", async () => {
     renderNavigator();
     await screen.findByTestId("workspace-navigator-tree");
-    fireEvent.click(screen.getByTestId("workspace-tree-folder"));
-    const fileRow = screen
-      .getAllByTestId("workspace-tree-file")
-      .find((f) => f.textContent?.includes("A 笔记"))!;
-    fireEvent.contextMenu(fileRow);
-    fireEvent.click(screen.getByRole("menuitem", { name: "移入回收站" }));
 
+    expect(screen.getByText("笔记库")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /固定笔记库导航/ })).toBeNull();
+    expect(screen.queryByText("Ctrl/Cmd+\\")).toBeNull();
+  });
+
+  it("文件右键菜单在触发位置打开，并保留重命名、锁定和回收站生命周期", async () => {
+    renderNavigator();
+    await screen.findByTestId("workspace-navigator-tree");
+    fireEvent.click(screen.getByRole("treeitem", { name: /notes/ }));
+    const fileRow = screen.getByRole("listitem", { name: /A 笔记/ });
+    expect(fileRow.className).toContain("select-none");
+    fireEvent.contextMenu(fileRow, {
+      clientX: 312,
+      clientY: 196,
+    });
+
+    const menu = screen.getByRole("menu", { name: "文件操作" });
+    expect(menu.parentElement?.style.left).toBe("312px");
+    expect(menu.parentElement?.style.top).toBe("196px");
+    expect(screen.getByRole("menuitem", { name: "锁定" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("menuitem", { name: "移入回收站" }));
     fireEvent.click(screen.getByRole("button", { name: "移入回收站" }));
     await waitFor(() => expect(fileDelete).toHaveBeenCalledWith("notes/a.md"));
-  });
-
-  it("索引降级显示弱警示且不回滚动作", async () => {
-    vi.mocked(fileRename).mockResolvedValueOnce({
-      entry: { id: 1, path: "x.md", title: "x", updated_at: "", word_count: 0 },
-      contentHash: "h",
-      indexStatus: "degraded",
-    });
-    renderNavigator();
-    await screen.findByTestId("workspace-navigator-tree");
-    fireEvent.click(screen.getByTestId("workspace-tree-folder"));
-    const fileRow = screen
-      .getAllByTestId("workspace-tree-file")
-      .find((f) => f.textContent?.includes("A 笔记"))!;
-    fireEvent.contextMenu(fileRow);
-    fireEvent.click(screen.getByRole("menuitem", { name: "重命名" }));
-
-    const input = await screen.findByRole("textbox");
-    fireEvent.change(input, { target: { value: "b" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    await waitFor(() => expect(screen.getByText(/索引待修复/)).toBeTruthy());
-  });
-
-  it("hover 文件行触发 prepared-note 预热", async () => {
-    const onPrepareNote = vi.fn();
-    renderNavigator({ onPrepareNote });
-    await screen.findByTestId("workspace-navigator-tree");
-    fireEvent.click(screen.getByTestId("workspace-tree-folder"));
-
-    const fileRow = screen
-      .getAllByTestId("workspace-tree-file")
-      .find((f) => f.textContent?.includes("A 笔记"))!;
-    fireEvent.mouseEnter(fileRow);
-
-    expect(onPrepareNote).toHaveBeenCalledWith(
-      expect.objectContaining({ path: "notes/a.md" }),
-    );
-  });
-
-  it("点击媒体文件行走同一打开路由（media tab 分流由消费方处理）", async () => {
-    const { onOpenDocument } = renderNavigator();
-    await screen.findByTestId("workspace-navigator-tree");
-    fireEvent.click(screen.getByTestId("workspace-tree-folder"));
-
-    const mediaRow = screen
-      .getAllByTestId("workspace-tree-file")
-      .find((f) => f.textContent?.includes("图片"))!;
-    fireEvent.click(mediaRow);
-
-    expect(onOpenDocument).toHaveBeenCalledWith("notes/图片.png", "图片");
-    // 导航器保持打开（连续浏览），媒体不伪装为 Markdown
-    expect(screen.getByTestId("workspace-navigator-tree")).toBeTruthy();
   });
 });
