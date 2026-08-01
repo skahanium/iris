@@ -209,6 +209,9 @@ export default {
         "editor-chrome": "15",
         ai: "10",
         navigator: "10",
+        // peek（悬浮覆盖）呈现的文件树必须盖住编辑器内悬浮 chrome（目录岛 15），
+        // 又不得越过 workspace-focus/toolbar 层（20）。
+        "navigator-overlay": "18",
         "workspace-focus": "20",
         toolbar: "20",
         "slash-command": "25",

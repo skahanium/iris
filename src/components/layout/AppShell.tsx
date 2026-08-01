@@ -67,6 +67,7 @@ export function AppShell({
     setNavigatorOpen,
     setPinPreferred,
     setSidecarWidth,
+    pinPreferred: layoutPinPreferred,
   } = layout;
   // 有效主平面：禅模式临时显示文档（§5.1），不覆盖 assistant_focus 意图。
   const mainHidden = !zen && projection.primarySurface === "assistant_focus";
@@ -176,13 +177,17 @@ export function AppShell({
       exitAssistantFocus: () => requestPrimarySurface("document"),
       projection,
       navigatorOpen: layout.navigatorOpen,
+      pinPreferred: layoutPinPreferred,
+      setPinPreferred,
       toggleNavigator,
     }),
     [
       layout.navigatorOpen,
+      layoutPinPreferred,
       openAssistant,
       projection,
       requestPrimarySurface,
+      setPinPreferred,
       toggleNavigator,
     ],
   );
@@ -239,7 +244,7 @@ export function AppShell({
           "border-r border-border-subtle",
           projection.navigator === "pinned"
             ? "relative z-navigator shrink-0"
-            : "absolute inset-y-0 left-0 z-navigator bg-panel shadow-overlay",
+            : "absolute inset-y-0 left-0 z-navigator-overlay bg-panel shadow-overlay",
           mainHidden && "pointer-events-none invisible",
         )}
         style={{

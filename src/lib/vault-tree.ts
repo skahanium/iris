@@ -150,6 +150,8 @@ export function listFilesInFolder(
 export interface VaultTreeRow {
   node: VaultTreeNode;
   depth: number;
+  /** 各祖先层级在当前行之后是否还有同级节点，用于绘制连续树形导轨。 */
+  ancestorHasNextSibling: boolean[];
 }
 
 /** 按展开集合把树展平为可见行序列；未展开的文件夹不进入序列。 */
@@ -158,14 +160,21 @@ export function flattenVaultTree(
   expanded: ReadonlySet<string>,
 ): VaultTreeRow[] {
   const rows: VaultTreeRow[] = [];
-  const walk = (nodes: VaultTreeNode[], depth: number) => {
-    for (const node of nodes) {
-      rows.push({ node, depth });
+  const walk = (
+    nodes: VaultTreeNode[],
+    depth: number,
+    ancestorHasNextSibling: boolean[],
+  ) => {
+    for (const [index, node] of nodes.entries()) {
+      rows.push({ node, depth, ancestorHasNextSibling });
       if (node.kind === "folder" && expanded.has(node.path) && node.children) {
-        walk(node.children, depth + 1);
+        walk(node.children, depth + 1, [
+          ...ancestorHasNextSibling,
+          index < nodes.length - 1,
+        ]);
       }
     }
   };
-  walk(tree, 0);
+  walk(tree, 0, []);
   return rows;
 }

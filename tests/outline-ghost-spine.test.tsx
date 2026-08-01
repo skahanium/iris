@@ -63,14 +63,19 @@ function renderOutline(
   return onOpenChange;
 }
 
-function renderOutlineWithPath(ed: Editor, open = true) {
+function renderOutlineWithPath(ed: Editor, open = true, occluded = false) {
   host = document.createElement("div");
   host.style.height = "640px";
   document.body.append(host);
   root = createRoot(host);
   act(() => {
     root?.render(
-      <EditorOutline editor={ed} open={open} onOpenChange={() => {}} />,
+      <EditorOutline
+        editor={ed}
+        open={open}
+        occluded={occluded}
+        onOpenChange={() => {}}
+      />,
     );
   });
 }
@@ -131,6 +136,36 @@ describe("outline ghost spine", () => {
     expect(css).not.toContain(".outline-ghost-popover-item");
     expect(css).not.toContain(".outline-luminous-tick");
     expect(css).not.toContain(".outline-luminous-caption");
+  });
+
+  it("occluded 时 rail 隐藏、不可交互并退出键盘与无障碍焦点", () => {
+    editor = makeEditor(["第一章", "第二节"]);
+    renderOutlineWithPath(editor, true, true);
+
+    const rail = document.querySelector<HTMLElement>(
+      '[data-testid="outline-rail"]',
+    );
+    expect(rail).not.toBeNull();
+    // 文件树（peek 悬浮层）打开时目录岛被其覆盖：rail 需从视觉、
+    // 指针与 Tab 焦点中整体退出，否则焦点会落在不可见元素上。
+    expect(rail!.className).toContain("invisible");
+    expect(rail!.className).toContain("pointer-events-none");
+    expect(rail!.getAttribute("aria-hidden")).toBe("true");
+    expect(rail!.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("未 occluded 时 rail 保持可见、可交互与可聚焦（对照）", () => {
+    editor = makeEditor(["第一章", "第二节"]);
+    renderOutlineWithPath(editor);
+
+    const rail = document.querySelector<HTMLElement>(
+      '[data-testid="outline-rail"]',
+    );
+    expect(rail).not.toBeNull();
+    expect(rail!.className).not.toContain("invisible");
+    expect(rail!.className).not.toContain("pointer-events-none");
+    expect(rail!.getAttribute("aria-hidden")).toBeNull();
+    expect(rail!.getAttribute("tabindex")).toBe("0");
   });
 
   it("uses the same stacked row layout for short and long outlines", () => {

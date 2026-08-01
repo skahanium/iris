@@ -1,4 +1,4 @@
-import { ChevronRight, FileText, Lock } from "lucide-react";
+import { ChevronRight, FileText, Folder, FolderOpen, Lock } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { flattenVaultTree, type VaultTreeNode } from "@/lib/vault-tree";
@@ -52,10 +52,13 @@ export function WorkspaceNavigatorTree({
   const [focusedIndex, setFocusedIndex] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const rowRefs = useRef(new Map<number, HTMLDivElement>());
+  const lastRevealedActivePathRef = useRef<string | null>(null);
 
-  // 当前文件自动显露：展开缺失的祖先文件夹并滚动到该行。
+  // 当前文件变化时自动显露：展开缺失的祖先文件夹并滚动到该行。
+  // 用户显式“折叠全部”后不因同一 activePath 的 state 更新立即反弹展开。
   useEffect(() => {
-    if (!activePath) return;
+    if (!activePath || lastRevealedActivePathRef.current === activePath) return;
+    lastRevealedActivePathRef.current = activePath;
     for (const ancestor of ancestorFoldersOf(activePath)) {
       if (!expanded.has(ancestor)) onToggleFolder(ancestor);
     }
@@ -173,7 +176,7 @@ export function WorkspaceNavigatorTree({
         // 焦点离开树时回到标题栏入口由入口按钮处理；这里只保持内部索引。
       }}
     >
-      {rows.map(({ node, depth }, index) => {
+      {rows.map(({ node, depth, ancestorHasNextSibling }, index) => {
         const isFolder = node.kind === "folder";
         const isActive = node.path === activePath;
         const isExpanded = isFolder && expanded.has(node.path);
@@ -191,14 +194,16 @@ export function WorkspaceNavigatorTree({
             }
             data-active={isActive || undefined}
             className={cn(
-              "group flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs",
+              "group relative flex min-h-7 cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-xs",
               isFolder ? "text-foreground/90" : "text-muted-foreground",
               isActive &&
-                "bg-[hsl(var(--brand)/0.12)] text-[hsl(var(--brand))]",
-              focused && "ring-1 ring-inset ring-[hsl(var(--brand)/0.35)]",
+                "bg-[hsl(var(--brand)/0.12)] text-[hsl(var(--brand))] before:absolute before:inset-y-1.5 before:left-0 before:w-px before:bg-[hsl(var(--brand))]",
+              focused &&
+                !isActive &&
+                "ring-1 ring-inset ring-[hsl(var(--brand)/0.35)]",
               !isActive && "hover:bg-muted/50 hover:text-foreground",
             )}
-            style={{ paddingLeft: `${0.5 + depth * 0.875}rem` }}
+            style={{ paddingLeft: `${0.625 + depth * 1.125}rem` }}
             onClick={() => {
               if (isFolder) onToggleFolder(node.path);
               else onOpenFile(node);
@@ -213,15 +218,41 @@ export function WorkspaceNavigatorTree({
               onRowMenu(node, index);
             }}
           >
+            {ancestorHasNextSibling.map((hasNextSibling, guideDepth) =>
+              hasNextSibling ? (
+                <span
+                  key={guideDepth}
+                  aria-hidden="true"
+                  data-testid="workspace-tree-guide"
+                  className="pointer-events-none absolute inset-y-0 w-px bg-border-subtle/80"
+                  style={{ left: `${1.125 + guideDepth * 1.125}rem` }}
+                />
+              ) : null,
+            )}
             {isFolder ? (
-              <ChevronRight
-                className={cn(
-                  "h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform duration-fast",
-                  isExpanded && "rotate-90",
+              <>
+                <ChevronRight
+                  className={cn(
+                    "h-3 w-3 shrink-0 text-muted-foreground/60 transition-transform duration-fast",
+                    isExpanded && "rotate-90",
+                  )}
+                />
+                {isExpanded ? (
+                  <FolderOpen
+                    aria-hidden="true"
+                    data-icon="folder-open"
+                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+                  />
+                ) : (
+                  <Folder
+                    aria-hidden="true"
+                    data-icon="folder-closed"
+                    className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70"
+                  />
                 )}
-              />
+              </>
             ) : (
-              <FileText className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+              <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
             )}
             <span className="min-w-0 truncate">{node.title ?? node.name}</span>
             {node.locked ? (

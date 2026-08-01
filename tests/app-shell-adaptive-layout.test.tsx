@@ -1,9 +1,14 @@
+import { readFileSync } from "node:fs";
 import { act, useEffect } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppShell } from "@/components/layout/AppShell";
 import type { WorkspacePrimarySurface } from "@/lib/workspace-chrome-layout";
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
 
 class FakeResizeObserver {
   static instances: FakeResizeObserver[] = [];
@@ -221,6 +226,40 @@ describe("AppShell 自适应布局：单实例稳定挂载与投影", () => {
         .getAttribute("data-presentation"),
     ).toBe("pinned");
     expect(mountCounts.navigator).toBe(navigatorMounts);
+  });
+
+  it("peek 悬浮呈现使用高于目录岛的 z 层（z-navigator-overlay），pinned 保持 z-navigator", () => {
+    renderShell({
+      navigatorOpen: true,
+      pinPreferred: true,
+    });
+    fireResize(2000);
+
+    const pinned = screen.getByTestId("workspace-navigator");
+    expect(pinned.getAttribute("data-presentation")).toBe("pinned");
+    // pinned 是独立 flex 列，与目录岛无几何重叠，保持普通层即可。
+    expect(pinned.className).toContain("z-navigator");
+    expect(pinned.className).not.toContain("z-navigator-overlay");
+
+    fireResize(1500);
+    const peek = screen.getByTestId("workspace-navigator");
+    expect(peek.getAttribute("data-presentation")).toBe("peek");
+    // peek 是覆盖在编辑器之上的悬浮层：必须高于目录岛（z-editor-chrome: 15），
+    // 否则目录岛会绘制在文件树之上（目录岛悬浮到文件树模块上的回归）。
+    expect(peek.className).toContain("z-navigator-overlay");
+    // 只允许 overlay token，不允许与普通 z-navigator 共存（tailwind-merge 会去重，
+    // 此断言保护类书写不回归成两个 z token 并存）。
+    expect(peek.className).not.toMatch(/(^|\s)z-navigator(\s|$)/);
+  });
+
+  it("z 序契约：navigator-overlay(18) 介于 editor-chrome(15) 与 workspace-focus(20) 之间", () => {
+    const config = read("tailwind.config.js");
+    const block = config.match(/zIndex:\s*\{[\s\S]*?\n\s*\}/);
+    expect(block).not.toBeNull();
+    const zIndex = block![0];
+    expect(zIndex).toContain('"editor-chrome": "15"');
+    expect(zIndex).toContain('"navigator-overlay": "18"');
+    expect(zIndex).toContain('"workspace-focus": "20"');
   });
 
   it("导航 closed 时不渲染导航子树；peek 在 focus 中隐藏但仍挂载", () => {

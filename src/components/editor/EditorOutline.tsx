@@ -37,6 +37,8 @@ interface EditorOutlineProps {
   onOpenChange?: (open: boolean) => void;
   locked?: boolean;
   zen?: boolean;
+  /** 被上层悬浮覆盖（文件树 peek 打开）时隐藏 rail，退出指针与键盘焦点。 */
+  occluded?: boolean;
 }
 
 const OUTLINE_REFRESH_DEBOUNCE_MS = 300;
@@ -74,6 +76,7 @@ export const EditorOutline = memo(function EditorOutline({
   editor,
   locked = false,
   zen = false,
+  occluded = false,
 }: EditorOutlineProps) {
   const [entries, setEntries] = useState<OutlineEntry[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -354,10 +357,14 @@ export const EditorOutline = memo(function EditorOutline({
     <nav
       ref={railRef}
       data-testid="outline-rail"
-      className="outline-ghost outline-ghost--active pointer-events-auto absolute z-editor-chrome flex w-[var(--editor-outline-rail-width)] min-w-[var(--editor-outline-rail-width)] flex-col"
+      className={cn(
+        "outline-ghost outline-ghost--active pointer-events-auto absolute z-editor-chrome flex w-[var(--editor-outline-rail-width)] min-w-[var(--editor-outline-rail-width)] flex-col",
+        occluded && "pointer-events-none invisible",
+      )}
       style={{ left: "var(--editor-outline-inset)" }}
       aria-label="文档目录"
-      tabIndex={0}
+      aria-hidden={occluded || undefined}
+      tabIndex={occluded ? -1 : 0}
       onKeyDown={handleKeyDown}
       onPointerLeave={() => {
         setHoverIndex(null);

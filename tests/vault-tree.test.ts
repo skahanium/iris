@@ -69,5 +69,12 @@ describe("vault-tree", () => {
       "notes/a.md",
       "z.md",
     ]);
+    expect(deep.map((row) => row.ancestorHasNextSibling)).toEqual([
+      [],
+      [true],
+      [true, true],
+      [true],
+      [],
+    ]);
   });
 });

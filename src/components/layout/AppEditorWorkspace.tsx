@@ -1,5 +1,12 @@
 import type { Editor } from "@tiptap/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { Dispatch, SetStateAction, ReactNode } from "react";
 
 import { DocumentOpenLoadingSurface } from "@/components/layout/DocumentOpenLoadingSurface";
@@ -12,6 +19,7 @@ import { WorkspaceEmpty } from "@/components/layout/WorkspaceEmpty";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
+import { WorkspaceChromeActionsContext } from "@/hooks/useWorkspaceChromeActions";
 import type { EditorStatsUpdate } from "@/hooks/useEditorStats";
 import type { SessionCharDelta } from "@/lib/session-char-delta";
 import { documentOpenEnd } from "@/lib/ipc";
@@ -265,6 +273,10 @@ export function AppEditorWorkspace({
   );
 
   const effectiveNotePath = pendingNoteOpen?.path ?? activePath;
+  // 文件树以 peek（悬浮覆盖）打开时会盖住编辑器左缘的目录岛：
+  // 此时让目录岛整体退出视觉/指针/键盘焦点（AppShell 外渲染时 context 为 null，降级为不遮蔽）。
+  const workspaceChrome = useContext(WorkspaceChromeActionsContext);
+  const outlineOccluded = workspaceChrome?.projection.navigator === "peek";
   const effectiveBodyMarkdown =
     pendingNoteOpen?.bodyMarkdown ?? editorBodyMarkdown;
   const effectiveCommittedSourceMarkdown =
@@ -956,6 +968,7 @@ export function AppEditorWorkspace({
           open={outlineOpen}
           locked={currentEditorSurface?.activeFileLocked ?? activeFileLocked}
           zen={zen}
+          occluded={outlineOccluded}
           onOpenChange={onOutlineOpenChange}
         />
       ) : null}

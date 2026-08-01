@@ -89,6 +89,8 @@ function mockChromeActions(
       pinnedEligible: false,
     },
     navigatorOpen: false,
+    pinPreferred: false,
+    setPinPreferred: () => undefined,
     toggleNavigator: () => undefined,
     ...overrides,
   };

@@ -10,6 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceNavigator } from "@/components/file/WorkspaceNavigator";
 import type { WorkspaceNavigatorFileLifecycle } from "@/components/file/WorkspaceNavigator";
 import {
+  WorkspaceChromeActionsContext,
+  type WorkspaceChromeActions,
+} from "@/hooks/useWorkspaceChromeActions";
+import {
   corpusList,
   fileDelete,
   fileRename,
@@ -104,16 +108,26 @@ describe("WorkspaceNavigator", () => {
       activePath?: string | null;
       onOpenDocument?: (path: string) => void;
       onPrepareNote?: () => void;
+      chromeActions?: WorkspaceChromeActions;
     } = {},
   ) {
     const onOpenDocument = props.onOpenDocument ?? vi.fn();
-    const result = render(
+    const navigator = (
       <WorkspaceNavigator
         activePath={props.activePath ?? null}
         onOpenDocument={onOpenDocument}
         onPrepareNote={props.onPrepareNote}
         fileLifecycle={lifecycle()}
-      />,
+      />
+    );
+    const result = render(
+      props.chromeActions ? (
+        <WorkspaceChromeActionsContext.Provider value={props.chromeActions}>
+          {navigator}
+        </WorkspaceChromeActionsContext.Provider>
+      ) : (
+        navigator
+      ),
     );
     return { ...result, onOpenDocument };
   }
@@ -142,7 +156,6 @@ describe("WorkspaceNavigator", () => {
     renderNavigator({ activePath: "notes/locked.md" });
 
     await screen.findByTestId("workspace-navigator-tree");
-    fireEvent.click(screen.getByTestId("workspace-tree-folder"));
 
     const locked = screen
       .getAllByTestId("workspace-tree-file")
@@ -152,6 +165,69 @@ describe("WorkspaceNavigator", () => {
     expect(
       screen.getByTestId("workspace-tree-folder").getAttribute("aria-expanded"),
     ).toBe("true");
+  });
+
+  it("顶部工具栏在根目录新建文件夹，并可展开或折叠整个目录树", async () => {
+    renderNavigator();
+    await screen.findByTestId("workspace-navigator-tree");
+
+    expect(screen.getByRole("button", { name: "新建根目录笔记" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "新建根目录文件夹" }),
+    ).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开全部文件夹" }));
+    expect(screen.getAllByTestId("workspace-tree-file")).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("button", { name: "折叠全部文件夹" }));
+    expect(screen.queryAllByTestId("workspace-tree-file")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "新建根目录文件夹" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "文件夹名称" }), {
+      target: { value: "收件箱" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建文件夹" }));
+
+    await waitFor(() => expect(folderCreate).toHaveBeenCalledWith("收件箱"));
+  });
+
+  it("全部折叠不会立即重新展开当前文档的祖先目录", async () => {
+    renderNavigator({ activePath: "notes/locked.md" });
+    await screen.findByTestId("workspace-navigator-tree");
+    expect(screen.getAllByTestId("workspace-tree-file")).toHaveLength(3);
+
+    fireEvent.click(screen.getByRole("button", { name: "折叠全部文件夹" }));
+    expect(screen.queryAllByTestId("workspace-tree-file")).toHaveLength(0);
+    expect(
+      screen.getByTestId("workspace-tree-folder").getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
+
+  it("标题行图钉切换固定偏好，并在空间不足时说明会降级为抽屉", async () => {
+    const setPinPreferred = vi.fn();
+    renderNavigator({
+      chromeActions: {
+        enterAssistantFocus: vi.fn(),
+        exitAssistantFocus: vi.fn(),
+        navigatorOpen: true,
+        openAssistant: vi.fn(),
+        pinPreferred: false,
+        projection: {
+          assistant: "sidecar",
+          navigator: "peek",
+          pinnedEligible: false,
+          primarySurface: "document",
+          sidecarWidthPx: 480,
+        },
+        setPinPreferred,
+        toggleNavigator: vi.fn(),
+      },
+    });
+    await screen.findByTestId("workspace-navigator-tree");
+
+    fireEvent.click(screen.getByRole("button", { name: "固定笔记库导航" }));
+    expect(setPinPreferred).toHaveBeenCalledWith(true);
+    expect(screen.getByText("窗口宽度不足时将保持为浮动抽屉")).toBeTruthy();
   });
 
   it("catalog 加载失败显示可重试的安全错误，不卸载壳层", async () => {

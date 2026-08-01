@@ -56,6 +56,29 @@ describe("WorkspaceNavigatorTree 键盘语义", () => {
     expect(file.getAttribute("aria-level")).toBe("2");
   });
 
+  it("嵌套项目渲染连续层级导轨，文件夹图标随展开状态变化", () => {
+    renderTree({ expanded: ["notes/", "notes/sub/"] });
+
+    expect(
+      screen.getAllByTestId("workspace-tree-guide").length,
+    ).toBeGreaterThan(0);
+    const notes = screen.getByRole("treeitem", { name: /notes/ });
+    expect(notes.querySelector("[data-icon='folder-open']")).not.toBeNull();
+    const sub = screen.getByRole("treeitem", { name: /sub/ });
+    expect(sub.querySelector("[data-icon='folder-open']")).not.toBeNull();
+  });
+
+  it("当前文件只使用 brand marker，不叠加键盘焦点环", () => {
+    renderTree({
+      activePath: "notes/sub/b.md",
+      expanded: ["notes/", "notes/sub/"],
+    });
+
+    const active = screen.getByRole("treeitem", { name: "B" });
+    expect(active.className).toContain("before:bg-[hsl(var(--brand))]");
+    expect(active.className).not.toContain("ring-1");
+  });
+
   it("↑/↓ 在可见行间移动焦点（aria-activedescendant 语义由焦点行 ring 表达）", () => {
     const { onOpenFile } = renderTree({ expanded: ["notes/"] });
     const tree = screen.getByRole("tree");

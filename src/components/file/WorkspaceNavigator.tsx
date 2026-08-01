@@ -1,5 +1,12 @@
-import { FilePlus2, FolderPlus } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  ChevronsDownUp,
+  ChevronsUpDown,
+  FilePlus2,
+  FolderPlus,
+  Pin,
+  PinOff,
+} from "lucide-react";
+import { useCallback, useContext, useMemo, useRef, useState } from "react";
 
 import {
   FolderCreateDialog,
@@ -12,6 +19,8 @@ import {
   IrisSurfaceMenuItem,
   IrisSurfaceMenuPanel,
 } from "@/components/ui/iris-surface-menu";
+import { Tooltip } from "@/components/ui/tooltip";
+import { WorkspaceChromeActionsContext } from "@/hooks/useWorkspaceChromeActions";
 import {
   buildFolderPath,
   displayFolderPath,
@@ -66,6 +75,44 @@ const MENU_ACTIONS = {
   delete: "移入回收站",
 } as const;
 
+function folderPaths(nodes: VaultTreeNode[]): string[] {
+  return nodes.flatMap((node) =>
+    node.kind === "folder"
+      ? [node.path, ...folderPaths(node.children ?? [])]
+      : [],
+  );
+}
+
+interface NavigatorIconButtonProps {
+  label: string;
+  children: React.ReactNode;
+  onClick: () => void;
+  pressed?: boolean;
+  tooltip?: string;
+}
+
+function NavigatorIconButton({
+  label,
+  children,
+  onClick,
+  pressed,
+  tooltip,
+}: NavigatorIconButtonProps) {
+  return (
+    <Tooltip content={tooltip ?? label} side="bottom">
+      <button
+        type="button"
+        className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/70 hover:text-foreground focus:outline-none"
+        aria-label={label}
+        aria-pressed={pressed}
+        onClick={onClick}
+      >
+        {children}
+      </button>
+    </Tooltip>
+  );
+}
+
 /**
  * 轻量 Workspace Navigator（v1.2.19 Task 7）。
  *
@@ -79,6 +126,7 @@ export function WorkspaceNavigator({
   onPrepareNote,
   fileLifecycle,
 }: WorkspaceNavigatorProps) {
+  const workspaceChrome = useContext(WorkspaceChromeActionsContext);
   const catalog = useVaultCatalog({ watch: true });
   const { files, folders, loading, error: catalogError, refresh } = catalog;
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -95,6 +143,7 @@ export function WorkspaceNavigator({
   const [indexDegraded, setIndexDegraded] = useState(false);
 
   const tree = useMemo(() => buildVaultTree(files, folders), [files, folders]);
+  const allFolderPaths = useMemo(() => folderPaths(tree), [tree]);
 
   const fileActions = useVaultFileActions({
     onOpen: (path) => onOpenDocument(path),
@@ -116,6 +165,14 @@ export function WorkspaceNavigator({
       else next.add(path);
       return next;
     });
+  }, []);
+
+  const expandAllFolders = useCallback(() => {
+    setExpanded(new Set(allFolderPaths));
+  }, [allFolderPaths]);
+
+  const collapseAllFolders = useCallback(() => {
+    setExpanded(new Set());
   }, []);
 
   const openFile = useCallback(
@@ -194,6 +251,12 @@ export function WorkspaceNavigator({
 
   const menuIsFolder = menuNode?.kind === "folder";
   const menuFile = menuNode && menuNode.kind === "file" ? menuNode : null;
+  const pinPreferred = workspaceChrome?.pinPreferred ?? false;
+  const pinnedEligible = workspaceChrome?.projection.pinnedEligible ?? false;
+  const pinLabel = pinPreferred ? "取消固定笔记库导航" : "固定笔记库导航";
+  const pinHint = pinnedEligible
+    ? pinLabel
+    : `${pinLabel}；窗口宽度不足时将保持为浮动抽屉`;
 
   return (
     <div
@@ -201,9 +264,55 @@ export function WorkspaceNavigator({
       data-testid="workspace-navigator"
       className="flex h-full min-h-0 flex-col bg-panel text-xs"
     >
-      <div className="flex shrink-0 items-center justify-between border-b border-border-subtle px-3 py-1.5">
-        <span className="text-xs font-medium text-foreground">笔记库</span>
+      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
+        <span className="min-w-0 flex-1 text-ui font-medium text-foreground">
+          笔记库
+        </span>
+        {!pinnedEligible ? (
+          <span className="sr-only">窗口宽度不足时将保持为浮动抽屉</span>
+        ) : null}
+        {workspaceChrome ? (
+          <NavigatorIconButton
+            label={pinLabel}
+            tooltip={pinHint}
+            pressed={pinPreferred}
+            onClick={() => workspaceChrome.setPinPreferred(!pinPreferred)}
+          >
+            {pinPreferred ? (
+              <PinOff className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Pin className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+          </NavigatorIconButton>
+        ) : null}
         <span className="text-micro text-muted-foreground">Ctrl/Cmd+\</span>
+      </div>
+      <div className="mx-2 mt-2 flex shrink-0 items-center gap-0.5 rounded-lg border border-border-subtle bg-surface-chrome px-1 py-1">
+        <NavigatorIconButton
+          label="新建根目录笔记"
+          onClick={() => void fileActions.createNote({})}
+        >
+          <FilePlus2 className="h-3.5 w-3.5" aria-hidden="true" />
+        </NavigatorIconButton>
+        <NavigatorIconButton
+          label="新建根目录文件夹"
+          onClick={() => {
+            setFolderCreateParent("");
+            setFolderCreateOpen(true);
+          }}
+        >
+          <FolderPlus className="h-3.5 w-3.5" aria-hidden="true" />
+        </NavigatorIconButton>
+        <span aria-hidden="true" className="mx-1 h-4 w-px bg-border-subtle" />
+        <NavigatorIconButton label="展开全部文件夹" onClick={expandAllFolders}>
+          <ChevronsUpDown className="h-3.5 w-3.5" aria-hidden="true" />
+        </NavigatorIconButton>
+        <NavigatorIconButton
+          label="折叠全部文件夹"
+          onClick={collapseAllFolders}
+        >
+          <ChevronsDownUp className="h-3.5 w-3.5" aria-hidden="true" />
+        </NavigatorIconButton>
       </div>
       {indexDegraded ? (
         <p className="shrink-0 border-b border-warning/30 bg-warning-bg px-3 py-1.5 text-[11px] text-warning-foreground">

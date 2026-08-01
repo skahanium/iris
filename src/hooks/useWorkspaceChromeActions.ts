@@ -17,6 +17,10 @@ export interface WorkspaceChromeActions {
   projection: WorkspaceChromeProjection;
   /** 轻量导航打开意图（标题栏入口显示"打开/关闭笔记库导航"）。 */
   navigatorOpen: boolean;
+  /** 用户是否偏好在宽度允许时固定导航。 */
+  pinPreferred: boolean;
+  /** 更新导航固定偏好；宽度不足时 presentation 仍自动降级为浮动抽屉。 */
+  setPinPreferred: (preferred: boolean) => void;
   /** 切换轻量导航（Ctrl/Cmd+\ 与标题栏入口共用，不持久化）。 */
   toggleNavigator: () => void;
 }
