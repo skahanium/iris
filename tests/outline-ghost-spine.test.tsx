@@ -706,7 +706,9 @@ describe("outline ghost spine", () => {
     expect(css).toContain("height: 4px");
     expect(css).toContain("height: min(74.4dvh, 33.6rem)");
     expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*overflow-y: auto;/);
-    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*bottom: 0;/);
+    expect(css).toMatch(
+      /\.outline-ghost-spine \{[\s\S]*top: 50%;[\s\S]*transform: translateY\(-50%\)/,
+    );
     expect(css).toMatch(/\.outline-ghost-items \{[\s\S]*margin-block: auto;/);
     expect(css).toMatch(
       /\.outline-ghost-items \{[\s\S]*row-gap: var\(--outline-row-gap\);/,
