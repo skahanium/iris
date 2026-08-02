@@ -515,6 +515,8 @@ export function ManagementCenterPanel({
       .then((result) => {
         if (result === null) {
           setEmbeddingActionMessage("无法启动后台重建，请稍后手动重试");
+        } else if (result === "disabled") {
+          setEmbeddingActionMessage("开发环境未启用嵌入模型");
         }
       })
       .catch(() => {
@@ -983,11 +985,13 @@ export function ManagementCenterPanel({
           icon={Cpu}
           title="嵌入模型"
           detail={
-            embeddingStatus
-              ? `${embeddingStatus.targetModelId} · ${embeddingStatus.dimension} 维 · ${embeddingStatus.indexedItems}/${embeddingStatus.totalItems} 项`
-              : embeddingStatusLoading
-                ? "正在读取嵌入索引状态…"
-                : "暂时无法读取嵌入索引状态。"
+            embeddingStatus?.phase === "disabled"
+              ? "开发环境默认不加载嵌入模型；Markdown 编辑与关键词检索不受影响。"
+              : embeddingStatus
+                ? `${embeddingStatus.targetModelId} · ${embeddingStatus.dimension} 维 · ${embeddingStatus.indexedItems}/${embeddingStatus.totalItems} 项`
+                : embeddingStatusLoading
+                  ? "正在读取嵌入索引状态…"
+                  : "暂时无法读取嵌入索引状态。"
           }
         >
           <StatusValue ready={embeddingStatus?.phase === "ready"}>
@@ -1001,10 +1005,18 @@ export function ManagementCenterPanel({
                     ? "失败但不影响编辑"
                     : embeddingStatus?.phase === "legacy_ready"
                       ? "旧版检索可用，等待空闲升级"
-                      : "未知"}
+                      : embeddingStatus?.phase === "disabled"
+                        ? "开发环境未启用"
+                        : "未知"}
           </StatusValue>
         </SettingRow>
-        {embeddingStatus?.phase === "running" ? (
+        {embeddingStatus?.phase === "disabled" ? (
+          <SettingRow
+            icon={Cpu}
+            title="嵌入重建"
+            detail="使用 npm run dev:desktop:embedding 准备模型并启动开发版。"
+          />
+        ) : embeddingStatus?.phase === "running" ? (
           <SettingRow
             icon={RefreshCw}
             title="嵌入重建"
@@ -1022,14 +1034,14 @@ export function ManagementCenterPanel({
           <SettingRow
             icon={RefreshCw}
             title="嵌入重建"
-            detail="后台重建已暂停，保留当前进度。"
+            detail="已保留当前进度，空闲后会自动续建。"
           >
             <Button
               size="sm"
               variant="outline"
               onClick={() => handleEmbeddingPaused(false)}
             >
-              继续
+              立即继续
             </Button>
           </SettingRow>
         ) : embeddingStatus?.phase === "failed" ? (

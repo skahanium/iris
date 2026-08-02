@@ -106,6 +106,10 @@ jobs:
       - name: Verify or prepare embedded BGE model
         run: npm run model:prepare
 
+      - name: Smoke test embedded BGE model
+        shell: pwsh
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test embedding_model_smoke -- --ignored
+
       - name: Verify Tauri updater signing secrets
         shell: pwsh
         env:
@@ -186,6 +190,10 @@ jobs:
 
       - name: Verify or prepare embedded BGE model
         run: npm run model:prepare
+
+      - name: Smoke test embedded BGE model
+        shell: bash
+        run: cargo test --manifest-path src-tauri/Cargo.toml --test embedding_model_smoke -- --ignored
 
       - name: Verify Tauri updater signing secrets
         shell: bash

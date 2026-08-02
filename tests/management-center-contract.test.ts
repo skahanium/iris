@@ -69,7 +69,7 @@ describe("management center contract", () => {
     expect(center).not.toContain("onOpenClassifiedPanel");
   });
 
-  it("only consumes scheduler-owned embedding state across all five phases", () => {
+  it("only consumes scheduler-owned embedding state across runtime phases", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
     const overlays = read("src/components/layout/AppOverlays.tsx");
     const ipc = read("src/lib/ipc.ts");
@@ -80,6 +80,8 @@ describe("management center contract", () => {
       "已暂停",
       "失败但不影响编辑",
       "模型不可用，可稍后手动重试。",
+      "开发环境未启用",
+      "npm run dev:desktop:embedding",
       "暂停",
       "继续",
       "手动重试",
@@ -92,6 +94,7 @@ describe("management center contract", () => {
       '"paused"',
       '"ready"',
       '"failed"',
+      '"disabled"',
     ]) {
       expect(center).toContain(phase);
     }

@@ -168,7 +168,8 @@ export type EmbeddingIndexPhase =
   | "running"
   | "paused"
   | "ready"
-  | "failed";
+  | "failed"
+  | "disabled";
 
 export type EmbeddingFailureCode =
   | "interrupted_migration"
@@ -190,7 +191,10 @@ export interface EmbeddingIndexStatus {
   automaticAttempted: boolean;
 }
 
-export type EmbeddingSchedulerStartResult = "started" | "already_running";
+export type EmbeddingSchedulerStartResult =
+  | "started"
+  | "already_running"
+  | "disabled";
 
 export interface FileChangedEvent {
   path: string;

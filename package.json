@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node scripts/with-iris-env.mjs -- vite",
     "dev:desktop": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev",
+    "dev:desktop:embedding": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev --embedding",
     "dev:desktop:vec": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev --features sqlite-vec",
     "dev:desktop:sign": "node scripts/with-iris-env.mjs -- node scripts/sign-dev-macos.mjs",
     "tauri:build:vec": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs build --features sqlite-vec",

@@ -89,6 +89,9 @@ pub fn run() {
             let tauri_app_data_dir = app.path().app_data_dir().ok();
             let iris_paths = crate::paths::resolve_iris_paths_from_process(tauri_app_data_dir)?;
             crate::paths::prepare_iris_paths(&iris_paths)?;
+            crate::embedding::engine::set_embedding_runtime_enabled(
+                crate::embedding::engine::embedding_runtime_enabled_from_environment(),
+            );
             let data_dir = iris_paths.data_dir.clone();
             // `AppState::new` returns `Arc<AppState>`; Tauri can inject it directly.
             let state = AppState::new(data_dir)?;

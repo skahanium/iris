@@ -5,6 +5,27 @@ describe("local packaging script contract", () => {
   const script = () => readFileSync("scripts/package-local.mjs", "utf8");
   const pkg = () => JSON.parse(readFileSync("package.json", "utf8"));
 
+  it("provides an explicit desktop development command that prepares and enables embeddings", () => {
+    const tauriCli = readFileSync("scripts/tauri-cli.mjs", "utf8");
+
+    expect(pkg().scripts["dev:desktop:embedding"]).toBe(
+      "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev --embedding",
+    );
+    expect(tauriCli).toContain('"--embedding"');
+    expect(tauriCli).toContain("IRIS_ENABLE_EMBEDDINGS");
+    expect(tauriCli).toContain("model:prepare");
+  });
+
+  it("runs a real embedding inference smoke test after release model preparation", () => {
+    const workflow = readFileSync(
+      ".github/workflows/package-desktop.yml",
+      "utf8",
+    );
+
+    expect(workflow).toContain("embedding_model_smoke");
+    expect(workflow).toContain("--ignored");
+  });
+
   it("exposes macOS and Windows self-package npm scripts", () => {
     expect(pkg().scripts).toMatchObject({
       "package:local:mac": "node scripts/package-local.mjs mac",

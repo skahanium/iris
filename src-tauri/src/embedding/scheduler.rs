@@ -20,7 +20,6 @@ const BATCH_SIZE: usize = 16;
 const MAX_SKILL_QUERY_CACHE_ENTRIES: usize = 64;
 const IDLE_DELAY: Duration = Duration::from_secs(30);
 const FAILED_SUMMARY: &str = "Embedding rebuild failed";
-const INTERRUPTED_SUMMARY: &str = "Embedding rebuild interrupted";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +40,7 @@ pub struct EmbeddingIndexStatus {
 pub enum EmbeddingStartResult {
     Started,
     AlreadyRunning,
+    Disabled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +82,7 @@ struct RuntimeState {
 pub struct EmbeddingScheduler {
     db: Arc<Database>,
     batcher: Arc<dyn EmbeddingBatcher>,
+    runtime_enabled: bool,
     idle_delay: Duration,
     runtime: Mutex<RuntimeState>,
     skill_query_embeddings: Mutex<HashMap<String, Vec<f32>>>,
@@ -93,12 +94,30 @@ pub struct EmbeddingScheduler {
 
 impl EmbeddingScheduler {
     pub fn new(db: Arc<Database>) -> Arc<Self> {
-        Self::with_batcher(db, Arc::new(BgeEmbeddingBatcher))
+        Self::with_batcher_and_runtime_enabled(
+            db,
+            Arc::new(BgeEmbeddingBatcher),
+            super::engine::embedding_runtime_enabled(),
+        )
     }
 
     #[doc(hidden)]
     pub fn with_batcher(db: Arc<Database>, batcher: Arc<dyn EmbeddingBatcher>) -> Arc<Self> {
-        Self::with_batcher_and_idle_delay(db, batcher, IDLE_DELAY)
+        Self::with_batcher_and_runtime_enabled(db, batcher, true)
+    }
+
+    #[doc(hidden)]
+    pub fn with_batcher_and_runtime_enabled(
+        db: Arc<Database>,
+        batcher: Arc<dyn EmbeddingBatcher>,
+        runtime_enabled: bool,
+    ) -> Arc<Self> {
+        Self::with_batcher_and_idle_delay_and_runtime_enabled(
+            db,
+            batcher,
+            IDLE_DELAY,
+            runtime_enabled,
+        )
     }
 
     /// Construct a scheduler with a deterministic idle delay for contract tests.
@@ -108,9 +127,19 @@ impl EmbeddingScheduler {
         batcher: Arc<dyn EmbeddingBatcher>,
         idle_delay: Duration,
     ) -> Arc<Self> {
+        Self::with_batcher_and_idle_delay_and_runtime_enabled(db, batcher, idle_delay, true)
+    }
+
+    fn with_batcher_and_idle_delay_and_runtime_enabled(
+        db: Arc<Database>,
+        batcher: Arc<dyn EmbeddingBatcher>,
+        idle_delay: Duration,
+        runtime_enabled: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
             db,
             batcher,
+            runtime_enabled,
             idle_delay,
             runtime: Mutex::new(RuntimeState {
                 foreground_busy: true,
@@ -200,6 +229,9 @@ impl EmbeddingScheduler {
     /// committed by the caller before this method is invoked. The worker never
     /// blocks a Run and an old-vault result cannot cross `reset_for_vault`.
     pub fn schedule_skill_activation_embeddings(self: &Arc<Self>) {
+        if !self.runtime_enabled {
+            return;
+        }
         let epoch = match self.runtime.lock() {
             Ok(mut runtime) => {
                 let epoch = runtime.vault_epoch;
@@ -229,6 +261,9 @@ impl EmbeddingScheduler {
     /// miss or model failure therefore changes only ranking quality: Runs use
     /// the deterministic lexical order without loading or waiting for a model.
     pub fn prepare_skill_activation_query(&self, query: &str) -> AppResult<()> {
+        if !self.runtime_enabled {
+            return Ok(());
+        }
         let query = query.trim();
         if query.is_empty() {
             return Ok(());
@@ -290,7 +325,13 @@ impl EmbeddingScheduler {
     }
 
     pub fn status(&self) -> AppResult<EmbeddingIndexStatus> {
-        self.db.with_read_conn(embedding_index_status)
+        let mut status = self.db.with_read_conn(embedding_index_status)?;
+        if !self.runtime_enabled {
+            status.phase = "disabled".into();
+            status.last_error = None;
+            status.failure_code = None;
+        }
+        Ok(status)
     }
 
     /// Record that a derived Markdown index transaction has committed.
@@ -300,6 +341,9 @@ impl EmbeddingScheduler {
     /// remains the sole owner of the repair state and resumes through its normal
     /// idle policy without a second queue or worker.
     pub fn notify_index_committed(self: &Arc<Self>) {
+        if !self.runtime_enabled {
+            return;
+        }
         let transitioned = self.db.with_conn(|conn| {
             if generation_coverage_complete(conn)? {
                 return Ok(false);
@@ -329,6 +373,9 @@ impl EmbeddingScheduler {
         self: &Arc<Self>,
         source: EmbeddingStartSource,
     ) -> AppResult<EmbeddingStartResult> {
+        if !self.runtime_enabled {
+            return Ok(EmbeddingStartResult::Disabled);
+        }
         {
             let mut runtime = self
                 .runtime
@@ -411,6 +458,14 @@ impl EmbeddingScheduler {
     }
 
     pub fn set_manual_paused(self: &Arc<Self>, paused: bool) -> AppResult<()> {
+        if !self.runtime_enabled {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .map_err(|_| AppError::msg("Embedding scheduler lock poisoned"))?;
+            runtime.manual_paused = paused;
+            return Ok(());
+        }
         let should_start_now = {
             let mut runtime = self
                 .runtime
@@ -436,6 +491,9 @@ impl EmbeddingScheduler {
     }
 
     fn schedule_auto_start(self: &Arc<Self>, epoch: u64) {
+        if !self.runtime_enabled {
+            return;
+        }
         let scheduler = Arc::clone(self);
         let _ = thread::Builder::new()
             .name("iris-embedding-idle".into())
@@ -457,9 +515,17 @@ impl EmbeddingScheduler {
     fn run_generation(self: Arc<Self>, vault_epoch: u64) {
         let result = self.batcher.ensure_available();
         if result.is_err() {
-            let _ = self.write_if_current(vault_epoch, |conn| {
-                mark_failed(conn, "model_unavailable", "Embedding model unavailable")
-            });
+            if self
+                .write_if_current(vault_epoch, |conn| {
+                    mark_failed(conn, "model_unavailable", "Embedding model unavailable")
+                })
+                .is_err()
+            {
+                tracing::warn!(
+                    result_code = "embedding_status_write_failed",
+                    "failed to persist embedding model availability status"
+                );
+            }
             self.finish_worker();
             self.emit_status();
             return;
@@ -868,17 +934,23 @@ fn commit_skill_activation_batch(
 }
 
 pub fn recover_interrupted_generation(conn: &Connection) -> AppResult<()> {
-    let phase = conn
+    let state = conn
         .query_row(
-            "SELECT phase FROM embedding_generation_state WHERE singleton = 1",
+            "SELECT phase, failure_code FROM embedding_generation_state WHERE singleton = 1",
             [],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
         )
         .optional()?;
-    let Some(phase) = phase else {
+    let Some((phase, failure_code)) = state else {
         return Ok(());
     };
-    if !matches!(phase.as_str(), "running" | "paused" | "rebuilding") {
+    let interrupted = matches!(phase.as_str(), "running" | "paused" | "rebuilding")
+        || (phase == "failed"
+            && matches!(
+                failure_code.as_deref(),
+                Some("interrupted_restart" | "model_unavailable")
+            ));
+    if !interrupted {
         return Ok(());
     }
 
@@ -890,23 +962,22 @@ pub fn recover_interrupted_generation(conn: &Connection) -> AppResult<()> {
              SET active_model_id = ?1, target_model_id = ?1, target_dimension = ?2,
                  phase = 'ready', indexed_items = ?3, total_items = ?3,
                  last_error = NULL, failure_code = NULL, updated_at = datetime('now')
-             WHERE singleton = 1 AND phase IN ('running', 'paused', 'rebuilding')",
+             WHERE singleton = 1",
             rusqlite::params![EMBEDDING_MODEL_ID, EMBEDDING_DIMENSION as i64, total],
         )?;
     } else {
         conn.execute(
             "UPDATE embedding_generation_state
              SET target_model_id = ?1, target_dimension = ?2,
-                 phase = 'failed', indexed_items = ?3, total_items = ?4,
-                 failure_code = 'interrupted_restart', last_error = ?5,
+                 phase = 'paused', indexed_items = ?3, total_items = ?4,
+                 failure_code = NULL, last_error = NULL,
                  updated_at = datetime('now')
-             WHERE singleton = 1 AND phase IN ('running', 'paused', 'rebuilding')",
+             WHERE singleton = 1",
             rusqlite::params![
                 EMBEDDING_MODEL_ID,
                 EMBEDDING_DIMENSION as i64,
                 indexed,
                 total,
-                INTERRUPTED_SUMMARY,
             ],
         )?;
     }
@@ -1343,6 +1414,44 @@ mod tests {
     }
 
     #[test]
+    fn disabled_scheduler_never_loads_a_model_or_changes_persisted_generation_state() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            seed_chunk(conn);
+            Ok(())
+        })
+        .unwrap();
+        let batcher = Arc::new(CountingBatcher {
+            ensure_calls: AtomicUsize::new(0),
+            batch_calls: AtomicUsize::new(0),
+        });
+        let scheduler = EmbeddingScheduler::with_batcher_and_runtime_enabled(
+            Arc::clone(&db),
+            batcher.clone(),
+            false,
+        );
+
+        scheduler.set_foreground_busy(false);
+        scheduler.notify_index_committed();
+        scheduler.mark_initial_index_complete();
+
+        assert_eq!(
+            scheduler
+                .start_generation(EmbeddingStartSource::Manual)
+                .unwrap(),
+            EmbeddingStartResult::Disabled
+        );
+        assert_eq!(scheduler.status().unwrap().phase, "disabled");
+        assert_eq!(batcher.ensure_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(batcher.batch_calls.load(Ordering::SeqCst), 0);
+        db.with_read_conn(|conn| {
+            assert_eq!(embedding_index_status(conn)?.phase, "legacy_ready");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn enqueue_repair_emits_paused_snapshot_before_idle_restart() {
         let db = Arc::new(Database::open_in_memory().unwrap());
         db.with_conn(|conn| {
@@ -1394,13 +1503,25 @@ mod tests {
     }
 
     #[test]
-    fn complete_interrupted_generation_recovers_to_ready_for_running_and_paused_phases() {
-        for phase in ["running", "paused"] {
+    fn complete_interrupted_generation_recovers_to_ready_for_recoverable_phases() {
+        for (phase, failure_code) in [
+            ("running", None),
+            ("paused", None),
+            ("failed", Some("interrupted_restart")),
+            ("failed", Some("model_unavailable")),
+        ] {
             let conn = Connection::open_in_memory().unwrap();
             migrate_up(&conn).unwrap();
             let chunk_id = seed_covered_chunks(&conn, 1)[0];
             seed_valid_vector(&conn, chunk_id, "chunk-0");
             set_generation_phase(&conn, phase);
+            if let Some(failure_code) = failure_code {
+                conn.execute(
+                    "UPDATE embedding_generation_state SET failure_code = ?1 WHERE singleton = 1",
+                    [failure_code],
+                )
+                .unwrap();
+            }
 
             recover_interrupted_generation(&conn).unwrap();
 
@@ -1456,7 +1577,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_interrupted_generation_fails_without_deleting_valid_batches() {
+    fn incomplete_interrupted_generation_stays_paused_without_deleting_valid_batches() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
         let chunk_ids = seed_covered_chunks(&conn, 2);
@@ -1466,8 +1587,9 @@ mod tests {
         recover_interrupted_generation(&conn).unwrap();
 
         let status = embedding_index_status(&conn).unwrap();
-        assert_eq!(status.phase, "failed");
-        assert_eq!(status.failure_code.as_deref(), Some("interrupted_restart"));
+        assert_eq!(status.phase, "paused");
+        assert_eq!(status.failure_code, None);
+        assert_eq!(status.last_error, None);
         assert_eq!((status.indexed_items, status.total_items), (1, 2));
         assert_eq!(
             conn.query_row(
@@ -1482,7 +1604,71 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_recovery_rejects_mismatched_vector_metadata() {
+    fn historical_interrupted_restart_recovers_to_paused_and_auto_completes_only_the_gap() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        db.with_conn(|conn| {
+            let chunk_ids = seed_covered_chunks(conn, 2);
+            seed_valid_vector(conn, chunk_ids[0], "chunk-0");
+            conn.execute(
+                "UPDATE embedding_generation_state
+                 SET phase = 'failed', failure_code = 'interrupted_restart',
+                     last_error = 'Embedding rebuild interrupted'
+                 WHERE singleton = 1",
+                [],
+            )?;
+            recover_interrupted_generation(conn)
+        })
+        .unwrap();
+
+        let batcher = Arc::new(CountingBatcher {
+            ensure_calls: AtomicUsize::new(0),
+            batch_calls: AtomicUsize::new(0),
+        });
+        let scheduler = EmbeddingScheduler::with_batcher_and_idle_delay(
+            Arc::clone(&db),
+            batcher.clone(),
+            Duration::from_millis(5),
+        );
+
+        scheduler.set_foreground_busy(false);
+        scheduler.mark_initial_index_complete();
+        wait_for_phase(&scheduler, "ready");
+
+        assert_eq!(batcher.ensure_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(batcher.batch_calls.load(Ordering::SeqCst), 1);
+        db.with_read_conn(|conn| {
+            assert_eq!(valid_sources(conn)?, 2);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn historical_model_unavailable_recovers_to_paused_for_one_new_process_attempt() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        let chunk_ids = seed_covered_chunks(&conn, 2);
+        seed_valid_vector(&conn, chunk_ids[0], "chunk-0");
+        conn.execute(
+            "UPDATE embedding_generation_state
+             SET phase = 'failed', failure_code = 'model_unavailable',
+                 last_error = 'Embedding model unavailable'
+             WHERE singleton = 1",
+            [],
+        )
+        .unwrap();
+
+        recover_interrupted_generation(&conn).unwrap();
+
+        let status = embedding_index_status(&conn).unwrap();
+        assert_eq!(status.phase, "paused");
+        assert_eq!(status.failure_code, None);
+        assert_eq!(status.last_error, None);
+        assert_eq!((status.indexed_items, status.total_items), (1, 2));
+    }
+
+    #[test]
+    fn interrupted_recovery_keeps_mismatched_vector_metadata_queued_for_repair() {
         for (label, mutation) in [
             (
                 "model",
@@ -1511,12 +1697,8 @@ mod tests {
             recover_interrupted_generation(&conn).unwrap();
 
             let status = embedding_index_status(&conn).unwrap();
-            assert_eq!(status.phase, "failed", "mismatched {label}");
-            assert_eq!(
-                status.failure_code.as_deref(),
-                Some("interrupted_restart"),
-                "mismatched {label}"
-            );
+            assert_eq!(status.phase, "paused", "mismatched {label}");
+            assert_eq!(status.failure_code, None, "mismatched {label}");
         }
     }
 

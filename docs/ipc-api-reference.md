@@ -44,7 +44,7 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 
 `file_write` 的成功语义仅是“指定 Markdown 已耐久原子落盘”。其 `FileWriteResult` 包含 `entry`、`contentHash` 与 `indexStatus`：`synced` 表示派生索引同步完成，`degraded` 表示 Markdown 已保存、索引修复已排队。调用方不得因 `degraded` 回滚、删除或拒绝该 Markdown，也不得把它显示为保存失败。所有正文写入入口（普通保存、创建、AI 应用、版本恢复、模板和链接级联）必须复用同一后端写入服务。
 
-嵌入重建没有同步阻塞接口。`embedding_scheduler_status` 返回 `EmbeddingIndexStatus`，`embedding_scheduler_start` 立即返回 `started` 或 `already_running`，`embedding_scheduler_set_paused` 在批次边界暂停/恢复，`embedding_scheduler_set_foreground_busy` 只报告前台活动。前端持续消费完整状态事件；运行、暂停、失败、进度和自动尝试标记均以服务端状态为准，不能由组件自行推断。旧 `search_embedding_status` 与同步 `search_reindex` 已移除，不得恢复兼容入口。
+嵌入重建没有同步阻塞接口。`embedding_scheduler_status` 返回 `EmbeddingIndexStatus`，`embedding_scheduler_start` 立即返回 `started`、`already_running` 或调试运行时的 `disabled`，`embedding_scheduler_set_paused` 在批次边界暂停/恢复，`embedding_scheduler_set_foreground_busy` 只报告前台活动。前端持续消费完整状态事件；运行、暂停、失败、`disabled`、进度和自动尝试标记均以服务端状态为准，不能由组件自行推断。旧 `search_embedding_status` 与同步 `search_reindex` 已移除，不得恢复兼容入口。
 
 `credential_set`、`credential_has`、`credential_status`、`credential_delete` 只处理服务名和状态；任何返回值、日志、诊断或错误均不得含有秘密值。
 

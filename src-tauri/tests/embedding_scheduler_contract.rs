@@ -122,7 +122,7 @@ fn wait_for_phase(scheduler: &EmbeddingScheduler, phase: &str) {
 }
 
 #[test]
-fn startup_marks_incomplete_running_generation_interrupted_without_retrying_it() {
+fn startup_preserves_incomplete_running_generation_for_idle_resume() {
     let conn = Connection::open_in_memory().expect("open database");
     migrate_up(&conn).expect("migrate database");
     seed_chunk(&conn, "pending-fingerprint");
@@ -135,16 +135,16 @@ fn startup_marks_incomplete_running_generation_interrupted_without_retrying_it()
 
     recover_interrupted_generation(&conn).expect("recover interrupted job");
 
-    let state: (String, String, String) = conn
+    let state: (String, Option<String>, Option<String>) = conn
         .query_row(
             "SELECT phase, failure_code, last_error FROM embedding_generation_state",
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .expect("read recovered state");
-    assert_eq!(state.0, "failed");
-    assert_eq!(state.1, "interrupted_restart");
-    assert_eq!(state.2, "Embedding rebuild interrupted");
+    assert_eq!(state.0, "paused");
+    assert_eq!(state.1, None);
+    assert_eq!(state.2, None);
 }
 
 #[test]

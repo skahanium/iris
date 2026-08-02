@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use fastembed::{
@@ -41,25 +42,61 @@ const REQUIRED_MODEL_FILES: [&str; 5] = [
 ///
 /// fastembed v5 mutates internal state during `embed()`, so calls share one
 /// lazily loaded model behind a Mutex instead of loading one model per request.
-static EMBEDDER: OnceLock<Result<Mutex<TextEmbedding>, String>> = OnceLock::new();
+static EMBEDDER: OnceLock<Mutex<TextEmbedding>> = OnceLock::new();
+static EMBEDDER_INITIALIZATION: Mutex<()> = Mutex::new(());
+static EMBEDDING_RUNTIME_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Configure whether this process may load and use the embedding runtime.
+pub fn set_embedding_runtime_enabled(enabled: bool) {
+    EMBEDDING_RUNTIME_ENABLED.store(enabled, Ordering::Release);
+}
+
+/// Return whether the current process may use embedding inference.
+pub fn embedding_runtime_enabled() -> bool {
+    EMBEDDING_RUNTIME_ENABLED.load(Ordering::Acquire)
+}
+
+/// Release builds always enable embeddings; debug builds require explicit opt-in.
+pub fn embedding_runtime_enabled_from_environment() -> bool {
+    !cfg!(debug_assertions)
+        || std::env::var("IRIS_ENABLE_EMBEDDINGS")
+            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
 
 /// Return exclusive access to the bundled BGE v2 model.
 fn get_embedder() -> AppResult<MutexGuard<'static, TextEmbedding>> {
-    let model = EMBEDDER
-        .get_or_init(|| {
-            create_bundled_embedder()
-                .map(Mutex::new)
-                .map_err(|error| error.to_string())
-        })
-        .as_ref()
-        .map_err(|error| {
-            AppError::Embed(format!(
-                "Failed to load bundled {EMBEDDING_MODEL_ID}: {error}"
-            ))
-        })?;
+    if !embedding_runtime_enabled() {
+        return Err(AppError::Embed("Embedding runtime disabled".into()));
+    }
+    let model = initialize_once(&EMBEDDER, &EMBEDDER_INITIALIZATION, || {
+        create_bundled_embedder().map(Mutex::new)
+    })?;
     model
         .lock()
         .map_err(|_| AppError::Embed("Embedding model lock poisoned".into()))
+}
+
+/// Initialize a shared value once, retaining only a successful initialization.
+fn initialize_once<'a, T>(
+    cell: &'a OnceLock<T>,
+    initialization: &Mutex<()>,
+    initialize: impl FnOnce() -> AppResult<T>,
+) -> AppResult<&'a T> {
+    if let Some(value) = cell.get() {
+        return Ok(value);
+    }
+    let _guard = initialization
+        .lock()
+        .map_err(|_| AppError::Embed("Embedding model initialization lock poisoned".into()))?;
+    if let Some(value) = cell.get() {
+        return Ok(value);
+    }
+    let value = initialize()?;
+    cell.set(value)
+        .map_err(|_| AppError::Embed("Embedding model was initialized concurrently".into()))?;
+    Ok(cell
+        .get()
+        .expect("embedding model must be available after successful initialization"))
 }
 
 /// Verify that the bundled embedding model can be loaded without embedding text.
@@ -310,6 +347,9 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 /// initialized, so that condition is a safe `false` rather than an error that
 /// would take down keyword and graph retrieval.
 pub fn embedding_generation_ready(conn: &Connection) -> AppResult<bool> {
+    if !embedding_runtime_enabled() {
+        return Ok(false);
+    }
     let state = match conn
         .query_row(
             "SELECT phase, active_model_id, target_model_id, target_dimension,
@@ -492,8 +532,9 @@ fn truncate_snippet(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes_to_f32, f32_to_bytes, validate_bundled_model_directory};
+    use super::{bytes_to_f32, f32_to_bytes, initialize_once, validate_bundled_model_directory};
     use std::fs;
+    use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
 
     fn write_complete_model_fixture(directory: &std::path::Path, revision: &str) {
@@ -525,6 +566,22 @@ mod tests {
             .to_string(),
         )
         .expect("write ready marker fixture");
+    }
+
+    #[test]
+    fn failed_model_initialization_is_not_cached_and_can_retry() {
+        let cell = OnceLock::new();
+        let initialization = Mutex::new(());
+
+        assert!(initialize_once(&cell, &initialization, || {
+            Err(crate::error::AppError::Embed("temporary failure".into()))
+        })
+        .is_err());
+        assert!(cell.get().is_none());
+
+        let model = initialize_once(&cell, &initialization, || Ok(7_u8)).unwrap();
+        assert_eq!(*model, 7);
+        assert_eq!(cell.get(), Some(&7));
     }
 
     #[test]
