@@ -358,7 +358,7 @@ export const EditorOutline = memo(function EditorOutline({
       ref={railRef}
       data-testid="outline-rail"
       className={cn(
-        "outline-ghost outline-ghost--active pointer-events-auto absolute z-editor-chrome flex w-[var(--editor-outline-rail-width)] min-w-[var(--editor-outline-rail-width)] flex-col",
+        "outline-ghost outline-ghost--active pointer-events-auto absolute inset-y-0 z-editor-chrome flex h-full w-[var(--editor-outline-rail-width)] min-w-[var(--editor-outline-rail-width)] flex-col",
         occluded && "pointer-events-none invisible",
       )}
       style={{ left: "var(--editor-outline-inset)" }}

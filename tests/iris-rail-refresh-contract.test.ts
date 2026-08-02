@@ -93,6 +93,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(outline).not.toContain('data-testid="outline-rail-handle"');
     expect(outline).toContain('data-testid="outline-ghost-popover"');
     expect(outline).toContain("outline-ghost--active");
+    expect(outline).toContain("absolute inset-y-0 z-editor-chrome flex h-full");
     expect(outline).toContain("outline-ghost-item");
     expect(outline).toContain("outline-ghost-items");
     expect(outline).toContain("outline-ghost-item-line");
@@ -120,18 +121,21 @@ describe("Iris Rail complete interface contracts", () => {
     expect(css).toContain("--editor-outline-rail-width: 3.25rem");
     expect(css).not.toContain("padding-left: var(--editor-outline-reserve);");
     expect(css).toContain(".outline-ghost-popover");
-    expect(css).toMatch(/\.outline-ghost \{[\s\S]*top: 50%/);
     expect(css).toMatch(
-      /\.outline-ghost \{[\s\S]*transform: translateY\(-50%\)/,
+      /\.outline-ghost \{[\s\S]*top: 0;[\s\S]*bottom: 0;[\s\S]*transform: none/,
     );
     expect(css).toContain("height: min(74.4dvh, 33.6rem)");
     expect(css).toContain("--outline-bar-width: 0.95rem");
     expect(css).toContain("--outline-row-gap: 0.84rem");
     expect(css).toContain("--outline-bar-active-width: 3rem");
     expect(css).toContain("--outline-bar-candidate-width: 3.5rem");
-    expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*min-height: 100%;/);
+    expect(css).toMatch(
+      /\.outline-ghost-list \{[\s\S]*height: min\(74\.4dvh, 33\.6rem\);[\s\S]*margin-block: 0;/,
+    );
     expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*overflow-y: auto;/);
-    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*bottom: 0;/);
+    expect(css).toMatch(
+      /\.outline-ghost-spine \{[\s\S]*top: 50%;[\s\S]*transform: translateY\(-50%\)/,
+    );
     expect(css).toMatch(/\.outline-ghost-items \{[\s\S]*margin-block: auto;/);
     expect(css).toMatch(
       /\.outline-ghost-items \{[\s\S]*row-gap: var\(--outline-row-gap\);/,

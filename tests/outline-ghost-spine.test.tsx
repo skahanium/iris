@@ -124,9 +124,18 @@ describe("outline ghost spine", () => {
     expect(outline).not.toContain("getTickTop");
     expect(outline).not.toContain("nearestIndexFromPointer");
     expect(css).toContain(".outline-ghost");
-    expect(css).toMatch(/\.outline-ghost \{[\s\S]*top: 50%/);
+    expect(outline).toContain("absolute inset-y-0 z-editor-chrome flex h-full");
     expect(css).toMatch(
-      /\.outline-ghost \{[\s\S]*transform: translateY\(-50%\)/,
+      /\.outline-ghost \{[\s\S]*top: 0;[\s\S]*bottom: 0;[\s\S]*transform: none/,
+    );
+    expect(css).toMatch(
+      /\.outline-ghost--active \{[\s\S]*height: 100%;[\s\S]*justify-content: center/,
+    );
+    expect(css).toMatch(
+      /\.outline-ghost-list \{[\s\S]*height: min\(74\.4dvh, 33\.6rem\);[\s\S]*margin-block: 0/,
+    );
+    expect(css).toMatch(
+      /\.outline-ghost-spine \{[\s\S]*top: 50%;[\s\S]*height: min\(74\.4dvh, 33\.6rem\);[\s\S]*transform: translateY\(-50%\)/,
     );
     expect(css).toContain(".outline-ghost-item--active");
     expect(css).toContain(".outline-ghost-item-line");
@@ -402,8 +411,13 @@ describe("outline ghost spine", () => {
     expect(list?.contains(spine!)).toBe(false);
 
     const css = read("src/styles/globals.css");
-    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*top: 0;/);
-    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*bottom: 0;/);
+    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*top: 50%;/);
+    expect(css).toMatch(
+      /\.outline-ghost-spine \{[\s\S]*height: min\(74\.4dvh, 33\.6rem\);/,
+    );
+    expect(css).toMatch(
+      /\.outline-ghost-spine \{[\s\S]*transform: translateY\(-50%\)/,
+    );
     expect(css).not.toContain(".outline-ghost-list::before");
   });
   it("keeps adjacent top-level headings as compact animated rail bars", () => {
@@ -732,7 +746,9 @@ describe("outline ghost spine", () => {
     expect(css).toMatch(
       /\.outline-ghost-list \{[\s\S]*padding: 0\.25rem 0\.35rem 0\.45rem 0;/,
     );
-    expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*min-height: 100%;/);
+    expect(css).toMatch(
+      /\.outline-ghost-list \{[\s\S]*height: min\(74\.4dvh, 33\.6rem\);[\s\S]*margin-block: 0;/,
+    );
     expect(css).not.toContain("min-height: calc(min(74.4dvh, 33.6rem) - 3rem)");
     expect(css).toMatch(
       /\.outline-ghost-item \{[\s\S]*padding-left: var\(--editor-outline-bar-offset\)/,

@@ -912,15 +912,18 @@
   }
 
   .outline-ghost {
-    top: 50%;
-    transform: translateY(-50%);
+    top: 0;
+    bottom: 0;
+    transform: none;
   }
 
   .outline-ghost--active {
     display: flex;
     width: var(--editor-outline-rail-width);
-    height: min(74.4dvh, 33.6rem);
+    height: 100%;
+    min-height: 0;
     flex-direction: column;
+    justify-content: center;
     gap: 0.5rem;
     outline: none;
     overflow: visible;
@@ -935,12 +938,14 @@
     --outline-bar-near-width: 2rem;
     position: relative;
     display: flex;
-    flex: 1 1 0;
+    flex: 0 1 auto;
     flex-direction: column;
-    min-height: 100%;
     width: 100%;
+    height: min(74.4dvh, 33.6rem);
+    max-height: 100%;
     overflow-x: visible;
     overflow-y: auto;
+    margin-block: 0;
     padding: 0.25rem 0.35rem 0.45rem 0;
     scrollbar-width: none;
   }
@@ -963,11 +968,13 @@
   .outline-ghost-spine {
     position: absolute;
     left: 0;
-    top: 0;
-    bottom: 0;
+    top: 50%;
+    height: min(74.4dvh, 33.6rem);
+    max-height: 100%;
     width: 3px;
     border-radius: 999px;
     background: hsl(var(--outline-rail-marker) / 0.22);
+    transform: translateY(-50%);
     pointer-events: none;
   }
 
