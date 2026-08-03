@@ -366,7 +366,14 @@ fn accept_freezes_normalized_prompt_profile_contract_metadata() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         assert!(snapshot.contains("\"display_name\":\"Iris\""));
-        assert_eq!(version, 2);
+        assert_eq!(
+            version,
+            crate::ai_runtime::prompt_contract::PROMPT_CONTRACT_VERSION
+        );
+        assert!(
+            snapshot.contains("\"behavior\":"),
+            "V3 snapshots must freeze the structured behavior defaults"
+        );
         assert!(!hash.is_empty());
         Ok(())
     })
@@ -377,7 +384,7 @@ fn accept_freezes_normalized_prompt_profile_contract_metadata() {
     assert_eq!(
         prompt_input
             .prompt_profile_snapshot
-            .expect("v2 snapshot")
+            .expect("V3 snapshot")
             .display_name,
         "Iris"
     );

@@ -1505,6 +1505,10 @@ fn validate_observation(
         .iter()
         .chain(manifest.tool_policy.forbidden.iter())
         .map(String::as_str)
+        // Unknown model calls are intentionally collapsed to this stable,
+        // non-sensitive failure marker by the live evaluator. They must remain
+        // observable as a policy failure instead of aborting the whole pilot.
+        .chain(std::iter::once(UNEXPECTED_EVAL_TOOL))
         .collect::<HashSet<_>>();
     let mut tools = HashSet::new();
     for tool in &observation.tool_calls {
@@ -5642,6 +5646,37 @@ fn apply_headless_eval_fault(
     Ok(())
 }
 
+const UNEXPECTED_EVAL_TOOL: &str = "unexpected_tool";
+
+/// Translate a persisted model tool name into the closed evaluation-tool
+/// vocabulary. The evaluator never retains arbitrary provider tool labels in
+/// its report: a call outside the synthetic contract becomes the stable
+/// `unexpected_tool` failure marker and consequently fails the tool policy.
+///
+/// Runtime emits `web.search`; the model-facing tool surface and policy
+/// contract intentionally call the same operation `web_search`.
+#[cfg(test)]
+pub(crate) fn normalize_observed_eval_tool_name(value: &str) -> &str {
+    match value {
+        "web.search" | "web.fetch" => "web_search",
+        "read_note" | "search_hybrid" | "list_vault" | "get_outline" | "get_backlinks"
+        | "web_search" => value,
+        _ => UNEXPECTED_EVAL_TOOL,
+    }
+}
+
+/// Project only the lifecycle capabilities that have a one-to-one equivalent
+/// in the closed model-tool contract. Other capability events are operational
+/// telemetry, not evidence that the model called an undeclared evaluation tool;
+/// the per-run tool audit below remains authoritative for those calls.
+#[cfg(test)]
+pub(crate) fn runtime_capability_to_eval_tool_name(value: &str) -> Option<&str> {
+    match value {
+        "web.search" | "web.fetch" => Some("web_search"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn score_headless_run(
@@ -5862,7 +5897,10 @@ fn score_headless_run(
         .tool_calls
         .lock()
         .map_err(|_| EvalContractError::new("eval_sink_lock_failed"))?
-        .clone();
+        .iter()
+        .filter_map(|capability| runtime_capability_to_eval_tool_name(capability))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
     // `AnswerObservation` describes which capabilities were observed, rather
     // than a trace of every invocation. A run can legitimately emit both a
     // lifecycle event and an audit row for the same capability (in particular
@@ -5876,11 +5914,7 @@ fn score_headless_run(
         if audit.tool_name == "web_taint_witness" {
             continue;
         }
-        let tool_name = if audit.tool_name == "web.search" {
-            "web_search"
-        } else {
-            audit.tool_name.as_str()
-        };
+        let tool_name = normalize_observed_eval_tool_name(&audit.tool_name);
         if !tool_calls.iter().any(|observed| observed == tool_name) {
             tool_calls.push(tool_name.to_string());
         }

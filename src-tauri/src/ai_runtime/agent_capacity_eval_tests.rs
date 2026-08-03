@@ -13,11 +13,12 @@ use super::agent_capacity_eval::{
     discover_live_profile_candidates_from_database, evaluate_case, execute_headless_core_case,
     execute_pressure_staircases, filter_live_profile_candidates_by_model_allowlist,
     generate_core_scenarios, generate_pressure_staircases, measure_case_quality,
-    pairwise_live_capability_matrix, preflight_live_profiles, prepare_approved_live_pilot,
-    restore_and_consume_live_preflight_session, run_approved_live_pilot,
-    run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
-    run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
-    run_security_track, select_core_scenarios, serialize_agent_capacity_report,
+    normalize_observed_eval_tool_name, pairwise_live_capability_matrix, preflight_live_profiles,
+    prepare_approved_live_pilot, restore_and_consume_live_preflight_session,
+    run_approved_live_pilot, run_approved_live_pilot_with_local_doubles,
+    run_approved_live_pilot_with_local_doubles_fault, run_combined_terminal_cases,
+    run_hard_boundary_probes, run_headless_core_evaluation, run_security_track,
+    runtime_capability_to_eval_tool_name, select_core_scenarios, serialize_agent_capacity_report,
     serialize_evaluation_summary, serialize_live_preflight_report,
     spawn_live_pilot_dynamic_llm_protocol_double, spawn_llm_protocol_double,
     validate_serialized_evaluation_summary, validate_serialized_live_pilot_result,
@@ -44,6 +45,30 @@ fn controlled_live_fact_oracle_rejects_a_model_placeholder_without_source_bindin
             None,
         ),
         "a model echo of the evaluator placeholder is not evidence unless the controlled source contains that claim"
+    );
+}
+
+#[test]
+fn live_evaluator_normalizes_runtime_web_capability_to_its_tool_contract_name() {
+    assert_eq!(
+        normalize_observed_eval_tool_name("web.search"),
+        "web_search"
+    );
+    assert_eq!(normalize_observed_eval_tool_name("web.fetch"), "web_search");
+    assert_eq!(normalize_observed_eval_tool_name("read_note"), "read_note");
+    assert_eq!(
+        normalize_observed_eval_tool_name("provider_private_tool"),
+        "unexpected_tool",
+        "unknown model tool labels must surface as a policy failure, not abort the pilot"
+    );
+    assert_eq!(
+        runtime_capability_to_eval_tool_name("web.search"),
+        Some("web_search")
+    );
+    assert_eq!(
+        runtime_capability_to_eval_tool_name("vault.read"),
+        None,
+        "lifecycle capabilities are not model-tool contract evidence; audits carry that evidence"
     );
 }
 use super::mcp_host_runtime::{

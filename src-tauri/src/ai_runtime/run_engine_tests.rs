@@ -747,7 +747,12 @@ async fn strict_web_multi_turn_pressure_keeps_run_local_sources_without_repair_c
                 assert_eq!(content, format!("第 {turn} 轮结论。"));
                 assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
             } else {
-                assert!(content.ends_with("[W1]"));
+                assert_eq!(content, format!("第 {turn} 轮结论。"));
+                assert!(
+                    !content.contains("[W1]"),
+                    "uncalibrated source-group routes must not expose a model-authored precise marker"
+                );
+                assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
             }
         }
     }
