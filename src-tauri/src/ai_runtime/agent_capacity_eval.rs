@@ -2930,6 +2930,40 @@ pub(crate) fn discover_live_profile_candidates_from_database(
     Ok(candidates)
 }
 
+/// Restrict a live preflight to exact, user-approved model identifiers.
+///
+/// The filter is applied before anonymous profile handles are generated, so a
+/// pilot can never accidentally hydrate a different compatible fallback.
+#[cfg(test)]
+pub(crate) fn filter_live_profile_candidates_by_model_allowlist(
+    candidates: Vec<LiveProfileCandidate>,
+    allowlist: Option<&str>,
+) -> Result<Vec<LiveProfileCandidate>, EvalContractError> {
+    let Some(raw_allowlist) = allowlist.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(candidates);
+    };
+    let allowed = raw_allowlist
+        .split(',')
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .collect::<HashSet<_>>();
+    if allowed.is_empty() {
+        return Err(EvalContractError::new(
+            "live_preflight_requested_models_invalid",
+        ));
+    }
+    let selected = candidates
+        .into_iter()
+        .filter(|candidate| allowed.contains(candidate.llm.model.as_str()))
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Err(EvalContractError::new(
+            "live_preflight_requested_models_unavailable",
+        ));
+    }
+    Ok(selected)
+}
+
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -3888,11 +3922,15 @@ async fn run_approved_live_pilot_with_executor(
         .count()
         .min(u32::MAX as usize) as u32;
     let case_count = cases.len().min(u32::MAX as usize) as u32;
-    let status = if executor == LivePilotCaseExecutor::Live && terminal_case_count == 12 {
-        // A live pilot is considered exercised when every scheduled Run
-        // reaches a durable terminal state. Quality and verification failures
-        // remain visible in the per-case verdicts; a strict offline refusal is
-        // not falsely reclassified as an unexecuted pilot.
+    let status = if executor == LivePilotCaseExecutor::Live
+        && terminal_case_count == 12
+        && completed_case_count == 12
+        && passed == 12
+    {
+        // A live pilot can promote a model route only after every scheduled
+        // Run completes and passes the closed evidence/quality verdict. A
+        // merely terminal wrong answer is an exercised failure, not evidence
+        // that the route is safe for calibrated finalization.
         "live_pilot_executed"
     } else {
         "live_not_tested"
@@ -4034,7 +4072,10 @@ pub(crate) fn validate_serialized_live_pilot_result(
     }
     if observed_passed != passed
         || observed_completed != completed_case_count
-        || (status == "live_pilot_executed" && observed_terminal != case_count)
+        || (status == "live_pilot_executed"
+            && (observed_terminal != case_count
+                || observed_completed != case_count
+                || observed_passed != case_count))
     {
         return Err(EvalContractError::new("live_pilot_count_inconsistent"));
     }
@@ -5235,7 +5276,7 @@ async fn execute_headless_core_case_with_local_body(
         };
         install_headless_eval_mcp(&state, mcp_mode)?;
     }
-    let mut final_content = headless_final_content(scenario, fault);
+    let final_content = headless_final_content(scenario, fault);
     let needs_local_tool = scenario.manifest.local_authorization.implicit_vault
         == ImplicitVaultExpectation::Allowed
         && scenario
@@ -5243,12 +5284,6 @@ async fn execute_headless_core_case_with_local_body(
             .required_sources
             .iter()
             .any(|source| source.kind == SourceKind::Local);
-    let needs_web_tool = scenario.web_state() == WebState::Online
-        && scenario
-            .manifest
-            .required_sources
-            .iter()
-            .any(|source| source.kind == SourceKind::Web);
     if needs_local_tool {
         state
             .db
@@ -5256,13 +5291,6 @@ async fn execute_headless_core_case_with_local_body(
                 crate::indexer::scan::index_vault_incremental(connection, &vault)
             })
             .map_err(|_| EvalContractError::new("eval_vault_index_failed"))?;
-    }
-    // Strict Web runs prefetch evidence before the model turn. The headless
-    // double therefore supplies a final run-local Web citation rather than a
-    // now-impossible model-initiated `web_search` tool call.
-    if needs_web_tool && !online_web_degradation_fault {
-        final_content =
-            final_content.replace(&format!("[cite:web-{}]", scenario.case_id()), "[W1]");
     }
     let mut scripts = Vec::new();
     if needs_local_tool {

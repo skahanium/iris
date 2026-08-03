@@ -19,7 +19,7 @@ use crate::ai_runtime::domain_executor::{
     AuthorizedDomainMaterial, DomainExecutionPlan, DomainExecutor, DomainMaterialRole,
 };
 use crate::ai_runtime::normal_session_repository::NormalSessionMessage;
-use crate::ai_runtime::prompt_contract::{CompiledPrompt, PromptContractV2};
+use crate::ai_runtime::prompt_contract::{CompiledPrompt, PromptContractV3};
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
@@ -153,6 +153,9 @@ impl RunContext {
                 _ => return None,
             };
             let content = if message.role == "assistant" {
+                // History remains an assistant turn for conversational continuity. Its
+                // non-evidentiary classification is owned once by PromptContractV3;
+                // never inject a protocol heading that a model can echo as Markdown.
                 sanitize_web_citations_for_model_history(&message.content, &message.web_citations)
             } else {
                 message.content.clone()
@@ -180,7 +183,7 @@ impl RunContext {
             .conversation_memory
             .as_ref()
             .map(ConversationMemory::to_prompt_fragment);
-        PromptContractV2::compile(
+        PromptContractV3::compile(
             &self.system_prompt(),
             &self.prompt_profile,
             &plan.prompt_instructions,

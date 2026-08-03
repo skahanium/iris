@@ -76,6 +76,7 @@ export function useAssistantRunTranscript({
                   ...message,
                   webCitations: persisted.webCitations,
                   citationBinding: persisted.citationBinding,
+                  sourceSummary: persisted.sourceSummary,
                 }
               : message,
           ),
@@ -117,7 +118,9 @@ export function useAssistantRunTranscript({
     }
     const event = run.events.at(-1);
     if (!event) return;
-    const key = `${run.runId}:${run.lastSeq}:${run.transientRevision}`;
+    const presentationSeq =
+      presentation?.runId === run.runId ? presentation.lastSeq : 0;
+    const key = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}`;
     if (appliedEventRef.current === key) return;
     appliedEventRef.current = key;
 
@@ -149,9 +152,7 @@ export function useAssistantRunTranscript({
         : projectAssistantProcessEvents(run.events, run.reasoningSummaries);
       const processItems = ensureTerminalAnswerComplete(rawItems, run.state);
       const content = presentationOwnsMessage
-        ? current?.content?.trim()
-          ? current.content
-          : (presentation?.answer ?? "")
+        ? (presentation?.answer ?? current?.content ?? "")
         : durableContent.trim()
           ? durableContent
           : // Live gap / empty durable must not wipe already-visible partial text.

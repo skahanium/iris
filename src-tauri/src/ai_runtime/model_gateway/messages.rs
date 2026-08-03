@@ -181,14 +181,10 @@ pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
                 return msg;
             }
             if matches!(m.role, MessageRole::Assistant) {
-                let mut msg = serde_json::json!({
+                return serde_json::json!({
                     "role": "assistant",
                     "content": m.content,
                 });
-                if let Some(reasoning) = &m.reasoning_content {
-                    msg["reasoning_content"] = serde_json::Value::String(reasoning.clone());
-                }
-                return msg;
             }
             serde_json::json!({
                 "role": role,

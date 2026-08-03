@@ -7,6 +7,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 use crate::ai_runtime::run_contract::{EvidenceRef, EvidenceSourceKind};
 use crate::error::{AppError, AppResult};
@@ -129,6 +130,95 @@ pub(crate) struct RegisteredEvidence {
 pub(crate) struct AgentEvidenceRepository;
 
 impl AgentEvidenceRepository {
+    /// Build the source allow-list for one structured final submission from exact Run
+    /// registrations. Web labels are Run-local `W1..Wn` projections, never
+    /// session-global citation numbers or evidence rows from an older Run.
+    pub(crate) fn provenance_policy(
+        db: &Database,
+        run_id: &str,
+        strict_web: bool,
+    ) -> AppResult<crate::ai_runtime::provenance::ProvenancePolicy> {
+        db.with_read_conn(|conn| {
+            let explicit_references_json: String = conn.query_row(
+                "SELECT message.explicit_references_json
+                 FROM agent_runs run
+                 JOIN session_messages message
+                   ON message.session_id = run.session_id AND message.turn_id = run.turn_id
+                 WHERE run.run_id = ?1",
+                [run_id],
+                |row| row.get(0),
+            )?;
+            let authorized_material_count = serde_json::from_str::<Vec<serde_json::Value>>(
+                &explicit_references_json,
+            )
+            .map(|references| references.len())
+            .unwrap_or_default();
+            let conversation_history_available: bool = conn.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM agent_runs prior_run
+                    JOIN session_messages prior_message
+                      ON prior_message.session_id = prior_run.session_id
+                     AND prior_message.turn_id = prior_run.turn_id
+                    WHERE prior_run.session_id = (
+                        SELECT session_id FROM agent_runs WHERE run_id = ?1
+                    )
+                      AND prior_run.run_id != ?1
+                      AND prior_message.role = 'assistant'
+                )",
+                [run_id],
+                |row| row.get(0),
+            )?;
+            let mut local = BTreeSet::new();
+            let mut external = BTreeSet::new();
+            let web_count: i64 = conn.query_row(
+                "SELECT COUNT(*)
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'web_search'
+                   AND evidence.source_type = 'web'
+                   AND evidence.retired_at IS NULL
+                   AND evidence.url LIKE 'https://%'",
+                [run_id],
+                |row| row.get(0),
+            )?;
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id, run_evidence.registration_source, evidence.source_type
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1 AND evidence.retired_at IS NULL",
+            )?;
+            let rows = statement
+                .query_map([run_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            for (evidence_id, registration_source, source_type) in rows {
+                if registration_source == "context" && source_type == "local" {
+                    local.insert(evidence_id);
+                }
+                if registration_source == "external_tool" {
+                    external.insert(evidence_id);
+                }
+            }
+            let web = (1..=web_count).collect::<BTreeSet<_>>();
+            Ok(crate::ai_runtime::provenance::ProvenancePolicy {
+                current_user_available: true,
+                conversation_history_available,
+                runtime_fact_available: false,
+                authorized_material_count,
+                current_run_local_evidence_ids: local,
+                current_run_web_evidence_ids: web,
+                current_run_external_evidence_ids: external,
+                strict_web,
+            })
+        })
+    }
+
     /// Register local source metadata without accepting or persisting note text.
     pub(crate) fn register_local(
         db: &Database,

@@ -58,6 +58,9 @@ function toChatLines(messages: AssistantSessionMessage[]): ChatLine[] {
     ...(message.citationBinding
       ? { citationBinding: message.citationBinding }
       : {}),
+    ...(message.sourceSummary?.length
+      ? { sourceSummary: message.sourceSummary }
+      : {}),
     seq: message.seq,
     created_at: message.createdAt,
   }));

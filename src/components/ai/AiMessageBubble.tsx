@@ -30,6 +30,7 @@ import type { AssistantProcessItem } from "@/lib/assistant-process";
 import type {
   CitationBinding,
   DisplayMention,
+  SourceSummaryEntry,
   WebCitationEntry,
 } from "@/types/ai";
 import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
@@ -66,6 +67,7 @@ interface AiMessageBubbleProps {
   /** Safe persisted web citations for footer + inline resolve. */
   webCitations?: WebCitationEntry[];
   citationBinding?: CitationBinding;
+  sourceSummary?: SourceSummaryEntry[];
 }
 
 const proseConversation = "iris-markdown-content select-text";
@@ -404,6 +406,7 @@ const AssistantBody = memo(function AssistantBody({
   onCitationClick,
   webCitations = [],
   citationBinding,
+  sourceSummary = [],
 }: {
   content: string;
 
@@ -412,6 +415,7 @@ const AssistantBody = memo(function AssistantBody({
   onCitationClick?: (ref: string) => void;
   webCitations?: WebCitationEntry[];
   citationBinding?: CitationBinding;
+  sourceSummary?: SourceSummaryEntry[];
 }) {
   const renderable = useMemo(
     () => createRenderableAssistantContent(content, { streaming }),
@@ -604,11 +608,12 @@ const AssistantBody = memo(function AssistantBody({
         dangerouslySetInnerHTML={{ __html: toTrustedHtml(html) }}
         onClick={handleClick}
       />
-      {!streaming && webCitations.length > 0 ? (
+      {!streaming && (webCitations.length > 0 || sourceSummary.length > 0) ? (
         <AssistantCitationFooter
           content={content}
           entries={webCitations}
           binding={citationBinding}
+          sourceSummary={sourceSummary}
           onOpenUrl={
             onCitationClick
               ? (url) => {
@@ -648,6 +653,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   processItems = [],
   webCitations = [],
   citationBinding,
+  sourceSummary,
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
 
@@ -750,6 +756,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
             onCitationClick={onCitationClick}
             webCitations={webCitations}
             citationBinding={citationBinding}
+            sourceSummary={sourceSummary}
           />
         </MarkdownErrorBoundary>
       ) : null}

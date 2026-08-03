@@ -15,6 +15,8 @@ mod agent_capacity_eval_tests;
 pub(crate) mod agent_evidence_repository;
 #[cfg(test)]
 mod agent_evidence_repository_tests;
+#[cfg(test)]
+mod agent_feature_matrix_tests;
 pub mod agent_permissions;
 pub(crate) mod agent_run_repository;
 #[cfg(test)]
@@ -37,6 +39,7 @@ pub(crate) mod document_policy_repository;
 pub(crate) mod domain_executor;
 #[cfg(test)]
 mod domain_executor_tests;
+pub(crate) mod final_answer_submission;
 pub(crate) mod frozen_change_plan;
 #[cfg(test)]
 mod frozen_change_plan_tests;
@@ -55,6 +58,9 @@ pub mod permission_decision;
 pub(crate) mod policy_decision_engine;
 pub(crate) mod prompt_contract;
 pub mod prompt_profile;
+pub(crate) mod provenance;
+#[cfg(test)]
+mod provenance_tests;
 pub(crate) mod provider_router;
 pub mod retrieval_broker;
 pub mod retrieval_scope;

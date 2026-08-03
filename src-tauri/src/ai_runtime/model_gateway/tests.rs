@@ -115,6 +115,21 @@ fn messages_for_api_includes_reasoning_content_with_tool_calls() {
 }
 
 #[test]
+fn messages_for_api_does_not_replay_reasoning_without_a_same_run_tool_continuation() {
+    let messages = vec![LlmMessage {
+        role: MessageRole::Assistant,
+        content: "历史回答".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: Some("private reasoning".into()),
+    }];
+
+    let api = messages_for_api(&messages);
+
+    assert!(api[0].get("reasoning_content").is_none());
+}
+
+#[test]
 fn resume_after_tool_confirm_body_preserves_reasoning_and_thinking() {
     let provider = ProviderConfig {
         name: "deepseek".into(),

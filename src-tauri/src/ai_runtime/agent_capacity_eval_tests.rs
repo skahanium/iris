@@ -11,25 +11,25 @@ use super::agent_capacity_eval::{
     aggregate_capacity_scorecard, approve_live_profile, build_agent_capacity_report,
     calculate_stable_boundary, controlled_live_fact_source_support,
     discover_live_profile_candidates_from_database, evaluate_case, execute_headless_core_case,
-    execute_pressure_staircases, generate_core_scenarios, generate_pressure_staircases,
-    measure_case_quality, pairwise_live_capability_matrix, preflight_live_profiles,
-    prepare_approved_live_pilot, restore_and_consume_live_preflight_session,
-    run_approved_live_pilot, run_approved_live_pilot_with_local_doubles,
-    run_approved_live_pilot_with_local_doubles_fault, run_combined_terminal_cases,
-    run_hard_boundary_probes, run_headless_core_evaluation, run_security_track,
-    select_core_scenarios, serialize_agent_capacity_report, serialize_evaluation_summary,
-    serialize_live_preflight_report, spawn_live_pilot_dynamic_llm_protocol_double,
-    spawn_llm_protocol_double, validate_serialized_evaluation_summary,
-    validate_serialized_live_pilot_result, validate_serialized_live_preflight_report,
-    write_blind_review_packet, write_live_pilot_result, write_live_preflight_report,
-    write_live_preflight_session_state, AnswerObservation, BudgetOutcome, CaseManifest,
-    CheckStatus, CitationObservation, EvalFault, EvalRunMode, EvaluationTelemetryTap,
-    EvidenceGroup, FactSupportObservation, HttpResponseScript, ImplicitVaultExpectation,
-    LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate, LlmProtocolDouble,
-    McpCapabilityContract, McpOperation, McpTransportContract, McpTransportFailureContract,
-    ObservedSource, PressureDimension, ProtocolContractOutcome, ProtocolValidationLevel,
-    RequiredFact, ScenarioLanguage, SourceKind, StableLevelObservation, TruncationOutcome,
-    VerdictReason, WebAnswerContamination, WebState,
+    execute_pressure_staircases, filter_live_profile_candidates_by_model_allowlist,
+    generate_core_scenarios, generate_pressure_staircases, measure_case_quality,
+    pairwise_live_capability_matrix, preflight_live_profiles, prepare_approved_live_pilot,
+    restore_and_consume_live_preflight_session, run_approved_live_pilot,
+    run_approved_live_pilot_with_local_doubles, run_approved_live_pilot_with_local_doubles_fault,
+    run_combined_terminal_cases, run_hard_boundary_probes, run_headless_core_evaluation,
+    run_security_track, select_core_scenarios, serialize_agent_capacity_report,
+    serialize_evaluation_summary, serialize_live_preflight_report,
+    spawn_live_pilot_dynamic_llm_protocol_double, spawn_llm_protocol_double,
+    validate_serialized_evaluation_summary, validate_serialized_live_pilot_result,
+    validate_serialized_live_preflight_report, write_blind_review_packet, write_live_pilot_result,
+    write_live_preflight_report, write_live_preflight_session_state, AnswerObservation,
+    BudgetOutcome, CaseManifest, CheckStatus, CitationObservation, EvalFault, EvalRunMode,
+    EvaluationTelemetryTap, EvidenceGroup, FactSupportObservation, HttpResponseScript,
+    ImplicitVaultExpectation, LiveCostConfirmation, LivePilotCallProbe, LiveProfileCandidate,
+    LlmProtocolDouble, McpCapabilityContract, McpOperation, McpTransportContract,
+    McpTransportFailureContract, ObservedSource, PressureDimension, ProtocolContractOutcome,
+    ProtocolValidationLevel, RequiredFact, ScenarioLanguage, SourceKind, StableLevelObservation,
+    TruncationOutcome, VerdictReason, WebAnswerContamination, WebState,
 };
 
 #[test]
@@ -2891,6 +2891,25 @@ fn live_preflight_exposes_only_anonymous_profile_ids_and_closed_capability_finge
 }
 
 #[test]
+fn live_preflight_can_limit_candidates_to_the_user_approved_model_names() {
+    let selected = filter_live_profile_candidates_by_model_allowlist(
+        vec![synthetic_live_candidate()],
+        Some("sensitive-model-name"),
+    )
+    .expect("approved model remains selectable");
+    assert_eq!(selected.len(), 1);
+    assert_eq!(
+        filter_live_profile_candidates_by_model_allowlist(
+            vec![synthetic_live_candidate()],
+            Some("not-configured"),
+        )
+        .expect_err("unknown model may not silently select another route")
+        .reason_code(),
+        "live_preflight_requested_models_unavailable"
+    );
+}
+
+#[test]
 fn live_pilot_rejects_missing_and_unknown_profile_approval_before_preparation() {
     let mut session = preflight_live_profiles(vec![synthetic_live_candidate()])
         .expect("anonymous live preflight");
@@ -3643,7 +3662,7 @@ async fn live_pilot_scoring_cannot_turn_a_completed_wrong_answer_green() {
     let mut executed_claim = serde_json::to_value(&result).expect("faulted pilot result");
     executed_claim["status"] = serde_json::json!("live_pilot_executed");
     validate_serialized_live_pilot_result(&executed_claim.to_string())
-        .expect("live_pilot_executed requires twelve Completed runs, not a perfect pass rate");
+        .expect_err("live_pilot_executed requires twelve passing runs, not only terminal runs");
     let serialized = serde_json::to_value(&result).expect("faulted pilot result");
     let faulted = serialized["cases"]
         .as_array()
@@ -3936,8 +3955,14 @@ fn live_preflight_command_entrypoint_writes_only_the_anonymous_report_when_reque
     let config_root = std::env::var_os("IRIS_CONFIG_DIR")
         .map(std::path::PathBuf::from)
         .expect("live_preflight_config_root_required");
-    let candidates = discover_live_profile_candidates_from_database(&source)
-        .expect("read-only live profile discovery");
+    let candidates = filter_live_profile_candidates_by_model_allowlist(
+        discover_live_profile_candidates_from_database(&source)
+            .expect("read-only live profile discovery"),
+        std::env::var("IRIS_AGENT_EVAL_MODEL_ALLOWLIST")
+            .ok()
+            .as_deref(),
+    )
+    .expect("requested live model selection");
     let session = preflight_live_profiles(candidates).expect("anonymous live preflight");
     let output = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -4002,8 +4027,14 @@ async fn live_pilot_command_entrypoint_runs_only_an_approved_current_session_whe
         .join("target/agent-eval")
         .join(format!("live-{session_id}.json"));
     assert!(state_path.is_file(), "live_session_missing");
-    let candidates = discover_live_profile_candidates_from_database(&source)
-        .expect("read-only live profile discovery");
+    let candidates = filter_live_profile_candidates_by_model_allowlist(
+        discover_live_profile_candidates_from_database(&source)
+            .expect("read-only live profile discovery"),
+        std::env::var("IRIS_AGENT_EVAL_MODEL_ALLOWLIST")
+            .ok()
+            .as_deref(),
+    )
+    .expect("requested live model selection");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock")

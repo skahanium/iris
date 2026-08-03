@@ -225,7 +225,10 @@ impl ClassifiedEphemeralStore {
             run.state_version,
             RunEventType::Completed,
             chrono::Utc::now().to_rfc3339(),
-            RunEventPayload::Completed { message_id: None },
+            RunEventPayload::Completed {
+                message_id: None,
+                source_summary: Vec::new(),
+            },
         )
         .map_err(AppError::msg)?;
         run.events.push(event.clone());

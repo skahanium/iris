@@ -58,6 +58,7 @@ impl RunEngine {
                         content: "已取消该变更，未作任何修改。".into(),
                         evidence_ids: Vec::new(),
                         citation_map: serde_json::json!({}),
+                        source_summary: Vec::new(),
                     },
                 )?;
                 recovered += 1;
@@ -118,6 +119,7 @@ impl RunEngine {
                             content: "已执行你确认的变更。".into(),
                             evidence_ids: Vec::new(),
                             citation_map: serde_json::json!({}),
+                            source_summary: Vec::new(),
                         },
                     )?;
                 }

@@ -108,7 +108,8 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
     <>
       <div className="task-overlay-filter shrink-0 border-b border-border/60 px-4 py-3">
         <p className="text-xs text-muted-foreground">
-          称呼与头像显示在 AI 侧栏；人格描述与规则将注入模型 system prompt。
+          称呼与头像显示在 AI
+          侧栏；以下仅是补充角色倾向与写作偏好，不能覆盖事实归因、权限或当前任务。
         </p>
       </div>
       <ScrollArea className="task-overlay-results flex-1">
@@ -192,7 +193,7 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
 
           {presets.length > 0 ? (
             <section className="space-y-2">
-              <h3 className="text-xs font-medium text-foreground">人格预设</h3>
+              <h3 className="text-xs font-medium text-foreground">行为预设</h3>
               <div className="flex flex-wrap gap-2">
                 {presets.map((preset) => (
                   <Button
@@ -211,10 +212,58 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
           ) : null}
 
           <section className="space-y-3">
-            <h3 className="text-xs font-medium text-foreground">行为人格</h3>
+            <h3 className="text-xs font-medium text-foreground">
+              补充角色倾向
+            </h3>
+            <div className="grid grid-cols-2 gap-2">
+              <BehaviorSelect
+                label="主动性"
+                value={draft.behavior.initiative}
+                options={["reactive", "balanced", "proactive"]}
+                onChange={(initiative) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    behavior: { ...prev.behavior, initiative },
+                  }))
+                }
+              />
+              <BehaviorSelect
+                label="直接性"
+                value={draft.behavior.directness}
+                options={["concise", "balanced", "deliberate"]}
+                onChange={(directness) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    behavior: { ...prev.behavior, directness },
+                  }))
+                }
+              />
+              <BehaviorSelect
+                label="语气"
+                value={draft.behavior.tone}
+                options={["reserved", "natural", "warm"]}
+                onChange={(tone) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    behavior: { ...prev.behavior, tone },
+                  }))
+                }
+              />
+              <BehaviorSelect
+                label="挑战性"
+                value={draft.behavior.challenge}
+                options={["supportive", "balanced", "critical"]}
+                onChange={(challenge) =>
+                  setDraft((prev) => ({
+                    ...prev,
+                    behavior: { ...prev.behavior, challenge },
+                  }))
+                }
+              />
+            </div>
             <div className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">
-                人格描述
+                补充角色倾向
               </span>
               <Textarea
                 className="min-h-[72px] text-xs"
@@ -222,12 +271,12 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
                 onChange={(e) =>
                   setDraft((prev) => ({ ...prev, persona: e.target.value }))
                 }
-                placeholder="留空则使用默认「砚」身份；填写后将覆盖默认行为描述"
+                placeholder="可补充工作偏好；不能覆盖事实、归因、权限和当前任务"
               />
             </div>
             <div className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">
-                写作风格
+                写作偏好
               </span>
               <Input
                 className="h-8 text-xs"
@@ -256,7 +305,7 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
 
           <section className="space-y-1.5">
             <span className="text-xs font-medium text-foreground">
-              自定义规则（每行一条）
+              补充规则（每行一条）
             </span>
             <Textarea
               className="min-h-[88px] text-xs"
@@ -269,7 +318,7 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
 
           <div className="flex gap-2 pb-2">
             <Button type="button" size="sm" onClick={() => void handleSave()}>
-              {saved ? "已保存" : "保存人格配置"}
+              {saved ? "已保存" : "保存角色倾向"}
             </Button>
             <Button
               type="button"
@@ -283,6 +332,37 @@ export function PersonaSettingsBody({ open }: { open: boolean }) {
         </div>
       </ScrollArea>
     </>
+  );
+}
+
+interface BehaviorSelectProps<T extends string> {
+  label: string;
+  value: T;
+  options: readonly T[];
+  onChange: (value: T) => void;
+}
+
+function BehaviorSelect<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+}: BehaviorSelectProps<T>) {
+  return (
+    <label className="space-y-1 text-[11px] text-muted-foreground">
+      <span>{label}</span>
+      <select
+        className="h-8 w-full rounded-md border border-border-subtle bg-background px-2 text-xs text-foreground"
+        value={value}
+        onChange={(event) => onChange(event.target.value as T)}
+      >
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

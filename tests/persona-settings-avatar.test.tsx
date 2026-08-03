@@ -42,7 +42,7 @@ describe("PersonaSettingsBody geometric avatars", () => {
     fireEvent.click(lens);
     expect(lens.getAttribute("aria-pressed")).toBe("true");
 
-    fireEvent.click(screen.getByRole("button", { name: "保存人格配置" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存角色倾向" }));
     await waitFor(() =>
       expect(mocks.saveProfile).toHaveBeenCalledWith(
         expect.objectContaining({ avatar_id: "lens" }),

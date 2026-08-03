@@ -127,6 +127,8 @@ pub struct AssistantSessionMessage {
     pub web_citations: Vec<crate::ai_types::WebCitationEntry>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub citation_binding: Option<crate::ai_types::CitationBinding>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub source_summary: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
     pub created_at: String,
 }
 
@@ -238,6 +240,7 @@ pub async fn assistant_session_load(
                         display_mentions: item.display_mentions,
                         web_citations,
                         citation_binding,
+                        source_summary: item.source_summary,
                         created_at: item.created_at,
                     }
                 })

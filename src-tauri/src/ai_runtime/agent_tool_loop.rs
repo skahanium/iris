@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 
+use crate::ai_runtime::final_answer_submission::{FinalAnswerSubmission, FINAL_ANSWER_TOOL_NAME};
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
 use crate::ai_runtime::run_contract::RunBudgetPolicy;
 use crate::ai_runtime::run_engine::RunEventSink;
@@ -38,6 +39,9 @@ pub(crate) fn parent_run_id_for_provider_scope(run_id: &str) -> &str {
 pub(crate) struct AgentToolLoopOutcome {
     /// Final assistant content emitted only after the model has stopped calling tools.
     pub(crate) content: String,
+    /// Internal structured submission when the model used the reserved final
+    /// answer tool. It never enters the model transcript or tool audit.
+    pub(crate) final_submission: Option<FinalAnswerSubmission>,
     /// Number of model turns used by this Run.
     pub(crate) model_turns: u32,
     /// Number of concrete tool dispatch attempts made by this Run.
@@ -252,6 +256,7 @@ impl AgentToolLoop {
         let mut completion_tokens = 0_u32;
         let mut total_tokens = 0_u32;
         let mut fingerprints = HashMap::<String, u32>::new();
+        let mut final_submission_repair_used = false;
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
@@ -292,8 +297,46 @@ impl AgentToolLoop {
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
                 }
+                if allowed_tools.contains(FINAL_ANSWER_TOOL_NAME) {
+                    if final_submission_repair_used {
+                        return Err(AppError::msg("agent_run_final_submission_required"));
+                    }
+                    final_submission_repair_used = true;
+                    // The withheld draft is continuation context only. It is
+                    // never persisted or emitted, and the correction surface
+                    // exposes no business tools beyond the reserved terminal
+                    // submission tool already present in `tools`.
+                    messages.push(LlmMessage {
+                        role: MessageRole::Assistant,
+                        content: content.into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    });
+                    messages.push(LlmMessage {
+                        role: MessageRole::System,
+                        content: "The previous draft cannot be shown because this Run requires verified source bindings. Submit the same answer only through submit_final_answer now.".into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    });
+                    continue;
+                }
                 return Ok(AgentToolLoopOutcome {
                     content,
+                    final_submission: None,
+                    model_turns,
+                    tool_calls,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                });
+            }
+
+            if let Some(submission) = final_answer_submission(&response, &allowed_tools)? {
+                return Ok(AgentToolLoopOutcome {
+                    content: submission.visible_content(),
+                    final_submission: Some(submission),
                     model_turns,
                     tool_calls,
                     prompt_tokens,
@@ -356,6 +399,31 @@ impl AgentToolLoop {
         }
         Err(AppError::msg("agent_run_tool_loop_limit"))
     }
+}
+
+fn final_answer_submission(
+    response: &GatewayResponse,
+    allowed_tools: &HashSet<&str>,
+) -> AppResult<Option<FinalAnswerSubmission>> {
+    let has_final_tool = response
+        .tool_calls
+        .iter()
+        .any(|call| call.function.name == FINAL_ANSWER_TOOL_NAME);
+    if !has_final_tool {
+        return Ok(None);
+    }
+    if response.tool_calls.len() != 1
+        || !response
+            .content
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        || !allowed_tools.contains(FINAL_ANSWER_TOOL_NAME)
+    {
+        return Err(AppError::msg("agent_run_final_submission_invalid"));
+    }
+    FinalAnswerSubmission::from_tool_call(&response.tool_calls[0]).map(Some)
 }
 
 fn ensure_run_not_cancelled(run_id: &str) -> AppResult<()> {

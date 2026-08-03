@@ -24,6 +24,30 @@ pub(crate) struct CitationBindingOutcome {
     pub(crate) binding: CitationBinding,
 }
 
+/// A V3 strict-Web answer cannot use answer-level source-group fallback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum StrictCitationBindingError {
+    MissingPreciseCurrentRunMarkers,
+}
+
+impl std::fmt::Display for StrictCitationBindingError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("agent_run_strict_citation_markers_missing")
+    }
+}
+
+/// Bind citations only when the body contains precise current-Run markers.
+pub(crate) fn bind_strict_current_run_citations(
+    content: &str,
+    cites: &[WebCitationLink],
+) -> Result<CitationBindingOutcome, StrictCitationBindingError> {
+    let outcome = bind_current_run_citations(content, cites);
+    if outcome.binding.mode == CitationBindingMode::SourceGroupFallback {
+        return Err(StrictCitationBindingError::MissingPreciseCurrentRunMarkers);
+    }
+    Ok(outcome)
+}
+
 /// Normalize model markers into the current Run projection without asking a
 /// model to rewrite prose. Unknown numeric markers are removed from the body
 /// and the verified answer falls back to an answer-level source group.
@@ -98,6 +122,68 @@ pub(crate) fn bind_current_run_citations(
     CitationBindingOutcome {
         content: normalized,
         binding,
+    }
+}
+
+/// Remove model-authored citation marker syntax when a Run intentionally uses
+/// answer-level source-group disclosure. In that mode no visible marker may
+/// imply that the harness verified a claim-level binding.
+pub(crate) fn strip_model_authored_citation_markers(content: &str) -> String {
+    let chars = content.chars().collect::<Vec<_>>();
+    let mut sanitized = String::with_capacity(content.len());
+    let mut cursor = 0;
+    while cursor < chars.len() {
+        if chars[cursor] != '[' {
+            sanitized.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+        let mut end = cursor + 1;
+        while end < chars.len() && chars[end] != ']' {
+            end += 1;
+        }
+        if end == chars.len() {
+            sanitized.push(chars[cursor]);
+            cursor += 1;
+            continue;
+        }
+        let label = chars[cursor + 1..end].iter().collect::<String>();
+        if parse_marker_index(&normalize_marker_label(&label)).is_none() {
+            sanitized.push('[');
+            sanitized.push_str(&label);
+            sanitized.push(']');
+        }
+        cursor = end + 1;
+    }
+    sanitized
+}
+
+/// Apply the source-group citation policy to a still-growing model stream.
+///
+/// A marker such as `[W1]` may arrive across several provider chunks.  Hold
+/// only a possible trailing marker prefix back until it is complete; emitting
+/// `[W` even briefly would falsely suggest claim-level verification in a
+/// source-group Run.
+pub(crate) fn strip_model_authored_citation_markers_for_stream(content: &str) -> String {
+    let stable = content
+        .rfind('[')
+        .filter(|start| !content[*start..].contains(']'))
+        .filter(|start| possible_citation_marker_prefix(&content[*start..]))
+        .map_or(content, |start| &content[..start]);
+    strip_model_authored_citation_markers(stable)
+}
+
+fn possible_citation_marker_prefix(value: &str) -> bool {
+    let mut characters = value.chars();
+    if characters.next() != Some('[') {
+        return false;
+    }
+    match characters.next() {
+        None => true,
+        Some('W' | 'w') => characters.all(|character| character.is_ascii_digit()),
+        Some(character) => {
+            character.is_ascii_digit() && characters.all(|item| item.is_ascii_digit())
+        }
     }
 }
 
@@ -483,6 +569,8 @@ fn display_title(cite: &WebCitationLink) -> &str {
 pub(crate) fn web_citation_map_json(
     cites: &[WebCitationLink],
     binding: Option<&CitationBinding>,
+    source_summary: Option<&crate::ai_runtime::provenance::SourceSummary>,
+    attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
 ) -> Value {
     let web = cites
         .iter()
@@ -498,6 +586,13 @@ pub(crate) fn web_citation_map_json(
     if let Some(binding) = binding {
         map["binding"] = serde_json::to_value(binding).unwrap_or(serde_json::Value::Null);
     }
+    if let Some(source_summary) = source_summary {
+        map["sourceSummary"] =
+            serde_json::to_value(source_summary.entries()).unwrap_or(serde_json::Value::Null);
+    }
+    if let Some(attribution) = attribution {
+        map["attribution"] = serde_json::to_value(attribution).unwrap_or(serde_json::Value::Null);
+    }
     map
 }
 
@@ -509,6 +604,18 @@ pub(crate) fn parse_web_citation_binding(raw: Option<&str>) -> Option<CitationBi
         .get("binding")
         .cloned()
         .and_then(|value| serde_json::from_value(value).ok())
+}
+
+/// Parse the minimal source-category summary persisted alongside citations.
+/// Older records simply have no summary.
+pub(crate) fn parse_source_summary(
+    raw: Option<&str>,
+) -> Vec<crate::ai_runtime::provenance::SourceSummaryEntry> {
+    let raw = raw.filter(|value| !value.trim().is_empty());
+    raw.and_then(|value| serde_json::from_str::<Value>(value).ok())
+        .and_then(|value| value.get("sourceSummary").cloned())
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default()
 }
 
 /// Parse persisted `citation_map_json` into safe UI entries (HTTPS only).
@@ -608,7 +715,7 @@ mod tests {
             referenced_indices: vec![1, 3],
             fallback_reason: None,
         };
-        let json = web_citation_map_json(&cites, Some(&binding));
+        let json = web_citation_map_json(&cites, Some(&binding), None, None);
         let raw = json.to_string();
         let parsed = parse_web_citation_entries(Some(raw.as_str()));
         assert_eq!(parsed.len(), 3);
@@ -618,6 +725,39 @@ mod tests {
             parse_web_citation_binding(Some(raw.as_str())),
             Some(binding)
         );
+    }
+
+    #[test]
+    fn citation_map_round_trips_only_safe_source_category_counts() {
+        let summary = crate::ai_runtime::provenance::SourceSummary::from_counts_for_test(
+            std::collections::BTreeMap::from([(
+                crate::ai_runtime::provenance::InformationOrigin::WebToolEvidence,
+                2,
+            )]),
+        );
+        let raw = web_citation_map_json(&sample_cites(), None, Some(&summary), None).to_string();
+
+        assert_eq!(
+            parse_source_summary(Some(raw.as_str())),
+            vec![crate::ai_runtime::provenance::SourceSummaryEntry {
+                category: "web".to_string(),
+                count: 2,
+            }]
+        );
+        assert!(parse_source_summary(None).is_empty());
+    }
+
+    #[test]
+    fn citation_map_persists_structured_block_attribution_without_source_text() {
+        let attribution = vec![crate::ai_runtime::provenance::BlockAttribution {
+            block: 1,
+            sources: vec!["W1".to_string(), "I".to_string()],
+        }];
+        let json = web_citation_map_json(&sample_cites(), None, None, Some(&attribution));
+
+        assert_eq!(json["attribution"][0]["block"], 1);
+        assert_eq!(json["attribution"][0]["sources"][0], "W1");
+        assert!(!json.to_string().contains("excerpt"));
     }
 
     #[test]
@@ -693,6 +833,34 @@ mod tests {
         assert_eq!(
             unknown.binding.fallback_reason.as_deref(),
             Some("unknown_marker")
+        );
+    }
+
+    #[test]
+    fn strict_binding_rejects_answer_level_source_group_fallback() {
+        assert_eq!(
+            bind_strict_current_run_citations("没有行内标记。", &sample_cites()).unwrap_err(),
+            StrictCitationBindingError::MissingPreciseCurrentRunMarkers
+        );
+    }
+
+    #[test]
+    fn source_group_streaming_withholds_partial_model_citation_markers() {
+        assert_eq!(
+            strip_model_authored_citation_markers_for_stream("结论来自本轮来源 [W"),
+            "结论来自本轮来源 "
+        );
+        assert_eq!(
+            strip_model_authored_citation_markers_for_stream("结论来自本轮来源 [W1"),
+            "结论来自本轮来源 "
+        );
+        assert_eq!(
+            strip_model_authored_citation_markers_for_stream("结论来自本轮来源 [W1]。"),
+            "结论来自本轮来源 。"
+        );
+        assert_eq!(
+            strip_model_authored_citation_markers_for_stream("普通 Markdown [链接"),
+            "普通 Markdown [链接"
         );
     }
 }

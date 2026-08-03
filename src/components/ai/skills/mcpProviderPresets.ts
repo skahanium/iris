@@ -150,6 +150,34 @@ export const MCP_PROVIDER_PRESETS: McpProviderPreset[] = [
       },
     ],
   },
+  {
+    id: "tavily",
+    label: "Tavily",
+    description:
+      "Tavily 官方 HTTPS MCP 服务；需要 Tavily API Key，提供搜索与 Markdown 网页读取。",
+    transportKind: "https",
+    providerName: "Tavily",
+    url: "https://mcp.tavily.com/mcp/",
+    searchMapping: mapping("tavily_search", {
+      queryArg: "query",
+      maxResultsArg: "max_results",
+    }),
+    fetchMapping: mapping("tavily_extract", {
+      urlListArg: "urls",
+      extraArgs: { extract_depth: "basic", format: "markdown" },
+    }),
+    credentials: [
+      {
+        target: "header",
+        name: "Authorization",
+        label: "Tavily API Key",
+        service: "iris.mcp.tavily",
+        scheme: "bearer",
+        placeholder: "tvly-...",
+      },
+    ],
+    plainEnv: [],
+  },
 ];
 
 export function findMcpProviderPreset(

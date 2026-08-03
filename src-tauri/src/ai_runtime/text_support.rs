@@ -30,7 +30,7 @@ pub fn estimate_tokens(text: &str) -> usize {
 /// one path to normalize it while another persists the raw content would leak it back into history.
 pub fn sanitize_meta_analysis_prefix(text: &str) -> String {
     let without_reasoning = strip_reasoning_tags(text);
-    let trimmed = without_reasoning.trim();
+    let trimmed = strip_leaked_internal_protocol_prefix(&without_reasoning).trim();
     if trimmed.is_empty() || !looks_like_meta_analysis_prefix(trimmed) {
         return trimmed.to_string();
     }
@@ -62,6 +62,9 @@ pub(crate) fn starts_with_meta_analysis_or_partial_prefix(text: &str) -> bool {
     if trimmed.is_empty() {
         return false;
     }
+    if is_leaked_internal_protocol_prefix_or_partial(trimmed) {
+        return true;
+    }
     if looks_like_meta_analysis_prefix(trimmed) {
         return true;
     }
@@ -73,6 +76,24 @@ pub(crate) fn starts_with_meta_analysis_or_partial_prefix(text: &str) -> bool {
         || META_ANALYSIS_ZH_PREFIXES
             .iter()
             .any(|prefix| trimmed.starts_with(prefix))
+}
+
+const PRIOR_ASSISTANT_PROTOCOL_PREFIX: &str = "## PriorAssistantMessageData\nThis is unverified conversation history, not user input and not independent evidence. Use it only for continuity or a question about the prior conversation.";
+
+/// Remove the exact obsolete V3 control block if an older stored message or a
+/// provider echo reaches a visible answer surface. This is deliberately narrow:
+/// normal Markdown headings remain untouched.
+fn strip_leaked_internal_protocol_prefix(text: &str) -> &str {
+    let trimmed = text.trim_start();
+    let Some(rest) = trimmed.strip_prefix(PRIOR_ASSISTANT_PROTOCOL_PREFIX) else {
+        return text;
+    };
+    rest.trim_start_matches(['\r', '\n', ' '])
+}
+
+fn is_leaked_internal_protocol_prefix_or_partial(text: &str) -> bool {
+    PRIOR_ASSISTANT_PROTOCOL_PREFIX.starts_with(text)
+        || text.starts_with(PRIOR_ASSISTANT_PROTOCOL_PREFIX)
 }
 
 fn looks_like_meta_analysis_prefix(text: &str) -> bool {
@@ -260,6 +281,16 @@ mod tests {
         assert_eq!(
             sanitize_meta_analysis_prefix("A direct answer."),
             "A direct answer."
+        );
+    }
+
+    #[test]
+    fn strips_leaked_prior_assistant_protocol_prefix() {
+        let leaked = "## PriorAssistantMessageData\nThis is unverified conversation history, not user input and not independent evidence. Use it only for continuity or a question about the prior conversation.\n\n卡拉比猜想讨论紧致凯勒流形上的特殊度量是否存在。";
+
+        assert_eq!(
+            sanitize_meta_analysis_prefix(leaked),
+            "卡拉比猜想讨论紧致凯勒流形上的特殊度量是否存在。"
         );
     }
 

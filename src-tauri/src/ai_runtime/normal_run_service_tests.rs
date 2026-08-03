@@ -644,6 +644,21 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
         1,
         "strict Web service path uses one model turn"
     );
+    let system_prompt = calls[0].body["messages"]
+        .as_array()
+        .expect("provider messages")
+        .iter()
+        .filter_map(|message| message["content"].as_str())
+        .find(|content| content.contains("CurrentRunVerifiedWebEvidence"))
+        .expect("current Run Web evidence system prompt");
+    assert!(
+        system_prompt.contains("source-group disclosure"),
+        "uncalibrated routes must declare source-group mode"
+    );
+    assert!(
+        !system_prompt.contains("Cite its [Wn] labels"),
+        "uncalibrated routes must not request model-authored precise citations"
+    );
     let tool_names = calls[0].body["tools"]
         .as_array()
         .into_iter()

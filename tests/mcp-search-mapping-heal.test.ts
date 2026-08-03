@@ -118,6 +118,24 @@ describe("Firecrawl search mapping heal", () => {
   });
 });
 
+describe("Tavily search mapping heal", () => {
+  const tavily = providerSummary({
+    id: "tavily",
+    name: "Tavily",
+    transportConfigJson: JSON.stringify({
+      preset_id: "tavily",
+      url: "https://mcp.tavily.com/mcp/",
+    }),
+  });
+
+  it("adds max_results for a legacy Tavily search mapping", () => {
+    const legacy = JSON.stringify({ tool: "tavily_search", queryArg: "query" });
+    expect(ensureProviderSearchMappingResultLimit(tavily, legacy)).toContain(
+      '"maxResultsArg":"max_results"',
+    );
+  });
+});
+
 describe("MCP credential state text", () => {
   it("distinguishes bound key, anonymous optional, and pending update", () => {
     const optionalRow = {

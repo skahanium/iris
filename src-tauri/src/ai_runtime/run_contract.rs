@@ -911,6 +911,9 @@ pub(crate) enum RunEventPayload {
     Completed {
         /// Stable final assistant message identifier when one was persisted.
         message_id: Option<String>,
+        /// Minimal source-origin category counts for the final answer.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        source_summary: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
     },
     /// Safe terminal failure metadata.
     Failed {
@@ -1224,6 +1227,9 @@ pub(crate) enum SafeRunErrorCode {
     /// Final evidence ownership or citation association was invalid.
     #[serde(rename = "agent_run_evidence_invalid")]
     EvidenceInvalid,
+    /// A calibrated model did not complete the required structured finalization protocol.
+    #[serde(rename = "agent_run_finalization_protocol_invalid")]
+    FinalizationProtocolInvalid,
     /// A committed Run event could not be delivered to the active renderer.
     #[serde(rename = "agent_run_event_delivery_failed")]
     EventDeliveryFailed,
@@ -1310,6 +1316,7 @@ impl SafeRunErrorCode {
             Self::EmptyOutput => "agent_run_empty_output",
             Self::OutputTooLong => "agent_run_output_too_long",
             Self::EvidenceInvalid => "agent_run_evidence_invalid",
+            Self::FinalizationProtocolInvalid => "agent_run_finalization_protocol_invalid",
             Self::EventDeliveryFailed => "agent_run_event_delivery_failed",
             Self::InvalidExplicitReference => "agent_run_invalid_explicit_reference",
             Self::ExplicitReferenceChanged => "agent_run_explicit_reference_changed",

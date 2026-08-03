@@ -57,6 +57,7 @@ const allowedControlKeys = new Set([
   "IRIS_AGENT_EVAL_CREDENTIAL_PROBE",
   "IRIS_AGENT_EVAL_UPDATE_VERSIONED",
   "IRIS_AGENT_EVAL_DIRECT_HTTPS",
+  "IRIS_AGENT_EVAL_MODEL_ALLOWLIST",
   "IRIS_DATA_DIR",
   "IRIS_CONFIG_DIR",
 ]);
@@ -212,6 +213,19 @@ function argumentValue(name) {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
+function approvedModelAllowlist() {
+  const value = argumentValue("--models");
+  if (value === undefined) return undefined;
+  if (
+    !/^[A-Za-z0-9._-]+(?:,[A-Za-z0-9._-]+)*$/.test(value) ||
+    value.split(",").length > 8
+  ) {
+    console.error("agent_eval_live_models_invalid");
+    process.exit(2);
+  }
+  return value;
+}
+
 function runLive() {
   const action = process.argv[3];
   const resolvePathsOrExit = () => {
@@ -230,6 +244,7 @@ function runLive() {
     const session = argumentValue("--session");
     const approvedProfile = argumentValue("--approve");
     const costConfirmation = argumentValue("--confirm-cost");
+    const modelAllowlist = approvedModelAllowlist();
     if (!session || !/^session-[0-9a-f]{64}$/.test(session)) {
       console.error("agent_eval_live_requires_current_session");
       process.exit(2);
@@ -252,6 +267,9 @@ function runLive() {
         IRIS_AGENT_EVAL_SESSION: session,
         IRIS_AGENT_EVAL_APPROVED_PROFILE: approvedProfile,
         IRIS_AGENT_EVAL_COST_CONFIRMATION: costConfirmation,
+        ...(modelAllowlist
+          ? { IRIS_AGENT_EVAL_MODEL_ALLOWLIST: modelAllowlist }
+          : {}),
       },
       (source, controls) =>
         buildLivePilotChildEnvironment(source, controls, resolvedPaths),
@@ -271,7 +289,12 @@ function runLive() {
     return;
   }
 
-  if (action !== "preflight" || process.argv.length !== 4) {
+  const modelAllowlist = approvedModelAllowlist();
+  if (
+    action !== "preflight" ||
+    (process.argv.length !== 4 &&
+      !(process.argv.length === 6 && modelAllowlist !== undefined))
+  ) {
     console.error(
       "agent_eval_live_requires_preflight_or_an_explicit_approved_profile",
     );
@@ -291,6 +314,9 @@ function runLive() {
     {
       IRIS_AGENT_EVAL_LIVE_ACTION: "preflight",
       IRIS_AGENT_EVAL_SOURCE_DB: sourceDatabase,
+      ...(modelAllowlist
+        ? { IRIS_AGENT_EVAL_MODEL_ALLOWLIST: modelAllowlist }
+        : {}),
     },
     (source, controls) =>
       buildLivePilotChildEnvironment(source, controls, resolvedPaths),
@@ -311,7 +337,7 @@ function main() {
   }
   if (mode !== "smoke" && mode !== "full") {
     console.error(
-      "usage: node scripts/agent-eval.mjs <smoke|full|live preflight|live pilot --session session-id --approve profile-id --confirm-cost one-12-case-pilot>",
+      "usage: node scripts/agent-eval.mjs <smoke|full|live preflight [--models model-a,model-b]|live pilot --session session-id --approve profile-id --confirm-cost one-12-case-pilot [--models model-a]>",
     );
     process.exit(2);
   }

@@ -1329,6 +1329,7 @@ async fn completed_run_never_persists_transient_fallback_reference_bodies() {
             content: "已依据附件完成概述。".into(),
             evidence_ids,
             citation_map: serde_json::json!({}),
+            source_summary: Vec::new(),
         },
     )
     .expect("completed run");
@@ -1545,6 +1546,7 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
                 .into(),
             evidence_ids: vec![],
             citation_map: serde_json::json!({}),
+            source_summary: Vec::new(),
         },
     )
     .expect("first run finalized");
@@ -1660,7 +1662,17 @@ fn provider_history_sanitizes_prior_web_citations_without_changing_answer_text()
         .find(|message| message.content.text_content().contains("历史结论见"))
         .expect("assistant history");
 
-    assert_eq!(history.content.text_content(), "历史结论见 [历史来源 1]。");
+    assert!(
+        !history
+            .content
+            .text_content()
+            .contains("PriorAssistantMessageData"),
+        "internal history classification must never be injected into the assistant turn"
+    );
+    assert!(history
+        .content
+        .text_content()
+        .contains("历史结论见 [历史来源 1]。"));
     assert!(!history.content.text_content().contains("https://"));
     assert!(!history.content.text_content().contains("[W1]"));
 }
@@ -1758,6 +1770,7 @@ fn previous_run_safety_does_not_treat_local_evidence_as_web_success() {
             content: "Local-only summary.".into(),
             evidence_ids: vec![local.evidence_id],
             citation_map: serde_json::json!({}),
+            source_summary: Vec::new(),
         },
     )
     .expect("first run finalized");

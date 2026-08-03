@@ -201,6 +201,7 @@ pub(crate) struct FinalizeRunInput {
     pub(crate) content: String,
     pub(crate) evidence_ids: Vec<i64>,
     pub(crate) citation_map: Value,
+    pub(crate) source_summary: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
 }
 
 /// Safe process-event history for one latest Run belonging to a logical turn.
@@ -725,7 +726,12 @@ impl AgentRunRepository {
                 }
                 let completed = transition_to(state, RunState::Completed)
                     .map_err(|_| AppError::msg("agent_run_illegal_transition"))?;
-                ensure_evidence_ids_belong_to_session(conn, session_id, &input.evidence_ids)?;
+                ensure_final_evidence_ids_belong_to_run(
+                    conn,
+                    &input.run_id,
+                    session_id,
+                    &input.evidence_ids,
+                )?;
                 let now = chrono::Utc::now().to_rfc3339();
                 let seq: i64 = conn.query_row(
                     "SELECT COALESCE(MAX(seq), 0) + 1 FROM session_messages WHERE session_id = ?1",
@@ -769,7 +775,10 @@ impl AgentRunRepository {
                 )?;
                 let event = AssistantRunEvent::new(
                     &input.run_id, event_seq, next_version, RunEventType::Completed, &now,
-                    RunEventPayload::Completed { message_id: Some(message_id.clone()) },
+                    RunEventPayload::Completed {
+                        message_id: Some(message_id.clone()),
+                        source_summary: input.source_summary,
+                    },
                 ).map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
                 conn.execute("UPDATE sessions SET updated_at = ?1 WHERE id = ?2", rusqlite::params![now, session_id])?;
@@ -900,7 +909,7 @@ impl AgentRunRepository {
                     |row| row.get::<_, i64>(0),
                 )
                 .map_err(not_found_or_db)?;
-            ensure_evidence_ids_belong_to_session(conn, session_id, evidence_ids)
+            ensure_final_evidence_ids_belong_to_run(conn, run_id, session_id, evidence_ids)
         })
     }
 
@@ -2378,6 +2387,33 @@ fn ensure_evidence_ids_belong_to_session(
         )?;
         if count != 1 {
             return Err(AppError::msg("agent_run_evidence_not_found"));
+        }
+    }
+    Ok(())
+}
+
+/// Final answer evidence must be registered by the exact Run. Session ownership
+/// alone is insufficient because a prior Run may have searched the same topic.
+fn ensure_final_evidence_ids_belong_to_run(
+    conn: &Connection,
+    run_id: &str,
+    session_id: i64,
+    evidence_ids: &[i64],
+) -> AppResult<()> {
+    for evidence_id in evidence_ids {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*)
+             FROM agent_run_evidence run_evidence
+             JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+             WHERE run_evidence.run_id = ?1
+               AND run_evidence.evidence_id = ?2
+               AND evidence.session_id = ?3
+               AND evidence.retired_at IS NULL",
+            rusqlite::params![run_id, evidence_id, session_id],
+            |row| row.get(0),
+        )?;
+        if count != 1 {
+            return Err(AppError::msg("agent_run_evidence_not_registered_by_run"));
         }
     }
     Ok(())

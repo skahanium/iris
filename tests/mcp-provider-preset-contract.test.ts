@@ -13,6 +13,7 @@ const EXPECTED_PRESET_IDS = [
   "firecrawl",
   "brave",
   "searxng",
+  "tavily",
 ] as const;
 
 describe("provider manifest contract", () => {
@@ -20,7 +21,37 @@ describe("provider manifest contract", () => {
     expect(MCP_PROVIDER_PRESETS.map((preset) => preset.id)).toEqual([
       ...EXPECTED_PRESET_IDS,
     ]);
-    expect(EXPECTED_PRESET_IDS).not.toContain("tavily");
+  });
+
+  it("declares Tavily as a required Bearer-authenticated HTTPS web provider", () => {
+    const tavily = MCP_PROVIDER_PRESETS.find(
+      (preset) => preset.id === "tavily",
+    );
+
+    expect(tavily).toMatchObject({
+      transportKind: "https",
+      providerName: "Tavily",
+      url: "https://mcp.tavily.com/mcp/",
+      credentials: [
+        {
+          target: "header",
+          name: "Authorization",
+          service: "iris.mcp.tavily",
+          scheme: "bearer",
+        },
+      ],
+    });
+    expect(tavily?.credentials[0]?.optional).toBeUndefined();
+    expect(JSON.parse(tavily?.searchMapping ?? "{}")).toEqual({
+      tool: "tavily_search",
+      queryArg: "query",
+      maxResultsArg: "max_results",
+    });
+    expect(JSON.parse(tavily?.fetchMapping ?? "{}")).toEqual({
+      tool: "tavily_extract",
+      urlListArg: "urls",
+      extraArgs: { extract_depth: "basic", format: "markdown" },
+    });
   });
 
   it("keeps optional MCP credential services aligned with preset optional flags", () => {

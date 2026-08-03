@@ -325,7 +325,10 @@ fn derive_legacy_lifecycle(
                 seq: 1,
                 state_version: 1,
                 event_type: "completed".into(),
-                payload: serde_json::to_value(RunEventPayload::Completed { message_id: None })?,
+                payload: serde_json::to_value(RunEventPayload::Completed {
+                    message_id: None,
+                    source_summary: Vec::new(),
+                })?,
                 created_at: created_at.to_string(),
             });
             active_turn_id = Some(turn_id);
@@ -339,6 +342,7 @@ fn derive_legacy_lifecycle(
                 if let Some(event) = events.iter_mut().find(|event| event.run_id == run_id) {
                     event.payload = serde_json::to_value(RunEventPayload::Completed {
                         message_id: Some(final_message_id),
+                        source_summary: Vec::new(),
                     })?;
                 }
             }
@@ -775,6 +779,7 @@ pub(crate) fn classified_run_complete(
         RunEventType::Completed,
         RunEventPayload::Completed {
             message_id: Some(message_id),
+            source_summary: Vec::new(),
         },
         now,
     )?;

@@ -2006,6 +2006,98 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
 }
 
 #[test]
+fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let preparing = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: 0,
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Preparing,
+                stage: "正在准备工具执行".to_string(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("preparing");
+    let running = AgentRunRepository::append_event(
+        &db,
+        AppendRunEventInput {
+            run_id: accepted.run_id.clone(),
+            state_version: event_state_version(&preparing),
+            event_type: RunEventType::StageChanged,
+            payload: RunEventPayload::StageChanged {
+                state: RunState::Running,
+                stage: "正在调用模型和工具".to_string(),
+                stage_code: None,
+            },
+        },
+    )
+    .expect("running");
+    let sink = RecordingSink::default();
+    let mut observer = AgentRunStreamObserver::new_with_deferred_deltas(
+        &db,
+        &accepted.run_id,
+        event_state_version(&running),
+        &sink,
+        true,
+    );
+    observer.enable_source_group_citation_filter();
+    observer.on_tools_finished().expect("unlock final answer");
+
+    for (index, token) in ["结论来自本轮来源 [W", "1]。\n"].into_iter().enumerate() {
+        observer
+            .observe(
+                &StreamEvent {
+                    request_id: accepted.run_id.clone(),
+                    event_type: StreamEventType::Token,
+                    data: StreamEventData::Token {
+                        token: token.to_string(),
+                        replace_visible: false,
+                    },
+                    surface: StreamSurface::VisibleAnswerSanitized,
+                    classified: false,
+                },
+                index as u32,
+            )
+            .expect("stream final token");
+    }
+    observer.bind_validated_content("结论来自本轮来源 。\n");
+    observer.flush().expect("flush validated stream");
+
+    let presentation = sink
+        .presentation_events
+        .lock()
+        .expect("presentation lock")
+        .clone();
+    let deltas = presentation
+        .iter()
+        .filter(|event| event["kind"] == "answer_delta")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        deltas.len(),
+        2,
+        "source-group answer must stream incrementally"
+    );
+    assert!(deltas
+        .iter()
+        .all(|event| !event["delta"].as_str().unwrap_or_default().contains("[W")));
+    assert!(presentation
+        .iter()
+        .all(|event| event["kind"] != "answer_reset"));
+    assert_eq!(
+        deltas
+            .iter()
+            .filter_map(|event| event["delta"].as_str())
+            .collect::<String>(),
+        "结论来自本轮来源 。\n"
+    );
+}
+
+#[test]
 fn tool_loop_observer_defers_generating_stage_until_after_later_tool_rounds() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
@@ -2995,7 +3087,7 @@ async fn strict_web_answer_without_current_run_marker_completes_with_a_source_gr
 }
 
 #[tokio::test]
-async fn strict_web_answer_persists_canonical_current_run_marker_and_citation_map() {
+async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3059,7 +3151,7 @@ async fn strict_web_answer_persists_canonical_current_run_marker_and_citation_ma
         &sink,
     )
     .await
-    .expect("valid current-run citation completes");
+    .expect("uncalibrated source-group answer completes");
 
     let (content, citation_map): (String, String) = db
         .with_read_conn(|conn| {
@@ -3072,8 +3164,11 @@ async fn strict_web_answer_persists_canonical_current_run_marker_and_citation_ma
             .map_err(Into::into)
         })
         .expect("persisted strict-web answer");
-    assert_eq!(content, "已由当前轮证据核验。[W1]");
+    assert_eq!(content, "已由当前轮证据核验。");
+    assert!(!content.contains("[W1]"));
     assert!(citation_map.contains("https://example.test/current-run"));
+    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+    assert!(citation_map.contains("\"uncalibrated_route\""));
 }
 
 #[tokio::test]
@@ -3157,7 +3252,7 @@ async fn strict_web_missing_marker_completes_with_a_verified_source_group() {
 }
 
 #[tokio::test]
-async fn strict_web_follow_up_persists_run_local_citation_map() {
+async fn source_group_web_follow_up_does_not_rehydrate_historical_precise_citations() {
     let db = Database::open_in_memory().expect("database");
     let first = RunIntake::start(&db, request()).expect("first accepted");
     let first_evidence = AgentEvidenceRepository::register_web(
@@ -3275,7 +3370,7 @@ async fn strict_web_follow_up_persists_run_local_citation_map() {
     assert!(historical_answer
         .content
         .text_content()
-        .contains("[历史来源 1]"));
+        .contains("首轮回答。"));
     assert!(!historical_answer.content.text_content().contains("[W1]"));
     assert!(!historical_answer
         .content
@@ -3309,7 +3404,8 @@ async fn strict_web_follow_up_persists_run_local_citation_map() {
             .map_err(Into::into)
         })
         .expect("follow-up persisted");
-    assert_eq!(content, "第二轮回答。[W1]");
+    assert_eq!(content, "第二轮回答。");
+    assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
     assert!(citation_map.contains("\"index\":1"));
     assert!(!citation_map.contains("\"index\":2"));
 }

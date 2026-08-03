@@ -219,6 +219,20 @@ export interface CitationBinding {
   fallbackReason?: string;
 }
 
+/** Minimal, non-sensitive count of source categories used by one answer. */
+export interface SourceSummaryEntry {
+  category:
+    | "user_input"
+    | "authorized_material"
+    | "conversation_history"
+    | "local_retrieval"
+    | "web"
+    | "external_tool"
+    | "runtime_fact"
+    | "model_inference";
+  count: number;
+}
+
 export interface AssistantSessionMessage {
   seq: number;
   role: string;
@@ -240,6 +254,7 @@ export interface AssistantSessionMessage {
   displayMentions: DisplayMention[];
   webCitations?: WebCitationEntry[];
   citationBinding?: CitationBinding;
+  sourceSummary?: SourceSummaryEntry[];
   createdAt: string;
 }
 
@@ -389,6 +404,7 @@ export type AssistantRunErrorCode =
   | "agent_run_empty_output"
   | "agent_run_output_too_long"
   | "agent_run_evidence_invalid"
+  | "agent_run_finalization_protocol_invalid"
   | "agent_run_event_delivery_failed"
   | "agent_run_invalid_explicit_reference"
   | "agent_run_explicit_reference_changed"
@@ -583,7 +599,11 @@ export type AssistantRunEventPayload =
   | { kind: "evidence_registered"; evidenceId: string }
   | { kind: "paused"; reason: string; recovery?: RunRecoveryKind | null }
   | { kind: "resumed"; reason: string }
-  | { kind: "completed"; messageId: string | null }
+  | {
+      kind: "completed";
+      messageId: string | null;
+      sourceSummary?: SourceSummaryEntry[];
+    }
   | { kind: "failed"; code: AssistantRunErrorCode; message: string }
   | { kind: "cancelled"; reason: string };
 

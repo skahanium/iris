@@ -4,12 +4,17 @@ import { ChevronDown } from "lucide-react";
 
 import { filterReferencedWebCitations } from "@/lib/ai/citation-display";
 import { cn } from "@/lib/utils";
-import type { CitationBinding, WebCitationEntry } from "@/types/ai";
+import type {
+  CitationBinding,
+  SourceSummaryEntry,
+  WebCitationEntry,
+} from "@/types/ai";
 
 interface AssistantCitationFooterProps {
   content: string;
   entries: WebCitationEntry[];
   binding?: CitationBinding;
+  sourceSummary?: SourceSummaryEntry[];
   referencedOnly?: boolean;
   className?: string;
   onOpenUrl?: (url: string) => void;
@@ -20,6 +25,7 @@ export const AssistantCitationFooter = memo(function AssistantCitationFooter({
   content,
   entries,
   binding,
+  sourceSummary = [],
   referencedOnly = true,
   className,
   onOpenUrl,
@@ -37,14 +43,15 @@ export const AssistantCitationFooter = memo(function AssistantCitationFooter({
     [content, entries, referencedOnly, sourceGroup],
   );
 
-  if (visible.length === 0) {
+  if (visible.length === 0 && sourceSummary.length === 0) {
     return null;
   }
 
-  const title = sourceGroup ? "本轮已核验证据" : "来源";
-  const summary = sourceGroup
-    ? `${visible.length} 项证据`
-    : `${visible.length} 个来源`;
+  const title = sourceGroup ? "本次检索来源" : "来源";
+  const summary = `${visible.length} 个来源`;
+  const categorySummary = sourceSummary
+    .map((entry) => `${sourceCategoryLabel(entry.category)} ${entry.count}`)
+    .join(" · ");
 
   return (
     <section
@@ -70,43 +77,64 @@ export const AssistantCitationFooter = memo(function AssistantCitationFooter({
         />
         <span className="shrink-0 font-medium text-foreground/75">{title}</span>
         <span className="min-w-0 truncate text-muted-foreground">
-          {summary}
+          {categorySummary || summary}
         </span>
       </button>
       {open ? (
         <div id={detailsId} className="mt-2">
           {sourceGroup ? (
             <p className="mb-1.5 text-caption text-muted-foreground">
-              本回答未提供可精确绑定的行内引用；以下为本轮核验证据范围。
+              本回答未提供可精确绑定的行内引用；以下仅为本次检索来源，不表示已逐段核验。
             </p>
           ) : null}
-          <ol className="m-0 list-none space-y-1 p-0 text-caption text-foreground/90">
-            {visible.map((entry) => (
-              <li key={entry.index} className="flex gap-1.5 leading-snug">
-                <span
-                  className="shrink-0 tabular-nums text-muted-foreground"
-                  aria-hidden="true"
-                >
-                  {entry.index}.
-                </span>
-                {onOpenUrl ? (
-                  <button
-                    type="button"
-                    className="min-w-0 text-left text-foreground/90 underline decoration-border-subtle underline-offset-2 hover:text-foreground hover:decoration-foreground/40"
-                    onClick={() => onOpenUrl(entry.url)}
+          {categorySummary ? (
+            <p className="mb-1.5 text-caption text-muted-foreground">
+              {categorySummary}
+            </p>
+          ) : null}
+          {visible.length > 0 ? (
+            <ol className="m-0 list-none space-y-1 p-0 text-caption text-foreground/90">
+              {visible.map((entry) => (
+                <li key={entry.index} className="flex gap-1.5 leading-snug">
+                  <span
+                    className="shrink-0 tabular-nums text-muted-foreground"
+                    aria-hidden="true"
                   >
-                    {entry.title.trim() || entry.url}
-                  </button>
-                ) : (
-                  <span className="min-w-0">
-                    {entry.title.trim() || entry.url}
+                    {entry.index}.
                   </span>
-                )}
-              </li>
-            ))}
-          </ol>
+                  {onOpenUrl ? (
+                    <button
+                      type="button"
+                      className="min-w-0 text-left text-foreground/90 underline decoration-border-subtle underline-offset-2 hover:text-foreground hover:decoration-foreground/40"
+                      onClick={() => onOpenUrl(entry.url)}
+                    >
+                      {entry.title.trim() || entry.url}
+                    </button>
+                  ) : (
+                    <span className="min-w-0">
+                      {entry.title.trim() || entry.url}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          ) : null}
         </div>
       ) : null}
     </section>
   );
 });
+
+function sourceCategoryLabel(category: SourceSummaryEntry["category"]): string {
+  const labels: Record<SourceSummaryEntry["category"], string> = {
+    user_input: "用户输入",
+    authorized_material: "授权材料",
+    conversation_history: "对话历史",
+    local_retrieval: "本地检索",
+    web: "网页",
+    external_tool: "外部工具",
+    runtime_fact: "运行时事实",
+    model_inference: "推断",
+  };
+  return labels[category];
+}

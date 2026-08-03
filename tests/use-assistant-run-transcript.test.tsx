@@ -49,6 +49,78 @@ afterEach(() => {
 });
 
 describe("useAssistantRunTranscript", () => {
+  it("连续 presentation delta 必须累积显示，而不是停留在首段", () => {
+    messages = [
+      { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },
+      { role: "assistant", content: "", runId: "run-1", turnId: "turn-1" },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const running = replayAssistantRunEvents("run-1", [
+      {
+        runId: "run-1",
+        seq: 1,
+        stateVersion: 0,
+        timestamp: "2026-08-03T00:00:00.000Z",
+        type: "accepted",
+        payload: {
+          kind: "accepted",
+          turnId: "turn-1",
+          sessionKey: "session-1",
+        },
+      },
+      {
+        runId: "run-1",
+        seq: 2,
+        stateVersion: 1,
+        timestamp: "2026-08-03T00:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在生成答复",
+        },
+      },
+    ] satisfies AssistantRunEvent[]);
+
+    act(() =>
+      root?.render(
+        <Probe
+          run={running}
+          presentation={{
+            runId: "run-1",
+            lastSeq: 2,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [],
+            answer: "第一段",
+            answerComplete: false,
+          }}
+        />,
+      ),
+    );
+    expect(messages[1]?.content).toBe("第一段");
+
+    act(() =>
+      root?.render(
+        <Probe
+          run={running}
+          presentation={{
+            runId: "run-1",
+            lastSeq: 3,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [],
+            answer: "第一段第二段",
+            answerComplete: false,
+          }}
+        />,
+      ),
+    );
+    expect(messages[1]?.content).toBe("第一段第二段");
+  });
+
   it("answerComplete 先到而 durable completed 丢失时仍结束 streaming", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },

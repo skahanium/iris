@@ -1,6 +1,6 @@
 /** PromptProfile 前端工具与迁移（单一数据源：SQLite via IPC） */
 
-import type { PromptProfileDto } from "@/lib/ipc";
+import type { PromptBehaviorDto, PromptProfileDto } from "@/lib/ipc";
 
 export const DEFAULT_DISPLAY_NAME = "砚";
 export const AVATAR_IDS = [
@@ -32,6 +32,12 @@ export const DEFAULT_PROMPT_PROFILE: PromptProfileDto = {
   persona: "",
   writing_style: "",
   custom_rules: [],
+  behavior: {
+    initiative: "balanced",
+    directness: "balanced",
+    tone: "natural",
+    challenge: "balanced",
+  },
   language: "zh-CN",
 };
 
@@ -90,7 +96,32 @@ export function normalizePromptProfile(
     custom_rules: (profile?.custom_rules ?? [])
       .map((rule) => rule.trim())
       .filter(Boolean),
+    behavior: normalizeBehavior(profile?.behavior),
     language: profile?.language?.trim() || "zh-CN",
+  };
+}
+
+function normalizeBehavior(
+  value: Partial<PromptBehaviorDto> | undefined,
+): PromptBehaviorDto {
+  const fallback = DEFAULT_PROMPT_PROFILE.behavior;
+  return {
+    initiative:
+      value?.initiative === "reactive" || value?.initiative === "proactive"
+        ? value.initiative
+        : fallback.initiative,
+    directness:
+      value?.directness === "concise" || value?.directness === "deliberate"
+        ? value.directness
+        : fallback.directness,
+    tone:
+      value?.tone === "reserved" || value?.tone === "warm"
+        ? value.tone
+        : fallback.tone,
+    challenge:
+      value?.challenge === "supportive" || value?.challenge === "critical"
+        ? value.challenge
+        : fallback.challenge,
   };
 }
 

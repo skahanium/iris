@@ -250,6 +250,33 @@ pub(super) fn validate_final_evidence_or_fail(
     })
 }
 
+/// Validate a structured terminal submission before it becomes visible or
+/// durable. Invalid attribution remains a safe terminal failure.
+pub(super) fn validated_current_run_final_submission(
+    db: &Database,
+    run_id: &str,
+    submission: &crate::ai_runtime::final_answer_submission::FinalAnswerSubmission,
+    strict_web: bool,
+) -> Result<crate::ai_runtime::provenance::ValidatedFinalAnswerSubmission, RunFinalizationFailure> {
+    let policy =
+        AgentEvidenceRepository::provenance_policy(db, run_id, strict_web).map_err(|error| {
+            RunFinalizationFailure::new(
+                RunFinalizationStage::EvidenceValidation,
+                SafeRunErrorCode::EvidenceInvalid,
+                error.to_string(),
+            )
+        })?;
+    crate::ai_runtime::provenance::validate_final_answer_submission(submission, &policy).map_err(
+        |error| {
+            RunFinalizationFailure::new(
+                RunFinalizationStage::EvidenceValidation,
+                SafeRunErrorCode::FinalizationProtocolInvalid,
+                error.to_string(),
+            )
+        },
+    )
+}
+
 pub(super) fn flush_validated_stream_or_fail(
     db: &Database,
     run_id: &str,
@@ -285,6 +312,8 @@ pub(super) fn emit_run_terminal(
     content: String,
     evidence_ids: Vec<i64>,
     citation_binding: Option<CitationBinding>,
+    source_summary: Option<&crate::ai_runtime::provenance::SourceSummary>,
+    attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     let citation_map =
@@ -293,12 +322,16 @@ pub(super) fn emit_run_terminal(
                 crate::ai_runtime::citation_linkify::web_citation_map_json(
                     &cites,
                     citation_binding.as_ref(),
+                    source_summary,
+                    attribution,
                 )
             }
             Ok(_) => match AgentEvidenceRepository::list_web_citation_links(db, &evidence_ids) {
                 Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(
                     &cites,
                     citation_binding.as_ref(),
+                    source_summary,
+                    attribution,
                 ),
                 Err(error) => {
                     tracing::warn!(
@@ -324,6 +357,9 @@ pub(super) fn emit_run_terminal(
             content,
             evidence_ids,
             citation_map,
+            source_summary: source_summary
+                .map(crate::ai_runtime::provenance::SourceSummary::entries)
+                .unwrap_or_default(),
         },
     ) {
         return fail_finalization_with_sink(
@@ -392,6 +428,8 @@ pub(super) fn finalize_and_emit_with_sink(
     content: String,
     evidence_ids: Vec<i64>,
     citation_binding: Option<CitationBinding>,
+    source_summary: Option<&crate::ai_runtime::provenance::SourceSummary>,
+    attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
     emit_run_terminal(
@@ -402,6 +440,8 @@ pub(super) fn finalize_and_emit_with_sink(
         content,
         evidence_ids,
         citation_binding,
+        source_summary,
+        attribution,
         sink,
     )
 }
@@ -432,6 +472,7 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
         SafeRunErrorCode::OutputTooLong => "模型回答超过本次运行上限，请缩小问题范围后重试",
         SafeRunErrorCode::EvidenceInvalid => "回答与所附证据无法安全关联，请重新附带资料后重试",
+        SafeRunErrorCode::FinalizationProtocolInvalid => "模型未完成本次答案的来源归因协议，请重试",
         SafeRunErrorCode::EventDeliveryFailed => "回答状态未能送达界面，请重新打开会话查看结果",
         SafeRunErrorCode::InvalidExplicitReference => "引用材料无效，请重新附带后重试",
         SafeRunErrorCode::ExplicitReferenceChanged => "引用材料已发生变化，请重新附带后重试",
@@ -509,6 +550,12 @@ pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
         }
         "agent_run_tool_loop_limit" => SafeRunErrorCode::ToolLoopLimit,
         "agent_run_invalid_model_response" => SafeRunErrorCode::InvalidRequest,
+        "agent_run_final_submission_required" | "agent_run_final_submission_invalid" => {
+            SafeRunErrorCode::FinalizationProtocolInvalid
+        }
+        error if error.starts_with("agent_run_provenance_") => {
+            SafeRunErrorCode::FinalizationProtocolInvalid
+        }
         _ => classify_provider_failure(error),
     }
 }
@@ -537,8 +584,13 @@ impl RunFinalizationFailure {
 mod apply_notice_tests {
     use std::collections::HashSet;
 
-    use super::{apply_required_web_degradation_notice, validate_web_urls_against_allowed};
+    use super::{
+        apply_required_web_degradation_notice, classify_tool_loop_failure,
+        validate_web_urls_against_allowed,
+    };
     use crate::ai_runtime::run_contract::AssistantSessionRef;
+    use crate::ai_runtime::run_contract::SafeRunErrorCode;
+    use crate::error::AppError;
     use crate::storage::db::Database;
 
     fn dummy_session() -> AssistantSessionRef {
@@ -602,5 +654,13 @@ mod apply_notice_tests {
             &allowed,
         )
         .expect("registered source must be accepted");
+    }
+
+    #[test]
+    fn provenance_protocol_errors_use_the_model_protocol_safe_error() {
+        let code =
+            classify_tool_loop_failure(&AppError::msg("agent_run_provenance_reference_invalid"));
+
+        assert_eq!(code, SafeRunErrorCode::FinalizationProtocolInvalid);
     }
 }

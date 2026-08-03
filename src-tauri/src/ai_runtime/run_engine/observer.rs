@@ -181,10 +181,10 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     sink: &'a dyn RunEventSink,
     pending_delta: String,
     transient_content: String,
-    last_transient_bytes: usize,
     last_presentation_emit_at: Instant,
     presentation_content: String,
     defer_visible_deltas: bool,
+    source_group_citation_filter: bool,
     emitted_generating_answer_stage: bool,
     reasoning_summaries: BTreeMap<String, String>,
     persisted_reasoning_summaries: BTreeMap<String, String>,
@@ -218,10 +218,10 @@ impl<'a> AgentRunStreamObserver<'a> {
             sink,
             pending_delta: String::new(),
             transient_content: String::new(),
-            last_transient_bytes: 0,
             last_presentation_emit_at: Instant::now(),
             presentation_content: String::new(),
             defer_visible_deltas,
+            source_group_citation_filter: false,
             emitted_generating_answer_stage: false,
             reasoning_summaries: BTreeMap::new(),
             persisted_reasoning_summaries: BTreeMap::new(),
@@ -252,6 +252,12 @@ impl<'a> AgentRunStreamObserver<'a> {
 }
 
 impl AgentRunStreamObserver<'_> {
+    /// Keep model-authored precise citation syntax out of an uncalibrated
+    /// source-group stream before any AnswerDelta reaches the UI.
+    pub(crate) fn enable_source_group_citation_filter(&mut self) {
+        self.source_group_citation_filter = true;
+    }
+
     /// Replace provisional provider tokens with the fully validated final body.
     pub(crate) fn bind_validated_content(&mut self, content: &str) {
         self.pending_delta.clear();
@@ -265,7 +271,6 @@ impl AgentRunStreamObserver<'_> {
             self.presentation_content.clear();
         }
         self.transient_content.clear();
-        self.last_transient_bytes = 0;
     }
 
     /// Visible answer text captured before cancellation, already buffered for the UI.
@@ -304,7 +309,6 @@ impl AgentRunStreamObserver<'_> {
         }
         self.presentation_content.clear();
         self.transient_content.clear();
-        self.last_transient_bytes = 0;
         self.pending_delta.clear();
     }
 
@@ -338,13 +342,33 @@ impl AgentRunStreamObserver<'_> {
 
     /// Deliver the complete provisional snapshot to the live UI without persistence.
     pub(crate) fn flush_transient(&mut self) -> AppResult<()> {
-        if self.defer_visible_deltas
-            || self.transient_content.is_empty()
-            || self.transient_content.len() == self.last_transient_bytes
-        {
+        if self.defer_visible_deltas || self.transient_content.is_empty() {
             return Ok(());
         }
-        let delta = self.transient_content[self.last_transient_bytes..].to_string();
+        let visible = if self.source_group_citation_filter {
+            crate::ai_runtime::citation_linkify::strip_model_authored_citation_markers_for_stream(
+                &self.transient_content,
+            )
+        } else {
+            self.transient_content.clone()
+        };
+        if visible == self.presentation_content {
+            return Ok(());
+        }
+        let delta = if let Some(delta) = visible.strip_prefix(&self.presentation_content) {
+            delta.to_string()
+        } else {
+            if !self.presentation_content.is_empty() {
+                let _ = self
+                    .sink
+                    .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
+            }
+            self.presentation_content.clear();
+            visible
+        };
+        if delta.is_empty() {
+            return Ok(());
+        }
         let _ = self.sink.emit_presentation(
             self.run_id,
             RunPresentationPayload::AnswerDelta {
@@ -352,7 +376,6 @@ impl AgentRunStreamObserver<'_> {
             },
         );
         self.presentation_content.push_str(&delta);
-        self.last_transient_bytes = self.transient_content.len();
         self.last_presentation_emit_at = Instant::now();
         Ok(())
     }
@@ -579,7 +602,6 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
                 }
                 if *replace_visible {
                     self.transient_content.clear();
-                    self.last_transient_bytes = 0;
                     if !self.presentation_content.is_empty() {
                         let _ = self
                             .sink
@@ -589,7 +611,7 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
                 }
                 self.transient_content.push_str(token);
                 if !self.defer_visible_deltas
-                    && (self.last_transient_bytes == 0
+                    && (self.presentation_content.is_empty()
                         || self.last_presentation_emit_at.elapsed()
                             >= STREAM_PRESENTATION_FLUSH_INTERVAL
                         || token.contains('\n')

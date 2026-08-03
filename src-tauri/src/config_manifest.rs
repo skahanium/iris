@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_search_result_limit_manifest_lists_anysearch_and_firecrawl() {
+    fn mcp_search_result_limit_manifest_resolves_builtin_provider_arguments() {
         assert_eq!(
             resolve_mcp_search_result_limit_arg(
                 r#"{"preset_id":"anysearch","url":"https://api.anysearch.com/mcp"}"#,
@@ -163,6 +163,14 @@ mod tests {
             )
             .as_deref(),
             Some("limit")
+        );
+        assert_eq!(
+            resolve_mcp_search_result_limit_arg(
+                r#"{"preset_id":"tavily","url":"https://mcp.tavily.com/mcp/"}"#,
+                "Tavily",
+            )
+            .as_deref(),
+            Some("max_results")
         );
     }
 }

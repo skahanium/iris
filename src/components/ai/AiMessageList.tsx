@@ -53,6 +53,7 @@ export interface ChatLine {
   processItems?: AssistantProcessItem[];
   webCitations?: WebCitationEntry[];
   citationBinding?: CitationBinding;
+  sourceSummary?: import("@/types/ai").SourceSummaryEntry[];
   /** Local-only playback state; durable Run completion must not cancel it. */
   presentationStreaming?: boolean;
 }
@@ -459,6 +460,7 @@ export const AiMessageList = memo(function AiMessageList({
               onCitationClick={onCitationClick}
               webCitations={m.webCitations}
               citationBinding={m.citationBinding}
+              sourceSummary={m.sourceSummary}
             />
           </div>
         </div>

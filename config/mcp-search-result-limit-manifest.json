@@ -10,5 +10,11 @@
     "hosts": ["mcp.firecrawl.dev"],
     "providerName": "Firecrawl",
     "maxResultsArg": "limit"
+  },
+  {
+    "presetId": "tavily",
+    "hosts": ["mcp.tavily.com"],
+    "providerName": "Tavily",
+    "maxResultsArg": "max_results"
   }
 ]

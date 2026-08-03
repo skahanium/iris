@@ -30,16 +30,19 @@ use crate::ai_runtime::agent_run_repository::{
 use crate::ai_runtime::agent_tool_loop::{
     AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
 };
-use crate::ai_runtime::citation_linkify::{bind_current_run_citations, linkify_web_citations};
+use crate::ai_runtime::citation_linkify::{
+    bind_strict_current_run_citations, linkify_web_citations, strip_model_authored_citation_markers,
+};
 use crate::ai_runtime::conversation_memory::ConversationMemory;
 use crate::ai_runtime::direct_provider_route::DirectProviderRoute;
+use crate::ai_runtime::final_answer_submission::FINAL_ANSWER_TOOL_NAME;
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
     AssistantSessionRef, Effect, Effort, PresentationProcessKind, PresentationProcessStatus,
     RunEventPayload, RunEventType, RunPresentationEvent, RunPresentationPayload, RunRecoveryKind,
     RunStageCode, RunState, SafeRunErrorCode, WebEvidenceFailureReason,
 };
-use crate::ai_types::CitationBinding;
+use crate::ai_types::{CitationBinding, CitationBindingMode};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -309,6 +312,7 @@ impl RunEngine {
                 },
                 evidence_ids: Vec::new(),
                 citation_map: serde_json::json!({}),
+                source_summary: Vec::new(),
             },
         )?;
         let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
@@ -415,6 +419,8 @@ impl RunEngine {
             running.state_version(),
             answer,
             Vec::new(),
+            None,
+            None,
             None,
             sink,
         )
@@ -722,6 +728,16 @@ impl RunEngine {
                 true,
             )
         };
+        // An uncalibrated Web route uses a source-group disclosure. Its final
+        // model turn may stream, but model-authored `[Wn]` syntax must be
+        // removed before it reaches the user, including when a marker spans
+        // multiple provider chunks. Strict structured routes intentionally
+        // remain sealed until their terminal submission validates.
+        if executor.requires_web_evidence()
+            && !tools.iter().any(|tool| tool.name == FINAL_ANSWER_TOOL_NAME)
+        {
+            observer.enable_source_group_citation_filter();
+        }
         let outcome = if let Some(telemetry) = telemetry {
             AgentToolLoop::from_policy(&budget_policy)
                 .execute_with_eval_telemetry(
@@ -893,6 +909,8 @@ impl RunEngine {
             final_evidence_ids.clone()
         };
         let mut citation_binding = None;
+        let mut source_summary = None;
+        let mut attribution = None;
         if executor.requires_web_evidence() {
             if !AgentEvidenceRepository::has_current_run_web_evidence(
                 db,
@@ -928,7 +946,57 @@ impl RunEngine {
                         );
                     }
                 };
-            let outcome = bind_current_run_citations(&content, &citations);
+            let outcome = if let Some(submission) = outcome.final_submission.as_ref() {
+                let provenance =
+                    match validated_current_run_final_submission(db, run_id, submission, true) {
+                        Ok(provenance) => provenance,
+                        Err(failure) => {
+                            return fail_finalization_with_sink(
+                                db,
+                                run_id,
+                                running_state_version,
+                                sink,
+                                failure,
+                            );
+                        }
+                    };
+                content = provenance.visible_content;
+                source_summary = Some(provenance.source_summary);
+                attribution = Some(provenance.attribution);
+                match bind_strict_current_run_citations(&content, &citations) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        return fail_finalization_with_sink(
+                            db,
+                            run_id,
+                            running_state_version,
+                            sink,
+                            RunFinalizationFailure::new(
+                                RunFinalizationStage::EvidenceValidation,
+                                SafeRunErrorCode::EvidenceInvalid,
+                                error.to_string(),
+                            ),
+                        );
+                    }
+                }
+            } else {
+                // No production route is admitted to strict structured-final
+                // mode until it passes the live-model calibration gate. A
+                // normal model answer is therefore bound to the verified
+                // current-Run source set; missing markers become an explicit
+                // source group instead of discarding usable content.
+                source_summary = Some(
+                    crate::ai_runtime::provenance::SourceSummary::from_web_count(citations.len()),
+                );
+                crate::ai_runtime::citation_linkify::CitationBindingOutcome {
+                    content: strip_model_authored_citation_markers(&content),
+                    binding: CitationBinding {
+                        mode: CitationBindingMode::SourceGroupFallback,
+                        referenced_indices: Vec::new(),
+                        fallback_reason: Some("uncalibrated_route".to_string()),
+                    },
+                }
+            };
             tracing::info!(
                 run_id = %run_id,
                 binding_mode = ?outcome.binding.mode,
@@ -978,6 +1046,8 @@ impl RunEngine {
             content,
             final_evidence_ids,
             citation_binding,
+            source_summary.as_ref(),
+            attribution.as_deref(),
             sink,
         )
     }
@@ -1212,6 +1282,8 @@ impl RunEngine {
             running_state_version,
             content,
             evidence_ids.to_vec(),
+            None,
+            None,
             None,
             sink,
         )

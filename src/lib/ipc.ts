@@ -994,7 +994,15 @@ export interface PromptProfileDto {
   persona: string;
   writing_style: string;
   custom_rules: string[];
+  behavior: PromptBehaviorDto;
   language: string;
+}
+
+export interface PromptBehaviorDto {
+  initiative: "reactive" | "balanced" | "proactive";
+  directness: "concise" | "balanced" | "deliberate";
+  tone: "reserved" | "natural" | "warm";
+  challenge: "supportive" | "balanced" | "critical";
 }
 
 export async function skillsList(): Promise<SkillListEntryDto[]> {

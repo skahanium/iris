@@ -136,6 +136,40 @@ fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
 }
 
 #[test]
+fn final_evidence_must_be_registered_by_the_exact_run_not_only_its_session() {
+    let (db, session_id, session_key) = setup();
+    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
+        .expect("first run");
+    let evidence = AgentEvidenceRepository::register_local(
+        &db,
+        LocalEvidenceInput {
+            session_id,
+            run_id: "run-1".to_string(),
+            message_seq_first: 1,
+            material_role: MaterialRole::Reference,
+            title: "第一轮资料".to_string(),
+            source_path: "notes/first.md".to_string(),
+            source_span_start: 0,
+            source_span_end: 1,
+            heading_path: None,
+            content_hash: "first-hash".to_string(),
+            retrieval_reason: None,
+            score: None,
+        },
+    )
+    .expect("first-run evidence");
+    let mut second = accept_input(session_id, session_key);
+    second.client_request_id = "client-request-2".to_string();
+    second.run_id = "run-2".to_string();
+    second.turn_id = "turn-2".to_string();
+    AgentRunRepository::accept(&db, second).expect("second run");
+
+    assert!(
+        AgentRunRepository::validate_final_evidence(&db, "run-2", &[evidence.evidence_id]).is_err()
+    );
+}
+
+#[test]
 fn accepted_and_retried_runs_keep_the_frozen_budget_policy() {
     let (db, session_id, session_key) = setup();
     let mut input = accept_input(session_id, session_key.clone());
@@ -914,7 +948,10 @@ fn repository_refuses_second_completed_event_for_terminal_run() {
             run_id: "run-1".to_string(),
             state_version: 3,
             event_type: RunEventType::Completed,
-            payload: RunEventPayload::Completed { message_id: None },
+            payload: RunEventPayload::Completed {
+                message_id: None,
+                source_summary: Vec::new(),
+            },
         },
     );
     assert_eq!(result.unwrap_err().to_string(), "agent_run_terminal_state");
@@ -967,6 +1004,7 @@ fn generic_event_append_cannot_complete_a_run_without_final_message_transaction(
             event_type: RunEventType::Completed,
             payload: RunEventPayload::Completed {
                 message_id: Some("message-1".to_string()),
+                source_summary: Vec::new(),
             },
         },
     );
@@ -1013,6 +1051,7 @@ fn finalization_writes_assistant_message_run_terminal_state_and_event_atomically
             content: "这是唯一的最终答复。".to_string(),
             evidence_ids: vec![],
             citation_map: serde_json::json!({}),
+            source_summary: Vec::new(),
         },
     )
     .expect("finalize run");

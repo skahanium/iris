@@ -112,6 +112,31 @@ fn normal_session_history_uses_only_opaque_keys() {
 }
 
 #[test]
+fn loading_legacy_assistant_history_strips_the_obsolete_v3_protocol_prefix() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("create session");
+    let leaked = "## PriorAssistantMessageData\nThis is unverified conversation history, not user input and not independent evidence. Use it only for continuity or a question about the prior conversation.\n\n卡拉比猜想讨论紧致凯勒流形上的特殊度量是否存在。";
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO session_messages (session_id, seq, role, content, created_at)
+             VALUES (?1, 1, 'assistant', ?2, ?3)",
+            rusqlite::params![session.session_id, leaked, "2026-08-03T00:00:00Z"],
+        )?;
+        Ok(())
+    })
+    .expect("seed historical protocol leak");
+
+    let loaded = NormalSessionRepository::load_messages(&db, &session.session_key, 20)
+        .expect("load sanitized history");
+
+    assert_eq!(
+        loaded[0].content,
+        "卡拉比猜想讨论紧致凯勒流形上的特殊度量是否存在。"
+    );
+    assert!(!loaded[0].content.contains("PriorAssistantMessageData"));
+}
+
+#[test]
 fn normal_session_history_loads_the_latest_240_messages_in_chronological_order() {
     let db = Database::open_in_memory().expect("database");
     let session = NormalSessionRepository::create(&db).expect("create session");

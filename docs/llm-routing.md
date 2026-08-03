@@ -16,7 +16,7 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 ## 模型、推理与预算
 
-模型目录、provider 刷新结果和模型验证事实共同决定模型是否可用于文本、视觉、长上下文或 reasoning。未知模型不会因名称猜测获得高风险能力。原始 chain-of-thought、`reasoning_content` 及 `<think>` 类块不作为普通对话内容持久化或展示。只有 provider 显式给出的 reasoning summary 才可作为独立、受限长度且已脱敏的 Run 过程事件显示和恢复；它不参与下一轮模型输入，不能替代或反推原始推理。
+模型目录、provider 刷新结果和模型验证事实共同决定模型是否可用于文本、视觉、长上下文或 reasoning。未知模型不会因名称猜测获得高风险能力。原始 chain-of-thought、`reasoning_content` 及 `<think>` 类块不作为普通对话内容持久化、展示、记忆、证据账本或归因引用。若 provider 协议明确要求同一 Run 的 continuation，`reasoning_content` 只可随该协议 continuation 传递；它绝不进入后续历史轮次。只有 provider 显式给出的 reasoning summary 才可作为独立、受限长度且已脱敏的 Run 过程事件显示和恢复，不能替代或反推原始推理。
 
 解析后的候选保留输入/输出 token 预算。视觉直答和工具循环都从同一模型池筛选，并将图片消息原样交给选中的视觉模型。
 
@@ -34,9 +34,11 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 非严格的可选 Web 工具失败会返回结构化工具结果并产生非终态 `capability_degraded` 事件。`web_required` 无可核验证据时写入 `web_verification_failed` 后安全终态，不生成事实结论或伪引用。诊断仅记录联网模式、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。偶发降级与 MCP/harness/LLM 分流步骤见 [ops/web-capability-degradation.md](./ops/web-capability-degradation.md)；可执行 `npm run diagnose:web-degradation` 读取本地 `agent_run_events`。
 
-助手只通过 `web_search` 语义入口请求外网证据。严格事实回答使用 Run-local `[W1]…[Wn]` 标注，界面会渲染为上标徽章，并在消息底部「来源」列出对应 HTTPS 标题（见 [design-system.md](./design-system.md) Web 引用契约）。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。非严格工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider；严格路径先验证证据 provider，再选择无工具回答模型。普通证据详情只展示引用、标题、安全 URL/域名、摘录和冲突说明；provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
+助手只通过 `web_search` 语义入口请求外网证据。已校准的严格事实回答使用 Run-local `[W1]…[Wn]` 标注，界面会渲染为上标徽章，并在消息底部「来源」列出对应 HTTPS 标题（见 [design-system.md](./design-system.md) Web 引用契约）。未校准路由使用来源组，不接受模型手写的精确标记；其工具轮次保持私有，最终模型回合在与终局相同的可见文本净化后渐进输出。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。非严格工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider；严格路径先验证证据 provider，再选择无工具回答模型。普通证据详情只展示引用、标题、安全 URL/域名、摘录和冲突说明；provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
 
 MCP 的 Web 路径仍只承载显式 `web.search` / `web.fetch` mapping，并只由联网开关授权。通用 MCP 只读工具走独立的 `external.read` 路径：管理中心把服务端 `readOnlyHint` 视为候选声明而非行为证明，只允许名称与递归输入 Schema 通过副作用审查、且用户对精确 provider/tool/schema 二次确认信任的工具进入白名单 binding；Composer 必须逐 Run 显式提交 binding ID/hash，Accept 原子冻结用户信任位、provider transport/config、Schema、映射和输出策略。运行中不重新 discovery，不透传服务端 description，也不允许 Skills、分类域、local-only 或模型自行扩大工具面。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现声明。
+
+内置 Tavily 预设使用官方 HTTPS MCP `https://mcp.tavily.com/mcp/`，将加密凭据服务 `iris.mcp.tavily` 作为必填 `Authorization: Bearer` 头（密钥绝不进入 URL）。其 `tavily_search` 映射 `query` / `max_results`，`tavily_extract` 映射 `urls`、`extract_depth: basic` 与 `format: markdown`。选择预设只填写配置，既不会自动启用 provider，也不会授予联网权限。
 
 ## 严格事实核验（v1.2.16）
 

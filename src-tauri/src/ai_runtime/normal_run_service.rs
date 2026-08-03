@@ -695,10 +695,7 @@ async fn dispatch_required_web_verified_run(
         1,
         LlmMessage {
             role: MessageRole::System,
-            content: format!(
-                "## CurrentRunVerifiedWebEvidence\nOnly the following Run-local Web evidence may support external factual conclusions. Cite its [Wn] labels; do not use historical assistant claims or invent sources.\n{evidence_json}"
-            )
-            .into(),
+            content: current_run_web_evidence_prompt(&evidence_json, false).into(),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -711,7 +708,7 @@ async fn dispatch_required_web_verified_run(
     // proof for this execution.
     let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-    let tools = ToolRegistry::constrain_for_explicit_references(
+    let mut tools = ToolRegistry::constrain_for_explicit_references(
         registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
         context.envelope.context,
         &context.retrieval_scope,
@@ -721,7 +718,7 @@ async fn dispatch_required_web_verified_run(
     .collect::<Vec<_>>();
     let has_local_follow_up_tools = !tools.is_empty();
     let serialized_messages = serde_json::to_string(messages).map_err(AppError::from)?;
-    let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+    let mut requirements = crate::ai_runtime::provider_router::ProviderRequirements {
         endpoint_family: None,
         streaming: true,
         tools: has_local_follow_up_tools,
@@ -733,7 +730,7 @@ async fn dispatch_required_web_verified_run(
         min_output_budget_tokens: 512,
         security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
     };
-    let route = resolve_normal_route(
+    let mut route = resolve_normal_route(
         db,
         accepted,
         context,
@@ -742,6 +739,33 @@ async fn dispatch_required_web_verified_run(
         has_local_follow_up_tools,
         sink,
     )?;
+    let mut structured_finalization = false;
+    let tool_capable_requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+        tools: true,
+        ..requirements
+    };
+    if calibrated_structured_finalization_route(db, context, tool_capable_requirements)?.is_some() {
+        messages[1].content = current_run_web_evidence_prompt(&evidence_json, true).into();
+        let strict_requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+            min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(
+                &serde_json::to_string(messages).map_err(AppError::from)?,
+            ),
+            tools: true,
+            ..tool_capable_requirements
+        };
+        if let Some(strict_route) =
+            calibrated_structured_finalization_route(db, context, strict_requirements)?
+        {
+            route = strict_route;
+            requirements = strict_requirements;
+            structured_finalization = true;
+        } else {
+            messages[1].content = current_run_web_evidence_prompt(&evidence_json, false).into();
+        }
+    }
+    if structured_finalization {
+        tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
+    }
     let provider =
         FailoverStreamingToolLoopProvider::new(route, requirements, db, &accepted.session, sink);
     #[cfg(test)]
@@ -779,6 +803,63 @@ async fn dispatch_required_web_verified_run(
             sink,
         )
         .await
+    }
+}
+
+/// Strict structured finalization is a route capability, not a prompt-only
+/// preference. Entries are added only after the user-approved live pilot has
+/// passed for that exact provider/model pair.
+fn calibrated_structured_finalization_enabled(
+    route: &crate::ai_runtime::direct_provider_route::DirectProviderRoute,
+    requirements: &crate::ai_runtime::provider_router::ProviderRequirements,
+) -> bool {
+    const VERIFIED: &[(&str, &str)] = &[];
+    route
+        .selected_provider_model_for_requirements(*requirements, 0)
+        .is_some_and(|(provider, model)| {
+            VERIFIED.iter().any(|(verified_provider, verified_model)| {
+                provider == *verified_provider && model == *verified_model
+            })
+        })
+}
+
+/// Render the current-Run Web evidence boundary for the route's verified
+/// finalization mode. Uncalibrated routes may show a source group but must not
+/// ask the model to manufacture claim-level citation markers.
+fn current_run_web_evidence_prompt(evidence_json: &str, structured_finalization: bool) -> String {
+    let instruction = if structured_finalization {
+        "Only the following Run-local Web evidence may support external factual conclusions. Submit the answer through the internal final-answer tool with current-Run source references; do not use historical assistant claims or invent sources."
+    } else {
+        "The following is this Run's Web evidence. This route uses a source-group disclosure: use it for the answer, but do not write [Wn] labels, claim exact per-block verification, or invent sources. Do not describe it as user input or conversation history."
+    };
+    format!("## CurrentRunVerifiedWebEvidence\n{instruction}\n{evidence_json}")
+}
+
+/// Select an exact calibrated route only when the same provider/model can
+/// satisfy a tool-capable finalization request. A verified pair can never gain
+/// the internal final-answer tool through a tool-free route.
+fn calibrated_structured_finalization_route(
+    db: &Database,
+    context: &crate::ai_runtime::run_context::RunContext,
+    requirements: crate::ai_runtime::provider_router::ProviderRequirements,
+) -> AppResult<Option<crate::ai_runtime::direct_provider_route::DirectProviderRoute>> {
+    if !requirements.tools {
+        return Ok(None);
+    }
+    let route = match build_normal_route(
+        db,
+        context,
+        requirements.min_input_budget_tokens,
+        requirements.vision,
+        true,
+    ) {
+        Ok(route) => route,
+        Err(_) => return Ok(None),
+    };
+    if calibrated_structured_finalization_enabled(&route, &requirements) {
+        Ok(Some(route))
+    } else {
+        Ok(None)
     }
 }
 
@@ -888,13 +969,37 @@ fn resolve_normal_route(
     needs_tools: bool,
     sink: &impl RunEventSink,
 ) -> AppResult<crate::ai_runtime::direct_provider_route::DirectProviderRoute> {
+    let route = build_normal_route(db, context, context_tokens, has_images, needs_tools);
+    match route {
+        Ok(route) => Ok(route),
+        Err(error) => {
+            let code = dispatch_failure_code(&error);
+            RunEngine::fail_before_dispatch_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                code,
+                sink,
+            )?;
+            Err(AppError::msg(code.as_str()))
+        }
+    }
+}
+
+fn build_normal_route(
+    db: &Database,
+    context: &crate::ai_runtime::run_context::RunContext,
+    context_tokens: usize,
+    has_images: bool,
+    needs_tools: bool,
+) -> AppResult<crate::ai_runtime::direct_provider_route::DirectProviderRoute> {
     let requirements = crate::llm::config::ModelPoolRequirements {
         context_tokens,
         has_images,
         needs_tools,
         needs_reasoning: false,
     };
-    let route = match context.model_override() {
+    match context.model_override() {
         Some(model) => crate::llm::config::resolve_model_override_for_requirements_without_secret(
             db,
             &crate::llm::config::ModelReference {
@@ -911,23 +1016,7 @@ fn resolve_normal_route(
             crate::llm::config::resolve_model_pool_for_requirements_without_secret(db, requirements)
         }
     }
-    .and_then(
-        crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route,
-    );
-    match route {
-        Ok(route) => Ok(route),
-        Err(error) => {
-            let code = dispatch_failure_code(&error);
-            RunEngine::fail_before_dispatch_with_sink(
-                db,
-                &accepted.session,
-                &accepted.run_id,
-                code,
-                sink,
-            )?;
-            Err(AppError::msg(code.as_str()))
-        }
-    }
+    .and_then(crate::ai_runtime::direct_provider_route::DirectProviderRoute::from_secret_free_route)
 }
 
 fn dispatch_failure_code(error: &AppError) -> SafeRunErrorCode {

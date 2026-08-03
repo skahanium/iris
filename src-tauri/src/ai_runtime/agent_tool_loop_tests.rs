@@ -242,6 +242,175 @@ fn web_tool_call() -> ToolCall {
     }
 }
 
+fn final_answer_tool_call(arguments: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: "call-submit-final-answer".into(),
+        call_type: "function".into(),
+        function: FunctionCall {
+            name: "submit_final_answer".into(),
+            arguments: arguments.to_string(),
+        },
+    }
+}
+
+fn final_answer_tool_spec() -> ToolSpec {
+    ToolSpec {
+        name: "submit_final_answer".into(),
+        description: "Submit the final answer with source bindings".into(),
+        input_schema: serde_json::json!({
+            "type": "object",
+            "required": ["blocks"],
+            "properties": {
+                "blocks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["markdown", "sources"],
+                        "properties": {
+                            "markdown": { "type": "string" },
+                            "sources": {
+                                "type": "array",
+                                "items": { "type": "string" }
+                            }
+                        }
+                    }
+                }
+            }
+        }),
+        access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+        requires_confirmation: false,
+        max_results: None,
+        capability_affinity: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn internal_final_answer_submission_bypasses_executor_history_and_tool_budget() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![final_answer_tool_call(serde_json::json!({
+                    "blocks": [
+                        { "markdown": "第一段。", "sources": ["W1"] },
+                        { "markdown": "分析上可能如此。", "sources": ["W1", "I"] }
+                    ]
+                }))],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: Some("private reasoning must not enter the transcript".into()),
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("the loop must not request a second turn".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-final-answer",
+            Vec::new(),
+            vec![final_answer_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("internal final answer submission");
+
+    assert_eq!(outcome.content, "第一段。\n\n分析上可能如此。");
+    assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("second turn messages lock")
+        .is_empty());
+}
+
+#[tokio::test]
+async fn final_submission_retries_one_withheld_plain_draft() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: Some("不应展示的普通草稿。".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: Some("private".into()),
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![final_answer_tool_call(serde_json::json!({
+                    "blocks": [{ "markdown": "已提交。", "sources": ["W1"] }]
+                }))],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-final-repair",
+            Vec::new(),
+            vec![final_answer_tool_spec()],
+            &mut observer,
+        )
+        .await
+        .expect("one repair submits the final answer");
+
+    assert_eq!(outcome.content, "已提交。");
+    assert_eq!(outcome.tool_calls, 0);
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(provider
+        .second_turn_messages
+        .lock()
+        .expect("repair messages lock")
+        .iter()
+        .all(|message| message.reasoning_content.is_none()));
+}
+
+#[test]
+fn final_submission_rejects_model_authored_web_markers() {
+    for markdown in ["模型手写的来源。[W99]", "模型手写的来源。[w99]"] {
+        let call = final_answer_tool_call(serde_json::json!({
+            "blocks": [{ "markdown": markdown, "sources": ["W1"] }]
+        }));
+
+        assert!(
+            super::final_answer_submission::FinalAnswerSubmission::from_tool_call(&call).is_err()
+        );
+    }
+}
+
 #[tokio::test]
 async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing() {
     let provider = ScriptedProvider {

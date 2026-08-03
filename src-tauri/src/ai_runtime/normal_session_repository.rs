@@ -45,6 +45,7 @@ pub(crate) struct NormalSessionMessage {
     pub(crate) display_mentions: Vec<serde_json::Value>,
     pub(crate) web_citations: Vec<crate::ai_types::WebCitationEntry>,
     pub(crate) citation_binding: Option<crate::ai_types::CitationBinding>,
+    pub(crate) source_summary: Vec<crate::ai_runtime::provenance::SourceSummaryEntry>,
     pub(crate) created_at: String,
 }
 
@@ -154,10 +155,12 @@ impl NormalSessionRepository {
             )?;
             let rows =
                 statement.query_map(rusqlite::params![session.session_id, limit], |row| {
+                    let role: String = row.get(1)?;
+                    let content = visible_session_message_content(&role, row.get(2)?);
                     Ok(NormalSessionMessage {
                         seq: row.get(0)?,
-                        role: row.get(1)?,
-                        content: row.get(2)?,
+                        role,
+                        content,
                         content_parts: row.get(3)?,
                         tool_calls: row
                             .get::<_, Option<String>>(4)?
@@ -177,6 +180,9 @@ impl NormalSessionRepository {
                             crate::ai_runtime::citation_linkify::parse_web_citation_binding(
                                 row.get::<_, Option<String>>(9)?.as_deref(),
                             ),
+                        source_summary: crate::ai_runtime::citation_linkify::parse_source_summary(
+                            row.get::<_, Option<String>>(9)?.as_deref(),
+                        ),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -221,10 +227,12 @@ impl NormalSessionRepository {
                  LIMIT ?2",
             )?;
             let rows = statement.query_map(rusqlite::params![session_id, limit], |row| {
+                let role: String = row.get(1)?;
+                let content = visible_session_message_content(&role, row.get(2)?);
                 Ok(NormalSessionMessage {
                     seq: row.get(0)?,
-                    role: row.get(1)?,
-                    content: row.get(2)?,
+                    role,
+                    content,
                     content_parts: row.get(3)?,
                     tool_calls: row
                         .get::<_, Option<String>>(4)?
@@ -243,6 +251,9 @@ impl NormalSessionRepository {
                         crate::ai_runtime::citation_linkify::parse_web_citation_binding(
                             row.get::<_, Option<String>>(9)?.as_deref(),
                         ),
+                    source_summary: crate::ai_runtime::citation_linkify::parse_source_summary(
+                        row.get::<_, Option<String>>(9)?.as_deref(),
+                    ),
                 })
             })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -289,10 +300,12 @@ impl NormalSessionRepository {
             )?;
             let rows =
                 statement.query_map(rusqlite::params![session_id, before_seq, limit], |row| {
+                    let role: String = row.get(1)?;
+                    let content = visible_session_message_content(&role, row.get(2)?);
                     Ok(NormalSessionMessage {
                         seq: row.get(0)?,
-                        role: row.get(1)?,
-                        content: row.get(2)?,
+                        role,
+                        content,
                         content_parts: row.get(3)?,
                         tool_calls: row
                             .get::<_, Option<String>>(4)?
@@ -312,6 +325,9 @@ impl NormalSessionRepository {
                             crate::ai_runtime::citation_linkify::parse_web_citation_binding(
                                 row.get::<_, Option<String>>(9)?.as_deref(),
                             ),
+                        source_summary: crate::ai_runtime::citation_linkify::parse_source_summary(
+                            row.get::<_, Option<String>>(9)?.as_deref(),
+                        ),
                     })
                 })?;
             let mut messages = rows.collect::<Result<Vec<_>, _>>()?;
@@ -419,6 +435,17 @@ fn derive_title(first_user_message: Option<&str>) -> String {
         format!("{title}…")
     } else {
         title
+    }
+}
+
+/// Render legacy assistant rows through the same final-text sanitizer used by
+/// new Runs. The database stays untouched; only an obsolete internal control
+/// block is hidden from the transcript and therefore cannot be echoed later.
+fn visible_session_message_content(role: &str, content: String) -> String {
+    if role == "assistant" {
+        crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(&content)
+    } else {
+        content
     }
 }
 

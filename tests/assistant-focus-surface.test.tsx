@@ -109,6 +109,12 @@ const PROFILE: PromptProfileDto = {
   persona: "test",
   writing_style: "plain",
   custom_rules: [],
+  behavior: {
+    initiative: "balanced",
+    directness: "balanced",
+    tone: "natural",
+    challenge: "balanced",
+  },
   language: "zh",
 };
 
