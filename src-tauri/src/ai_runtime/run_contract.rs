@@ -545,8 +545,9 @@ pub struct AssistantRunControlRequest {
 pub struct AssistantRunGetRequest {
     /// Session that owns the Run.
     pub(crate) session: AssistantSessionRef,
-    /// Stable Run identifier. Omit only to recover the latest non-terminal Run
-    /// owned by the supplied session after a frontend reconnect.
+    /// Stable Run identifier. Omit only for a normal-domain session to recover
+    /// its latest non-terminal Run after a frontend reconnect; classified
+    /// sessions require a Run ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) run_id: Option<String>,
 }

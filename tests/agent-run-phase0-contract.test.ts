@@ -99,4 +99,92 @@ describe("阶段 0：Agent Run 契约基线", () => {
     expect(architecture).toContain("CEF 加密持久化边界");
     expect(roadmap).toContain("classified 隔离必须保持为 CEF 加密持久化边界");
   });
+
+  it("将涉密 Run 的易失执行边界与 normal-domain 回放边界写为一致事实", () => {
+    const architecture = read("ARCHITECTURE.md");
+    const ipcDocs = read("docs/ipc-api-reference.md");
+    const aiTypes = read("src/types/ai.ts");
+    const assistantCommands = read(
+      "src-tauri/src/commands/assistant_commands.rs",
+    );
+    const classifiedEphemeral = read(
+      "src-tauri/src/ai_runtime/classified_ephemeral.rs",
+    );
+    const runContract = read("src-tauri/src/ai_runtime/run_contract.rs");
+    const ipc = read("src/lib/ipc.ts");
+    const runGetCommand = sourceBlock(
+      assistantCommands,
+      "pub async fn assistant_run_get",
+      "/// Mint a short-lived capability",
+    );
+
+    expect(classifiedEphemeral).toContain(
+      "This module deliberately owns no database or CEF handle",
+    );
+    expect(classifiedEphemeral).toContain(
+      "Process-local storage for classified execution",
+    );
+    expect(classifiedEphemeral).toContain(
+      "Return only lifecycle metadata for a transient classified Run",
+    );
+    expect(runGetCommand).toContain("SecurityDomain::Classified");
+    expect(runGetCommand).toContain(".get(run_id)");
+    expect(runGetCommand).toContain("None => Ok(None)");
+    expect(aiTypes).toContain(
+      "Omit only for a normal-domain session to recover its latest non-terminal Run",
+    );
+    expect(runContract).toContain(
+      "Omit only for a normal-domain session to recover",
+    );
+    expect(runContract).toContain("sessions require a Run ID");
+    expect(ipc).toContain("assistant_classified_run_take_result");
+
+    expect(architecture).toContain("normal-domain Run 在 accepted 后持久化");
+    expect(architecture).toContain("涉密 Run 仅在当前进程内易失执行");
+    expect(architecture).toContain(
+      "仅可在同一进程内按显式 run ID 读取无正文的易失快照与安全事件",
+    );
+    expect(ipcDocs).toContain(
+      "只接受显式 `runId`，按该 ID 读取无正文的易失快照与安全事件",
+    );
+    expect(ipcDocs).toContain("不支持省略 `runId` 的“最近活动 Run”查询");
+    expect(ipcDocs).toContain("`assistant_classified_run_take_result`");
+  });
+
+  it("冻结 Agent/RAG 可靠性修复的基线、阻断项与后续验收规格", () => {
+    const roadmap = read("ROADMAP.md");
+    const remediationPlan = read(
+      "docs/superpowers/plans/2026-08-07-iris-agent-rag-reliability-remediation.md",
+    );
+    const baseline = JSON.parse(
+      read("docs/eval/results/v1.2.18-agent-rag-stage0-baseline.json"),
+    ) as {
+      revision: string;
+      deterministicRag: { metrics: { anySourceRecallAt5: number } };
+      agentSmoke: { smokeStatus: string; completedCases: number };
+      securityAudit: { highSeverityVulnerabilities: number };
+    };
+
+    expect(roadmap).toContain("Agent / RAG 可靠性修复优先级");
+    expect(roadmap).toContain("v1.2.19 的新功能交付不应绕过这些门禁");
+    expect(remediationPlan).toContain("MAX_COSINE_FALLBACK_CHUNKS");
+    expect(remediationPlan).toContain("block_links");
+    expect(remediationPlan).toContain("sqlite-vec 0.1.9");
+    expect(remediationPlan).toContain(
+      "sqlite_vec_v3_mirrors_all_canonical_caches_insert_update_and_delete",
+    );
+    expect(remediationPlan).toContain("semantic_anchor_embeddings_v2");
+    expect(remediationPlan).toContain("regulation_embeddings_v2");
+    expect(remediationPlan).toContain("searchAvailable");
+    expect(remediationPlan).toContain("24 个闭环用例");
+    expect(remediationPlan).toContain(
+      "不新增远程向量数据库、重排序服务或长期记忆",
+    );
+    expect(baseline.revision).toBe("478ba3cdcbdb70f45ecade471a845b0d0b416acd");
+    expect(baseline.deterministicRag.metrics.anySourceRecallAt5).toBe(0.96);
+    expect(baseline.agentSmoke.smokeStatus).toBe("failed");
+    expect(baseline.agentSmoke.completedCases).toBe(12);
+    expect(baseline.securityAudit.highSeverityVulnerabilities).toBe(13);
+    expect(remediationPlan).toContain("brace-expansion");
+  });
 });

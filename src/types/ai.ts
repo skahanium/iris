@@ -638,7 +638,7 @@ export interface AssistantRunControlRequest {
 
 export interface AssistantRunGetRequest {
   session: AssistantSessionRef;
-  /** Omit to recover this session's latest non-terminal Run after reconnecting. */
+  /** Omit only for a normal-domain session to recover its latest non-terminal Run after reconnecting; classified sessions require runId. */
   runId?: string;
 }
 

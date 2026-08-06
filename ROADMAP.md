@@ -8,6 +8,14 @@ Iris 是桌面端、单用户、本地优先的 Markdown 笔记应用。长期�
 
 Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安装平台，也不提供 MCP、资源、工作区、脚本或依赖安装能力。
 
+## Agent / RAG 可靠性修复优先级
+
+在继续 v1.2.19 的界面工作前，优先完成 Agent / RAG 可靠性修复。阶段 0 的冻结基线、已知阻断项和逐项施工契约见 [修复计划](./docs/superpowers/plans/2026-08-07-iris-agent-rag-reliability-remediation.md) 与 [基线记录](./docs/eval/results/v1.2.18-agent-rag-stage0-baseline.json)。此工作不构成新的发布版本承诺；v1.2.19 的新功能交付不应绕过这些门禁。
+
+- 先修复 Markdown chunk/source 元数据、图关系事实源、语义检索可用性和嵌入状态，再扩大 Agent 的上下文、预算或工具能力。
+- sqlite-vec 目标为全平台默认的本地检索后端；引入或升级所需的 `unsafe` 注册必须满足仓库安全审查规则，且 FTS 是明确可见的降级路径，不得以空结果或 Rust 全表 cosine scan 伪装成功。
+- 修复完成前，发布质量必须同时证明 RAG 质量、范围/引用完整性、Agent 24 个闭环用例和依赖许可；没有真实证据不得把来源组表述为逐段语义核验。
+
 ## 下一里程碑 — v1.2.19 自适应工作区导航与 Agent 主区阅读（规划中）
 
 目标是在不把 Iris 变成永久三栏应用、也不牺牲 Markdown 正文宽度的前提下，恢复可见的知识库空间导航，并为长 Agent 回答提供文档级阅读宽度。详细交互契约见 [自适应工作区规范](./docs/adaptive-workspace.md)，施工顺序见 [实施计划](./docs/superpowers/plans/2026-07-31-v1.2.19-adaptive-workspace.md)，人工验收见 [自适应工作区清单](./docs/testing/v1.2.19-adaptive-workspace-manual-checklist.md)。

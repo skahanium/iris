@@ -306,7 +306,7 @@ impl ClassifiedEphemeralStore {
             .ok_or_else(|| AppError::msg("agent_run_classified_result_expired"))
     }
 
-    /// Return only lifecycle metadata for an active transient Run.
+    /// Return only lifecycle metadata for a transient classified Run.
     pub(crate) fn get(&self, run_id: &str) -> AppResult<Option<AssistantRunGetResponse>> {
         let Some(run) = self.runs.get(run_id) else {
             return Ok(None);

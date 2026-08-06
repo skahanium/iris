@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "iris-agent-rag-stage0-baseline-v1",
+  "revision": "478ba3cdcbdb70f45ecade471a845b0d0b416acd",
+  "recordedAt": "2026-08-06T16:37:30Z",
+  "purpose": "Freeze the v1.2.18 Agent/RAG starting point before the reliability remediation. Functional metrics are reproducible by their named command; performance values are single-run observations, not cross-machine targets. This record contains only closed metrics, test identifiers, error codes and source paths; it contains no user notes, prompts, credentials, URLs or tool arguments.",
+  "measurementEnvironment": {
+    "platform": "macOS 26.5.2 (25F84)",
+    "rustc": "1.94.1 (e408947bf 2026-03-25)",
+    "sqlite": "3.51.0",
+    "node": "22.23.1",
+    "fixtureSample": "48 synthetic notes, 60 labelled queries"
+  },
+  "deterministicRag": {
+    "command": "npm run rag:eval",
+    "status": "passed",
+    "fixture": "docs/eval/fixtures/rag-v2-vault (48 synthetic notes, 60 labelled queries)",
+    "vectorMode": "disabled by the test; this is an FTS/metadata/scope/rank/ContextPacket baseline, not a sqlite-vec quality claim",
+    "metrics": {
+      "anySourceRecallAt5": 0.96,
+      "anySourceRecallAt30": 0.96,
+      "allRequiredSourceRecallAt5": 0.9,
+      "allRequiredSourceRecallAt30": 0.9,
+      "mrrAt10": 0.94,
+      "ndcgAt10": 0.945,
+      "metadataMatches": 10,
+      "noAnswerFalsePositiveRate": 0.0,
+      "scopeLeaks": 0,
+      "warmP95Milliseconds": 0.3,
+      "warmP95Interpretation": "single-run local observation; it varies by machine and process and is not a release threshold"
+    }
+  },
+  "agentSmoke": {
+    "command": "npm run agent:eval:smoke",
+    "smokeStatus": "failed",
+    "requiredCases": 24,
+    "completedCases": 12,
+    "failedCaseIds": [25, 36, 37, 48],
+    "repetitionsPerFailedCase": 3,
+    "terminalErrorCodes": [
+      "agent_run_incomplete_output",
+      "agent_run_web_provider_failed"
+    ],
+    "reproduction": "The encrypted-credential child test reliably fails with the selected local LLM/MCP transports, while invoking the Rust test without IRIS_AGENT_EVAL_CREDENTIAL_PROBE=1 is a no-op and is not evidence that the credential-hydration pilot passes.",
+    "triage": "Stage 0 records this as a release blocker. A later TDD task must preserve the real encrypted-credential isolation assertion and make all 24 interaction-matrix cases terminal and passing; it must not relax the expected count or mark external failures as success."
+  },
+  "securityAudit": {
+    "rustCommand": "npm run audit:rust",
+    "rustStatus": "passed",
+    "rustAdvisoriesLoaded": 1190,
+    "rustDependenciesScanned": 651,
+    "npmCommand": "npm audit --audit-level=high",
+    "npmStatus": "failed",
+    "highSeverityVulnerabilities": 13,
+    "rootAdvisory": "GHSA-rgw5-rvv9-x895 in brace-expansion through minimatch and the ESLint/TypeScript-eslint development dependency chain",
+    "automatedFix": "unavailable",
+    "triage": "This is a release blocker. A later dependency task must update, replace, isolate or explicitly time-bound the affected development dependency chain; it must not lower npm audit severity or suppress the finding without a maintainer-approved security decision."
+  },
+  "confirmedStartingConditions": [
+    "retrieval_broker/graph.rs reads confirmed block_links although the Markdown indexer writes links",
+    "embedding/engine.rs returns an empty semantic result when chunk_embeddings_v2 exceeds MAX_COSINE_FALLBACK_CHUNKS (8000)",
+    "embedding_generation_ready requires global generation completeness, so a changed document can make usable existing vectors unavailable",
+    "indexer/chunker.rs can carry a short pre-heading chunk into the next heading and assign the new heading path",
+    "the default packaging and CI paths do not prove all-platform sqlite-vec retrieval quality"
+  ],
+  "nonClaims": [
+    "The deterministic RAG result does not prove vector recall, vector latency, semantic entailment or a calibrated citation model.",
+    "A source group proves only source binding for an uncalibrated route; it does not prove every visible claim is semantically supported.",
+    "This snapshot does not authorize a remote vector database, an HTTP provider endpoint, a reranking service or a long-term memory subsystem."
+  ]
+}
