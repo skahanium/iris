@@ -10,8 +10,8 @@ impl ToolCatalogEntry {
     pub(crate) fn required_capability_ids(&self) -> &'static [&'static str] {
         match self.name {
             "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault"
-            | "get_block_links" | "get_backlinks" | "vault_version_list" | "get_regulation"
-            | "read_note" | "get_outline" => &["vault.read"],
+            | "get_backlinks" | "vault_version_list" | "get_regulation" | "read_note"
+            | "get_outline" => &["vault.read"],
             "get_context_packets" => &["context.read"],
             "system_time_now" | "app_context_read" | "capabilities_read" => &["runtime.read"],
             "web_search" => &["web.search"],

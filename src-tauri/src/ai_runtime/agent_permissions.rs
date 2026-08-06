@@ -319,9 +319,7 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
 
     let profile = match tool_name {
         "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault" | "get_backlinks"
-        | "get_block_links" | "conclude_reasoning" | "spawn_subagent" => {
-            (vec![Atom::VaultSearch], Risk::Low, true)
-        }
+        | "conclude_reasoning" | "spawn_subagent" => (vec![Atom::VaultSearch], Risk::Low, true),
         "read_note" | "get_outline" | "get_regulation" | "get_context_packets" => {
             (vec![Atom::VaultRead], Risk::Low, true)
         }

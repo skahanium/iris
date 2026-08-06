@@ -77,7 +77,6 @@ fn live_evaluator_normalizes_runtime_web_capability_to_its_tool_contract_name() 
         "search_keyword",
         "get_regulation",
         "get_context_packets",
-        "get_block_links",
         "vault_version_list",
     ] {
         assert_eq!(
@@ -86,6 +85,11 @@ fn live_evaluator_normalizes_runtime_web_capability_to_its_tool_contract_name() 
             "the evaluator must recognize every production local-read tool admitted by vault/context capabilities"
         );
     }
+    assert_eq!(
+        normalize_observed_eval_tool_name("get_block_links"),
+        "unexpected_tool",
+        "removed tools must not remain in the evaluator's production surface"
+    );
     assert_eq!(
         normalize_observed_eval_tool_name("provider_private_tool"),
         "unexpected_tool",

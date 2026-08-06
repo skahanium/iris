@@ -36,13 +36,37 @@ pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<Mark
     let mut current_heading_path: Option<String> = None;
     let mut heading_stack: Vec<String> = Vec::new();
     let max_chars = max_chars.max(1);
-    const MIN_CHARS: usize = 100;
+    const TARGET_CHARS: usize = 320;
+    const HARD_MAX_CHARS: usize = 384;
+    const OVERLAP_CHARS: usize = 48;
+    let target_chars = max_chars.min(TARGET_CHARS);
+    let hard_max_chars = max_chars.min(HARD_MAX_CHARS).max(target_chars);
+    let overlap_chars = if target_chars > OVERLAP_CHARS {
+        OVERLAP_CHARS
+    } else {
+        0
+    };
     let mut fence = FenceState::new();
+    let lines = lines_with_offsets(content);
 
-    for (line_start, line, line_with_eol_len) in lines_with_offsets(content) {
+    for (line_index, &(line_start, line, line_with_eol_len)) in lines.iter().enumerate() {
         let in_fence = fence.feed(line);
-        let is_boundary = !in_fence && (line.starts_with('#') || line.trim().is_empty());
-        if is_boundary && !current.is_empty() && current_chars >= MIN_CHARS {
+        let heading = if in_fence {
+            None
+        } else {
+            parse_heading(line).or_else(|| {
+                lines
+                    .get(line_index + 1)
+                    .and_then(|(_, next_line, _)| parse_setext_underline(next_line))
+                    .filter(|_| !is_fence_delimiter(line))
+                    .map(|level| (level, line.trim().to_string()))
+                    .filter(|(_, heading)| !heading.is_empty())
+            })
+        };
+
+        if heading.is_some()
+            || (!in_fence && line.trim().is_empty() && current_chars >= target_chars)
+        {
             push_non_empty_trimmed(
                 &mut chunks,
                 &current,
@@ -52,12 +76,10 @@ pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<Mark
             current.clear();
             current_chars = 0;
         }
-        if let Some((level, heading)) = parse_heading(line) {
-            if !in_fence {
-                heading_stack.truncate(level.saturating_sub(1));
-                heading_stack.push(heading);
-                current_heading_path = heading_path(&heading_stack);
-            }
+        if let Some((level, heading)) = heading {
+            heading_stack.truncate(level.saturating_sub(1));
+            heading_stack.push(heading);
+            current_heading_path = heading_path(&heading_stack);
         }
         if !line.is_empty() || !current.is_empty() {
             if !current.is_empty() {
@@ -70,17 +92,17 @@ pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<Mark
             current.push_str(line);
             current_chars += line.chars().count();
         }
-        while current_chars > max_chars {
+        while current_chars > hard_max_chars {
             let trimmed = current.trim_start();
             if trimmed.len() != current.len() {
                 current_start += current.len() - trimmed.len();
                 current = trimmed.to_string();
                 current_chars = current.chars().count();
-                if current_chars <= max_chars {
+                if current_chars <= hard_max_chars {
                     break;
                 }
             }
-            let split_at = byte_index_after_chars(&current, max_chars);
+            let split_at = byte_index_after_chars(&current, target_chars);
             let (head, tail) = current.split_at(split_at);
             push_non_empty_trimmed(
                 &mut chunks,
@@ -88,9 +110,11 @@ pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<Mark
                 current_start,
                 current_heading_path.clone(),
             );
-            current_start += split_at;
-            current = tail.to_string();
-            current_chars = current_chars.saturating_sub(max_chars);
+            let overlap_start =
+                byte_index_after_chars(&current, target_chars.saturating_sub(overlap_chars));
+            current_start += overlap_start;
+            current = format!("{}{}", &current[overlap_start..split_at], tail);
+            current_chars = current.chars().count();
         }
         if line_with_eol_len > line.len() && current.is_empty() {
             current_start = line_start + line_with_eol_len;
@@ -166,9 +190,20 @@ fn trim_offsets(text: &str, source_start: usize) -> (usize, usize, &str) {
 }
 
 fn parse_heading(line: &str) -> Option<(usize, String)> {
-    let trimmed = line.trim_start();
-    let level = trimmed.chars().take_while(|c| *c == '#').count();
+    let leading_spaces = line.bytes().take_while(|byte| *byte == b' ').count();
+    if leading_spaces > 3 {
+        return None;
+    }
+    let trimmed = &line[leading_spaces..];
+    let level = trimmed.bytes().take_while(|byte| *byte == b'#').count();
     if level == 0 || level > 6 {
+        return None;
+    }
+    if trimmed
+        .as_bytes()
+        .get(level)
+        .is_some_and(|byte| !byte.is_ascii_whitespace())
+    {
         return None;
     }
     let rest = trimmed[level..].trim();
@@ -177,6 +212,24 @@ fn parse_heading(line: &str) -> Option<(usize, String)> {
     } else {
         Some((level, rest.trim_matches('#').trim().to_string()))
     }
+}
+
+fn parse_setext_underline(line: &str) -> Option<usize> {
+    let leading_spaces = line.bytes().take_while(|byte| *byte == b' ').count();
+    if leading_spaces > 3 {
+        return None;
+    }
+    let marker = line[leading_spaces..].trim_end();
+    let first = marker.as_bytes().first().copied()?;
+    if !matches!(first, b'=' | b'-') || !marker.bytes().all(|byte| byte == first) {
+        return None;
+    }
+    Some(if first == b'=' { 1 } else { 2 })
+}
+
+fn is_fence_delimiter(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
 }
 
 fn heading_path(stack: &[String]) -> Option<String> {
@@ -283,13 +336,68 @@ mod tests {
     fn ignores_heading_markers_inside_fenced_code() {
         let md = "```python\n# not a heading\nprint('x')\n```\n\n# Real\n\nBody.";
         let chunks = chunk_markdown_with_metadata(md, 512);
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].heading_path.as_deref(), Some("Real"));
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].heading_path, None);
+        assert_eq!(chunks[1].heading_path.as_deref(), Some("Real"));
     }
 
     #[test]
     fn whitespace_only_returns_empty() {
         let chunks = chunk_markdown("   \n\n  ", 512);
         assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn heading_flushes_a_short_preamble_before_updating_heading_path() {
+        let chunks = chunk_markdown_with_metadata("brief\n# Next\nbody", 512);
+        assert_eq!(chunks[0].content, "brief");
+        assert_eq!(chunks[0].heading_path, None);
+        assert_eq!(chunks[1].heading_path.as_deref(), Some("Next"));
+    }
+
+    #[test]
+    fn setext_heading_starts_a_new_chunk_outside_fences() {
+        let chunks = chunk_markdown_with_metadata("Intro\n=====\n\nBody", 512);
+        assert_eq!(chunks[0].heading_path.as_deref(), Some("Intro"));
+    }
+
+    #[test]
+    fn atx_heading_accepts_at_most_three_leading_spaces() {
+        let chunks = chunk_markdown_with_metadata("   # Three\nbody\n    # Four\nmore", 512);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.heading_path.as_deref() == Some("Three")));
+    }
+
+    #[test]
+    fn setext_markers_inside_fences_do_not_change_heading_path() {
+        let chunks = chunk_markdown_with_metadata("```\nNot a heading\n=====\n```", 512);
+        assert!(chunks.iter().all(|chunk| chunk.heading_path.is_none()));
+    }
+
+    #[test]
+    fn internal_policy_keeps_hard_splits_below_384_chars_with_bounded_overlap() {
+        let content = "a".repeat(500);
+        let chunks = chunk_markdown_with_metadata(&content, 2_000);
+
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks
+            .iter()
+            .all(|chunk| chunk.content.chars().count() <= 384));
+        assert_eq!(chunks[0].source_end - chunks[1].source_start, 48);
+        assert_eq!(
+            &content[chunks[1].source_start..chunks[0].source_end],
+            "a".repeat(48)
+        );
+    }
+
+    #[test]
+    fn hard_split_overlap_does_not_repeat_the_heading_line() {
+        let content = format!("# Heading\n{}", "a".repeat(400));
+        let chunks = chunk_markdown_with_metadata(&content, 2_000);
+
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].content.starts_with("# Heading"));
+        assert!(!chunks[1].content.contains("# Heading"));
     }
 }

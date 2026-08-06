@@ -242,12 +242,6 @@ async fn note_read_tools_reject_paths_outside_the_immutable_run_scope() {
             &serde_json::json!({ "path": "private/secret.md" }),
         )
         .await,
-        note_impl::get_block_links(
-            &state,
-            &ctx,
-            &serde_json::json!({ "note_path": "private/secret.md" }),
-        )
-        .await,
     ] {
         assert_eq!(
             result
@@ -291,46 +285,6 @@ async fn list_vault_returns_only_paths_inside_the_immutable_run_scope() {
     );
     assert_eq!(result.output["count"], 1);
     assert_eq!(result.output["files"][0]["path"], "notes/test.md");
-}
-
-#[tokio::test]
-async fn get_block_links_drops_rows_without_a_resolved_target_path() {
-    let (state, _dir) = test_state();
-    state
-        .db
-        .with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO files
-                 (path, title, content_hash, word_count, created_at, updated_at)
-                 VALUES ('notes/test.md', 'Test', 'hash', 1, datetime('now'), datetime('now'))",
-                [],
-            )?;
-            let source_id = conn.last_insert_rowid();
-            conn.execute(
-                "INSERT INTO block_links
-                 (source_file_id, source_anchor_key, target_file_id, target_anchor_key,
-                  link_type, confidence, is_confirmed, created_by, created_at)
-                 VALUES (?1, NULL, NULL, 'missing-target', 'wikilink', 1.0, 0, 'test', datetime('now'))",
-                [source_id],
-            )?;
-            Ok(())
-        })
-        .expect("seed unresolved block link");
-    let scope = crate::ai_runtime::retrieval_scope::RetrievalScope {
-        path_prefixes: vec!["notes/".into()],
-        ..Default::default()
-    };
-    let ctx = dispatch_context_with_retrieval_scope(&scope);
-
-    let result = note_impl::get_block_links(
-        &state,
-        &ctx,
-        &serde_json::json!({ "note_path": "notes/test.md" }),
-    )
-    .await
-    .expect("block links");
-
-    assert_eq!(result["links"], serde_json::json!([]));
 }
 
 #[tokio::test]
@@ -446,26 +400,6 @@ async fn get_backlinks_rejects_parent_dir() {
     let ctx = dispatch_context_with_plan(None);
     let args = serde_json::json!({ "path": "../secret.md" });
     let result = note_impl::get_backlinks(&state, &ctx, &args).await;
-    assert!(result.is_err());
-    assert!(!result.unwrap_err().to_string().is_empty());
-}
-
-#[tokio::test]
-async fn get_block_links_rejects_parent_dir() {
-    let (state, _dir) = test_state();
-    let ctx = dispatch_context_with_plan(None);
-    let args = serde_json::json!({ "note_path": "../note.md" });
-    let result = note_impl::get_block_links(&state, &ctx, &args).await;
-    assert!(result.is_err());
-    assert!(!result.unwrap_err().to_string().is_empty());
-}
-
-#[tokio::test]
-async fn get_block_links_rejects_iris_metadata() {
-    let (state, _dir) = test_state();
-    let ctx = dispatch_context_with_plan(None);
-    let args = serde_json::json!({ "note_path": ".iris/versions/x.md" });
-    let result = note_impl::get_block_links(&state, &ctx, &args).await;
     assert!(result.is_err());
     assert!(!result.unwrap_err().to_string().is_empty());
 }

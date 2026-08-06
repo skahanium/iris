@@ -385,7 +385,6 @@ impl SubAgentCoordinator {
             "list_vault",
             "get_outline",
             "get_backlinks",
-            "get_block_links",
             "vault_version_list",
             "git_read_status",
             "git_read_diff",

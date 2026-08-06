@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::paths::validate_user_note_relative_path;
@@ -166,70 +164,4 @@ pub(super) async fn get_backlinks(
         Ok(entries)
     })?;
     Ok(serde_json::json!({ "backlinks": entries, "count": entries.len() }))
-}
-
-pub(super) async fn get_block_links(
-    state: &AppState,
-    ctx: &ToolDispatchContext<'_>,
-    args: &serde_json::Value,
-) -> AppResult<serde_json::Value> {
-    let note_path = args["note_path"]
-        .as_str()
-        .ok_or_else(|| AppError::msg("missing note_path"))?;
-    ctx.ensure_document_capability(
-        note_path,
-        crate::ai_runtime::policy_decision_engine::DocumentCapability::Read,
-    )?;
-    ctx.ensure_retrieval_scope_allows_path(&state.db, note_path)?;
-    ctx.ensure_active_skill_scope_allows_path(&state.db, note_path)?;
-    let vault: &Path = &state.vault_path()?;
-    let _abs = validate_user_note_relative_path(vault, note_path)?;
-    let links = state.db.with_read_conn(|conn| {
-        let file_id: Option<i64> = conn
-            .query_row("SELECT id FROM files WHERE path = ?1", [note_path], |r| {
-                r.get(0)
-            })
-            .ok();
-        let Some(fid) = file_id else {
-            return Ok(vec![]);
-        };
-        let mut stmt = conn.prepare(
-            "SELECT bl.id, tf.path, bl.link_type, bl.is_confirmed
-             FROM block_links bl
-             LEFT JOIN files tf ON tf.id = bl.target_file_id
-             WHERE bl.source_file_id = ?1
-               AND (tf.path IS NULL OR (tf.path <> '.classified' AND tf.path NOT LIKE '.classified/%'))
-             LIMIT 30",
-        )?;
-        let rows = stmt.query_map([fid], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)? != 0,
-            ))
-        })?;
-        let mut links = Vec::new();
-        for row in rows {
-            let (id, target_path, link_type, is_confirmed) = row?;
-            let Some(target_path) = target_path else {
-                continue;
-            };
-            if !ctx
-                .retrieval_scope
-                .allows_path(conn, &target_path)
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            links.push(serde_json::json!({
-                "id": id,
-                "target_path": target_path,
-                "link_type": link_type,
-                "is_confirmed": is_confirmed,
-            }));
-        }
-        Ok(links)
-    })?;
-    Ok(serde_json::json!({ "links": links }))
 }

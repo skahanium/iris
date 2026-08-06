@@ -86,22 +86,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             max_results: None,
         },
         ToolCatalogEntry {
-            name: "get_block_links",
-            description: "获取笔记的显式或已确认块级链接",
-            input_schema: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "note_path": {"type": "string"}
-                },
-                "required": ["note_path"]
-            }),
-            access_level: ToolAccessLevel::ReadIndex,
-            requires_confirmation: false,
-            implementation: ToolImplementationStatus::Dispatchable,
-            default_enabled_without_skill: true,
-            max_results: Some(50),
-        },
-        ToolCatalogEntry {
             name: "read_note",
             description: "读取指定笔记的 Markdown 全文（可截断）",
             input_schema: serde_json::json!({

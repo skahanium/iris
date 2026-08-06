@@ -165,6 +165,22 @@ fn catalog_find_works() {
 }
 
 #[test]
+fn dead_block_links_tool_is_not_exposed() {
+    assert!(catalog_find("get_block_links").is_none());
+    assert!(!DISPATCHABLE_TOOL_NAMES.contains(&"get_block_links"));
+    assert!(
+        crate::ai_runtime::agent_permissions::permission_profile_for_tool("get_block_links")
+            .is_none()
+    );
+    assert!(
+        crate::ai_runtime::subagent_coordinator::SubAgentCoordinator::child_tool_surface(&[
+            "get_block_links".to_string()
+        ])
+        .is_empty()
+    );
+}
+
+#[test]
 fn catalog_exposes_skill_root_capability_tools() {
     for name in [
         "memory_read",
