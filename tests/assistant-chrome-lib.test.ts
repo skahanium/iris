@@ -6,6 +6,7 @@ import {
   buildAssistantChromeSnapshot,
   resolveToolActivityLabel,
 } from "@/lib/assistant-chrome";
+import { TOOL_DISPLAY_NAMES, toolDisplayName } from "@/lib/tool-display-names";
 
 describe("assistant chrome helpers", () => {
   it("counts only safe EvidenceRef metadata", () => {
@@ -76,5 +77,10 @@ describe("assistant chrome helpers", () => {
 
     expect(assistantChromeSnapshotsEqual(left, same)).toBe(true);
     expect(assistantChromeSnapshotsEqual(left, changed)).toBe(false);
+  });
+
+  it("does not expose the removed block-links tool in the UI display map", () => {
+    expect(TOOL_DISPLAY_NAMES).not.toHaveProperty("get_block_links");
+    expect(toolDisplayName("get_block_links")).toBe("get_block_links");
   });
 });

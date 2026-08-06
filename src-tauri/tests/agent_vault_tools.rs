@@ -425,6 +425,11 @@ async fn ordinary_agent_retrieval_filters_classified_rows_even_if_indexed() {
         "notes/open.md",
         "# Open\n\nordinary public project note",
     );
+    index_note(
+        &state,
+        "notes/neighbor.md",
+        "# Neighbor\n\npublic graph neighbor sentinel",
+    );
 
     state
         .db
@@ -492,11 +497,16 @@ async fn ordinary_agent_retrieval_filters_classified_rows_even_if_indexed() {
                 [],
                 |row| row.get(0),
             )?;
+            let neighbor_file_id: i64 = conn.query_row(
+                "SELECT id FROM files WHERE path = 'notes/neighbor.md'",
+                [],
+                |row| row.get(0),
+            )?;
             conn.execute(
-                "INSERT INTO block_links
-                 (source_file_id, target_file_id, link_type, confidence, is_confirmed, created_by, created_at)
-                 VALUES (?1, ?2, 'related', 1.0, 1, 'test', ?3)",
-                rusqlite::params![open_file_id, secret_file_id, "2026-01-01T00:00:00Z"],
+                "INSERT INTO links (source_id, target_id, context)
+                 VALUES (?1, ?2, 'classified graph edge'),
+                        (?1, ?3, 'public graph edge')",
+                rusqlite::params![open_file_id, secret_file_id, neighbor_file_id],
             )?;
             Ok(())
         })
@@ -546,5 +556,11 @@ async fn ordinary_agent_retrieval_filters_classified_rows_even_if_indexed() {
             !serialized.contains(".classified") && !serialized.contains("Secret Title"),
             "{tool} leaked classified metadata: {serialized}"
         );
+        if tool == "search_hybrid" {
+            assert!(
+                serialized.contains("public graph neighbor sentinel"),
+                "search_hybrid did not exercise the public graph-neighbor path: {serialized}"
+            );
+        }
     }
 }

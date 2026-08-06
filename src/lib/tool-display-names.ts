@@ -7,7 +7,6 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_context_packets: "获取证据包",
   get_genre_template: "获取文种模板",
   get_model_essays: "获取范文",
-  get_block_links: "获取块级链接",
   read_note: "读取笔记",
   list_vault: "列出笔记库",
   get_outline: "文档大纲",
