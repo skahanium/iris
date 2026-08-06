@@ -381,6 +381,92 @@ describe("useAssistantRunTranscript", () => {
     expect(
       messages.some((message) => message.content.includes("发送继续")),
     ).toBe(true);
+    expect(
+      messages[1]?.processItems?.some((item) => item.label === "答复完毕"),
+    ).toBe(false);
+  });
+
+  it("失败终态保留已露出的正文，但过程回落为失败而非答复完毕", () => {
+    messages = [
+      { role: "user", content: "最近新闻", runId: "run-1", turnId: "turn-1" },
+      {
+        role: "assistant",
+        content: "已经安全展示的前半段。",
+        runId: "run-1",
+        turnId: "turn-1",
+        processItems: [
+          {
+            id: "stage:generating",
+            kind: "stage",
+            label: "正在生成答复",
+            status: "running",
+            createdAt: 1,
+          },
+        ],
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() =>
+      root?.render(
+        <Probe
+          presentation={{
+            runId: "run-1",
+            lastSeq: 3,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [],
+            answer: "已经安全展示的前半段。",
+            answerComplete: false,
+          }}
+          run={replayAssistantRunEvents("run-1", [
+            {
+              runId: "run-1",
+              seq: 1,
+              stateVersion: 0,
+              timestamp: "2026-08-06T00:00:00.000Z",
+              type: "accepted",
+              payload: {
+                kind: "accepted",
+                turnId: "turn-1",
+                sessionKey: "session-1",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 2,
+              stateVersion: 1,
+              timestamp: "2026-08-06T00:00:01.000Z",
+              type: "stage_changed",
+              payload: {
+                kind: "stage_changed",
+                state: "running",
+                stage: "正在生成答复",
+              },
+            },
+            {
+              runId: "run-1",
+              seq: 3,
+              stateVersion: 2,
+              timestamp: "2026-08-06T00:00:02.000Z",
+              type: "failed",
+              payload: {
+                kind: "failed",
+                code: "agent_run_incomplete_output",
+                message: "回答未完整生成，请重试",
+              },
+            },
+          ] satisfies AssistantRunEvent[])}
+        />,
+      ),
+    );
+
+    expect(messages[1]?.content).toBe("已经安全展示的前半段。");
+    expect(messages[1]?.presentationStreaming).toBe(false);
+    expect(
+      messages[1]?.processItems?.some((item) => item.label === "答复完毕"),
+    ).toBe(false);
   });
 
   it("直播中展示序号缺口时保留已露出正文，不用空耐久正文覆盖", () => {

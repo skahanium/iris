@@ -552,6 +552,71 @@ fn direct_engine_calls_provider_once_and_finalizes_one_run() {
 }
 
 #[test]
+fn direct_engine_strips_a_model_authored_source_appendix_before_persistence() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some(
+            "郭富城现任妻子是方媛。\n\n**来源：**\n\n• https://zh.wikipedia.org/wiki/%E6%96%B9%E5%AA%9B\n• https://baike.baidu.com/item/%E6%96%B9%E5%AA%9B/18899138"
+                .to_string(),
+        ),
+    };
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_direct_with_sink(&db, &accepted.session, &accepted.run_id, &provider, &sink)
+        .expect("direct execution");
+
+    let content: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT content FROM session_messages WHERE session_id = 1 AND role = 'assistant'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted direct answer");
+    assert_eq!(content, "郭富城现任妻子是方媛。");
+    assert!(sink
+        .events
+        .lock()
+        .expect("sink lock")
+        .iter()
+        .all(|event| !event.to_string().contains("https://")));
+}
+
+#[test]
+fn direct_engine_does_not_complete_an_answer_that_only_contains_a_source_appendix() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some("来源\n- https://example.test/unverified".to_string()),
+    };
+    let sink = RecordingSink::default();
+
+    let error = RunEngine::execute_direct_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+    )
+    .expect_err("source appendix alone must not complete");
+
+    assert_eq!(error.to_string(), SafeRunErrorCode::EmptyOutput.as_str());
+    let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+        .expect("replay")
+        .expect("run exists");
+    assert_eq!(replay.run.state, RunState::Failed);
+    assert!(replay.run.final_message_id.is_none());
+    assert!(replay.events.iter().all(|event| {
+        serde_json::to_value(event).expect("serialize event")["type"] != "completed"
+    }));
+}
+
+#[test]
 fn completed_runs_refresh_conversation_memory_without_changing_terminal_state() {
     let db = Database::open_in_memory().expect("database");
     let sink = RecordingSink::default();
@@ -2057,8 +2122,8 @@ fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
 
     for (index, token) in [
         "结论：根据你提",
-        "供的信息，本轮 web 证据显示已发布 [W",
-        "1]。\n",
+        "供的信息，先给出结论。\n",
+        "本轮 web 证据显示已发布 [W1]。\n",
     ]
     .into_iter()
     .enumerate()
@@ -2079,7 +2144,9 @@ fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
             )
             .expect("stream final token");
     }
-    observer.bind_validated_content("结论：根据可用的信息，查到的网页资料显示已发布 。\n");
+    observer.bind_validated_content(
+        "结论：根据可用的信息，先给出结论。\n查到的网页资料显示已发布 。\n",
+    );
     observer.flush().expect("flush validated stream");
 
     let presentation = sink
@@ -2111,7 +2178,7 @@ fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
             .iter()
             .filter_map(|event| event["delta"].as_str())
             .collect::<String>(),
-        "结论：根据可用的信息，查到的网页资料显示已发布 。\n"
+        "结论：根据可用的信息，先给出结论。\n查到的网页资料显示已发布 。\n"
     );
 }
 
@@ -2537,6 +2604,57 @@ async fn streaming_direct_engine_persists_deltas_and_one_terminal_message() {
 }
 
 #[tokio::test]
+async fn streaming_direct_engine_never_emits_a_model_authored_source_appendix() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, request()).expect("accepted");
+    let provider = FixedContentStreamingProvider {
+        content:
+            "结论已经给出。\n\n**来源：**\n\n• https://example.test/one\n• https://example.test/two"
+                .to_string(),
+    };
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_direct_streaming_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        &provider,
+        &sink,
+    )
+    .await
+    .expect("streaming direct run");
+
+    let presentation = sink
+        .presentation_events
+        .lock()
+        .expect("presentation lock")
+        .clone();
+    let visible = presentation
+        .iter()
+        .filter(|event| event["kind"] == "answer_delta")
+        .filter_map(|event| event["delta"].as_str())
+        .collect::<String>();
+    assert_eq!(visible, "结论已经给出。");
+    assert!(presentation
+        .iter()
+        .all(|event| event["kind"] != "answer_reset"));
+    assert!(presentation
+        .iter()
+        .all(|event| !event.to_string().contains("https://")));
+    let persisted: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT content FROM session_messages WHERE session_id = 1 AND role = 'assistant'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted direct answer");
+    assert_eq!(persisted, "结论已经给出。");
+}
+
+#[tokio::test]
 async fn streaming_direct_engine_persists_only_the_answer_after_meta_analysis() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
@@ -2925,6 +3043,101 @@ async fn tool_loop_engine_never_persists_a_meta_analysis_prefix() {
 }
 
 #[tokio::test]
+async fn tool_loop_appends_one_recovery_turn_after_a_title_only_answer() {
+    let db = Database::open_in_memory().expect("database");
+    let accepted = RunIntake::start(&db, standard_tool_loop_request()).expect("accepted");
+    let evidence = AgentEvidenceRepository::register_web(
+        &db,
+        WebEvidenceInput {
+            session_id: 1,
+            run_id: accepted.run_id.clone(),
+            message_seq_first: 1,
+            material_role: MaterialRole::Reference,
+            title: "当前网页来源".to_string(),
+            url: "https://example.test/latest-news".to_string(),
+            normalized_url: "https://example.test/latest-news".to_string(),
+            domain: "example.test".to_string(),
+            retrieved_at: "2026-08-06T00:00:00Z".to_string(),
+            provider_id: "test-web".to_string(),
+            provider_kind: "https".to_string(),
+            raw_result_hash: "latest-news".to_string(),
+            extraction_method: "test".to_string(),
+            bounded_excerpt: "近期新闻摘要。".to_string(),
+            retrieval_reason: Some("test".to_string()),
+            score: None,
+            source_rank: Some(1),
+            conflict_group: None,
+            failure_reason: None,
+        },
+    )
+    .expect("register current web evidence");
+    let provider = ScriptedToolLoopProvider {
+        responses: std::sync::Mutex::new(VecDeque::from([
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("特朗普 最新新闻 2026年8月".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some("近期报道主要聚焦其国内政策与外交活动。".to_string()),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+    };
+    let sink = RecordingSink::default();
+
+    RunEngine::execute_tool_loop_with_sink(
+        &db,
+        &accepted.session,
+        &accepted.run_id,
+        vec![crate::ai_runtime::LlmMessage {
+            role: MessageRole::User,
+            content: "最近有什么新闻".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }],
+        vec![],
+        &[evidence.evidence_id],
+        None,
+        &provider,
+        &StrictWebEvidenceExecutor {
+            evidence_ids: vec![evidence.evidence_id],
+        },
+        &sink,
+    )
+    .await
+    .expect("title-only final answer is recovered by one append-only turn");
+
+    let persisted: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT m.content FROM agent_runs r JOIN session_messages m ON m.session_id = r.session_id WHERE r.run_id = ?1 AND m.role = 'assistant'",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted recovered answer");
+    assert_eq!(
+        persisted,
+        "特朗普 最新新闻 2026年8月\n\n近期报道主要聚焦其国内政策与外交活动。"
+    );
+    assert!(provider
+        .responses
+        .lock()
+        .expect("scripted responses")
+        .is_empty());
+}
+
+#[tokio::test]
 async fn tool_success_followed_by_oversized_output_has_one_precise_safe_terminal() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, standard_tool_loop_request()).expect("accepted");
@@ -3051,7 +3264,10 @@ async fn strict_web_answer_without_current_run_marker_completes_with_a_source_gr
     let provider = ScriptedToolLoopProvider {
         responses: std::sync::Mutex::new(VecDeque::from([
             crate::ai_runtime::model_gateway::GatewayResponse {
-                content: Some("缺少本轮引用的答复。".to_string()),
+                content: Some(
+                    "缺少本轮引用的答复。\n\n资料来源\n- https://example.test/current-run"
+                        .to_string(),
+                ),
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
@@ -3102,6 +3318,17 @@ async fn strict_web_answer_without_current_run_marker_completes_with_a_source_gr
         })
         .expect("persisted source-group answer");
     assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+    let content: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT content FROM session_messages WHERE session_id = 1 AND role = 'assistant'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("persisted source-group body");
+    assert_eq!(content, "缺少本轮引用的答复。");
 }
 
 #[tokio::test]

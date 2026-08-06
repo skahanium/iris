@@ -317,18 +317,155 @@ pub(crate) fn normalize_source_group_visible_text(text: &str) -> String {
             normalized.replace(from, to)
         };
     }
+    normalize_model_visible_text(&normalized)
+}
+
+/// Remove a model-authored source appendix from any user-visible answer.
+///
+/// Source lists are rendered solely from the evidence ledger by the controlled
+/// citation footer. This helper therefore deliberately does not depend on a
+/// Web route, tool loop, or citation binding: direct answers must not gain a
+/// second, unverifiable source surface merely because they bypassed a tool.
+pub(crate) fn normalize_model_visible_text(text: &str) -> String {
+    strip_trailing_model_source_appendix(text)
+}
+
+/// Remove a model-authored source appendix when it occupies the answer tail.
+///
+/// The controlled citation footer is the sole user-facing source list, so a
+/// second Markdown appendix would present unverified prose and duplicate the
+/// verified disclosure.
+///
+/// Deliberately narrow: an exact source heading must be followed exclusively
+/// by Markdown list entries or HTTPS links. Ordinary discussion of source
+/// quality, or a heading followed by normal prose, remains part of the answer.
+fn strip_trailing_model_source_appendix(text: &str) -> String {
+    let lines = text.lines().collect::<Vec<_>>();
+    let Some((heading_index, first_item_index)) = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| is_model_source_heading(line))
+        .filter_map(|(index, _)| {
+            lines[index + 1..]
+                .iter()
+                .position(|line| !line.trim().is_empty())
+                .map(|offset| (index, index + 1 + offset))
+        })
+        .next_back()
+    else {
+        return text.to_string();
+    };
+
+    if !is_model_source_item(lines[first_item_index])
+        || lines[first_item_index..]
+            .iter()
+            .filter(|line| !line.trim().is_empty())
+            .any(|line| !is_model_source_item(line))
+    {
+        return text.to_string();
+    }
+
+    lines[..heading_index].join("\n").trim_end().to_string()
+}
+
+fn is_model_source_heading(line: &str) -> bool {
+    let normalized = normalize_model_source_heading(line);
+    matches!(
+        normalized.as_str(),
+        "资料来源" | "参考来源" | "参考资料" | "来源" | "sources" | "references"
+    )
+}
+
+fn normalize_model_source_heading(line: &str) -> String {
+    let mut normalized = line.trim().trim_start_matches('#').trim();
+    if let Some(inner) = normalized
+        .strip_prefix("**")
+        .and_then(|value| value.strip_suffix("**"))
+        .or_else(|| {
+            normalized
+                .strip_prefix("__")
+                .and_then(|value| value.strip_suffix("__"))
+        })
+    {
+        normalized = inner.trim();
+    }
     normalized
+        .trim_end_matches([':', '：'])
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn is_model_source_item(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let bullet = trimmed
+        .strip_prefix(['-', '*', '•'])
+        .is_some_and(|rest| rest.starts_with(char::is_whitespace));
+    let ordered = trimmed
+        .chars()
+        .next()
+        .is_some_and(|character| character.is_ascii_digit())
+        && strip_ordered_or_bullet_marker(trimmed).is_some_and(|rest| !rest.is_empty());
+    bullet || ordered || trimmed.starts_with("https://") || is_markdown_https_link(trimmed)
+}
+
+fn is_markdown_https_link(value: &str) -> bool {
+    value
+        .strip_prefix('[')
+        .and_then(|rest| rest.split_once("]("))
+        .is_some_and(|(_, url)| url.starts_with("https://") && url.ends_with(')'))
 }
 
 /// Return only the stable normalized prefix for a source-group stream. A
 /// phrase such as `根据你提…` is held until it can be neutralized as a whole,
 /// preventing an unsafe partial attribution from flashing in the UI.
 pub(crate) fn normalize_source_group_visible_text_for_stream(text: &str) -> String {
-    normalize_source_group_visible_text(trim_source_group_partial_suffix(text))
+    normalize_source_group_visible_text(trim_partial_visible_text_suffix(text))
 }
 
-fn trim_source_group_partial_suffix(text: &str) -> &str {
+/// Return the stable visible prefix for every streamed answer.
+///
+/// A trailing source heading is held until the following tokens prove whether
+/// it starts a source appendix or normal prose. The terminal path runs the
+/// same normalizer before persistence.
+pub(crate) fn normalize_model_visible_text_for_stream(text: &str) -> String {
+    normalize_model_visible_text(trim_partial_visible_text_suffix(text))
+}
+
+/// Whether a non-empty answer is only a display title rather than a complete
+/// response. This is structural rather than a language-quality score, so
+/// short greetings and explicit list/code forms remain valid.
+pub(crate) fn is_title_only_visible_answer(content: &str) -> bool {
+    let lines = content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    let Some(line) = lines.first() else {
+        return false;
+    };
+    if lines.len() != 1 || line.starts_with(['-', '*', '•', '>', '`']) {
+        return false;
+    }
+    let plain = line.trim_start_matches('#').trim();
+    plain.chars().count() >= 8
+        && !plain
+            .chars()
+            .any(|character| matches!(character, '。' | '！' | '？' | '.' | '!' | '?'))
+}
+
+/// The smallest safe unit that can become visible in an incremental answer.
+pub(crate) fn has_complete_visible_answer_unit(content: &str) -> bool {
+    !is_title_only_visible_answer(content)
+        && content
+            .chars()
+            .any(|character| matches!(character, '。' | '！' | '？' | '.' | '!' | '?'))
+}
+
+fn trim_partial_visible_text_suffix(text: &str) -> &str {
     let mut trim_at = text.len();
+    if let Some(start) = trailing_source_appendix_heading_candidate_start(text) {
+        trim_at = trim_at.min(start);
+    }
     for start in text.char_indices().map(|(index, _)| index) {
         let suffix = &text[start..];
         let suffix_chars = suffix.chars().count();
@@ -350,7 +487,39 @@ fn trim_source_group_partial_suffix(text: &str) -> &str {
             trim_at = trim_at.min(start);
         }
     }
-    &text[..trim_at]
+    if trim_at == text.len() {
+        text
+    } else {
+        text[..trim_at].trim_end()
+    }
+}
+
+fn trailing_source_appendix_heading_candidate_start(text: &str) -> Option<usize> {
+    let start = text.rfind('\n').map_or(0, |index| index + 1);
+    let candidate = text[start..].trim();
+    let normalized = normalize_partial_model_source_heading(candidate);
+    (!normalized.is_empty()
+        && [
+            "资料来源",
+            "参考来源",
+            "参考资料",
+            "来源",
+            "sources",
+            "references",
+        ]
+        .iter()
+        .any(|heading| heading.starts_with(&normalized)))
+    .then_some(start)
+}
+
+fn normalize_partial_model_source_heading(candidate: &str) -> String {
+    candidate
+        .trim_start_matches('#')
+        .trim()
+        .trim_start_matches(['*', '_'])
+        .trim_end_matches(['*', '_', ':', '：'])
+        .trim()
+        .to_ascii_lowercase()
 }
 
 fn replace_ascii_case_insensitive(text: &str, from: &str, to: &str) -> String {
@@ -493,7 +662,7 @@ mod tests {
     fn source_group_visible_text_neutralizes_english_lifecycle_jargon() {
         assert_eq!(
             normalize_source_group_visible_text_for_stream("Conclusion: the current run"),
-            "Conclusion: "
+            "Conclusion:"
         );
         assert_eq!(
             normalize_source_group_visible_text_for_stream(
@@ -501,5 +670,92 @@ mod tests {
             ),
             "Conclusion: the web evidence found supports the release; the earlier conversation supplied context."
         );
+    }
+
+    #[test]
+    fn source_group_visible_text_strips_a_trailing_model_authored_source_appendix() {
+        let visible = normalize_source_group_visible_text(
+            "特朗普近期新闻可概括为三项政策动向。\n\n## 资料来源\n- [新闻一](https://example.test/one)\n- [新闻二](https://example.test/two)",
+        );
+
+        assert_eq!(visible, "特朗普近期新闻可概括为三项政策动向。");
+    }
+
+    #[test]
+    fn source_group_visible_text_keeps_a_normal_discussion_of_source_quality() {
+        let answer = "判断资料来源时，应优先查看原始公告和完整上下文。";
+
+        assert_eq!(normalize_source_group_visible_text(answer), answer);
+    }
+
+    #[test]
+    fn source_group_stream_withholds_a_possible_trailing_source_appendix() {
+        assert_eq!(
+            normalize_source_group_visible_text_for_stream("结论已经给出。\n\n## 资料来源"),
+            "结论已经给出。"
+        );
+        assert_eq!(
+            normalize_source_group_visible_text_for_stream(
+                "结论已经给出。\n\n## 资料来源\n- [新闻](https://example.test/news)",
+            ),
+            "结论已经给出。"
+        );
+    }
+
+    #[test]
+    fn visible_model_text_strips_the_screenshot_style_raw_url_appendix() {
+        let visible = normalize_model_visible_text(
+            "郭富城现任妻子是方媛（Moka Fang）。\n\n**来源：**\n\n• https://zh.wikipedia.org/wiki/%E6%96%B9%E5%AA%9B\n• https://baike.baidu.com/item/%E6%96%B9%E5%AA%9B/18899138\n• https://global.hk01.com/%E5%A8%9B%E4%B9%90/60355524",
+        );
+
+        assert_eq!(visible, "郭富城现任妻子是方媛（Moka Fang）。");
+    }
+
+    #[test]
+    fn visible_model_text_keeps_source_headings_with_explanatory_prose() {
+        let answer = "资料来源\n\n可靠的资料来源应优先采用原始公告，而不是聚合转载。";
+
+        assert_eq!(normalize_model_visible_text(answer), answer);
+    }
+
+    #[test]
+    fn visible_model_text_strips_bare_markdown_links_after_an_english_source_heading() {
+        let visible = normalize_model_visible_text(
+            "The answer is complete.\n\n### References:\n[Primary source](https://example.test/primary)\n[Secondary source](https://example.test/secondary)",
+        );
+
+        assert_eq!(visible, "The answer is complete.");
+    }
+
+    #[test]
+    fn visible_model_text_strips_chinese_ordered_source_links() {
+        let visible = normalize_model_visible_text(
+            "结论已经给出。\n\n参考来源：\n1、https://example.test/one\n2、[第二项](https://example.test/two)",
+        );
+
+        assert_eq!(visible, "结论已经给出。");
+    }
+
+    #[test]
+    fn visible_model_stream_withholds_a_pending_bold_source_heading() {
+        assert_eq!(
+            normalize_model_visible_text_for_stream("结论已经给出。\n\n**来源：**"),
+            "结论已经给出。"
+        );
+    }
+
+    #[test]
+    fn visible_model_stream_withholds_a_source_heading_after_a_single_newline() {
+        assert_eq!(
+            normalize_model_visible_text_for_stream("结论已经给出。\n来源"),
+            "结论已经给出。"
+        );
+    }
+
+    #[test]
+    fn visible_model_stream_releases_a_source_heading_when_prose_follows() {
+        let answer = "资料来源\n可靠的资料来源应优先采用原始公告。";
+
+        assert_eq!(normalize_model_visible_text_for_stream(answer), answer);
     }
 }

@@ -13,7 +13,7 @@ use crate::ai_runtime::run_contract::{RunBudgetPolicy, RunBudgetProfile};
 use crate::ai_runtime::{
     FunctionCall, LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec,
 };
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 fn standard_tool_loop() -> AgentToolLoop {
     AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
@@ -218,6 +218,204 @@ impl StreamEventObserver for NoopObserver {
     ) -> AppResult<()> {
         Ok(())
     }
+}
+
+struct VisibleDraftObserver {
+    content: String,
+}
+
+impl StreamEventObserver for VisibleDraftObserver {
+    fn observe(
+        &mut self,
+        event: &super::model_gateway::StreamEvent,
+        _token_index: u32,
+    ) -> AppResult<()> {
+        if let super::model_gateway::StreamEventData::Token { token, .. } = &event.data {
+            self.content.push_str(token);
+        }
+        Ok(())
+    }
+
+    fn has_visible_content(&self) -> bool {
+        !self.content.is_empty()
+    }
+
+    fn visible_content_snapshot(&self) -> Option<String> {
+        (!self.content.trim().is_empty()).then_some(self.content.clone())
+    }
+}
+
+struct InterruptedThenRecoveryProvider {
+    calls: AtomicU32,
+    recovery_tools: Mutex<Vec<ToolSpec>>,
+    recovery_messages: Mutex<Vec<LlmMessage>>,
+    recovery_attempts_tool_call: bool,
+}
+
+impl ToolLoopProvider for InterruptedThenRecoveryProvider {
+    fn answer_turn<'a>(
+        &'a self,
+        run_id: &'a str,
+        messages: &'a [LlmMessage],
+        tools: &'a [ToolSpec],
+        _budget: AgentModelTurnBudget,
+        observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<Box<dyn Future<Output = AppResult<super::model_gateway::GatewayResponse>> + Send + 'a>>
+    {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 {
+            return Box::pin(async move {
+                observer.observe(
+                    &super::model_gateway::StreamEvent {
+                        request_id: run_id.to_string(),
+                        event_type: super::model_gateway::StreamEventType::Token,
+                        data: super::model_gateway::StreamEventData::Token {
+                            token: "已经露出的开头，".to_string(),
+                            replace_visible: false,
+                        },
+                        surface: StreamSurface::VisibleAnswerSanitized,
+                        classified: false,
+                    },
+                    1,
+                )?;
+                Err(AppError::msg(
+                    "partial_visible_stream_error: upstream connection closed",
+                ))
+            });
+        }
+        self.recovery_tools
+            .lock()
+            .expect("recovery tools lock")
+            .extend_from_slice(tools);
+        *self
+            .recovery_messages
+            .lock()
+            .expect("recovery messages lock") = messages.to_vec();
+        Box::pin(async {
+            Ok(super::model_gateway::GatewayResponse {
+                content: Some("这是同一回答的续写，现已完整。".into()),
+                tool_calls: self
+                    .recovery_attempts_tool_call
+                    .then(tool_call)
+                    .into_iter()
+                    .collect(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            })
+        })
+    }
+}
+
+#[tokio::test]
+async fn partial_visible_stream_error_recovers_once_with_same_provider_and_no_tools() {
+    let provider = InterruptedThenRecoveryProvider {
+        calls: AtomicU32::new(0),
+        recovery_tools: Mutex::new(Vec::new()),
+        recovery_messages: Mutex::new(Vec::new()),
+        recovery_attempts_tool_call: false,
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = VisibleDraftObserver {
+        content: String::new(),
+    };
+    let original_tools = vec![ToolSpec {
+        name: "web_search".into(),
+        description: "Search Web".into(),
+        input_schema: serde_json::json!({ "type": "object" }),
+        access_level: crate::ai_runtime::ToolAccessLevel::Network,
+        requires_confirmation: false,
+        max_results: None,
+        capability_affinity: Vec::new(),
+    }];
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-visible-stream-recovery",
+            vec![LlmMessage {
+                role: MessageRole::User,
+                content: "给我一份完整回答".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            }],
+            original_tools,
+            &mut observer,
+        )
+        .await
+        .expect("one append-only recovery must complete the answer");
+
+    assert_eq!(
+        outcome.content,
+        "已经露出的开头，\n\n这是同一回答的续写，现已完整。"
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(provider
+        .recovery_tools
+        .lock()
+        .expect("recovery tools lock")
+        .is_empty());
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+    let recovery_messages = provider
+        .recovery_messages
+        .lock()
+        .expect("recovery messages lock");
+    assert!(recovery_messages.iter().any(|message| {
+        matches!(message.role, MessageRole::System)
+            && message
+                .content
+                .text_content()
+                .contains("only the missing continuation")
+    }));
+    assert!(recovery_messages
+        .iter()
+        .all(|message| message.reasoning_content.is_none()));
+}
+
+#[tokio::test]
+async fn partial_visible_stream_recovery_rejects_a_business_tool_call() {
+    let provider = InterruptedThenRecoveryProvider {
+        calls: AtomicU32::new(0),
+        recovery_tools: Mutex::new(Vec::new()),
+        recovery_messages: Mutex::new(Vec::new()),
+        recovery_attempts_tool_call: true,
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = VisibleDraftObserver {
+        content: String::new(),
+    };
+
+    let error = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-visible-stream-recovery-tool-call",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect_err("an append-only recovery may not reopen the tool surface");
+
+    assert_eq!(error.to_string(), "agent_run_incomplete_output");
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
 }
 
 fn tool_call() -> ToolCall {

@@ -361,6 +361,7 @@ fn safe_run_errors_serialize_as_stable_agent_run_codes() {
     for code in [
         SafeRunErrorCode::InvalidRequest,
         SafeRunErrorCode::ToolLoopLimit,
+        SafeRunErrorCode::IncompleteOutput,
         SafeRunErrorCode::InvalidExplicitReference,
         SafeRunErrorCode::ExplicitReferenceChanged,
         SafeRunErrorCode::InvalidRetrievalScope,
@@ -397,6 +398,7 @@ fn finalization_failures_deserialize_to_distinct_stable_safe_codes() {
     for stable_code in [
         "agent_run_empty_output",
         "agent_run_output_too_long",
+        "agent_run_incomplete_output",
         "agent_run_evidence_invalid",
         "agent_run_event_delivery_failed",
     ] {

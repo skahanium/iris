@@ -6868,7 +6868,7 @@ fn headless_final_content(scenario: &CoreScenario, fault: Option<EvalFault>) -> 
     if parts.is_empty() {
         parts.push("synthetic bounded answer".to_string());
     }
-    parts.join(" ")
+    format!("{}。", parts.join("。"))
 }
 
 /// A source-group footer is the explicit uncalibrated-route disclosure for
@@ -8320,7 +8320,7 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
     // Strict Web verification performs the mandatory search before the model
     // turn. The model receives evidence and must answer with a run-local W
     // citation; it must not spend a second turn deciding to search.
-    let scripts = vec![sse_content("bounded web answer [W1]")];
+    let scripts = vec![sse_content("bounded web answer confirmed. [W1]")];
     let llm = spawn_llm_protocol_double(scripts)
         .await
         .map_err(|_| EvalContractError::new("boundary_llm_double_failed"))?;

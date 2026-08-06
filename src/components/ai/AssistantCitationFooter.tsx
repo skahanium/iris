@@ -56,7 +56,7 @@ export const AssistantCitationFooter = memo(function AssistantCitationFooter({
   return (
     <section
       className={cn(
-        "assistant-citation-footer mt-3 border-t border-border-subtle pt-2.5",
+        "assistant-citation-footer assistant-message-meta-disclosure",
         className,
       )}
       aria-label={sourceGroup ? title : "引用来源"}

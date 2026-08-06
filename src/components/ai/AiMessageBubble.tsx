@@ -347,7 +347,7 @@ function AssistantProcessTimeline({
 
   return (
     <div
-      className="assistant-process-footnote"
+      className="assistant-process-footnote assistant-message-meta-disclosure"
       data-testid="assistant-process-timeline"
     >
       <button

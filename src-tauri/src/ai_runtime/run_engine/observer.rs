@@ -98,6 +98,16 @@ impl<R: Runtime> RunEventSink for TauriRunEventSink<'_, R> {
         if let Some(payload) = presentation_payload_for_durable_event(event) {
             let _ = self.emit_presentation(event.run_id(), payload);
         }
+        if matches!(
+            event.payload(),
+            RunEventPayload::Completed { .. }
+                | RunEventPayload::Failed { .. }
+                | RunEventPayload::Cancelled { .. }
+        ) {
+            if let Ok(mut clocks) = presentation_clocks().lock() {
+                clocks.remove(event.run_id());
+            }
+        }
         Ok(())
     }
 
@@ -165,9 +175,8 @@ fn presentation_payload_for_durable_event(
                 },
             })
         }
-        RunEventPayload::Failed { .. }
-        | RunEventPayload::Cancelled { .. }
-        | RunEventPayload::Completed { .. } => Some(RunPresentationPayload::AnswerComplete),
+        RunEventPayload::Completed { .. } => Some(RunPresentationPayload::AnswerComplete),
+        RunEventPayload::Failed { .. } | RunEventPayload::Cancelled { .. } => None,
         _ => None,
     }
 }
@@ -185,6 +194,7 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     presentation_content: String,
     defer_visible_deltas: bool,
     source_group_citation_filter: bool,
+    visible_answer_admitted: bool,
     emitted_generating_answer_stage: bool,
     reasoning_summaries: BTreeMap<String, String>,
     persisted_reasoning_summaries: BTreeMap<String, String>,
@@ -222,6 +232,7 @@ impl<'a> AgentRunStreamObserver<'a> {
             presentation_content: String::new(),
             defer_visible_deltas,
             source_group_citation_filter: false,
+            visible_answer_admitted: false,
             emitted_generating_answer_stage: false,
             reasoning_summaries: BTreeMap::new(),
             persisted_reasoning_summaries: BTreeMap::new(),
@@ -256,20 +267,17 @@ impl AgentRunStreamObserver<'_> {
     /// source-group stream before any AnswerDelta reaches the UI.
     pub(crate) fn enable_source_group_citation_filter(&mut self) {
         self.source_group_citation_filter = true;
+        self.visible_answer_admitted = false;
     }
 
     /// Replace provisional provider tokens with the fully validated final body.
     pub(crate) fn bind_validated_content(&mut self, content: &str) {
         self.pending_delta.clear();
+        // Durable ContentDelta events must always reconstruct the complete
+        // validated answer; presentation deduplication is handled separately
+        // in `flush` so prior transient AnswerDelta events never erase the
+        // persisted prefix.
         self.pending_delta.push_str(content);
-        if self.presentation_content != content {
-            if !self.presentation_content.is_empty() {
-                let _ = self
-                    .sink
-                    .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
-            }
-            self.presentation_content.clear();
-        }
         self.transient_content.clear();
     }
 
@@ -310,6 +318,7 @@ impl AgentRunStreamObserver<'_> {
         self.presentation_content.clear();
         self.transient_content.clear();
         self.pending_delta.clear();
+        self.visible_answer_admitted = false;
     }
 
     /// Whether the live "正在生成答复" stage was already emitted for this Run.
@@ -352,8 +361,17 @@ impl AgentRunStreamObserver<'_> {
                 ),
             )
         } else {
-            self.transient_content.clone()
+            crate::ai_runtime::text_support::normalize_model_visible_text_for_stream(
+                &self.transient_content,
+            )
         };
+        if self.source_group_citation_filter
+            && !self.visible_answer_admitted
+            && !crate::ai_runtime::text_support::has_complete_visible_answer_unit(&visible)
+        {
+            return Ok(());
+        }
+        self.visible_answer_admitted = true;
         if visible == self.presentation_content {
             return Ok(());
         }
@@ -392,9 +410,21 @@ impl AgentRunStreamObserver<'_> {
     /// Even when `pending_delta` is empty (already streamed or a retry after a partial
     /// flush), AnswerComplete must still be delivered so the UI can leave streaming.
     pub(crate) fn flush(&mut self) -> AppResult<()> {
-        let emit_final_presentation = self.presentation_content != self.pending_delta;
         if !self.pending_delta.is_empty() {
-            let mut remaining = mem::take(&mut self.pending_delta);
+            let final_content = mem::take(&mut self.pending_delta);
+            let presentation_delta =
+                if let Some(suffix) = final_content.strip_prefix(&self.presentation_content) {
+                    suffix.to_string()
+                } else {
+                    if !self.presentation_content.is_empty() {
+                        let _ = self
+                            .sink
+                            .emit_presentation(self.run_id, RunPresentationPayload::AnswerReset);
+                    }
+                    self.presentation_content.clear();
+                    final_content.clone()
+                };
+            let mut remaining = final_content;
             while !remaining.is_empty() {
                 let chunk = take_safe_content_delta_chunk(&mut remaining)?;
                 if chunk.is_empty() {
@@ -412,15 +442,20 @@ impl AgentRunStreamObserver<'_> {
                     },
                 )?;
                 self.sink.emit(&persisted)?;
-                if emit_final_presentation {
-                    let _ = self.sink.emit_presentation(
-                        self.run_id,
-                        RunPresentationPayload::AnswerDelta {
-                            delta: chunk.clone(),
-                        },
-                    );
-                    self.presentation_content.push_str(&chunk);
+            }
+            let mut presentation_remaining = presentation_delta;
+            while !presentation_remaining.is_empty() {
+                let chunk = take_safe_content_delta_chunk(&mut presentation_remaining)?;
+                if chunk.is_empty() {
+                    break;
                 }
+                let _ = self.sink.emit_presentation(
+                    self.run_id,
+                    RunPresentationPayload::AnswerDelta {
+                        delta: chunk.clone(),
+                    },
+                );
+                self.presentation_content.push_str(&chunk);
             }
         }
         let _ = self
@@ -652,6 +687,11 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
     fn has_visible_content(&self) -> bool {
         self.has_visible_content()
     }
+
+    fn visible_content_snapshot(&self) -> Option<String> {
+        let content = self.interrupt_visible_content();
+        (!content.trim().is_empty()).then_some(content)
+    }
 }
 
 #[cfg(test)]
@@ -734,5 +774,35 @@ mod presentation_clock_tests {
             payload,
             RunPresentationPayload::ProcessStarted { label, .. } if label == "正在调用模型和工具"
         ));
+    }
+
+    #[test]
+    fn failed_and_cancelled_runs_do_not_emit_answer_complete_presentation() {
+        for (event_type, payload) in [
+            (
+                RunEventType::Failed,
+                RunEventPayload::Failed {
+                    code: crate::ai_runtime::run_contract::SafeRunErrorCode::IncompleteOutput,
+                    message: "回答未完整生成，请重试".to_string(),
+                },
+            ),
+            (
+                RunEventType::Cancelled,
+                RunEventPayload::Cancelled {
+                    reason: "user_cancelled".to_string(),
+                },
+            ),
+        ] {
+            let event = crate::ai_runtime::run_contract::AssistantRunEvent::new(
+                "terminal-projection",
+                3,
+                2,
+                event_type,
+                "2026-08-06T08:00:00Z",
+                payload,
+            )
+            .expect("terminal event");
+            assert!(presentation_payload_for_durable_event(&event).is_none());
+        }
     }
 }

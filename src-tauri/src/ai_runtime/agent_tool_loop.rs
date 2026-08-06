@@ -39,6 +39,8 @@ pub(crate) fn parent_run_id_for_provider_scope(run_id: &str) -> &str {
 pub(crate) struct AgentToolLoopOutcome {
     /// Final assistant content emitted only after the model has stopped calling tools.
     pub(crate) content: String,
+    /// Provider stop reason associated with the final assistant content.
+    pub(crate) finish_reason: String,
     /// Internal structured submission when the model used the reserved final
     /// answer tool. It never enters the model transcript or tool audit.
     pub(crate) final_submission: Option<FinalAnswerSubmission>,
@@ -257,6 +259,10 @@ impl AgentToolLoop {
         let mut total_tokens = 0_u32;
         let mut fingerprints = HashMap::<String, u32>::new();
         let mut final_submission_repair_used = false;
+        let mut incomplete_final_answer_repair_used = false;
+        let mut incomplete_final_draft = None::<String>;
+        let requires_factual_completion =
+            executor.requires_web_evidence() || executor.requires_external_evidence();
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
@@ -265,15 +271,44 @@ impl AgentToolLoop {
                 usage.model_turns = model_turns;
             }
             let model_started_at = std::time::Instant::now();
-            let response = provider
+            let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some() {
+                &[]
+            } else {
+                &tools
+            };
+            let response = match provider
                 .answer_turn(
                     provider_run_id,
                     &messages,
-                    &tools,
+                    active_tools,
                     self.turn_budget,
                     observer,
                 )
-                .await?;
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    let visible_draft = observer.visible_content_snapshot();
+                    if !can_recover_visible_stream_error(&error, visible_draft.as_deref())
+                        || incomplete_final_answer_repair_used
+                        || model_turns >= self.max_model_turns
+                    {
+                        return Err(error);
+                    }
+                    incomplete_final_answer_repair_used = true;
+                    let draft = visible_draft.expect("recovery guard requires a visible draft");
+                    incomplete_final_draft = Some(draft.clone());
+                    messages.push(LlmMessage {
+                        role: MessageRole::Assistant,
+                        content: draft.into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    });
+                    messages.push(incomplete_answer_continuation_instruction());
+                    continue;
+                }
+            };
             prompt_tokens = prompt_tokens.saturating_add(response.usage.prompt_tokens);
             completion_tokens = completion_tokens.saturating_add(response.usage.completion_tokens);
             total_tokens = total_tokens.saturating_add(response.usage.total_tokens);
@@ -286,6 +321,10 @@ impl AgentToolLoop {
                 telemetry.record_model_turn(&response, model_started_at);
             }
 
+            if incomplete_final_draft.is_some() && !response.tool_calls.is_empty() {
+                return Err(AppError::msg("agent_run_incomplete_output"));
+            }
+
             if response.tool_calls.is_empty() {
                 if executor.requires_web_evidence() && !executor.has_web_evidence() {
                     return Err(AppError::msg("agent_run_web_evidence_required"));
@@ -293,7 +332,11 @@ impl AgentToolLoop {
                 if executor.requires_external_evidence() && !executor.has_external_evidence() {
                     return Err(AppError::msg("agent_run_external_evidence_required"));
                 }
-                let content = response.content.unwrap_or_default();
+                let response_content = response.content.unwrap_or_default();
+                let content = match incomplete_final_draft.take() {
+                    Some(draft) => append_final_answer_continuation(draft, response_content)?,
+                    None => response_content,
+                };
                 if content.trim().is_empty() {
                     return Err(AppError::msg("agent_run_invalid_model_response"));
                 }
@@ -322,8 +365,29 @@ impl AgentToolLoop {
                     });
                     continue;
                 }
+                if crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity::needs_recovery(
+                    &content,
+                    &response.finish_reason,
+                    requires_factual_completion,
+                ) {
+                    if incomplete_final_answer_repair_used || model_turns >= self.max_model_turns {
+                        return Err(AppError::msg("agent_run_incomplete_output"));
+                    }
+                    incomplete_final_answer_repair_used = true;
+                    incomplete_final_draft = Some(content.clone());
+                    messages.push(LlmMessage {
+                        role: MessageRole::Assistant,
+                        content: content.into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        reasoning_content: None,
+                    });
+                    messages.push(incomplete_answer_continuation_instruction());
+                    continue;
+                }
                 return Ok(AgentToolLoopOutcome {
                     content,
+                    finish_reason: response.finish_reason,
                     final_submission: None,
                     model_turns,
                     tool_calls,
@@ -336,6 +400,7 @@ impl AgentToolLoop {
             if let Some(submission) = final_answer_submission(&response, &allowed_tools)? {
                 return Ok(AgentToolLoopOutcome {
                     content: submission.visible_content(),
+                    finish_reason: response.finish_reason,
                     final_submission: Some(submission),
                     model_turns,
                     tool_calls,
@@ -397,8 +462,40 @@ impl AgentToolLoop {
                 crate::ai_runtime::agent_capacity_eval::BudgetOutcome::ModelTurnsExhausted,
             );
         }
-        Err(AppError::msg("agent_run_tool_loop_limit"))
+        Err(AppError::msg(if incomplete_final_draft.is_some() {
+            "agent_run_incomplete_output"
+        } else {
+            "agent_run_tool_loop_limit"
+        }))
     }
+}
+
+fn can_recover_visible_stream_error(error: &AppError, visible_draft: Option<&str>) -> bool {
+    visible_draft.is_some_and(|draft| !draft.trim().is_empty())
+        && matches!(error, AppError::Message(message) if message.starts_with("partial_visible_stream_error:"))
+}
+
+fn incomplete_answer_continuation_instruction() -> LlmMessage {
+    LlmMessage {
+        role: MessageRole::System,
+        content: "The prior answer stopped before it was complete. Continue it now by outputting only the missing continuation. Do not repeat, replace, title, summarize, cite, or call tools.".into(),
+        tool_call_id: None,
+        tool_calls: None,
+        reasoning_content: None,
+    }
+}
+
+fn append_final_answer_continuation(draft: String, continuation: String) -> AppResult<String> {
+    if continuation.trim().is_empty() || continuation.trim_start().starts_with(draft.trim()) {
+        return Err(AppError::msg("agent_run_incomplete_output"));
+    }
+    let separator =
+        if draft.ends_with(char::is_whitespace) || continuation.starts_with(char::is_whitespace) {
+            ""
+        } else {
+            "\n\n"
+        };
+    Ok(format!("{draft}{separator}{continuation}"))
 }
 
 fn final_answer_submission(

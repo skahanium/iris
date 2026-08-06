@@ -68,7 +68,7 @@ afterEach(() => {
 });
 
 describe("useAssistantPresentationPlayback", () => {
-  it("立即镜像过程项，不制造额外视觉延迟", () => {
+  it("立即镜像过程项，并合并重复联网搜索", () => {
     messages = [{ role: "assistant", content: "", runId: "run-1" }];
     render(
       presentation([
@@ -98,8 +98,12 @@ describe("useAssistantPresentationPlayback", () => {
       ]),
     );
 
-    expect(messages[0]?.processItems).toHaveLength(3);
-    expect(messages[0]?.processItems?.[2]?.durationMs).toBe(6700);
+    expect(messages[0]?.processItems).toHaveLength(2);
+    expect(messages[0]?.processItems?.[1]).toMatchObject({
+      id: "tool:web-1",
+      label: "联网搜索",
+      durationMs: 6703,
+    });
   });
 
   it("直接展示已收到的答案正文", () => {

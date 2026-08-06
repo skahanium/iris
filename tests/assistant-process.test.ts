@@ -186,6 +186,46 @@ describe("Assistant Run 处理过程投影", () => {
     expect(items[0]?.durationMs).toBe(6_700);
   });
 
+  it("将同一回答中的重复联网搜索合并并累计耗时", () => {
+    const items = projectAssistantProcessEvents([
+      event(1, "tool_started", {
+        kind: "tool_started",
+        capability: "web.search",
+        toolCallId: "tool-web-first",
+      }),
+      event(2, "tool_completed", {
+        kind: "tool_completed",
+        capability: "web.search",
+        toolCallId: "tool-web-first",
+        summary: "工具调用完成",
+        durationMs: 5_400,
+      } as Extract<AssistantRunEvent["payload"], { kind: "tool_completed" }>),
+      event(3, "tool_started", {
+        kind: "tool_started",
+        capability: "web_search",
+        toolCallId: "tool-web-second",
+      }),
+      event(4, "tool_completed", {
+        kind: "tool_completed",
+        capability: "web_search",
+        toolCallId: "tool-web-second",
+        summary: "工具调用完成",
+        durationMs: 6_200,
+      } as Extract<AssistantRunEvent["payload"], { kind: "tool_completed" }>),
+    ]);
+
+    expect(items).toEqual([
+      {
+        id: "tool:tool-web-first",
+        kind: "tool",
+        label: "联网搜索",
+        status: "completed",
+        createdAt: Date.parse(timestamp),
+        durationMs: 11_600,
+      },
+    ]);
+  });
+
   it("保留阶段和 provider 显式摘要，但绝不把最终正文投影为过程内容", () => {
     const items = projectAssistantProcessEvents([
       event(1, "accepted", {

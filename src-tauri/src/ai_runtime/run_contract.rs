@@ -1230,6 +1230,9 @@ pub(crate) enum SafeRunErrorCode {
     /// Provider output exceeded the bounded final-answer size.
     #[serde(rename = "agent_run_output_too_long")]
     OutputTooLong,
+    /// Provider stopped before producing a complete visible answer.
+    #[serde(rename = "agent_run_incomplete_output")]
+    IncompleteOutput,
     /// Final evidence ownership or citation association was invalid.
     #[serde(rename = "agent_run_evidence_invalid")]
     EvidenceInvalid,
@@ -1321,6 +1324,7 @@ impl SafeRunErrorCode {
             Self::ToolLoopLimit => "agent_run_tool_loop_limit",
             Self::EmptyOutput => "agent_run_empty_output",
             Self::OutputTooLong => "agent_run_output_too_long",
+            Self::IncompleteOutput => "agent_run_incomplete_output",
             Self::EvidenceInvalid => "agent_run_evidence_invalid",
             Self::FinalizationProtocolInvalid => "agent_run_finalization_protocol_invalid",
             Self::EventDeliveryFailed => "agent_run_event_delivery_failed",

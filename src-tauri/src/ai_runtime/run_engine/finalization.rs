@@ -119,7 +119,9 @@ pub(super) fn direct_user_message(content: &str) -> crate::ai_runtime::LlmMessag
 pub(super) fn validated_final_model_answer(
     content: &str,
 ) -> Result<String, RunFinalizationFailure> {
-    let normalized = crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(content);
+    let normalized = crate::ai_runtime::text_support::normalize_model_visible_text(
+        &crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(content),
+    );
     if normalized.trim().is_empty() {
         return Err(RunFinalizationFailure::new(
             RunFinalizationStage::FinalOutputValidation,
@@ -139,9 +141,26 @@ pub(super) fn validated_final_model_answer(
 
 pub(super) fn validated_final_model_answer_with_telemetry(
     content: &str,
+    finish_reason: Option<&str>,
+    requires_factual_completion: bool,
     telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
 ) -> Result<String, RunFinalizationFailure> {
-    let result = validated_final_model_answer(content);
+    let result = match finish_reason {
+        Some(reason) if !crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity::has_normal_finish_reason(reason) => Err(RunFinalizationFailure::new(
+            RunFinalizationStage::FinalOutputValidation,
+            SafeRunErrorCode::IncompleteOutput,
+            "provider did not report a normal final finish reason",
+        )),
+        _ if !crate::ai_runtime::final_answer_integrity::FinalAnswerIntegrity::has_complete_visible_answer(
+            content,
+            requires_factual_completion,
+        ) => Err(RunFinalizationFailure::new(
+            RunFinalizationStage::FinalOutputValidation,
+            SafeRunErrorCode::IncompleteOutput,
+            "visible model output was only a title",
+        )),
+        _ => validated_final_model_answer(content),
+    };
     if let Some(telemetry) = telemetry {
         match &result {
             Ok(_) => telemetry.record_final_output_validation(true, false),
@@ -500,6 +519,7 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         SafeRunErrorCode::ToolLoopLimit => "模型调用工具次数过多，请基于已附资料缩小问题后重试",
         SafeRunErrorCode::EmptyOutput => "模型未生成可用回答，请重试",
         SafeRunErrorCode::OutputTooLong => "模型回答超过本次运行上限，请缩小问题范围后重试",
+        SafeRunErrorCode::IncompleteOutput => "回答未完整生成，请重试",
         SafeRunErrorCode::EvidenceInvalid => "回答与所附证据无法安全关联，请重新附带资料后重试",
         SafeRunErrorCode::FinalizationProtocolInvalid => "模型未完成本次答案的来源归因协议，请重试",
         SafeRunErrorCode::EventDeliveryFailed => "回答状态未能送达界面，请重新打开会话查看结果",
@@ -548,7 +568,7 @@ pub(super) fn settle_cancelled_run_with_partial(
     session: &AssistantSessionRef,
     run_id: &str,
     observer: &AgentRunStreamObserver<'_>,
-    sink: &impl RunEventSink,
+    _sink: &impl RunEventSink,
     fallback_content: Option<&str>,
 ) -> AppResult<bool> {
     let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
@@ -563,7 +583,6 @@ pub(super) fn settle_cancelled_run_with_partial(
         }
     }
     let _ = AgentRunRepository::persist_interrupted_assistant_message(db, run_id, &partial)?;
-    let _ = sink.emit_presentation(run_id, RunPresentationPayload::AnswerComplete);
     crate::ai_runtime::model_gateway::clear_abort(run_id);
     Ok(true)
 }
@@ -578,6 +597,7 @@ pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
             SafeRunErrorCode::WebEvidenceInvalid
         }
         "agent_run_tool_loop_limit" => SafeRunErrorCode::ToolLoopLimit,
+        "agent_run_incomplete_output" => SafeRunErrorCode::IncompleteOutput,
         "agent_run_invalid_model_response" => SafeRunErrorCode::InvalidRequest,
         "agent_run_final_submission_required" | "agent_run_final_submission_invalid" => {
             SafeRunErrorCode::FinalizationProtocolInvalid
@@ -615,7 +635,8 @@ mod apply_notice_tests {
 
     use super::{
         apply_required_web_degradation_notice, classify_tool_loop_failure,
-        validate_web_urls_against_allowed,
+        validate_web_urls_against_allowed, validated_final_model_answer,
+        validated_final_model_answer_with_telemetry,
     };
     use crate::ai_runtime::run_contract::AssistantSessionRef;
     use crate::ai_runtime::run_contract::SafeRunErrorCode;
@@ -691,5 +712,39 @@ mod apply_notice_tests {
             classify_tool_loop_failure(&AppError::msg("agent_run_provenance_reference_invalid"));
 
         assert_eq!(code, SafeRunErrorCode::FinalizationProtocolInvalid);
+    }
+
+    #[test]
+    fn rejects_a_title_only_final_answer() {
+        assert!(
+            validated_final_model_answer_with_telemetry(
+                "特朗普 最新新闻 2026年8月",
+                Some("stop"),
+                true,
+                None,
+            )
+            .is_err(),
+            "a title without an answer must not complete a Run"
+        );
+    }
+
+    #[test]
+    fn shared_terminal_validation_strips_source_appendices_before_strict_binding() {
+        let content = match validated_final_model_answer(
+            "结论已经给出。\n\n## Sources\n1. https://example.test/one\n2. [Two](https://example.test/two)",
+        ) {
+            Ok(content) => content,
+            Err(error) => panic!("unexpected finalization failure: {}", error.code.as_str()),
+        };
+
+        assert_eq!(content, "结论已经给出。");
+    }
+
+    #[test]
+    fn shared_terminal_validation_rejects_a_source_appendix_without_an_answer() {
+        let error = validated_final_model_answer("## References\n- https://example.test/one")
+            .expect_err("a source appendix is not an answer");
+
+        assert_eq!(error.code, SafeRunErrorCode::EmptyOutput);
     }
 }

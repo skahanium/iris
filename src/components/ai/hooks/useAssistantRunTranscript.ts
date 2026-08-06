@@ -137,28 +137,22 @@ export function useAssistantRunTranscript({
       const presentationReady =
         presentation?.runId === run.runId &&
         presentation.resyncFromSeq === null;
-      const cancelledWithVisiblePartial =
-        run.state === "cancelled" &&
-        ((presentationReady && presentation.answer.trim().length > 0) ||
-          (current?.content?.trim().length ?? 0) > 0);
-      const presentationOwnsMessage =
-        presentationReady &&
-        (!terminal ||
-          presentation.answerComplete ||
-          cancelledWithVisiblePartial);
+      const presentationOwnsContent =
+        presentationReady && (!terminal || presentation.answerComplete);
+      const presentationOwnsProcess = presentationReady && !terminal;
       const durableContent = run.content;
-      const rawItems = presentationOwnsMessage
+      const rawItems = presentationOwnsProcess
         ? current?.processItems
         : projectAssistantProcessEvents(run.events, run.reasoningSummaries);
       const processItems = ensureTerminalAnswerComplete(rawItems, run.state);
-      const content = presentationOwnsMessage
+      const content = presentationOwnsContent
         ? (presentation?.answer ?? current?.content ?? "")
         : durableContent.trim()
           ? durableContent
           : // Live gap / empty durable must not wipe already-visible partial text.
             (current?.content ?? "");
-      const presentationStreaming = presentationOwnsMessage
-        ? (current?.presentationStreaming ?? !terminal)
+      const presentationStreaming = presentationOwnsContent
+        ? !terminal && (current?.presentationStreaming ?? true)
         : false;
       if (
         current?.content === content &&

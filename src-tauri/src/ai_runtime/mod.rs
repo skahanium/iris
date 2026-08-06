@@ -39,6 +39,7 @@ pub(crate) mod document_policy_repository;
 pub(crate) mod domain_executor;
 #[cfg(test)]
 mod domain_executor_tests;
+pub(crate) mod final_answer_integrity;
 pub(crate) mod final_answer_submission;
 pub(crate) mod frozen_change_plan;
 #[cfg(test)]

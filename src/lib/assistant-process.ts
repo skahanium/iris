@@ -160,7 +160,66 @@ export function projectAssistantProcessEvents(
     });
   }
 
-  return items;
+  return collapseRepeatedWebSearchProcessItems(items);
+}
+
+/**
+ * Collapse repeated Web searches into one compact process item for a single
+ * answer. This is presentation-only: the durable tool audit and evidence
+ * ledger retain every individual operation.
+ */
+export function collapseRepeatedWebSearchProcessItems(
+  items: readonly AssistantProcessItem[],
+): AssistantProcessItem[] {
+  const collapsed: AssistantProcessItem[] = [];
+  let firstWebSearchIndex: number | null = null;
+
+  for (const item of items) {
+    if (!isWebSearchProcessItem(item)) {
+      collapsed.push(item);
+      continue;
+    }
+    if (firstWebSearchIndex === null) {
+      firstWebSearchIndex = collapsed.length;
+      collapsed.push(item);
+      continue;
+    }
+    const first = collapsed[firstWebSearchIndex];
+    if (!first) continue;
+    collapsed[firstWebSearchIndex] = {
+      ...first,
+      status: mergeProcessStatus(first.status, item.status),
+      ...mergeProcessDuration(first.durationMs, item.durationMs),
+    };
+  }
+
+  return collapsed;
+}
+
+function isWebSearchProcessItem(item: AssistantProcessItem): boolean {
+  return item.kind === "tool" && item.label === displayCapability("web_search");
+}
+
+function mergeProcessStatus(
+  left: AssistantProcessItem["status"],
+  right: AssistantProcessItem["status"],
+): AssistantProcessItem["status"] {
+  if (left === "running" || right === "running") return "running";
+  if (left === "completed" || right === "completed") return "completed";
+  return "failed";
+}
+
+function mergeProcessDuration(
+  left: number | undefined,
+  right: number | undefined,
+): { durationMs?: number } {
+  const durations = [left, right].filter(
+    (duration): duration is number =>
+      typeof duration === "number" && Number.isFinite(duration),
+  );
+  return durations.length > 0
+    ? { durationMs: durations.reduce((total, duration) => total + duration, 0) }
+    : {};
 }
 
 /** Pure internal prep labels stay out of the user-visible process timeline. */

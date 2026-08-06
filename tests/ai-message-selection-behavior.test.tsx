@@ -169,6 +169,51 @@ describe("AI message selection behavior", () => {
     expect(toast).toHaveBeenCalledWith("已复制回答", { tone: "success" });
   });
 
+  it("uses one shared metadata disclosure shell for process and source sections", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[
+            {
+              role: "assistant",
+              content: "最终正文",
+              processItems: [
+                {
+                  id: "stage:1",
+                  kind: "stage",
+                  label: "正在生成答复",
+                  status: "completed",
+                  createdAt: 1,
+                },
+              ],
+              webCitations: [
+                {
+                  index: 1,
+                  title: "可信来源",
+                  url: "https://example.test/source",
+                },
+              ],
+              citationBinding: {
+                mode: "source_group_fallback",
+                referencedIndices: [],
+              },
+            },
+          ]}
+          streaming={false}
+          selectedIndices={new Set()}
+          onSelect={vi.fn()}
+        />,
+      );
+    });
+
+    expect(
+      host.querySelector('[data-testid="assistant-process-timeline"]'),
+    ).toHaveClass("assistant-message-meta-disclosure");
+    expect(host.querySelector(".assistant-citation-footer")).toHaveClass(
+      "assistant-message-meta-disclosure",
+    );
+  });
+
   it("shows the latest process step only in the collapsed timeline header", async () => {
     await act(async () => {
       root.render(

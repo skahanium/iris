@@ -114,6 +114,13 @@ pub trait StreamEventObserver: Send {
     fn has_visible_content(&self) -> bool {
         false
     }
+
+    /// Safe visible draft accumulated by this attempt, if any. This is only
+    /// used to ask the *same* provider for an append-only recovery after a
+    /// transport failure; it is never evidence or conversation history.
+    fn visible_content_snapshot(&self) -> Option<String> {
+        None
+    }
 }
 
 fn lifecycle_content_hash(value: &str) -> String {

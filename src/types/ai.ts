@@ -403,6 +403,7 @@ export type AssistantRunErrorCode =
   | "agent_run_invalid_request"
   | "agent_run_empty_output"
   | "agent_run_output_too_long"
+  | "agent_run_incomplete_output"
   | "agent_run_evidence_invalid"
   | "agent_run_finalization_protocol_invalid"
   | "agent_run_event_delivery_failed"

@@ -818,19 +818,26 @@ impl RunEngine {
             }
         }
         observer.clear_deferred_visible_deltas();
-        let mut content =
-            match validated_final_model_answer_with_telemetry(&outcome.content, telemetry) {
-                Ok(content) => content,
-                Err(failure) => {
-                    return fail_finalization_with_sink(
-                        db,
-                        run_id,
-                        running_state_version,
-                        sink,
-                        failure,
-                    );
-                }
-            };
+        let mut content = match validated_final_model_answer_with_telemetry(
+            &outcome.content,
+            outcome
+                .final_submission
+                .is_none()
+                .then_some(outcome.finish_reason.as_str()),
+            executor.requires_web_evidence() || executor.requires_external_evidence(),
+            telemetry,
+        ) {
+            Ok(content) => content,
+            Err(failure) => {
+                return fail_finalization_with_sink(
+                    db,
+                    run_id,
+                    running_state_version,
+                    sink,
+                    failure,
+                );
+            }
+        };
         if let Some(plan) = domain_plan {
             if let Err(error) = plan.verify_output(&content) {
                 return fail_finalization_with_sink(
@@ -891,7 +898,12 @@ impl RunEngine {
                 ),
             );
         }
-        content = match validated_final_model_answer_with_telemetry(&content, telemetry) {
+        content = match validated_final_model_answer_with_telemetry(
+            &content,
+            None,
+            executor.requires_web_evidence() || executor.requires_external_evidence(),
+            telemetry,
+        ) {
             Ok(content) => content,
             Err(failure) => {
                 return fail_finalization_with_sink(
@@ -1207,6 +1219,8 @@ impl RunEngine {
         }
         let mut content = match validated_final_model_answer_with_telemetry(
             response.content.as_deref().unwrap_or_default(),
+            Some(response.finish_reason.as_str()),
+            false,
             telemetry,
         ) {
             Ok(content) => content,
@@ -1251,18 +1265,19 @@ impl RunEngine {
             );
         }
         validate_final_evidence_or_fail(db, run_id, running_state_version, evidence_ids, sink)?;
-        content = match validated_final_model_answer_with_telemetry(&content, telemetry) {
-            Ok(content) => content,
-            Err(failure) => {
-                return fail_finalization_with_sink(
-                    db,
-                    run_id,
-                    running_state_version,
-                    sink,
-                    failure,
-                );
-            }
-        };
+        content =
+            match validated_final_model_answer_with_telemetry(&content, None, false, telemetry) {
+                Ok(content) => content,
+                Err(failure) => {
+                    return fail_finalization_with_sink(
+                        db,
+                        run_id,
+                        running_state_version,
+                        sink,
+                        failure,
+                    );
+                }
+            };
         content = linkify_final_web_citations(db, evidence_ids, content);
         if settle_cancelled_run_with_partial(
             db,
