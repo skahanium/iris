@@ -61,6 +61,7 @@ pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<Mark
                 .get(line_index + 1)
                 .and_then(|&(next_start, next_line, next_len)| {
                     parse_setext_underline(next_line)
+                        .filter(|_| line.bytes().take_while(|byte| *byte == b' ').count() <= 3)
                         .filter(|_| !is_fence_delimiter(line))
                         .map(|level| (level, next_start + next_len))
                 })
@@ -87,7 +88,9 @@ pub fn chunk_markdown_with_metadata(content: &str, max_chars: usize) -> Vec<Mark
         }
         if let Some((level, heading)) = heading {
             heading_stack.truncate(level.saturating_sub(1));
-            heading_stack.push(heading);
+            if !heading.is_empty() {
+                heading_stack.push(heading);
+            }
             current_heading_path = heading_path(&heading_stack);
         }
         if !line.is_empty() || !current.is_empty() {
@@ -221,12 +224,19 @@ fn parse_heading(line: &str) -> Option<(usize, String)> {
     {
         return None;
     }
-    let rest = trimmed[level..].trim();
-    if rest.is_empty() {
-        None
+    let rest = trimmed[level..].trim_end();
+    let without_closing_hashes = rest.trim_end_matches('#');
+    let heading = if without_closing_hashes.len() < rest.len()
+        && without_closing_hashes
+            .chars()
+            .last()
+            .is_some_and(char::is_whitespace)
+    {
+        without_closing_hashes.trim()
     } else {
-        Some((level, rest.trim_matches('#').trim().to_string()))
-    }
+        rest.trim()
+    };
+    Some((level, heading.to_string()))
 }
 
 fn parse_setext_underline(line: &str) -> Option<usize> {
@@ -471,5 +481,49 @@ mod tests {
 
         assert!(chunks.len() > 1);
         assert_eq!(chunks[0].source_end, chunks[1].source_start);
+    }
+
+    #[test]
+    fn four_space_indented_code_is_not_a_setext_heading() {
+        let content = "    SELECT *\n---\nbody";
+        let chunks = chunk_markdown_with_metadata(content, 512);
+
+        assert!(chunks.iter().all(|chunk| chunk.heading_path.is_none()));
+        for chunk in chunks {
+            assert_eq!(
+                &content[chunk.source_start..chunk.source_end],
+                chunk.content
+            );
+        }
+    }
+
+    #[test]
+    fn empty_level_one_atx_heading_flushes_a_short_preamble() {
+        let chunks = chunk_markdown_with_metadata("brief\n#\nbody", 512);
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].content, "brief");
+        assert_eq!(chunks[0].heading_path, None);
+        assert_eq!(chunks[1].content, "#\nbody");
+        assert_eq!(chunks[1].heading_path, None);
+    }
+
+    #[test]
+    fn empty_nested_atx_heading_with_spaces_keeps_a_structural_boundary() {
+        let chunks = chunk_markdown_with_metadata("brief\n###   \nbody", 512);
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].content, "brief");
+        assert_eq!(chunks[1].content, "###   \nbody");
+        assert_eq!(chunks[1].heading_path, None);
+    }
+
+    #[test]
+    fn atx_body_hashes_are_not_removed_without_a_closing_sequence() {
+        let c_sharp = chunk_markdown_with_metadata("# C#\nbody", 512);
+        let tag = chunk_markdown_with_metadata("# #tag\nbody", 512);
+
+        assert_eq!(c_sharp[0].heading_path.as_deref(), Some("C#"));
+        assert_eq!(tag[0].heading_path.as_deref(), Some("#tag"));
     }
 }
