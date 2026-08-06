@@ -346,8 +346,10 @@ impl AgentRunStreamObserver<'_> {
             return Ok(());
         }
         let visible = if self.source_group_citation_filter {
-            crate::ai_runtime::citation_linkify::strip_model_authored_citation_markers_for_stream(
-                &self.transient_content,
+            crate::ai_runtime::text_support::normalize_source_group_visible_text_for_stream(
+                &crate::ai_runtime::citation_linkify::strip_model_authored_citation_markers_for_stream(
+                    &self.transient_content,
+                ),
             )
         } else {
             self.transient_content.clone()

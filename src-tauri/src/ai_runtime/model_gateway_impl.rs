@@ -29,6 +29,7 @@ pub use body_impl::{build_chat_completions_body, GatewayRequest, LlmFunctionDef,
 use body_impl::{build_llm_api_body, uses_openai_responses};
 use http_backend_impl::format_llm_http_error;
 pub use http_backend_impl::HttpLlmBackend;
+pub(crate) use messages_impl::messages_for_api_with_reasoning_continuation;
 pub use messages_impl::{
     insert_missing_tool_result_stubs, messages_for_api, prepare_tool_api_messages,
     remove_orphan_tool_messages, repair_tool_api_messages, tool_api_message_chain_valid,

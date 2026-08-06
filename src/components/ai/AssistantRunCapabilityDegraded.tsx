@@ -39,6 +39,8 @@ function webFailureReasonMessage(
       return "搜索结果中没有可安全使用的 HTTPS 证据。";
     case "evidence_content_empty":
       return "搜索结果缺少可注册的正文或摘要。";
+    case "local_material_query_blocked":
+      return "为保护你授权的材料，已阻止将其中原文用于联网检索；请改用不含原文的公开关键词。";
     case "provider_rate_limited":
       return "搜索服务触发限流，可稍后重试。";
     case "provider_quota_exhausted":

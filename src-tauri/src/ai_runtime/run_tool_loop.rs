@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 use futures_util::future::join_all;
 
 use crate::ai_runtime::agent_evidence_repository::{
-    AgentEvidenceRepository, ExternalToolEvidenceInput, MaterialRole, WebEvidenceInput,
+    AgentEvidenceRepository, ExternalToolEvidenceInput, LocalEvidenceInput, MaterialRole,
+    WebEvidenceInput,
 };
 use crate::ai_runtime::agent_run_repository::{
     AgentRunRepository, AppendRunCheckpointInput, AppendRunEventInput, DurableApplyCheckpoint,
@@ -46,11 +47,15 @@ use crate::storage::db::Database;
 use sha2::{Digest, Sha256};
 
 const WEB_TOOL_NAME: &str = "web_search";
-const MAX_WEB_EVIDENCE_PER_RUN: usize = 8;
+const MAX_WEB_EVIDENCE_PER_RUN: usize = 12;
 /// Required-run and diagnostic search limit. Keeping this shared prevents a one-row smoke probe
 /// from passing while the actual evidence request exceeds a provider's output budget.
-pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 5;
+pub(crate) const INITIAL_WEB_SEARCH_RESULTS: usize = 8;
 const MAX_WEB_EXCERPT_CHARS: usize = 2_000;
+/// A strict answer may make an initial search, an independent supplement, and
+/// one retry for a transient or oversize provider response. The shared time
+/// budget remains the hard wall across all of them.
+const MAX_WEB_PROVIDER_ATTEMPTS_PER_RUN: u32 = 3;
 /// Model-requested follow-up searches retain their own bounded interaction budget.
 const MODEL_WEB_EVIDENCE_DEADLINE: Duration = Duration::from_secs(20);
 /// Minimum remaining budget required before retrying a failed web search attempt.
@@ -428,16 +433,30 @@ impl<'a> NormalRunToolExecutor<'a> {
             .and_then(serde_json::Value::as_str)
             .filter(|query| !query.trim().is_empty())
             .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
-        record_web_query_taint_witness(
+        let local_materials = self
+            .context
+            .materials
+            .iter()
+            .map(|material| material.content.clone())
+            .collect::<Vec<_>>();
+        let query_contains_authorized_material = record_web_query_taint_witness(
             &self.state.db,
             &self.accepted.run_id,
             u32::try_from(state_version).unwrap_or(u32::MAX),
             query,
-            self.context
-                .materials
-                .iter()
-                .map(|material| material.content.clone()),
+            local_materials,
         )?;
+        if query_contains_authorized_material {
+            self.set_web_failure(Some(WebFailure::with_reason(
+                SafeRunErrorCode::WebEvidenceInvalid,
+                false,
+                WebEvidenceFailureReason::LocalMaterialQueryBlocked,
+            )))?;
+            return Ok(failed_tool_call(
+                WEB_TOOL_NAME,
+                "web_query_local_material_blocked",
+            ));
+        }
         let urls = args
             .get("urls")
             .and_then(serde_json::Value::as_array)
@@ -477,8 +496,10 @@ impl<'a> NormalRunToolExecutor<'a> {
         };
         let budget_started = self.web_budget.started()?;
         let call_started = Instant::now();
+        let mut attempts_for_search = 0_u32;
         let output =
             loop {
+                attempts_for_search = attempts_for_search.saturating_add(1);
                 let Some(attempt_count) = self.reserve_web_attempt()? else {
                     let failure = WebFailure::new(SafeRunErrorCode::WebEvidenceInvalid, false);
                     self.set_web_failure(Some(failure))?;
@@ -503,7 +524,7 @@ impl<'a> NormalRunToolExecutor<'a> {
                 }
                 let mut attempt_input = broker_input.clone();
                 attempt_input.max_search_results =
-                    web_search_result_limit(remaining, attempt_count);
+                    web_search_result_limit(remaining, attempts_for_search);
                 let failure = match tokio::time::timeout(
                 remaining_time,
                 crate::ai_runtime::web_evidence_broker::collect_initial_run_web_evidence_with_usage(
@@ -523,7 +544,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             };
                 let adaptive_oversize_retry =
                     failure.reason == WebEvidenceFailureReason::ProviderOutputTooLarge;
-                if attempt_count < 2
+                if attempts_for_search < 2
                     && (failure.retryable || adaptive_oversize_retry)
                     && budget_started.elapsed() + Duration::from_millis(250) + MIN_RETRY_BUDGET
                         < MODEL_WEB_EVIDENCE_DEADLINE
@@ -816,6 +837,11 @@ impl<'a> NormalRunToolExecutor<'a> {
                     "content": body,
                     "truncated": truncated,
                     "cached": true,
+                    "contentHash": material.content_hash,
+                    "sourceSpan": {
+                        "start": material.source_span_start,
+                        "end": material.source_span_end,
+                    },
                 }),
                 duration_ms: 0,
                 tokens_used: None,
@@ -831,6 +857,11 @@ impl<'a> NormalRunToolExecutor<'a> {
         })?;
         let truncated = packet.excerpt.chars().count() > max_chars;
         let body: String = packet.excerpt.chars().take(max_chars).collect();
+        let (content_hash, source_span_start, source_span_end) = packet
+            .source_span
+            .as_ref()
+            .map(|span| (packet.content_hash.clone(), span.start, span.end))
+            .unwrap_or_else(|| (crate::cas::hash::content_hash_str(&body), 0, body.len()));
         Some(ToolCallResult {
             tool_name: "read_note".to_string(),
             success: true,
@@ -839,17 +870,199 @@ impl<'a> NormalRunToolExecutor<'a> {
                 "content": body,
                 "truncated": truncated,
                 "cached": true,
+                "contentHash": content_hash,
+                "sourceSpan": {
+                    "start": source_span_start,
+                    "end": source_span_end,
+                },
             }),
             duration_ms: 0,
             tokens_used: None,
             error: None,
         })
     }
+
+    /// Bind successful model-initiated local retrieval to the current Run's
+    /// evidence ledger. The dispatcher provides only source metadata here;
+    /// note text remains transient in tool results and is never copied into
+    /// the ledger or audit trail.
+    fn register_local_tool_evidence(
+        &self,
+        run_id: &str,
+        tool_name: &str,
+        args: &serde_json::Value,
+        result: &ToolCallResult,
+    ) -> AppResult<()> {
+        if !result.success {
+            return Ok(());
+        }
+        let evidence_inputs = match tool_name {
+            "read_note" => vec![self.read_note_evidence_input(run_id, args, result)?],
+            "search_hybrid" | "search_semantic" | "search_keyword" => result
+                .output
+                .get("results")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(local_evidence_input_from_packet)
+                .map(|packet| local_packet_evidence_input(run_id, self.context, packet))
+                .collect(),
+            "get_context_packets" => result
+                .output
+                .get("packets")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(local_evidence_input_from_packet)
+                .map(|packet| local_packet_evidence_input(run_id, self.context, packet))
+                .collect(),
+            "get_regulation" => result
+                .output
+                .get("regulation")
+                .and_then(local_evidence_input_from_packet)
+                .map(|packet| vec![local_packet_evidence_input(run_id, self.context, packet)])
+                .unwrap_or_default(),
+            _ => return Ok(()),
+        };
+        for input in evidence_inputs {
+            let registered = AgentEvidenceRepository::register_local(&self.state.db, input)?;
+            self.local_evidence_ids
+                .lock()
+                .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?
+                .push(registered.evidence_id);
+        }
+        Ok(())
+    }
+
+    fn read_note_evidence_input(
+        &self,
+        run_id: &str,
+        args: &serde_json::Value,
+        result: &ToolCallResult,
+    ) -> AppResult<LocalEvidenceInput> {
+        let requested_path = args
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| AppError::msg("agent_run_local_evidence_invalid"))?;
+        let requested_path =
+            crate::ai_runtime::retrieval_scope::normalize_note_path(requested_path)
+                .map_err(|_| AppError::msg("agent_run_local_evidence_invalid"))?;
+        let returned_path = result
+            .output
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|path| crate::ai_runtime::retrieval_scope::normalize_note_path(path).ok())
+            .filter(|path| path == &requested_path)
+            .ok_or_else(|| AppError::msg("agent_run_local_evidence_invalid"))?;
+        let content_hash = result
+            .output
+            .get("contentHash")
+            .and_then(serde_json::Value::as_str)
+            .filter(|hash| !hash.trim().is_empty())
+            .ok_or_else(|| AppError::msg("agent_run_local_evidence_invalid"))?;
+        let source_span = result
+            .output
+            .get("sourceSpan")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|span| Some((span.get("start")?.as_i64()?, span.get("end")?.as_i64()?)))
+            .filter(|(start, end)| *start >= 0 && end >= start)
+            .ok_or_else(|| AppError::msg("agent_run_local_evidence_invalid"))?;
+        Ok(LocalEvidenceInput {
+            session_id: self.context.session_id,
+            run_id: run_id.to_string(),
+            message_seq_first: self.context.message_seq_first,
+            material_role: MaterialRole::Lookup,
+            title: returned_path.clone(),
+            source_path: returned_path,
+            source_span_start: source_span.0,
+            source_span_end: source_span.1,
+            heading_path: None,
+            content_hash: content_hash.to_string(),
+            retrieval_reason: Some("model_read_note".to_string()),
+            score: None,
+        })
+    }
+}
+
+fn local_packet_evidence_input(
+    run_id: &str,
+    context: &RunContext,
+    packet: LocalEvidencePacket,
+) -> LocalEvidenceInput {
+    LocalEvidenceInput {
+        session_id: context.session_id,
+        run_id: run_id.to_string(),
+        message_seq_first: context.message_seq_first,
+        material_role: MaterialRole::Lookup,
+        title: packet.title,
+        source_path: packet.source_path,
+        source_span_start: packet.source_span_start,
+        source_span_end: packet.source_span_end,
+        heading_path: packet.heading_path,
+        content_hash: packet.content_hash,
+        retrieval_reason: Some(packet.retrieval_reason),
+        score: Some(packet.score),
+    }
+}
+
+struct LocalEvidencePacket {
+    title: String,
+    source_path: String,
+    source_span_start: i64,
+    source_span_end: i64,
+    heading_path: Option<String>,
+    content_hash: String,
+    retrieval_reason: String,
+    score: f64,
+}
+
+fn local_evidence_input_from_packet(value: &serde_json::Value) -> Option<LocalEvidencePacket> {
+    let source_path = crate::ai_runtime::retrieval_scope::normalize_note_path(
+        value.get("source_path")?.as_str()?,
+    )
+    .ok()?;
+    let content_hash = value.get("content_hash")?.as_str()?.trim();
+    let source_span = value.get("source_span")?.as_object()?;
+    let source_span_start = source_span.get("start")?.as_i64()?;
+    let source_span_end = source_span.get("end")?.as_i64()?;
+    if content_hash.is_empty()
+        || value.get("stale").and_then(serde_json::Value::as_bool) == Some(true)
+        || source_span_start < 0
+        || source_span_end <= source_span_start
+    {
+        return None;
+    }
+    Some(LocalEvidencePacket {
+        title: value
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or(&source_path)
+            .to_string(),
+        source_path,
+        source_span_start,
+        source_span_end,
+        heading_path: value
+            .get("heading_path")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        content_hash: content_hash.to_string(),
+        retrieval_reason: value
+            .get("retrieval_reason")
+            .and_then(serde_json::Value::as_str)
+            .filter(|reason| !reason.trim().is_empty())
+            .unwrap_or("model_local_search")
+            .to_string(),
+        score: value
+            .get("score")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or_default(),
+    })
 }
 
 /// Select the provider-facing result count for one bounded Web attempt.
 ///
-/// The Run may ultimately register up to eight evidence rows, but an MCP
+/// The Run may ultimately register up to twelve evidence rows, but an MCP
 /// provider must never be asked for that many raw search bodies in one strict
 /// prefetch. A response that exceeds the host cap gets exactly one smaller
 /// retry; this preserves the cap rather than hiding an unbounded payload.
@@ -1236,6 +1449,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                 self.dispatch_non_web_tool(&call.function.name, &args).await
             };
             audit_dispatched_tool(&self.state.db, &gate, &gate_outcome.decision, &result)?;
+            self.register_local_tool_evidence(run_id, &call.function.name, &args, &result)?;
             let summary = if result.success {
                 "工具调用完成"
             } else {
@@ -1279,17 +1493,19 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
     }
 
     fn evidence_ids(&self) -> Vec<i64> {
-        let mut evidence_ids = if self.subagent_depth == 0 {
-            self.run_web_evidence
-                .lock()
-                .map(|state| state.evidence_ids.clone())
-                .unwrap_or_default()
-        } else {
-            self.local_evidence_ids
-                .lock()
-                .map(|ids| ids.clone())
-                .unwrap_or_default()
-        };
+        let mut evidence_ids = self
+            .local_evidence_ids
+            .lock()
+            .map(|ids| ids.clone())
+            .unwrap_or_default();
+        if self.subagent_depth == 0 {
+            evidence_ids.extend(
+                self.run_web_evidence
+                    .lock()
+                    .map(|state| state.evidence_ids.clone())
+                    .unwrap_or_default(),
+            );
+        }
         let external_evidence_ids = if self.subagent_depth == 0 {
             &self.external_evidence_ids
         } else {
@@ -1311,7 +1527,12 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         // `web_search` call has persisted a Run-level evidence association.
         // It deliberately cannot be satisfied by session history or a prior
         // Run's citations.
-        if self.evidence_ids().is_empty() {
+        if self
+            .run_web_evidence
+            .lock()
+            .map(|state| state.evidence_ids.is_empty())
+            .unwrap_or(true)
+        {
             return false;
         }
         if !self.requires_corroborated_web_evidence() {
@@ -1867,7 +2088,7 @@ impl NormalRunToolExecutor<'_> {
             .web_attempt_count
             .lock()
             .map_err(|_| AppError::msg("agent_run_web_attempt_lock_failed"))?;
-        if *attempts >= 2 {
+        if *attempts >= MAX_WEB_PROVIDER_ATTEMPTS_PER_RUN {
             return Ok(None);
         }
         *attempts = attempts.saturating_add(1);
@@ -2744,7 +2965,7 @@ mod tests {
     use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
     use crate::ai_runtime::run_context::RunContextAssembler;
     use crate::ai_runtime::run_contract::{
-        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId,
+        AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, ContextMode,
         ExternalToolGrantRef, RunBudgetPolicy, RunEventPayload, RunEventType, RunState,
         SafeRunErrorCode, SecurityDomain,
     };
@@ -2752,7 +2973,10 @@ mod tests {
     use crate::ai_runtime::run_intake::RunIntake;
     use crate::ai_runtime::skills::SkillScopeRule;
     use crate::ai_runtime::{FunctionCall, LlmMessage, MessageRole, ToolCall, ToolSpec};
-    use crate::ai_types::{SkillActivationItemSummary, SkillActivationPlanSummary};
+    use crate::ai_types::{
+        ContextReferenceKind, ContextReferenceWire, SkillActivationItemSummary,
+        SkillActivationPlanSummary,
+    };
     use crate::app::AppState;
     use crate::error::AppResult;
     use crate::storage::db::Database;
@@ -2982,6 +3206,21 @@ mod tests {
     }
 
     #[test]
+    fn local_material_query_block_has_a_distinct_safe_web_failure_reason() {
+        let failure = super::WebFailure::with_reason(
+            SafeRunErrorCode::WebEvidenceInvalid,
+            false,
+            super::WebEvidenceFailureReason::LocalMaterialQueryBlocked,
+        );
+
+        assert_eq!(
+            failure.reason,
+            super::WebEvidenceFailureReason::LocalMaterialQueryBlocked
+        );
+        assert!(!failure.retryable);
+    }
+
+    #[test]
     fn concurrent_child_web_reservations_share_the_parent_run_limit() {
         let shared = Arc::new(Mutex::new(super::RunWebEvidenceState::default()));
         let barrier = Arc::new(std::sync::Barrier::new(3));
@@ -3187,6 +3426,13 @@ mod tests {
             binding_id: binding.id,
             binding_config_hash: binding.binding_config_hash,
         }];
+        assert_ne!(
+            RunIntake::resolve_envelope(&start)
+                .expect("external-tool envelope")
+                .context,
+            ContextMode::ImplicitVault,
+            "an external-tool grant is not authorization to read vault material"
+        );
         let accepted = RunIntake::start(&state.db, start).expect("accepted");
         let context = RunContextAssembler::assemble(
             &state.db,
@@ -4273,8 +4519,9 @@ mod tests {
 
     #[test]
     fn strict_web_search_retries_an_oversize_provider_with_two_results() {
-        assert_eq!(web_search_result_limit(8, 1), 5);
-        assert_eq!(web_search_result_limit(8, 2), 2);
+        assert_eq!(web_search_result_limit(12, 1), 8);
+        assert_eq!(web_search_result_limit(12, 2), 2);
+        assert_eq!(web_search_result_limit(4, 1), 4);
         assert_eq!(web_search_result_limit(1, 1), 1);
         assert_eq!(web_search_result_limit(1, 2), 1);
     }
@@ -4444,5 +4691,161 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("outside the confirmed Skill scope"));
+    }
+
+    #[tokio::test]
+    async fn model_read_note_registers_current_run_local_evidence_without_persisting_note_text() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let note_body = "仅用于本地检索账本的机密笔记正文 agentlocalmarker";
+        std::fs::write(vault.join("retrieved.md"), note_body).expect("local note");
+        std::fs::write(
+            vault.join("searched.md"),
+            "供搜索工具登记的独立本地证据 packetonlymarker",
+        )
+        .expect("search fixture note");
+        let state = Arc::new(AppState::new(directory.path().join("data")).expect("state"));
+        state.set_vault(vault.clone()).expect("activate vault");
+        state
+            .db
+            .with_conn(|connection| {
+                crate::indexer::scan::index_vault_incremental(connection, &vault)
+            })
+            .expect("index local retrieval fixtures");
+        let mut local_request = request();
+        local_request.turn.message = "请读取授权笔记后回答".to_string();
+        local_request
+            .turn
+            .explicit_references
+            .push(ContextReferenceWire {
+                id: "retrieved-note".into(),
+                kind: ContextReferenceKind::Note,
+                file_path: Some("retrieved.md".into()),
+                content_hash: Some(crate::cas::hash::content_hash_str(note_body)),
+                utf8_range: None,
+                editor_range: None,
+                excerpt: String::new(),
+                heading_path: None,
+                anchor: None,
+                stale: false,
+                invalid_reason: None,
+            });
+        local_request.turn.retrieval_scope.paths =
+            vec!["retrieved.md".into(), "searched.md".into()];
+        let accepted = RunIntake::start(&state.db, local_request).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let preparing = RunEngine::mark_preparing_with_sink(
+            &state.db,
+            &accepted.session,
+            &accepted.run_id,
+            &sink,
+        )
+        .expect("preparing state");
+        AgentRunRepository::append_event(
+            &state.db,
+            AppendRunEventInput {
+                run_id: accepted.run_id.clone(),
+                state_version: preparing,
+                event_type: RunEventType::StageChanged,
+                payload: RunEventPayload::StageChanged {
+                    state: RunState::Running,
+                    stage: "正在调用模型和工具".to_string(),
+                    stage_code: None,
+                },
+            },
+        )
+        .expect("running state");
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("vault.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("local-read-call", "read_note", r#"{"path":"retrieved.md"}"#),
+                1,
+            )
+            .await
+            .expect("read result");
+
+        assert!(result.success, "{:?}", result.error);
+        let evidence_id = state
+            .db
+            .with_read_conn(|connection| {
+                connection
+                    .query_row(
+                        "SELECT evidence.id
+                     FROM session_evidence evidence
+                     JOIN agent_run_evidence evidence_use ON evidence_use.evidence_id = evidence.id
+                     WHERE evidence_use.run_id = ?1
+                       AND evidence_use.registration_source = 'context'
+                       AND evidence.source_type = 'local'
+                       AND evidence.source_path = 'retrieved.md'",
+                        [&accepted.run_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(Into::into)
+            })
+            .expect("current Run local evidence");
+        assert_eq!(executor.evidence_ids(), vec![evidence_id]);
+
+        state
+            .db
+            .with_conn(|connection| {
+                crate::indexer::scan::index_vault_incremental(connection, &vault)
+            })
+            .expect("index local search fixture");
+        let search = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "local-search-call",
+                    "search_keyword",
+                    r#"{"query":"packetonlymarker","limit":3}"#,
+                ),
+                2,
+            )
+            .await
+            .expect("search result");
+        assert!(search.success, "{:?}", search.error);
+        assert!(
+            search.output["results"]
+                .as_array()
+                .is_some_and(|results| !results.is_empty()),
+            "indexed local fixture must be found: {:?}",
+            search.output
+        );
+        assert!(
+            executor.evidence_ids().len() >= 2,
+            "model-initiated packet search must also register its local result: {:?}",
+            search.output
+        );
+        state
+            .db
+            .with_read_conn(|connection| {
+                let persisted_body_count: i64 = connection.query_row(
+                    "SELECT COUNT(*) FROM session_evidence WHERE bounded_excerpt = ?1",
+                    [note_body],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(persisted_body_count, 0, "note text must stay transient");
+                Ok(())
+            })
+            .expect("no note text persistence");
     }
 }

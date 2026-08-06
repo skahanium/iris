@@ -20,7 +20,7 @@ const MAX_REPEAT_CALLS: u32 = 2;
 const MAX_TOOL_RESULT_CHARS: usize = 8_000;
 const CHILD_PROVIDER_SCOPE_SEPARATOR: &str = "::child-provider-scope::";
 /// Web evidence is deliberately allowed a larger envelope than generic tool
-/// output. Eight compact evidence excerpts need materially more room than a
+/// output. Twelve compact evidence excerpts need materially more room than a
 /// normal tool response, but the budget remains bounded per tool turn.
 pub(crate) const MAX_WEB_TOOL_RESULT_CHARS: usize = 32_000;
 

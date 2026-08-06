@@ -94,6 +94,29 @@ fn tool_or_inference_cannot_be_presented_as_user_input() {
 }
 
 #[test]
+fn historical_user_wording_cannot_be_backfilled_by_a_history_reference() {
+    let mut historical_policy = policy();
+    historical_policy.conversation_history_available = true;
+    for markdown in [
+        "你之前提到的预算是 10 万。",
+        "根据你在前文提到的信息，预算是 10 万。",
+        "In your earlier message, you mentioned a budget of 100,000.",
+    ] {
+        let output = FinalAnswerSubmission {
+            blocks: vec![FinalAnswerBlock {
+                markdown: markdown.to_string(),
+                sources: vec!["H".to_string()],
+            }],
+        };
+        assert_eq!(
+            validate_final_answer_submission(&output, &historical_policy).unwrap_err(),
+            ProvenanceValidationError::UserAttributionRequiresCurrentUserInput,
+            "historical wording must not turn conversation history into current user input: {markdown}"
+        );
+    }
+}
+
+#[test]
 fn strict_web_requires_each_substantive_block_to_bind_current_run_web_evidence() {
     let mut strict_policy = policy();
     strict_policy.strict_web = true;
@@ -115,6 +138,33 @@ fn strict_web_requires_each_substantive_block_to_bind_current_run_web_evidence()
         validate_final_answer_submission(&output, &strict_policy).unwrap_err(),
         ProvenanceValidationError::StrictWebBlockMissingCurrentRunEvidence { block: 2 }
     );
+}
+
+#[test]
+fn strict_web_allows_source_free_structural_heading_before_a_bound_fact_block() {
+    let mut strict_policy = policy();
+    strict_policy.strict_web = true;
+    let output = FinalAnswerSubmission {
+        blocks: vec![
+            FinalAnswerBlock {
+                markdown: "## 结论".into(),
+                sources: Vec::new(),
+            },
+            FinalAnswerBlock {
+                markdown: "HTTP 404 表示服务器找不到所请求的资源。".into(),
+                sources: vec!["W21".into()],
+            },
+        ],
+    };
+
+    let validated = validate_final_answer_submission(&output, &strict_policy)
+        .expect("structural Markdown is not an unsupported factual assertion");
+
+    assert_eq!(
+        validated.visible_content,
+        "## 结论\n\nHTTP 404 表示服务器找不到所请求的资源。 [W21]"
+    );
+    assert_eq!(validated.attribution[0].sources, Vec::<String>::new());
 }
 
 #[test]

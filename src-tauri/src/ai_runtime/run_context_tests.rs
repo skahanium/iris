@@ -123,6 +123,19 @@ fn assemble_reads_only_the_run_persisted_explicit_reference() {
     assert_eq!(context.materials.len(), 1);
     assert_eq!(context.materials[0].content, "attached evidence");
     assert_eq!(context.materials[0].source_path, "notes/attached.md");
+    let plan = context.domain_plan();
+    assert!(plan
+        .rendered_authorized_material
+        .contains("attached evidence"));
+    assert!(plan.rendered_local_retrieval.is_empty());
+    let prompt = context
+        .messages_with_domain_plan(&plan)
+        .into_iter()
+        .map(|message| message.content.text_content())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(prompt.contains("## AuthorizedMaterialData"));
+    assert!(!prompt.contains("## LocalRetrievalEvidenceData"));
     assert!(!context
         .prompt_with_domain_plan(&context.domain_plan())
         .contains("must never be read"));
@@ -595,6 +608,225 @@ fn scope_only_context_performs_deterministic_retrieval_before_provider_dispatch(
     assert!(!context
         .prompt_with_domain_plan(&context.domain_plan())
         .contains("forbidden evidence"));
+}
+
+#[test]
+fn implicit_vault_context_prefetches_authorized_indexed_material_before_provider_dispatch() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/project.md",
+        "Project",
+        "implicit-vault-needle authorized local milestone",
+        "implicit-vault-needle authorized local milestone",
+    );
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "implicit-vault-retrieval".into(),
+            run_id: "run-implicit-vault-retrieval".into(),
+            turn_id: "turn-implicit-vault-retrieval".into(),
+            message: "implicit-vault-needle".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::ImplicitVault,
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-implicit-vault-retrieval",
+    )
+    .expect("assembled implicit vault context");
+
+    assert_eq!(context.materials.len(), 1);
+    assert_eq!(context.materials[0].source_path, "notes/project.md");
+    assert!(context.materials[0]
+        .content
+        .contains("authorized local milestone"));
+    let plan = context.domain_plan();
+    assert!(plan
+        .rendered_local_retrieval
+        .contains("authorized local milestone"));
+    assert!(plan.rendered_authorized_material.is_empty());
+    let prompt = context
+        .messages_with_domain_plan(&plan)
+        .into_iter()
+        .map(|message| message.content.text_content())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(prompt.contains("## LocalRetrievalEvidenceData"));
+    assert!(!prompt.contains("## AuthorizedMaterialData"));
+}
+
+#[test]
+fn implicit_vault_prefetch_uses_the_local_clause_of_a_mixed_local_and_web_request() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/risk.md",
+        "Risk",
+        "结合本地风险登记：依赖切换需要回滚预案。",
+        "结合本地风险登记：依赖切换需要回滚预案。",
+    );
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "implicit-vault-mixed-query".into(),
+            run_id: "run-implicit-vault-mixed-query".into(),
+            turn_id: "turn-implicit-vault-mixed-query".into(),
+            message: "结合本地风险登记与最新公开依赖状态，给出风险判断。".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::ImplicitVault,
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let context = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-implicit-vault-mixed-query",
+    )
+    .expect("local clause must retrieve the relevant material before Web verification");
+
+    assert_eq!(context.materials.len(), 1);
+    assert!(context.materials[0].content.contains("回滚预案"));
+}
+
+#[test]
+fn implicit_vault_context_fails_closed_when_no_eligible_local_material_is_found() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "implicit-vault-empty".into(),
+            run_id: "run-implicit-vault-empty".into(),
+            turn_id: "turn-implicit-vault-empty".into(),
+            message: "local-evidence-must-exist".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::ImplicitVault,
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let error = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-implicit-vault-empty",
+    )
+    .expect_err("implicit vault requests cannot fall back to an answer without local evidence");
+
+    assert_eq!(
+        error.to_string(),
+        "agent_run_local_reference_index_unavailable"
+    );
+}
+
+#[test]
+fn implicit_vault_context_fails_closed_when_policy_blocks_every_retrieved_note() {
+    let dir = tempfile::tempdir().expect("vault");
+    let vault = dir.path().join("vault");
+    std::fs::create_dir_all(vault.join("notes")).expect("notes directory");
+    let db = Database::open_in_memory().expect("database");
+    index_scoped_note(
+        &db,
+        "notes/private.md",
+        "Private",
+        "policy-guard-needle private local fact",
+        "policy-guard-needle private local fact",
+    );
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO document_capability_policies
+             (scope_kind, scope_path, capability, decision)
+             VALUES ('document', 'notes/private.md', 'send_to_model', 'deny')",
+            [],
+        )?;
+        Ok(())
+    })
+    .expect("deny model access to retrieved note");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    AgentRunRepository::accept(
+        &db,
+        AcceptRunInput {
+            session_id: session.session_id,
+            session_key: session.session_key.clone(),
+            client_request_id: "implicit-vault-policy-denied".into(),
+            run_id: "run-implicit-vault-policy-denied".into(),
+            turn_id: "turn-implicit-vault-policy-denied".into(),
+            message: "policy-guard-needle".into(),
+            content_parts: None,
+            explicit_references: vec![],
+            context_scope: Default::default(),
+            display_mentions: vec![],
+            explicit_action: None,
+            envelope: ExecutionEnvelope {
+                context: ContextMode::ImplicitVault,
+                effort: Effort::ToolLoop,
+                ..envelope()
+            },
+        },
+    )
+    .expect("accepted run");
+
+    let error = RunContextAssembler::assemble(
+        &db,
+        Some(&vault),
+        &session.session_key,
+        "run-implicit-vault-policy-denied",
+    )
+    .expect_err("policy-blocked local material must never fall back to a model-only answer");
+
+    assert_eq!(
+        error.to_string(),
+        "agent_run_local_reference_index_unavailable"
+    );
 }
 
 #[test]
@@ -1585,9 +1817,9 @@ fn normal_context_includes_six_prior_messages_but_never_duplicates_the_current_t
         .as_deref()
         .expect("previous Run safety summary");
     assert!(prior_summary.contains("status=completed"));
-    assert!(prior_summary.contains("webResult=degraded"));
-    assert!(prior_summary.contains("attemptCount=2"));
-    assert!(prior_summary.contains("safeCode=agent_run_web_provider_timeout"));
+    assert!(prior_summary.contains("evidence_outcome=degraded"));
+    assert!(prior_summary.contains("attempt_count=2"));
+    assert!(prior_summary.contains("safe_code=agent_run_web_provider_timeout"));
     assert!(!prior_summary.contains("Why did you search the web?"));
 
     let messages = context.messages_with_domain_plan(&context.domain_plan());
@@ -1808,6 +2040,6 @@ fn previous_run_safety_does_not_treat_local_evidence_as_web_success() {
         .as_deref()
         .expect("previous Run summary");
 
-    assert!(prior_summary.contains("webAttempted=false"));
-    assert!(prior_summary.contains("webResult=skipped"));
+    assert!(prior_summary.contains("web_attempted=false"));
+    assert!(prior_summary.contains("evidence_outcome=skipped"));
 }

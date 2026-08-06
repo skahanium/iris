@@ -228,6 +228,73 @@ describe("McpProfilesPanel 实时诊断", () => {
     expect(host.textContent).not.toContain("实时可用性");
   });
 
+  it("在服务商条目内显示主备、允许排序且不会进入详情", async () => {
+    const tavily = { ...provider, id: "tavily", name: "Tavily" };
+    const jina = { ...provider, id: "jina", name: "Jina Reader" };
+    const disabled = {
+      ...provider,
+      id: "disabled",
+      name: "Disabled",
+      enabled: false,
+    };
+    ipcMocks.webEvidenceProvidersList.mockResolvedValue([
+      disabled,
+      provider,
+      tavily,
+      jina,
+    ]);
+    ipcMocks.webSearchRouteGet.mockResolvedValue({
+      candidateProviderIds: [tavily.id, provider.id, jina.id],
+    });
+    ipcMocks.webSearchRouteSet.mockResolvedValue({
+      candidateProviderIds: [provider.id, tavily.id, jina.id],
+    });
+
+    await act(async () => {
+      root.render(<McpProfilesPanel open />);
+    });
+    await flush();
+
+    expect(
+      Array.from(
+        host.querySelectorAll('[data-testid="mcp-provider-card"]'),
+      ).map((card) => card.textContent?.replace(/\s+/g, " ").trim()),
+    ).toEqual([
+      expect.stringContaining("Tavily"),
+      expect.stringContaining("AnySearch"),
+      expect.stringContaining("Jina Reader"),
+      expect.stringContaining("Disabled"),
+    ]);
+    expect(host.textContent).toContain("主服务");
+    expect(host.textContent).toContain("备用 1");
+    expect(host.textContent).toContain("备用 2");
+
+    const primaryUp = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="将 Tavily 上移"]',
+    );
+    const lastFallbackDown = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="将 Jina Reader 下移"]',
+    );
+    const moveAnySearchUp = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="将 AnySearch 上移"]',
+    );
+    expect(primaryUp?.disabled).toBe(true);
+    expect(lastFallbackDown?.disabled).toBe(true);
+    if (!moveAnySearchUp) throw new Error("missing move-up control");
+
+    await act(async () => {
+      moveAnySearchUp.click();
+    });
+    await flush();
+
+    expect(ipcMocks.webSearchRouteSet).toHaveBeenCalledWith({
+      candidateProviderIds: [provider.id, tavily.id, jina.id],
+    });
+    expect(
+      host.querySelector('[data-testid="mcp-provider-detail"]'),
+    ).toBeNull();
+  });
+
   it("保存、启停和编辑都会清空当前面板的诊断结果", async () => {
     await act(async () => {
       root.render(<McpProfilesPanel open />);

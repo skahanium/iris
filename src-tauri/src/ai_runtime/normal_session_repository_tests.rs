@@ -1,4 +1,4 @@
-use super::conversation_memory::ConversationMemory;
+use super::conversation_memory::{build_memory_prompt_messages, ConversationMemory};
 use super::normal_session_repository::NormalSessionRepository;
 use crate::storage::db::Database;
 
@@ -168,6 +168,50 @@ fn normal_session_history_loads_the_latest_240_messages_in_chronological_order()
 }
 
 #[test]
+fn long_committed_conversation_has_a_bounded_memory_and_recent_prompt_projection() {
+    let db = Database::open_in_memory().expect("database");
+    let session = NormalSessionRepository::create(&db).expect("session");
+    db.with_conn(|conn| {
+        for seq in 1..=1_000_i64 {
+            conn.execute(
+                "INSERT INTO session_messages (session_id, seq, role, content, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    session.session_id,
+                    seq,
+                    if seq % 2 == 0 { "assistant" } else { "user" },
+                    format!("committed-long-history-{seq}"),
+                    format!("2026-08-05T00:{:02}:00Z", seq % 60),
+                ],
+            )?;
+        }
+        Ok(())
+    })
+    .expect("seed committed long conversation");
+
+    let memory =
+        ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
+            .expect("refresh memory")
+            .expect("long conversation creates memory");
+    let prompt = build_memory_prompt_messages(&db, session.session_id, 6)
+        .expect("bounded prompt projection");
+
+    assert_eq!(memory.seq_end, 994);
+    assert_eq!(prompt.len(), 7, "one memory fragment plus six recent turns");
+    assert_eq!(prompt[0].0, "system");
+    assert!(prompt[0].1.contains("seq=1..994"));
+    assert_eq!(
+        prompt[1..]
+            .iter()
+            .map(|(_, content)| content.clone())
+            .collect::<Vec<_>>(),
+        (995..=1_000)
+            .map(|seq| format!("committed-long-history-{seq}"))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn normal_session_history_restores_new_turn_metadata_and_defaults_legacy_rows_to_arrays() {
     let db = Database::open_in_memory().expect("database");
     let created = NormalSessionRepository::create(&db).expect("create session");
@@ -234,7 +278,12 @@ fn prompt_history_and_memory_projection_exclude_failed_modern_turns() {
         }
         for (seq, role, content, turn_id) in [
             (1, "user", "legacy visible context", None),
-            (2, "user", "failed user must be hidden", Some("failed-turn")),
+            (
+                2,
+                "user",
+                "goal: failed-only confidential objective",
+                Some("failed-turn"),
+            ),
             (3, "user", "completed user remains", Some("completed-turn")),
             (
                 4,
@@ -308,7 +357,17 @@ fn prompt_history_and_memory_projection_exclude_failed_modern_turns() {
     let memory = ConversationMemory::latest_for_session(&db, session.session_id)
         .expect("memory lookup")
         .expect("committed conversation is long enough");
-    assert!(!memory.goal_summary.contains("failed user"));
+    for summary in [
+        &memory.goal_summary,
+        &memory.preference_summary,
+        &memory.decision_summary,
+        &memory.open_threads_summary,
+    ] {
+        assert!(
+            !summary.contains("failed-only confidential objective"),
+            "failed-turn content must never enter durable conversation memory"
+        );
+    }
 }
 
 #[test]

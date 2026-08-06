@@ -107,6 +107,30 @@ describe("AssistantRunCapabilityDegraded", () => {
     expect(host.textContent).not.toContain("private provider output");
   });
 
+  it("explains a local-material query block without exposing the material", () => {
+    act(() => {
+      root.render(
+        <AssistantRunWebVerificationFailed
+          failure={{
+            kind: "web_verification_failed",
+            code: "agent_run_web_evidence_invalid",
+            failureReason: "local_material_query_blocked",
+            retryable: false,
+            attemptCount: 1,
+            durationBucket: "not_started",
+            diagnosticId: "run-private-query",
+          }}
+          retrying={false}
+          onRetry={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("保护你授权的材料");
+    expect(host.textContent).toContain("公开关键词");
+    expect(host.textContent).not.toContain("Iris Pilot");
+  });
+
   it("renders the precise non-retryable API Key remediation message", () => {
     act(() => {
       root.render(

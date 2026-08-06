@@ -8,6 +8,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::ai_runtime::final_answer_submission::is_source_free_structural_block;
+
 /// Origin categories admitted by the V3 answer-attribution protocol.
 #[allow(
     dead_code,
@@ -70,15 +72,23 @@ pub(crate) struct SourceSummary {
 }
 
 impl SourceSummary {
-    /// Build the conservative summary used by an uncalibrated source-group
-    /// answer. It describes only the verified Run sources, never claim-level
-    /// support.
-    pub(crate) fn from_web_count(count: usize) -> Self {
+    /// Build a conservative display projection of verified sources attached to
+    /// one completed Run. Unlike a structured submission, this is a source
+    /// group only: it never claims that a particular source supports a
+    /// particular sentence.
+    pub(crate) fn from_verified_run_origins(
+        origins: impl IntoIterator<Item = InformationOrigin>,
+    ) -> Self {
         let mut counts = BTreeMap::new();
-        if count > 0 {
-            counts.insert(InformationOrigin::WebToolEvidence, count);
+        for origin in origins {
+            *counts.entry(origin).or_insert(0) += 1;
         }
         Self { counts }
+    }
+
+    /// Whether the projection contains no displayable source categories.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.counts.is_empty()
     }
 
     /// Return the number of distinct accepted source references for one origin.
@@ -88,11 +98,7 @@ impl SourceSummary {
     }
 
     fn from_references(references: &BTreeMap<String, InformationOrigin>) -> Self {
-        let mut counts = BTreeMap::new();
-        for origin in references.values() {
-            *counts.entry(*origin).or_insert(0) += 1;
-        }
-        Self { counts }
+        Self::from_verified_run_origins(references.values().copied())
     }
 
     /// Serialize only category counts; source identifiers and excerpts never
@@ -277,6 +283,9 @@ fn validate_block_attribution(
     origins: &[InformationOrigin],
     policy: &ProvenancePolicy,
 ) -> Result<(), ProvenanceValidationError> {
+    if origins.is_empty() && is_source_free_structural_block(block) {
+        return Ok(());
+    }
     let has_origin = |origin| origins.contains(&origin);
     if has_user_attribution(block) && !has_origin(InformationOrigin::CurrentUserRequest) {
         return Err(ProvenanceValidationError::UserAttributionRequiresCurrentUserInput);
@@ -321,9 +330,18 @@ fn has_user_attribution(block: &str) -> bool {
         "按你的信息",
         "如你所述",
         "根据你",
+        "你提到",
+        "你之前",
+        "你此前",
+        "你在前文",
+        "先前你",
         "you said",
         "you provided",
         "as you said",
+        "you mentioned",
+        "you previously",
+        "your earlier message",
+        "your previous message",
     ]
     .iter()
     .any(|needle| lowercase.contains(needle))

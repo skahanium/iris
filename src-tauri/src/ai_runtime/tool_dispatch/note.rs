@@ -30,6 +30,11 @@ pub(super) async fn read_note(
         "path": path,
         "content": body,
         "truncated": truncated,
+        // Evidence registration must use the source that was actually read,
+        // rather than treating the (possibly truncated) model payload as the
+        // whole note. These fields remain internal tool-result metadata.
+        "contentHash": crate::cas::hash::content_hash_str(&content),
+        "sourceSpan": { "start": 0, "end": content.len() },
     }))
 }
 

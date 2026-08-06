@@ -34,7 +34,7 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 非严格的可选 Web 工具失败会返回结构化工具结果并产生非终态 `capability_degraded` 事件。`web_required` 无可核验证据时写入 `web_verification_failed` 后安全终态，不生成事实结论或伪引用。诊断仅记录联网模式、原因码、尝试次数、结果和耗时区间，不记录查询、笔记、原始 MCP 输出、端点或凭据。偶发降级与 MCP/harness/LLM 分流步骤见 [ops/web-capability-degradation.md](./ops/web-capability-degradation.md)；可执行 `npm run diagnose:web-degradation` 读取本地 `agent_run_events`。
 
-助手只通过 `web_search` 语义入口请求外网证据。已校准的严格事实回答使用 Run-local `[W1]…[Wn]` 标注，界面会渲染为上标徽章，并在消息底部「来源」列出对应 HTTPS 标题（见 [design-system.md](./design-system.md) Web 引用契约）。未校准路由使用来源组，不接受模型手写的精确标记；其工具轮次保持私有，最终模型回合在与终局相同的可见文本净化后渐进输出。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。非严格工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider；严格路径先验证证据 provider，再选择无工具回答模型。普通证据详情只展示引用、标题、安全 URL/域名、摘录和冲突说明；provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
+助手只通过 `web_search` 语义入口请求外网证据。严格结构化终局只有精确校准的 provider/model 才能启用；当前校准表为空，所有生产路由均使用来源组，不接受模型手写的精确标记。未来已校准路由的 Run-local `[W1]…[Wn]` 会渲染为上标徽章，并在消息底部「来源」列出对应 HTTPS 标题（见 [design-system.md](./design-system.md) Web 引用契约）。来源组的工具轮次保持私有，最终模型回合在与终局相同的可见文本净化后渐进输出；该净化会移除伪精确标记，并把不可精确绑定的“用户提供”归因或“本轮 / 上一轮”生命周期措辞改为自然中性表达。`WebEvidenceBroker` 仅使用被显式映射为 `web.search` / `web.fetch` 的 provider；搜索、显式 URL 深读和抓取均进入该 broker。非严格工具循环先检查模型池中是否有支持工具调用的模型，再检查联网证据 provider；严格路径先验证证据 provider，再选择无工具回答模型。普通来源区只显示来源类别计数与可点击 HTTPS 标题；不显示摘录、搜索词、工具参数、原始输出或内部推理。provider 内部标识、原始结果哈希与提取方式只在诊断路径出现。
 
 MCP 的 Web 路径仍只承载显式 `web.search` / `web.fetch` mapping，并只由联网开关授权。通用 MCP 只读工具走独立的 `external.read` 路径：管理中心把服务端 `readOnlyHint` 视为候选声明而非行为证明，只允许名称与递归输入 Schema 通过副作用审查、且用户对精确 provider/tool/schema 二次确认信任的工具进入白名单 binding；Composer 必须逐 Run 显式提交 binding ID/hash，Accept 原子冻结用户信任位、provider transport/config、Schema、映射和输出策略。运行中不重新 discovery，不透传服务端 description，也不允许 Skills、分类域、local-only 或模型自行扩大工具面。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现声明。
 
@@ -42,7 +42,7 @@ MCP 的 Web 路径仍只承载显式 `web.search` / `web.fetch` mapping，并只
 
 ## 严格事实核验（v1.2.16）
 
-联网开关只授予 `web_search` 能力；开启后，除本机运行时事实、对话元问题、用户已提供材料的变换与纯创作外，所有外部事实请求都使用 `web_required`。每次完成都必须绑定本 Run 的 HTTPS Web 证据；会话历史、摘要和旧引用不能充当新一轮的核验结果。模型可见、Run 关联和最终引用都来自同一份最多 8 条的证据包：单条摘录最多 2,000 字符，Web 工具结果专用上限为 32,000 字符，超过预算必须重新打包或拒绝，绝不静默截断。引用使用 Run-local 的 `[W1]…[Wn]`，不复用会话级编号。联网未开启、来源不足或来源冲突时，Run 以可重试的安全终态结束，不给出事实结论。
+联网开关只授予 `web_search` 能力；开启后，除本机运行时事实、对话元问题、用户已提供材料的变换与纯创作外，所有外部事实请求都使用 `web_required`。每次完成都必须绑定本 Run 的 HTTPS Web 证据；会话历史、摘要和旧引用不能充当新一轮的核验结果。首次搜索最多打包 8 条，整个 Run 累计最多注册 12 条；单条摘录最多 2,000 字符，Web 工具结果专用上限为 32,000 字符，超过预算必须重新打包或拒绝，绝不静默截断。精确校准路由才使用 Run-local 的 `[W1]…[Wn]`，不复用会话级编号；未校准路由只呈现来源组。联网未开启、来源不足或来源冲突时，Run 以可重试的安全终态结束，不给出事实结论。
 
 时效新闻、赛果、职位和价格优先使用官方/主办方来源；没有官方来源时至少需要两个独立可信来源一致。来源不充分时宁可拒答。
 

@@ -105,9 +105,12 @@ fn seed_chunks(conn: &Connection, count: usize) {
 }
 
 fn wait_for_phase(scheduler: &EmbeddingScheduler, phase: &str) {
-    // CI runners under full `cargo test` contention need more than a couple of
-    // seconds for the background worker to land the expected terminal phase.
-    let deadline = Instant::now() + Duration::from_secs(15);
+    // The scheduler owns a native background worker. Under the full Rust suite
+    // that worker can wait behind unrelated CPU-bound tests, so this contract
+    // waits for its durable state transition instead of treating scheduler
+    // contention as a model failure. The bound still prevents a hung worker
+    // from making CI unbounded.
+    let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let current = scheduler.status().unwrap().phase;
         if current == phase {

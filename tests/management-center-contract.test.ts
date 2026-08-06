@@ -163,7 +163,8 @@ describe("management center contract", () => {
     expect(mcpPanel).toContain("webEvidenceProviderDiagnostics");
     expect(mcpPanel.toLowerCase()).not.toContain(removedDdg);
     expect(mcpPanel).not.toContain("原生托底");
-    expect(mcpPanel).toContain("联网搜索主备顺序");
+    expect(mcpPanel).toContain("orderMcpProvidersForSearchRoute");
+    expect(mcpPanel).not.toContain('data-testid="web-search-route"');
     expect(mcpPanel).toContain("webSearchRouteGet");
     expect(mcpPanel).toContain("webSearchRouteSet");
     expect(center).toContain("onManagementCenterProviderIdChange");
@@ -174,6 +175,11 @@ describe("management center contract", () => {
     expect(mcpPanel).not.toContain("MCP_PROVIDER_PRESETS.map");
     expect(mcpPanel).not.toContain("setDraft(createDraftSummary(preset))");
     expect(mcpCard).toContain("MCP_PROVIDER_PRESETS.map");
+    expect(mcpCard).toContain("主服务");
+    expect(mcpCard).toContain("备用 1");
+    expect(mcpCard).toContain("备用 2");
+    expect(mcpCard).toContain("onMoveSearchRoute");
+    expect(mcpCard).toContain("event.stopPropagation()");
     expect(mcpCard).not.toContain("MCP_PROVIDER_PRESETS.slice(0, 6)");
     expect(mcpCard).not.toContain(
       'variant={presetId === preset.id ? "secondary" : "outline"}',

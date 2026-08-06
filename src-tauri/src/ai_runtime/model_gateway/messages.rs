@@ -144,6 +144,18 @@ pub fn tool_api_message_chain_valid(messages: &[LlmMessage]) -> bool {
 
 /// Serialize messages for provider APIs (tool_calls need `type`, tool role needs `tool_call_id`).
 pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
+    messages_for_api_with_reasoning_continuation(messages, false)
+}
+
+/// Serialize one same-provider tool continuation.
+///
+/// Provider-private reasoning is replayed only when the selected adapter
+/// explicitly requires it to resume that tool exchange. It never becomes
+/// ordinary history, evidence, memory, or a cross-provider fallback input.
+pub(crate) fn messages_for_api_with_reasoning_continuation(
+    messages: &[LlmMessage],
+    replay_reasoning_content: bool,
+) -> Vec<serde_json::Value> {
     messages
         .iter()
         .map(|m| {
@@ -175,7 +187,10 @@ pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
                     "content": content,
                     "tool_calls": tool_calls,
                 });
-                if let Some(reasoning) = &m.reasoning_content {
+                if replay_reasoning_content {
+                    let Some(reasoning) = &m.reasoning_content else {
+                        return msg;
+                    };
                     msg["reasoning_content"] = serde_json::Value::String(reasoning.clone());
                 }
                 return msg;

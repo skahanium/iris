@@ -253,7 +253,7 @@ function runLive() {
       console.error("agent_eval_live_requires_an_explicit_approved_profile");
       process.exit(2);
     }
-    if (costConfirmation !== "one-12-case-pilot") {
+    if (costConfirmation !== "one-24-case-interaction-matrix-pilot") {
       console.error("agent_eval_live_pilot_requires_user_cost_checkpoint");
       process.exit(2);
     }
@@ -337,7 +337,7 @@ function main() {
   }
   if (mode !== "smoke" && mode !== "full") {
     console.error(
-      "usage: node scripts/agent-eval.mjs <smoke|full|live preflight [--models model-a,model-b]|live pilot --session session-id --approve profile-id --confirm-cost one-12-case-pilot [--models model-a]>",
+      "usage: node scripts/agent-eval.mjs <smoke|full|live preflight [--models model-a,model-b]|live pilot --session session-id --approve profile-id --confirm-cost one-24-case-interaction-matrix-pilot [--models model-a]>",
     );
     process.exit(2);
   }

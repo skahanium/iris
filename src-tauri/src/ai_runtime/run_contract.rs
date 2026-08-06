@@ -41,6 +41,10 @@ pub(crate) enum ContextMode {
     None,
     /// Conversation history only.
     Conversation,
+    /// A request explicitly depends on authorized vault knowledge but names no
+    /// individual note or bounded scope. The runtime must retrieve eligible
+    /// local context before any model turn.
+    ImplicitVault,
     /// Only references made explicit in this Run.
     ExplicitReferences,
     /// An explicit action target or bounded scope supplied for this Run.
@@ -1204,6 +1208,8 @@ pub(crate) enum WebEvidenceFailureReason {
     SearchResultUnparseable,
     SearchResultNoUsableHttps,
     EvidenceContentEmpty,
+    /// A query would disclose text from user-authorized local material to a Web provider.
+    LocalMaterialQueryBlocked,
     #[default]
     Unknown,
 }

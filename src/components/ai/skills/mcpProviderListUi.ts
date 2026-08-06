@@ -2,6 +2,67 @@ import type { WebEvidenceProviderSummary } from "@/lib/ipc";
 
 export type McpListDotTone = "muted" | "success" | "warning";
 
+export type McpSearchRouteRole = "primary" | "fallback_1" | "fallback_2";
+
+interface SearchRouteEligibleProvider {
+  id: string;
+  enabled: boolean;
+  hasSearchMapping: boolean;
+}
+
+export interface McpSearchRouteListItem<T> {
+  provider: T;
+  searchRouteRole?: McpSearchRouteRole;
+}
+
+/**
+ * Projects MCP providers into the single list order used for web-search
+ * priority. Only the first three enabled search mappings are route candidates.
+ */
+export function orderMcpProvidersForSearchRoute<
+  T extends SearchRouteEligibleProvider,
+>(
+  providers: readonly T[],
+  searchRouteIds: readonly string[],
+): McpSearchRouteListItem<T>[] {
+  const eligible = providers.filter(
+    (provider) => provider.enabled && provider.hasSearchMapping,
+  );
+  const eligibleById = new Map(
+    eligible.map((provider) => [provider.id, provider]),
+  );
+  const orderedCandidates: T[] = [];
+  const candidateIds = new Set<string>();
+
+  for (const id of searchRouteIds) {
+    const provider = eligibleById.get(id);
+    if (!provider || candidateIds.has(id)) continue;
+    orderedCandidates.push(provider);
+    candidateIds.add(id);
+  }
+  for (const provider of eligible) {
+    if (candidateIds.has(provider.id)) continue;
+    orderedCandidates.push(provider);
+    candidateIds.add(provider.id);
+  }
+
+  const routeCandidates = orderedCandidates.slice(0, 3);
+  const routeCandidateIds = new Set(
+    routeCandidates.map((provider) => provider.id),
+  );
+  const roles: McpSearchRouteRole[] = ["primary", "fallback_1", "fallback_2"];
+
+  return [
+    ...routeCandidates.map((provider, index) => ({
+      provider,
+      searchRouteRole: roles[index],
+    })),
+    ...providers
+      .filter((provider) => !routeCandidateIds.has(provider.id))
+      .map((provider) => ({ provider })),
+  ];
+}
+
 export function mcpListDotTone(
   provider: Pick<WebEvidenceProviderSummary, "enabled" | "mappingStatus">,
 ): McpListDotTone {

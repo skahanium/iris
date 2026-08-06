@@ -1,5 +1,11 @@
 ﻿import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, Globe2, Terminal } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Globe2,
+  Terminal,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip } from "@/components/ui/tooltip";
 import type {
   WebEvidenceProviderDiagnostics,
   WebEvidenceProviderInput,
@@ -38,6 +45,7 @@ import {
   mcpListDotTone,
   mcpListMappingShortLabel,
   mcpListTransportShortLabel,
+  type McpSearchRouteRole,
 } from "./mcpProviderListUi";
 
 export interface McpCredentialSave {
@@ -54,6 +62,11 @@ interface McpProfileCardProps {
   persisted?: boolean;
   surface?: "list" | "detail";
   onSelect?: () => void;
+  /** Visible web-search priority role when this provider is a route candidate. */
+  searchRouteRole?: McpSearchRouteRole;
+  canMoveSearchRouteUp?: boolean;
+  canMoveSearchRouteDown?: boolean;
+  onMoveSearchRoute?: (direction: -1 | 1) => void;
   onSave: (
     input: WebEvidenceProviderInput,
     credentialSaves: McpCredentialSave[],
@@ -415,6 +428,10 @@ export function McpProfileCard({
   persisted = true,
   surface = "detail",
   onSelect,
+  searchRouteRole,
+  canMoveSearchRouteUp = false,
+  canMoveSearchRouteDown = false,
+  onMoveSearchRoute,
   onSave,
   onToggle,
   onDelete,
@@ -638,17 +655,21 @@ export function McpProfileCard({
 
   if (surface === "list") {
     const TransportIcon = listTransportKind === "stdio" ? Terminal : Globe2;
+    const searchRouteRoleLabel =
+      searchRouteRole === "primary"
+        ? "主服务"
+        : searchRouteRole === "fallback_1"
+          ? "备用 1"
+          : searchRouteRole === "fallback_2"
+            ? "备用 2"
+            : null;
+    const providerName = provider.name || "MCP 联网证据提供方";
     return (
-      <Button
-        asChild
-        variant="ghost"
-        size="sm"
-        className="h-auto w-full p-0 font-normal hover:bg-transparent"
-      >
+      <div className="group relative">
         <button
           type="button"
           data-testid="mcp-provider-card"
-          className={MCP_PROVIDER_LIST_CARD_CLASS}
+          className={cn(MCP_PROVIDER_LIST_CARD_CLASS, "pr-24")}
           onClick={onSelect}
         >
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface-inset/40">
@@ -667,8 +688,13 @@ export function McpProfileCard({
                 aria-label={mcpListDotAriaLabel(provider)}
               />
               <p className="truncate text-sm font-medium text-foreground">
-                {provider.name || "MCP 联网证据提供方"}
+                {providerName}
               </p>
+              {searchRouteRoleLabel ? (
+                <span className="shrink-0 rounded-full border border-success/25 bg-success-bg px-1.5 py-0.5 text-[10px] font-medium text-success-foreground">
+                  {searchRouteRoleLabel}
+                </span>
+              ) : null}
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {mcpListTransportShortLabel(listTransportKind)}
@@ -681,7 +707,43 @@ export function McpProfileCard({
             aria-hidden
           />
         </button>
-      </Button>
+        {searchRouteRole && onMoveSearchRoute ? (
+          <span className="absolute inset-y-0 right-8 z-10 flex items-center gap-0.5 opacity-0 transition-opacity duration-fast group-focus-within:opacity-100 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100">
+            <Tooltip content="上移">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 min-h-7 w-7 min-w-7"
+                aria-label={`将 ${providerName} 上移`}
+                disabled={saving || !canMoveSearchRouteUp}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onMoveSearchRoute(-1);
+                }}
+              >
+                <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </Tooltip>
+            <Tooltip content="下移">
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 min-h-7 w-7 min-w-7"
+                aria-label={`将 ${providerName} 下移`}
+                disabled={saving || !canMoveSearchRouteDown}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onMoveSearchRoute(1);
+                }}
+              >
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+              </Button>
+            </Tooltip>
+          </span>
+        ) : null}
+      </div>
     );
   }
 

@@ -86,12 +86,22 @@ impl RunIntake {
                 .as_ref()
                 .map_or(Effect::Answer, |action| action.effect)
         };
+        let has_explicit_materials_or_scope =
+            !request.turn.explicit_references.is_empty() || has_retrieval_scope(request);
+        let implicit_vault_required = !has_explicit_materials_or_scope
+            && allow_implicit_vault_for_run(
+                request.security_domain,
+                &directive_text,
+                has_explicit_materials_or_scope,
+            );
         let context = if request.explicit_action.is_some() {
             ContextMode::ExplicitScope
         } else if !request.turn.explicit_references.is_empty() {
             ContextMode::ExplicitReferences
         } else if has_retrieval_scope(request) {
             ContextMode::ExplicitScope
+        } else if implicit_vault_required {
+            ContextMode::ImplicitVault
         } else if is_novel_writing_request(&directive_text) || request.session.is_some() {
             ContextMode::Conversation
         } else {
@@ -162,7 +172,7 @@ impl RunIntake {
             if allow_implicit_vault_for_run(
                 request.security_domain,
                 &directive_text,
-                !request.turn.explicit_references.is_empty() || has_retrieval_scope(request),
+                has_explicit_materials_or_scope,
             ) {
                 required_capabilities.push(CapabilityId::new("vault.read"));
             }
@@ -878,9 +888,15 @@ fn rejects_local_material_as_factual_source(message: &str) -> bool {
         message,
         &[
             "不使用本地",
+            "不使用本地材料",
+            "不使用本地资料",
             "不用本地",
+            "不用本地材料",
             "不得使用本地",
             "不要用本地",
+            "不要使用本地",
+            "不要使用本地材料",
+            "不要使用本地资料",
             "do not use local",
             "don't use local",
             "without local",
@@ -1283,6 +1299,9 @@ pub(crate) fn allow_implicit_vault_for_run(
     if has_explicit_materials_or_scope {
         return true;
     }
+    if rejects_local_material_as_factual_source(user_message) {
+        return false;
+    }
     if security_domain == SecurityDomain::Classified {
         return false;
     }
@@ -1308,19 +1327,47 @@ fn looks_like_strong_vault_dependency(message: &str) -> bool {
         message,
         &[
             "笔记",
-            "授权",
             "材料",
+            "授权材料",
+            "授权的材料",
+            "已授权资料",
             "会议记录",
             "项目资料",
             "项目笔记",
-            "vault",
             "note",
             "notes",
-            "authorized",
+            "authorized material",
             "local project",
             "local note",
             "local material",
             "local meeting",
+        ],
+    ) || mentions_vault_as_material_source(message)
+}
+
+/// A bare `vault` token is not enough to request local material: it is also a
+/// common part of Skill identifiers such as `vault-command-skill`. Requiring a
+/// source-reading phrase preserves fail-closed implicit retrieval without
+/// making a Skill name accidentally depend on the local retrieval index.
+fn mentions_vault_as_material_source(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "vault material",
+            "vault materials",
+            "vault note",
+            "vault notes",
+            "from vault",
+            "in vault",
+            "read vault",
+            "search vault",
+            "vault 中",
+            "vault里",
+            "vault 的笔记",
+            "vault的笔记",
+            "vault 里的",
+            "读取 vault",
+            "搜索 vault",
         ],
     )
 }

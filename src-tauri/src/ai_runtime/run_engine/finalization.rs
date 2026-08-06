@@ -316,13 +316,31 @@ pub(super) fn emit_run_terminal(
     attribution: Option<&[crate::ai_runtime::provenance::BlockAttribution]>,
     sink: &impl RunEventSink,
 ) -> AppResult<()> {
+    let effective_source_summary = match source_summary {
+        Some(summary) => Some(summary.clone()),
+        None => {
+            match AgentEvidenceRepository::source_summary_for_current_run(db, run_id, &evidence_ids)
+            {
+                Ok(summary) if !summary.is_empty() => Some(summary),
+                Ok(_) => None,
+                Err(error) => {
+                    tracing::warn!(
+                        run_id = %run_id,
+                        error = %error,
+                        "current Run source summary skipped after evidence lookup failure"
+                    );
+                    None
+                }
+            }
+        }
+    };
     let citation_map =
         match AgentEvidenceRepository::list_current_run_web_citation_links(db, run_id) {
             Ok(cites) if !cites.is_empty() => {
                 crate::ai_runtime::citation_linkify::web_citation_map_json(
                     &cites,
                     citation_binding.as_ref(),
-                    source_summary,
+                    effective_source_summary.as_ref(),
                     attribution,
                 )
             }
@@ -330,7 +348,7 @@ pub(super) fn emit_run_terminal(
                 Ok(cites) => crate::ai_runtime::citation_linkify::web_citation_map_json(
                     &cites,
                     citation_binding.as_ref(),
-                    source_summary,
+                    effective_source_summary.as_ref(),
                     attribution,
                 ),
                 Err(error) => {
@@ -338,7 +356,12 @@ pub(super) fn emit_run_terminal(
                         error = %error,
                         "web citation map skipped after evidence lookup failure"
                     );
-                    serde_json::json!({ "web": [] })
+                    crate::ai_runtime::citation_linkify::web_citation_map_json(
+                        &[],
+                        citation_binding.as_ref(),
+                        effective_source_summary.as_ref(),
+                        attribution,
+                    )
                 }
             },
             Err(error) => {
@@ -346,7 +369,12 @@ pub(super) fn emit_run_terminal(
                     error = %error,
                     "current Run citation map skipped after evidence lookup failure"
                 );
-                serde_json::json!({ "web": [] })
+                crate::ai_runtime::citation_linkify::web_citation_map_json(
+                    &[],
+                    citation_binding.as_ref(),
+                    effective_source_summary.as_ref(),
+                    attribution,
+                )
             }
         };
     if let Err(error) = AgentRunRepository::finalize(
@@ -357,7 +385,8 @@ pub(super) fn emit_run_terminal(
             content,
             evidence_ids,
             citation_map,
-            source_summary: source_summary
+            source_summary: effective_source_summary
+                .as_ref()
                 .map(crate::ai_runtime::provenance::SourceSummary::entries)
                 .unwrap_or_default(),
         },

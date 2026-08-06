@@ -98,12 +98,9 @@ pub fn record_web_query_taint_witness(
     run_step: u32,
     query: &str,
     local_materials: impl IntoIterator<Item = String>,
-) -> AppResult<()> {
+) -> AppResult<bool> {
     let materials = local_materials.into_iter().collect::<Vec<_>>();
-    let detected = materials
-        .iter()
-        .filter(|material| !material.is_empty())
-        .any(|material| query.contains(material));
+    let detected = query_contains_authorized_material(query, &materials);
     let arguments = serde_json::json!({
         "query": query,
         "localMaterialCount": materials.len(),
@@ -124,7 +121,67 @@ pub fn record_web_query_taint_witness(
             duration_ms: 0,
             subagent_depth: 0,
         },
-    )
+    )?;
+    Ok(detected)
+}
+
+/// Detect whole authorized material and meaningful fragments before they can
+/// leave the device in an external search query. The function intentionally
+/// favors a safe false positive over sending even a short private phrase to a
+/// Web provider; the model can retry with an independent public query.
+fn query_contains_authorized_material(query: &str, materials: &[String]) -> bool {
+    let normalized_query = normalize_taint_text(query);
+    if normalized_query.is_empty() {
+        return false;
+    }
+    materials
+        .iter()
+        .filter(|material| !material.trim().is_empty())
+        .any(|material| {
+            let normalized_material = normalize_taint_text(material);
+            (!normalized_material.is_empty() && normalized_query.contains(&normalized_material))
+                || taint_fragments(material)
+                    .into_iter()
+                    .any(|fragment| normalized_query.contains(&fragment))
+        })
+}
+
+fn normalize_taint_text(value: &str) -> String {
+    let mut normalized = String::with_capacity(value.len());
+    let mut previous_was_space = true;
+    for character in value.chars().flat_map(char::to_lowercase) {
+        if character.is_alphanumeric() || is_cjk(character) {
+            normalized.push(character);
+            previous_was_space = false;
+        } else if !previous_was_space {
+            normalized.push(' ');
+            previous_was_space = true;
+        }
+    }
+    normalized.trim().to_string()
+}
+
+fn taint_fragments(material: &str) -> Vec<String> {
+    let mut fragments = material
+        .split(|character: char| {
+            !character.is_ascii_alphanumeric() && !character.is_ascii_whitespace()
+        })
+        .map(normalize_taint_text)
+        .filter(|fragment| fragment.chars().count() >= 6)
+        .collect::<Vec<_>>();
+    for run in material.split(|character: char| !is_cjk(character)) {
+        let normalized = normalize_taint_text(run);
+        if normalized.chars().count() >= 4 {
+            fragments.push(normalized);
+        }
+    }
+    fragments.sort_unstable();
+    fragments.dedup();
+    fragments
+}
+
+const fn is_cjk(character: char) -> bool {
+    matches!(character, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}')
 }
 
 /// Count tool records for one Run.
@@ -378,6 +435,49 @@ mod tests {
         assert!(summary.contains("query_hash="));
         assert!(!summary.contains("private query"));
         assert!(!summary.contains("private body"));
+    }
+
+    #[test]
+    fn tainted_web_query_is_witnessed_before_external_dispatch() {
+        let (db, run_id) = audit_db();
+        let detected = record_web_query_taint_witness(
+            &db,
+            &run_id,
+            1,
+            "请搜索 Iris Pilot 的公开资料",
+            ["项目代号：Iris Pilot。".to_string()],
+        )
+        .expect("record content-free witness");
+
+        assert!(
+            detected,
+            "the caller must block a detected query before dispatch"
+        );
+        let witness = query_by_run(&db, &run_id)
+            .expect("read witness")
+            .into_iter()
+            .find(|entry| entry.tool_name == "web_taint_witness")
+            .expect("witness is persisted");
+        assert_eq!(witness.result_summary.as_deref(), Some("taint=detected"));
+        assert!(!witness
+            .arguments_summary
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Iris Pilot"));
+    }
+
+    #[test]
+    fn independent_public_clause_is_not_tainted_by_an_explicit_material_fixture() {
+        let local_material = "retrieval context: explicitly selected synthetic material\n\
+            fact-local-38=value-38";
+
+        assert!(
+            !query_contains_authorized_material(
+                "最新公开信息对比，分别引用本地与网页证据。",
+                &[local_material.to_string()],
+            ),
+            "a public clause must remain searchable when it does not repeat the selected material"
+        );
     }
 
     #[test]

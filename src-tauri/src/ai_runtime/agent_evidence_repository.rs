@@ -130,6 +130,62 @@ pub(crate) struct RegisteredEvidence {
 pub(crate) struct AgentEvidenceRepository;
 
 impl AgentEvidenceRepository {
+    /// Summarize only verified evidence attached to this exact Run and final
+    /// message. This powers uncalibrated source-group disclosure without
+    /// turning session history, raw tool output, or model inferences into
+    /// visible sources.
+    pub(crate) fn source_summary_for_current_run(
+        db: &Database,
+        run_id: &str,
+        evidence_ids: &[i64],
+    ) -> AppResult<crate::ai_runtime::provenance::SourceSummary> {
+        let selected = evidence_ids.iter().copied().collect::<BTreeSet<_>>();
+        if selected.is_empty() {
+            return Ok(crate::ai_runtime::provenance::SourceSummary::default());
+        }
+        db.with_read_conn(|conn| {
+            let mut statement = conn.prepare(
+                "SELECT run_evidence.evidence_id, run_evidence.registration_source,
+                        evidence.source_type, evidence.url
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1 AND evidence.retired_at IS NULL",
+            )?;
+            let rows = statement
+                .query_map([run_id], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let origins = rows.into_iter().filter_map(
+                |(evidence_id, registration_source, source_type, url)| {
+                    if !selected.contains(&evidence_id) {
+                        return None;
+                    }
+                    match (registration_source.as_str(), source_type.as_str()) {
+                        ("context", "local") => Some(
+                            crate::ai_runtime::provenance::InformationOrigin::LocalToolEvidence,
+                        ),
+                        ("web_search", "web")
+                            if url.is_some_and(|url| url.starts_with("https://")) =>
+                        {
+                            Some(crate::ai_runtime::provenance::InformationOrigin::WebToolEvidence)
+                        }
+                        ("external_tool", "web") => Some(
+                            crate::ai_runtime::provenance::InformationOrigin::ExternalToolEvidence,
+                        ),
+                        _ => None,
+                    }
+                },
+            );
+            Ok(crate::ai_runtime::provenance::SourceSummary::from_verified_run_origins(origins))
+        })
+    }
+
     /// Build the source allow-list for one structured final submission from exact Run
     /// registrations. Web labels are Run-local `W1..Wn` projections, never
     /// session-global citation numbers or evidence rows from an older Run.

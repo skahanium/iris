@@ -30,6 +30,7 @@ import { McpProviderDetail } from "./McpProviderDetail";
 import {
   mcpListMappingShortLabel,
   mcpListTransportShortLabel,
+  orderMcpProvidersForSearchRoute,
 } from "./mcpProviderListUi";
 import type { McpProviderPreset } from "./mcpProviderPresets";
 import type { ManagementProviderChrome } from "@/components/settings/managementProviderChrome";
@@ -283,20 +284,18 @@ export function McpProfilesPanel({
     [providers],
   );
 
-  const orderedSearchProviders = useMemo(() => {
-    const eligible = mcpProviders.filter(
-      (provider) => provider.enabled && provider.hasSearchMapping,
-    );
-    const byId = new Map(eligible.map((provider) => [provider.id, provider]));
-    const ordered = searchRouteIds
-      .map((id) => byId.get(id))
-      .filter((provider): provider is WebEvidenceProviderSummary => !!provider);
-    for (const provider of eligible) {
-      if (!ordered.some((item) => item.id === provider.id))
-        ordered.push(provider);
-    }
-    return ordered.slice(0, 3);
-  }, [mcpProviders, searchRouteIds]);
+  const listedMcpProviders = useMemo(
+    () => orderMcpProvidersForSearchRoute(mcpProviders, searchRouteIds),
+    [mcpProviders, searchRouteIds],
+  );
+
+  const orderedSearchProviders = useMemo(
+    () =>
+      listedMcpProviders
+        .filter((item) => item.searchRouteRole !== undefined)
+        .map((item) => item.provider),
+    [listedMcpProviders],
+  );
 
   const moveSearchRouteProvider = async (
     providerId: string,
@@ -579,49 +578,6 @@ export function McpProfilesPanel({
         </div>
       ) : null}
 
-      {!activeDetailId && orderedSearchProviders.length > 0 ? (
-        <div
-          className="space-y-1 rounded-md border border-border/60 p-2"
-          data-testid="web-search-route"
-        >
-          <p className="px-1 text-xs font-medium">联网搜索主备顺序</p>
-          {orderedSearchProviders.map((provider, index) => (
-            <div
-              key={provider.id}
-              className="flex items-center justify-between gap-2 px-1 py-1 text-xs"
-            >
-              <span>
-                {index === 0 ? "主服务" : `备用 ${index}`} · {provider.name}
-              </span>
-              <span className="flex gap-1">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-2"
-                  disabled={saving || index === 0}
-                  onClick={() => void moveSearchRouteProvider(provider.id, -1)}
-                >
-                  上移
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 px-2"
-                  disabled={
-                    saving || index === orderedSearchProviders.length - 1
-                  }
-                  onClick={() => void moveSearchRouteProvider(provider.id, 1)}
-                >
-                  下移
-                </Button>
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       {detailProvider ? (
         <>
           <McpProviderDetail
@@ -754,24 +710,41 @@ export function McpProfilesPanel({
         </div>
       ) : null}
 
-      {!activeDetailId && mcpProviders.length > 0 ? (
+      {!activeDetailId && listedMcpProviders.length > 0 ? (
         <div className="space-y-3">
-          {mcpProviders.map((provider) => (
-            <McpProfileCard
-              key={provider.id}
-              provider={provider}
-              surface="list"
-              onSelect={() => setSelectedProvider(provider.id)}
-              credentialConfiguredByService={credentialConfiguredByService}
-              saving={saving}
-              onSave={saveProvider}
-              onToggle={(enabled) => toggleProvider(provider.id, enabled)}
-              onDelete={() => deleteProvider(provider.id)}
-              onClearCredential={clearCredential}
-              onDiagnostics={() => void runDiagnostics(provider.id)}
-              onConfigurationChanged={invalidateDiagnostics}
-            />
-          ))}
+          {listedMcpProviders.map(({ provider, searchRouteRole }) => {
+            const routeIndex = orderedSearchProviders.findIndex(
+              (candidate) => candidate.id === provider.id,
+            );
+            return (
+              <McpProfileCard
+                key={provider.id}
+                provider={provider}
+                surface="list"
+                onSelect={() => setSelectedProvider(provider.id)}
+                searchRouteRole={searchRouteRole}
+                canMoveSearchRouteUp={routeIndex > 0}
+                canMoveSearchRouteDown={
+                  routeIndex >= 0 &&
+                  routeIndex < orderedSearchProviders.length - 1
+                }
+                onMoveSearchRoute={
+                  searchRouteRole
+                    ? (direction) =>
+                        void moveSearchRouteProvider(provider.id, direction)
+                    : undefined
+                }
+                credentialConfiguredByService={credentialConfiguredByService}
+                saving={saving}
+                onSave={saveProvider}
+                onToggle={(enabled) => toggleProvider(provider.id, enabled)}
+                onDelete={() => deleteProvider(provider.id)}
+                onClearCredential={clearCredential}
+                onDiagnostics={() => void runDiagnostics(provider.id)}
+                onConfigurationChanged={invalidateDiagnostics}
+              />
+            );
+          })}
         </div>
       ) : !activeDetailId && !draft ? (
         <p className="rounded-md border border-dashed border-border/70 px-3 py-3 text-xs text-muted-foreground">

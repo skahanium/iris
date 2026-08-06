@@ -51,6 +51,7 @@ fn interaction_integrity_matrix_exercises_all_eight_v3_cross_turn_boundaries() {
         false,
         "什么是“卡拉比猜想”？",
         "",
+        "",
     );
     assert_eq!(
         follow_up.current_user_prompt,
@@ -146,6 +147,7 @@ fn interaction_integrity_matrix_exercises_all_eight_v3_cross_turn_boundaries() {
         None,
         false,
         "只用一句话回答。",
+        "",
         "",
     );
     assert!(
@@ -263,6 +265,7 @@ fn v3_feature_matrix_covers_l9_personality_and_attribution_hard_boundaries() {
             false,
             "仅用一句中文回答。",
             "授权材料正文",
+            "",
         );
         assert!(compiled.system_prompt.find("SAFETY") < compiled.system_prompt.find("DOMAIN"));
         assert!(compiled.system_prompt.find("DOMAIN") < compiled.system_prompt.find("SKILL"));

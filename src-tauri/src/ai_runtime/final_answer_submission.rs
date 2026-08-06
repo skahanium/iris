@@ -22,9 +22,8 @@ pub(crate) const FINAL_ANSWER_TOOL_NAME: &str = "submit_final_answer";
 pub(crate) fn tool_spec() -> ToolSpec {
     ToolSpec {
         name: FINAL_ANSWER_TOOL_NAME.to_string(),
-        description:
-            "Submit the final answer as ordered Markdown blocks with current-Run source references."
-                .to_string(),
+        description: "Submit the final answer as ordered Markdown blocks with current-Run source references. Only pure Markdown structure (a heading or horizontal rule) may use an empty source list."
+            .to_string(),
         input_schema: serde_json::json!({
             "type": "object",
             "additionalProperties": false,
@@ -40,7 +39,7 @@ pub(crate) fn tool_spec() -> ToolSpec {
                         "required": ["markdown", "sources"],
                         "properties": {
                             "markdown": { "type": "string", "minLength": 1, "maxLength": 32000 },
-                            "sources": { "type": "array", "minItems": 1, "maxItems": 16, "items": { "type": "string", "minLength": 1, "maxLength": 32 } }
+                            "sources": { "type": "array", "minItems": 0, "maxItems": 16, "items": { "type": "string", "minLength": 1, "maxLength": 32 } }
                         }
                     }
                 }
@@ -85,7 +84,8 @@ impl FinalAnswerSubmission {
             || submission.blocks.iter().any(|block| {
                 block.markdown.trim().is_empty()
                     || block.markdown.to_ascii_lowercase().contains("[w")
-                    || block.sources.is_empty()
+                    || (block.sources.is_empty()
+                        && !is_source_free_structural_block(&block.markdown))
                     || block.sources.len() > MAX_SOURCES_PER_BLOCK
                     || block.sources.iter().any(|source| {
                         source.trim().is_empty()
@@ -115,6 +115,44 @@ impl FinalAnswerSubmission {
     }
 }
 
+/// Whether Markdown is pure presentation structure and therefore makes no
+/// source-bearing statement. A source-free final block is limited to headings
+/// and horizontal rules; all prose, lists, code, quotes, links, and tables
+/// still require at least one provenance reference.
+pub(crate) fn is_source_free_structural_block(markdown: &str) -> bool {
+    let lines = markdown
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>();
+    !lines.is_empty()
+        && lines
+            .iter()
+            .all(|line| is_markdown_heading(line) || is_horizontal_rule(line))
+}
+
+fn is_markdown_heading(line: &str) -> bool {
+    let marker_count = line
+        .chars()
+        .take_while(|character| *character == '#')
+        .count();
+    (1..=6).contains(&marker_count)
+        && line
+            .get(marker_count..)
+            .and_then(|remaining| remaining.chars().next())
+            .is_some_and(char::is_whitespace)
+}
+
+fn is_horizontal_rule(line: &str) -> bool {
+    let compact = line.chars().filter(|character| !character.is_whitespace());
+    let Some(marker) = compact.clone().next() else {
+        return false;
+    };
+    matches!(marker, '-' | '*' | '_')
+        && compact.clone().all(|character| character == marker)
+        && compact.count() >= 3
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FinalAnswerSubmission, FINAL_ANSWER_TOOL_NAME};
@@ -141,5 +179,22 @@ mod tests {
             .to_string(),
         );
         assert!(FinalAnswerSubmission::from_tool_call(&oversized).is_err());
+    }
+
+    #[test]
+    fn terminal_submission_allows_only_structural_markdown_without_sources() {
+        let heading = ToolCall::new(
+            "final-heading",
+            FINAL_ANSWER_TOOL_NAME,
+            r###"{"blocks":[{"markdown":"## 结论","sources":[]},{"markdown":"事实","sources":["W1"]}]}"###,
+        );
+        assert!(FinalAnswerSubmission::from_tool_call(&heading).is_ok());
+
+        let prose = ToolCall::new(
+            "final-prose",
+            FINAL_ANSWER_TOOL_NAME,
+            r#"{"blocks":[{"markdown":"这是没有来源的事实。","sources":[]}]}"#,
+        );
+        assert!(FinalAnswerSubmission::from_tool_call(&prose).is_err());
     }
 }

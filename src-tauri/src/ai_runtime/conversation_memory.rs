@@ -257,26 +257,24 @@ struct MemoryDraft {
 }
 
 fn load_messages(db: &Database, session_id: i64) -> AppResult<Vec<MemoryMessage>> {
-    db.with_read_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT seq, role, content, content_hash
-             FROM session_messages
-             WHERE session_id = ?1 AND role IN ('user', 'assistant')
-             ORDER BY seq ASC",
-        )?;
-        let rows = stmt.query_map([session_id], |row| {
-            Ok(MemoryMessage {
-                seq: row.get(0)?,
-                role: row.get(1)?,
-                content: row.get(2)?,
-                content_hash: row.get(3)?,
+    // Memory is prompt data, so it must use the exact same committed-turn
+    // projection as recent Run history. Reading session_messages directly
+    // would resurrect failed or still-active user turns into later prompts.
+    crate::ai_runtime::normal_session_repository::NormalSessionRepository::recent_messages(
+        db,
+        session_id,
+        u32::MAX,
+    )
+    .map(|messages| {
+        messages
+            .into_iter()
+            .map(|message| MemoryMessage {
+                seq: message.seq,
+                role: message.role,
+                content: message.content,
+                content_hash: None,
             })
-        })?;
-        let mut messages = Vec::new();
-        for row in rows {
-            messages.push(row?);
-        }
-        Ok(messages)
+            .collect()
     })
 }
 

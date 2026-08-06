@@ -985,11 +985,10 @@ impl RunEngine {
                 // normal model answer is therefore bound to the verified
                 // current-Run source set; missing markers become an explicit
                 // source group instead of discarding usable content.
-                source_summary = Some(
-                    crate::ai_runtime::provenance::SourceSummary::from_web_count(citations.len()),
-                );
                 crate::ai_runtime::citation_linkify::CitationBindingOutcome {
-                    content: strip_model_authored_citation_markers(&content),
+                    content: crate::ai_runtime::text_support::normalize_source_group_visible_text(
+                        &strip_model_authored_citation_markers(&content),
+                    ),
                     binding: CitationBinding {
                         mode: CitationBindingMode::SourceGroupFallback,
                         referenced_indices: Vec::new(),
@@ -1075,8 +1074,10 @@ impl RunEngine {
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
-                let analyzing_materials =
-                    domain_plan.is_some_and(|plan| !plan.rendered_context.trim().is_empty());
+                let analyzing_materials = domain_plan.is_some_and(|plan| {
+                    !plan.rendered_authorized_material.trim().is_empty()
+                        || !plan.rendered_local_retrieval.trim().is_empty()
+                });
                 let preparing = AgentRunRepository::append_event(
                     db,
                     AppendRunEventInput {
@@ -1086,7 +1087,7 @@ impl RunEngine {
                         payload: RunEventPayload::StageChanged {
                             state: RunState::Preparing,
                             stage: if analyzing_materials {
-                                "正在分析附带材料".to_string()
+                                "正在分析材料".to_string()
                             } else {
                                 "正在准备".to_string()
                             },

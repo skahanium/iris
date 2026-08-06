@@ -10,16 +10,17 @@ use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProvi
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
     build_cached_skill_activation, execute_normal_run, execute_normal_run_with_eval_telemetry,
-    required_web_query_from_user_history, strict_follow_up_capabilities,
+    public_web_query_for_mixed_local_context, required_web_query_from_user_history,
+    strict_follow_up_capabilities,
 };
 use super::normal_session_repository::NormalSessionRepository;
 use super::run_context::RunContextAssembler;
 use super::run_contract::{
-    AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, RunEventPayload,
-    RunEventType, RunState, SecurityDomain,
+    AssistantRunEvent, AssistantRunStartRequest, AssistantTurnDraft, CapabilityId, ContextMode,
+    RunEventPayload, RunEventType, RunState, SecurityDomain,
 };
 use super::run_engine::{ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink};
-use super::run_intake::RunIntake;
+use super::run_intake::{looks_like_local_vault_dependency, RunIntake};
 use super::run_tool_loop::NormalRunToolExecutor;
 use super::tool_executor::ToolRegistry;
 use super::ToolCall;
@@ -98,6 +99,17 @@ fn required_web_query_uses_last_substantive_turn_for_a_retry_instruction() {
         required_web_query_from_user_history("你再试试?", &history),
         "详细讲一下 OpenAI AI 智能体越狱事件\n你再试试?"
     );
+}
+
+#[test]
+fn mixed_local_and_web_request_uses_only_its_public_clause_for_the_required_web_query() {
+    let query = public_web_query_for_mixed_local_context(
+        "结合本地风险登记与最新公开依赖状态，给出风险判断。",
+        true,
+    );
+
+    assert_eq!(query, "最新公开依赖状态，给出风险判断。");
+    assert!(!query.contains("本地风险登记"));
 }
 
 #[test]
@@ -246,8 +258,7 @@ async fn normal_run_injects_cached_confirmed_skill_after_source_file_is_removed(
     let sink = RecordingSink::default();
     let mut request = direct_request();
     request.client_request_id = "cached-skill-production-run".into();
-    request.turn.message =
-        "Summarize the authorized local project material using run-skill.".into();
+    request.turn.message = "Rewrite this sentence using run-skill: Hello.".into();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
 
     execute_normal_run(
@@ -259,7 +270,10 @@ async fn normal_run_injects_cached_confirmed_skill_after_source_file_is_removed(
     )
     .await;
 
-    let captures = llm.finish().await.expect("LLM completion");
+    let captures = tokio::time::timeout(Duration::from_secs(2), llm.finish())
+        .await
+        .expect("cached Skill run must reach the model boundary")
+        .expect("LLM completion");
     let system_prompt = captures[0].body["messages"][0]["content"]
         .as_str()
         .expect("system prompt text");
@@ -314,6 +328,17 @@ fn production_vault_set_keeps_new_vault_skill_available_to_normal_activation() {
     let mut request = direct_request();
     request.client_request_id = "vault-set-skill-activation".into();
     request.turn.message = "请使用 vault-command-skill".into();
+    assert!(
+        !looks_like_local_vault_dependency(&request.turn.message),
+        "a Skill identifier is not itself a request to retrieve vault material"
+    );
+    assert_ne!(
+        RunIntake::resolve_envelope(&request)
+            .expect("skill request envelope")
+            .context,
+        ContextMode::ImplicitVault,
+        "a Skill identifier is not itself a request to retrieve vault material"
+    );
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink).expect("accepted run");
     let context = RunContextAssembler::assemble(
         &state.db,
@@ -333,6 +358,20 @@ fn production_vault_set_keeps_new_vault_skill_available_to_normal_activation() {
             .activated_skills[0]
             .name,
         "vault-command-skill"
+    );
+}
+
+#[test]
+fn vault_source_request_still_enters_the_fail_closed_local_retrieval_boundary() {
+    let mut request = direct_request();
+    request.turn.message = "请根据 vault 的笔记回答。".into();
+
+    assert_eq!(
+        RunIntake::resolve_envelope(&request)
+            .expect("vault material envelope")
+            .context,
+        ContextMode::ImplicitVault,
+        "source-reading language must remain distinct from a Skill identifier"
     );
 }
 
@@ -649,11 +688,19 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
         .expect("provider messages")
         .iter()
         .filter_map(|message| message["content"].as_str())
-        .find(|content| content.contains("CurrentRunVerifiedWebEvidence"))
-        .expect("current Run Web evidence system prompt");
+        .find(|content| content.contains("WebEvidenceData"))
+        .expect("web evidence system prompt");
     assert!(
-        system_prompt.contains("source-group disclosure"),
-        "uncalibrated routes must declare source-group mode"
+        system_prompt.contains("Keep source mechanics out of visible prose"),
+        "uncalibrated routes must keep source-group mechanics out of visible prose"
+    );
+    assert!(
+        !system_prompt.contains("CurrentRunVerifiedWebEvidence"),
+        "model-facing evidence data must not expose the old lifecycle heading"
+    );
+    assert!(
+        !system_prompt.contains("source-group disclosure"),
+        "model-facing evidence data must not expose source-group protocol labels"
     );
     assert!(
         !system_prompt.contains("Cite its [Wn] labels"),

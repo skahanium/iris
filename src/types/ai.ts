@@ -560,6 +560,7 @@ export type AssistantRunEventPayload =
         | "search_result_unparseable"
         | "search_result_no_usable_https"
         | "evidence_content_empty"
+        | "local_material_query_blocked"
         | "unknown";
       retryable: boolean;
       attemptCount: number;

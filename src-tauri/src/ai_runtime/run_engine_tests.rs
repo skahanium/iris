@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use super::agent_capacity_eval::EvaluationTelemetryTap;
 use super::agent_tool_loop::{ToolLoopExecutor, ToolLoopProvider};
 use super::conversation_memory::ConversationMemory;
-use super::domain_executor::{AuthorizedDomainMaterial, DomainExecutor, DomainMaterialRole};
+use super::domain_executor::{
+    DomainExecutor, DomainMaterial, DomainMaterialOrigin, DomainMaterialRole,
+};
 use super::frozen_change_plan::{FrozenChangePlan, FrozenChangePlanInput};
 use super::normal_session_repository::NormalSessionRepository;
 use super::policy_decision_engine::RunPolicyDecision;
@@ -2053,7 +2055,14 @@ fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
     observer.enable_source_group_citation_filter();
     observer.on_tools_finished().expect("unlock final answer");
 
-    for (index, token) in ["结论来自本轮来源 [W", "1]。\n"].into_iter().enumerate() {
+    for (index, token) in [
+        "结论：根据你提",
+        "供的信息，本轮 web 证据显示已发布 [W",
+        "1]。\n",
+    ]
+    .into_iter()
+    .enumerate()
+    {
         observer
             .observe(
                 &StreamEvent {
@@ -2070,7 +2079,7 @@ fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
             )
             .expect("stream final token");
     }
-    observer.bind_validated_content("结论来自本轮来源 。\n");
+    observer.bind_validated_content("结论：根据可用的信息，查到的网页资料显示已发布 。\n");
     observer.flush().expect("flush validated stream");
 
     let presentation = sink
@@ -2090,6 +2099,10 @@ fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
     assert!(deltas
         .iter()
         .all(|event| !event["delta"].as_str().unwrap_or_default().contains("[W")));
+    assert!(deltas.iter().all(|event| {
+        let delta = event["delta"].as_str().unwrap_or_default();
+        !delta.contains("你提供") && !delta.contains("本轮")
+    }));
     assert!(presentation
         .iter()
         .all(|event| event["kind"] != "answer_reset"));
@@ -2098,7 +2111,7 @@ fn source_group_streaming_hides_model_markers_without_a_terminal_reset() {
             .iter()
             .filter_map(|event| event["delta"].as_str())
             .collect::<String>(),
-        "结论来自本轮来源 。\n"
+        "结论：根据可用的信息，查到的网页资料显示已发布 。\n"
     );
 }
 
@@ -3123,7 +3136,7 @@ async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker(
     let provider = ScriptedToolLoopProvider {
         responses: std::sync::Mutex::new(VecDeque::from([
             crate::ai_runtime::model_gateway::GatewayResponse {
-                content: Some("已由当前轮证据核验。[W1]".to_string()),
+                content: Some("根据你提供的信息，本轮 web 证据表明版本已发布。[W1]".to_string()),
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: "stop".to_string(),
@@ -3169,8 +3182,10 @@ async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker(
             .map_err(Into::into)
         })
         .expect("persisted strict-web answer");
-    assert_eq!(content, "已由当前轮证据核验。");
+    assert_eq!(content, "根据可用的信息，查到的网页资料表明版本已发布。");
     assert!(!content.contains("[W1]"));
+    assert!(!content.contains("你提供"));
+    assert!(!content.contains("本轮"));
     assert!(citation_map.contains("https://example.test/current-run"));
     assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
     assert!(citation_map.contains("\"uncalibrated_route\""));
@@ -3620,13 +3635,20 @@ async fn streaming_prompt_execution_binds_registered_evidence_to_final_message()
     .expect("streaming execution");
 
     db.with_read_conn(|conn| {
-        let evidence_json: String = conn.query_row(
-            "SELECT evidence_refs_json FROM session_messages
+        let (evidence_json, citation_map_json): (String, String) = conn.query_row(
+            "SELECT evidence_refs_json, citation_map_json FROM session_messages
              WHERE session_id = ?1 AND role = 'assistant'",
             [session_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         assert_eq!(evidence_json, format!("[{}]", evidence.evidence_id));
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&citation_map_json)
+                .expect("citation map")
+                ["sourceSummary"],
+            serde_json::json!([{ "category": "local_retrieval", "count": 1 }]),
+            "a local-only answer must retain the same safe source-category projection as the ledger"
+        );
         Ok(())
     })
     .expect("final message evidence binding");
@@ -3839,8 +3861,9 @@ async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final
             explicit_constraints: vec![],
         },
         "起草一份检查通知",
-        &[AuthorizedDomainMaterial {
+        &[DomainMaterial {
             role: DomainMaterialRole::Exemplar,
+            origin: DomainMaterialOrigin::UserAuthorizedMaterial,
             label: "通知范文".into(),
             content: "北京市教育局将于2026年3月12日组织专项检查。".into(),
         }],

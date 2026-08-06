@@ -88,6 +88,30 @@ describe("AssistantCitationFooter", () => {
     expect(screen.queryByText("本轮已核验证据")).not.toBeInTheDocument();
   });
 
+  it("shows every registered source-group entry instead of imposing a five-source display cap", () => {
+    const entries = Array.from({ length: 12 }, (_, index) => ({
+      index: index + 1,
+      title: `Source ${index + 1}`,
+      url: `https://example.com/${index + 1}`,
+    }));
+    render(
+      <AssistantCitationFooter
+        content="模型回答没有行内引用格式。"
+        binding={{
+          mode: "source_group_fallback",
+          referencedIndices: [],
+          fallbackReason: "missing_marker",
+        }}
+        entries={entries}
+      />,
+    );
+
+    expect(screen.getByText("12 个来源")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源" }));
+    expect(screen.getByText("Source 1")).toBeInTheDocument();
+    expect(screen.getByText("Source 12")).toBeInTheDocument();
+  });
+
   it("shows only category counts until the source disclosure is expanded", () => {
     render(
       <AssistantCitationFooter

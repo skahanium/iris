@@ -7,7 +7,8 @@ use crate::ai_types::{
 use crate::error::{AppError, AppResult};
 
 use super::{
-    messages_for_api, prepare_tool_api_messages, tool_api_message_chain_valid, ProviderContinuation,
+    messages_for_api_with_reasoning_continuation, prepare_tool_api_messages,
+    tool_api_message_chain_valid, ProviderContinuation,
 };
 
 /// Tool definition for LLM function-calling format.
@@ -237,7 +238,10 @@ fn build_chat_completions_body_inner(request: &GatewayRequest) -> serde_json::Va
 
     let mut body = serde_json::json!({
         "model": request.provider.model,
-        "messages": messages_for_api(messages),
+        "messages": messages_for_api_with_reasoning_continuation(
+            messages,
+            requires_reasoning_content_tool_continuation(request),
+        ),
     });
 
     if !request.tools.is_empty() {
@@ -395,6 +399,17 @@ fn effective_reasoning_request(request: &GatewayRequest) -> ResolvedReasoningReq
     } else {
         request.reasoning
     }
+}
+
+/// The OpenAI-compatible `reasoning_content` field is a provider-private
+/// continuation requirement for DeepSeek's reasoning adapter only. Other
+/// adapters may emit reasoning during a turn, but they must not receive it
+/// back in a chat-completions tool continuation.
+fn requires_reasoning_content_tool_continuation(request: &GatewayRequest) -> bool {
+    let reasoning = effective_reasoning_request(request);
+    reasoning.requested
+        && reasoning.adapter == ReasoningAdapter::DeepSeekReasoningContent
+        && request.provider.endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
 }
 
 fn apply_anthropic_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) {

@@ -97,7 +97,7 @@ fn format_evidence_packets_labels_lookup_role_as_non_authoritative() {
 }
 
 #[test]
-fn messages_for_api_includes_reasoning_content_with_tool_calls() {
+fn messages_for_api_replays_reasoning_only_when_the_provider_continuation_requires_it() {
     let messages = vec![LlmMessage {
         role: MessageRole::Assistant,
         content: String::new().into(),
@@ -109,7 +109,7 @@ fn messages_for_api_includes_reasoning_content_with_tool_calls() {
         )]),
         reasoning_content: Some("internal chain of thought".into()),
     }];
-    let api = messages_for_api(&messages);
+    let api = super::messages_for_api_with_reasoning_continuation(&messages, true);
     assert_eq!(api[0]["reasoning_content"], "internal chain of thought");
     assert_eq!(api[0]["tool_calls"][0]["type"], "function");
 }
@@ -130,7 +130,50 @@ fn messages_for_api_does_not_replay_reasoning_without_a_same_run_tool_continuati
 }
 
 #[test]
-fn resume_after_tool_confirm_body_preserves_reasoning_and_thinking() {
+fn ordinary_openai_compatible_tool_continuation_never_replays_reasoning_content() {
+    let messages = vec![
+        LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall::new(
+                "call_1",
+                "search_hybrid",
+                r#"{"query":"test"}"#,
+            )]),
+            reasoning_content: Some("provider-private reasoning".into()),
+        },
+        LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"success":true}"#.into(),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        },
+    ];
+    let body = build_chat_completions_body(&GatewayRequest {
+        provider: test_provider("mimo"),
+        messages,
+        tools: vec![],
+        max_tokens: Some(1024),
+        input_token_budget: None,
+        temperature: None,
+        stream: true,
+        thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest {
+            requested: true,
+            adapter: crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream,
+            ..crate::ai_types::ResolvedReasoningRequest::disabled()
+        },
+        continuation: None,
+        skip_stub_ids: vec![],
+    });
+
+    assert!(body["messages"][0].get("reasoning_content").is_none());
+}
+
+#[test]
+fn deepseek_tool_continuation_preserves_reasoning_content_and_provider_control() {
     let provider = ProviderConfig {
         name: "deepseek".into(),
         base_url: "https://api.deepseek.com".into(),
@@ -167,7 +210,11 @@ fn resume_after_tool_confirm_body_preserves_reasoning_and_thinking() {
         temperature: Some(0.7),
         stream: false,
         thinking: true,
-        reasoning: crate::ai_types::ResolvedReasoningRequest::legacy_enabled(true),
+        reasoning: crate::ai_types::ResolvedReasoningRequest {
+            requested: true,
+            adapter: crate::ai_types::ReasoningAdapter::DeepSeekReasoningContent,
+            ..crate::ai_types::ResolvedReasoningRequest::disabled()
+        },
         continuation: None,
         skip_stub_ids: vec![],
     });
@@ -175,7 +222,7 @@ fn resume_after_tool_confirm_body_preserves_reasoning_and_thinking() {
         body["messages"][0]["reasoning_content"],
         "internal chain of thought"
     );
-    assert_eq!(body["thinking"]["type"], "enabled");
+    assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
     assert_eq!(body["messages"][1]["role"], "tool");
 }
 

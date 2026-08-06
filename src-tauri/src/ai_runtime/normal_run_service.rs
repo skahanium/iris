@@ -13,6 +13,7 @@ use tauri::AppHandle;
 
 use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
+use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, Effort, Freshness, Modality, RunBudgetPolicy, SafeRunErrorCode,
     VerificationRequirement, WebEvidenceFailureReason,
@@ -22,7 +23,7 @@ use crate::ai_runtime::run_engine::{
     RunEventSink, WebVerificationFailure,
 };
 use crate::ai_runtime::run_intake::RunIntake;
-use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
+use crate::ai_runtime::run_tool_loop::{NormalRunToolExecutor, INITIAL_WEB_SEARCH_RESULTS};
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall};
 use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
@@ -647,7 +648,16 @@ async fn dispatch_required_web_verified_run(
         .cloned()
         .unwrap_or_else(|| serde_json::json!([]))];
     let prefetch_succeeded = first_prefetch.success;
-    if prefetch_succeeded && !executor.has_web_evidence() {
+    let first_prefetch_count = first_prefetch
+        .output
+        .get("count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default() as usize;
+    // Start with a compact search result set, then use only the remaining
+    // evidence budget for an independent supplement. This keeps the first
+    // provider request bounded while allowing a factual answer to draw on up
+    // to the full Run-level evidence budget.
+    if prefetch_succeeded && first_prefetch_count >= INITIAL_WEB_SEARCH_RESULTS {
         let supplement = crate::ai_runtime::agent_tool_loop::ToolLoopExecutor::execute(
             &executor,
             &accepted.run_id,
@@ -695,7 +705,7 @@ async fn dispatch_required_web_verified_run(
         1,
         LlmMessage {
             role: MessageRole::System,
-            content: current_run_web_evidence_prompt(&evidence_json, false).into(),
+            content: PromptContractV3::web_evidence_data_prompt(&evidence_json, false).into(),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -745,7 +755,8 @@ async fn dispatch_required_web_verified_run(
         ..requirements
     };
     if calibrated_structured_finalization_route(db, context, tool_capable_requirements)?.is_some() {
-        messages[1].content = current_run_web_evidence_prompt(&evidence_json, true).into();
+        messages[1].content =
+            PromptContractV3::web_evidence_data_prompt(&evidence_json, true).into();
         let strict_requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(
                 &serde_json::to_string(messages).map_err(AppError::from)?,
@@ -760,7 +771,8 @@ async fn dispatch_required_web_verified_run(
             requirements = strict_requirements;
             structured_finalization = true;
         } else {
-            messages[1].content = current_run_web_evidence_prompt(&evidence_json, false).into();
+            messages[1].content =
+                PromptContractV3::web_evidence_data_prompt(&evidence_json, false).into();
         }
     }
     if structured_finalization {
@@ -823,18 +835,6 @@ fn calibrated_structured_finalization_enabled(
         })
 }
 
-/// Render the current-Run Web evidence boundary for the route's verified
-/// finalization mode. Uncalibrated routes may show a source group but must not
-/// ask the model to manufacture claim-level citation markers.
-fn current_run_web_evidence_prompt(evidence_json: &str, structured_finalization: bool) -> String {
-    let instruction = if structured_finalization {
-        "Only the following Run-local Web evidence may support external factual conclusions. Submit the answer through the internal final-answer tool with current-Run source references; do not use historical assistant claims or invent sources."
-    } else {
-        "The following is this Run's Web evidence. This route uses a source-group disclosure: use it for the answer, but do not write [Wn] labels, claim exact per-block verification, or invent sources. Do not describe it as user input or conversation history."
-    };
-    format!("## CurrentRunVerifiedWebEvidence\n{instruction}\n{evidence_json}")
-}
-
 /// Select an exact calibrated route only when the same provider/model can
 /// satisfy a tool-capable finalization request. A verified pair can never gain
 /// the internal final-answer tool through a tool-free route.
@@ -882,7 +882,9 @@ fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> S
         .filter(|message| message.role == "user")
         .map(|message| message.content.clone())
         .collect::<Vec<_>>();
-    required_web_query_from_user_history(&context.user_message, &prior_users_newest_first)
+    let query =
+        required_web_query_from_user_history(&context.user_message, &prior_users_newest_first);
+    public_web_query_for_mixed_local_context(&query, !context.materials.is_empty())
 }
 
 /// Build a compact search query without blindly concatenating every adjacent
@@ -917,6 +919,39 @@ pub(crate) fn required_web_query_from_user_history(
     query.chars().take(MAX_QUERY_CHARS).collect()
 }
 
+/// Keep strict Web prefetch independent from a mixed request's local clause.
+///
+/// A strict run fetches Web evidence before the model can reformulate a query.
+/// When the request also depends on local material, sending the whole sentence
+/// can repeat a private phrase verbatim and must be blocked by the Web taint
+/// gate. Prefer the first explicit public/Web clause; if none is identifiable,
+/// preserve the original query so the gate remains fail-closed.
+pub(crate) fn public_web_query_for_mixed_local_context(
+    query: &str,
+    has_local_material: bool,
+) -> String {
+    if !has_local_material {
+        return query.to_string();
+    }
+    const WEB_CUES: [&str; 10] = [
+        "联网", "最新", "公开", "核实", "检索", "web", "current", "public", "browse", "search",
+    ];
+    let lowercase = query.to_ascii_lowercase();
+    let Some(start) = WEB_CUES.iter().filter_map(|cue| lowercase.find(cue)).min() else {
+        return query.to_string();
+    };
+    let public_clause = query[start..]
+        .split_inclusive(['。', '！', '？', '\n'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if public_clause.chars().count() < 4 {
+        query.to_string()
+    } else {
+        public_clause.to_string()
+    }
+}
+
 fn is_web_retry_instruction(message: &str) -> bool {
     let normalized = message
         .chars()
@@ -942,7 +977,7 @@ fn is_context_dependent_web_follow_up(message: &str) -> bool {
 
 fn supplementary_web_query(query: &str) -> String {
     format!(
-        "{query}\nFind an independent authoritative or corroborating HTTPS source for the factual claims in this request."
+        "Find an independent authoritative or corroborating HTTPS source for the factual claims in this request.\n{query}"
     )
 }
 

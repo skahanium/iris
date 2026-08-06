@@ -1,6 +1,6 @@
 use super::domain_executor::{
-    AuthorityConflict, AuthorizedDomainMaterial, DomainAccessTrace, DomainExecutor,
-    DomainExecutorKind, DomainMaterialRole, DomainVerificationError,
+    AuthorityConflict, DomainAccessTrace, DomainExecutor, DomainExecutorKind, DomainMaterial,
+    DomainMaterialOrigin, DomainMaterialRole, DomainVerificationError,
 };
 use super::run_contract::{
     CapabilityId, ContextMode, Effect, Effort, ExecutionEnvelope, Freshness, MaterialNeed,
@@ -24,9 +24,10 @@ fn envelope(context: ContextMode, material_needs: Vec<MaterialNeed>) -> Executio
     }
 }
 
-fn material(role: DomainMaterialRole, label: &str, content: &str) -> AuthorizedDomainMaterial {
-    AuthorizedDomainMaterial {
+fn material(role: DomainMaterialRole, label: &str, content: &str) -> DomainMaterial {
+    DomainMaterial {
         role,
+        origin: DomainMaterialOrigin::UserAuthorizedMaterial,
         label: label.into(),
         content: content.into(),
     }
@@ -69,9 +70,36 @@ fn golden_official_writing_separates_authority_content_from_exemplar_style() {
     assert!(plan
         .prompt_instructions
         .contains("不得把 exemplar 当作内容结论"));
-    assert!(plan.rendered_context.contains("role=\"authority\""));
-    assert!(plan.rendered_context.contains("role=\"exemplar\""));
+    assert!(plan
+        .rendered_authorized_material
+        .contains("role=\"authority\""));
+    assert!(plan
+        .rendered_authorized_material
+        .contains("role=\"exemplar\""));
     assert!(plan.style_blueprint.is_some());
+}
+
+#[test]
+fn local_retrieval_uses_its_own_prompt_element_instead_of_authorized_material_markup() {
+    let plan = DomainExecutor::plan(
+        &envelope(ContextMode::ImplicitVault, vec![MaterialNeed::Reference]),
+        "根据本地项目资料总结里程碑",
+        &[DomainMaterial {
+            role: DomainMaterialRole::Reference,
+            origin: DomainMaterialOrigin::LocalRetrieval,
+            label: "notes/project.md".into(),
+            content: "项目里程碑：完成索引重建。".into(),
+        }],
+        &[],
+    );
+
+    assert!(plan.rendered_authorized_material.is_empty());
+    assert!(plan
+        .rendered_local_retrieval
+        .contains("<local-retrieval-evidence"));
+    assert!(!plan
+        .rendered_local_retrieval
+        .contains("<authorized-material"));
 }
 
 #[test]
@@ -183,7 +211,8 @@ fn golden_novel_without_explicit_reference_has_no_vault_read_or_search_trace() {
         plan.active_executors,
         vec![DomainExecutorKind::NovelBoundary]
     );
-    assert!(plan.rendered_context.is_empty());
+    assert!(plan.rendered_authorized_material.is_empty());
+    assert!(plan.rendered_local_retrieval.is_empty());
     assert!(plan.requested_capabilities.is_empty());
     assert_eq!(plan.access_trace, vec![DomainAccessTrace::ConversationOnly]);
     assert!(plan.prompt_instructions.contains("不得读取当前活动文档"));
@@ -210,7 +239,9 @@ fn explicit_reference_answer_prefers_attached_materials_without_research_tools()
         .prompt_instructions
         .contains("用户已通过 @ 附带授权材料"));
     assert!(plan.prompt_instructions.contains("不要对同一路径再次调用"));
-    assert!(plan.rendered_context.contains("问题线索工作思路（刘CG）"));
+    assert!(plan
+        .rendered_authorized_material
+        .contains("问题线索工作思路（刘CG）"));
 }
 
 #[test]
@@ -233,9 +264,9 @@ fn golden_novel_reads_only_two_explicit_references_in_declared_scope() {
         &[],
     );
 
-    assert!(plan.rendered_context.contains("角色设定"));
-    assert!(plan.rendered_context.contains("上一章"));
-    assert!(!plan.rendered_context.contains("禁止混入"));
+    assert!(plan.rendered_authorized_material.contains("角色设定"));
+    assert!(plan.rendered_authorized_material.contains("上一章"));
+    assert!(!plan.rendered_authorized_material.contains("禁止混入"));
     assert_eq!(
         plan.access_trace,
         vec![

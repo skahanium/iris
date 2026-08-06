@@ -16,7 +16,7 @@ pub(crate) enum DomainMaterialRole {
     Authority,
     /// A sample that may influence only form, structure and style.
     Exemplar,
-    /// Explicit user material that may provide supporting background or facts.
+    /// Supporting material that may provide background or facts.
     Reference,
     /// Read-only lookup material that cannot independently establish a conclusion.
     Lookup,
@@ -33,11 +33,22 @@ impl DomainMaterialRole {
     }
 }
 
+/// Provenance boundary for one material body in a provider prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DomainMaterialOrigin {
+    /// A note, selection, or exact fallback directly selected by the user.
+    UserAuthorizedMaterial,
+    /// A result retrieved from the eligible local vault for this Run.
+    LocalRetrieval,
+}
+
 /// One source body already approved by policy and held only for this Run.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AuthorizedDomainMaterial {
+pub(crate) struct DomainMaterial {
     /// The policy-assigned use of this source.
     pub(crate) role: DomainMaterialRole,
+    /// The provenance boundary that determines the prompt data channel.
+    pub(crate) origin: DomainMaterialOrigin,
     /// Safe source label for prompt-local citation and diagnostics.
     pub(crate) label: String,
     /// Transient source body. It is never persisted by this executor.
@@ -106,8 +117,10 @@ pub(crate) struct DomainExecutionPlan {
     pub(crate) active_executors: Vec<DomainExecutorKind>,
     /// Fixed prompt rules that remain separate from untrusted material bodies.
     pub(crate) prompt_instructions: String,
-    /// Authorized source data rendered with a role label for this Provider request.
-    pub(crate) rendered_context: String,
+    /// Directly user-selected material rendered with a role label for this Provider request.
+    pub(crate) rendered_authorized_material: String,
+    /// Local retrieval evidence rendered separately from user-selected material.
+    pub(crate) rendered_local_retrieval: String,
     /// Abstract style guidance when an official-writing exemplar is present.
     pub(crate) style_blueprint: Option<StyleBlueprint>,
     /// Capabilities requested by this executor; policy remains the only authority to grant them.
@@ -146,7 +159,7 @@ impl DomainExecutor {
     pub(crate) fn plan(
         envelope: &ExecutionEnvelope,
         user_message: &str,
-        materials: &[AuthorizedDomainMaterial],
+        materials: &[DomainMaterial],
         authority_conflicts: &[AuthorityConflict],
     ) -> DomainExecutionPlan {
         if is_novel_request(user_message) {
@@ -219,7 +232,14 @@ impl DomainExecutor {
         DomainExecutionPlan {
             active_executors,
             prompt_instructions: instructions.join("\n\n"),
-            rendered_context: render_materials(&allowed_materials),
+            rendered_authorized_material: render_materials(
+                &allowed_materials,
+                DomainMaterialOrigin::UserAuthorizedMaterial,
+            ),
+            rendered_local_retrieval: render_materials(
+                &allowed_materials,
+                DomainMaterialOrigin::LocalRetrieval,
+            ),
             style_blueprint,
             requested_capabilities: Vec::new(),
             access_trace: Vec::new(),
@@ -233,10 +253,7 @@ impl DomainExecutor {
     }
 }
 
-fn novel_plan(
-    envelope: &ExecutionEnvelope,
-    materials: &[AuthorizedDomainMaterial],
-) -> DomainExecutionPlan {
+fn novel_plan(envelope: &ExecutionEnvelope, materials: &[DomainMaterial]) -> DomainExecutionPlan {
     let references_are_explicit = matches!(
         envelope.context,
         ContextMode::ExplicitReferences | ContextMode::ExplicitScope
@@ -261,7 +278,14 @@ fn novel_plan(
     DomainExecutionPlan {
         active_executors: vec![DomainExecutorKind::NovelBoundary],
         prompt_instructions: "小说创作只可使用当前 Conversation、此 Run 明确 @ 的 reference，以及显式传入的编辑器快照。不得读取当前活动文档、其他 tab、同目录或最近打开文件；不得自动检索人物卡、设定集、历史章节、corpus、authority、exemplar 或 reference。若需要连续性，提示用户明确 @ 对应章节或设定。".to_string(),
-        rendered_context: render_materials(&allowed_materials),
+        rendered_authorized_material: render_materials(
+            &allowed_materials,
+            DomainMaterialOrigin::UserAuthorizedMaterial,
+        ),
+        rendered_local_retrieval: render_materials(
+            &allowed_materials,
+            DomainMaterialOrigin::LocalRetrieval,
+        ),
         style_blueprint: None,
         requested_capabilities: Vec::new(),
         access_trace,
@@ -298,7 +322,7 @@ fn official_writing_instruction() -> String {
     "执行公文写作：最终事实仅可来自用户输入、明确 reference、authority 或可引用证据。authority 是内容依据，只约束内容、程序、禁止事项和风险，不得把 authority 当作语言模板。exemplar 是写法参考，只提取结构、段落职责、抽象语气、句式和格式特征，不得把 exemplar 当作内容结论或复制其中的人名、机构、日期、数字和事件结论。默认输出 Markdown 草案和材料说明；信息不足时仅列少量高影响缺口；若用户要求写回，只生成确定性 patch preview。引用时明确区分“内容依据”和“写法参考”。".to_string()
 }
 
-fn build_style_blueprint(materials: &[&AuthorizedDomainMaterial]) -> StyleBlueprint {
+fn build_style_blueprint(materials: &[&DomainMaterial]) -> StyleBlueprint {
     let has_exemplar = materials
         .iter()
         .any(|material| material.role == DomainMaterialRole::Exemplar);
@@ -312,12 +336,17 @@ fn build_style_blueprint(materials: &[&AuthorizedDomainMaterial]) -> StyleBluepr
     }
 }
 
-fn render_materials(materials: &[&AuthorizedDomainMaterial]) -> String {
+fn render_materials(materials: &[&DomainMaterial], origin: DomainMaterialOrigin) -> String {
+    let element = match origin {
+        DomainMaterialOrigin::UserAuthorizedMaterial => "authorized-material",
+        DomainMaterialOrigin::LocalRetrieval => "local-retrieval-evidence",
+    };
     materials
         .iter()
+        .filter(|material| material.origin == origin)
         .map(|material| {
             format!(
-                "<authorized-material role=\"{}\" label=\"{}\">\n{}\n</authorized-material>",
+                "<{element} role=\"{}\" label=\"{}\">\n{}\n</{element}>",
                 material.role.as_str(),
                 material.label,
                 material.content
@@ -327,7 +356,7 @@ fn render_materials(materials: &[&AuthorizedDomainMaterial]) -> String {
         .join("\n\n")
 }
 
-fn collect_exemplar_fact_candidates(materials: &[&AuthorizedDomainMaterial]) -> Vec<String> {
+fn collect_exemplar_fact_candidates(materials: &[&DomainMaterial]) -> Vec<String> {
     let mut candidates = BTreeSet::new();
     for material in materials
         .iter()
@@ -339,7 +368,7 @@ fn collect_exemplar_fact_candidates(materials: &[&AuthorizedDomainMaterial]) -> 
     candidates.into_iter().collect()
 }
 
-fn supported_fact_text(user_message: &str, materials: &[&AuthorizedDomainMaterial]) -> String {
+fn supported_fact_text(user_message: &str, materials: &[&DomainMaterial]) -> String {
     let mut text = user_message.to_string();
     for material in materials
         .iter()

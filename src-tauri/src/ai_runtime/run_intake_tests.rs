@@ -1528,6 +1528,7 @@ fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
     let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
 
     assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.context, ContextMode::ImplicitVault);
     assert_eq!(envelope.effort, Effort::ToolLoop);
     assert_eq!(envelope.web_reason, WebDecisionReason::LocalTransformation);
     assert_eq!(
@@ -1571,6 +1572,22 @@ fn allow_implicit_vault_decision_table_covers_work_creative_and_scoped_cases() {
         "根据本地笔记回答",
         false,
     ));
+}
+
+#[test]
+fn request_that_rejects_local_material_never_enters_the_implicit_vault_boundary() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "不要使用本地材料；请联网核实当前公开状态。".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.context, ContextMode::None);
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert!(!envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "vault.read"));
 }
 
 #[test]

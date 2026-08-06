@@ -114,7 +114,7 @@ test("live pilot CLI requires session, profile and exact one-run cost confirmati
       "--approve",
       profile,
       "--confirm-cost",
-      "one-12-case-pilot",
+      "one-24-case-interaction-matrix-pilot",
     ).stderr,
     /agent_eval_live_custom_roots_required/,
   );

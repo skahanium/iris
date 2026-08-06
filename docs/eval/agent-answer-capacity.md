@@ -14,6 +14,10 @@ Web 开关是联网能力授权，不是让模型自行决定是否检索的提�
 本 Run 取得 Web 证据后才可完成。联网未开启时，这类请求必须安全拒答，不得猜测。
 前台打开的文档永远不会隐式进入上下文。
 
+模型通过 `read_note`、本地搜索、上下文包或法规查询取得的本地材料，必须由生产工具循环以
+路径、内容哈希和字节范围登记到当前 Run 的证据账本；评测不得事后伪造这类证据。隔离的
+headless live 环境会先建立与桌面运行时等价的本地索引，再执行模型工具调用。
+
 ## 证据层级与声明边界
 
 版本化结果使用三个互不混淆的状态：
@@ -24,11 +28,14 @@ Web 开关是联网能力授权，不是让模型自行决定是否检索的提�
 | `contract_verified`      | OpenAI-compatible、Anthropic Messages、Responses continuation 与 MCP search/fetch 的协议形状和失败分类 | 某个真实厂商服务可用或效果良好     |
 | `live_not_tested`        | 尚未经过用户批准的真实配置                                                                             | 不得转述为 live 通过               |
 
-当前 v1.2.15 结果属于 `headless_deterministic`。真实 MiniMax/AnySearch 12 题
-pilot 已具备预检、批准与费用门；若 12 个 Run 未全部到达 `Completed`，版本化
-声明仍为 `live_not_tested`，不得外推为 live 通过。本轮评测环境对
-`api.minimaxi.com` 无可用出站（代理 CONNECT 403 / DNS 失败），因此已批准的
-pilot 只能证明门禁与凭据水合路径，不能证明真实模型质量。
+当前 v1.2.15 结果属于 `headless_deterministic`。确定性矩阵使用受控的 synthetic
+来源，并以精确事实／引用断言验证 Iris 自身的完整链路；它不能替代真实模型评测。
+真实 live pilot 必须使用真实 LLM 和已配置的 HTTPS 搜索服务，但不得要求公网
+结果包含 synthetic `fact-web-N=value-N` 占位断言：这类断言只可能由本地假源满足，
+会把可用的真实联网结果误判为失败。live 层使用稳定的公开核验任务，评估当前请求的
+网页取证、来源组／严格绑定、用户归因、内部协议泄漏、工具权限和自然表达；精确事实
+正确性仍由确定性矩阵承担。若任何 real Run 未全部安全完成，声明仍为
+`live_not_tested`，不得外推为 live 通过。
 
 ## 分栏评分合同
 
@@ -40,9 +47,24 @@ pilot 只能证明门禁与凭据水合路径，不能证明真实模型质量�
 - `performance`：模型耗时与 TTFT 的 p50/p95、轮数与工具调用计数；
 - `faultRecovery`：降级、约束失败与截断计数。
 
+### 网页查询边界与正文证据分离
+
+本地材料不得进入网页查询。评测报告以封闭的 `webQueryBoundary` 单独记录这一
+边界：`not_applicable`、`confirmed_clean`、`blocked_local_material` 或 `unknown`。
+只要同一回答的任一次网页调用包含被阻止的本地材料，即使模型随后改用干净查询，
+结果仍保留为 `blocked_local_material`；不得以最后一次调用覆盖先前的违规尝试。
+该状态不保存查询或材料原文。
+
+这与回答正文的网页证据污染是两个不同的失败面：前者衡量模型是否尝试越过隐私
+边界，后者衡量可见结论是否缺少应有的网页证据。生产工具循环会在网络派发之前
+阻止前者，因此“已阻止的尝试”不代表材料已经外传；但它仍是 live pilot 的硬门槛，
+不能被当作模型校准通过。`unknown` 也不得被乐观解释为干净。
+
 ## 实时预检、批准门与临时状态
 
-`agent:eval:live -- preflight` 只读取已配置的非密钥路由形状。源 SQLite 以
+`agent:eval:live -- preflight` 只读取已配置的非密钥路由形状。每个允许的模型只
+生成一个候选：它使用产品当前联网搜索主服务；备用服务的切换行为由无界面路由契约
+测试覆盖，不会被错误扩增为独立的付费 live pilot。源 SQLite 以
 read-only 模式打开；路由规范化、旧配置迁移和模型解析都在另一个内存数据库
 完成，不会写回应用数据库。预检不会解析 credential reference、不会读取 API
 Key，也不会连接模型或 MCP 端点。启动评测子进程时使用最小环境白名单，只传递
@@ -73,14 +95,25 @@ binding 都匹配；即便两个配置具有相同 capability fingerprint，替�
 消费，旧会话不能重放。
 
 用户必须同时提供当前 session、该 session 下的匿名 profile，并逐次确认
-`one-12-case-pilot` 成本 checkpoint。随后才会签发短时效、同会话绑定、一次性
+`one-24-case-interaction-matrix-pilot` 成本 checkpoint。随后才会签发短时效、同会话绑定、一次性
 的随机 approval token；所有门禁完成后，选中的非密钥路由与 MCP 元数据才复制
-到 `tempfile` 管理的独立 `AppState`。12 题固定走与 deterministic 评测相同的
-normal headless 路径。只有 12 个真实 Run 全部到达 `Completed`，结果才标记
-`live_pilot_executed`；部分完成或失败仍为 `live_not_tested`。任何进一步承压
-扩展还需再次确认费用。每题仍按 required fact、证据、引用、授权、路线效率、
-降级和安全七项生成封闭 verdict；`Completed` 只代表执行到终态，错误答案或
-缺证据/缺引用不会因此计为通过。
+到 `tempfile` 管理的独立 `AppState`。每个已选模型固定执行 8 个交互完整性场景、各重复 3 次，
+共 24 个 normal headless Run；MiniMax-M3 与 MiMo v2.5 分别完成后构成 48 次真实试运行。
+确定性
+对端继续复用完整 synthetic oracle；真实网络对端改用公开核验任务和对应的 live
+oracle，二者绝不共享伪造网页事实。只有每个选中模型的 24 个真实 Run（两个模型合计 48 个）全部到达终态、每题封闭 verdict
+均通过，且没有归因、内部协议、权限或来源边界违规，结果才标记 `live_pilot_executed`；
+离线网页场景的合规安全拒绝是通过的终态，保留在 `completedCaseCount` 之外但不得阻止放行。
+若评测器自身在某个案例的准备或取分阶段出错，该案例会以闭集
+`agent_run_evaluation_inconclusive` 记录为失败，剩余案例仍会继续并写出完整报告；
+原始错误不进入结果文件，标准错误流只输出固定 reason code 供本地诊断。
+未终态或 verdict 失败仍为 `live_not_tested`。任何进一步承压扩展还需再次确认费用。每题
+按来源可用性、可见表达、授权、路线效率、降级和安全生成封闭 verdict；`Completed` 只代表
+已展示回答，不能单独构成放行。
+
+在线搜索服务若在尚未产生任何可见正文前终止，样本同样不能通过，也不能用于严格路由校准；
+但它归为基础设施未完成验证，而非“模型编造”或归因违规。只要已经出现可见正文，仍按普通
+证据、归因与降级门禁审查，不存在该豁免。
 
 ## 时效事实核验硬门槛
 
@@ -107,9 +140,9 @@ v1.2.15 确定性 full 结果为 48/48：
 | 仅 Web |   12 |   12 |
 | 混合   |   12 |   12 |
 
-隐式 vault Allowed 的本地/混合变体现已由确定性 harness 脚本化 `read_note`
-（Offline 工作任务在明显本地依赖时进入 ToolLoop），并走真实 vault/evidence
-路径；假阴性已消除。显式本地材料继续通过；Offline Web 与缺少必需 Web
+隐式 vault Allowed 的本地/混合变体由 `RunContextAssembler` 在任何模型回合前
+确定性预取、应用文档权限并登记真实 vault/evidence 路径；模型不需要、也不能
+通过脚本化 `read_note` 决定这一入口。显式本地材料继续通过；Offline Web 与缺少必需 Web
 证据的混合请求均以无工具、无来源的严格安全拒绝终止，拒绝本身计为安全通过，
 但绝不计为事实回答正确。
 
@@ -133,9 +166,9 @@ v1.2.15 确定性 full 结果为 48/48：
 索引规模 >48、向量可用性与 Web 延迟在确定性层固定为 `live_not_tested`；
 检索干扰 >48 不在 CI 中物化，只保留调度与下界声明。
 
-压力探针中的 headless Web 回答路径稳定边界为 5/6，而生产
-`NormalRunToolExecutor` 的 Web 证据预算硬边界仍为 8/9，二者分别记录，禁止
-互相替代。这里的 `web_evidence_count` 只表示 Iris 的证据预算，绝不表示网络
+压力探针与生产 `NormalRunToolExecutor` 共用 Web 证据预算：首次检索最多 8 条，
+一次回答累计最多 12 条，第 13 条必须拒绝；两者禁止使用不同的隐含上限。这里的
+`web_evidence_count` 只表示 Iris 的证据预算，绝不表示网络
 延迟；机器报告将 `webLatency` 单独固定为 `live_not_tested`。检索干扰项
 在 48 篇上仍为 5/5，只能声明 `lower_bound_only`；组合终局不是标量，
 声明为 `non_scalar_suite`。推理深度各层虽经过真实 headless RunEngine，
@@ -153,7 +186,7 @@ v1.2.15 确定性 full 结果为 48/48：
 | 工具调用     | `AgentToolLoop`         |          24 |                       第 25 次阻止 | 5/5  |
 | 普通工具结果 | `AgentToolLoop`         |  8,000 字符 |                   8,001 截断并记录 | 5/5  |
 | Web 证据包   | `NormalRunToolExecutor` | 32,000 字符 | 超限时重新打包或拒绝，禁止静默截断 | 5/5  |
-| Web 证据     | `NormalRunToolExecutor` |        8 条 |                        第 9 条阻止 | 5/5  |
+| Web 证据     | `NormalRunToolExecutor` |       12 条 |                       第 13 条阻止 | 5/5  |
 | 最终回答     | `RunEngine`             | 32,000 字符 |                        32,001 拒绝 | 5/5  |
 
 六个组合终端也执行真实组件，而不是把单项结果拼成标签：
@@ -230,7 +263,7 @@ npm run agent:eval
 npm run rag:eval
 npm run agent:eval:live -- preflight
 npm run agent:eval:live -- pilot --session session-<64hex> \
-  --approve profile-<32hex> --confirm-cost one-12-case-pilot
+  --approve profile-<32hex> --confirm-cost one-24-case-interaction-matrix-pilot
 ```
 
 `agent:eval:smoke` 执行分层核心子集和全部硬边界；`agent:eval` 执行 48 题、
@@ -252,6 +285,8 @@ npm run agent:eval:live -- pilot --session session-<64hex> \
 - `npm run agent:eval`（版本化报告已更新为 48/48、`securityGate=true`）
 
 压力轴 `index_scale>48` / `vector_availability` / `webLatency` 继续
-`live_not_tested`。真实 MiniMax/AnySearch 12 题 pilot 已在匹配 `master.key`
-的凭据根下跑通：12/12 Run 均到达 `Completed`，`claimBoundary.liveProfiles`
-已标为 `live_pilot_executed`（质量失败仍如实计入 passed/failed，不伪造满分）。
+`live_not_tested`。版本化确定性报告也固定使用
+`claimBoundary.liveProfiles=live_not_tested`：它不能携带、继承或推广真实模型的
+放行结论。真实联网证据只能来自被忽略的、按精确模型与路由绑定的 live-pilot
+记录；只有 MiniMax-M3 与 MiMo v2.5 都完成获批的重复试运行，且所有 hard
+admission 与人格门槛均通过后，才可以将对应路由加入严格结构化终局校准表。
