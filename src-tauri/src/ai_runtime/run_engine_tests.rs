@@ -596,7 +596,8 @@ fn direct_engine_calls_provider_once_and_finalizes_one_run() {
 async fn direct_streaming_enforces_the_frozen_run_budget_when_usage_is_missing_at_boundaries() {
     for boundary in [-1_i32, 0, 1] {
         let db = Database::open_in_memory().expect("database");
-        let accepted = RunIntake::start(&db, request()).expect("accepted direct run");
+        let accepted = RunIntake::start(&db, standard_tool_loop_request())
+            .expect("accepted non-default-budget run");
         let sink = RecordingSink::default();
         let frozen = AgentRunRepository::budget_policy_for_session(
             &db,
@@ -605,6 +606,15 @@ async fn direct_streaming_enforces_the_frozen_run_budget_when_usage_is_missing_a
         )
         .expect("read accepted frozen budget")
         .expect("accepted budget");
+        assert_ne!(
+            crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
+                max_prompt_tokens: Some(frozen.max_prompt_tokens),
+                max_completion_tokens: Some(frozen.max_completion_tokens),
+                max_turn_output_tokens: Some(frozen.max_turn_output_tokens),
+            },
+            crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget::default(),
+            "the direct streaming path must prove it forwards an accepted budget, not its default"
+        );
         let completion_limit = frozen
             .max_completion_tokens
             .min(frozen.max_turn_output_tokens) as i32;

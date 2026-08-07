@@ -159,14 +159,7 @@ impl RunContext {
                 "assistant" => crate::ai_runtime::MessageRole::Assistant,
                 _ => return None,
             };
-            let content = if message.role == "assistant" {
-                // History remains an assistant turn for conversational continuity. Its
-                // non-evidentiary classification is owned once by PromptContractV3;
-                // never inject a protocol heading that a model can echo as Markdown.
-                sanitize_web_citations_for_model_history(&message.content, &message.web_citations)
-            } else {
-                message.content.clone()
-            };
+            let content = provider_history_content(message);
             Some(crate::ai_runtime::LlmMessage {
                 role,
                 content: crate::ai_types::MessageContent::Text(content),
@@ -254,6 +247,10 @@ pub(crate) fn classify_context_assembly_failure(error: &AppError) -> SafeRunErro
 fn select_bounded_recent_history(
     candidates: Vec<NormalSessionMessage>,
 ) -> Vec<NormalSessionMessage> {
+    let candidates = candidates
+        .into_iter()
+        .map(provider_history_copy)
+        .collect::<Vec<_>>();
     let mut selected_pairs = Vec::<(NormalSessionMessage, NormalSessionMessage)>::new();
     let mut selected_tokens = 0_u32;
     let mut end = candidates.len();
@@ -287,6 +284,26 @@ fn select_bounded_recent_history(
         .into_iter()
         .flat_map(|(user, assistant)| [user, assistant])
         .collect()
+}
+
+/// Return one transient history copy exactly as it will reach the Provider.
+///
+/// Selection, token accounting and oversized-pair projection must operate on
+/// this copy; citation sanitization can expand compact `[Wn]` markers.
+fn provider_history_copy(mut message: NormalSessionMessage) -> NormalSessionMessage {
+    message.content = provider_history_content(&message);
+    message
+}
+
+fn provider_history_content(message: &NormalSessionMessage) -> String {
+    if message.role == "assistant" {
+        // History remains an assistant turn for conversational continuity. Its
+        // non-evidentiary classification is owned once by PromptContractV3;
+        // never inject a protocol heading that a model can echo as Markdown.
+        sanitize_web_citations_for_model_history(&message.content, &message.web_citations)
+    } else {
+        message.content.clone()
+    }
 }
 
 fn project_history_pair_to_budget(
@@ -390,6 +407,42 @@ mod history_selection_tests {
         ]
     }
 
+    fn context_with_history(recent_messages: Vec<NormalSessionMessage>) -> RunContext {
+        RunContext {
+            session_id: 1,
+            message_seq_first: 3,
+            user_message: "继续这个对话".to_string(),
+            content_parts: None,
+            envelope: ExecutionEnvelope {
+                effect: crate::ai_runtime::run_contract::Effect::Answer,
+                context: ContextMode::Conversation,
+                freshness: crate::ai_runtime::run_contract::Freshness::Offline,
+                web_reason: crate::ai_runtime::run_contract::WebDecisionReason::LegacyUnknown,
+                verification_requirement:
+                    crate::ai_runtime::run_contract::VerificationRequirement::None,
+                effort: crate::ai_runtime::run_contract::Effort::Direct,
+                security_domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
+                risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,
+                modalities: vec![crate::ai_runtime::run_contract::Modality::Text],
+                material_needs: Vec::new(),
+                required_capabilities: Vec::new(),
+                explicit_constraints: Vec::new(),
+            },
+            write_target_path: None,
+            document_policy: crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine::new(
+                crate::ai_runtime::policy_decision_engine::DocumentPolicy::allow_all(),
+            ),
+            materials: Vec::new(),
+            retrieval_scope: RetrievalScope::default(),
+            local_retrieval_packets: Vec::new(),
+            recent_messages,
+            conversation_memory: None,
+            prompt_profile: PromptProfile::default(),
+            previous_run_summary: None,
+            interrupted_assistant_continue: false,
+        }
+    }
+
     #[test]
     fn newest_oversized_pair_is_projected_as_a_pair_inside_the_history_budget() {
         let selected = select_bounded_recent_history(pair(1, "latest", 4_001));
@@ -415,6 +468,51 @@ mod history_selection_tests {
         assert_eq!(selected.len(), 2, "history may not skip an older gap");
         assert_eq!(selected[0].turn_id.as_deref(), Some("newest"));
         assert!(is_coherent_conversation_pair(&selected[0], &selected[1]));
+    }
+
+    #[test]
+    fn provider_history_budget_counts_citation_sanitization_before_projection() {
+        let mut latest_pair = pair(1, "latest", 0);
+        latest_pair[0].content = "问".repeat(4_000);
+        latest_pair[1].content = "[W1]".repeat(3_900);
+        latest_pair[1].web_citations = vec![crate::ai_types::WebCitationEntry {
+            index: 1,
+            title: String::new(),
+            url: String::new(),
+        }];
+
+        let context = context_with_history(select_bounded_recent_history(latest_pair));
+        let messages = context.messages_with_domain_plan(&context.domain_plan());
+        let provider_history = &messages[1..messages.len() - 1];
+        let provider_history_tokens = provider_history
+            .iter()
+            .map(|message| {
+                let content = message.content.text_content();
+                crate::ai_runtime::text_support::estimate_tokens(&content)
+            })
+            .sum::<usize>();
+
+        assert_eq!(
+            provider_history.len(),
+            2,
+            "the latest complete pair remains available"
+        );
+        assert!(matches!(
+            provider_history[0].role,
+            crate::ai_runtime::MessageRole::User
+        ));
+        assert!(matches!(
+            provider_history[1].role,
+            crate::ai_runtime::MessageRole::Assistant
+        ));
+        assert!(provider_history[1]
+            .content
+            .text_content()
+            .contains("[历史来源 1]"));
+        assert!(
+            provider_history_tokens <= MAX_RECENT_CONVERSATION_TOKENS as usize,
+            "provider-facing history must stay inside the frozen 8k token budget"
+        );
     }
 }
 
