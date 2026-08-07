@@ -544,9 +544,10 @@ pub struct SemanticHit {
     pub score: f32,
 }
 
-/// Read embedding blob (auto-detects format).
+/// Read an embedding blob for storage-format compatibility tests.
 /// Magic [0x51,0x55] => quantized; otherwise => raw f32 LE.
-pub(crate) fn bytes_to_f32(blob: &[u8]) -> Vec<f32> {
+#[cfg(test)]
+fn bytes_to_f32(blob: &[u8]) -> Vec<f32> {
     if blob.is_empty() {
         return vec![];
     }

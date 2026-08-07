@@ -10,9 +10,9 @@ use crate::ai_runtime::{
 use crate::error::{AppError, AppResult};
 
 use super::{
-    fuse_and_rank, search_exact_regulation, search_fts, search_graph_neighbors, search_metadata,
-    search_template, search_vector_anchors, search_vector_chunks, search_vector_regulations,
-    RetrievalRequest,
+    ensure_sqlite_vec_v3_available, fuse_and_rank, search_exact_regulation, search_fts,
+    search_graph_neighbors, search_metadata, search_template, search_vector_anchors,
+    search_vector_chunks, search_vector_regulations, RetrievalRequest,
 };
 
 /// Per-layer retrieval status reported by the diagnostic API.
@@ -34,7 +34,7 @@ pub struct RetrievalLayerDiagnostic {
     pub layer: String,
     pub status: RetrievalLayerStatus,
     pub message: Option<String>,
-    /// Backend used for this layer (e.g. "cosine-rust", "sqlite-vec").
+    /// Backend used for this layer (e.g. "sqlite-vec").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend: Option<String>,
     /// Active embedding model identifier when the layer ran.
@@ -58,11 +58,20 @@ pub fn hybrid_retrieve_with_diagnostics(
     conn: &Connection,
     request: &RetrievalRequest,
 ) -> AppResult<RetrievalOutcome> {
+    hybrid_retrieve_with_diagnostics_with_embedder(conn, request, |query| {
+        crate::embedding::engine::embed_query(query)
+    })
+}
+
+fn hybrid_retrieve_with_diagnostics_with_embedder(
+    conn: &Connection,
+    request: &RetrievalRequest,
+    embedder: impl FnOnce(&str) -> AppResult<Vec<f32>>,
+) -> AppResult<RetrievalOutcome> {
     let mut packets: Vec<ContextPacket> = Vec::new();
     let mut diagnostics: Vec<RetrievalLayerDiagnostic> = Vec::new();
-    // Retrieve a bounded candidate pool before applying the hard scope boundary.
-    // Applying the final Top-K limit first can let out-of-scope records consume
-    // all slots and leave a valid scoped query with no results.
+    // Each layer retrieves a bounded candidate pool before final rank fusion.
+    // Vector hard scope is also pushed into each vec0 KNN query below.
     let candidate_limit = request.max_results.saturating_mul(4).max(8);
 
     if request.layers.fts {
@@ -81,38 +90,74 @@ pub fn hybrid_retrieve_with_diagnostics(
     }
 
     if request.layers.vector {
-        if crate::embedding::engine::embedding_generation_ready(conn)? {
+        if let Err(error) = ensure_sqlite_vec_v3_available(conn) {
+            append_layer_result_with_meta(
+                "vector",
+                Err(error),
+                &mut packets,
+                &mut diagnostics,
+                Some("sqlite-vec".into()),
+                Some(crate::embedding::engine::EMBEDDING_MODEL_ID.into()),
+            );
+        } else if crate::embedding::engine::embedding_generation_ready(conn)? {
             let model_id = crate::embedding::engine::EMBEDDING_MODEL_ID.to_string();
-            append_layer_result_with_meta(
-                "vector_chunks",
-                search_vector_chunks(conn, &request.query, candidate_limit),
-                &mut packets,
-                &mut diagnostics,
-                Some("cosine-rust".into()),
-                Some(model_id.clone()),
-            );
-            append_layer_result_with_meta(
-                "vector_anchors",
-                search_vector_anchors(conn, &request.query, candidate_limit),
-                &mut packets,
-                &mut diagnostics,
-                Some("cosine-rust".into()),
-                Some(model_id.clone()),
-            );
-            append_layer_result_with_meta(
-                "vector_regulations",
-                search_vector_regulations(conn, &request.query, candidate_limit),
-                &mut packets,
-                &mut diagnostics,
-                Some("cosine-rust".into()),
-                Some(model_id),
-            );
+            match embedder(&request.query) {
+                Ok(query_embedding) => {
+                    append_layer_result_with_meta(
+                        "vector_chunks",
+                        search_vector_chunks(
+                            conn,
+                            &query_embedding,
+                            candidate_limit,
+                            &request.scope,
+                        ),
+                        &mut packets,
+                        &mut diagnostics,
+                        Some("sqlite-vec".into()),
+                        Some(model_id.clone()),
+                    );
+                    append_layer_result_with_meta(
+                        "vector_anchors",
+                        search_vector_anchors(
+                            conn,
+                            &query_embedding,
+                            candidate_limit,
+                            &request.scope,
+                        ),
+                        &mut packets,
+                        &mut diagnostics,
+                        Some("sqlite-vec".into()),
+                        Some(model_id.clone()),
+                    );
+                    append_layer_result_with_meta(
+                        "vector_regulations",
+                        search_vector_regulations(
+                            conn,
+                            &query_embedding,
+                            candidate_limit,
+                            &request.scope,
+                        ),
+                        &mut packets,
+                        &mut diagnostics,
+                        Some("sqlite-vec".into()),
+                        Some(model_id),
+                    );
+                }
+                Err(error) => append_layer_result_with_meta(
+                    "vector",
+                    Err(error),
+                    &mut packets,
+                    &mut diagnostics,
+                    Some("sqlite-vec".into()),
+                    Some(model_id),
+                ),
+            }
         } else {
             diagnostics.push(RetrievalLayerDiagnostic {
                 layer: "vector".to_string(),
                 status: RetrievalLayerStatus::IndexNotReady,
                 message: Some(embedding_not_ready_message(conn)?),
-                backend: Some("cosine-rust".into()),
+                backend: Some("sqlite-vec".into()),
                 model_id: Some(crate::embedding::engine::EMBEDDING_MODEL_ID.into()),
                 generation_id: None,
             });
@@ -362,10 +407,13 @@ fn classify_retrieval_error(err: &AppError) -> RetrievalLayerStatus {
         AppError::Db(db_err) => db_err.to_string().to_lowercase(),
         _ => err.to_string().to_lowercase(),
     };
-    if message.contains("no such column") {
-        RetrievalLayerStatus::SchemaMismatch
-    } else if message.contains("no such table") || message.contains("no such module") {
+    if message.contains("unavailable")
+        || message.contains("no such table")
+        || message.contains("no such module")
+    {
         RetrievalLayerStatus::Unavailable
+    } else if message.contains("no such column") {
+        RetrievalLayerStatus::SchemaMismatch
     } else if message.contains("index")
         || message.contains("embedding")
         || message.contains("model")
@@ -385,6 +433,278 @@ fn sanitize_retrieval_error(message: &str) -> String {
 mod tests {
     use super::*;
     use crate::ai_runtime::retrieval_broker::RetrievalLayers;
+
+    #[cfg(feature = "sqlite-vec")]
+    fn vector_fixture(second: f32) -> Vec<f32> {
+        let mut vector = vec![0.0_f32; crate::embedding::engine::EMBEDDING_DIMENSION];
+        vector[0] = 1.0;
+        vector[1] = second;
+        vector
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn insert_file(conn: &Connection, id: i64, path: &str) {
+        conn.execute(
+            "INSERT INTO files
+             (id, path, title, content_hash, word_count, created_at, updated_at)
+             VALUES (?1, ?2, ?2, ?3, 1, datetime('now'), datetime('now'))",
+            rusqlite::params![id, path, format!("file-{id}")],
+        )
+        .expect("insert vector fixture file");
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn insert_chunk_vector(conn: &Connection, id: i64, file_id: i64, vector: &[f32]) {
+        let fingerprint = format!("chunk-{id}");
+        conn.execute(
+            "INSERT INTO chunks
+             (id, file_id, chunk_index, content, source_start, source_end, content_hash, char_count)
+             VALUES (?1, ?2, 0, ?3, 0, 10, ?4, 10)",
+            rusqlite::params![id, file_id, format!("chunk evidence {id}"), fingerprint],
+        )
+        .expect("insert chunk fixture");
+        conn.execute(
+            "INSERT INTO chunk_embeddings_v2
+             (chunk_id, embedding, source_fingerprint, model_id, dimension)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                id,
+                crate::embedding::engine::f32_to_bytes(vector),
+                fingerprint,
+                crate::embedding::engine::EMBEDDING_MODEL_ID,
+                crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+            ],
+        )
+        .expect("insert chunk vector fixture");
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn insert_anchor_vector(conn: &Connection, id: i64, file_id: i64, vector: &[f32]) {
+        let fingerprint = format!("anchor-{id}");
+        conn.execute(
+            "INSERT INTO semantic_anchors
+             (id, anchor_key, file_id, anchor_type, content, heading_path, source_start,
+              source_end, content_hash, extractor_version, embedding_model, embedding_dim,
+              confidence, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'semantic', ?4, 'Anchor', 20, 30, ?5, 'test', ?6, 512,
+                     1.0, datetime('now'), datetime('now'))",
+            rusqlite::params![
+                id,
+                format!("anchor-key-{id}"),
+                file_id,
+                format!("anchor evidence {id}"),
+                fingerprint,
+                crate::embedding::engine::EMBEDDING_MODEL_ID,
+            ],
+        )
+        .expect("insert anchor fixture");
+        conn.execute(
+            "INSERT INTO semantic_anchor_embeddings_v2
+             (anchor_id, embedding, source_fingerprint, model_id, dimension)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                id,
+                crate::embedding::engine::f32_to_bytes(vector),
+                fingerprint,
+                crate::embedding::engine::EMBEDDING_MODEL_ID,
+                crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+            ],
+        )
+        .expect("insert anchor vector fixture");
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn insert_regulation_vector(conn: &Connection, id: i64, file_id: i64, vector: &[f32]) {
+        let fingerprint = format!("regulation-{id}");
+        conn.execute(
+            "INSERT INTO regulation_index
+             (id, file_id, regulation_name, article, content, source_start, source_end,
+              content_hash, parser_version, embedding_model, embedding_dim, created_at)
+             VALUES (?1, ?2, '条例', ?3, ?4, 40, 50, ?5, 'test', ?6, 512, datetime('now'))",
+            rusqlite::params![
+                id,
+                file_id,
+                format!("第{id}条"),
+                format!("regulation evidence {id}"),
+                fingerprint,
+                crate::embedding::engine::EMBEDDING_MODEL_ID,
+            ],
+        )
+        .expect("insert regulation fixture");
+        conn.execute(
+            "INSERT INTO regulation_embeddings_v2
+             (regulation_id, embedding, source_fingerprint, model_id, dimension)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                id,
+                crate::embedding::engine::f32_to_bytes(vector),
+                fingerprint,
+                crate::embedding::engine::EMBEDDING_MODEL_ID,
+                crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+            ],
+        )
+        .expect("insert regulation vector fixture");
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    #[test]
+    fn agent_vector_knn_applies_exact_prefix_and_required_tag_before_each_top_k() {
+        let db = crate::storage::db::Database::open_in_memory().expect("open sqlite-vec database");
+        db.with_conn(|conn| {
+            let closer = vector_fixture(0.0);
+            for id in 1..=13_i64 {
+                insert_file(conn, id, &format!("outside/{id}.md"));
+                insert_chunk_vector(conn, id, id, &closer);
+                insert_anchor_vector(conn, id, id, &closer);
+                insert_regulation_vector(conn, id, id, &closer);
+            }
+            insert_file(conn, 99, ".classified/secret.md");
+            insert_chunk_vector(conn, 99, 99, &closer);
+            insert_anchor_vector(conn, 99, 99, &closer);
+            insert_regulation_vector(conn, 99, 99, &closer);
+
+            let allowed = vector_fixture(0.05);
+            insert_file(conn, 100, "exact/needle.md");
+            insert_chunk_vector(conn, 100, 100, &allowed);
+            insert_file(conn, 101, "prefix/needle.md");
+            insert_anchor_vector(conn, 101, 101, &allowed);
+            insert_regulation_vector(conn, 101, 101, &allowed);
+            conn.execute("INSERT INTO tags (id, name) VALUES (1, 'required')", [])?;
+            conn.execute(
+                "INSERT INTO file_tags (file_id, tag_id) VALUES (99, 1), (100, 1), (101, 1)",
+                [],
+            )?;
+            conn.execute(
+                "UPDATE embedding_generation_state
+                 SET active_model_id = ?1, target_model_id = ?1, target_dimension = ?2,
+                     phase = 'ready', indexed_items = 45, total_items = 45
+                 WHERE singleton = 1",
+                rusqlite::params![
+                    crate::embedding::engine::EMBEDDING_MODEL_ID,
+                    crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+                ],
+            )?;
+
+            let request = RetrievalRequest {
+                query: "needle".into(),
+                max_results: 3,
+                layers: RetrievalLayers {
+                    fts: false,
+                    vector: true,
+                    graph: false,
+                    exact: false,
+                    template: false,
+                },
+                note_context: None,
+                file_id_context: None,
+                scope: crate::ai_runtime::retrieval_scope::RetrievalScope {
+                    paths: vec!["exact/needle.md".into(), ".classified/secret.md".into()],
+                    path_prefixes: vec!["prefix/".into()],
+                    required_tags: vec!["required".into()],
+                },
+                runtime_documents: Vec::new(),
+                corpus_config: None,
+            };
+
+            let outcome = hybrid_retrieve_with_diagnostics_with_embedder(conn, &request, |_| {
+                Ok(closer.clone())
+            })?;
+
+            assert_eq!(outcome.packets.len(), 3);
+            for reason in ["vector_chunk", "vector_anchor", "vector_regulation"] {
+                assert!(
+                    outcome
+                        .packets
+                        .iter()
+                        .any(|packet| packet.retrieval_reason == reason),
+                    "missing broker packet from {reason}"
+                );
+            }
+            assert!(outcome.packets.iter().all(|packet| {
+                matches!(
+                    packet.source_path.as_deref(),
+                    Some("exact/needle.md" | "prefix/needle.md")
+                )
+            }));
+            let vector_diagnostics: Vec<_> = outcome
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.layer.starts_with("vector_"))
+                .collect();
+            assert_eq!(vector_diagnostics.len(), 3);
+            assert!(vector_diagnostics.iter().all(|diagnostic| {
+                diagnostic.backend.as_deref() == Some("sqlite-vec")
+                    && diagnostic.status == RetrievalLayerStatus::Ok
+            }));
+            Ok(())
+        })
+        .expect("run scoped Agent retrieval broker");
+    }
+
+    #[cfg(not(feature = "sqlite-vec"))]
+    #[test]
+    fn agent_retrieval_reports_vector_unavailable_and_preserves_fts_without_feature() {
+        let database =
+            crate::storage::db::Database::open_in_memory().expect("open non-vec database");
+        database
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO files
+                     (id, path, title, content_hash, word_count, created_at, updated_at)
+                     VALUES (1, 'notes/needle.md', 'Needle', 'file-hash', 1,
+                             datetime('now'), datetime('now'))",
+                    [],
+                )?;
+                conn.execute(
+                    "INSERT INTO chunks
+                     (id, file_id, chunk_index, content, source_start, source_end,
+                      content_hash, char_count)
+                     VALUES (1, 1, 0, 'needle keyword evidence', 0, 23, 'chunk-hash', 23)",
+                    [],
+                )?;
+                conn.execute(
+                    "INSERT INTO files_fts (path, title, content)
+                     VALUES ('notes/needle.md', 'Needle', 'needle keyword evidence')",
+                    [],
+                )?;
+
+                let outcome = hybrid_retrieve_with_diagnostics(
+                    conn,
+                    &RetrievalRequest {
+                        query: "needle".into(),
+                        max_results: 3,
+                        layers: RetrievalLayers {
+                            fts: true,
+                            vector: true,
+                            graph: false,
+                            exact: false,
+                            template: false,
+                        },
+                        note_context: None,
+                        file_id_context: None,
+                        scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+                        runtime_documents: Vec::new(),
+                        corpus_config: None,
+                    },
+                )?;
+
+                assert!(outcome
+                    .packets
+                    .iter()
+                    .any(|packet| packet.retrieval_reason == "fts_keyword_match"));
+                assert!(
+                    outcome.diagnostics.iter().any(|diagnostic| {
+                        diagnostic.layer == "vector"
+                            && diagnostic.status == RetrievalLayerStatus::Unavailable
+                            && diagnostic.backend.as_deref() == Some("sqlite-vec")
+                    }),
+                    "unexpected diagnostics: {:#?}",
+                    outcome.diagnostics
+                );
+                Ok(())
+            })
+            .expect("run degraded Agent retrieval broker");
+    }
 
     #[test]
     fn classifies_schema_mismatch_separately_from_missing_tables() {

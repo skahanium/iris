@@ -917,22 +917,13 @@ mod tests {
 
         let inserted: (Vec<u8>, Option<i64>) = conn
             .query_row(
-                &format!(
-                    "SELECT embedding, {} FROM {vec_table} WHERE {vec_id_column} = ?1",
-                    if matches!(kind, CacheKind::Chunk) {
-                        "file_id"
-                    } else {
-                        "NULL"
-                    }
-                ),
+                &format!("SELECT embedding, file_id FROM {vec_table} WHERE {vec_id_column} = ?1"),
                 [record_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .expect("insert trigger mirrors canonical cache");
         assert_eq!(inserted.0, embedding_fixture(1.0));
-        if matches!(kind, CacheKind::Chunk) {
-            assert_eq!(inserted.1, Some(file_id));
-        }
+        assert_eq!(inserted.1, Some(file_id));
 
         conn.execute(
             &format!(

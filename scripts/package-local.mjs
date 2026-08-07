@@ -26,32 +26,23 @@ const embeddedModelSource = path.join(
 function usage() {
   return [
     "Usage:",
-    "  node scripts/package-local.mjs [--check] [--sqlite-vec|--no-sqlite-vec] mac",
-    "  node scripts/package-local.mjs [--check] [--sqlite-vec|--no-sqlite-vec] win",
+    "  node scripts/package-local.mjs [--check] mac",
+    "  node scripts/package-local.mjs [--check] win",
     "",
     "Creates local self-use packages only. No Developer ID, notarization, CI, or Windows code signing.",
-    "Windows defaults to sqlite-vec disabled; use --sqlite-vec for experimental vec0 builds.",
+    "All desktop packages require the default sqlite-vec feature and pass its release smoke gate.",
   ].join("\n");
 }
 
 function parseArgs(argv) {
   const options = {
     check: false,
-    sqliteVec: null,
     target: null,
   };
 
   for (const arg of argv) {
     if (arg === "--check") {
       options.check = true;
-      continue;
-    }
-    if (arg === "--sqlite-vec") {
-      options.sqliteVec = true;
-      continue;
-    }
-    if (arg === "--no-sqlite-vec") {
-      options.sqliteVec = false;
       continue;
     }
     if (arg === "--help" || arg === "-h") {
@@ -67,10 +58,6 @@ function parseArgs(argv) {
 
   if (!options.target) {
     throw new Error("Missing target: expected mac or win");
-  }
-
-  if (options.sqliteVec === null) {
-    options.sqliteVec = options.target === "win" ? false : true;
   }
 
   return options;
@@ -111,11 +98,8 @@ function archLabel() {
   return process.arch;
 }
 
-function tauriBuildArgs(target, sqliteVec, configPath) {
+function tauriBuildArgs(target, configPath) {
   const args = ["run", "tauri", "--", "build", "--config", configPath];
-  if (sqliteVec) {
-    args.push("--features", "sqlite-vec");
-  }
   if (target === "mac") {
     args.push("--bundles", "app");
     return args;
@@ -155,6 +139,19 @@ function resetTargetBundle(target) {
 
 function prepareEmbeddedModel() {
   run("prepare embedded BGE model", "npm", ["run", "model:prepare"]);
+}
+
+function runEmbeddingAndSqliteVecSmoke() {
+  run("smoke test embedded BGE model and sqlite-vec", "cargo", [
+    "test",
+    "--locked",
+    "--manifest-path",
+    "src-tauri/Cargo.toml",
+    "--test",
+    "embedding_model_smoke",
+    "--",
+    "--ignored",
+  ]);
 }
 
 function runChecks() {
@@ -198,18 +195,19 @@ function createLocalDmg() {
   return dmgPath;
 }
 
-function packageMac(options) {
+function packageMac() {
   if (process.platform !== "darwin") {
     throw new Error("mac packaging must run on macOS.");
   }
   prepareEmbeddedModel();
+  runEmbeddingAndSqliteVecSmoke();
   resetTargetBundle("mac");
   const configPath = writePackageTauriConfig();
   try {
     run(
       "build macOS app intermediate",
       "npm",
-      tauriBuildArgs("mac", options.sqliteVec, configPath),
+      tauriBuildArgs("mac", configPath),
     );
   } finally {
     rmSync(configPath, { force: true });
@@ -226,7 +224,7 @@ function packageMac(options) {
       `  path: ${dmgPath}`,
       `  version: ${packageVersion()}`,
       `  arch: ${archLabel()}`,
-      `  sqlite-vec: ${options.sqliteVec ? "enabled" : "disabled"}`,
+      "  sqlite-vec: required default feature, smoke verified",
       `  trusted-types: ${trustedTypesStatus()}`,
       "  signing: ad-hoc app signature, unsigned DMG",
       "",
@@ -234,18 +232,19 @@ function packageMac(options) {
   );
 }
 
-function packageWin(options) {
+function packageWin() {
   if (process.platform !== "win32") {
     throw new Error("Windows NSIS packaging must run on Windows.");
   }
   prepareEmbeddedModel();
+  runEmbeddingAndSqliteVecSmoke();
   resetTargetBundle("win");
   const configPath = writePackageTauriConfig();
   try {
     run(
       "build Windows NSIS installer",
       "npm",
-      tauriBuildArgs("win", options.sqliteVec, configPath),
+      tauriBuildArgs("win", configPath),
     );
   } finally {
     rmSync(configPath, { force: true });
@@ -262,7 +261,7 @@ function packageWin(options) {
       `  bundle dir: ${path.join(bundleRoot, "nsis")}`,
       `  version: ${packageVersion()}`,
       `  arch: ${archLabel()}`,
-      `  sqlite-vec: ${options.sqliteVec ? "enabled" : "disabled"}`,
+      "  sqlite-vec: required default feature, smoke verified",
       `  trusted-types: ${trustedTypesStatus()}`,
       "  signing: unsigned self-use installer",
       "",
@@ -273,8 +272,8 @@ function packageWin(options) {
 function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.check) runChecks();
-  if (options.target === "mac") packageMac(options);
-  else packageWin(options);
+  if (options.target === "mac") packageMac();
+  else packageWin();
 }
 
 try {

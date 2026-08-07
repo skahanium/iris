@@ -32,9 +32,8 @@ describe("local packaging script contract", () => {
       "package:local:mac:check": "node scripts/package-local.mjs --check mac",
       "package:local:win": "node scripts/package-local.mjs win",
       "package:local:win:check": "node scripts/package-local.mjs --check win",
-      "package:local:win:vec":
-        "node scripts/package-local.mjs --sqlite-vec win",
     });
+    expect(pkg().scripts["package:local:win:vec"]).toBeUndefined();
   });
 
   it("builds macOS through an app intermediate and creates the DMG with hdiutil", () => {
@@ -59,16 +58,16 @@ describe("local packaging script contract", () => {
     expect(source).toContain("verify desktop package");
   });
 
-  it("defaults Windows packaging away from sqlite-vec and keeps explicit vec opt-in", () => {
+  it("uses the default sqlite-vec feature for every desktop package without a bypass", () => {
     const source = script();
+    const cargo = readFileSync("src-tauri/Cargo.toml", "utf8");
 
     expect(source).toContain("sqlite-vec");
-    expect(source).toContain("--sqlite-vec");
-    expect(source).toContain("--no-sqlite-vec");
-    expect(source).toContain('target === "win" ? false : true');
-    expect(pkg().scripts["package:local:win:vec"]).toBe(
-      "node scripts/package-local.mjs --sqlite-vec win",
-    );
+    expect(source).toContain("embedding_model_smoke");
+    expect(source).not.toContain("--sqlite-vec");
+    expect(source).not.toContain("--no-sqlite-vec");
+    expect(source).not.toContain('"enabled" : "disabled"');
+    expect(cargo).toContain('default = ["sqlite-vec"]');
   });
 
   it("prints the production Trusted Types enforcement state in package output", () => {

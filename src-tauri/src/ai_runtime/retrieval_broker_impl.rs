@@ -40,7 +40,10 @@ use graph_impl::search_graph_neighbors;
 use metadata_impl::search_metadata;
 use rank_impl::fuse_and_rank;
 use template_impl::search_template;
-use vector_impl::{search_vector_anchors, search_vector_chunks, search_vector_regulations};
+use vector_impl::{
+    ensure_sqlite_vec_v3_available, search_vector_anchors, search_vector_chunks,
+    search_vector_regulations,
+};
 
 /// Complete request contract for one hybrid retrieval call.
 #[derive(Debug, Clone)]

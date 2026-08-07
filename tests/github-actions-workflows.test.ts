@@ -27,9 +27,9 @@ describe("GitHub Actions workflows", () => {
       ".iris-dev/target/release/bundle/nsis/*setup.exe",
     );
     expect(workflow).toContain("runs-on: macos-latest");
-    expect(workflow).toContain(
-      "node scripts/package-local.mjs --no-sqlite-vec mac",
-    );
+    expect(workflow).toContain("node scripts/package-local.mjs mac");
+    expect(workflow).not.toContain("--no-sqlite-vec");
+    expect(workflow).not.toContain("--sqlite-vec");
     expect(workflow).toContain(".iris-dev/target/release/bundle/dmg/*.dmg");
     expect(workflow).toContain("actions/upload-artifact@v6");
     expect(workflow).not.toContain("actions/upload-artifact@v4");

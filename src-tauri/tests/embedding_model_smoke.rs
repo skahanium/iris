@@ -13,10 +13,18 @@ fn bundled_embedding_model_initializes_and_embeds_a_fixed_text() {
     assert!(vector.iter().all(|value| value.is_finite()));
 }
 
-#[cfg(feature = "sqlite-vec")]
 #[test]
 #[ignore = "release packaging sqlite-vec load gate"]
 fn bundled_sqlite_vec_loads_and_applies_v3_index_migration() {
+    #[cfg(not(feature = "sqlite-vec"))]
+    panic!("release packaging requires the default sqlite-vec feature");
+
+    #[cfg(feature = "sqlite-vec")]
+    verify_bundled_sqlite_vec_loads_and_applies_v3_index_migration();
+}
+
+#[cfg(feature = "sqlite-vec")]
+fn verify_bundled_sqlite_vec_loads_and_applies_v3_index_migration() {
     let database = iris_lib::storage::db::Database::open_in_memory()
         .expect("bundled sqlite-vec database must initialize");
 
