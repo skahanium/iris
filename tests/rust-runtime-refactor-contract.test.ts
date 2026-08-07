@@ -120,11 +120,13 @@ describe("Rust Agent Run runtime module contract", () => {
     expect(audit).not.toContain("pub harness_round:");
   });
 
-  it("keeps classified search filtering as valid SQL", () => {
-    const engine = read("src-tauri/src/embedding/engine.rs");
+  it("keeps classified filtering in SQL before Agent vector KNN", () => {
+    const vector = read("src-tauri/src/ai_runtime/retrieval_broker/vector.rs");
 
-    expect(engine).toContain("f.path <> '.classified'");
-    expect(engine).toContain("f.path NOT LIKE '.classified/%'");
-    expect(engine).not.toContain("''.classified/%''");
+    expect(vector).toContain("f.path <> '.classified'");
+    expect(vector).toContain("f.path NOT LIKE '.classified/%'");
+    expect(vector).toContain("file_id IN (");
+    expect(vector).toContain("embedding MATCH");
+    expect(vector).not.toContain("''.classified/%''");
   });
 });

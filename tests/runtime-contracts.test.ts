@@ -37,14 +37,15 @@ describe("runtime configuration contracts", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("keeps the explicit sqlite-vec review gate", () => {
+  it("pins the default sqlite-vec backend and keeps its unsafe review gate", () => {
     const cargoToml = read("src-tauri/Cargo.toml");
+    const database = read("src-tauri/src/storage/db.rs");
 
-    expect(cargoToml).toContain(
-      "Experimental: sqlite-vec registration uses unsafe",
-    );
-    expect(cargoToml).toContain("default = []");
+    expect(cargoToml).toContain('sqlite-vec = { version = "=0.1.9"');
+    expect(cargoToml).toContain('default = ["sqlite-vec"]');
     expect(cargoToml).toContain('sqlite-vec = ["dep:sqlite-vec"]');
+    expect(database).toContain("SAFETY: sqlite-vec documents registration");
+    expect(database).toContain("sqlite3_auto_extension");
   });
 
   it("registers reversible link-index migration files", () => {
