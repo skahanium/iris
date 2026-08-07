@@ -5,6 +5,24 @@ function readWorkflow(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+function forbiddenUbuntuTauriBundleCommands(workflow: string): string[] {
+  const jobs = workflow.slice(workflow.indexOf("jobs:"));
+  const ubuntuJobBlocks = jobs
+    .split(/(?=^  [\w-]+:\s*$)/m)
+    .filter((job) => /^    runs-on: ubuntu-/m.test(job));
+  const tauriBuildCommand =
+    /\b(?:npm\s+run\s+tauri(?:\s+--)?\s+build|cargo\s+tauri\s+build)\b[^\r\n]*/g;
+
+  return ubuntuJobBlocks.flatMap((job) =>
+    Array.from(job.matchAll(tauriBuildCommand), (match) =>
+      match[0].trim(),
+    ).filter(
+      (command) =>
+        !/--no-bundle\b/.test(command) || /--bundles\b/.test(command),
+    ),
+  );
+}
+
 describe("GitHub Actions workflows", () => {
   it("keeps desktop packaging manual or tag-triggered only", () => {
     const workflow = readWorkflow(".github/workflows/package-desktop.yml");
@@ -187,6 +205,61 @@ describe("GitHub Actions workflows", () => {
           `${workflowPath} must not contain ${pattern}`,
         ).not.toMatch(pattern);
       }
+    }
+  });
+
+  it("forbids Ubuntu Tauri bundles but permits explicit no-bundle and non-Linux builds", () => {
+    const ubuntuJob = (command: string) => `jobs:
+  ubuntu-quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: ${command}
+`;
+
+    expect(
+      forbiddenUbuntuTauriBundleCommands(ubuntuJob("npm run tauri -- build")),
+    ).toEqual(["npm run tauri -- build"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(ubuntuJob("cargo tauri build")),
+    ).toEqual(["cargo tauri build"]);
+    for (const bundle of ["deb", "rpm", "appimage"]) {
+      expect(
+        forbiddenUbuntuTauriBundleCommands(
+          ubuntuJob(`npm run tauri -- build --bundles ${bundle}`),
+        ),
+      ).toEqual([`npm run tauri -- build --bundles ${bundle}`]);
+    }
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuJob("npm run tauri -- build --no-bundle"),
+      ),
+    ).toEqual([]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuJob("npm run tauri -- build --no-bundle --bundles deb"),
+      ),
+    ).toEqual(["npm run tauri -- build --no-bundle --bundles deb"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(`jobs:
+  windows-package:
+    runs-on: windows-2022
+    steps:
+      - run: npm run tauri -- build
+`),
+    ).toEqual([]);
+  });
+
+  it("has no Ubuntu Tauri bundle command in any repository workflow", () => {
+    const workflowPaths = readdirSync(".github/workflows", {
+      withFileTypes: true,
+    })
+      .filter((entry) => !entry.isDirectory() && entry.name.endsWith(".yml"))
+      .map((entry) => `.github/workflows/${entry.name}`);
+
+    for (const workflowPath of workflowPaths) {
+      expect(
+        forbiddenUbuntuTauriBundleCommands(readWorkflow(workflowPath)),
+      ).toEqual([]);
     }
   });
 
