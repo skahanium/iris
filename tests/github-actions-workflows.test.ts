@@ -6,6 +6,19 @@ function readWorkflow(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+interface WorkflowDirectoryEntry {
+  isDirectory(): boolean;
+  name: string;
+}
+
+function workflowFilePaths(
+  entries: readonly WorkflowDirectoryEntry[],
+): string[] {
+  return entries
+    .filter((entry) => !entry.isDirectory() && /\.ya?ml$/.test(entry.name))
+    .map((entry) => `.github/workflows/${entry.name}`);
+}
+
 function readPackageScripts(): Record<string, string> {
   const manifest: unknown = JSON.parse(readFileSync("package.json", "utf8"));
   if (typeof manifest !== "object" || manifest === null) {
@@ -30,6 +43,18 @@ type PrettierYamlPlugin = typeof yamlPlugin & {
   __parsePrettierYamlConfig(source: string): unknown;
 };
 
+function runnerMayUseUbuntu(runner: unknown): boolean {
+  if (Array.isArray(runner)) {
+    return runner.some((value) => runnerMayUseUbuntu(value));
+  }
+  if (typeof runner !== "string") return true;
+
+  const normalized = runner.toLowerCase();
+  return !(
+    normalized.startsWith("windows-") || normalized.startsWith("macos-")
+  );
+}
+
 function ubuntuWorkflowRunBlocks(workflow: string): string[] {
   const parsed = (yamlPlugin as PrettierYamlPlugin).__parsePrettierYamlConfig(
     workflow,
@@ -39,8 +64,7 @@ function ubuntuWorkflowRunBlocks(workflow: string): string[] {
   return Object.values(parsed.jobs).flatMap((job) => {
     if (
       !isRecord(job) ||
-      typeof job["runs-on"] !== "string" ||
-      !job["runs-on"].startsWith("ubuntu-") ||
+      !runnerMayUseUbuntu(job["runs-on"]) ||
       !Array.isArray(job.steps)
     ) {
       return [];
@@ -85,8 +109,10 @@ function shellCommandSegments(command: string): string[] {
         ? nextCharacter === character
           ? 2
           : 1
-        : character === "&" && nextCharacter === "&"
-          ? 2
+        : character === "&"
+          ? nextCharacter === "&"
+            ? 2
+            : 1
           : 0;
     if (separatorLength === 0) continue;
 
@@ -319,12 +345,24 @@ describe("GitHub Actions workflows", () => {
     expect(packageWorkflow).not.toContain("--no-sqlite-vec");
   });
 
+  it("scans both YAML workflow file extensions", () => {
+    expect(
+      workflowFilePaths([
+        { name: "ci.yml", isDirectory: () => false },
+        { name: "package-desktop.yaml", isDirectory: () => false },
+        { name: "notes.txt", isDirectory: () => false },
+        { name: "archive.yml", isDirectory: () => true },
+      ]),
+    ).toEqual([
+      ".github/workflows/ci.yml",
+      ".github/workflows/package-desktop.yaml",
+    ]);
+  });
+
   it("permits Linux runners but forbids Linux packages and release assets in every workflow", () => {
-    const workflowPaths = readdirSync(".github/workflows", {
-      withFileTypes: true,
-    })
-      .filter((entry) => !entry.isDirectory() && entry.name.endsWith(".yml"))
-      .map((entry) => `.github/workflows/${entry.name}`);
+    const workflowPaths = workflowFilePaths(
+      readdirSync(".github/workflows", { withFileTypes: true }),
+    );
     const linuxReleasePatterns = [
       /\b(?:package|bundle)[-_: /]linux\b/i,
       /(?:release-assets|(?:assets|artifacts?)[/_-])linux\b/i,
@@ -392,6 +430,25 @@ describe("GitHub Actions workflows", () => {
     expect(
       forbiddenUbuntuTauriBundleCommands(ubuntuJob("npm run tauri:build:vec")),
     ).toEqual(["npm run tauri:build:vec"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(`jobs:
+  ubuntu-array:
+    runs-on: [ubuntu-24.04]
+    steps:
+      - run: npx tauri build
+`),
+    ).toEqual(["npx tauri build"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(`jobs:
+  matrix-quality:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: \${{ matrix.os }}
+    steps:
+      - run: npx tauri build
+`),
+    ).toEqual(["npx tauri build"]);
     for (const command of [
       "npm run tauri -- build",
       "npm run tauri:build:vec",
@@ -465,6 +522,7 @@ describe("GitHub Actions workflows", () => {
     for (const ordinaryOrNonTauriCommand of [
       'echo "npx --yes tauri build"',
       'echo "npx --yes tauri build; ./node_modules/.bin/tauri build"',
+      'echo "npx tauri build & npx tauri build"',
       "npm exec -- eslint build",
     ]) {
       expect(
@@ -495,6 +553,16 @@ describe("GitHub Actions workflows", () => {
       ),
     ).toEqual(["npm run tauri -- build --no-bundle --bundles deb"]);
     expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuJob("npx tauri build --no-bundle & npx tauri build"),
+      ),
+    ).toEqual(["npx tauri build"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuJob("npx tauri build --no-bundle && npx tauri build"),
+      ),
+    ).toEqual(["npx tauri build"]);
+    expect(
       forbiddenUbuntuTauriBundleCommands(`jobs:
   windows-package:
     runs-on: windows-2022
@@ -513,11 +581,9 @@ describe("GitHub Actions workflows", () => {
   });
 
   it("has no Ubuntu Tauri bundle command in any repository workflow", () => {
-    const workflowPaths = readdirSync(".github/workflows", {
-      withFileTypes: true,
-    })
-      .filter((entry) => !entry.isDirectory() && entry.name.endsWith(".yml"))
-      .map((entry) => `.github/workflows/${entry.name}`);
+    const workflowPaths = workflowFilePaths(
+      readdirSync(".github/workflows", { withFileTypes: true }),
+    );
 
     for (const workflowPath of workflowPaths) {
       expect(
