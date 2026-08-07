@@ -73,6 +73,7 @@ fn hybrid_retrieve_with_diagnostics_with_embedder(
     // Each layer retrieves a bounded candidate pool before final rank fusion.
     // Vector hard scope is also pushed into each vec0 KNN query below.
     let candidate_limit = request.max_results.saturating_mul(4).max(8);
+    let vector_candidate_limit = request.max_results.saturating_mul(4).max(32);
 
     if request.layers.fts {
         append_layer_result(
@@ -108,7 +109,7 @@ fn hybrid_retrieve_with_diagnostics_with_embedder(
                         search_vector_chunks(
                             conn,
                             &query_embedding,
-                            candidate_limit,
+                            vector_candidate_limit,
                             &request.scope,
                         ),
                         &mut packets,
@@ -121,7 +122,7 @@ fn hybrid_retrieve_with_diagnostics_with_embedder(
                         search_vector_anchors(
                             conn,
                             &query_embedding,
-                            candidate_limit,
+                            vector_candidate_limit,
                             &request.scope,
                         ),
                         &mut packets,
@@ -134,7 +135,7 @@ fn hybrid_retrieve_with_diagnostics_with_embedder(
                         search_vector_regulations(
                             conn,
                             &query_embedding,
-                            candidate_limit,
+                            vector_candidate_limit,
                             &request.scope,
                         ),
                         &mut packets,
@@ -431,8 +432,10 @@ fn sanitize_retrieval_error(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::RetrievalLayers;
+    #[cfg(feature = "sqlite-vec")]
+    use super::super::{clear_observed_knn_limits, observed_knn_limits};
     use super::*;
-    use crate::ai_runtime::retrieval_broker::RetrievalLayers;
 
     #[cfg(feature = "sqlite-vec")]
     fn vector_fixture(second: f32) -> Vec<f32> {
@@ -552,7 +555,7 @@ mod tests {
         let db = crate::storage::db::Database::open_in_memory().expect("open sqlite-vec database");
         db.with_conn(|conn| {
             let closer = vector_fixture(0.0);
-            for id in 1..=13_i64 {
+            for id in 1..=33_i64 {
                 insert_file(conn, id, &format!("outside/{id}.md"));
                 insert_chunk_vector(conn, id, id, &closer);
                 insert_anchor_vector(conn, id, id, &closer);
@@ -577,7 +580,7 @@ mod tests {
             conn.execute(
                 "UPDATE embedding_generation_state
                  SET active_model_id = ?1, target_model_id = ?1, target_dimension = ?2,
-                     phase = 'ready', indexed_items = 45, total_items = 45
+                     phase = 'ready', indexed_items = 105, total_items = 105
                  WHERE singleton = 1",
                 rusqlite::params![
                     crate::embedding::engine::EMBEDDING_MODEL_ID,
@@ -585,57 +588,73 @@ mod tests {
                 ],
             )?;
 
-            let request = RetrievalRequest {
-                query: "needle".into(),
-                max_results: 3,
-                layers: RetrievalLayers {
-                    fts: false,
-                    vector: true,
-                    graph: false,
-                    exact: false,
-                    template: false,
-                },
-                note_context: None,
-                file_id_context: None,
-                scope: crate::ai_runtime::retrieval_scope::RetrievalScope {
-                    paths: vec!["exact/needle.md".into(), ".classified/secret.md".into()],
-                    path_prefixes: vec!["prefix/".into()],
-                    required_tags: vec!["required".into()],
-                },
-                runtime_documents: Vec::new(),
-                corpus_config: None,
-            };
+            for max_results in [1, 3, 5] {
+                let request = RetrievalRequest {
+                    query: "needle".into(),
+                    max_results,
+                    layers: RetrievalLayers {
+                        fts: false,
+                        vector: true,
+                        graph: false,
+                        exact: false,
+                        template: false,
+                    },
+                    note_context: None,
+                    file_id_context: None,
+                    scope: crate::ai_runtime::retrieval_scope::RetrievalScope {
+                        paths: vec!["exact/needle.md".into(), ".classified/secret.md".into()],
+                        path_prefixes: vec!["prefix/".into()],
+                        required_tags: vec!["required".into()],
+                    },
+                    runtime_documents: Vec::new(),
+                    corpus_config: None,
+                };
 
-            let outcome = hybrid_retrieve_with_diagnostics_with_embedder(conn, &request, |_| {
-                Ok(closer.clone())
-            })?;
+                clear_observed_knn_limits();
+                let outcome =
+                    hybrid_retrieve_with_diagnostics_with_embedder(conn, &request, |_| {
+                        Ok(closer.clone())
+                    })?;
 
-            assert_eq!(outcome.packets.len(), 3);
-            for reason in ["vector_chunk", "vector_anchor", "vector_regulation"] {
-                assert!(
-                    outcome
-                        .packets
-                        .iter()
-                        .any(|packet| packet.retrieval_reason == reason),
-                    "missing broker packet from {reason}"
+                assert_eq!(
+                    observed_knn_limits(),
+                    vec![
+                        ("vector_chunks", 32),
+                        ("vector_anchors", 32),
+                        ("vector_regulations", 32),
+                    ],
+                    "all Agent vector layers must receive the independent KNN floor"
                 );
+                assert!(outcome.packets.iter().all(|packet| {
+                    matches!(
+                        packet.source_path.as_deref(),
+                        Some("exact/needle.md" | "prefix/needle.md")
+                    )
+                }));
+
+                if max_results == 3 {
+                    assert_eq!(outcome.packets.len(), 3);
+                    for reason in ["vector_chunk", "vector_anchor", "vector_regulation"] {
+                        assert!(
+                            outcome
+                                .packets
+                                .iter()
+                                .any(|packet| packet.retrieval_reason == reason),
+                            "missing broker packet from {reason}"
+                        );
+                    }
+                    let vector_diagnostics: Vec<_> = outcome
+                        .diagnostics
+                        .iter()
+                        .filter(|diagnostic| diagnostic.layer.starts_with("vector_"))
+                        .collect();
+                    assert_eq!(vector_diagnostics.len(), 3);
+                    assert!(vector_diagnostics.iter().all(|diagnostic| {
+                        diagnostic.backend.as_deref() == Some("sqlite-vec")
+                            && diagnostic.status == RetrievalLayerStatus::Ok
+                    }));
+                }
             }
-            assert!(outcome.packets.iter().all(|packet| {
-                matches!(
-                    packet.source_path.as_deref(),
-                    Some("exact/needle.md" | "prefix/needle.md")
-                )
-            }));
-            let vector_diagnostics: Vec<_> = outcome
-                .diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.layer.starts_with("vector_"))
-                .collect();
-            assert_eq!(vector_diagnostics.len(), 3);
-            assert!(vector_diagnostics.iter().all(|diagnostic| {
-                diagnostic.backend.as_deref() == Some("sqlite-vec")
-                    && diagnostic.status == RetrievalLayerStatus::Ok
-            }));
             Ok(())
         })
         .expect("run scoped Agent retrieval broker");

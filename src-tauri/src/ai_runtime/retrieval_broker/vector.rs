@@ -13,6 +13,27 @@ use crate::error::{AppError, AppResult};
 #[cfg(feature = "sqlite-vec")]
 use super::truncate;
 
+#[cfg(all(test, feature = "sqlite-vec"))]
+thread_local! {
+    static OBSERVED_KNN_LIMITS: std::cell::RefCell<Vec<(&'static str, usize)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(all(test, feature = "sqlite-vec"))]
+pub(super) fn clear_observed_knn_limits() {
+    OBSERVED_KNN_LIMITS.with(|limits| limits.borrow_mut().clear());
+}
+
+#[cfg(all(test, feature = "sqlite-vec"))]
+pub(super) fn observed_knn_limits() -> Vec<(&'static str, usize)> {
+    OBSERVED_KNN_LIMITS.with(|limits| limits.borrow().clone())
+}
+
+#[cfg(all(test, feature = "sqlite-vec"))]
+fn observe_knn_limit(layer: &'static str, limit: usize) {
+    OBSERVED_KNN_LIMITS.with(|limits| limits.borrow_mut().push((layer, limit)));
+}
+
 #[cfg(feature = "sqlite-vec")]
 pub(super) fn ensure_sqlite_vec_v3_available(conn: &Connection) -> AppResult<()> {
     conn.query_row("SELECT vec_version()", [], |_| Ok(()))
@@ -135,6 +156,8 @@ pub(super) fn search_vector_chunks(
     limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
+    #[cfg(all(test, feature = "sqlite-vec"))]
+    observe_knn_limit("vector_chunks", limit);
     let Some((parameters, file_subquery, model_parameter)) =
         knn_query_parts(query_embedding, limit, scope)?
     else {
@@ -217,6 +240,8 @@ pub(super) fn search_vector_anchors(
     limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
+    #[cfg(all(test, feature = "sqlite-vec"))]
+    observe_knn_limit("vector_anchors", limit);
     search_structured_vectors(
         conn,
         query_embedding,
@@ -233,6 +258,8 @@ pub(super) fn search_vector_regulations(
     limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
+    #[cfg(all(test, feature = "sqlite-vec"))]
+    observe_knn_limit("vector_regulations", limit);
     search_structured_vectors(
         conn,
         query_embedding,

@@ -40,6 +40,8 @@ use graph_impl::search_graph_neighbors;
 use metadata_impl::search_metadata;
 use rank_impl::fuse_and_rank;
 use template_impl::search_template;
+#[cfg(all(test, feature = "sqlite-vec"))]
+use vector_impl::{clear_observed_knn_limits, observed_knn_limits};
 use vector_impl::{
     ensure_sqlite_vec_v3_available, search_vector_anchors, search_vector_chunks,
     search_vector_regulations,
