@@ -5,22 +5,120 @@ function readWorkflow(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-function forbiddenUbuntuTauriBundleCommands(workflow: string): string[] {
-  const jobs = workflow.slice(workflow.indexOf("jobs:"));
-  const ubuntuJobBlocks = jobs
-    .split(/(?=^  [\w-]+:\s*$)/m)
-    .filter((job) => /^    runs-on: ubuntu-/m.test(job));
-  const tauriBuildCommand =
-    /\b(?:npm\s+run\s+tauri(?:\s+--)?\s+build|cargo\s+tauri\s+build)\b[^\r\n]*/g;
-
-  return ubuntuJobBlocks.flatMap((job) =>
-    Array.from(job.matchAll(tauriBuildCommand), (match) =>
-      match[0].trim(),
-    ).filter(
-      (command) =>
-        !/--no-bundle\b/.test(command) || /--bundles\b/.test(command),
+function readPackageScripts(): Record<string, string> {
+  const manifest: unknown = JSON.parse(readFileSync("package.json", "utf8"));
+  if (typeof manifest !== "object" || manifest === null) {
+    return {};
+  }
+  const scripts = (manifest as { scripts?: unknown }).scripts;
+  if (typeof scripts !== "object" || scripts === null) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(scripts as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
+}
+
+function workflowJobBlocks(workflow: string): string[] {
+  const jobs = workflow.slice(workflow.indexOf("jobs:"));
+  return jobs.split(/(?=^  [\w-]+:\s*$)/m);
+}
+
+function runBlocks(job: string): string[] {
+  const lines = job.split("\n");
+  const blocks: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const currentLine = lines[index];
+    if (currentLine === undefined) continue;
+    const run = currentLine.match(/^(\s*)(?:-\s+)?run:\s*(.*)$/);
+    if (!run) continue;
+
+    const indent = (run[1] ?? "").length;
+    const inline = run[2] ?? "";
+    if (inline !== "|" && inline !== ">" && inline !== "") {
+      const blockLines = [inline];
+      while (
+        blockLines.at(-1)?.trimEnd().endsWith("\\") &&
+        index + 1 < lines.length
+      ) {
+        index += 1;
+        const continuation = lines[index];
+        if (continuation === undefined) break;
+        blockLines.push(continuation);
+      }
+      blocks.push(blockLines.join("\n"));
+      continue;
+    }
+
+    const blockLines: string[] = [];
+    for (index += 1; index < lines.length; index += 1) {
+      const line = lines[index];
+      if (line === undefined) continue;
+      if (line.trim() && line.search(/\S/) <= indent) {
+        index -= 1;
+        break;
+      }
+      blockLines.push(line);
+    }
+    blocks.push(blockLines.join("\n"));
+  }
+
+  return blocks.map((block) => block.replace(/\s*\\\r?\n[ \t]*/g, " "));
+}
+
+function tauriBuildCommands(command: string): string[] {
+  const build =
+    /\b(?:npm\s+run\s+tauri(?:\s+--)?\s+build|cargo\s+tauri\s+build|node\s+\S*tauri-cli\.mjs\s+build)\b[^\r\n]*/g;
+  return Array.from(command.matchAll(build), (match) =>
+    (match[0] ?? "").trim(),
+  );
+}
+
+function scriptTauriBuildCommands(
+  command: string,
+): Array<{ final: string; report: string }> {
+  const scripts = readPackageScripts();
+  const npmRun = /\bnpm\s+run\s+([\w:-]+)([^\r\n]*)/g;
+
+  return Array.from(command.matchAll(npmRun)).flatMap((match) => {
+    const scriptName = match[1];
+    if (!scriptName) return [];
+    const script = scripts[scriptName];
+    if (!script) return [];
+    const invocationArgs = (match[2] ?? "").replace(/^\s*--\s*/, " ");
+    return tauriBuildCommands(`${script}${invocationArgs}`).map((final) => ({
+      final,
+      report: (match[0] ?? "").trim(),
+    }));
+  });
+}
+
+function isAllowedUbuntuTauriBuild(command: string): boolean {
+  return /--no-bundle\b/.test(command) && !/--bundles\b/.test(command);
+}
+
+function forbiddenUbuntuTauriBundleCommands(workflow: string): string[] {
+  const ubuntuJobBlocks = workflowJobBlocks(workflow).filter((job) =>
+    /^    runs-on: ubuntu-/m.test(job),
+  );
+
+  const violations = ubuntuJobBlocks
+    .flatMap((job) =>
+      runBlocks(job).flatMap((block) => [
+        ...tauriBuildCommands(block).map((command) => ({
+          final: command,
+          report: command,
+        })),
+        ...scriptTauriBuildCommands(block),
+      ]),
+    )
+    .filter((command) => !isAllowedUbuntuTauriBuild(command.final))
+    .map((command) => command.report);
+
+  return [...new Set(violations)];
 }
 
 describe("GitHub Actions workflows", () => {
@@ -237,6 +335,15 @@ describe("GitHub Actions workflows", () => {
     expect(
       forbiddenUbuntuTauriBundleCommands(
         ubuntuJob("npm run tauri -- build --no-bundle --bundles deb"),
+      ),
+    ).toEqual(["npm run tauri -- build --no-bundle --bundles deb"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(ubuntuJob("npm run tauri:build:vec")),
+    ).toEqual(["npm run tauri:build:vec"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuJob(`npm run tauri -- build --no-bundle \\
+        --bundles deb`),
       ),
     ).toEqual(["npm run tauri -- build --no-bundle --bundles deb"]);
     expect(
