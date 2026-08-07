@@ -597,6 +597,7 @@ pub(crate) fn classify_tool_loop_failure(error: &AppError) -> SafeRunErrorCode {
             SafeRunErrorCode::WebEvidenceInvalid
         }
         "agent_run_tool_loop_limit" => SafeRunErrorCode::ToolLoopLimit,
+        "agent_run_output_too_long" => SafeRunErrorCode::OutputTooLong,
         "agent_run_incomplete_output" => SafeRunErrorCode::IncompleteOutput,
         "agent_run_invalid_model_response" => SafeRunErrorCode::InvalidRequest,
         "agent_run_final_submission_required" | "agent_run_final_submission_invalid" => {

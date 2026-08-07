@@ -2966,6 +2966,9 @@ impl LivePilotMcpDouble {
     }
 }
 
+/// The pilot exercises credential hydration and request/response HTTP
+/// `tools/call` only. It is deliberately stateless so that it does not claim
+/// coverage for session or SSE compatibility.
 async fn spawn_live_pilot_mcp_double() -> Result<LivePilotMcpDouble, String> {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -3086,7 +3089,7 @@ async fn serve_live_pilot_mcp_request(
         .unwrap_or(serde_json::Value::Null);
     if method.starts_with("notifications/") {
         socket
-            .write_all(b"HTTP/1.1 202 Accepted\r\nMcp-Session-Id: live-pilot-loopback\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .await
             .map_err(|_| "live MCP response failed".to_string())?;
         return Ok(());
@@ -3100,7 +3103,7 @@ async fn serve_live_pilot_mcp_request(
         "tools/call" => serde_json::json!({
             "content": [{
                 "type": "text",
-                "text": live_pilot_mcp_evidence_text(live_pilot_mcp_case_id(&request)?)
+                "text": live_pilot_mcp_evidence_text()
             }],
             "isError": false
         }),
@@ -3108,7 +3111,7 @@ async fn serve_live_pilot_mcp_request(
     };
     let body = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nMcp-Session-Id: live-pilot-loopback\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(), body
     );
     socket
@@ -3121,39 +3124,9 @@ async fn serve_live_pilot_mcp_request(
         .map_err(|_| "live MCP shutdown failed".to_string())
 }
 
-fn live_pilot_mcp_case_id(request: &serde_json::Value) -> Result<u32, String> {
-    request
-        .pointer("/params/arguments/query")
-        .and_then(serde_json::Value::as_str)
-        .and_then(|query| {
-            query.strip_prefix("agent-live-pilot-case:").or_else(|| {
-                query
-                    .rsplit_once("[agent-live-pilot-case:")
-                    .and_then(|(_, marker)| marker.split_once(']').map(|(value, _)| value))
-                    .and_then(|value| value.split_ascii_whitespace().next())
-            })
-        })
-        .and_then(|value| value.parse::<u32>().ok())
-        .filter(|ordinal| (1..=48).contains(ordinal))
-        .ok_or_else(|| "live MCP controlled case id missing".to_string())
-}
-
-#[test]
-fn live_pilot_mcp_fixture_extracts_case_id_from_strict_run_query() {
-    let request = serde_json::json!({
-        "params": {
-            "arguments": {
-                "query": "请检索当前公开状态。\n\n[agent-live-pilot-case:26 repetition:2]"
-            }
-        }
-    });
-
-    assert_eq!(live_pilot_mcp_case_id(&request), Ok(26));
-}
-
 #[test]
 fn live_pilot_mcp_fixture_covers_every_selected_web_fact() {
-    let evidence = live_pilot_mcp_evidence_text(24);
+    let evidence = live_pilot_mcp_evidence_text();
     assert_eq!(
         selected_live_pilot_web_fact_claims().expect("selected Web claims"),
         vec![
@@ -3172,14 +3145,118 @@ fn live_pilot_mcp_fixture_covers_every_selected_web_fact() {
     }
 }
 
-fn live_pilot_mcp_evidence_text(case_id: u32) -> String {
+#[tokio::test]
+async fn live_pilot_mcp_fixture_is_stateless_json_tools_call_contract() {
+    let mcp = spawn_live_pilot_mcp_double()
+        .await
+        .expect("stateless local MCP transport");
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("direct loopback HTTP client");
+
+    let initialize = match client
+        .post(&mcp.url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "fixture-test", "version": "1"}
+            }
+        }))
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => panic!("initialize must return a JSON response"),
+    };
+    assert!(
+        initialize.headers().get("Mcp-Session-Id").is_none(),
+        "the live-pilot fixture must not advertise stateful MCP"
+    );
+    assert!(initialize.status().is_success());
+    assert!(initialize
+        .json::<serde_json::Value>()
+        .await
+        .expect("initialize JSON")
+        .get("result")
+        .is_some());
+
+    let initialized = match client
+        .post(&mcp.url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+        }))
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => panic!("initialized notification must return an accepted response"),
+    };
+    assert!(
+        initialized.headers().get("Mcp-Session-Id").is_none(),
+        "notifications must preserve the stateless contract"
+    );
+    assert_eq!(initialized.status(), reqwest::StatusCode::ACCEPTED);
+
+    let tool_call = match client
+        .post(&mcp.url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "search",
+                "arguments": {"query": "fixture-side value intentionally irrelevant"}
+            }
+        }))
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(_) => panic!("tools/call must return a JSON response"),
+    };
+    assert!(
+        tool_call.headers().get("Mcp-Session-Id").is_none(),
+        "tools/call must preserve the stateless contract"
+    );
+    assert!(tool_call.status().is_success());
+    assert!(tool_call
+        .json::<serde_json::Value>()
+        .await
+        .expect("tools/call JSON")
+        .pointer("/result/content/0/text")
+        .is_some());
+
+    let methods = mcp
+        .finish()
+        .await
+        .expect("captured MCP methods")
+        .into_iter()
+        .map(|capture| capture.method)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        methods,
+        vec![
+            "initialize".to_string(),
+            "notifications/initialized".to_string(),
+            "tools/call".to_string(),
+        ]
+    );
+}
+
+fn live_pilot_mcp_evidence_text() -> String {
     let claims = selected_live_pilot_web_fact_claims()
         .expect("selected Web claims")
         .into_iter()
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "[1] title: Contract A\nurl: https://source.invalid/contract\nsnippet: controlled request-case-{case_id} {claims}\n\n[2] title: Contract B\nurl: https://source-b.invalid/contract\nsnippet: independently corroborated controlled request-case-{case_id} {claims}"
+        "[1] title: Contract A\nurl: https://source.invalid/contract\nsnippet: controlled MCP evidence {claims}\n\n[2] title: Contract B\nurl: https://source-b.invalid/contract\nsnippet: independently corroborated MCP evidence {claims}"
     )
 }
 
@@ -4218,8 +4295,7 @@ async fn live_pilot_records_each_infrastructure_error_and_completes_the_matrix()
 }
 
 #[tokio::test]
-async fn approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_reaches_local_transports(
-) {
+async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_tools_call() {
     if std::env::var("IRIS_AGENT_EVAL_CREDENTIAL_PROBE").as_deref() != Ok("1") {
         return;
     }

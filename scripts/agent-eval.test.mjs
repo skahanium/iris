@@ -302,7 +302,7 @@ test("live child uses the separated encrypted store without exposing selected or
         "--manifest-path",
         "src-tauri/Cargo.toml",
         "--lib",
-        "ai_runtime::agent_capacity_eval_tests::approved_live_hydration_reads_only_selected_aes_gcm_credentials_and_reaches_local_transports",
+        "ai_runtime::agent_capacity_eval_tests::approved_live_hydration_proves_selected_credentials_and_stateless_http_tools_call",
         "--",
         "--exact",
         "--nocapture",

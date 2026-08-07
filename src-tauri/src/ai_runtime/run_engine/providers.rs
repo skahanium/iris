@@ -116,6 +116,7 @@ impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider
             self.thinking,
             self.reasoning,
         );
+        apply_model_turn_budget(&mut request, AgentModelTurnBudget::default());
         request.continuation = self.continuation.clone();
         Box::pin(async move {
             self.gateway
@@ -222,12 +223,12 @@ pub(crate) fn apply_model_turn_budget(
     request: &mut crate::ai_runtime::model_gateway::GatewayRequest,
     budget: AgentModelTurnBudget,
 ) {
-    if let Some(max_output_tokens) = budget.max_output_tokens {
+    if let Some(max_output_tokens) = budget.max_turn_output_tokens {
         request.max_tokens = Some(request.max_tokens.map_or(max_output_tokens, |configured| {
             configured.min(max_output_tokens)
         }));
     }
-    request.input_token_budget = budget.input_token_budget;
+    request.input_token_budget = budget.max_prompt_tokens;
 }
 
 /// Construct the stable system boundary and one transient user prompt for a Run.

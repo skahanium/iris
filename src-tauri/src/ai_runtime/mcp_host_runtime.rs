@@ -415,6 +415,25 @@ fn rmcp_headers(
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpSdkFailureClass {
+    Transport,
+    Protocol,
+    Unknown,
+}
+
+fn classify_mcp_service_error(error: &rmcp::service::ServiceError) -> McpSdkFailureClass {
+    match error {
+        rmcp::service::ServiceError::McpError(_)
+        | rmcp::service::ServiceError::UnexpectedResponse => McpSdkFailureClass::Protocol,
+        rmcp::service::ServiceError::TransportSend(_)
+        | rmcp::service::ServiceError::TransportClosed
+        | rmcp::service::ServiceError::Cancelled { .. }
+        | rmcp::service::ServiceError::Timeout { .. } => McpSdkFailureClass::Transport,
+        _ => McpSdkFailureClass::Unknown,
+    }
+}
+
 fn rmcp_client_error(error: impl std::fmt::Display) -> AppError {
     // Do not surface SDK transport strings: a remote error may echo credentials
     // or provider content. The typed runtime boundary records only safe codes.
@@ -434,6 +453,23 @@ fn rmcp_client_error(error: impl std::fmt::Display) -> AppError {
         McpRuntimeFailureKind::Unavailable,
         "official MCP client request failed",
     )
+}
+
+fn rmcp_service_error(error: rmcp::service::ServiceError) -> AppError {
+    match classify_mcp_service_error(&error) {
+        McpSdkFailureClass::Transport => runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "official MCP client transport failed",
+        ),
+        McpSdkFailureClass::Protocol => runtime_error(
+            McpRuntimeFailureKind::InvalidResponse,
+            "official MCP client received an invalid response",
+        ),
+        McpSdkFailureClass::Unknown => runtime_error(
+            McpRuntimeFailureKind::Unavailable,
+            "official MCP client request failed",
+        ),
+    }
 }
 
 fn rmcp_tool_call_arguments(
@@ -679,7 +715,14 @@ impl StreamableHttpClient for BoundedMcpHttpClient {
         let response = Self::apply_headers(request, auth_header, custom_headers)
             .send()
             .await
-            .map_err(|error| StreamableHttpError::Client(error.into()))?
+            .map_err(|error| StreamableHttpError::Client(error.into()))?;
+        // The Streamable HTTP session stream is optional. A server that
+        // declines GET must leave request/response tool calls usable instead
+        // of terminating the entire MCP session in the background worker.
+        if response.status() == reqwest::StatusCode::METHOD_NOT_ALLOWED {
+            return Err(StreamableHttpError::ServerDoesNotSupportSse);
+        }
+        let response = response
             .error_for_status()
             .map_err(|error| StreamableHttpError::Client(error.into()))?;
         let content_type = Self::response_content_type(&response);
@@ -1510,7 +1553,7 @@ async fn call_http_tool_with_rmcp(
         let result = client
             .call_tool(CallToolRequestParams::new(tool_name).with_arguments(arguments))
             .await
-            .map_err(rmcp_client_error)?;
+            .map_err(rmcp_service_error)?;
         let _ = client.cancel().await;
         let result = serde_json::to_value(result)?;
         ensure_json_value_under_cap(&result, launch.max_response_bytes)?;
@@ -2479,7 +2522,30 @@ mod tests {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
+        sync::oneshot,
     };
+
+    #[test]
+    fn mcp_sdk_failure_class_uses_service_error_variants_and_safe_runtime_categories() {
+        assert_eq!(
+            classify_mcp_service_error(&rmcp::service::ServiceError::TransportClosed),
+            McpSdkFailureClass::Transport
+        );
+        assert_eq!(
+            classify_mcp_service_error(&rmcp::service::ServiceError::UnexpectedResponse),
+            McpSdkFailureClass::Protocol
+        );
+        assert!(
+            rmcp_service_error(rmcp::service::ServiceError::TransportClosed)
+                .to_string()
+                .starts_with("unavailable:")
+        );
+        assert!(
+            rmcp_service_error(rmcp::service::ServiceError::UnexpectedResponse)
+                .to_string()
+                .starts_with("invalid_response:")
+        );
+    }
 
     async fn one_shot_http_response(
         body: &'static str,
@@ -2529,6 +2595,134 @@ mod tests {
             .send()
             .await
             .expect("receive test HTTP response")
+    }
+
+    async fn one_shot_http_url(status: &str, headers: &str, body: &str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local MCP HTTP test peer");
+        let address = listener.local_addr().expect("read local test peer address");
+        let status = status.to_string();
+        let headers = headers.to_string();
+        let body = body.to_string();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept test HTTP client");
+            let mut received = Vec::with_capacity(512);
+            let mut chunk = [0_u8; 512];
+            while received.len() < 4 * 1024 {
+                let count = socket
+                    .read(&mut chunk)
+                    .await
+                    .expect("read test HTTP request");
+                if count == 0 {
+                    return;
+                }
+                received.extend_from_slice(&chunk[..count]);
+                if received.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 {status}\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket
+                .write_all(response.as_bytes())
+                .await
+                .expect("write test HTTP response");
+            socket.shutdown().await.expect("close test HTTP response");
+        });
+        format!("http://{address}/mcp")
+    }
+
+    async fn persistent_sse_http_url() -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>)
+    {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local MCP SSE test peer");
+        let address = listener.local_addr().expect("read local test peer address");
+        let (release_sender, release_receiver) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept test HTTP client");
+            let mut received = Vec::with_capacity(512);
+            let mut chunk = [0_u8; 512];
+            while received.len() < 4 * 1024 {
+                let count = socket
+                    .read(&mut chunk)
+                    .await
+                    .expect("read test HTTP request");
+                if count == 0 {
+                    return;
+                }
+                received.extend_from_slice(&chunk[..count]);
+                if received.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: keep-alive\r\n\r\ndata: ready\n\n",
+                )
+                .await
+                .expect("write test SSE response");
+            let _ = release_receiver.await;
+            socket.shutdown().await.expect("close test SSE response");
+        });
+        (format!("http://{address}/mcp"), release_sender, task)
+    }
+
+    fn direct_loopback_mcp_client() -> BoundedMcpHttpClient {
+        BoundedMcpHttpClient {
+            client: reqwest::Client::builder()
+                .no_proxy()
+                .build()
+                .expect("build direct loopback test client"),
+            max_response_bytes: 4 * 1024,
+        }
+    }
+
+    #[tokio::test]
+    async fn stateful_session_get_405_is_an_optional_sse_capability() {
+        let uri = one_shot_http_url("405 Method Not Allowed", "", "").await;
+        let result = direct_loopback_mcp_client()
+            .get_stream(
+                Arc::from(uri),
+                Arc::from("test-stateful-session"),
+                None,
+                None,
+                HashMap::new(),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(StreamableHttpError::ServerDoesNotSupportSse)
+        ));
+    }
+
+    #[tokio::test]
+    async fn stateful_session_accepts_a_persistent_sse_stream() {
+        let (uri, release, task) = persistent_sse_http_url().await;
+        let mut stream = direct_loopback_mcp_client()
+            .get_stream(
+                Arc::from(uri),
+                Arc::from("test-stateful-session"),
+                None,
+                None,
+                HashMap::new(),
+            )
+            .await
+            .expect("persistent SSE stream");
+
+        assert!(stream.next().await.expect("initial SSE item").is_ok());
+        assert!(
+            timeout(Duration::from_millis(20), stream.next())
+                .await
+                .is_err(),
+            "the test-owned SSE peer must remain connected until explicitly released"
+        );
+        release.send(()).expect("release test SSE peer");
+        task.await.expect("finish test SSE peer");
     }
 
     #[tokio::test]

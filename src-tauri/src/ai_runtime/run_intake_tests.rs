@@ -2302,6 +2302,9 @@ fn intake_freezes_the_run_budget_policy_matrix() {
             serde_json::json!({
                 "schemaVersion": 1,
                 "profile": "direct",
+                "maxPromptTokens": 64000,
+                "maxCompletionTokens": 8000,
+                "maxTurnOutputTokens": 8000,
                 "maxModelTurns": 1,
                 "maxToolCalls": 0,
                 "maxChildRuns": 0,
@@ -2317,6 +2320,9 @@ fn intake_freezes_the_run_budget_policy_matrix() {
             serde_json::json!({
                 "schemaVersion": 1,
                 "profile": "standard",
+                "maxPromptTokens": 128000,
+                "maxCompletionTokens": 16000,
+                "maxTurnOutputTokens": 4000,
                 "maxModelTurns": 8,
                 "maxToolCalls": 24,
                 "maxChildRuns": 0,
@@ -2332,6 +2338,9 @@ fn intake_freezes_the_run_budget_policy_matrix() {
             serde_json::json!({
                 "schemaVersion": 1,
                 "profile": "delegated",
+                "maxPromptTokens": 96000,
+                "maxCompletionTokens": 12000,
+                "maxTurnOutputTokens": 4000,
                 "maxModelTurns": 8,
                 "maxToolCalls": 24,
                 "maxChildRuns": 3,
@@ -2347,6 +2356,9 @@ fn intake_freezes_the_run_budget_policy_matrix() {
             serde_json::json!({
                 "schemaVersion": 1,
                 "profile": "durable_apply",
+                "maxPromptTokens": 128000,
+                "maxCompletionTokens": 16000,
+                "maxTurnOutputTokens": 4000,
                 "maxModelTurns": 8,
                 "maxToolCalls": 24,
                 "maxChildRuns": 0,

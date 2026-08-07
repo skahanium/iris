@@ -19,10 +19,163 @@ fn standard_tool_loop() -> AgentToolLoop {
     AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
 }
 
+#[test]
+fn standard_turn_reserves_output_before_selecting_history() {
+    let budget = RunBudgetPolicy::standard();
+
+    assert_eq!(budget.max_prompt_tokens, 128_000);
+    assert_eq!(budget.max_completion_tokens, 16_000);
+    assert_eq!(budget.max_turn_output_tokens, 4_000);
+}
+
+#[test]
+fn direct_provider_has_an_explicit_nonzero_turn_budget() {
+    assert_ne!(AgentModelTurnBudget::default().max_prompt_tokens, None);
+}
+
+#[tokio::test]
+async fn parent_turn_reuses_one_frozen_budget_for_every_provider_call() {
+    let provider = MultiTurnBudgetRecordingProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call()],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("final answer".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        budgets: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    AgentToolLoop::from_policy(&RunBudgetPolicy::standard())
+        .execute(
+            &provider,
+            &executor,
+            "run-frozen-parent-budget",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("two turns complete with one immutable budget");
+
+    assert_eq!(
+        provider.budgets.lock().expect("budget lock").as_slice(),
+        [
+            AgentModelTurnBudget {
+                max_prompt_tokens: Some(128_000),
+                max_completion_tokens: Some(16_000),
+                max_turn_output_tokens: Some(4_000),
+            },
+            AgentModelTurnBudget {
+                max_prompt_tokens: Some(128_000),
+                max_completion_tokens: Some(16_000),
+                max_turn_output_tokens: Some(4_000),
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn missing_provider_usage_is_estimated_from_the_local_turn_data() {
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([super::model_gateway::GatewayResponse {
+            content: Some("本地估算的回答".into()),
+            tool_calls: Vec::new(),
+            usage: Default::default(),
+            finish_reason: "stop".into(),
+            reasoning_content: None,
+            continuation: None,
+        }])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    let outcome = standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-estimated-usage",
+            vec![LlmMessage {
+                role: MessageRole::User,
+                content: "请给出一个简短回答".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            }],
+            Vec::new(),
+            &mut observer,
+        )
+        .await
+        .expect("missing usage still yields a bounded outcome");
+
+    assert!(outcome.prompt_tokens > 0);
+    assert!(outcome.completion_tokens > 0);
+    assert_eq!(
+        outcome.total_tokens,
+        outcome.prompt_tokens + outcome.completion_tokens
+    );
+}
+
 struct ScriptedProvider {
     responses: Mutex<VecDeque<super::model_gateway::GatewayResponse>>,
     calls: AtomicU32,
     second_turn_messages: Mutex<Vec<LlmMessage>>,
+}
+
+struct MultiTurnBudgetRecordingProvider {
+    responses: Mutex<VecDeque<super::model_gateway::GatewayResponse>>,
+    budgets: Mutex<Vec<AgentModelTurnBudget>>,
+}
+
+impl ToolLoopProvider for MultiTurnBudgetRecordingProvider {
+    fn answer_turn<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _messages: &'a [LlmMessage],
+        _tools: &'a [ToolSpec],
+        budget: AgentModelTurnBudget,
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<Box<dyn Future<Output = AppResult<super::model_gateway::GatewayResponse>> + Send + 'a>>
+    {
+        self.budgets.lock().expect("budget lock").push(budget);
+        Box::pin(async move {
+            Ok(self
+                .responses
+                .lock()
+                .expect("responses lock")
+                .pop_front()
+                .expect("scripted response"))
+        })
+    }
 }
 
 impl ToolLoopProvider for ScriptedProvider {
@@ -1180,6 +1333,9 @@ async fn from_policy_preserves_the_direct_one_model_zero_tool_budget() {
     let policy = RunBudgetPolicy {
         schema_version: 1,
         profile: RunBudgetProfile::Direct,
+        max_prompt_tokens: 64_000,
+        max_completion_tokens: 8_000,
+        max_turn_output_tokens: 8_000,
         max_model_turns: 1,
         max_tool_calls: 0,
         max_child_runs: 0,
@@ -1256,6 +1412,9 @@ async fn child_policy_reaches_every_provider_turn_with_gateway_token_limits() {
     let policy = RunBudgetPolicy {
         schema_version: 1,
         profile: RunBudgetProfile::Delegated,
+        max_prompt_tokens: 96_000,
+        max_completion_tokens: 12_000,
+        max_turn_output_tokens: 4_000,
         max_model_turns: 8,
         max_tool_calls: 24,
         max_child_runs: 3,
@@ -1282,8 +1441,9 @@ async fn child_policy_reaches_every_provider_turn_with_gateway_token_limits() {
     assert_eq!(
         provider.budgets.lock().expect("budget lock").as_slice(),
         [AgentModelTurnBudget {
-            input_token_budget: Some(2_000),
-            max_output_tokens: Some(1_024),
+            max_prompt_tokens: Some(2_000),
+            max_completion_tokens: Some(2_048),
+            max_turn_output_tokens: Some(1_024),
         }]
     );
 }
@@ -1336,6 +1496,9 @@ async fn child_policy_executes_six_tools_and_rejects_the_seventh() {
     let policy = RunBudgetPolicy {
         schema_version: 1,
         profile: RunBudgetProfile::Delegated,
+        max_prompt_tokens: 96_000,
+        max_completion_tokens: 12_000,
+        max_turn_output_tokens: 4_000,
         max_model_turns: 8,
         max_tool_calls: 24,
         max_child_runs: 3,

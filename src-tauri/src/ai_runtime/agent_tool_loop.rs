@@ -67,10 +67,21 @@ pub(crate) struct AgentToolLoopUsage {
 }
 
 /// Per-model-turn limits that the provider must forward into `GatewayRequest`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AgentModelTurnBudget {
-    pub(crate) input_token_budget: Option<u32>,
-    pub(crate) max_output_tokens: Option<u32>,
+    pub(crate) max_prompt_tokens: Option<u32>,
+    pub(crate) max_completion_tokens: Option<u32>,
+    pub(crate) max_turn_output_tokens: Option<u32>,
+}
+
+impl Default for AgentModelTurnBudget {
+    fn default() -> Self {
+        Self {
+            max_prompt_tokens: Some(64_000),
+            max_completion_tokens: Some(8_000),
+            max_turn_output_tokens: Some(8_000),
+        }
+    }
 }
 
 /// Provider-facing side of a model/tool loop.
@@ -149,7 +160,11 @@ impl AgentToolLoop {
         Self {
             max_model_turns: policy.max_model_turns,
             max_tool_calls: policy.max_tool_calls,
-            turn_budget: AgentModelTurnBudget::default(),
+            turn_budget: AgentModelTurnBudget {
+                max_prompt_tokens: Some(policy.max_prompt_tokens),
+                max_completion_tokens: Some(policy.max_completion_tokens),
+                max_turn_output_tokens: Some(policy.max_turn_output_tokens),
+            },
         }
     }
 
@@ -159,8 +174,13 @@ impl AgentToolLoop {
             max_model_turns: policy.child_max_model_turns,
             max_tool_calls: policy.child_max_tool_calls,
             turn_budget: AgentModelTurnBudget {
-                input_token_budget: Some(policy.child_input_tokens_per_turn),
-                max_output_tokens: Some(policy.child_output_tokens_per_turn),
+                max_prompt_tokens: Some(policy.child_input_tokens_per_turn),
+                max_completion_tokens: Some(
+                    policy
+                        .child_max_model_turns
+                        .saturating_mul(policy.child_output_tokens_per_turn),
+                ),
+                max_turn_output_tokens: Some(policy.child_output_tokens_per_turn),
             },
         }
     }
@@ -266,16 +286,24 @@ impl AgentToolLoop {
 
         while model_turns < self.max_model_turns {
             ensure_run_not_cancelled(run_id)?;
-            model_turns += 1;
-            if let Some(usage) = usage.as_deref_mut() {
-                usage.model_turns = model_turns;
-            }
-            let model_started_at = std::time::Instant::now();
             let active_tools: &[ToolSpec] = if incomplete_final_draft.is_some() {
                 &[]
             } else {
                 &tools
             };
+            enforce_prompt_budget(&messages, active_tools, self.turn_budget)?;
+            if self
+                .turn_budget
+                .max_completion_tokens
+                .is_some_and(|limit| completion_tokens >= limit)
+            {
+                return Err(AppError::msg("agent_run_tool_loop_limit"));
+            }
+            model_turns += 1;
+            if let Some(usage) = usage.as_deref_mut() {
+                usage.model_turns = model_turns;
+            }
+            let model_started_at = std::time::Instant::now();
             let response = match provider
                 .answer_turn(
                     provider_run_id,
@@ -309,9 +337,34 @@ impl AgentToolLoop {
                     continue;
                 }
             };
-            prompt_tokens = prompt_tokens.saturating_add(response.usage.prompt_tokens);
-            completion_tokens = completion_tokens.saturating_add(response.usage.completion_tokens);
-            total_tokens = total_tokens.saturating_add(response.usage.total_tokens);
+            let (turn_prompt_tokens, turn_completion_tokens, turn_total_tokens) =
+                resolved_turn_usage(&response, &messages, active_tools);
+            if self
+                .turn_budget
+                .max_prompt_tokens
+                .is_some_and(|limit| turn_prompt_tokens > limit)
+            {
+                return Err(AppError::msg("agent_run_tool_loop_limit"));
+            }
+            let exceeds_turn_output = self
+                .turn_budget
+                .max_turn_output_tokens
+                .is_some_and(|limit| turn_completion_tokens > limit);
+            let exceeds_run_completion =
+                self.turn_budget.max_completion_tokens.is_some_and(|limit| {
+                    completion_tokens.saturating_add(turn_completion_tokens) > limit
+                });
+            if exceeds_turn_output || exceeds_run_completion {
+                let code = if response.tool_calls.is_empty() {
+                    "agent_run_output_too_long"
+                } else {
+                    "agent_run_tool_loop_limit"
+                };
+                return Err(AppError::msg(code));
+            }
+            prompt_tokens = prompt_tokens.saturating_add(turn_prompt_tokens);
+            completion_tokens = completion_tokens.saturating_add(turn_completion_tokens);
+            total_tokens = total_tokens.saturating_add(turn_total_tokens);
             if let Some(usage) = usage.as_deref_mut() {
                 usage.prompt_tokens = prompt_tokens;
                 usage.completion_tokens = completion_tokens;
@@ -358,7 +411,7 @@ impl AgentToolLoop {
                     });
                     messages.push(LlmMessage {
                         role: MessageRole::System,
-                        content: "The previous draft cannot be shown because this Run requires verified source bindings. Submit the same answer only through submit_final_answer now.".into(),
+                        content: "The previous draft cannot be shown because this Run requires verified source bindings. Source binding identifies the current Run's permitted sources; it does not establish support for individual claims. Submit the same answer only through submit_final_answer now.".into(),
                         tool_call_id: None,
                         tool_calls: None,
                         reasoning_content: None,
@@ -468,6 +521,85 @@ impl AgentToolLoop {
             "agent_run_tool_loop_limit"
         }))
     }
+}
+
+fn enforce_prompt_budget(
+    messages: &[LlmMessage],
+    tools: &[ToolSpec],
+    budget: AgentModelTurnBudget,
+) -> AppResult<()> {
+    if budget
+        .max_prompt_tokens
+        .is_some_and(|limit| estimate_prompt_tokens(messages, tools) > limit)
+    {
+        return Err(AppError::msg("agent_run_tool_loop_limit"));
+    }
+    Ok(())
+}
+
+fn resolved_turn_usage(
+    response: &GatewayResponse,
+    messages: &[LlmMessage],
+    tools: &[ToolSpec],
+) -> (u32, u32, u32) {
+    let prompt_tokens = nonzero_or_estimate(
+        response.usage.prompt_tokens,
+        estimate_prompt_tokens(messages, tools),
+    );
+    let completion_tokens = nonzero_or_estimate(
+        response.usage.completion_tokens,
+        estimate_completion_tokens(response),
+    );
+    let total_tokens = nonzero_or_estimate(
+        response.usage.total_tokens,
+        prompt_tokens.saturating_add(completion_tokens),
+    );
+    (prompt_tokens, completion_tokens, total_tokens)
+}
+
+fn nonzero_or_estimate(reported: u32, estimate: u32) -> u32 {
+    if reported == 0 {
+        estimate
+    } else {
+        reported
+    }
+}
+
+fn estimate_prompt_tokens(messages: &[LlmMessage], tools: &[ToolSpec]) -> u32 {
+    let message_tokens = messages.iter().fold(0_u32, |total, message| {
+        total.saturating_add(estimate_tokens(&message.content.text_content()))
+    });
+    let tool_tokens = serde_json::to_string(tools)
+        .ok()
+        .map(|serialized| estimate_tokens(&serialized))
+        .unwrap_or_default();
+    message_tokens.saturating_add(tool_tokens)
+}
+
+fn estimate_completion_tokens(response: &GatewayResponse) -> u32 {
+    let content_tokens = response
+        .content
+        .as_deref()
+        .map(estimate_tokens)
+        .unwrap_or_default();
+    let tool_tokens = serde_json::to_string(&response.tool_calls)
+        .ok()
+        .map(|serialized| estimate_tokens(&serialized))
+        .unwrap_or_default();
+    let reasoning_tokens = response
+        .reasoning_content
+        .as_deref()
+        .map(estimate_tokens)
+        .unwrap_or_default();
+    content_tokens
+        .saturating_add(tool_tokens)
+        .saturating_add(reasoning_tokens)
+}
+
+fn estimate_tokens(value: &str) -> u32 {
+    crate::ai_runtime::text_support::estimate_tokens(value)
+        .try_into()
+        .unwrap_or(u32::MAX)
 }
 
 fn can_recover_visible_stream_error(error: &AppError, visible_draft: Option<&str>) -> bool {

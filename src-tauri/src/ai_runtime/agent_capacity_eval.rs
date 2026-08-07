@@ -9302,7 +9302,7 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
     state
         .db
         .with_conn(|connection| {
-            for turn in 1..=4_i64 {
+            for turn in 1..=13_i64 {
                 let turn_id = format!("combined-committed-turn-{turn}");
                 connection.execute(
                     "INSERT INTO agent_runs
@@ -9387,14 +9387,34 @@ fn probe_history_and_context_limit() -> Result<bool, EvalContractError> {
         &accepted.run_id,
     )
     .map_err(|_| EvalContractError::new("combined_context_failed"))?;
-    // The eight setup Runs remain unfinished and must stay out of both the
-    // recent history and durable memory. The four completed pairs exercise
-    // the exact projection used by a normal long-running conversation.
-    Ok(context.recent_messages.len() == 6
+    // The eight setup Runs remain unfinished and must stay out of recent
+    // history. Thirteen completed pairs prove that the current context keeps
+    // the 12 newest coherent user/assistant pairs under the 8k budget and
+    // summarizes only the older complete pair.
+    let history_tokens = context
+        .recent_messages
+        .iter()
+        .map(|message| crate::ai_runtime::text_support::estimate_tokens(&message.content))
+        .sum::<usize>();
+    Ok(context.recent_messages.len() == 24
         && context
             .recent_messages
             .iter()
             .all(|message| message.content.starts_with("committed-history-"))
+        && context.recent_messages.chunks_exact(2).all(|pair| {
+            pair[0].role == "user"
+                && pair[1].role == "assistant"
+                && pair[0].turn_id == pair[1].turn_id
+        })
+        && context
+            .recent_messages
+            .first()
+            .is_some_and(|message| message.content.starts_with("committed-history-2-"))
+        && context
+            .recent_messages
+            .last()
+            .is_some_and(|message| message.content.starts_with("committed-history-13-"))
+        && history_tokens <= 8_000
         && context
             .conversation_memory
             .as_ref()
@@ -11295,7 +11315,7 @@ fn live_pilot_dynamic_final_content(scenario: &CoreScenario) -> String {
     if parts.is_empty() {
         parts.push("synthetic bounded answer".to_string());
     }
-    parts.join(" ")
+    format!("{}.", parts.join(" "))
 }
 
 #[cfg(test)]

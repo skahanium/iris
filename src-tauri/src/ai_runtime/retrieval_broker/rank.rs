@@ -13,20 +13,6 @@ struct FusedCandidate {
     representative_quality: f64,
 }
 
-/// Optional deterministic seam for reranking ordinary retrieval candidates.
-///
-/// The v1.2.6 default is intentionally a no-op. A future local reranker can
-/// adjust candidate scores here without changing broker orchestration.
-pub(super) trait CandidateReranker {
-    fn rerank(&self, packets: &mut [ContextPacket]);
-}
-
-struct NoopCandidateReranker;
-
-impl CandidateReranker for NoopCandidateReranker {
-    fn rerank(&self, _packets: &mut [ContextPacket]) {}
-}
-
 /// Deterministic Rank v2 for hybrid retrieval.
 ///
 /// Exact regulation matches are pinned before ordinary candidates. Ordinary
@@ -34,25 +20,14 @@ impl CandidateReranker for NoopCandidateReranker {
 /// multiplying incomparable raw scores, then selected with MMR and a per-file
 /// cap to avoid filling the prompt with near-duplicate evidence.
 pub(super) fn fuse_and_rank(packets: &mut Vec<ContextPacket>, max_results: usize) {
-    fuse_and_rank_with_reranker(packets, max_results, &NoopCandidateReranker);
-}
-
-/// Fuse candidates after an optional ordinary-candidate reranking step.
-pub(super) fn fuse_and_rank_with_reranker(
-    packets: &mut Vec<ContextPacket>,
-    max_results: usize,
-    reranker: &dyn CandidateReranker,
-) {
     if max_results == 0 {
         packets.clear();
         return;
     }
 
     let candidates = std::mem::take(packets);
-    let (exact, mut ordinary): (Vec<_>, Vec<_>) =
-        candidates.into_iter().partition(is_exact_regulation);
+    let (exact, ordinary): (Vec<_>, Vec<_>) = candidates.into_iter().partition(is_exact_regulation);
 
-    reranker.rerank(&mut ordinary);
     let mut selected = select_exact_packets(exact, max_results);
     let remaining = max_results.saturating_sub(selected.len());
     if remaining > 0 {
@@ -429,27 +404,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn injected_reranker_can_change_ordinary_candidate_order() {
-        struct PromoteSecond;
-
-        impl CandidateReranker for PromoteSecond {
-            fn rerank(&self, packets: &mut [ContextPacket]) {
-                for packet in packets {
-                    packet.score = if packet.id == "second" { 1.0 } else { 0.0 };
-                }
-            }
-        }
-
-        let mut first = packet("first", "reference");
-        first.score = 0.8;
-        let mut second = packet("second", "reference");
-        second.score = 0.2;
-        let mut packets = vec![first, second];
-        fuse_and_rank_with_reranker(&mut packets, 2, &PromoteSecond);
-
-        assert_eq!(packets[0].id, "second");
-    }
     #[test]
     fn mmr_prefers_distinct_evidence_over_a_near_duplicate() {
         let mut first = packet("first", "exemplar");

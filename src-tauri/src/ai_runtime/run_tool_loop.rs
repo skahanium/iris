@@ -3838,8 +3838,9 @@ mod tests {
             assert!(!surfaces[0].contains(&"spawn_subagent".to_string()));
         }
         let child_budget = crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
-            input_token_budget: Some(2_000),
-            max_output_tokens: Some(1_024),
+            max_prompt_tokens: Some(2_000),
+            max_completion_tokens: Some(2_048),
+            max_turn_output_tokens: Some(1_024),
         };
         assert_eq!(
             provider.budgets.lock().expect("child budgets").as_slice(),

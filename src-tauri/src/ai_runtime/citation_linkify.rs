@@ -50,7 +50,9 @@ pub(crate) fn bind_strict_current_run_citations(
 
 /// Normalize model markers into the current Run projection without asking a
 /// model to rewrite prose. Unknown numeric markers are removed from the body
-/// and the verified answer falls back to an answer-level source group.
+/// and the uncalibrated answer falls back to an answer-level source binding.
+/// That binding identifies permitted current-Run sources; it does not assert
+/// support for any individual claim.
 pub(crate) fn bind_current_run_citations(
     content: &str,
     cites: &[WebCitationLink],
@@ -813,7 +815,7 @@ mod tests {
     }
 
     #[test]
-    fn binds_missing_or_unknown_marker_as_a_verified_source_group() {
+    fn binds_missing_or_unknown_marker_as_source_binding_without_claim_support() {
         let missing = bind_current_run_citations("没有行内标记。", &sample_cites());
         assert_eq!(
             missing.binding.mode,

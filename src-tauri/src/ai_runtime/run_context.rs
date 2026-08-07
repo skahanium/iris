@@ -34,7 +34,9 @@ use crate::error::{AppError, AppResult};
 const MAX_EXPLICIT_MATERIALS: usize = 12;
 const MAX_EXPLICIT_MATERIAL_CHARS: usize = 12_000;
 const MAX_TOTAL_MATERIAL_CHARS: usize = 32_000;
-const RECENT_CONVERSATION_MESSAGE_LIMIT: u32 = 6;
+const RECENT_CONVERSATION_CANDIDATE_LIMIT: u32 = 24;
+const MAX_RECENT_CONVERSATION_PAIRS: usize = 12;
+const MAX_RECENT_CONVERSATION_TOKENS: u32 = 8_000;
 
 /// One authorized local source body held only while building a Provider request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,6 +247,68 @@ pub(crate) fn classify_context_assembly_failure(error: &AppError) -> SafeRunErro
     }
 }
 
+/// Keep only complete, coherent conversation turns that fit the frozen
+/// short-term history budget. Candidates arrive in chronological order, so we
+/// select from newest to oldest and restore chronological order before prompt
+/// compilation.
+fn select_bounded_recent_history(
+    candidates: Vec<NormalSessionMessage>,
+) -> Vec<NormalSessionMessage> {
+    let mut selected_pairs = Vec::<(NormalSessionMessage, NormalSessionMessage)>::new();
+    let mut selected_tokens = 0_u32;
+    let mut end = candidates.len();
+
+    while end >= 2 && selected_pairs.len() < MAX_RECENT_CONVERSATION_PAIRS {
+        let user = &candidates[end - 2];
+        let assistant = &candidates[end - 1];
+        if !is_coherent_conversation_pair(user, assistant) {
+            end -= 1;
+            continue;
+        }
+
+        let pair_tokens = history_pair_tokens(user, assistant);
+        if selected_tokens.saturating_add(pair_tokens) > MAX_RECENT_CONVERSATION_TOKENS {
+            if selected_pairs.is_empty() {
+                break;
+            }
+            end -= 2;
+            continue;
+        }
+
+        selected_tokens = selected_tokens.saturating_add(pair_tokens);
+        selected_pairs.push((user.clone(), assistant.clone()));
+        end -= 2;
+    }
+
+    selected_pairs.reverse();
+    selected_pairs
+        .into_iter()
+        .flat_map(|(user, assistant)| [user, assistant])
+        .collect()
+}
+
+fn is_coherent_conversation_pair(
+    user: &NormalSessionMessage,
+    assistant: &NormalSessionMessage,
+) -> bool {
+    user.role == "user"
+        && assistant.role == "assistant"
+        && user.seq < assistant.seq
+        && match (&user.turn_id, &assistant.turn_id) {
+            (Some(user_turn_id), Some(assistant_turn_id)) => user_turn_id == assistant_turn_id,
+            (None, None) => true,
+            _ => false,
+        }
+}
+
+fn history_pair_tokens(user: &NormalSessionMessage, assistant: &NormalSessionMessage) -> u32 {
+    let user_tokens = crate::ai_runtime::text_support::estimate_tokens(&user.content);
+    let assistant_tokens = crate::ai_runtime::text_support::estimate_tokens(&assistant.content);
+    user_tokens
+        .saturating_add(assistant_tokens)
+        .min(u32::MAX as usize) as u32
+}
+
 impl RunContextAssembler {
     /// Read only explicit references persisted with the Run, then validate every source.
     pub(crate) fn assemble(
@@ -269,13 +333,14 @@ impl RunContextAssembler {
             .map(crate::knowledge::corpora::load_corpora)
             .transpose()?
             .unwrap_or_default();
-        let recent_messages =
+        let recent_message_candidates =
             crate::ai_runtime::normal_session_repository::NormalSessionRepository::recent_messages_before(
                 db,
                 input.session_id,
                 input.message_seq_first,
-                RECENT_CONVERSATION_MESSAGE_LIMIT,
+                RECENT_CONVERSATION_CANDIDATE_LIMIT,
             )?;
+        let recent_messages = select_bounded_recent_history(recent_message_candidates);
         let conversation_memory = ConversationMemory::latest_for_session(db, input.session_id)?;
         // v2 Runs must retain the identity configuration accepted with their
         // user turn. Legacy rows have no snapshot and remain read-compatible.

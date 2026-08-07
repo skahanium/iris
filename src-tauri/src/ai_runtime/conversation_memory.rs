@@ -11,7 +11,7 @@ use crate::error::AppResult;
 use crate::storage::db::Database;
 
 const DEFAULT_MINIMUM_MESSAGES: usize = 7;
-const DEFAULT_RECENT_MESSAGE_LIMIT: usize = 6;
+const DEFAULT_RECENT_MESSAGE_LIMIT: usize = 24;
 const SUMMARY_LIMIT: usize = 220;
 
 /// Policy knobs for deciding when and how much dialogue to summarize.
@@ -515,11 +515,11 @@ mod memory_extraction_tests {
     }
 
     #[test]
-    fn refresh_keeps_summary_and_recent_window_disjoint_at_seven_messages() {
+    fn refresh_keeps_summary_and_recent_window_disjoint_at_twenty_five_messages() {
         let db = Database::open_in_memory().expect("database");
         let session = NormalSessionRepository::create(&db).expect("session");
         db.with_conn(|conn| {
-            for seq in 1..=7 {
+            for seq in 1..=25 {
                 conn.execute(
                     "INSERT INTO session_messages
                      (session_id, seq, role, content, created_at)
@@ -540,8 +540,8 @@ mod memory_extraction_tests {
         let memory =
             ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
                 .expect("refresh")
-                .expect("seven messages require memory");
-        let recent = NormalSessionRepository::recent_messages(&db, session.session_id, 6)
+                .expect("twenty-five messages require memory");
+        let recent = NormalSessionRepository::recent_messages(&db, session.session_id, 24)
             .expect("recent history");
 
         assert_eq!((memory.seq_start, memory.seq_end), (1, 1));

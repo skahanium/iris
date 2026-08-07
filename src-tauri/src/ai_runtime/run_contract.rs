@@ -152,6 +152,12 @@ pub(crate) enum RunBudgetProfile {
 pub(crate) struct RunBudgetPolicy {
     pub(crate) schema_version: u8,
     pub(crate) profile: RunBudgetProfile,
+    /// Maximum prompt tokens accepted for one model turn.
+    pub(crate) max_prompt_tokens: u32,
+    /// Maximum completion tokens consumed across the entire Run.
+    pub(crate) max_completion_tokens: u32,
+    /// Maximum completion tokens accepted from one model turn.
+    pub(crate) max_turn_output_tokens: u32,
     pub(crate) max_model_turns: u32,
     pub(crate) max_tool_calls: u32,
     pub(crate) max_child_runs: u32,
@@ -281,6 +287,9 @@ impl RunBudgetPolicy {
             RunBudgetProfile::Direct => Self {
                 schema_version: 1,
                 profile,
+                max_prompt_tokens: 64_000,
+                max_completion_tokens: 8_000,
+                max_turn_output_tokens: 8_000,
                 max_model_turns: 1,
                 max_tool_calls: 0,
                 max_child_runs: 0,
@@ -293,6 +302,9 @@ impl RunBudgetPolicy {
             RunBudgetProfile::Standard => Self {
                 schema_version: 1,
                 profile,
+                max_prompt_tokens: 128_000,
+                max_completion_tokens: 16_000,
+                max_turn_output_tokens: 4_000,
                 max_model_turns: 8,
                 max_tool_calls: 24,
                 max_child_runs: 0,
@@ -305,6 +317,9 @@ impl RunBudgetPolicy {
             RunBudgetProfile::Delegated => Self {
                 schema_version: 1,
                 profile,
+                max_prompt_tokens: 96_000,
+                max_completion_tokens: 12_000,
+                max_turn_output_tokens: 4_000,
                 max_model_turns: 8,
                 max_tool_calls: 24,
                 max_child_runs: 3,
@@ -317,6 +332,9 @@ impl RunBudgetPolicy {
             RunBudgetProfile::DurableApply => Self {
                 schema_version: 1,
                 profile,
+                max_prompt_tokens: 128_000,
+                max_completion_tokens: 16_000,
+                max_turn_output_tokens: 4_000,
                 max_model_turns: 8,
                 max_tool_calls: 24,
                 max_child_runs: 0,

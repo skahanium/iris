@@ -193,22 +193,23 @@ fn long_committed_conversation_has_a_bounded_memory_and_recent_prompt_projection
         ConversationMemory::refresh_for_session(&db, session.session_id, Default::default())
             .expect("refresh memory")
             .expect("long conversation creates memory");
-    let prompt = build_memory_prompt_messages(&db, session.session_id, 6)
+    let prompt = build_memory_prompt_messages(&db, session.session_id, 24)
         .expect("bounded prompt projection");
 
-    assert_eq!(memory.seq_end, 994);
-    assert_eq!(prompt.len(), 7, "one memory fragment plus six recent turns");
+    assert_eq!(memory.seq_end, 976);
+    assert_eq!(prompt.len(), 25, "one memory fragment plus 24 recent turns");
     assert_eq!(prompt[0].0, "system");
-    assert!(prompt[0].1.contains("seq=1..994"));
+    assert!(prompt[0].1.contains("seq=1..976"));
     assert_eq!(
         prompt[1..]
             .iter()
             .map(|(_, content)| content.clone())
             .collect::<Vec<_>>(),
-        (995..=1_000)
+        (977..=1_000)
             .map(|seq| format!("committed-long-history-{seq}"))
             .collect::<Vec<_>>()
     );
+    assert_eq!(memory.seq_end + (prompt.len() - 1) as i64, 1_000);
 }
 
 #[test]
@@ -375,7 +376,7 @@ fn retract_clears_conversation_memory_when_remaining_history_fits_the_recent_win
     let db = Database::open_in_memory().expect("database");
     let session = NormalSessionRepository::create(&db).expect("session");
     db.with_conn(|conn| {
-        for seq in 1..=7 {
+        for seq in 1..=25 {
             conn.execute(
                 "INSERT INTO session_messages (session_id, seq, role, content, created_at)
                  VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -384,7 +385,7 @@ fn retract_clears_conversation_memory_when_remaining_history_fits_the_recent_win
                     seq,
                     if seq % 2 == 0 { "assistant" } else { "user" },
                     format!("message-{seq}"),
-                    format!("2026-07-27T00:00:0{seq}Z"),
+                    format!("2026-07-27T00:{:02}:00Z", seq % 60),
                 ],
             )?;
         }
@@ -396,8 +397,14 @@ fn retract_clears_conversation_memory_when_remaining_history_fits_the_recent_win
         .expect("memory exists");
 
     assert_eq!(
-        NormalSessionRepository::retract(&db, &session.session_key, 7).expect("retract"),
+        NormalSessionRepository::retract(&db, &session.session_key, 25).expect("retract"),
         1
+    );
+    assert_eq!(
+        NormalSessionRepository::recent_messages(&db, session.session_id, 24)
+            .expect("remaining recent history")
+            .len(),
+        24
     );
     assert!(
         ConversationMemory::latest_for_session(&db, session.session_id)

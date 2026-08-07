@@ -57,8 +57,9 @@ fn child_turn_limits_are_written_into_the_gateway_request() {
     apply_model_turn_budget(
         &mut request,
         crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
-            input_token_budget: Some(2_000),
-            max_output_tokens: Some(1_024),
+            max_prompt_tokens: Some(2_000),
+            max_completion_tokens: Some(2_048),
+            max_turn_output_tokens: Some(1_024),
         },
     );
 
@@ -617,7 +618,7 @@ fn direct_engine_does_not_complete_an_answer_that_only_contains_a_source_appendi
 }
 
 #[test]
-fn completed_runs_refresh_conversation_memory_without_changing_terminal_state() {
+fn completed_runs_defer_conversation_memory_until_history_exceeds_window() {
     let db = Database::open_in_memory().expect("database");
     let sink = RecordingSink::default();
     let first = RunIntake::start(&db, request()).expect("first accepted");
@@ -642,10 +643,12 @@ fn completed_runs_refresh_conversation_memory_without_changing_terminal_state() 
     let normal = NormalSessionRepository::get(&db, &session.session_key)
         .expect("session lookup")
         .expect("session exists");
-    let memory = ConversationMemory::latest_for_session(&db, normal.session_id)
-        .expect("memory lookup")
-        .expect("memory refreshed after the fourth completed turn");
-    assert_eq!(memory.seq_end, 2);
+    assert!(
+        ConversationMemory::latest_for_session(&db, normal.session_id)
+            .expect("memory lookup")
+            .is_none(),
+        "four completed turns fit in the 24-message history window"
+    );
 }
 
 #[test]
@@ -691,8 +694,8 @@ fn multi_turn_pressure_keeps_recent_context_bounded_and_memory_disjoint() {
             let context =
                 RunContextAssembler::assemble(&db, None, &session.session_key, &pending.run_id)
                     .expect("assemble bounded pressure context");
-            assert_eq!(context.recent_messages.len(), (turns * 2).min(6) as usize);
-            if turns > 3 {
+            assert_eq!(context.recent_messages.len(), (turns * 2).min(24) as usize);
+            if turns > 12 {
                 let memory = context.conversation_memory.expect("long history memory");
                 assert!(
                     memory.seq_end < context.recent_messages.first().expect("recent").seq,
@@ -701,6 +704,108 @@ fn multi_turn_pressure_keeps_recent_context_bounded_and_memory_disjoint() {
             }
         }
     }
+}
+
+#[test]
+fn history_selection_keeps_the_twelve_newest_complete_pairs() {
+    let db = Database::open_in_memory().expect("database");
+    let sink = RecordingSink::default();
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some("已完成历史答复".to_string()),
+    };
+    let mut session = None;
+
+    for turn in 1..=13 {
+        let mut next = request();
+        next.client_request_id = format!("history-pair-{turn}");
+        next.session = session.clone();
+        next.turn.message = format!("第 {turn} 轮用户消息");
+        let accepted = RunIntake::start(&db, next).expect("accepted history turn");
+        session = Some(accepted.session.clone());
+        RunEngine::execute_direct_with_sink(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            &provider,
+            &sink,
+        )
+        .expect("complete history turn");
+    }
+
+    let session = session.expect("history session");
+    let mut probe = request();
+    probe.client_request_id = "history-pair-probe".to_string();
+    probe.session = Some(session.clone());
+    let probe = RunIntake::start(&db, probe).expect("accepted history probe");
+    let context = RunContextAssembler::assemble(&db, None, &session.session_key, &probe.run_id)
+        .expect("assemble bounded history");
+
+    assert_eq!(context.recent_messages.len(), 24);
+    assert!(context
+        .recent_messages
+        .chunks_exact(2)
+        .all(|pair| pair[0].role == "user" && pair[1].role == "assistant"));
+    assert!(context
+        .recent_messages
+        .iter()
+        .any(|message| message.content == "第 13 轮用户消息"));
+    assert!(context
+        .recent_messages
+        .iter()
+        .all(|message| !message.content.contains("第 1 轮用户消息")));
+}
+
+#[test]
+fn history_selection_never_exceeds_eight_thousand_tokens_or_splits_pairs() {
+    let db = Database::open_in_memory().expect("database");
+    let sink = RecordingSink::default();
+    let provider = MockProvider {
+        calls: Cell::new(0),
+        response: Some("答".repeat(1_000)),
+    };
+    let mut session = None;
+
+    for turn in 1..=6 {
+        let mut next = request();
+        next.client_request_id = format!("history-token-{turn}");
+        next.session = session.clone();
+        next.turn.message = format!("第 {turn} 轮{}", "问".repeat(996));
+        let accepted = RunIntake::start(&db, next).expect("accepted history turn");
+        session = Some(accepted.session.clone());
+        RunEngine::execute_direct_with_sink(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            &provider,
+            &sink,
+        )
+        .expect("complete history turn");
+    }
+
+    let session = session.expect("history session");
+    let mut probe = request();
+    probe.client_request_id = "history-token-probe".to_string();
+    probe.session = Some(session.clone());
+    let probe = RunIntake::start(&db, probe).expect("accepted history probe");
+    let context = RunContextAssembler::assemble(&db, None, &session.session_key, &probe.run_id)
+        .expect("assemble bounded history");
+
+    assert_eq!(context.recent_messages.len(), 8);
+    assert!(context
+        .recent_messages
+        .chunks_exact(2)
+        .all(|pair| pair[0].role == "user" && pair[1].role == "assistant"));
+    let token_count = context
+        .recent_messages
+        .iter()
+        .map(|message| crate::ai_runtime::text_support::estimate_tokens(&message.content))
+        .sum::<usize>();
+    assert!(token_count <= 8_000);
+    assert!(context
+        .recent_messages
+        .iter()
+        .any(|message| message.content.starts_with("第 6 轮")));
 }
 
 #[tokio::test]
@@ -903,10 +1008,10 @@ fn long_conversation_cancel_retract_and_resume_keeps_context_and_terminals_consi
     assert!(context.recent_messages.iter().all(
         |message| !message.content.contains("必须撤回") && !message.content.contains("撤回前")
     ));
-    let memory = context
-        .conversation_memory
-        .expect("long retained history memory");
-    assert!(memory.seq_end < context.recent_messages.first().expect("recent").seq);
+    assert!(
+        context.conversation_memory.is_none(),
+        "the retained history fits the 24-message window and needs no summary"
+    );
     RunEngine::execute_direct_with_sink(
         &db,
         &after_retract.session,
@@ -3233,7 +3338,7 @@ async fn tool_success_followed_by_invalid_evidence_never_persists_output() {
 }
 
 #[tokio::test]
-async fn strict_web_answer_without_current_run_marker_completes_with_a_source_group() {
+async fn strict_web_answer_without_current_run_marker_uses_source_binding_not_claim_support() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3300,7 +3405,7 @@ async fn strict_web_answer_without_current_run_marker_completes_with_a_source_gr
         &sink,
     )
     .await
-    .expect("missing current-run marker must degrade to the verified source group");
+    .expect("missing current-run marker must degrade to a current-run source binding, not claim support");
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
@@ -3318,6 +3423,7 @@ async fn strict_web_answer_without_current_run_marker_completes_with_a_source_gr
         })
         .expect("persisted source-group answer");
     assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+    assert!(!citation_map.contains("claim_support"));
     let content: String = db
         .with_read_conn(|conn| {
             conn.query_row(
@@ -3419,7 +3525,7 @@ async fn uncalibrated_web_answer_does_not_display_model_authored_precise_marker(
 }
 
 #[tokio::test]
-async fn strict_web_missing_marker_completes_with_a_verified_source_group() {
+async fn strict_web_missing_marker_uses_current_run_source_binding_only() {
     let db = Database::open_in_memory().expect("database");
     let accepted = RunIntake::start(&db, request()).expect("accepted");
     let evidence = AgentEvidenceRepository::register_web(
@@ -3492,10 +3598,11 @@ async fn strict_web_missing_marker_completes_with_a_verified_source_group() {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(Into::into)
-        })
+    })
         .expect("source-group answer persisted");
     assert_eq!(content, "结论来自当前轮证据。");
     assert!(citation_map.contains("\"mode\":\"source_group_fallback\""));
+    assert!(!citation_map.contains("claim_support"));
 }
 
 #[tokio::test]
