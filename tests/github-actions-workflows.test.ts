@@ -69,9 +69,14 @@ function runBlocks(job: string): string[] {
   return blocks.map((block) => block.replace(/\s*\\\r?\n[ \t]*/g, " "));
 }
 
+const tauriCliBinary = String.raw`(?:tauri(?:\.cmd)?|(?:\S*\/)?node_modules\/\.bin\/tauri(?:\.cmd)?)`;
+const tauriCliLauncher = String.raw`(?:(?:npm\s+run|cargo)\s+|(?:npx|npm\s+exec)(?:\s+(?!${tauriCliBinary}(?:\s|$))\S+)*\s+)`;
+
 function tauriBuildCommands(command: string): string[] {
-  const build =
-    /\b(?:npm\s+run\s+tauri(?:\s+--)?\s+build|cargo\s+tauri\s+build|npx\s+tauri\s+build|npm\s+exec\s+tauri\s+build|node\s+\S*tauri-cli\.mjs\s+build)\b[^\r\n]*/g;
+  const build = new RegExp(
+    String.raw`(?:^|\s)(?:${tauriCliLauncher})?(?:${tauriCliBinary}|node\s+\S*tauri-cli\.mjs)(?:\s+--)?\s+build\b[^\r\n]*`,
+    "g",
+  );
   return Array.from(command.matchAll(build), (match) =>
     (match[0] ?? "").trim(),
   );
@@ -367,6 +372,21 @@ describe("GitHub Actions workflows", () => {
         [],
       );
     }
+    const semanticTauriCliVariants = [
+      "./node_modules/.bin/tauri build",
+      "npm exec -- tauri build",
+      "npx --yes tauri build",
+    ];
+    expect(
+      semanticTauriCliVariants.flatMap((command) =>
+        forbiddenUbuntuTauriBundleCommands(ubuntuJob(command)),
+      ),
+    ).toEqual(semanticTauriCliVariants);
+    expect(
+      semanticTauriCliVariants.flatMap((command) =>
+        forbiddenUbuntuTauriBundleCommands(ubuntuJob(`${command} --no-bundle`)),
+      ),
+    ).toEqual([]);
     for (const chomping of ["|-", ">-", "|+"]) {
       expect(
         forbiddenUbuntuTauriBundleCommands(
