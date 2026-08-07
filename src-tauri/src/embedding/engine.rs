@@ -13,9 +13,6 @@ use sha2::{Digest, Sha256};
 use crate::ai_types::EmbedBackend;
 use crate::error::{AppError, AppResult};
 
-/// Maximum chunks for Rust cosine fallback (avoids loading entire vault into memory).
-const MAX_COSINE_FALLBACK_CHUNKS: i64 = 8_000;
-
 /// Pinned v2 embedding model and its fixed output dimension.
 pub const EMBEDDING_MODEL_ID: &str = "Xenova/bge-small-zh-v1.5";
 /// Immutable upstream revision pinned by the bundled model manifest.
@@ -412,72 +409,130 @@ pub fn semantic_search(
     if !embedding_generation_ready(conn)? {
         return Ok(Vec::new());
     }
-    semantic_search_cosine_v2(conn, query, limit)
+
+    #[cfg(feature = "sqlite-vec")]
+    {
+        ensure_sqlite_vec_v3_available(conn)?;
+        let indexed: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM vec_chunks_v3 LIMIT 1)",
+            [],
+            |row| row.get(0),
+        )?;
+        if !indexed || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let query_embedding = embed_query(query)?;
+        semantic_search_sqlite_vec_v3_with_embedding(conn, &query_embedding, limit)
+    }
+
+    #[cfg(not(feature = "sqlite-vec"))]
+    {
+        let _ = (conn, query, limit);
+        Err(AppError::Embed(
+            "sqlite-vec semantic search unavailable: this build has no sqlite-vec backend".into(),
+        ))
+    }
 }
 
-/// Bounded Rust cosine scan for the v2 generation.
-fn semantic_search_cosine_v2(
+#[cfg(feature = "sqlite-vec")]
+fn ensure_sqlite_vec_v3_available(conn: &Connection) -> AppResult<()> {
+    conn.query_row("SELECT vec_version()", [], |_| Ok(()))
+        .map_err(|error| {
+            AppError::Embed(format!(
+                "sqlite-vec semantic search unavailable: extension is not loaded ({error})"
+            ))
+        })?;
+    let migrated: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'vec_chunks_v3'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    if !migrated {
+        return Err(AppError::Embed(
+            "sqlite-vec semantic search unavailable: v3 index migration is not applied".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "sqlite-vec")]
+fn semantic_search_sqlite_vec_v3_with_embedding(
     conn: &Connection,
-    query: &str,
+    query_embedding: &[f32],
     limit: usize,
 ) -> AppResult<Vec<SemanticHit>> {
-    let chunk_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM chunk_embeddings_v2", [], |row| {
-            row.get(0)
-        })?;
-    if chunk_count > MAX_COSINE_FALLBACK_CHUNKS {
-        tracing::warn!(
-            chunks = chunk_count,
-            max = MAX_COSINE_FALLBACK_CHUNKS,
-            "cosine fallback skipped: too many chunks for the non-sqlite-vec build"
-        );
-        return Ok(vec![]);
+    if query_embedding.len() != EMBEDDING_DIMENSION {
+        return Err(AppError::Embed(format!(
+            "sqlite-vec query has {} dimensions, expected {EMBEDDING_DIMENSION}",
+            query_embedding.len()
+        )));
     }
-    if chunk_count == 0 {
-        return Ok(vec![]);
+    if limit == 0 {
+        return Ok(Vec::new());
     }
-
-    let query_vec = embed_query(query)?;
+    let candidate_count = limit.saturating_mul(4).max(32);
+    let candidate_count = i64::try_from(candidate_count)
+        .map_err(|_| AppError::Embed("sqlite-vec result limit exceeds SQLite range".into()))?;
+    let result_limit = i64::try_from(limit)
+        .map_err(|_| AppError::Embed("sqlite-vec result limit exceeds SQLite range".into()))?;
+    let embedding_bytes = f32_to_bytes(query_embedding);
     let mut stmt = conn.prepare(
-        "SELECT c.id, c.content, f.path, f.title, ce.embedding
-         FROM chunks c
-         JOIN files f ON f.id = c.file_id
-         JOIN chunk_embeddings_v2 ce ON ce.chunk_id = c.id
-         WHERE f.path <> '.classified'
-           AND f.path NOT LIKE '.classified/%'",
+        "WITH nearest AS (
+             SELECT chunk_id, distance
+             FROM vec_chunks_v3
+             WHERE embedding MATCH ?1
+               AND k = ?2
+               AND file_id IN (
+                   SELECT id FROM files
+                   WHERE path <> '.classified'
+                     AND path NOT LIKE '.classified/%'
+               )
+         )
+         SELECT chunks.id, chunks.content, files.path, files.title, nearest.distance
+         FROM nearest
+         INNER JOIN chunks ON chunks.id = nearest.chunk_id
+         INNER JOIN files ON files.id = chunks.file_id
+         INNER JOIN chunk_embeddings_v2 AS cache ON cache.chunk_id = chunks.id
+         WHERE cache.model_id = ?3
+           AND cache.dimension = ?4
+           AND cache.source_fingerprint = COALESCE(chunks.content_hash, '')
+           AND length(cache.embedding) = ?5
+         ORDER BY nearest.distance ASC
+         LIMIT ?6",
     )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Vec<u8>>(4)?,
-        ))
-    })?;
+    let rows = stmt.query_map(
+        rusqlite::params![
+            embedding_bytes,
+            candidate_count,
+            EMBEDDING_MODEL_ID,
+            EMBEDDING_DIMENSION as i64,
+            (EMBEDDING_DIMENSION * std::mem::size_of::<f32>()) as i64,
+            result_limit,
+        ],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, f64>(4)?,
+            ))
+        },
+    )?;
 
     let mut hits = Vec::new();
-    for row in rows.flatten() {
-        let (chunk_id, snippet, path, title, blob) = row;
-        let embedding = bytes_to_f32(&blob);
-        if embedding.len() != EMBEDDING_DIMENSION {
-            tracing::warn!(
-                chunk_id,
-                dimensions = embedding.len(),
-                "skipping invalid v2 embedding dimension"
-            );
-            continue;
-        }
+    for row in rows {
+        let (chunk_id, snippet, path, title, distance) = row?;
         hits.push(SemanticHit {
             chunk_id,
             path,
             title,
             snippet: truncate_snippet(&snippet, 200),
-            score: cosine_similarity(&query_vec, &embedding),
+            score: (1.0_f64 - distance).clamp(0.0, 1.0) as f32,
         });
     }
-    hits.sort_by(|left, right| right.score.total_cmp(&left.score));
-    hits.truncate(limit);
     Ok(hits)
 }
 #[derive(Debug, Clone, serde::Serialize)]
@@ -512,8 +567,8 @@ pub(crate) fn bytes_to_f32(blob: &[u8]) -> Vec<f32> {
 /// Serialize an embedding as contiguous little-endian `f32` values.
 ///
 /// sqlite-vec `float[N]` columns require this exact representation. The reader
-/// still accepts the legacy scalar-quantized format so existing databases stay
-/// searchable by the cosine fallback until their v2 generation is rebuilt.
+/// still accepts the legacy scalar-quantized format for cache migration and
+/// consumers that have not yet switched to the v3 sqlite-vec index.
 pub fn f32_to_bytes(vec: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(std::mem::size_of_val(vec));
     for value in vec {
@@ -522,6 +577,7 @@ pub fn f32_to_bytes(vec: &[f32]) -> Vec<u8> {
     bytes
 }
 
+#[cfg(feature = "sqlite-vec")]
 fn truncate_snippet(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -614,6 +670,122 @@ mod tests {
 
         assert_eq!(decoded, vec![1.0_f32, -1.0_f32, 0.0_f32]);
     }
+
+    #[cfg(feature = "sqlite-vec")]
+    #[test]
+    fn semantic_search_uses_sqlite_vec_knn_and_never_skips_a_large_index() {
+        let db = crate::storage::db::Database::open_in_memory().expect("open sqlite-vec database");
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "BEGIN;
+                 WITH RECURSIVE ids(id) AS (
+                     VALUES(1)
+                     UNION ALL
+                     SELECT id + 1 FROM ids WHERE id < 8001
+                 )
+                 INSERT INTO files
+                     (id, path, title, content_hash, word_count, created_at, updated_at)
+                 SELECT id,
+                        CASE
+                            WHEN id <= 40 THEN printf('.classified/secret-%d.md', id)
+                            WHEN id = 8001 THEN 'needle.md'
+                            ELSE printf('bulk/%d.md', id)
+                        END,
+                        CASE WHEN id = 8001 THEN 'Needle' ELSE printf('Bulk %d', id) END,
+                        printf('file-hash-%d', id), 1,
+                        '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                 FROM ids;
+                 WITH RECURSIVE ids(id) AS (
+                     VALUES(1)
+                     UNION ALL
+                     SELECT id + 1 FROM ids WHERE id < 8001
+                 )
+                 INSERT INTO chunks
+                     (id, file_id, chunk_index, content, content_hash, char_count)
+                 SELECT id, id, 0,
+                        CASE WHEN id = 8001 THEN 'needle' ELSE 'bulk' END,
+                        printf('chunk-hash-%d', id), 6
+                 FROM ids;",
+            )?;
+
+            let mut far_vector = vec![0.0_f32; super::EMBEDDING_DIMENSION];
+            far_vector[1] = 1.0;
+            conn.execute(
+                "INSERT INTO chunk_embeddings_v2
+                     (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                 SELECT id, ?1, content_hash, ?2, ?3
+                 FROM chunks WHERE id BETWEEN 41 AND 8000",
+                rusqlite::params![
+                    f32_to_bytes(&far_vector),
+                    super::EMBEDDING_MODEL_ID,
+                    super::EMBEDDING_DIMENSION as i64,
+                ],
+            )?;
+            let mut nearest_vector = vec![0.0_f32; super::EMBEDDING_DIMENSION];
+            nearest_vector[0] = 1.0;
+            conn.execute(
+                "INSERT INTO chunk_embeddings_v2
+                     (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                 SELECT id, ?1, content_hash, ?2, ?3
+                 FROM chunks WHERE id <= 40",
+                rusqlite::params![
+                    f32_to_bytes(&nearest_vector),
+                    super::EMBEDDING_MODEL_ID,
+                    super::EMBEDDING_DIMENSION as i64,
+                ],
+            )?;
+            let mut allowed_vector = nearest_vector.clone();
+            allowed_vector[1] = 0.05;
+            conn.execute(
+                "INSERT INTO chunk_embeddings_v2
+                     (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                 SELECT id, ?1, content_hash, ?2, ?3
+                 FROM chunks WHERE id = 8001",
+                rusqlite::params![
+                    f32_to_bytes(&allowed_vector),
+                    super::EMBEDDING_MODEL_ID,
+                    super::EMBEDDING_DIMENSION as i64,
+                ],
+            )?;
+            conn.execute_batch("COMMIT")?;
+
+            let response =
+                super::semantic_search_sqlite_vec_v3_with_embedding(conn, &nearest_vector, 5)?;
+
+            assert!(response.iter().any(|hit| hit.path == "needle.md"));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[cfg(not(feature = "sqlite-vec"))]
+    #[test]
+    fn semantic_search_without_sqlite_vec_reports_unavailable_explicitly() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open non-vec database");
+        crate::storage::migrate::migrate_up(&conn).expect("migrate non-vec database");
+        conn.execute(
+            "UPDATE embedding_generation_state
+             SET active_model_id = ?1,
+                 target_model_id = ?1,
+                 target_dimension = ?2,
+                 phase = 'ready',
+                 indexed_items = 0,
+                 total_items = 0
+             WHERE singleton = 1",
+            rusqlite::params![super::EMBEDDING_MODEL_ID, super::EMBEDDING_DIMENSION as i64],
+        )
+        .expect("mark empty generation ready");
+
+        let error = super::semantic_search(&conn, "needle", 5)
+            .expect_err("a non-vec build must report semantic search unavailable");
+
+        assert!(matches!(
+            error,
+            crate::error::AppError::Embed(message)
+                if message.contains("sqlite-vec semantic search unavailable")
+        ));
+    }
+
     #[test]
     fn bundled_model_directory_requires_verified_ready_marker() {
         let temp = tempdir().expect("create model fixture directory");

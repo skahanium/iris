@@ -158,6 +158,8 @@ const MIGRATION_059_DOWN: &str =
 const MIGRATION_060_UP: &str = include_str!("../../migrations/060_skill_activation_embeddings.sql");
 const MIGRATION_060_DOWN: &str =
     include_str!("../../migrations/060_skill_activation_embeddings.down.sql");
+const MIGRATION_061_UP: &str = include_str!("../../migrations/061_sqlite_vec_v3.sql");
+const MIGRATION_061_DOWN: &str = include_str!("../../migrations/061_sqlite_vec_v3.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -644,6 +646,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_060_UP,
         false,
     )?;
+    apply_migration(conn, "061_sqlite_vec_v3", MIGRATION_061_UP, true)?;
 
     Ok(())
 }
@@ -655,6 +658,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "061_sqlite_vec_v3", MIGRATION_061_DOWN);
     rollback_migration(conn, "060_skill_activation_embeddings", MIGRATION_060_DOWN);
     rollback_migration(
         conn,
@@ -756,6 +760,250 @@ pub fn load_migration_file(path: &Path) -> AppResult<String> {
 mod tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[cfg(feature = "sqlite-vec")]
+    #[derive(Clone, Copy)]
+    enum CacheKind {
+        Chunk,
+        Anchor,
+        Regulation,
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn register_sqlite_vec_for_tests() {
+        use std::sync::Once;
+
+        static REGISTER: Once = Once::new();
+        REGISTER.call_once(|| {
+            // SAFETY: sqlite-vec 0.1.9 documents this exact static-extension
+            // registration path. Registration is process-global, guarded by
+            // `Once`, and no safe rusqlite API exists for the bundled symbol.
+            #[allow(clippy::missing_transmute_annotations)]
+            unsafe {
+                rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                    sqlite_vec::sqlite3_vec_init as *const (),
+                )));
+            }
+        });
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn sqlite_vec_connection() -> Connection {
+        register_sqlite_vec_for_tests();
+        Connection::open_in_memory().expect("open sqlite-vec test database")
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn table_exists(conn: &Connection, table: &str) -> bool {
+        conn.query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1
+             )",
+            [table],
+            |row| row.get(0),
+        )
+        .expect("query table existence")
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn embedding_fixture(first: f32) -> Vec<u8> {
+        let mut embedding = vec![0.0_f32; crate::embedding::engine::EMBEDDING_DIMENSION];
+        embedding[0] = first;
+        crate::embedding::engine::f32_to_bytes(&embedding)
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn insert_file_fixture(conn: &Connection, file_id: i64, path: &str) {
+        conn.execute(
+            "INSERT INTO files
+             (id, path, title, content_hash, word_count, created_at, updated_at)
+             VALUES (?1, ?2, ?2, 'file-hash', 1,
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            params![file_id, path],
+        )
+        .expect("insert file fixture");
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    fn assert_cache_mirror(
+        conn: &Connection,
+        kind: CacheKind,
+        record_id: i64,
+        old_fingerprint: &str,
+        new_fingerprint: &str,
+    ) {
+        let file_id = 100 + record_id;
+        insert_file_fixture(conn, file_id, &format!("mirror-{record_id}.md"));
+        let first_embedding = embedding_fixture(1.0);
+        let second_embedding = embedding_fixture(0.5);
+        let (cache_table, id_column, vec_table, vec_id_column) = match kind {
+            CacheKind::Chunk => {
+                conn.execute(
+                    "INSERT INTO chunks
+                     (id, file_id, chunk_index, content, content_hash, char_count)
+                     VALUES (?1, ?2, 0, 'chunk', ?3, 5)",
+                    params![record_id, file_id, old_fingerprint],
+                )
+                .expect("insert chunk fixture");
+                (
+                    "chunk_embeddings_v2",
+                    "chunk_id",
+                    "vec_chunks_v3",
+                    "chunk_id",
+                )
+            }
+            CacheKind::Anchor => {
+                conn.execute(
+                    "INSERT INTO semantic_anchors
+                     (id, anchor_key, file_id, anchor_type, content, source_start, source_end,
+                      content_hash, extractor_version, embedding_model, embedding_dim,
+                      confidence, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, 'semantic', 'anchor', 0, 6, ?4, 'test', ?5, 512,
+                             1.0, datetime('now'), datetime('now'))",
+                    params![
+                        record_id,
+                        format!("anchor-{record_id}"),
+                        file_id,
+                        old_fingerprint,
+                        crate::embedding::engine::EMBEDDING_MODEL_ID,
+                    ],
+                )
+                .expect("insert anchor fixture");
+                (
+                    "semantic_anchor_embeddings_v2",
+                    "anchor_id",
+                    "vec_anchors_v3",
+                    "anchor_id",
+                )
+            }
+            CacheKind::Regulation => {
+                conn.execute(
+                    "INSERT INTO regulation_index
+                     (id, file_id, regulation_name, article, content, source_start, source_end,
+                      content_hash, parser_version, embedding_model, embedding_dim, created_at)
+                     VALUES (?1, ?2, 'regulation', '1', 'regulation', 0, 10, ?3, 'test', ?4,
+                             512, datetime('now'))",
+                    params![
+                        record_id,
+                        file_id,
+                        old_fingerprint,
+                        crate::embedding::engine::EMBEDDING_MODEL_ID,
+                    ],
+                )
+                .expect("insert regulation fixture");
+                (
+                    "regulation_embeddings_v2",
+                    "regulation_id",
+                    "vec_regulations_v3",
+                    "regulation_id",
+                )
+            }
+        };
+
+        conn.execute(
+            &format!(
+                "INSERT INTO {cache_table}
+                 ({id_column}, embedding, source_fingerprint, model_id, dimension)
+                 VALUES (?1, ?2, ?3, ?4, 512)"
+            ),
+            params![
+                record_id,
+                first_embedding,
+                old_fingerprint,
+                crate::embedding::engine::EMBEDDING_MODEL_ID,
+            ],
+        )
+        .expect("insert canonical embedding cache row");
+
+        let inserted: (Vec<u8>, Option<i64>) = conn
+            .query_row(
+                &format!(
+                    "SELECT embedding, {} FROM {vec_table} WHERE {vec_id_column} = ?1",
+                    if matches!(kind, CacheKind::Chunk) {
+                        "file_id"
+                    } else {
+                        "NULL"
+                    }
+                ),
+                [record_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("insert trigger mirrors canonical cache");
+        assert_eq!(inserted.0, embedding_fixture(1.0));
+        if matches!(kind, CacheKind::Chunk) {
+            assert_eq!(inserted.1, Some(file_id));
+        }
+
+        conn.execute(
+            &format!(
+                "UPDATE {cache_table}
+                 SET embedding = ?1, source_fingerprint = ?2
+                 WHERE {id_column} = ?3"
+            ),
+            params![second_embedding, new_fingerprint, record_id],
+        )
+        .expect("update canonical embedding cache row");
+        let updated: Vec<u8> = conn
+            .query_row(
+                &format!("SELECT embedding FROM {vec_table} WHERE {vec_id_column} = ?1"),
+                [record_id],
+                |row| row.get(0),
+            )
+            .expect("update trigger refreshes vector row");
+        assert_eq!(updated, embedding_fixture(0.5));
+
+        conn.execute(
+            &format!("DELETE FROM {cache_table} WHERE {id_column} = ?1"),
+            [record_id],
+        )
+        .expect("delete canonical embedding cache row");
+        let remaining: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM {vec_table} WHERE {vec_id_column} = ?1"),
+                [record_id],
+                |row| row.get(0),
+            )
+            .expect("delete trigger removes vector row");
+        assert_eq!(remaining, 0);
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    #[test]
+    fn sqlite_vec_v3_mirrors_all_canonical_caches_insert_update_and_delete() {
+        let conn = sqlite_vec_connection();
+        migrate_up(&conn).unwrap();
+        assert!(is_applied(&conn, "061_sqlite_vec_v3"));
+
+        for table in ["vec_chunks_v3", "vec_anchors_v3", "vec_regulations_v3"] {
+            assert!(table_exists(&conn, table), "missing {table}");
+            let schema: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    [table],
+                    |row| row.get(0),
+                )
+                .expect("read vec0 schema");
+            assert!(schema.contains("float[512] distance_metric=cosine"));
+        }
+
+        assert_cache_mirror(&conn, CacheKind::Chunk, 7, "hash-a", "hash-b");
+        assert_cache_mirror(&conn, CacheKind::Anchor, 8, "hash-a", "hash-b");
+        assert_cache_mirror(&conn, CacheKind::Regulation, 9, "hash-a", "hash-b");
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    #[test]
+    fn sqlite_vec_v3_down_restores_the_pre_migration_schema() {
+        let conn = sqlite_vec_connection();
+        migrate_up(&conn).unwrap();
+        assert!(table_exists(&conn, "vec_chunks_v3"));
+
+        migrate_down(&conn).unwrap();
+
+        assert!(!table_exists(&conn, "vec_chunks_v3"));
+        assert!(!table_exists(&conn, "vec_anchors_v3"));
+        assert!(!table_exists(&conn, "vec_regulations_v3"));
+    }
 
     #[test]
     fn migration_roundtrip() {
@@ -2196,7 +2444,7 @@ mod tests {
             .unwrap()
             .flatten()
             .collect();
-        let optional: BTreeSet<String> = ["002_vec", "010_knowledge_index"]
+        let optional: BTreeSet<String> = ["002_vec", "010_knowledge_index", "061_sqlite_vec_v3"]
             .into_iter()
             .map(str::to_string)
             .collect();

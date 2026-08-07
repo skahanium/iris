@@ -12,3 +12,31 @@ fn bundled_embedding_model_initializes_and_embeds_a_fixed_text() {
     );
     assert!(vector.iter().all(|value| value.is_finite()));
 }
+
+#[cfg(feature = "sqlite-vec")]
+#[test]
+#[ignore = "release packaging sqlite-vec load gate"]
+fn bundled_sqlite_vec_loads_and_applies_v3_index_migration() {
+    let database = iris_lib::storage::db::Database::open_in_memory()
+        .expect("bundled sqlite-vec database must initialize");
+
+    assert!(
+        database.vector_index_ready(),
+        "bundled sqlite-vec extension must load before release packaging"
+    );
+    database
+        .with_read_conn(|conn| {
+            let version: String = conn.query_row("SELECT vec_version()", [], |row| row.get(0))?;
+            assert!(version.starts_with('v'));
+            let migration_applied: bool = conn.query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM _migrations WHERE name = '061_sqlite_vec_v3'
+                 )",
+                [],
+                |row| row.get(0),
+            )?;
+            assert!(migration_applied, "sqlite-vec v3 migration must be applied");
+            Ok(())
+        })
+        .expect("verify bundled sqlite-vec release database");
+}

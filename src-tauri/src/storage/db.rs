@@ -32,7 +32,7 @@ pub struct VectorIndexConsistency {
 
 pub fn vector_index_consistency(conn: &Connection) -> AppResult<Option<VectorIndexConsistency>> {
     let vec_table_exists: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE name = 'vec_chunks'",
+        "SELECT COUNT(*) FROM sqlite_master WHERE name = 'vec_chunks_v3'",
         [],
         |row| row.get(0),
     )?;
@@ -40,15 +40,20 @@ pub fn vector_index_consistency(conn: &Connection) -> AppResult<Option<VectorInd
         return Ok(None);
     }
 
-    let chunk_embeddings = conn.query_row("SELECT COUNT(*) FROM chunk_embeddings", [], |row| {
-        row.get(0)
-    })?;
-    let vec_chunks = conn.query_row("SELECT COUNT(*) FROM vec_chunks", [], |row| row.get(0))?;
+    let chunk_embeddings = conn.query_row(
+        "SELECT COUNT(*) FROM chunk_embeddings_v2
+         WHERE dimension = 512 AND length(embedding) = 2048",
+        [],
+        |row| row.get(0),
+    )?;
+    let vec_chunks = conn.query_row("SELECT COUNT(*) FROM vec_chunks_v3", [], |row| row.get(0))?;
     let missing_vec_chunks = conn.query_row(
         "SELECT COUNT(*)
-         FROM chunk_embeddings ce
-         LEFT JOIN vec_chunks vc ON vc.rowid = ce.chunk_id
-         WHERE vc.rowid IS NULL",
+         FROM chunk_embeddings_v2 AS cache
+         LEFT JOIN vec_chunks_v3 AS vectors ON vectors.chunk_id = cache.chunk_id
+         WHERE cache.dimension = 512
+           AND length(cache.embedding) = 2048
+           AND vectors.chunk_id IS NULL",
         [],
         |row| row.get(0),
     )?;
@@ -67,14 +72,14 @@ pub fn log_vector_index_consistency(conn: &Connection) {
                 chunk_embeddings = consistency.chunk_embeddings,
                 vec_chunks = consistency.vec_chunks,
                 missing_vec_chunks = consistency.missing_vec_chunks,
-                "sqlite-vec legacy index is stale; it is not used by the v2 embedding scheduler"
+                "sqlite-vec v3 chunk index is stale; canonical cache rebuild is required"
             );
         }
         Ok(Some(consistency)) => {
             tracing::debug!(
                 chunk_embeddings = consistency.chunk_embeddings,
                 vec_chunks = consistency.vec_chunks,
-                "sqlite-vec chunk index is consistent"
+                "sqlite-vec v3 chunk index is consistent"
             );
         }
         Ok(None) => {}
@@ -103,10 +108,12 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        #[cfg(feature = "sqlite-vec")]
+        Self::register_sqlite_vec();
         let primary = Connection::open(path)?;
         Self::apply_pragmas(&primary)?;
         #[cfg(feature = "sqlite-vec")]
-        let vec_ready = Self::try_load_sqlite_vec(&primary, true);
+        let vec_ready = Self::sqlite_vec_available(&primary);
         #[cfg(not(feature = "sqlite-vec"))]
         let vec_ready = false;
         VECTOR_INDEX_READY.store(vec_ready, Ordering::Relaxed);
@@ -121,7 +128,7 @@ impl Database {
             let wc = Connection::open(path)?;
             Self::apply_pragmas(&wc)?;
             #[cfg(feature = "sqlite-vec")]
-            let _ = Self::try_load_sqlite_vec(&wc, true);
+            let _ = Self::sqlite_vec_available(&wc);
             write_pool.push(Mutex::new(wc));
         }
 
@@ -130,7 +137,7 @@ impl Database {
             let rc = Connection::open(path)?;
             Self::apply_pragmas(&rc)?;
             #[cfg(feature = "sqlite-vec")]
-            let _ = Self::try_load_sqlite_vec(&rc, true);
+            let _ = Self::sqlite_vec_available(&rc);
             read_pool.push(Mutex::new(rc));
         }
 
@@ -146,9 +153,15 @@ impl Database {
         let db_id = IN_MEMORY_DB_COUNTER.fetch_add(1, Ordering::Relaxed);
         let db_uri = format!("file:memdb_{db_id}?mode=memory&cache=shared");
 
+        #[cfg(feature = "sqlite-vec")]
+        Self::register_sqlite_vec();
         let primary = Connection::open(&db_uri)?;
         Self::apply_pragmas(&primary)?;
-        VECTOR_INDEX_READY.store(false, Ordering::Relaxed);
+        #[cfg(feature = "sqlite-vec")]
+        let vec_ready = Self::sqlite_vec_available(&primary);
+        #[cfg(not(feature = "sqlite-vec"))]
+        let vec_ready = false;
+        VECTOR_INDEX_READY.store(vec_ready, Ordering::Relaxed);
         migrate_up(&primary)?;
 
         let mut write_pool = Vec::with_capacity(WRITE_POOL_SIZE);
@@ -175,15 +188,12 @@ impl Database {
     }
 
     #[cfg(feature = "sqlite-vec")]
-    /// Load sqlite-vec extension when the bundled SQLite supports it.
-    fn try_load_sqlite_vec(conn: &Connection, persistent_db: bool) -> bool {
-        if !persistent_db || cfg!(test) {
-            return false;
-        }
-        // Register once per process; `sqlite3_auto_extension` is global state.
+    /// Register sqlite-vec before opening any SQLite connections.
+    fn register_sqlite_vec() {
         SQLITE_VEC_REGISTER.call_once(|| {
             // SAFETY: sqlite-vec documents registration via `sqlite3_auto_extension` (see sqlite-vec
-            // crate tests). No safe alternative exists for static extension init with rusqlite bundled.
+            // 0.1.9 crate tests). The callback is a process-lifetime static symbol, registration is
+            // guarded by `Once`, and no safe alternative exists with rusqlite's bundled SQLite.
             #[allow(clippy::missing_transmute_annotations)]
             unsafe {
                 rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
@@ -191,6 +201,11 @@ impl Database {
                 )));
             }
         });
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    /// Verify that sqlite-vec loaded on a newly opened connection.
+    fn sqlite_vec_available(conn: &Connection) -> bool {
         match conn.query_row("SELECT vec_version()", [], |row| row.get::<_, String>(0)) {
             Ok(version) => {
                 tracing::info!(%version, "sqlite-vec extension loaded");
@@ -318,6 +333,28 @@ mod tests {
         .unwrap();
     }
 
+    #[cfg(feature = "sqlite-vec")]
+    #[test]
+    fn open_in_memory_loads_default_sqlite_vec_backend_before_migration() {
+        let db = Database::open_in_memory().unwrap();
+
+        assert!(db.vector_index_ready());
+        db.with_read_conn(|conn| {
+            let version: String = conn.query_row("SELECT vec_version()", [], |row| row.get(0))?;
+            assert!(version.starts_with('v'));
+            let v3_tables: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table'
+                   AND name IN ('vec_chunks_v3', 'vec_anchors_v3', 'vec_regulations_v3')",
+                [],
+                |row| row.get(0),
+            )?;
+            assert_eq!(v3_tables, 3);
+            Ok(())
+        })
+        .unwrap();
+    }
+
     #[test]
     fn wal_mode_enabled() {
         let db = Database::open_in_memory().unwrap();
@@ -335,6 +372,7 @@ mod tests {
         .unwrap();
     }
 
+    #[cfg(feature = "sqlite-vec")]
     #[test]
     fn vector_index_consistency_reports_missing_vec_rows() {
         let db = Database::open_in_memory().unwrap();
@@ -360,14 +398,24 @@ mod tests {
                 [file_id],
                 |row| row.get(0),
             )?;
+            let embedding = crate::embedding::engine::f32_to_bytes(&vec![
+                1.0_f32;
+                crate::embedding::engine::EMBEDDING_DIMENSION
+            ]);
             conn.execute(
-                "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?1, X'0000'), (?2, X'0000')",
-                rusqlite::params![first_chunk, second_chunk],
+                "INSERT INTO chunk_embeddings_v2
+                 (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                 VALUES (?1, ?3, '', ?4, 512), (?2, ?3, '', ?4, 512)",
+                rusqlite::params![
+                    first_chunk,
+                    second_chunk,
+                    embedding,
+                    crate::embedding::engine::EMBEDDING_MODEL_ID
+                ],
             )?;
-            conn.execute("CREATE TABLE vec_chunks (embedding BLOB)", [])?;
             conn.execute(
-                "INSERT INTO vec_chunks (rowid, embedding) VALUES (?1, X'0000')",
-                [first_chunk],
+                "DELETE FROM vec_chunks_v3 WHERE chunk_id = ?1",
+                [second_chunk],
             )?;
 
             let consistency = vector_index_consistency(conn)?.expect("vec table exists");

@@ -51,12 +51,12 @@ walkdir = "2"
 fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
 scraper = "0.27"
 toml = "0.8"
-# Experimental: sqlite-vec registration uses unsafe; keep optional and require
-# focused maintainer review before enabling in release builds.
-sqlite-vec = { version = "0.1.10-alpha.4", default-features = false, optional = true }
+# sqlite-vec is the default bounded semantic-search backend on desktop. Keep the
+# stable version exact because its pre-1.0 FFI and vec0 behavior may change.
+sqlite-vec = { version = "=0.1.9", default-features = false, optional = true }
 
 [features]
-default = []
+default = ["sqlite-vec"]
 sqlite-vec = ["dep:sqlite-vec"]
 
 [target.'cfg(windows)'.dependencies]
