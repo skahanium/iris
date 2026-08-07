@@ -226,20 +226,8 @@ fn metadata_alias_retrieval_returns_note_without_polluting_body_fts() {
 #[test]
 fn legacy_ready_generation_reports_vector_layer_as_not_ready_while_keyword_search_remains_available(
 ) {
-    let conn = migrated_memory_connection();
-    conn.execute(
-        "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
-         VALUES ('notes/legacy.md', 'Legacy', 'legacy-hash', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-        [],
-    )
-    .expect("insert keyword-searchable note");
-    conn.execute(
-        "INSERT INTO files_fts (path, title, content)
-         VALUES ('notes/legacy.md', 'Legacy', 'legacy alpha evidence')",
-        [],
-    )
-    .expect("insert keyword index");
-    insert_chunk_for_path(&conn, "notes/legacy.md", "legacy alpha evidence");
+    let database = iris_lib::storage::db::Database::open_in_memory()
+        .expect("open sqlite-vec in-memory database");
     let request = RetrievalRequest {
         query: "alpha".into(),
         max_results: 5,
@@ -257,20 +245,37 @@ fn legacy_ready_generation_reports_vector_layer_as_not_ready_while_keyword_searc
         corpus_config: None,
     };
 
-    let outcome = hybrid_retrieve_with_diagnostics(&conn, &request).expect("run retrieval");
-    let vector = outcome
-        .diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.layer == "vector")
-        .expect("vector diagnostic");
+    database
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
+                 VALUES ('notes/legacy.md', 'Legacy', 'legacy-hash', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO files_fts (path, title, content)
+                 VALUES ('notes/legacy.md', 'Legacy', 'legacy alpha evidence')",
+                [],
+            )?;
+            insert_chunk_for_path(conn, "notes/legacy.md", "legacy alpha evidence");
 
-    assert_eq!(vector.status, RetrievalLayerStatus::IndexNotReady);
-    assert_eq!(
-        vector.message.as_deref(),
-        Some("BGE v2 embedding generation awaits idle upgrade")
-    );
-    assert!(outcome
-        .packets
-        .iter()
-        .any(|packet| packet.retrieval_reason == "fts_keyword_match"));
+            let outcome = hybrid_retrieve_with_diagnostics(conn, &request)?;
+            let vector = outcome
+                .diagnostics
+                .iter()
+                .find(|diagnostic| diagnostic.layer == "vector")
+                .expect("vector diagnostic");
+
+            assert_eq!(vector.status, RetrievalLayerStatus::IndexNotReady);
+            assert_eq!(
+                vector.message.as_deref(),
+                Some("BGE v2 embedding generation awaits idle upgrade")
+            );
+            assert!(outcome
+                .packets
+                .iter()
+                .any(|packet| packet.retrieval_reason == "fts_keyword_match"));
+            Ok(())
+        })
+        .expect("run sqlite-vec retrieval");
 }

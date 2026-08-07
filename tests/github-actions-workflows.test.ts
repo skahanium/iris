@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 function readWorkflow(path: string): string {
@@ -138,6 +138,43 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).toContain("cargo test");
     expect(workflow).not.toContain("package:local:win");
     expect(workflow).not.toContain("package:local:mac");
+  });
+
+  it("uses Ubuntu only to validate sqlite-vec and releases macOS and Windows assets only", () => {
+    const ci = readWorkflow(".github/workflows/ci.yml");
+    const packageWorkflow = readWorkflow(
+      ".github/workflows/package-desktop.yml",
+    );
+
+    expect(ci).toContain("runs-on: ubuntu-24.04");
+    expect(ci).toContain("--features sqlite-vec");
+    expect(ci).toContain("sqlite_vec_v3_mirrors_all_canonical_caches");
+    expect(ci).toContain(
+      "semantic_search_uses_sqlite_vec_knn_and_never_skips_a_large_index",
+    );
+    expect(packageWorkflow).toContain("runs-on: windows-2022");
+    expect(packageWorkflow).toContain("runs-on: macos-latest");
+    expect(packageWorkflow).toContain("cargo test --features sqlite-vec");
+    expect(packageWorkflow).not.toContain("package-linux");
+    expect(packageWorkflow).not.toContain("release-assets/linux");
+    expect(packageWorkflow).not.toContain("AppImage");
+    expect(packageWorkflow).not.toContain(".deb");
+    expect(packageWorkflow).not.toContain(".rpm");
+    expect(packageWorkflow).not.toContain("--no-sqlite-vec");
+  });
+
+  it("runs the sqlite-vec scale ladder nightly without publishing Linux packages", () => {
+    const workflowPath = ".github/workflows/sqlite-vec-scale-ladder.yml";
+
+    expect(existsSync(workflowPath)).toBe(true);
+    const workflow = readWorkflow(workflowPath);
+    expect(workflow).toContain("schedule:");
+    expect(workflow).toContain("runs-on: ubuntu-24.04");
+    expect(workflow).toContain("--features sqlite-vec");
+    expect(workflow).toContain("sqlite_vec_knn_scale_ladder");
+    expect(workflow).not.toContain("actions/upload-artifact");
+    expect(workflow).not.toContain("gh release");
+    expect(workflow).not.toContain("package:local");
   });
 
   it("verifies updater assets again after a GitHub Release is published", () => {

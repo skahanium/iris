@@ -73,7 +73,7 @@ jobs:
 
       - name: Run Rust tests
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --features sqlite-vec
 
   package-windows:
     name: Windows x64 NSIS
@@ -108,7 +108,7 @@ jobs:
 
       - name: Smoke test embedded BGE model
         shell: pwsh
-        run: cargo test --manifest-path src-tauri/Cargo.toml --test embedding_model_smoke -- --ignored
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features sqlite-vec --test embedding_model_smoke -- --ignored
 
       - name: Verify Tauri updater signing secrets
         shell: pwsh
@@ -193,7 +193,7 @@ jobs:
 
       - name: Smoke test embedded BGE model
         shell: bash
-        run: cargo test --manifest-path src-tauri/Cargo.toml --test embedding_model_smoke -- --ignored
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features sqlite-vec --test embedding_model_smoke -- --ignored
 
       - name: Verify Tauri updater signing secrets
         shell: bash

@@ -24,8 +24,8 @@ Iris 不提供通用插件 API、插件市场或任意代码执行能力。Skill
 - 桌面：Tauri 2.x + Rust
 - 前端：React 19 + TailwindCSS + shadcn/ui
 - 编辑：TipTap / ProseMirror
-- 数据：SQLite、FTS5 与可选 sqlite-vec 加速
-- 嵌入：fastembed（当前基线为 AllMiniLML6V2；v1.2.6 计划迁移至 BGE-small-zh-v1.5）
+- 数据：SQLite、FTS5 与默认启用的 sqlite-vec 检索索引
+- 嵌入：fastembed（当前基线为 Xenova/bge-small-zh-v1.5，512 维）
 
 ## 开发
 
@@ -51,7 +51,7 @@ cargo test
 发布版本必须使用受控脚本：
 
 ```bash
-npm run version:set -- 1.2.6
+npm run version:set -- <version>
 npm run version:check
 ```
 

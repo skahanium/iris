@@ -2,11 +2,11 @@
 
 > 评测对象是端到端 AI 检索，而非单独的 embedding 相似度。版本范围见 [ROADMAP.md](../../ROADMAP.md)。
 
-## 当前基线与 v1.2.6 目标
+## 当前 v1.2.18 基线
 
-现有基线使用 fastembed `AllMiniLML6V2`（384 维），普通语义搜索可以在 sqlite-vec 不可用时走 Rust cosine 路径；AI retrieval broker 另有 FTS、链接、锚点和法规候选。该基线不能证明 broker 的范围过滤、证据 span/hash 或排序质量。
+当前基线使用 `Xenova/bge-small-zh-v1.5`（512 维）。`sqlite-vec` v3 是 macOS、Windows 和 Linux 桌面构建默认启用的有界 KNN 后端；扩展不可用时检索会明确报告状态并保留 FTS，不会回退为 Rust 全表 cosine 扫描。AI retrieval broker 还融合 FTS、链接、锚点和法规候选。
 
-v1.2.6 将以 BGE-small-zh-v1.5 与 Rank v2 完成强制索引迁移，评测从 `hybrid_retrieve → Rank → scope → ContextPacket` 全链路执行。当前工作树不保留已替代的 RAG 规格文档，验收事实以本评测页、fixture 和测试合同为准。
+评测从 `hybrid_retrieve → Rank → scope → ContextPacket` 全链路执行。发布资产只面向 macOS + Windows；Ubuntu/Linux 只作为 CI 与编排 runner，继续执行 sqlite-vec 质量验证，但绝不构建、上传或发布 Linux 包。
 
 ## Fixture 与标签
 
@@ -24,7 +24,7 @@ fixture 只用于测试，不包含真实用户笔记或秘密。旧 `semantic-v
 
 每次评测保存机器、commit、模型、索引状态、查询标签和结果 JSON。固定基线为 `docs/eval/results/v1.2.5-hybrid.json`。
 
-| 指标                           | v1.2.6 门槛                  |
+| 指标                           | v1.2.18 门槛                 |
 | ------------------------------ | ---------------------------- |
 | scope 泄漏                     | 0                            |
 | ContextPacket span/hash 有效性 | 100%                         |

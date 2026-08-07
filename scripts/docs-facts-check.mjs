@@ -103,6 +103,61 @@ function checkVersionConsistency() {
   }
 }
 
+function checkReleaseDocumentationFacts() {
+  const version = readJson(path.join(root, "package.json")).version;
+  const currentVersion = `v${version}`;
+  const facts = [
+    {
+      path: "README.md",
+      required: [
+        `当前开发版本**：${currentVersion}`,
+        "Xenova/bge-small-zh-v1.5",
+        "默认启用的 sqlite-vec",
+      ],
+      forbidden: ["AllMiniLML6V2", "v1.2.6 计划"],
+    },
+    {
+      path: "docs/eval/semantic-search.md",
+      required: [
+        currentVersion,
+        "Xenova/bge-small-zh-v1.5",
+        "512 维",
+        "macOS + Windows",
+      ],
+      forbidden: ["AllMiniLML6V2", "Rust cosine", "v1.2.6"],
+    },
+    {
+      path: "docs/eval/rag-v2-broker-evaluation.md",
+      required: [currentVersion, "macOS + Windows", "sqlite-vec"],
+      forbidden: ["# v1.2.6"],
+    },
+    {
+      path: "SECURITY.md",
+      required: [`当前开发版本 \`${currentVersion}\``],
+      forbidden: ["当前开发版本 `v1.2.6`"],
+    },
+    {
+      path: "CONTRIBUTING.md",
+      required: ["macOS + Windows", "Ubuntu/Linux", "sqlite-vec"],
+      forbidden: [],
+    },
+  ];
+
+  for (const fact of facts) {
+    const content = readFileSync(path.join(root, fact.path), "utf8");
+    for (const required of fact.required) {
+      if (!content.includes(required)) {
+        fail(`${fact.path} is missing current release fact: ${required}`);
+      }
+    }
+    for (const forbidden of fact.forbidden) {
+      if (content.includes(forbidden)) {
+        fail(`${fact.path} contains stale release fact: ${forbidden}`);
+      }
+    }
+  }
+}
+
 // ── 2. Migration count ─────────────────────────────────────
 
 function checkMigrationCount() {
@@ -292,6 +347,7 @@ function checkIpcIndex() {
 // ── Run ─────────────────────────────────────────────────────
 
 checkVersionConsistency();
+checkReleaseDocumentationFacts();
 checkMigrationCount();
 checkDocLinks();
 checkRetiredArchitectureReferences();

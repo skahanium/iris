@@ -1,4 +1,4 @@
-# v1.2.6 RAG broker evaluation
+# v1.2.18 RAG broker evaluation
 
 The default quality gate is intentionally model-free and deterministic. It
 indexes `fixtures/rag-v2-vault/` and calls the public broker rather than an
@@ -51,8 +51,10 @@ recall.
 The test disables vector retrieval deliberately. It therefore verifies the
 actual hybrid broker, FTS, metadata, scope, rank and ContextPacket route
 without downloading a model. A separately provisioned release environment
-must run the same corpus with BGE v2 available before using vector-quality
-claims.
+must run the same corpus with BGE v2 and sqlite-vec available before using
+vector-quality claims. Release packages and assets are macOS + Windows only;
+Ubuntu/Linux remains a CI and orchestration runner for the same sqlite-vec
+quality checks and never produces a Linux package or release asset.
 
 ## Citation-integrity release gate
 

@@ -592,6 +592,8 @@ mod tests {
     use super::{bytes_to_f32, f32_to_bytes, initialize_once, validate_bundled_model_directory};
     use std::fs;
     use std::sync::{Mutex, OnceLock};
+    #[cfg(feature = "sqlite-vec")]
+    use std::time::Instant;
     use tempfile::tempdir;
 
     fn write_complete_model_fixture(directory: &std::path::Path, revision: &str) {
@@ -757,6 +759,99 @@ mod tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    #[test]
+    fn sqlite_vec_knn_scale_ladder() {
+        for scale in [1_000_i64, 10_000, 25_000, 50_000] {
+            let db = crate::storage::db::Database::open_in_memory()
+                .expect("open sqlite-vec scale-ladder database");
+            let mut query_vector = vec![0.0_f32; super::EMBEDDING_DIMENSION];
+            query_vector[0] = 1.0;
+            let mut distractor_vector = vec![0.0_f32; super::EMBEDDING_DIMENSION];
+            distractor_vector[1] = 1.0;
+            let started = Instant::now();
+
+            let (index_elapsed, knn_elapsed) = db
+                .with_conn(|conn| {
+                    conn.execute_batch("BEGIN")?;
+                    conn.execute(
+                        "WITH RECURSIVE ids(id) AS (
+                             VALUES(1)
+                             UNION ALL
+                             SELECT id + 1 FROM ids WHERE id < ?1
+                         )
+                         INSERT INTO files
+                             (id, path, title, content_hash, word_count, created_at, updated_at)
+                         SELECT id, printf('scale/%d.md', id), printf('Scale %d', id),
+                                printf('file-hash-%d', id), 1,
+                                '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                         FROM ids",
+                        [scale + 1],
+                    )?;
+                    conn.execute(
+                        "WITH RECURSIVE ids(id) AS (
+                             VALUES(1)
+                             UNION ALL
+                             SELECT id + 1 FROM ids WHERE id < ?1
+                         )
+                         INSERT INTO chunks
+                             (id, file_id, chunk_index, content, content_hash, char_count)
+                         SELECT id, id, 0,
+                                CASE WHEN id = ?1 THEN 'needle' ELSE 'bulk' END,
+                                printf('chunk-hash-%d', id), 6
+                         FROM ids",
+                        [scale + 1],
+                    )?;
+                    conn.execute(
+                        "INSERT INTO chunk_embeddings_v2
+                             (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                         SELECT id, ?1, content_hash, ?2, ?3
+                         FROM chunks WHERE id < ?4",
+                        rusqlite::params![
+                            f32_to_bytes(&distractor_vector),
+                            super::EMBEDDING_MODEL_ID,
+                            super::EMBEDDING_DIMENSION as i64,
+                            scale + 1,
+                        ],
+                    )?;
+                    conn.execute(
+                        "INSERT INTO chunk_embeddings_v2
+                             (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                         SELECT id, ?1, content_hash, ?2, ?3
+                         FROM chunks WHERE id = ?4",
+                        rusqlite::params![
+                            f32_to_bytes(&query_vector),
+                            super::EMBEDDING_MODEL_ID,
+                            super::EMBEDDING_DIMENSION as i64,
+                            scale + 1,
+                        ],
+                    )?;
+                    conn.execute_batch("COMMIT")?;
+                    let index_elapsed = started.elapsed();
+                    let knn_started = Instant::now();
+                    let response = super::semantic_search_sqlite_vec_v3_with_embedding(
+                        conn,
+                        &query_vector,
+                        5,
+                    )?;
+                    let knn_elapsed = knn_started.elapsed();
+                    assert!(
+                        response
+                            .iter()
+                            .any(|hit| hit.path == format!("scale/{}.md", scale + 1)),
+                        "KNN missed the needle at scale {scale}"
+                    );
+                    Ok((index_elapsed, knn_elapsed))
+                })
+                .unwrap();
+            println!(
+                "sqlite-vec scale={scale}: index_ms={} knn_ms={}",
+                index_elapsed.as_millis(),
+                knn_elapsed.as_millis()
+            );
+        }
     }
 
     #[cfg(not(feature = "sqlite-vec"))]

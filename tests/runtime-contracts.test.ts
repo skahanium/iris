@@ -62,6 +62,26 @@ describe("runtime configuration contracts", () => {
     expect(migrate).toContain("MIGRATION_031_UP");
   });
 
+  it("retires legacy graph and search-cache code through reversible migration 062", () => {
+    const migrate = read("src-tauri/src/storage/migrate.rs");
+    const app = read("src-tauri/src/app.rs");
+    const llm = read("src-tauri/src/llm/mod.rs");
+
+    expect(
+      existsSync("src-tauri/migrations/062_remove_legacy_search_graph.sql"),
+    ).toBe(true);
+    expect(
+      existsSync(
+        "src-tauri/migrations/062_remove_legacy_search_graph.down.sql",
+      ),
+    ).toBe(true);
+    expect(migrate).toContain("MIGRATION_062_UP");
+    expect(migrate).toContain("062_remove_legacy_search_graph");
+    expect(app).not.toContain("cleanup_expired_search_cache");
+    expect(llm).not.toContain("search_web");
+    expect(existsSync("src-tauri/src/llm/search_web.rs")).toBe(false);
+  });
+
   it("uses the Run IPC contract instead of deleted research or assistant-execute commands", () => {
     const ipc = read("src/lib/ipc.ts");
     const types = read("src/types/ai.ts");

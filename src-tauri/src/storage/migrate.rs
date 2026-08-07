@@ -160,6 +160,9 @@ const MIGRATION_060_DOWN: &str =
     include_str!("../../migrations/060_skill_activation_embeddings.down.sql");
 const MIGRATION_061_UP: &str = include_str!("../../migrations/061_sqlite_vec_v3.sql");
 const MIGRATION_061_DOWN: &str = include_str!("../../migrations/061_sqlite_vec_v3.down.sql");
+const MIGRATION_062_UP: &str = include_str!("../../migrations/062_remove_legacy_search_graph.sql");
+const MIGRATION_062_DOWN: &str =
+    include_str!("../../migrations/062_remove_legacy_search_graph.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -647,6 +650,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         false,
     )?;
     apply_migration(conn, "061_sqlite_vec_v3", MIGRATION_061_UP, true)?;
+    apply_migration(
+        conn,
+        "062_remove_legacy_search_graph",
+        MIGRATION_062_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -658,6 +667,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "062_remove_legacy_search_graph", MIGRATION_062_DOWN);
     rollback_migration(conn, "061_sqlite_vec_v3", MIGRATION_061_DOWN);
     rollback_migration(conn, "060_skill_activation_embeddings", MIGRATION_060_DOWN);
     rollback_migration(
@@ -793,7 +803,6 @@ mod tests {
         Connection::open_in_memory().expect("open sqlite-vec test database")
     }
 
-    #[cfg(feature = "sqlite-vec")]
     fn table_exists(conn: &Connection, table: &str) -> bool {
         conn.query_row(
             "SELECT EXISTS(
@@ -1502,12 +1511,7 @@ mod tests {
             .unwrap_or(false);
 
         if applied {
-            for table in &[
-                "semantic_anchors",
-                "regulation_index",
-                "genre_templates",
-                "block_links",
-            ] {
+            for table in &["semantic_anchors", "regulation_index", "genre_templates"] {
                 let has: bool = conn
                     .query_row(
                         &format!(
@@ -1589,16 +1593,11 @@ mod tests {
     }
 
     #[test]
-    fn migration_025_creates_scalar_knowledge_tables_without_vec() {
+    fn migration_025_keeps_scalar_knowledge_tables_after_legacy_graph_removal() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
-        for table in [
-            "semantic_anchors",
-            "regulation_index",
-            "genre_templates",
-            "block_links",
-        ] {
+        for table in ["semantic_anchors", "regulation_index", "genre_templates"] {
             let has: bool = conn
                 .query_row(
                     "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
@@ -1727,7 +1726,6 @@ mod tests {
             "knowledge_deposits",
             "user_profile",
             "web_page_cache",
-            "search_cache",
         ] {
             let has_column: bool = conn
                 .query_row(
@@ -1740,6 +1738,44 @@ mod tests {
                 .map(|count| count > 0)
                 .unwrap();
             assert!(has_column, "missing vault_id on {table}");
+        }
+    }
+
+    #[test]
+    fn legacy_graph_and_search_cache_tables_are_absent_after_migration_062() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        assert!(!table_exists(&conn, "block_links"));
+        assert!(!table_exists(&conn, "search_cache"));
+    }
+
+    #[test]
+    fn migration_062_down_restores_historic_schemas_without_reactivating_them() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        rollback_migration(&conn, "062_remove_legacy_search_graph", MIGRATION_062_DOWN);
+
+        assert!(table_exists(&conn, "block_links"));
+        assert!(table_exists(&conn, "search_cache"));
+        let search_cache_columns = conn
+            .prepare("PRAGMA table_info(search_cache)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        for column in [
+            "vault_id",
+            "provider_id",
+            "provider_kind",
+            "provider_config_hash",
+            "broker_version",
+        ] {
+            assert!(
+                search_cache_columns.contains(&column.to_string()),
+                "missing restored search_cache.{column}"
+            );
         }
     }
 

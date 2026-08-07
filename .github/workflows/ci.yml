@@ -82,6 +82,12 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      - name: Run sqlite-vec migration and KNN tests
+        working-directory: src-tauri
+        run: |
+          cargo test --features sqlite-vec storage::migrate::tests::sqlite_vec_v3_mirrors_all_canonical_caches_insert_update_and_delete -- --nocapture
+          cargo test --features sqlite-vec embedding::engine::tests::semantic_search_uses_sqlite_vec_knn_and_never_skips_a_large_index -- --nocapture
+
   rag-eval:
     name: RAG evaluation gates
     runs-on: ubuntu-24.04

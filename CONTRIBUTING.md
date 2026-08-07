@@ -58,6 +58,10 @@ sudo dnf install webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel li
 sudo pacman -S webkit2gtk-4.1 base-devel openssl libappindicator-gtk3 librsvg
 ```
 
+### 发布平台
+
+官方 Release 只构建和发布 macOS + Windows 包及 Release assets。Ubuntu/Linux 仅作为 CI 与编排 runner，保留 sqlite-vec 的质量验证，不构建、上传或发布 Linux package/Release asset。
+
 ### 启动开发
 
 ```bash

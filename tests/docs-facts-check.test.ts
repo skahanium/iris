@@ -51,4 +51,15 @@ describe("docs:check — document facts verification", () => {
     expect(source).toContain("agent-harness-refactor");
     expect(source).toContain("version_cleanup_cmd");
   });
+
+  it("guards current RAG, release-platform, and security claims against factual drift", () => {
+    const source = readFileSync(scriptPath, "utf8");
+
+    expect(source).toContain("checkReleaseDocumentationFacts");
+    expect(source).toContain("semantic-search.md");
+    expect(source).toContain("rag-v2-broker-evaluation.md");
+    expect(source).toContain("SECURITY.md");
+    expect(source).toContain("sqlite-vec");
+    expect(source).toContain("macOS + Windows");
+  });
 });

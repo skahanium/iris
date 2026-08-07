@@ -362,9 +362,6 @@ impl AppState {
             );
         }
 
-        if let Err(e) = crate::llm::search_web::cleanup_expired_search_cache(&state.db) {
-            tracing::warn!("failed to cleanup expired search cache: {e}");
-        }
         if let Err(e) = crate::llm::fetch_web_page::cleanup_expired_web_cache(&state.db) {
             tracing::warn!("failed to cleanup expired web cache: {e}");
         }
