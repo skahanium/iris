@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import * as yamlPlugin from "prettier/plugins/yaml";
 import { describe, expect, it } from "vitest";
 
 function readWorkflow(path: string): string {
@@ -21,69 +22,34 @@ function readPackageScripts(): Record<string, string> {
   );
 }
 
-function workflowJobBlocks(workflow: string): string[] {
-  const jobs = workflow.slice(workflow.indexOf("jobs:"));
-  return jobs.split(/(?=^  [\w-]+:\s*$)/m);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function blockScalarValue(lines: string[], folded: boolean): string {
-  const commonIndent = Math.min(
-    ...lines.filter((line) => line.trim()).map((line) => line.search(/\S/)),
+type PrettierYamlPlugin = typeof yamlPlugin & {
+  __parsePrettierYamlConfig(source: string): unknown;
+};
+
+function ubuntuWorkflowRunBlocks(workflow: string): string[] {
+  const parsed = (yamlPlugin as PrettierYamlPlugin).__parsePrettierYamlConfig(
+    workflow,
   );
-  const content = lines.map((line) =>
-    line.trim() ? line.slice(commonIndent) : "",
-  );
+  if (!isRecord(parsed) || !isRecord(parsed.jobs)) return [];
 
-  if (!folded) return content.join("\n");
-  return content.reduce(
-    (value, line, index) =>
-      index === 0 ? line : `${value}${line ? " " : "\n"}${line}`,
-    "",
-  );
-}
-
-function runBlocks(job: string): string[] {
-  const lines = job.split("\n");
-  const blocks: string[] = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const currentLine = lines[index];
-    if (currentLine === undefined) continue;
-    const run = currentLine.match(/^(\s*)(?:-\s+)?run:\s*(.*)$/);
-    if (!run) continue;
-
-    const indent = (run[1] ?? "").length;
-    const inline = run[2] ?? "";
-    const blockScalar = inline.match(/^([>|])[+-]?$/);
-    if (inline !== "" && !blockScalar) {
-      const blockLines = [inline];
-      while (
-        blockLines.at(-1)?.trimEnd().endsWith("\\") &&
-        index + 1 < lines.length
-      ) {
-        index += 1;
-        const continuation = lines[index];
-        if (continuation === undefined) break;
-        blockLines.push(continuation);
-      }
-      blocks.push(blockLines.join("\n"));
-      continue;
+  return Object.values(parsed.jobs).flatMap((job) => {
+    if (
+      !isRecord(job) ||
+      typeof job["runs-on"] !== "string" ||
+      !job["runs-on"].startsWith("ubuntu-") ||
+      !Array.isArray(job.steps)
+    ) {
+      return [];
     }
 
-    const blockLines: string[] = [];
-    for (index += 1; index < lines.length; index += 1) {
-      const line = lines[index];
-      if (line === undefined) continue;
-      if (line.trim() && line.search(/\S/) <= indent) {
-        index -= 1;
-        break;
-      }
-      blockLines.push(line);
-    }
-    blocks.push(blockScalarValue(blockLines, blockScalar?.[1] === ">"));
-  }
-
-  return blocks.map((block) => block.replace(/\s*\\\r?\n[ \t]*/g, " "));
+    return job.steps.flatMap((step) =>
+      isRecord(step) && typeof step.run === "string" ? [step.run] : [],
+    );
+  });
 }
 
 const tauriCliBinary = String.raw`(?:tauri(?:\.cmd)?|(?:\S*\/)?node_modules\/\.bin\/tauri(?:\.cmd)?)`;
@@ -92,12 +58,13 @@ const nestedNodeTauriBuild =
   /(?:^|\s)node\s+\S*tauri-cli\.mjs(?:\s+--)?\s+build\b[^\r\n]*/g;
 
 function shellCommandSegments(command: string): string[] {
+  const shellCommand = command.replace(/\s*\\\r?\n[ \t]*/g, " ");
   const segments: string[] = [];
   let start = 0;
   let quote: '"' | "'" | undefined;
 
-  for (let index = 0; index < command.length; index += 1) {
-    const character = command[index];
+  for (let index = 0; index < shellCommand.length; index += 1) {
+    const character = shellCommand[index];
     if (character === undefined) continue;
     if (character === "\\" && quote !== "'") {
       index += 1;
@@ -112,7 +79,7 @@ function shellCommandSegments(command: string): string[] {
       continue;
     }
 
-    const nextCharacter = command[index + 1];
+    const nextCharacter = shellCommand[index + 1];
     const separatorLength =
       character === "\n" || character === ";" || character === "|"
         ? nextCharacter === character
@@ -123,13 +90,13 @@ function shellCommandSegments(command: string): string[] {
           : 0;
     if (separatorLength === 0) continue;
 
-    const segment = command.slice(start, index).trim();
+    const segment = shellCommand.slice(start, index).trim();
     if (segment) segments.push(segment);
     index += separatorLength - 1;
     start = index + 1;
   }
 
-  const segment = command.slice(start).trim();
+  const segment = shellCommand.slice(start).trim();
   if (segment) segments.push(segment);
   return segments;
 }
@@ -161,9 +128,11 @@ function scriptTauriBuildCommands(
   command: string,
 ): Array<{ final: string; report: string }> {
   const scripts = readPackageScripts();
-  const npmRun = /\bnpm\s+run\s+([\w:-]+)([^\r\n]*)/g;
+  const npmRun = /^npm\s+run\s+([\w:-]+)(.*)$/;
 
-  return Array.from(command.matchAll(npmRun)).flatMap((match) => {
+  return shellCommandSegments(command).flatMap((segment) => {
+    const match = segment.match(npmRun);
+    if (!match) return [];
     const scriptName = match[1];
     if (!scriptName) return [];
     const script = scripts[scriptName];
@@ -183,20 +152,14 @@ function isAllowedUbuntuTauriBuild(command: string): boolean {
 }
 
 function forbiddenUbuntuTauriBundleCommands(workflow: string): string[] {
-  const ubuntuJobBlocks = workflowJobBlocks(workflow).filter((job) =>
-    /^    runs-on: ubuntu-/m.test(job),
-  );
-
-  const violations = ubuntuJobBlocks
-    .flatMap((job) =>
-      runBlocks(job).flatMap((block) => [
-        ...tauriBuildCommands(block).map((command) => ({
-          final: command,
-          report: command,
-        })),
-        ...scriptTauriBuildCommands(block),
-      ]),
-    )
+  const violations = ubuntuWorkflowRunBlocks(workflow)
+    .flatMap((block) => [
+      ...tauriBuildCommands(block).map((command) => ({
+        final: command,
+        report: command,
+      })),
+      ...scriptTauriBuildCommands(block),
+    ])
     .filter((command) => !isAllowedUbuntuTauriBuild(command.final))
     .map((command) => command.report);
 
@@ -473,6 +436,32 @@ describe("GitHub Actions workflows", () => {
         ),
       ),
     ).toEqual(["npx tauri build --no-bundle --bundles deb"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuBlockJob(
+          ">-",
+          `npx tauri build --no-bundle
+            --bundles deb`,
+        ),
+      ),
+    ).toEqual([]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(ubuntuJob('"npx tauri build"')),
+    ).toEqual(["npx tauri build"]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuJob('"npx tauri build --no-bundle"'),
+      ),
+    ).toEqual([]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuBlockJob(
+          "|-",
+          `echo "npm run tauri:build:vec"
+          # "npm run tauri:build:vec"`,
+        ),
+      ),
+    ).toEqual([]);
     for (const ordinaryOrNonTauriCommand of [
       'echo "npx --yes tauri build"',
       'echo "npx --yes tauri build; ./node_modules/.bin/tauri build"',
@@ -498,8 +487,11 @@ describe("GitHub Actions workflows", () => {
     }
     expect(
       forbiddenUbuntuTauriBundleCommands(
-        ubuntuJob(`npm run tauri -- build --no-bundle \\
-        --bundles deb`),
+        ubuntuBlockJob(
+          "|-",
+          `npm run tauri -- build --no-bundle \\
+          --bundles deb`,
+        ),
       ),
     ).toEqual(["npm run tauri -- build --no-bundle --bundles deb"]);
     expect(
@@ -508,6 +500,14 @@ describe("GitHub Actions workflows", () => {
     runs-on: windows-2022
     steps:
       - run: npm run tauri -- build
+`),
+    ).toEqual([]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(`jobs:
+  macos-package:
+    runs-on: macos-latest
+    steps:
+      - run: npx tauri build
 `),
     ).toEqual([]);
   });
