@@ -73,6 +73,21 @@ fn accept_input(session_id: i64, session_key: String) -> AcceptRunInput {
     }
 }
 
+fn legacy_v1_budget_json(policy: &RunBudgetPolicy) -> String {
+    let mut value = serde_json::to_value(policy).expect("serialize canonical budget");
+    let fields = value
+        .as_object_mut()
+        .expect("canonical budget must be an object");
+    for field in [
+        "maxPromptTokens",
+        "maxCompletionTokens",
+        "maxTurnOutputTokens",
+    ] {
+        fields.remove(field);
+    }
+    serde_json::to_string(&value).expect("serialize legacy v1 budget")
+}
+
 #[test]
 fn accept_is_atomic_and_persists_only_safe_reference_metadata() {
     let (db, session_id, session_key) = setup();
@@ -214,57 +229,71 @@ fn accepted_and_retried_runs_keep_the_frozen_budget_policy() {
 }
 
 #[test]
-fn legacy_empty_budget_is_materialized_for_retry_and_active_execution() {
-    let (db, session_id, session_key) = setup();
-    let mut input = accept_input(session_id, session_key.clone());
-    input.envelope.effort = Effort::ToolLoop;
-    input
-        .envelope
-        .required_capabilities
-        .push(CapabilityId::new("harness.child_run"));
-    AgentRunRepository::accept(&db, input).expect("accepted legacy fixture");
-    db.with_conn(|conn| {
-        conn.execute(
-            "UPDATE agent_runs
-             SET budget_policy_json = '{}', status = 'failed'
+fn legacy_empty_and_v1_budgets_are_materialized_for_retry_and_active_execution() {
+    for legacy_budget in [
+        "{}".to_string(),
+        legacy_v1_budget_json(&{
+            let mut legacy_envelope = envelope();
+            legacy_envelope.effort = Effort::ToolLoop;
+            legacy_envelope
+                .required_capabilities
+                .push(CapabilityId::new("harness.child_run"));
+            RunBudgetPolicy::for_envelope(&legacy_envelope)
+        }),
+    ] {
+        let (db, session_id, session_key) = setup();
+        let mut input = accept_input(session_id, session_key.clone());
+        input.envelope.effort = Effort::ToolLoop;
+        input
+            .envelope
+            .required_capabilities
+            .push(CapabilityId::new("harness.child_run"));
+        AgentRunRepository::accept(&db, input).expect("accepted legacy fixture");
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE agent_runs
+             SET budget_policy_json = ?1, status = 'failed'
              WHERE run_id = 'run-1'",
-            [],
-        )?;
-        Ok(())
-    })
-    .expect("simulate pre-budget accepted run");
+                [legacy_budget],
+            )?;
+            Ok(())
+        })
+        .expect("simulate pre-budget accepted run");
 
-    AgentRunRepository::accept_retry(
-        &db,
-        RetryRunInput {
-            session_key: session_key.clone(),
-            source_run_id: "run-1".into(),
-            client_request_id: "retry-legacy-budget".into(),
-            run_id: "run-2".into(),
-        },
-    )
-    .expect("legacy retry is accepted");
-    let retry_policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-2")
-        .expect("read retry budget")
-        .expect("retry budget");
-    assert_eq!(retry_policy.profile, RunBudgetProfile::Delegated);
+        AgentRunRepository::accept_retry(
+            &db,
+            RetryRunInput {
+                session_key: session_key.clone(),
+                source_run_id: "run-1".into(),
+                client_request_id: "retry-legacy-budget".into(),
+                run_id: "run-2".into(),
+            },
+        )
+        .expect("legacy retry is accepted");
+        let retry_policy =
+            AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-2")
+                .expect("read retry budget")
+                .expect("retry budget");
+        assert_eq!(retry_policy.profile, RunBudgetProfile::Delegated);
 
-    let active_policy = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
-        .expect("materialize active legacy budget")
-        .expect("active legacy budget");
-    assert_eq!(active_policy, retry_policy);
-    db.with_read_conn(|conn| {
-        let budgets = conn
-            .prepare(
-                "SELECT budget_policy_json FROM agent_runs
+        let active_policy =
+            AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+                .expect("materialize active legacy budget")
+                .expect("active legacy budget");
+        assert_eq!(active_policy, retry_policy);
+        db.with_read_conn(|conn| {
+            let budgets = conn
+                .prepare(
+                    "SELECT budget_policy_json FROM agent_runs
                  WHERE run_id IN ('run-1', 'run-2') ORDER BY run_id",
-            )?
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-        assert!(budgets.iter().all(|budget| budget != "{}"));
-        Ok(())
-    })
-    .expect("legacy budgets are frozen once");
+                )?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            assert!(budgets.iter().all(|budget| budget != "{}"));
+            Ok(())
+        })
+        .expect("legacy budgets are frozen once");
+    }
 }
 
 #[test]
@@ -1373,10 +1402,13 @@ fn frozen_confirmation_is_bound_to_its_run_hash_and_single_consumption() {
 }
 
 #[test]
-fn atomic_confirmation_request_binds_the_pending_plan_to_awaiting_state() {
+fn durable_confirmation_materializes_a_legacy_v1_budget_before_resuming() {
     let (db, session_id, session_key) = setup();
-    AgentRunRepository::accept(&db, accept_input(session_id, session_key.clone()))
-        .expect("accepted run");
+    let mut input = accept_input(session_id, session_key.clone());
+    input.envelope.effect = Effect::Apply;
+    input.envelope.effort = Effort::Durable;
+    let canonical_budget = RunBudgetPolicy::for_envelope(&input.envelope);
+    AgentRunRepository::accept(&db, input).expect("accepted run");
     let preparing = AgentRunRepository::append_event(
         &db,
         AppendRunEventInput {
@@ -1460,6 +1492,14 @@ fn atomic_confirmation_request_binds_the_pending_plan_to_awaiting_state() {
             risk: RiskClass::BoundedWrite,
         }])
     );
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET budget_policy_json = ?1 WHERE run_id = 'run-1'",
+            [legacy_v1_budget_json(&canonical_budget)],
+        )?;
+        Ok(())
+    })
+    .expect("simulate persisted v1 durable budget");
 
     let approval = AgentRunRepository::approve_frozen_confirmation(
         &db,
@@ -1486,6 +1526,23 @@ fn atomic_confirmation_request_binds_the_pending_plan_to_awaiting_state() {
         .expect("restore exact plan");
     assert_eq!(restored.plan_hash(), consumed.plan_hash);
     assert_eq!(restored.change()["content"], "approved");
+    let materialized = AgentRunRepository::budget_policy_for_session(&db, &session_key, "run-1")
+        .expect("read materialized durable budget")
+        .expect("durable budget");
+    assert_eq!(materialized, canonical_budget);
+    db.with_read_conn(|conn| {
+        let stored: String = conn.query_row(
+            "SELECT budget_policy_json FROM agent_runs WHERE run_id = 'run-1'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            stored,
+            serde_json::to_string(&canonical_budget).expect("canonical durable budget")
+        );
+        Ok(())
+    })
+    .expect("legacy durable budget must be materialized exactly once");
 }
 
 #[test]

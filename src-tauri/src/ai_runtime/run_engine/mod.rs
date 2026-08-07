@@ -28,7 +28,7 @@ use crate::ai_runtime::agent_run_repository::{
     DurableApplyCheckpointStage, FinalizeRunInput,
 };
 use crate::ai_runtime::agent_tool_loop::{
-    AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
+    resolved_turn_usage, AgentModelTurnBudget, AgentToolLoop, ToolLoopExecutor, ToolLoopProvider,
 };
 use crate::ai_runtime::citation_linkify::{
     bind_strict_current_run_citations, linkify_web_citations, strip_model_authored_citation_markers,
@@ -1083,6 +1083,14 @@ impl RunEngine {
             }
             return Err(AppError::msg("agent_run_terminal_state"));
         }
+        let budget_policy =
+            AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
+                .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        let turn_budget = AgentModelTurnBudget {
+            max_prompt_tokens: Some(budget_policy.max_prompt_tokens),
+            max_completion_tokens: Some(budget_policy.max_completion_tokens),
+            max_turn_output_tokens: Some(budget_policy.max_turn_output_tokens),
+        };
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
@@ -1150,7 +1158,7 @@ impl RunEngine {
         };
         let model_started_at = Instant::now();
         let response = provider
-            .answer_streaming(run_id, messages, &mut observer)
+            .answer_streaming(run_id, messages, turn_budget, &mut observer)
             .await;
         let response = match response {
             Ok(response) => response,
@@ -1187,6 +1195,45 @@ impl RunEngine {
             response.content.as_deref(),
         )? {
             return Ok(());
+        }
+        let (prompt_tokens, completion_tokens, _) = resolved_turn_usage(&response, messages, &[]);
+        if turn_budget
+            .max_prompt_tokens
+            .is_some_and(|limit| prompt_tokens > limit)
+        {
+            return fail_finalization_with_sink(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::FinalOutputValidation,
+                    SafeRunErrorCode::InvalidRequest,
+                    "direct model turn exceeded frozen prompt budget",
+                ),
+            );
+        }
+        if turn_budget
+            .max_turn_output_tokens
+            .is_some_and(|limit| completion_tokens > limit)
+            || turn_budget
+                .max_completion_tokens
+                .is_some_and(|limit| completion_tokens > limit)
+        {
+            if let Some(telemetry) = telemetry {
+                telemetry.record_final_output_validation(false, true);
+            }
+            return fail_finalization_with_sink(
+                db,
+                run_id,
+                running_state_version,
+                sink,
+                RunFinalizationFailure::new(
+                    RunFinalizationStage::FinalOutputValidation,
+                    SafeRunErrorCode::OutputTooLong,
+                    "direct model turn exceeded frozen completion budget",
+                ),
+            );
         }
         if let Err(error) = observer.flush_transient() {
             return fail_finalization_with_sink(

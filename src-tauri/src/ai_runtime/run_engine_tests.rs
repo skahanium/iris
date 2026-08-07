@@ -81,6 +81,11 @@ struct FixedContentStreamingProvider {
     content: String,
 }
 
+struct MissingUsageStreamingProvider {
+    content: String,
+    budgets: std::sync::Mutex<Vec<crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget>>,
+}
+
 struct MakeSqliteReadonlyProvider<'a> {
     db: &'a Database,
 }
@@ -163,6 +168,7 @@ impl StreamingDirectAnswerProvider for MockStreamingProvider {
         &'a self,
         run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<
@@ -206,6 +212,7 @@ impl StreamingDirectAnswerProvider for FixedContentStreamingProvider {
         &'a self,
         run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<
@@ -246,6 +253,37 @@ impl StreamingDirectAnswerProvider for FixedContentStreamingProvider {
     }
 }
 
+impl StreamingDirectAnswerProvider for MissingUsageStreamingProvider {
+    fn answer_streaming<'a>(
+        &'a self,
+        _run_id: &'a str,
+        _messages: &'a [crate::ai_runtime::LlmMessage],
+        budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
+        _observer: &'a mut dyn StreamEventObserver,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
+                + Send
+                + 'a,
+        >,
+    > {
+        self.budgets
+            .lock()
+            .expect("direct budget lock")
+            .push(budget);
+        Box::pin(async move {
+            Ok(crate::ai_runtime::model_gateway::GatewayResponse {
+                content: Some(self.content.clone()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".to_string(),
+                reasoning_content: None,
+                continuation: None,
+            })
+        })
+    }
+}
+
 struct MetaAnalysisStreamingProvider;
 
 struct NormalAnswerStreamingProvider;
@@ -272,6 +310,7 @@ impl StreamingDirectAnswerProvider for MetaAnalysisStreamingProvider {
         &'a self,
         _run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         _observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<
@@ -304,6 +343,7 @@ impl StreamingDirectAnswerProvider for NormalAnswerStreamingProvider {
         &'a self,
         run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<
@@ -550,6 +590,71 @@ fn direct_engine_calls_provider_once_and_finalizes_one_run() {
     );
     assert_eq!(emitted[0]["type"], "stage_changed");
     assert_eq!(emitted[2]["type"], "completed");
+}
+
+#[tokio::test]
+async fn direct_streaming_enforces_the_frozen_run_budget_when_usage_is_missing_at_boundaries() {
+    for boundary in [-1_i32, 0, 1] {
+        let db = Database::open_in_memory().expect("database");
+        let accepted = RunIntake::start(&db, request()).expect("accepted direct run");
+        let sink = RecordingSink::default();
+        let frozen = AgentRunRepository::budget_policy_for_session(
+            &db,
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("read accepted frozen budget")
+        .expect("accepted budget");
+        let completion_limit = frozen
+            .max_completion_tokens
+            .min(frozen.max_turn_output_tokens) as i32;
+        let provider = MissingUsageStreamingProvider {
+            content: "答".repeat(completion_limit.saturating_add(boundary) as usize),
+            budgets: std::sync::Mutex::new(Vec::new()),
+        };
+
+        let result = RunEngine::execute_direct_streaming_with_sink(
+            &db,
+            &accepted.session,
+            &accepted.run_id,
+            &provider,
+            &sink,
+        )
+        .await;
+
+        if boundary <= 0 {
+            result.expect("N-1 and N missing-usage direct outputs stay within the frozen limit");
+            let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+                .expect("replay")
+                .expect("run");
+            assert_eq!(replay.run.state, RunState::Completed);
+        } else {
+            assert_eq!(
+                result
+                    .expect_err("N+1 missing-usage direct output must fail before finalization")
+                    .to_string(),
+                SafeRunErrorCode::OutputTooLong.as_str()
+            );
+            let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
+                .expect("replay")
+                .expect("run");
+            assert_eq!(replay.run.state, RunState::Failed);
+            assert!(replay.run.final_message_id.is_none());
+        }
+        assert_eq!(
+            provider
+                .budgets
+                .lock()
+                .expect("direct budget lock")
+                .as_slice(),
+            [crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget {
+                max_prompt_tokens: Some(frozen.max_prompt_tokens),
+                max_completion_tokens: Some(frozen.max_completion_tokens),
+                max_turn_output_tokens: Some(frozen.max_turn_output_tokens),
+            }],
+            "each accepted Direct Run passes its persisted frozen budget to the provider"
+        );
+    }
 }
 
 #[test]
@@ -1421,6 +1526,61 @@ fn startup_recovery_offers_resume_only_when_consumed_target_is_still_at_base_has
         .expect("run");
     assert_eq!(replay.run.state, RunState::Paused);
     assert_eq!(replay.run.recovery, Some(RunRecoveryKind::ResumeAvailable));
+
+    std::fs::remove_dir_all(vault).expect("remove recovery vault");
+}
+
+#[test]
+fn durable_startup_recovery_materializes_a_consumed_legacy_v1_budget() {
+    let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
+    let (legacy_v1, canonical) = db
+        .with_read_conn(|conn| {
+            let canonical: String = conn.query_row(
+                "SELECT budget_policy_json FROM agent_runs WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )?;
+            let mut legacy_v1: serde_json::Value = serde_json::from_str(&canonical)?;
+            let fields = legacy_v1
+                .as_object_mut()
+                .expect("canonical budget is an object");
+            for field in [
+                "maxPromptTokens",
+                "maxCompletionTokens",
+                "maxTurnOutputTokens",
+            ] {
+                fields.remove(field);
+            }
+            Ok::<_, crate::error::AppError>((serde_json::to_string(&legacy_v1)?, canonical))
+        })
+        .expect("derive persisted v1 budget");
+    db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE agent_runs SET budget_policy_json = ?1 WHERE run_id = ?2",
+            rusqlite::params![legacy_v1, accepted.run_id],
+        )?;
+        Ok(())
+    })
+    .expect("simulate interrupted legacy durable run");
+
+    assert_eq!(
+        RunEngine::recover_interrupted_runs(&db).expect("recover legacy durable apply"),
+        1
+    );
+    let stored: String = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT budget_policy_json FROM agent_runs WHERE run_id = ?1",
+                [&accepted.run_id],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .expect("read recovered budget");
+    assert_eq!(
+        stored, canonical,
+        "recovery must materialize v1 exactly once"
+    );
 
     std::fs::remove_dir_all(vault).expect("remove recovery vault");
 }
@@ -4026,6 +4186,7 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
             &'a self,
             _run_id: &'a str,
             messages: &'a [crate::ai_runtime::LlmMessage],
+            _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
             _observer: &'a mut dyn StreamEventObserver,
         ) -> Pin<
             Box<
@@ -4140,6 +4301,7 @@ impl StreamingDirectAnswerProvider for LeakingStreamingProvider {
         &'a self,
         run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
         Box<

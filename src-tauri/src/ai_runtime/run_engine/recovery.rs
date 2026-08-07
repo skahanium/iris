@@ -73,6 +73,9 @@ impl RunEngine {
                 recovered += 1;
                 continue;
             };
+            let budget_is_valid =
+                AgentRunRepository::budget_policy_for_session(db, &session_key, &run_id)
+                    .is_ok_and(|policy| policy.is_some());
             let plan =
                 crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
                     &consumed.plan_json,
@@ -85,6 +88,7 @@ impl RunEngine {
                         && plan.confirmation_id() == consumed.confirmation_id
                         && plan.run_id() == run_id
                 })
+                .filter(|_| budget_is_valid)
                 .and_then(|plan| {
                     classify_consumed_durable_apply(db, &session_key, &run_id, plan).ok()
                 })

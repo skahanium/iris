@@ -14,6 +14,7 @@ pub(crate) trait StreamingDirectAnswerProvider: Send + Sync {
         &'a self,
         run_id: &'a str,
         messages: &'a [crate::ai_runtime::LlmMessage],
+        budget: AgentModelTurnBudget,
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
         Box<
@@ -100,6 +101,7 @@ impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider
         &'a self,
         run_id: &'a str,
         messages: &'a [crate::ai_runtime::LlmMessage],
+        budget: AgentModelTurnBudget,
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
         Box<
@@ -116,7 +118,7 @@ impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider
             self.thinking,
             self.reasoning,
         );
-        apply_model_turn_budget(&mut request, AgentModelTurnBudget::default());
+        apply_model_turn_budget(&mut request, budget);
         request.continuation = self.continuation.clone();
         Box::pin(async move {
             self.gateway
@@ -356,6 +358,7 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
         &'a self,
         run_id: &'a str,
         messages: &'a [crate::ai_runtime::LlmMessage],
+        budget: AgentModelTurnBudget,
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
         Box<
@@ -390,7 +393,7 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
                 let provider =
                     ModelGatewayStreamingDirectAnswerProvider::from_dispatch(&gateway, dispatch)?;
                 let response = provider
-                    .answer_streaming(run_id, messages, observer)
+                    .answer_streaming(run_id, messages, budget, observer)
                     .await
                     .and_then(|response| {
                         (response

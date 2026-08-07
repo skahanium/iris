@@ -262,6 +262,9 @@ fn select_bounded_recent_history(
         let user = &candidates[end - 2];
         let assistant = &candidates[end - 1];
         if !is_coherent_conversation_pair(user, assistant) {
+            if !selected_pairs.is_empty() {
+                break;
+            }
             end -= 1;
             continue;
         }
@@ -269,10 +272,9 @@ fn select_bounded_recent_history(
         let pair_tokens = history_pair_tokens(user, assistant);
         if selected_tokens.saturating_add(pair_tokens) > MAX_RECENT_CONVERSATION_TOKENS {
             if selected_pairs.is_empty() {
-                break;
+                selected_pairs.push(project_history_pair_to_budget(user, assistant));
             }
-            end -= 2;
-            continue;
+            break;
         }
 
         selected_tokens = selected_tokens.saturating_add(pair_tokens);
@@ -285,6 +287,49 @@ fn select_bounded_recent_history(
         .into_iter()
         .flat_map(|(user, assistant)| [user, assistant])
         .collect()
+}
+
+fn project_history_pair_to_budget(
+    user: &NormalSessionMessage,
+    assistant: &NormalSessionMessage,
+) -> (NormalSessionMessage, NormalSessionMessage) {
+    let user_tokens = crate::ai_runtime::text_support::estimate_tokens(&user.content) as u32;
+    let assistant_tokens =
+        crate::ai_runtime::text_support::estimate_tokens(&assistant.content) as u32;
+    let pair_tokens = user_tokens.saturating_add(assistant_tokens).max(1);
+    let minimum_per_message = 1_u32;
+    let remaining_budget =
+        MAX_RECENT_CONVERSATION_TOKENS.saturating_sub(minimum_per_message.saturating_mul(2));
+    let user_budget = minimum_per_message.saturating_add(
+        ((remaining_budget as u64).saturating_mul(user_tokens as u64) / pair_tokens as u64)
+            .min(remaining_budget as u64) as u32,
+    );
+    let assistant_budget = MAX_RECENT_CONVERSATION_TOKENS.saturating_sub(user_budget);
+    let mut projected_user = user.clone();
+    projected_user.content = truncate_history_content_to_token_budget(&user.content, user_budget);
+    let mut projected_assistant = assistant.clone();
+    projected_assistant.content =
+        truncate_history_content_to_token_budget(&assistant.content, assistant_budget);
+    (projected_user, projected_assistant)
+}
+
+fn truncate_history_content_to_token_budget(content: &str, budget: u32) -> String {
+    if crate::ai_runtime::text_support::estimate_tokens(content) <= budget as usize {
+        return content.to_string();
+    }
+    let char_count = content.chars().count();
+    let mut lower = 0;
+    let mut upper = char_count;
+    while lower < upper {
+        let middle = lower.saturating_add(upper.saturating_sub(lower).saturating_add(1) / 2);
+        let candidate = content.chars().take(middle).collect::<String>();
+        if crate::ai_runtime::text_support::estimate_tokens(&candidate) <= budget as usize {
+            lower = middle;
+        } else {
+            upper = middle.saturating_sub(1);
+        }
+    }
+    content.chars().take(lower.max(1)).collect()
 }
 
 fn is_coherent_conversation_pair(
@@ -307,6 +352,70 @@ fn history_pair_tokens(user: &NormalSessionMessage, assistant: &NormalSessionMes
     user_tokens
         .saturating_add(assistant_tokens)
         .min(u32::MAX as usize) as u32
+}
+
+#[cfg(test)]
+mod history_selection_tests {
+    use super::*;
+
+    fn message(seq: i64, role: &str, content: String, turn_id: &str) -> NormalSessionMessage {
+        NormalSessionMessage {
+            seq,
+            role: role.to_string(),
+            content,
+            content_parts: None,
+            tool_calls: None,
+            turn_id: Some(turn_id.to_string()),
+            run_id: None,
+            turn_state: None,
+            retryable: false,
+            context_scope: serde_json::json!([]),
+            display_mentions: Vec::new(),
+            web_citations: Vec::new(),
+            citation_binding: None,
+            source_summary: Vec::new(),
+            created_at: "2026-08-07T00:00:00Z".to_string(),
+        }
+    }
+
+    fn pair(start_seq: i64, turn_id: &str, tokens_per_message: usize) -> Vec<NormalSessionMessage> {
+        vec![
+            message(start_seq, "user", "问".repeat(tokens_per_message), turn_id),
+            message(
+                start_seq + 1,
+                "assistant",
+                "答".repeat(tokens_per_message),
+                turn_id,
+            ),
+        ]
+    }
+
+    #[test]
+    fn newest_oversized_pair_is_projected_as_a_pair_inside_the_history_budget() {
+        let selected = select_bounded_recent_history(pair(1, "latest", 4_001));
+
+        assert_eq!(
+            selected.len(),
+            2,
+            "newest complete pair must remain available"
+        );
+        assert!(is_coherent_conversation_pair(&selected[0], &selected[1]));
+        assert!(selected.iter().all(|message| !message.content.is_empty()));
+        assert!(history_pair_tokens(&selected[0], &selected[1]) <= MAX_RECENT_CONVERSATION_TOKENS);
+    }
+
+    #[test]
+    fn history_selection_stops_at_the_first_nonfitting_older_pair() {
+        let mut candidates = pair(1, "older", 500);
+        candidates.extend(pair(3, "middle", 3_500));
+        candidates.extend(pair(5, "newest", 1_000));
+
+        let selected = select_bounded_recent_history(candidates);
+
+        assert_eq!(selected.len(), 2, "history may not skip an older gap");
+        assert_eq!(selected[0].turn_id.as_deref(), Some("newest"));
+        assert!(is_coherent_conversation_pair(&selected[0], &selected[1]));
+    }
 }
 
 impl RunContextAssembler {

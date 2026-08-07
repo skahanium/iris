@@ -447,11 +447,23 @@ impl AgentRunRepository {
                         )),
                     )
                     .optional()?;
-                let Some((session_id, turn_id, effect, effort, security_domain, risk, envelope_json, explicit_action_json, goal_summary, budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash)) = source else {
+                let Some((session_id, turn_id, effect, effort, security_domain, risk, envelope_json, explicit_action_json, goal_summary, stored_budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash)) = source else {
                     return Err(AppError::msg("agent_run_retry_not_available"));
                 };
                 let (_, budget_policy_json) =
-                    materialize_budget_policy(&budget_policy_json, &envelope_json)?;
+                    materialize_budget_policy(&stored_budget_policy_json, &envelope_json)?;
+                if budget_policy_json != stored_budget_policy_json {
+                    conn.execute(
+                        "UPDATE agent_runs
+                         SET budget_policy_json = ?1
+                         WHERE run_id = ?2 AND budget_policy_json = ?3",
+                        rusqlite::params![
+                            budget_policy_json,
+                            input.source_run_id,
+                            stored_budget_policy_json
+                        ],
+                    )?;
+                }
                 let now = chrono::Utc::now().to_rfc3339();
                 conn.execute(
                     "INSERT INTO agent_runs
@@ -1127,13 +1139,18 @@ impl AgentRunRepository {
     ) -> AppResult<FrozenConfirmationApproval> {
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
-                let (status, stored_state_version): (String, u64) = conn
+                let (status, stored_state_version, stored_budget_policy_json, envelope_json): (
+                    String,
+                    u64,
+                    String,
+                    String,
+                ) = conn
                     .query_row(
-                        "SELECT r.status, r.state_version
+                        "SELECT r.status, r.state_version, r.budget_policy_json, r.envelope_json
                          FROM agent_runs r JOIN sessions s ON s.id = r.session_id
                          WHERE r.run_id = ?1 AND s.session_key = ?2",
                         rusqlite::params![run_id, session_key],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
                     )
                     .map_err(not_found_or_db)?;
                 let (confirmation_status, plan_json): (String, String) = conn
@@ -1160,6 +1177,20 @@ impl AgentRunRepository {
                 }
                 if parse_wire::<RunState>(&status)? != RunState::AwaitingConfirmation {
                     return Err(AppError::msg("agent_run_illegal_transition"));
+                }
+                let (_, normalized_budget_policy_json) =
+                    materialize_budget_policy(&stored_budget_policy_json, &envelope_json)?;
+                if normalized_budget_policy_json != stored_budget_policy_json {
+                    conn.execute(
+                        "UPDATE agent_runs
+                         SET budget_policy_json = ?1
+                         WHERE run_id = ?2 AND budget_policy_json = ?3",
+                        rusqlite::params![
+                            normalized_budget_policy_json,
+                            run_id,
+                            stored_budget_policy_json
+                        ],
+                    )?;
                 }
                 let now = chrono::Utc::now().to_rfc3339();
                 let consumed = conn.execute(
@@ -1874,12 +1905,54 @@ fn materialize_budget_policy(
     if stored_policy == "{}" {
         return Ok((canonical_policy, normalized));
     }
-    let stored_policy: RunBudgetPolicy = serde_json::from_str(stored_policy)
+    if let Ok(stored_policy) = serde_json::from_str::<RunBudgetPolicy>(stored_policy) {
+        if stored_policy != canonical_policy {
+            return Err(AppError::msg("agent_run_invalid_budget_policy"));
+        }
+        return Ok((stored_policy, normalized));
+    }
+    let legacy_policy: LegacyRunBudgetPolicyV1 = serde_json::from_str(stored_policy)
         .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
-    if stored_policy != canonical_policy {
+    if legacy_policy != LegacyRunBudgetPolicyV1::from(&canonical_policy) {
         return Err(AppError::msg("agent_run_invalid_budget_policy"));
     }
-    Ok((stored_policy, normalized))
+    Ok((canonical_policy, normalized))
+}
+
+/// The complete persisted v1 shape before frozen token fields were added.
+///
+/// This is intentionally exact rather than permissive: only a policy that is
+/// otherwise identical to the persisted envelope may be materialized once.
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LegacyRunBudgetPolicyV1 {
+    schema_version: u8,
+    profile: crate::ai_runtime::run_contract::RunBudgetProfile,
+    max_model_turns: u32,
+    max_tool_calls: u32,
+    max_child_runs: u32,
+    child_max_model_turns: u32,
+    child_max_tool_calls: u32,
+    child_input_tokens_per_turn: u32,
+    child_output_tokens_per_turn: u32,
+    post_confirmation_max_model_turns: u32,
+}
+
+impl From<&RunBudgetPolicy> for LegacyRunBudgetPolicyV1 {
+    fn from(policy: &RunBudgetPolicy) -> Self {
+        Self {
+            schema_version: policy.schema_version,
+            profile: policy.profile,
+            max_model_turns: policy.max_model_turns,
+            max_tool_calls: policy.max_tool_calls,
+            max_child_runs: policy.max_child_runs,
+            child_max_model_turns: policy.child_max_model_turns,
+            child_max_tool_calls: policy.child_max_tool_calls,
+            child_input_tokens_per_turn: policy.child_input_tokens_per_turn,
+            child_output_tokens_per_turn: policy.child_output_tokens_per_turn,
+            post_confirmation_max_model_turns: policy.post_confirmation_max_model_turns,
+        }
+    }
 }
 
 /// Persisted explicit-reference facts that may be resolved for one Run.

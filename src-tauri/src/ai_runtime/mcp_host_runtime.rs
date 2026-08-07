@@ -2522,8 +2522,257 @@ mod tests {
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
-        sync::oneshot,
+        sync::{oneshot, watch},
     };
+
+    const STATEFUL_MCP_SESSION_ID: &str = "stateful-test-session";
+
+    #[derive(Clone, Copy)]
+    enum StatefulMcpStreamMode {
+        Get405,
+        PersistentSse,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct StatefulMcpCapture {
+        http_method: String,
+        rpc_method: Option<String>,
+        session_header_matches_issued_session: bool,
+    }
+
+    struct StatefulMcpDouble {
+        url: String,
+        captures: Arc<StdMutex<Vec<StatefulMcpCapture>>>,
+        shutdown: watch::Sender<bool>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl StatefulMcpDouble {
+        async fn wait_for_session_traffic(&self) {
+            timeout(Duration::from_millis(500), async {
+                loop {
+                    let captures = self
+                        .captures
+                        .lock()
+                        .expect("stateful MCP capture lock")
+                        .clone();
+                    let initialized = captures.iter().any(|capture| {
+                        capture.rpc_method.as_deref() == Some("notifications/initialized")
+                            && capture.session_header_matches_issued_session
+                    });
+                    let opened_stream = captures.iter().any(|capture| {
+                        capture.http_method == "GET"
+                            && capture.session_header_matches_issued_session
+                    });
+                    let called_tool = captures.iter().any(|capture| {
+                        capture.rpc_method.as_deref() == Some("tools/call")
+                            && capture.session_header_matches_issued_session
+                    });
+                    if initialized && opened_stream && called_tool {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            })
+            .await
+            .expect("RMCP stateful transport must send notification, GET and tools/call");
+        }
+
+        async fn finish(self) -> Vec<StatefulMcpCapture> {
+            let _ = self.shutdown.send(true);
+            self.task.abort();
+            let _ = self.task.await;
+            self.captures
+                .lock()
+                .expect("stateful MCP capture lock")
+                .clone()
+        }
+    }
+
+    async fn spawn_stateful_mcp_double(mode: StatefulMcpStreamMode) -> StatefulMcpDouble {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stateful MCP test peer");
+        let address = listener
+            .local_addr()
+            .expect("read stateful MCP test peer address");
+        let captures = Arc::new(StdMutex::new(Vec::new()));
+        let task_captures = Arc::clone(&captures);
+        let (shutdown, mut shutdown_receiver) = watch::channel(false);
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    result = listener.accept() => {
+                        let Ok((mut socket, _)) = result else {
+                            return;
+                        };
+                        let captures = Arc::clone(&task_captures);
+                        let shutdown = shutdown_receiver.clone();
+                        tokio::spawn(async move {
+                            let _ = serve_stateful_mcp_request(
+                                &mut socket,
+                                mode,
+                                captures,
+                                shutdown,
+                            ).await;
+                        });
+                    }
+                    changed = shutdown_receiver.changed() => {
+                        if changed.is_err() || *shutdown_receiver.borrow() {
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        StatefulMcpDouble {
+            url: format!("http://{address}/mcp"),
+            captures,
+            shutdown,
+            task,
+        }
+    }
+
+    async fn serve_stateful_mcp_request(
+        socket: &mut tokio::net::TcpStream,
+        mode: StatefulMcpStreamMode,
+        captures: Arc<StdMutex<Vec<StatefulMcpCapture>>>,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Result<(), ()> {
+        const MAX_REQUEST_BYTES: usize = 64 * 1024;
+        let mut bytes = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        let header_end = loop {
+            let read = socket.read(&mut chunk).await.map_err(|_| ())?;
+            if read == 0 {
+                return Err(());
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+            if bytes.len() > MAX_REQUEST_BYTES {
+                return Err(());
+            }
+            if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                break index + 4;
+            }
+        };
+        let header_text = String::from_utf8_lossy(&bytes[..header_end]);
+        let http_method = header_text
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .unwrap_or_default()
+            .to_string();
+        let session_header_matches_issued_session = header_text.lines().any(|line| {
+            line.split_once(':').is_some_and(|(name, value)| {
+                name.eq_ignore_ascii_case("mcp-session-id")
+                    && value.trim() == STATEFUL_MCP_SESSION_ID
+            })
+        });
+        if http_method == "GET" {
+            captures.lock().map_err(|_| ())?.push(StatefulMcpCapture {
+                http_method,
+                rpc_method: None,
+                session_header_matches_issued_session,
+            });
+            match mode {
+                StatefulMcpStreamMode::Get405 => {
+                    socket
+                        .write_all(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                        .await
+                        .map_err(|_| ())?;
+                }
+                StatefulMcpStreamMode::PersistentSse => {
+                    socket
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: keep-alive\r\n\r\n: ready\n\n")
+                        .await
+                        .map_err(|_| ())?;
+                    while !*shutdown.borrow() {
+                        if shutdown.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        let content_length = header_text
+            .lines()
+            .find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.eq_ignore_ascii_case("content-length")
+                    .then(|| value.trim().parse::<usize>().ok())
+                    .flatten()
+            })
+            .unwrap_or(0);
+        let expected_length = header_end.saturating_add(content_length);
+        while bytes.len() < expected_length {
+            let read = socket.read(&mut chunk).await.map_err(|_| ())?;
+            if read == 0 {
+                return Err(());
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+            if bytes.len() > MAX_REQUEST_BYTES {
+                return Err(());
+            }
+        }
+        let request: serde_json::Value =
+            serde_json::from_slice(&bytes[header_end..expected_length]).map_err(|_| ())?;
+        let rpc_method = request
+            .get("method")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        captures.lock().map_err(|_| ())?.push(StatefulMcpCapture {
+            http_method: http_method.clone(),
+            rpc_method: rpc_method.clone(),
+            session_header_matches_issued_session,
+        });
+
+        if http_method == "DELETE"
+            || rpc_method
+                .as_deref()
+                .is_some_and(|method| method.starts_with("notifications/"))
+        {
+            socket
+                .write_all(
+                    b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .map_err(|_| ())?;
+            return Ok(());
+        }
+        let id = request
+            .get("id")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let result = match rpc_method.as_deref() {
+            Some("initialize") => serde_json::json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "stateful-rmcp-test", "version": "1"}
+            }),
+            Some("tools/call") => serde_json::json!({
+                "content": [{"type": "text", "text": "stateful fixture result"}],
+                "isError": false
+            }),
+            _ => serde_json::json!({}),
+        };
+        let body = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
+        let session_header = if rpc_method.as_deref() == Some("initialize") {
+            format!("Mcp-Session-Id: {STATEFUL_MCP_SESSION_ID}\r\n")
+        } else {
+            String::new()
+        };
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{session_header}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket
+            .write_all(response.as_bytes())
+            .await
+            .map_err(|_| ())?;
+        Ok(())
+    }
 
     #[test]
     fn mcp_sdk_failure_class_uses_service_error_variants_and_safe_runtime_categories() {
@@ -2723,6 +2972,60 @@ mod tests {
         );
         release.send(()).expect("release test SSE peer");
         task.await.expect("finish test SSE peer");
+    }
+
+    #[tokio::test]
+    async fn rmcp_client_keeps_a_stateful_session_across_notification_get_and_tool_call() {
+        for mode in [
+            StatefulMcpStreamMode::Get405,
+            StatefulMcpStreamMode::PersistentSse,
+        ] {
+            let peer = spawn_stateful_mcp_double(mode).await;
+            let result = call_http_tool_with_rmcp(
+                McpHttpLaunch {
+                    url: peer.url.clone(),
+                    headers: Vec::new(),
+                    request_timeout: Duration::from_secs(2),
+                    max_response_bytes: 16 * 1024,
+                    allow_localhost_dev: true,
+                },
+                "stateful_tool".into(),
+                serde_json::json!({}),
+            )
+            .await
+            .expect("real RMCP stateful tools/call succeeds");
+
+            assert!(result.get("content").is_some());
+            peer.wait_for_session_traffic().await;
+            let captures = peer.finish().await;
+            let initialize = captures
+                .iter()
+                .find(|capture| capture.rpc_method.as_deref() == Some("initialize"))
+                .expect("stateful peer observed initialize");
+            assert_eq!(initialize.http_method, "POST");
+            assert!(
+                !initialize.session_header_matches_issued_session,
+                "initialize must establish, not predeclare, the session"
+            );
+            assert!(captures.iter().any(|capture| {
+                capture.rpc_method.as_deref() == Some("notifications/initialized")
+                    && capture.session_header_matches_issued_session
+            }));
+            assert!(captures.iter().any(|capture| {
+                capture.http_method == "GET" && capture.session_header_matches_issued_session
+            }));
+            assert!(captures.iter().any(|capture| {
+                capture.rpc_method.as_deref() == Some("tools/call")
+                    && capture.session_header_matches_issued_session
+            }));
+            assert!(
+                captures
+                    .iter()
+                    .filter(|capture| capture.rpc_method.as_deref() != Some("initialize"))
+                    .all(|capture| capture.session_header_matches_issued_session),
+                "the peer records only method and header-match facts; every post-initialize request must carry the issued session"
+            );
+        }
     }
 
     #[tokio::test]

@@ -969,7 +969,12 @@ fn spawn_classified_direct_run<R: tauri::Runtime>(
             }
         }
         let response = provider
-            .answer_streaming(&accepted.run_id, &messages, &mut SilentObserver)
+            .answer_streaming(
+                &accepted.run_id,
+                &messages,
+                crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget::default(),
+                &mut SilentObserver,
+            )
             .await;
         match response {
             Ok(response)

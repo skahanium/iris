@@ -403,6 +403,8 @@ struct InterruptedThenRecoveryProvider {
     recovery_tools: Mutex<Vec<ToolSpec>>,
     recovery_messages: Mutex<Vec<LlmMessage>>,
     recovery_attempts_tool_call: bool,
+    visible_draft: String,
+    continuation: String,
 }
 
 impl ToolLoopProvider for InterruptedThenRecoveryProvider {
@@ -423,7 +425,7 @@ impl ToolLoopProvider for InterruptedThenRecoveryProvider {
                         request_id: run_id.to_string(),
                         event_type: super::model_gateway::StreamEventType::Token,
                         data: super::model_gateway::StreamEventData::Token {
-                            token: "已经露出的开头，".to_string(),
+                            token: self.visible_draft.clone(),
                             replace_visible: false,
                         },
                         surface: StreamSurface::VisibleAnswerSanitized,
@@ -446,7 +448,7 @@ impl ToolLoopProvider for InterruptedThenRecoveryProvider {
             .expect("recovery messages lock") = messages.to_vec();
         Box::pin(async {
             Ok(super::model_gateway::GatewayResponse {
-                content: Some("这是同一回答的续写，现已完整。".into()),
+                content: Some(self.continuation.clone()),
                 tool_calls: self
                     .recovery_attempts_tool_call
                     .then(tool_call)
@@ -468,6 +470,8 @@ async fn partial_visible_stream_error_recovers_once_with_same_provider_and_no_to
         recovery_tools: Mutex::new(Vec::new()),
         recovery_messages: Mutex::new(Vec::new()),
         recovery_attempts_tool_call: false,
+        visible_draft: "已经露出的开头，".into(),
+        continuation: "这是同一回答的续写，现已完整。".into(),
     };
     let executor = RecordingExecutor {
         calls: AtomicU32::new(0),
@@ -509,6 +513,13 @@ async fn partial_visible_stream_error_recovers_once_with_same_provider_and_no_to
         "已经露出的开头，\n\n这是同一回答的续写，现已完整。"
     );
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        outcome.completion_tokens,
+        crate::ai_runtime::text_support::estimate_tokens("已经露出的开头，") as u32
+            + crate::ai_runtime::text_support::estimate_tokens("这是同一回答的续写，现已完整。")
+                as u32,
+        "the recovery budget includes the visible draft exactly once"
+    );
     assert!(provider
         .recovery_tools
         .lock()
@@ -538,6 +549,8 @@ async fn partial_visible_stream_recovery_rejects_a_business_tool_call() {
         recovery_tools: Mutex::new(Vec::new()),
         recovery_messages: Mutex::new(Vec::new()),
         recovery_attempts_tool_call: true,
+        visible_draft: "已经露出的开头，".into(),
+        continuation: "这是同一回答的续写，现已完整。".into(),
     };
     let executor = RecordingExecutor {
         calls: AtomicU32::new(0),
@@ -569,6 +582,81 @@ async fn partial_visible_stream_recovery_rejects_a_business_tool_call() {
 
     assert_eq!(error.to_string(), "agent_run_incomplete_output");
     assert_eq!(executor.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn interrupted_visible_drafts_count_against_per_turn_and_cumulative_budgets() {
+    const LIMIT: usize = 8;
+
+    for (draft_tokens, expected_error) in [
+        (LIMIT - 1, None),
+        (LIMIT, Some("agent_run_tool_loop_limit")),
+        (LIMIT + 1, Some("agent_run_output_too_long")),
+    ] {
+        let provider = InterruptedThenRecoveryProvider {
+            calls: AtomicU32::new(0),
+            recovery_tools: Mutex::new(Vec::new()),
+            recovery_messages: Mutex::new(Vec::new()),
+            recovery_attempts_tool_call: false,
+            visible_draft: "答".repeat(draft_tokens),
+            continuation: "续".into(),
+        };
+        let executor = RecordingExecutor {
+            calls: AtomicU32::new(0),
+            web_evidence: false,
+        };
+        let mut observer = VisibleDraftObserver {
+            content: String::new(),
+        };
+        let policy = RunBudgetPolicy {
+            schema_version: 1,
+            profile: RunBudgetProfile::Standard,
+            max_prompt_tokens: 1_000,
+            max_completion_tokens: LIMIT as u32,
+            max_turn_output_tokens: LIMIT as u32,
+            max_model_turns: 2,
+            max_tool_calls: 0,
+            max_child_runs: 0,
+            child_max_model_turns: 0,
+            child_max_tool_calls: 0,
+            child_input_tokens_per_turn: 0,
+            child_output_tokens_per_turn: 0,
+            post_confirmation_max_model_turns: 0,
+        };
+
+        let result = AgentToolLoop::from_policy(&policy)
+            .execute(
+                &provider,
+                &executor,
+                "run-interrupted-draft-budget",
+                Vec::new(),
+                Vec::new(),
+                &mut observer,
+            )
+            .await;
+
+        match expected_error {
+            None => {
+                let outcome =
+                    result.expect("N-1 visible draft leaves exactly one completion token");
+                assert_eq!(outcome.completion_tokens, LIMIT as u32);
+                assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+            }
+            Some(expected_error) => {
+                assert_eq!(
+                    result
+                        .expect_err("N and N+1 visible drafts must not be resumed over budget")
+                        .to_string(),
+                    expected_error
+                );
+                assert_eq!(
+                    provider.calls.load(Ordering::SeqCst),
+                    1,
+                    "over-budget recovery must not call the provider again"
+                );
+            }
+        }
+    }
 }
 
 fn tool_call() -> ToolCall {

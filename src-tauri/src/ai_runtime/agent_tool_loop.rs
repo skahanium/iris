@@ -325,6 +325,24 @@ impl AgentToolLoop {
                     }
                     incomplete_final_answer_repair_used = true;
                     let draft = visible_draft.expect("recovery guard requires a visible draft");
+                    let draft_completion_tokens = estimate_tokens(&draft);
+                    let exceeds_turn_output = self
+                        .turn_budget
+                        .max_turn_output_tokens
+                        .is_some_and(|limit| draft_completion_tokens > limit);
+                    let exceeds_run_completion =
+                        self.turn_budget.max_completion_tokens.is_some_and(|limit| {
+                            completion_tokens.saturating_add(draft_completion_tokens) > limit
+                        });
+                    if exceeds_turn_output || exceeds_run_completion {
+                        return Err(AppError::msg("agent_run_output_too_long"));
+                    }
+                    completion_tokens = completion_tokens.saturating_add(draft_completion_tokens);
+                    total_tokens = total_tokens.saturating_add(draft_completion_tokens);
+                    if let Some(usage) = usage.as_deref_mut() {
+                        usage.completion_tokens = completion_tokens;
+                        usage.total_tokens = total_tokens;
+                    }
                     incomplete_final_draft = Some(draft.clone());
                     messages.push(LlmMessage {
                         role: MessageRole::Assistant,
@@ -537,7 +555,7 @@ fn enforce_prompt_budget(
     Ok(())
 }
 
-fn resolved_turn_usage(
+pub(crate) fn resolved_turn_usage(
     response: &GatewayResponse,
     messages: &[LlmMessage],
     tools: &[ToolSpec],
@@ -582,10 +600,14 @@ fn estimate_completion_tokens(response: &GatewayResponse) -> u32 {
         .as_deref()
         .map(estimate_tokens)
         .unwrap_or_default();
-    let tool_tokens = serde_json::to_string(&response.tool_calls)
-        .ok()
-        .map(|serialized| estimate_tokens(&serialized))
-        .unwrap_or_default();
+    let tool_tokens = if response.tool_calls.is_empty() {
+        0
+    } else {
+        serde_json::to_string(&response.tool_calls)
+            .ok()
+            .map(|serialized| estimate_tokens(&serialized))
+            .unwrap_or_default()
+    };
     let reasoning_tokens = response
         .reasoning_content
         .as_deref()
