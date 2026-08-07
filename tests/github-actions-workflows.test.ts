@@ -26,6 +26,22 @@ function workflowJobBlocks(workflow: string): string[] {
   return jobs.split(/(?=^  [\w-]+:\s*$)/m);
 }
 
+function blockScalarValue(lines: string[], folded: boolean): string {
+  const commonIndent = Math.min(
+    ...lines.filter((line) => line.trim()).map((line) => line.search(/\S/)),
+  );
+  const content = lines.map((line) =>
+    line.trim() ? line.slice(commonIndent) : "",
+  );
+
+  if (!folded) return content.join("\n");
+  return content.reduce(
+    (value, line, index) =>
+      index === 0 ? line : `${value}${line ? " " : "\n"}${line}`,
+    "",
+  );
+}
+
 function runBlocks(job: string): string[] {
   const lines = job.split("\n");
   const blocks: string[] = [];
@@ -38,7 +54,8 @@ function runBlocks(job: string): string[] {
 
     const indent = (run[1] ?? "").length;
     const inline = run[2] ?? "";
-    if (inline !== "" && !/^[>|][+-]?$/.test(inline)) {
+    const blockScalar = inline.match(/^([>|])[+-]?$/);
+    if (inline !== "" && !blockScalar) {
       const blockLines = [inline];
       while (
         blockLines.at(-1)?.trimEnd().endsWith("\\") &&
@@ -63,7 +80,7 @@ function runBlocks(job: string): string[] {
       }
       blockLines.push(line);
     }
-    blocks.push(blockLines.join("\n"));
+    blocks.push(blockScalarValue(blockLines, blockScalar?.[1] === ">"));
   }
 
   return blocks.map((block) => block.replace(/\s*\\\r?\n[ \t]*/g, " "));
@@ -71,15 +88,73 @@ function runBlocks(job: string): string[] {
 
 const tauriCliBinary = String.raw`(?:tauri(?:\.cmd)?|(?:\S*\/)?node_modules\/\.bin\/tauri(?:\.cmd)?)`;
 const tauriCliLauncher = String.raw`(?:(?:npm\s+run|cargo)\s+|(?:npx|npm\s+exec)(?:\s+(?!${tauriCliBinary}(?:\s|$))\S+)*\s+)`;
+const nestedNodeTauriBuild =
+  /(?:^|\s)node\s+\S*tauri-cli\.mjs(?:\s+--)?\s+build\b[^\r\n]*/g;
 
-function tauriBuildCommands(command: string): string[] {
+function shellCommandSegments(command: string): string[] {
+  const segments: string[] = [];
+  let start = 0;
+  let quote: '"' | "'" | undefined;
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+    if (character === undefined) continue;
+    if (character === "\\" && quote !== "'") {
+      index += 1;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+
+    const nextCharacter = command[index + 1];
+    const separatorLength =
+      character === "\n" || character === ";" || character === "|"
+        ? nextCharacter === character
+          ? 2
+          : 1
+        : character === "&" && nextCharacter === "&"
+          ? 2
+          : 0;
+    if (separatorLength === 0) continue;
+
+    const segment = command.slice(start, index).trim();
+    if (segment) segments.push(segment);
+    index += separatorLength - 1;
+    start = index + 1;
+  }
+
+  const segment = command.slice(start).trim();
+  if (segment) segments.push(segment);
+  return segments;
+}
+
+function tauriBuildCommands(
+  command: string,
+  allowNestedNodeTauriCli = false,
+): string[] {
   const build = new RegExp(
-    String.raw`(?:^|\s)(?:${tauriCliLauncher})?(?:${tauriCliBinary}|node\s+\S*tauri-cli\.mjs)(?:\s+--)?\s+build\b[^\r\n]*`,
-    "g",
+    String.raw`^(?:${tauriCliLauncher})?(?:${tauriCliBinary}|node\s+\S*tauri-cli\.mjs)(?:\s+--)?\s+build\b[^\r\n]*`,
   );
-  return Array.from(command.matchAll(build), (match) =>
-    (match[0] ?? "").trim(),
-  );
+  const commands = shellCommandSegments(command).flatMap((segment) => {
+    const match = segment.match(build);
+    return match?.[0] ? [match[0]] : [];
+  });
+
+  if (!allowNestedNodeTauriCli) return commands;
+  return [
+    ...new Set([
+      ...commands,
+      ...Array.from(command.matchAll(nestedNodeTauriBuild), (match) =>
+        (match[0] ?? "").trim(),
+      ),
+    ]),
+  ];
 }
 
 function scriptTauriBuildCommands(
@@ -94,10 +169,12 @@ function scriptTauriBuildCommands(
     const script = scripts[scriptName];
     if (!script) return [];
     const invocationArgs = (match[2] ?? "").replace(/^\s*--\s*/, " ");
-    return tauriBuildCommands(`${script}${invocationArgs}`).map((final) => ({
-      final,
-      report: (match[0] ?? "").trim(),
-    }));
+    return tauriBuildCommands(`${script}${invocationArgs}`, true).map(
+      (final) => ({
+        final,
+        report: (match[0] ?? "").trim(),
+      }),
+    );
   });
 }
 
@@ -387,6 +464,26 @@ describe("GitHub Actions workflows", () => {
         forbiddenUbuntuTauriBundleCommands(ubuntuJob(`${command} --no-bundle`)),
       ),
     ).toEqual([]);
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuBlockJob(
+          ">-",
+          `npx tauri build --no-bundle
+          --bundles deb`,
+        ),
+      ),
+    ).toEqual(["npx tauri build --no-bundle --bundles deb"]);
+    for (const ordinaryOrNonTauriCommand of [
+      'echo "npx --yes tauri build"',
+      'echo "npx --yes tauri build; ./node_modules/.bin/tauri build"',
+      "npm exec -- eslint build",
+    ]) {
+      expect(
+        forbiddenUbuntuTauriBundleCommands(
+          ubuntuJob(ordinaryOrNonTauriCommand),
+        ),
+      ).toEqual([]);
+    }
     for (const chomping of ["|-", ">-", "|+"]) {
       expect(
         forbiddenUbuntuTauriBundleCommands(
