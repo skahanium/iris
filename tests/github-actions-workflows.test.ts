@@ -38,7 +38,7 @@ function runBlocks(job: string): string[] {
 
     const indent = (run[1] ?? "").length;
     const inline = run[2] ?? "";
-    if (inline !== "|" && inline !== ">" && inline !== "") {
+    if (inline !== "" && !/^[>|][+-]?$/.test(inline)) {
       const blockLines = [inline];
       while (
         blockLines.at(-1)?.trimEnd().endsWith("\\") &&
@@ -71,7 +71,7 @@ function runBlocks(job: string): string[] {
 
 function tauriBuildCommands(command: string): string[] {
   const build =
-    /\b(?:npm\s+run\s+tauri(?:\s+--)?\s+build|cargo\s+tauri\s+build|node\s+\S*tauri-cli\.mjs\s+build)\b[^\r\n]*/g;
+    /\b(?:npm\s+run\s+tauri(?:\s+--)?\s+build|cargo\s+tauri\s+build|npx\s+tauri\s+build|npm\s+exec\s+tauri\s+build|node\s+\S*tauri-cli\.mjs\s+build)\b[^\r\n]*/g;
   return Array.from(command.matchAll(build), (match) =>
     (match[0] ?? "").trim(),
   );
@@ -313,6 +313,13 @@ describe("GitHub Actions workflows", () => {
     steps:
       - run: ${command}
 `;
+    const ubuntuBlockJob = (chomping: string, command: string) => `jobs:
+  ubuntu-quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: ${chomping}
+          ${command}
+`;
 
     expect(
       forbiddenUbuntuTauriBundleCommands(ubuntuJob("npm run tauri -- build")),
@@ -340,6 +347,38 @@ describe("GitHub Actions workflows", () => {
     expect(
       forbiddenUbuntuTauriBundleCommands(ubuntuJob("npm run tauri:build:vec")),
     ).toEqual(["npm run tauri:build:vec"]);
+    for (const command of [
+      "npm run tauri -- build",
+      "npm run tauri:build:vec",
+      "npx tauri build",
+      "npm exec tauri build",
+    ]) {
+      expect(forbiddenUbuntuTauriBundleCommands(ubuntuJob(command))).toEqual([
+        command,
+      ]);
+    }
+    for (const command of [
+      "npm run tauri -- build --no-bundle",
+      "npm run tauri:build:vec -- --no-bundle",
+      "npx tauri build --no-bundle",
+      "npm exec tauri build --no-bundle",
+    ]) {
+      expect(forbiddenUbuntuTauriBundleCommands(ubuntuJob(command))).toEqual(
+        [],
+      );
+    }
+    for (const chomping of ["|-", ">-", "|+"]) {
+      expect(
+        forbiddenUbuntuTauriBundleCommands(
+          ubuntuBlockJob(chomping, "npx tauri build"),
+        ),
+      ).toEqual(["npx tauri build"]);
+      expect(
+        forbiddenUbuntuTauriBundleCommands(
+          ubuntuBlockJob(chomping, "npx tauri build --no-bundle"),
+        ),
+      ).toEqual([]);
+    }
     expect(
       forbiddenUbuntuTauriBundleCommands(
         ubuntuJob(`npm run tauri -- build --no-bundle \\
