@@ -18,7 +18,7 @@
 - 10 条链接/多文档；
 - 10 条无答案。
 
-fixture 只用于测试，不包含真实用户笔记或秘密。旧 `semantic-vault` 是 v1.2.5 历史基线，待 v2 fixture 落地后整体替换，不再扩充。
+fixture 只用于测试，不包含真实用户笔记或秘密。当前 RAG v2 数据集是**冻结于 v1.2.6 的历史 fixture**；其 labels hash 固定在 `fixtures/rag-v2-vault/fixture-metadata.json`，v1.2.18 仅以它评估当前 broker，不声称数据集已更新为 v1.2.18。旧 `semantic-vault` 是 v1.2.5 历史基线，待 v2 fixture 落地后整体替换，不再扩充。
 
 ## 指标与发布门槛
 

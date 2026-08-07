@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,7 +125,7 @@ function checkReleaseDocumentationFacts() {
         "512 维",
         "macOS + Windows",
       ],
-      forbidden: ["AllMiniLML6V2", "Rust cosine", "v1.2.6"],
+      forbidden: ["AllMiniLML6V2", "Rust cosine"],
     },
     {
       path: "docs/eval/rag-v2-broker-evaluation.md",
@@ -154,6 +155,65 @@ function checkReleaseDocumentationFacts() {
       if (content.includes(forbidden)) {
         fail(`${fact.path} contains stale release fact: ${forbidden}`);
       }
+    }
+  }
+}
+
+function checkRagFixtureContract() {
+  const version = readJson(path.join(root, "package.json")).version;
+  const fixtureRoot = path.join(
+    root,
+    "docs",
+    "eval",
+    "fixtures",
+    "rag-v2-vault",
+  );
+  const labelsPath = path.join(fixtureRoot, "labels.json");
+  const metadataPath = path.join(fixtureRoot, "fixture-metadata.json");
+  const labelsContent = readFileSync(labelsPath, "utf8");
+  const labels = JSON.parse(labelsContent);
+  const metadata = readJson(metadataPath);
+  const fixtureDocumentFacts = [
+    {
+      path: "docs/eval/rag-v2-broker-evaluation.md",
+      statement: `frozen at ${metadata.fixtureVersion}`,
+    },
+    {
+      path: "docs/eval/semantic-search.md",
+      statement: `冻结于 ${metadata.fixtureVersion} 的历史 fixture`,
+    },
+  ];
+
+  if (metadata.schemaVersion !== "iris-rag-fixture-metadata-v1") {
+    fail("rag-v2 fixture metadata must use iris-rag-fixture-metadata-v1");
+  }
+  if (metadata.fixtureStatus !== "historical_frozen") {
+    fail("rag-v2 fixture metadata must mark the label set historical_frozen");
+  }
+  if (metadata.fixtureVersion !== labels.version) {
+    fail(
+      `rag-v2 fixture version mismatch: metadata=${metadata.fixtureVersion} vs labels=${labels.version}`,
+    );
+  }
+  if (metadata.currentEvaluationVersion !== `v${version}`) {
+    fail(
+      `rag-v2 current evaluation version must be v${version}, got ${metadata.currentEvaluationVersion}`,
+    );
+  }
+  const labelsSha256 = createHash("sha256").update(labelsContent).digest("hex");
+  if (metadata.labelsSha256 !== labelsSha256) {
+    fail("rag-v2 fixture metadata labelsSha256 does not match labels.json");
+  }
+
+  for (const document of fixtureDocumentFacts) {
+    const content = readFileSync(path.join(root, document.path), "utf8");
+    if (!content.includes(document.statement)) {
+      fail(`${document.path} must describe the ${document.statement} fixture`);
+    }
+    if (!content.includes(`v${version}`)) {
+      fail(
+        `${document.path} must distinguish the current v${version} evaluation`,
+      );
     }
   }
 }
@@ -348,6 +408,7 @@ function checkIpcIndex() {
 
 checkVersionConsistency();
 checkReleaseDocumentationFacts();
+checkRagFixtureContract();
 checkMigrationCount();
 checkDocLinks();
 checkRetiredArchitectureReferences();

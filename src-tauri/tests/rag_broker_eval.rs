@@ -1,4 +1,8 @@
-//! End-to-end quality gates for the v1.2.6 hybrid retrieval broker.
+//! End-to-end quality gates for the current hybrid retrieval broker.
+//!
+//! The fixture itself is frozen at v1.2.6. Its metadata binds that historic
+//! label set to this current evaluation without presenting it as a v1.2.18
+//! fixture revision.
 //!
 //! The suite indexes a real fixture vault then invokes the public broker.  It
 //! deliberately disables vectors, so the default CI path never downloads a
@@ -19,6 +23,8 @@ use rusqlite::Connection;
 use serde::Deserialize;
 
 const FIXTURE_VERSION: &str = "v1.2.6";
+const FIXTURE_STATUS: &str = "historical_frozen";
+const CURRENT_EVALUATION_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 const POSITIVE_RECALL_AT_5_MIN: f64 = 0.80;
 const POSITIVE_RECALL_AT_30_MIN: f64 = 0.95;
 const NO_ANSWER_FALSE_POSITIVE_RATE_MAX: f64 = 0.10;
@@ -32,6 +38,14 @@ struct EvalFixture {
     version: String,
     notes: Vec<FixtureNote>,
     queries: Vec<EvalQuery>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FixtureMetadata {
+    fixture_version: String,
+    fixture_status: String,
+    current_evaluation_version: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,6 +193,19 @@ fn load_fixture() -> EvalFixture {
         .unwrap_or_else(|error| panic!("parse {}: {error}", labels.display()))
 }
 
+fn load_fixture_metadata() -> FixtureMetadata {
+    let metadata = fixture_root().join("fixture-metadata.json");
+    assert!(
+        metadata.is_file(),
+        "missing frozen fixture metadata at {}",
+        metadata.display()
+    );
+    let content = std::fs::read_to_string(&metadata)
+        .unwrap_or_else(|error| panic!("read {}: {error}", metadata.display()));
+    serde_json::from_str(&content)
+        .unwrap_or_else(|error| panic!("parse {}: {error}", metadata.display()))
+}
+
 fn request_for(query: &EvalQuery) -> RetrievalRequest {
     RetrievalRequest {
         query: query.query.clone(),
@@ -254,7 +281,14 @@ fn packet_has_valid_citation(packet: &iris_lib::ai_runtime::ContextPacket) -> bo
 #[test]
 fn rag_v2_fixture_contract_has_48_notes_and_60_labeled_queries() {
     let fixture = load_fixture();
+    let metadata = load_fixture_metadata();
     assert_eq!(fixture.version, FIXTURE_VERSION);
+    assert_eq!(metadata.fixture_version, FIXTURE_VERSION);
+    assert_eq!(metadata.fixture_status, FIXTURE_STATUS);
+    assert_eq!(
+        metadata.current_evaluation_version,
+        CURRENT_EVALUATION_VERSION
+    );
     assert_eq!(
         fixture.notes.len(),
         48,

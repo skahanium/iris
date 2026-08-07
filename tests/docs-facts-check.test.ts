@@ -62,4 +62,15 @@ describe("docs:check — document facts verification", () => {
     expect(source).toContain("sqlite-vec");
     expect(source).toContain("macOS + Windows");
   });
+
+  it("checks the frozen RAG fixture contract rather than only its document heading", () => {
+    const source = readFileSync(scriptPath, "utf8");
+
+    expect(source).toContain("checkRagFixtureContract");
+    expect(source).toContain("fixture-metadata.json");
+    expect(source).toContain("historical_frozen");
+    expect(source).toContain("fixtureVersion");
+    expect(source).toContain("currentEvaluationVersion");
+    expect(source).toContain("fixtureDocumentFacts");
+  });
 });

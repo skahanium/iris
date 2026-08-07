@@ -22,6 +22,11 @@ labels exercise hard scope boundaries: path prefix, exact path, one required
 tag, and two required tags with AND semantics. The fixture contract test
 asserts all of these counts directly from `labels.json`.
 
+This is a **historical fixture frozen at v1.2.6**; its immutable labels hash
+is recorded in `fixtures/rag-v2-vault/fixture-metadata.json`. v1.2.18 names
+the current broker and release gate evaluated against that fixture, not a new
+fixture revision.
+
 ## Default gates
 
 - any-source Recall@5 >= 0.80; any-source Recall@30 >= 0.95

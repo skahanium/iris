@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 function readWorkflow(path: string): string {
@@ -155,20 +155,48 @@ describe("GitHub Actions workflows", () => {
     expect(packageWorkflow).toContain("runs-on: windows-2022");
     expect(packageWorkflow).toContain("runs-on: macos-latest");
     expect(packageWorkflow).toContain("cargo test --features sqlite-vec");
-    expect(packageWorkflow).not.toContain("package-linux");
-    expect(packageWorkflow).not.toContain("release-assets/linux");
-    expect(packageWorkflow).not.toContain("AppImage");
-    expect(packageWorkflow).not.toContain(".deb");
-    expect(packageWorkflow).not.toContain(".rpm");
     expect(packageWorkflow).not.toContain("--no-sqlite-vec");
   });
 
-  it("runs the sqlite-vec scale ladder nightly without publishing Linux packages", () => {
+  it("permits Linux runners but forbids Linux packages and release assets in every workflow", () => {
+    const workflowPaths = readdirSync(".github/workflows", {
+      withFileTypes: true,
+    })
+      .filter((entry) => !entry.isDirectory() && entry.name.endsWith(".yml"))
+      .map((entry) => `.github/workflows/${entry.name}`);
+    const linuxReleasePatterns = [
+      /\b(?:package|bundle)[-_: /]linux\b/i,
+      /(?:release-assets|(?:assets|artifacts?)[/_-])linux\b/i,
+      /\b(?:AppImage|Flatpak|Snapcraft)\b/i,
+      /\.(?:deb|rpm)\b/i,
+      /(?:actions\/upload-artifact|gh release (?:create|upload))[\s\S]{0,500}\b(?:linux|AppImage|Flatpak|Snapcraft)\b/i,
+    ];
+
+    expect(workflowPaths).toContain(".github/workflows/ci.yml");
+    expect(workflowPaths).toContain(
+      ".github/workflows/sqlite-vec-scale-ladder.yml",
+    );
+    expect(
+      workflowPaths.some((path) => readWorkflow(path).includes("ubuntu-")),
+    ).toBe(true);
+    for (const workflowPath of workflowPaths) {
+      const workflow = readWorkflow(workflowPath);
+      for (const pattern of linuxReleasePatterns) {
+        expect(
+          workflow,
+          `${workflowPath} must not contain ${pattern}`,
+        ).not.toMatch(pattern);
+      }
+    }
+  });
+
+  it("runs the sqlite-vec scale ladder every day without publishing Linux packages", () => {
     const workflowPath = ".github/workflows/sqlite-vec-scale-ladder.yml";
 
     expect(existsSync(workflowPath)).toBe(true);
     const workflow = readWorkflow(workflowPath);
     expect(workflow).toContain("schedule:");
+    expect(workflow).toContain('- cron: "0 19 * * *"');
     expect(workflow).toContain("runs-on: ubuntu-24.04");
     expect(workflow).toContain("--features sqlite-vec");
     expect(workflow).toContain("sqlite_vec_knn_scale_ladder");
