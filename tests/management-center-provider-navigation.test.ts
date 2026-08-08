@@ -35,11 +35,12 @@ describe("管理中心供应商子页", () => {
 
   it("MCP 详情默认提供高级设置折叠入口", () => {
     const card = read("src/components/ai/skills/McpProfileCard.tsx");
+    const listCard = read("src/components/ai/skills/McpProfileListCard.tsx");
     expect(card).toContain("mcp-provider-advanced-trigger");
     expect(card).toContain("mcp-provider-basic-key");
     expect(card).toContain('surface === "list"');
-    expect(card).toContain("ChevronRight");
-    expect(card).toContain("mcpListDotTone");
+    expect(listCard).toContain("ChevronRight");
+    expect(listCard).toContain("mcpListDotTone");
     expect(card).not.toContain("mcp-provider-detail-back");
   });
 });
