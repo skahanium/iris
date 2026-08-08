@@ -87,7 +87,7 @@ describe("provider manifest contract", () => {
     expect(rustLoader).toContain("mcp-search-result-limit-manifest.json");
 
     const frontend = readFileSync(
-      "src/components/settings/LlmRoutingSection.tsx",
+      "src/components/settings/llmRoutingModelHelpers.ts",
       "utf8",
     );
     expect(frontend).toContain("llm-builtin-providers.json");

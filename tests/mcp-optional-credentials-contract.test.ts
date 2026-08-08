@@ -7,10 +7,9 @@ function read(path: string): string {
 
 describe("MCP optional credential contract", () => {
   it("preserves optional credential metadata when saving provider cards", () => {
-    const card = read("src/components/ai/skills/McpProfileCard.tsx");
-
-    expect(card).toContain("optional: row.optional === true");
-    expect(card).toContain("optional: credentialOptional(value)");
+    const parsers = read("src/components/ai/skills/mcpProfileParsers.ts");
+    expect(parsers).toContain("optional: row.optional === true");
+    expect(parsers).toContain("optional: credentialOptional(value)");
   });
 
   it("preserves optional credential metadata in preset drafts", () => {
