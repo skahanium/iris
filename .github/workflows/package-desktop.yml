@@ -90,6 +90,11 @@ jobs:
           IRIS_RAG_PERFORMANCE_REFERENCE: github-hosted-ubuntu-24.04-x64
         run: cargo test --features sqlite-vec --test rag_broker_eval sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate -- --ignored --nocapture
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
       - name: Audit Rust dependencies
         run: npm run audit:rust
 

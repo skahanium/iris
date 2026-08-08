@@ -310,10 +310,10 @@ describe("GitHub Actions workflows", () => {
     );
 
     expect(ci).toMatch(
-      /rust-tests:[\s\S]*?run: npm run agent:eval:smoke\n[\s\S]*?run: npm audit\n[\s\S]*?run: npm run audit:rust\n[\s\S]*?rag-eval:/,
+      /rust-tests:[\s\S]*?run: npm run agent:eval:smoke\n[\s\S]*?run: npm audit\n[\s\S]*?tool: cargo-audit\n[\s\S]*?run: npm run audit:rust\n[\s\S]*?rag-eval:/,
     );
     expect(packageDesktop).toMatch(
-      /release-quality:[\s\S]*?run: npm run agent:eval:smoke\n[\s\S]*?run: npm run agent:eval\n[\s\S]*?run: npm audit\n[\s\S]*?run: npm run audit:rust\n[\s\S]*?package-windows:/,
+      /release-quality:[\s\S]*?run: npm run agent:eval:smoke\n[\s\S]*?run: npm run agent:eval\n[\s\S]*?run: npm audit\n[\s\S]*?tool: cargo-audit\n[\s\S]*?run: npm run audit:rust\n[\s\S]*?package-windows:/,
     );
   });
 
