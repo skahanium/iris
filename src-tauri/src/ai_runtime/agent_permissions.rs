@@ -356,8 +356,7 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
         "git_write_commit" => (vec![Atom::GitWriteCommit], Risk::High, true),
         "clipboard_write" => (vec![Atom::ClipboardWrite], Risk::High, false),
         "clipboard_read" => (vec![Atom::ClipboardRead], Risk::High, false),
-        "confirm_block_link"
-        | "save_genre_template"
+        "save_genre_template"
         | "update_user_rule"
         | "memory_write"
         | "scheduled_task_create"

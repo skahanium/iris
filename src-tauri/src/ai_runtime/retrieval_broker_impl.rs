@@ -7,10 +7,6 @@ use crate::ai_runtime::{ContextPacket, RuntimeDocumentSnapshot};
 use crate::error::AppResult;
 use crate::knowledge::corpora::CorpusConfig;
 
-#[path = "retrieval_broker/query_hash.rs"]
-mod query_hash_impl;
-pub use query_hash_impl::query_hash;
-
 #[path = "retrieval_broker/diagnostics.rs"]
 mod diagnostics_impl;
 pub use diagnostics_impl::{

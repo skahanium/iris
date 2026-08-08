@@ -6,9 +6,7 @@ use iris_lib::ai_runtime::model_gateway::{
     build_chat_completions_body, messages_for_api, GatewayRequest, LlmFunctionDef, LlmMessage,
     LlmToolDef, MessageRole, ProviderConfig, ToolCall,
 };
-use iris_lib::ai_runtime::retrieval_broker::{
-    hybrid_retrieve, query_hash, RetrievalLayers, RetrievalRequest,
-};
+use iris_lib::ai_runtime::retrieval_broker::{hybrid_retrieve, RetrievalLayers, RetrievalRequest};
 use iris_lib::ai_runtime::skills::{
     inject_into_prompt, SkillConfirmationStatus, SkillEntry, SkillScope,
 };
@@ -139,25 +137,6 @@ fn bench_skill_prompt_injection(c: &mut Criterion) {
     });
 }
 
-fn bench_retrieval_request_hash(c: &mut Criterion) {
-    let request = RetrievalRequest {
-        query: "本地优先知识库语义检索性能".repeat(20),
-        max_results: 30,
-        layers: RetrievalLayers::default(),
-        note_context: Some("notes/architecture.md".to_string()),
-        file_id_context: Some(42),
-        scope: Default::default(),
-        runtime_documents: Vec::new(),
-        corpus_config: None,
-    };
-
-    c.bench_function("retrieval_query_hash_large_request", |b| {
-        b.iter(|| {
-            black_box(query_hash(black_box(&request)));
-        })
-    });
-}
-
 fn build_retrieval_bench_conn(rows: usize) -> rusqlite::Connection {
     let mut conn = rusqlite::Connection::open_in_memory().expect("open benchmark db");
     conn.execute_batch(
@@ -246,7 +225,6 @@ criterion_group!(
     bench_chunk_markdown,
     bench_llm_message_serialization,
     bench_skill_prompt_injection,
-    bench_retrieval_request_hash,
     bench_retrieval_hybrid_synthetic_corpus
 );
 criterion_main!(benches);

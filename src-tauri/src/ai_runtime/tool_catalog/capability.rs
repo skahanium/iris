@@ -89,7 +89,7 @@ fn capability_affinity(entry: &ToolCatalogEntry) -> Vec<ToolCapabilityAffinity> 
         name if name.starts_with("vault_") => {
             push_unique(&mut capabilities, VaultOrganize);
         }
-        "add_tags" | "confirm_block_link" | "create_note_from_deposit" => {
+        "add_tags" | "create_note_from_deposit" => {
             push_unique(&mut capabilities, VaultOrganize);
         }
         _ => {}

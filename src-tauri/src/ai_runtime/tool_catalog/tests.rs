@@ -98,7 +98,6 @@ fn write_tools_not_in_default_readonly() {
         "insert_text_at_cursor",
         "replace_selection",
         "add_tags",
-        "confirm_block_link",
         "save_genre_template",
         "update_user_rule",
         "create_note_from_deposit",

@@ -38,13 +38,6 @@ pub fn extract_wiki_links(content: &str) -> Vec<String> {
     links
 }
 
-/// Update links for a file: clear existing outbound links, insert new ones.
-/// Target file is resolved by matching the wiki-link title against file titles or stem paths.
-pub fn sync_wiki_links(conn: &Connection, source_id: i64) -> AppResult<()> {
-    conn.execute("DELETE FROM links WHERE source_id = ?1", [source_id])?;
-    Ok(())
-}
-
 /// Insert a single link record (upsert by source_id + target_id).
 pub fn insert_wiki_link(
     conn: &Connection,
@@ -295,32 +288,6 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert_eq!(old, 0, "old link should be deleted");
-            Ok(())
-        })
-        .unwrap();
-    }
-
-    #[test]
-    fn sync_wiki_links_clears_source() {
-        let db = Database::open_in_memory().unwrap();
-        db.with_conn(|conn| {
-            conn.execute(
-                "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
-                 VALUES (1, 'a.md', 'A', 'abc', '', ''),
-                      (2, 'b.md', 'B', 'def', '', '')",
-                [],
-            )?;
-            conn.execute(
-                "INSERT INTO links (source_id, target_id, context) VALUES (1, 2, 'ctx')",
-                [],
-            )?;
-
-            sync_wiki_links(conn, 1)?;
-            let count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM links WHERE source_id = 1", [], |r| {
-                    r.get(0)
-                })?;
-            assert_eq!(count, 0);
             Ok(())
         })
         .unwrap();
