@@ -66,6 +66,9 @@ above 1 s. Its log includes the deterministic generation schema and per-scale
 fixture hash, revision, model fingerprint, platform, reference machine and raw
 per-scale samples. Ubuntu is only this CI runner;
 it never produces a Linux package, release asset, upload or publication.
+The tag-triggered `release-quality` job runs the same 50k gate against the
+tag's own commit and the Windows/macOS package jobs depend on that job, so a
+passing nightly run can never substitute for release evidence.
 
 The two recall families have deliberately different semantics:
 

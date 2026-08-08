@@ -267,6 +267,18 @@ describe("GitHub Actions workflows", () => {
       /release-quality:[\s\S]*?run: npm run agent:eval:smoke\n[\s\S]*?run: npm run agent:eval\n[\s\S]*?run: npm audit\n[\s\S]*?run: npm run audit:rust\n[\s\S]*?package-windows:/,
     );
   });
+
+  it("blocks tag packaging on the same-commit 50k sqlite-vec performance gate", () => {
+    const workflow = readWorkflow(".github/workflows/package-desktop.yml");
+
+    expect(workflow).toMatch(
+      /release-quality:[\s\S]*?IRIS_RAG_PERFORMANCE_REFERENCE: github-hosted-ubuntu-24\.04-x64[\s\S]*?sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate[\s\S]*?package-windows:/,
+    );
+    expect(workflow).toMatch(/package-windows:[\s\S]*?needs: release-quality/);
+    expect(workflow).toMatch(
+      /package-macos-arm64:[\s\S]*?needs: release-quality/,
+    );
+  });
   it("creates a draft GitHub Release with packaged assets for v tags", () => {
     const workflow = readWorkflow(".github/workflows/package-desktop.yml");
 

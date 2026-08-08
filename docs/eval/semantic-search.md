@@ -42,5 +42,6 @@ fixture 只用于测试，不包含真实用户笔记或秘密。当前 RAG v2 �
 fixture 查询再执行 vector-only broker 调用，要求 `vector_chunks=ok`、向量结果命中并通过
 向量包 span/hash 100% 校验。50k scale ladder 只在 Ubuntu CI 临时目录生成合成数据，输出
 revision、模型指纹、平台、每个规模的确定性 fixture 生成哈希、参考机与原始样本；发布 p95
-仅使用独立 50k 样本，绝不混入 1k/10k/25k。它不构建、上传或发布任何 Linux 桌面包。评测失败不得以“模型下载、
+仅使用独立 50k 样本，绝不混入 1k/10k/25k。tag 的 `release-quality` 还会在同一 commit
+同步执行该 50k gate，Windows/macOS 打包必须等待其通过。它不构建、上传或发布任何 Linux 桌面包。评测失败不得以“模型下载、
 sqlite-vec 未启用或候选不足”跳过并宣称通过；必须明确记录降级状态和失败原因。
