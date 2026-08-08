@@ -9,10 +9,11 @@ function read(path: string): string {
 describe("model pool settings contract", () => {
   it("renders one global model pool with primary-to-fallback ordering", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const pool = read("src/components/settings/LlmModelPoolSection.tsx");
 
-    expect(section).toContain('data-section="llm-model-pool"');
-    expect(section).toContain("模型池与主备顺序");
-    expect(section).toContain("第一项是主模型，后两项是备用模型");
+    expect(pool).toContain('data-section="llm-model-pool"');
+    expect(pool).toContain("模型池与主备顺序");
+    expect(pool).toContain("第一项是主模型，后两项是备用模型");
     expect(section).toContain("candidateOrder");
     expect(section).toContain("moveCandidate");
     expect(section).not.toContain("能力槽模型路由");
@@ -25,11 +26,12 @@ describe("model pool settings contract", () => {
     const ipc = read("src/lib/ipc.ts");
     const helpers = read("src/components/settings/llmRoutingModelHelpers.ts");
     const types = read("src/types/llm.ts");
+    const pool = read("src/components/settings/LlmModelPoolSection.tsx");
 
     expect(section).toContain("llmConfigTestProvider");
     expect(section).toContain("llmModelRegistryRefresh");
     expect(section).toContain("llmModelValidate");
-    expect(section).toContain("模型池与主备顺序");
+    expect(pool).toContain("模型池与主备顺序");
     expect(helpers).toContain("modelSupportsVision");
     expect(section).not.toContain("modelSupportsSlot");
     expect(section).not.toContain("llmModelConfirmCapability");

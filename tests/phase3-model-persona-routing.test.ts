@@ -19,11 +19,12 @@ describe("model routing and Run execution contracts", () => {
 
   it("renders provider configuration and the ordered model-pool route", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const pool = read("src/components/settings/LlmModelPoolSection.tsx");
 
-    expect(section).toContain('data-section="llm-model-pool"');
+    expect(pool).toContain('data-section="llm-model-pool"');
     expect(section).toContain("candidateOrder: normalizeCandidateOrder(");
     expect(section).toContain("schemaVersion: 6");
-    expect(section).toContain("第一项是主模型，后两项是备用模型");
+    expect(pool).toContain("第一项是主模型，后两项是备用模型");
     expect(section).toContain("AddModelWizard");
     expect(section).toContain("addProviderModel");
     expect(section).toContain("removeProviderModel");
