@@ -263,169 +263,12 @@ impl ToolLoopProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
     }
 }
 
-/// Direct streaming adapter that retries only a safe, same-route failover candidate.
-/// It owns no credential beyond the one candidate currently being dispatched.
-pub(crate) struct FailoverStreamingDirectAnswerProvider<'a> {
-    route: DirectProviderRoute,
-    requirements: crate::ai_runtime::provider_router::ProviderRequirements,
-    db: &'a Database,
-    session: &'a AssistantSessionRef,
-    sink: &'a dyn RunEventSink,
-    #[cfg(test)]
-    test_streaming_client: Option<reqwest::Client>,
-}
-
-impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
-    pub(crate) fn new(
-        route: DirectProviderRoute,
-        requirements: crate::ai_runtime::provider_router::ProviderRequirements,
-        db: &'a Database,
-        session: &'a AssistantSessionRef,
-        sink: &'a dyn RunEventSink,
-    ) -> Self {
-        Self {
-            route,
-            requirements,
-            db,
-            session,
-            sink,
-            #[cfg(test)]
-            test_streaming_client: None,
-        }
-    }
-
-    /// Test-only transport seam matching the tool-loop provider. Production
-    /// construction keeps the HTTPS-only default client.
-    #[cfg(test)]
-    pub(crate) fn with_test_streaming_client(mut self, client: reqwest::Client) -> Self {
-        self.test_streaming_client = Some(client);
-        self
-    }
-}
-
-impl ToolLoopProvider for FailoverStreamingDirectAnswerProvider<'_> {
-    fn answer_turn<'a>(
-        &'a self,
-        run_id: &'a str,
-        messages: &'a [crate::ai_runtime::LlmMessage],
-        tools: &'a [crate::ai_runtime::ToolSpec],
-        budget: AgentModelTurnBudget,
-        observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
-                + Send
-                + 'a,
-        >,
-    > {
-        Box::pin(async move {
-            let mut selected_index = 0;
-            loop {
-                let dispatch = self
-                    .route
-                    .hydrate_selected_streaming_dispatch(self.requirements, selected_index)?;
-                let from_provider_id = dispatch.provider.name.clone();
-                let from_model_id = dispatch.provider.model.clone();
-                #[cfg(test)]
-                let gateway = match &self.test_streaming_client {
-                    Some(client) => crate::ai_runtime::model_gateway::ModelGateway::new(
-                        client.clone(),
-                        vec![dispatch.provider.clone()],
-                    ),
-                    None => crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![
-                        dispatch.provider.clone(),
-                    ])?,
-                };
-                #[cfg(not(test))]
-                let gateway =
-                    crate::ai_runtime::model_gateway::ModelGateway::with_defaults(vec![dispatch
-                        .provider
-                        .clone()])?;
-                let provider =
-                    ModelGatewayStreamingDirectAnswerProvider::from_dispatch(&gateway, dispatch)?;
-                let response = provider
-                    .answer_turn(run_id, messages, tools, budget, observer)
-                    .await
-                    .and_then(|response| {
-                        (response
-                            .content
-                            .as_deref()
-                            .is_some_and(|content| !content.trim().is_empty())
-                            || !response.tool_calls.is_empty())
-                        .then_some(response)
-                        .ok_or_else(|| AppError::msg("agent_run_invalid_model_response"))
-                    });
-                match response {
-                    Ok(response) => {
-                        crate::ai_runtime::circuit_breaker::record_llm_success(
-                            &from_provider_id,
-                            &from_model_id,
-                        );
-                        return Ok(response);
-                    }
-                    Err(error) => {
-                        let failure = classify_failover_failure(&error);
-                        if !may_failover_after_model_attempt(
-                            failure,
-                            observer.has_visible_content(),
-                            false,
-                        ) {
-                            return Err(error);
-                        }
-                        if failure.is_retryable() {
-                            crate::ai_runtime::circuit_breaker::record_llm_failure(
-                                &from_provider_id,
-                                &from_model_id,
-                            );
-                        }
-                        let Some(next_index) =
-                            self.route.next_selected_index_after_for_requirements(
-                                self.requirements,
-                                selected_index,
-                                failure,
-                            )
-                        else {
-                            return Err(error);
-                        };
-                        let (provider_id, model_id) = self
-                            .route
-                            .selected_provider_model_for_requirements(self.requirements, next_index)
-                            .ok_or_else(|| AppError::msg("agent_run_no_capable_model"))?;
-                        let snapshot = AgentRunRepository::get_for_session(
-                            self.db,
-                            &self.session.session_key,
-                            run_id,
-                        )?
-                        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
-                        let switched = AgentRunRepository::append_event(
-                            self.db,
-                            AppendRunEventInput {
-                                run_id: run_id.to_string(),
-                                state_version: snapshot.run.state_version,
-                                event_type: RunEventType::ProviderSwitched,
-                                payload: RunEventPayload::ProviderSwitched {
-                                    capability: "model.respond".to_string(),
-                                    from_provider_id,
-                                    provider_id: provider_id.to_string(),
-                                    model_id: model_id.to_string(),
-                                    reason_code: failover_reason(failure).to_string(),
-                                    attempt: (next_index + 1) as u32,
-                                },
-                            },
-                        )?;
-                        self.sink.emit(&switched)?;
-                        selected_index = next_index;
-                    }
-                }
-            }
-        })
-    }
-}
-
-/// Provider adapter for a bounded Run tool loop. It preserves the selected
-/// candidate's declared capabilities instead of coercing it into the legacy
-/// Fast/no-tools direct route.
-pub(crate) struct FailoverStreamingToolLoopProvider<'a> {
+/// Unified streaming failover adapter for both direct answers and bounded Run
+/// tool loops. It preserves the selected candidate's declared capabilities,
+/// keeps Responses continuations provider-bound, and never fails over after
+/// visible content has been emitted. Direct paths simply pass an empty tool
+/// list; their single-turn usage leaves the continuation state untouched.
+pub(crate) struct FailoverStreamingProvider<'a> {
     route: DirectProviderRoute,
     requirements: crate::ai_runtime::provider_router::ProviderRequirements,
     db: &'a Database,
@@ -444,7 +287,7 @@ struct SelectedResponseContinuation {
     continuation: crate::ai_runtime::model_gateway::ProviderContinuation,
 }
 
-impl<'a> FailoverStreamingToolLoopProvider<'a> {
+impl<'a> FailoverStreamingProvider<'a> {
     pub(crate) fn new(
         route: DirectProviderRoute,
         requirements: crate::ai_runtime::provider_router::ProviderRequirements,
@@ -476,7 +319,7 @@ impl<'a> FailoverStreamingToolLoopProvider<'a> {
     }
 }
 
-impl ToolLoopProvider for FailoverStreamingToolLoopProvider<'_> {
+impl ToolLoopProvider for FailoverStreamingProvider<'_> {
     fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,

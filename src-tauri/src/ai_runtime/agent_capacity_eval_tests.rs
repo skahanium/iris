@@ -390,7 +390,7 @@ use super::provider_router::{
     CandidateAvailability, CandidateHealth, ProviderCandidate, ProviderFailure,
     ProviderRequirements, ProviderRouter, SecurityDomain,
 };
-use super::run_engine::{FailoverStreamingToolLoopProvider, RunEventSink};
+use super::run_engine::{FailoverStreamingProvider, RunEventSink};
 use super::run_intake::RunIntake;
 use super::{
     EndpointFamily, LlmMessage, MessageRole, ProviderConfig, ReasoningAdapter, ReasoningControl,
@@ -1887,14 +1887,9 @@ async fn production_tool_loop_failover_retries_real_streaming_gateway_boundary()
     let db = Database::open_in_memory().unwrap();
     let accepted = RunIntake::start(&db, retry_run_request()).unwrap();
     let sink = CapacityNoopSink;
-    let provider = FailoverStreamingToolLoopProvider::new(
-        route,
-        retry_requirements(),
-        &db,
-        &accepted.session,
-        &sink,
-    )
-    .with_test_streaming_client(reqwest::Client::new());
+    let provider =
+        FailoverStreamingProvider::new(route, retry_requirements(), &db, &accepted.session, &sink)
+            .with_test_streaming_client(reqwest::Client::new());
     let messages = vec![LlmMessage {
         role: MessageRole::User,
         content: "retry the same tool turn".into(),

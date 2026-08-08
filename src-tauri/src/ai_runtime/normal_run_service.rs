@@ -19,8 +19,7 @@ use crate::ai_runtime::run_contract::{
     VerificationRequirement, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
-    FailoverStreamingDirectAnswerProvider, FailoverStreamingToolLoopProvider, RunEngine,
-    RunEventSink, WebVerificationFailure,
+    FailoverStreamingProvider, RunEngine, RunEventSink, WebVerificationFailure,
 };
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::{NormalRunToolExecutor, INITIAL_WEB_SEARCH_RESULTS};
@@ -439,13 +438,8 @@ async fn dispatch_normal_run_after_context(
             true,
             sink,
         )?;
-        let provider = FailoverStreamingToolLoopProvider::new(
-            route,
-            requirements,
-            db,
-            &accepted.session,
-            sink,
-        );
+        let provider =
+            FailoverStreamingProvider::new(route, requirements, db, &accepted.session, sink);
         #[cfg(test)]
         let provider = if let Some(client) = state.test_streaming_client() {
             provider.with_test_streaming_client(client)
@@ -515,13 +509,8 @@ async fn dispatch_normal_run_after_context(
         false,
         sink,
     )?;
-    let provider = FailoverStreamingDirectAnswerProvider::new(
-        route,
-        direct_requirements,
-        db,
-        &accepted.session,
-        sink,
-    );
+    let provider =
+        FailoverStreamingProvider::new(route, direct_requirements, db, &accepted.session, sink);
     #[cfg(test)]
     let provider = if let Some(client) = state.test_streaming_client() {
         provider.with_test_streaming_client(client)
@@ -779,8 +768,7 @@ async fn dispatch_required_web_verified_run(
     if structured_finalization {
         tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
     }
-    let provider =
-        FailoverStreamingToolLoopProvider::new(route, requirements, db, &accepted.session, sink);
+    let provider = FailoverStreamingProvider::new(route, requirements, db, &accepted.session, sink);
     #[cfg(test)]
     let provider = if let Some(client) = state.test_streaming_client() {
         provider.with_test_streaming_client(client)
