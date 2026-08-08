@@ -63,6 +63,15 @@ jobs:
       - name: Run frontend tests
         run: npm run test
 
+      - name: Run Agent 24-case smoke release gate
+        run: npm run agent:eval:smoke
+
+      - name: Run Agent full baseline release gate
+        run: npm run agent:eval
+
+      - name: Audit npm dependencies
+        run: npm audit
+
       - name: Check Rust formatting
         working-directory: src-tauri
         run: cargo fmt --all -- --check
@@ -74,6 +83,9 @@ jobs:
       - name: Run Rust tests
         working-directory: src-tauri
         run: cargo test --features sqlite-vec
+
+      - name: Audit Rust dependencies
+        run: npm run audit:rust
 
   package-windows:
     name: Windows x64 NSIS

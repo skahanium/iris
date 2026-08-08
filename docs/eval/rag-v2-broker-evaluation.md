@@ -42,7 +42,13 @@ fixture revision.
 separate, explicitly invoked test. It restores the verified pinned BGE model,
 indexes the synthetic fixture, derives `chunk_embeddings_v2`, and runs the
 public hybrid broker with sqlite-vec enabled. A missing model or extension
-fails the gate; an FTS-only result cannot count as a vector pass.
+fails the gate; an FTS-only result cannot count as a vector pass. For every
+labelled query it also makes a **vector-only** public-broker call: its
+`vector_chunks` diagnostic must be `ok` for the verified sqlite-vec/BGE model,
+vector-only Recall@5/30 must meet 0.80/0.95, and every returned vector chunk
+or anchor/regulation vector packet must carry a valid original-source span and
+content hash. Thus lexical fusion
+cannot hide an unavailable vector layer or an invalid vector citation.
 
 The provisioned thresholds are hybrid any-source Recall@5 >= 0.95 and
 Recall@30 >= 0.98; all-required-source Recall@5 >= 0.90 and Recall@30 >=
@@ -53,9 +59,12 @@ after the verified model smoke; these are the only desktop release targets.
 `sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate` is explicitly
 invoked by the nightly CI ladder with reference machine
 `github-hosted-ubuntu-24.04-x64`. It creates 1k/10k/25k/50k synthetic fixtures
-in fresh test temporary directories and rejects warm KNN p95 above 750 ms or
-bounded retrieval p95 above 1 s. Its log includes revision, model fingerprint,
-platform, reference machine and raw samples. Ubuntu is only this CI runner;
+in fresh test temporary directories. The 1k/10k/25k samples are diagnostic
+only: the release decision is calculated **only from the independent 50k
+sample set**, rejecting warm KNN p95 above 750 ms or bounded retrieval p95
+above 1 s. Its log includes the deterministic generation schema and per-scale
+fixture hash, revision, model fingerprint, platform, reference machine and raw
+per-scale samples. Ubuntu is only this CI runner;
 it never produces a Linux package, release asset, upload or publication.
 
 The two recall families have deliberately different semantics:

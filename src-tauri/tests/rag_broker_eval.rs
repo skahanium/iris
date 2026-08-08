@@ -8,7 +8,7 @@
 //! deliberately disables vectors, so the default CI path never downloads a
 //! model.  Vector quality belongs to a separately provisioned model gate.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -111,6 +111,20 @@ struct VectorPerformanceMetrics {
     end_to_end_latencies_ms: Vec<f64>,
 }
 
+/// Evidence collected from an independent vector-only broker invocation.
+/// Hybrid ranking is intentionally not enough here: lexical packets can mask
+/// an unavailable vector layer in the final fused result.
+#[derive(Debug, Default)]
+struct VectorEvidenceMetrics {
+    query_count: usize,
+    vector_chunks_ok_queries: usize,
+    positive_queries: usize,
+    expected_hits_at_5: usize,
+    expected_hits_at_30: usize,
+    packet_count: usize,
+    citation_violations: usize,
+}
+
 #[test]
 fn vector_quality_gate_fails_when_all_required_recall_at_30_is_below_095() {
     let metrics = BrokerMetrics {
@@ -139,6 +153,76 @@ fn vector_performance_gate_fails_when_warm_knn_p95_exceeds_750_ms() {
     };
 
     assert!(!meets_vector_performance_release_gates(&metrics));
+}
+
+#[test]
+fn provisioned_vector_gate_rejects_fts_only_results() {
+    let metrics = VectorEvidenceMetrics {
+        query_count: 60,
+        positive_queries: 50,
+        ..VectorEvidenceMetrics::default()
+    };
+
+    assert!(!meets_provisioned_vector_evidence_gates(&metrics));
+}
+
+#[test]
+fn provisioned_vector_gate_requires_valid_citations_for_every_vector_packet() {
+    let mut metrics = VectorEvidenceMetrics {
+        query_count: 60,
+        vector_chunks_ok_queries: 60,
+        positive_queries: 50,
+        expected_hits_at_5: 50,
+        expected_hits_at_30: 50,
+        packet_count: 50,
+        citation_violations: 0,
+    };
+    assert!(meets_provisioned_vector_evidence_gates(&metrics));
+
+    metrics.citation_violations = 1;
+    assert!(!meets_provisioned_vector_evidence_gates(&metrics));
+}
+
+#[test]
+fn vector_citation_gate_covers_every_vector_packet_kind() {
+    assert!(is_vector_packet_reason("vector_chunk"));
+    assert!(is_vector_packet_reason("vector_anchor"));
+    assert!(is_vector_packet_reason("vector_regulation"));
+    assert!(!is_vector_packet_reason("fts_keyword_match"));
+}
+
+#[test]
+fn scale_performance_gate_uses_only_the_50k_samples() {
+    let by_scale = BTreeMap::from([
+        (
+            1_000,
+            VectorPerformanceMetrics {
+                warm_knn_latencies_ms: vec![900.0],
+                end_to_end_latencies_ms: vec![1_100.0],
+            },
+        ),
+        (
+            50_000,
+            VectorPerformanceMetrics {
+                warm_knn_latencies_ms: vec![100.0],
+                end_to_end_latencies_ms: vec![150.0],
+            },
+        ),
+    ]);
+
+    assert!(meets_50k_vector_performance_release_gate(&by_scale));
+}
+
+#[test]
+fn synthetic_scale_fixture_hash_is_deterministic_and_scale_bound() {
+    assert_eq!(
+        synthetic_scale_fixture_hash(50_000),
+        synthetic_scale_fixture_hash(50_000)
+    );
+    assert_ne!(
+        synthetic_scale_fixture_hash(1_000),
+        synthetic_scale_fixture_hash(50_000)
+    );
 }
 
 #[test]
@@ -249,9 +333,29 @@ fn meets_vector_release_gates(metrics: &BrokerMetrics) -> bool {
         && metrics.scope_leaks == SCOPE_LEAK_COUNT_MAX
 }
 
+fn meets_provisioned_vector_evidence_gates(metrics: &VectorEvidenceMetrics) -> bool {
+    metrics.query_count > 0
+        && metrics.vector_chunks_ok_queries == metrics.query_count
+        && metrics.positive_queries > 0
+        && ratio(metrics.expected_hits_at_5, metrics.positive_queries)
+            >= SEMANTIC_ONLY_RECALL_AT_5_MIN
+        && ratio(metrics.expected_hits_at_30, metrics.positive_queries)
+            >= SEMANTIC_ONLY_RECALL_AT_30_MIN
+        && metrics.packet_count > 0
+        && metrics.citation_violations == 0
+}
+
 fn meets_vector_performance_release_gates(metrics: &VectorPerformanceMetrics) -> bool {
     percentile_ms(&metrics.warm_knn_latencies_ms, 0.95) <= WARM_KNN_P95_MS_MAX
         && percentile_ms(&metrics.end_to_end_latencies_ms, 0.95) <= END_TO_END_RETRIEVAL_P95_MS_MAX
+}
+
+fn meets_50k_vector_performance_release_gate(
+    metrics_by_scale: &BTreeMap<i64, VectorPerformanceMetrics>,
+) -> bool {
+    metrics_by_scale
+        .get(&50_000)
+        .is_some_and(meets_vector_performance_release_gates)
 }
 
 fn ratio(numerator: usize, denominator: usize) -> f64 {
@@ -321,6 +425,12 @@ fn vector_request_for(query: &EvalQuery) -> RetrievalRequest {
     request
 }
 
+fn vector_only_request_for(query: &EvalQuery) -> RetrievalRequest {
+    let mut request = vector_request_for(query);
+    request.layers.fts = false;
+    request
+}
+
 fn crate_content_hash(content: &str) -> String {
     iris_lib::cas::hash::content_hash_str(content)
 }
@@ -370,10 +480,75 @@ fn packet_has_valid_citation(packet: &iris_lib::ai_runtime::ContextPacket) -> bo
         && !packet.excerpt.trim().is_empty()
 }
 
+fn is_vector_packet_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "vector_chunk" | "vector_anchor" | "vector_regulation"
+    )
+}
+
 fn fixture_labels_hash() -> String {
     let labels = std::fs::read_to_string(fixture_root().join("labels.json"))
         .expect("read fixture labels for result metadata");
     crate_content_hash(&labels)
+}
+
+fn synthetic_scale_fixture_manifest(scale: i64) -> serde_json::Value {
+    serde_json::json!({
+        "schema": "iris-synthetic-sqlite-vec-scale-v1",
+        "records": scale,
+        "needleChunkId": scale,
+        "distractorChunkRange": [1, scale - 1],
+        "embeddingDimension": EMBEDDING_DIMENSION,
+        "modelId": EMBEDDING_MODEL_ID,
+        "containsUserVaultData": false,
+    })
+}
+
+fn synthetic_scale_fixture_hash(scale: i64) -> String {
+    let manifest = serde_json::to_string(&synthetic_scale_fixture_manifest(scale))
+        .expect("serialize synthetic scale fixture manifest");
+    crate_content_hash(&manifest)
+}
+
+fn observe_vector_evidence(
+    query: &EvalQuery,
+    outcome: &iris_lib::ai_runtime::retrieval_broker::RetrievalOutcome,
+    metrics: &mut VectorEvidenceMetrics,
+) {
+    metrics.query_count += 1;
+    metrics.vector_chunks_ok_queries += usize::from(outcome.diagnostics.iter().any(|diagnostic| {
+        diagnostic.layer == "vector_chunks"
+            && diagnostic.status == RetrievalLayerStatus::Ok
+            && diagnostic.backend.as_deref() == Some("sqlite-vec")
+            && diagnostic.model_id.as_deref() == Some(EMBEDDING_MODEL_ID)
+    }));
+
+    let vector_packets = outcome
+        .packets
+        .iter()
+        .filter(|packet| is_vector_packet_reason(&packet.retrieval_reason))
+        .collect::<Vec<_>>();
+    metrics.packet_count += vector_packets.len();
+    metrics.citation_violations += vector_packets
+        .iter()
+        .filter(|packet| !packet_has_valid_citation(packet))
+        .count();
+
+    if query.expected_paths.is_empty() {
+        return;
+    }
+
+    metrics.positive_queries += 1;
+    let chunk_paths = vector_packets
+        .iter()
+        .filter(|packet| packet.retrieval_reason == "vector_chunk")
+        .filter_map(|packet| packet.source_path.clone())
+        .collect::<Vec<_>>();
+    metrics.expected_hits_at_5 +=
+        usize::from(first_expected_rank(&chunk_paths, &query.expected_paths, 5).is_some());
+    metrics.expected_hits_at_30 +=
+        usize::from(first_expected_rank(&chunk_paths, &query.expected_paths, 30).is_some());
 }
 
 fn emit_result_metadata(gate: &str, metrics: &BrokerMetrics) {
@@ -725,7 +900,14 @@ fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
             populate_fixture_chunk_embeddings(conn);
 
             let mut metrics = BrokerMetrics::default();
+            let mut vector_evidence = VectorEvidenceMetrics::default();
             for query in &fixture.queries {
+                // This independent call makes the vector proof non-fungible:
+                // FTS has no opportunity to satisfy a vector assertion.
+                let vector_outcome =
+                    hybrid_retrieve_with_diagnostics(conn, &vector_only_request_for(query))?;
+                observe_vector_evidence(query, &vector_outcome, &mut vector_evidence);
+
                 let start = Instant::now();
                 let outcome = hybrid_retrieve_with_diagnostics(conn, &vector_request_for(query))?;
                 metrics
@@ -768,9 +950,31 @@ fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
             }
 
             emit_result_metadata("provisioned-sqlite-vec", &metrics);
+            eprintln!(
+                "RAG provisioned vector evidence: {}",
+                serde_json::json!({
+                    "revision": option_env!("GITHUB_SHA").unwrap_or("workspace"),
+                    "model": EMBEDDING_MODEL_FINGERPRINT,
+                    "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+                    "fixtureLabelsSha256": fixture_labels_hash(),
+                    "rawMetrics": {
+                        "queries": vector_evidence.query_count,
+                        "vectorChunksOkQueries": vector_evidence.vector_chunks_ok_queries,
+                        "positiveQueries": vector_evidence.positive_queries,
+                        "expectedHitRecallAt5": ratio(vector_evidence.expected_hits_at_5, vector_evidence.positive_queries),
+                        "expectedHitRecallAt30": ratio(vector_evidence.expected_hits_at_30, vector_evidence.positive_queries),
+                        "vectorPackets": vector_evidence.packet_count,
+                        "vectorCitationViolations": vector_evidence.citation_violations,
+                    }
+                })
+            );
             assert!(
                 meets_vector_release_gates(&metrics),
                 "provisioned sqlite-vec vector-quality release gates failed"
+            );
+            assert!(
+                meets_provisioned_vector_evidence_gates(&vector_evidence),
+                "provisioned sqlite-vec vector evidence gate failed; FTS-only results are not accepted"
             );
             assert!(
                 metrics.p95_ms() <= END_TO_END_RETRIEVAL_P95_MS_MAX,
@@ -793,26 +997,23 @@ fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
 fn sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate() {
     let reference_machine = std::env::var("IRIS_RAG_PERFORMANCE_REFERENCE")
         .expect("IRIS_RAG_PERFORMANCE_REFERENCE is required for a release performance result");
-    let mut all_knn_samples = Vec::new();
-    let mut all_retrieval_samples = Vec::new();
+    let mut metrics_by_scale = BTreeMap::new();
+    let mut fixture_hashes = BTreeMap::new();
 
     for scale in vector_scale_fixture_sizes() {
         let fixture = tempfile::tempdir().expect("create temporary synthetic scale fixture");
         let fixture_manifest = fixture.path().join("fixture.json");
+        let manifest = synthetic_scale_fixture_manifest(scale);
         std::fs::write(
             &fixture_manifest,
-            serde_json::json!({
-                "kind": "synthetic-sqlite-vec-scale-fixture",
-                "records": scale,
-                "containsUserVaultData": false,
-            })
-            .to_string(),
+            serde_json::to_string(&manifest).expect("serialize synthetic fixture manifest"),
         )
         .expect("write synthetic fixture manifest");
+        fixture_hashes.insert(scale, synthetic_scale_fixture_hash(scale));
 
         let database = iris_lib::storage::db::Database::open_in_memory()
             .expect("open sqlite-vec scale database");
-        database
+        let scale_metrics = database
             .with_conn(|conn| {
                 let mut query_vector = vec![0.0_f32; EMBEDDING_DIMENSION];
                 query_vector[0] = 1.0;
@@ -903,36 +1104,62 @@ fn sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate() {
                     assert!(needle_found, "KNN missed scale-{scale} synthetic needle");
                     assert!(!ids.is_empty(), "KNN returned no candidates at scale {scale}");
                 }
-                all_knn_samples.extend(warm_samples);
-                all_retrieval_samples.extend(retrieval_samples);
-                Ok(())
+                Ok(VectorPerformanceMetrics {
+                    warm_knn_latencies_ms: warm_samples,
+                    end_to_end_latencies_ms: retrieval_samples,
+                })
             })
             .expect("run temporary sqlite-vec scale fixture");
+        metrics_by_scale.insert(scale, scale_metrics);
     }
-
-    let metrics = VectorPerformanceMetrics {
-        warm_knn_latencies_ms: all_knn_samples,
-        end_to_end_latencies_ms: all_retrieval_samples,
-    };
+    let metrics = metrics_by_scale
+        .get(&50_000)
+        .expect("50k scale performance metrics");
+    let per_scale_metrics = metrics_by_scale
+        .iter()
+        .map(|(scale, scale_metrics)| {
+            (
+                scale.to_string(),
+                serde_json::json!({
+                    "warmKnnP95Milliseconds": percentile_ms(&scale_metrics.warm_knn_latencies_ms, 0.95),
+                    "endToEndRetrievalP95Milliseconds": percentile_ms(&scale_metrics.end_to_end_latencies_ms, 0.95),
+                    "warmKnnSamplesMilliseconds": scale_metrics.warm_knn_latencies_ms,
+                    "endToEndSamplesMilliseconds": scale_metrics.end_to_end_latencies_ms,
+                }),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let fixture_generation = vector_scale_fixture_sizes()
+        .into_iter()
+        .map(|scale| {
+            serde_json::json!({
+                "records": scale,
+                "sha256": fixture_hashes.get(&scale).expect("fixture hash for scale"),
+            })
+        })
+        .collect::<Vec<_>>();
     eprintln!(
         "RAG vector scale result: {}",
         serde_json::json!({
             "revision": option_env!("GITHUB_SHA").unwrap_or("workspace"),
             "model": EMBEDDING_MODEL_FINGERPRINT,
             "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
-            "fixture": "temporary synthetic 1k/10k/25k/50k sqlite-vec fixtures",
+            "fixtureGeneration": {
+                "schema": "iris-synthetic-sqlite-vec-scale-v1",
+                "fixtures": fixture_generation,
+            },
             "referenceMachine": reference_machine,
             "rawMetrics": {
-                "warmKnnP95Milliseconds": percentile_ms(&metrics.warm_knn_latencies_ms, 0.95),
-                "endToEndRetrievalP95Milliseconds": percentile_ms(&metrics.end_to_end_latencies_ms, 0.95),
-                "warmKnnSamplesMilliseconds": metrics.warm_knn_latencies_ms,
-                "endToEndSamplesMilliseconds": metrics.end_to_end_latencies_ms,
+                "releaseGateScale": 50000,
+                "releaseGateWarmKnnP95Milliseconds": percentile_ms(&metrics.warm_knn_latencies_ms, 0.95),
+                "releaseGateEndToEndRetrievalP95Milliseconds": percentile_ms(&metrics.end_to_end_latencies_ms, 0.95),
+                "perScale": per_scale_metrics,
             }
         })
     );
     assert!(
-        meets_vector_performance_release_gates(&metrics),
-        "sqlite-vec performance release gate failed"
+        meets_50k_vector_performance_release_gate(&metrics_by_scale),
+        "sqlite-vec 50k performance release gate failed"
     );
 }
 

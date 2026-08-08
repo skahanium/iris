@@ -253,6 +253,20 @@ describe("GitHub Actions workflows", () => {
       /package-macos-arm64:[\s\S]*needs: release-quality/,
     );
   });
+
+  it("makes Agent smoke, baseline and dependency audits non-bypassable quality gates", () => {
+    const ci = readWorkflow(".github/workflows/ci.yml");
+    const packageDesktop = readWorkflow(
+      ".github/workflows/package-desktop.yml",
+    );
+
+    expect(ci).toMatch(
+      /rust-tests:[\s\S]*?run: npm run agent:eval:smoke\n[\s\S]*?run: npm audit\n[\s\S]*?run: npm run audit:rust\n[\s\S]*?rag-eval:/,
+    );
+    expect(packageDesktop).toMatch(
+      /release-quality:[\s\S]*?run: npm run agent:eval:smoke\n[\s\S]*?run: npm run agent:eval\n[\s\S]*?run: npm audit\n[\s\S]*?run: npm run audit:rust\n[\s\S]*?package-windows:/,
+    );
+  });
   it("creates a draft GitHub Release with packaged assets for v tags", () => {
     const workflow = readWorkflow(".github/workflows/package-desktop.yml");
 

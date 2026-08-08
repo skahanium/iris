@@ -60,6 +60,12 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Setup Node.js for evaluation and audits
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -87,6 +93,15 @@ jobs:
         run: |
           cargo test --features sqlite-vec storage::migrate::tests::sqlite_vec_v3_mirrors_all_canonical_caches_insert_update_and_delete -- --nocapture
           cargo test --features sqlite-vec embedding::engine::tests::semantic_search_uses_sqlite_vec_knn_and_never_skips_a_large_index -- --nocapture
+
+      - name: Run Agent 24-case smoke gate
+        run: npm run agent:eval:smoke
+
+      - name: Audit npm dependencies
+        run: npm audit
+
+      - name: Audit Rust dependencies
+        run: npm run audit:rust
 
   rag-eval:
     name: RAG evaluation gates

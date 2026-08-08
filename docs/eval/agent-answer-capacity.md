@@ -277,6 +277,9 @@ npm run agent:eval:live -- pilot --session session-<64hex> \
 同目录的 `live-pilot-session-<64hex>.json`，不会包含 prompt、answer、route
 或凭据。
 
+PR CI 必须执行 smoke 与前端/Rust 依赖审计；发布质量门禁同时执行 smoke、完整
+`agent:eval` 版本化基线以及两类审计，任一命令失败都不能进入 Windows/macOS 打包。
+
 ## 终验记录（v1.2.15 优雅补齐）
 
 本轮（harness 诚实 + 产品授权收窄）后已执行并通过：

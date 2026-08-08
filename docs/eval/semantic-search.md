@@ -27,6 +27,7 @@ fixture 只用于测试，不包含真实用户笔记或秘密。当前 RAG v2 �
 | 指标                           | v1.2.18 门槛                               |
 | ------------------------------ | ------------------------------------------ |
 | semantic-only Recall@5/30      | ≥ 0.80 / ≥ 0.95                            |
+| vector-only Recall@5/30        | ≥ 0.80 / ≥ 0.95（已供给 BGE + sqlite-vec） |
 | hybrid any-source Recall@5/30  | ≥ 0.95 / ≥ 0.98（已供给 BGE + sqlite-vec） |
 | all-required Recall@5/30       | ≥ 0.90 / ≥ 0.95（已供给 BGE + sqlite-vec） |
 | scope 泄漏                     | 0                                          |
@@ -37,7 +38,9 @@ fixture 只用于测试，不包含真实用户笔记或秘密。当前 RAG v2 �
 | 端到端 retrieval p95           | ≤ 1s（声明的参考机）                       |
 
 默认 FTS gate 与已供给模型的 sqlite-vec gate 独立执行：后者由 macOS/Windows
-打包流水线显式调用，缺少已验证模型或扩展即失败，不能以 FTS 结果替代。50k scale
-ladder 只在 Ubuntu CI 临时目录生成合成数据，输出 revision、模型指纹、平台、fixture
-描述、参考机与原始样本；它不构建、上传或发布任何 Linux 桌面包。评测失败不得以“模型下载、
+打包流水线显式调用，缺少已验证模型或扩展即失败，不能以 FTS 结果替代。已供给 gate 对每条
+fixture 查询再执行 vector-only broker 调用，要求 `vector_chunks=ok`、向量结果命中并通过
+向量包 span/hash 100% 校验。50k scale ladder 只在 Ubuntu CI 临时目录生成合成数据，输出
+revision、模型指纹、平台、每个规模的确定性 fixture 生成哈希、参考机与原始样本；发布 p95
+仅使用独立 50k 样本，绝不混入 1k/10k/25k。它不构建、上传或发布任何 Linux 桌面包。评测失败不得以“模型下载、
 sqlite-vec 未启用或候选不足”跳过并宣称通过；必须明确记录降级状态和失败原因。
