@@ -113,18 +113,18 @@ impl ClassifiedEphemeralStore {
             || message.trim().is_empty()
             || message.chars().count() > MAX_USER_MESSAGE_CHARS
         {
-            return Err(AppError::msg("agent_run_invalid_request"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
         let context = self
             .contexts
             .get(context_ref)
-            .ok_or_else(|| AppError::msg("agent_run_classified_context_expired"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::ClassifiedContextExpired))?;
         let policy = load_classified_policy_decision_engine(vault)?;
         let scope = policy.effective_document_scope(&context.path);
         if scope.decision_for(DocumentCapability::Read) == CapabilityDecision::Deny
             || scope.decision_for(DocumentCapability::SendToModel) == CapabilityDecision::Deny
         {
-            return Err(AppError::msg("agent_run_permission_denied"));
+            return Err(AppError::run(SafeRunErrorCode::PermissionDenied));
         }
         let document = read_classified_document(vault, &context.path)?;
         let run_id = uuid::Uuid::new_v4().to_string();
@@ -247,7 +247,7 @@ impl ClassifiedEphemeralStore {
                 .events
                 .last()
                 .cloned()
-                .ok_or_else(|| AppError::msg("agent_run_not_found"));
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound));
         }
         run.state = RunState::Failed;
         run.state_version += 1;
@@ -296,9 +296,9 @@ impl ClassifiedEphemeralStore {
         let run = self
             .runs
             .remove(run_id)
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if run.context_ref != context_ref || run.state != RunState::Completed {
-            return Err(AppError::msg("agent_run_classified_context_expired"));
+            return Err(AppError::run(SafeRunErrorCode::ClassifiedContextExpired));
         }
         run.output
             .as_deref()
@@ -329,20 +329,20 @@ impl ClassifiedEphemeralStore {
     fn run(&self, run_id: &str) -> AppResult<&RunEntry> {
         self.runs
             .get(run_id)
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))
     }
     fn run_mut(&mut self, run_id: &str) -> AppResult<&mut RunEntry> {
         self.runs
             .get_mut(run_id)
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))
     }
     fn require_context(&self, context_ref: &str) -> AppResult<()> {
         let context = self
             .contexts
             .get(context_ref)
-            .ok_or_else(|| AppError::msg("agent_run_classified_context_expired"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::ClassifiedContextExpired))?;
         if context.created_at.elapsed() > CONTEXT_TTL {
-            return Err(AppError::msg("agent_run_classified_context_expired"));
+            return Err(AppError::run(SafeRunErrorCode::ClassifiedContextExpired));
         }
         require_unlocked()
     }
@@ -357,13 +357,13 @@ impl ClassifiedEphemeralStore {
 fn require_unlocked() -> AppResult<()> {
     let key = VAULT_KEY
         .get()
-        .ok_or_else(|| AppError::msg("agent_run_classified_vault_locked"))?
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::ClassifiedVaultLocked))?
         .read()
-        .map_err(|_| AppError::msg("agent_run_classified_vault_locked"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::ClassifiedVaultLocked))?;
     if key.is_unlocked() {
         Ok(())
     } else {
-        Err(AppError::msg("agent_run_classified_vault_locked"))
+        Err(AppError::run(SafeRunErrorCode::ClassifiedVaultLocked))
     }
 }
 
@@ -372,13 +372,13 @@ fn read_classified_document(vault: &Path, path: &str) -> AppResult<String> {
     if classified_io::has_csef_magic(&raw) {
         let key = VAULT_KEY
             .get()
-            .ok_or_else(|| AppError::msg("agent_run_classified_vault_locked"))?
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::ClassifiedVaultLocked))?
             .read()
-            .map_err(|_| AppError::msg("agent_run_classified_vault_locked"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::ClassifiedVaultLocked))?;
         let plaintext = classified_io::decrypt_cef(&raw, key.key()?)?;
-        String::from_utf8(plaintext).map_err(|_| AppError::msg("agent_run_invalid_request"))
+        String::from_utf8(plaintext).map_err(|_| AppError::run(SafeRunErrorCode::InvalidRequest))
     } else {
-        String::from_utf8(raw).map_err(|_| AppError::msg("agent_run_invalid_request"))
+        String::from_utf8(raw).map_err(|_| AppError::run(SafeRunErrorCode::InvalidRequest))
     }
 }
 

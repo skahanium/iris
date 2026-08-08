@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_types::{
     EndpointFamily, ReasoningAdapter, ReasoningControl, ReasoningMode, ReasoningVisibility,
     ResolvedReasoningRequest,
@@ -1011,11 +1012,11 @@ fn resolve_model_override_with_registry(
     registry: &[ModelRegistryEntry],
 ) -> AppResult<ResolvedLlmConfig> {
     if !enabled_model_references(routing).contains(model) {
-        return Err(AppError::msg("agent_run_no_capable_model"));
+        return Err(AppError::run(SafeRunErrorCode::NoCapableModel));
     }
     let resolved = resolve_model_reference(routing, model, registry)?;
     if !resolved_satisfies_requirements(&resolved, requirements) {
-        return Err(AppError::msg("agent_run_no_capable_model"));
+        return Err(AppError::run(SafeRunErrorCode::NoCapableModel));
     }
     Ok(resolved)
 }
@@ -1038,7 +1039,7 @@ fn resolve_model_pool_with_registry(
     }
 
     let Some(resolved) = candidates.first().cloned() else {
-        return Err(AppError::msg("agent_run_no_capable_model"));
+        return Err(AppError::run(SafeRunErrorCode::NoCapableModel));
     };
     Ok(ResolvedModelPool {
         resolved,

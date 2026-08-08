@@ -1236,7 +1236,7 @@ pub(crate) enum WebEvidenceFailureReason {
 /// Stable, safe error codes exposed across the Rust/TypeScript boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SafeRunErrorCode {
+pub enum SafeRunErrorCode {
     /// Input did not satisfy the Run contract.
     #[serde(rename = "agent_run_invalid_request")]
     InvalidRequest,
@@ -1333,6 +1333,93 @@ pub(crate) enum SafeRunErrorCode {
     /// The classified vault was locked before the in-memory Run could complete.
     #[serde(rename = "agent_run_classified_vault_locked")]
     ClassifiedVaultLocked,
+    /// The frozen change plan expired, diverged, or no longer matches the Run.
+    #[serde(rename = "agent_run_invalid_change_plan")]
+    InvalidChangePlan,
+    /// The provider continuation state lock could not be acquired.
+    #[serde(rename = "agent_run_continuation_lock_failed")]
+    ContinuationLockFailed,
+    /// The Run control channel is not available for the requested transition.
+    #[serde(rename = "agent_run_control_not_available")]
+    ControlNotAvailable,
+    /// The Run already reached a terminal state.
+    #[serde(rename = "agent_run_terminal_state")]
+    TerminalState,
+    /// A classified-domain Run was started from the normal domain (or vice versa).
+    #[serde(rename = "agent_run_classified_domain_not_supported")]
+    ClassifiedDomainNotSupported,
+    /// The Run evidence registry lock could not be acquired.
+    #[serde(rename = "agent_run_evidence_lock_failed")]
+    EvidenceLockFailed,
+    /// The persisted budget policy is missing or inconsistent with the envelope.
+    #[serde(rename = "agent_run_invalid_budget_policy")]
+    InvalidBudgetPolicy,
+    /// The Run event payload failed schema validation.
+    #[serde(rename = "agent_run_invalid_event")]
+    InvalidEvent,
+    /// The persisted local evidence reference is invalid or unresolved.
+    #[serde(rename = "agent_run_local_evidence_invalid")]
+    LocalEvidenceInvalid,
+    /// The explicit action is not permitted for this Run.
+    #[serde(rename = "agent_run_invalid_explicit_action")]
+    InvalidExplicitAction,
+    /// Classified history is disabled for this session.
+    #[serde(rename = "agent_run_classified_history_disabled")]
+    ClassifiedHistoryDisabled,
+    /// The durable checkpoint stage transition conflicts with the current stage.
+    #[serde(rename = "agent_run_checkpoint_stage_conflict")]
+    CheckpointStageConflict,
+    /// The accepted event could not be replayed for this Run.
+    #[serde(rename = "agent_run_accepted_event_missing")]
+    AcceptedEventMissing,
+    /// The final answer submission failed structural validation.
+    #[serde(rename = "agent_run_final_submission_invalid")]
+    FinalSubmissionInvalid,
+    /// The model attempted an effect outside the permitted write target.
+    #[serde(rename = "agent_run_write_target_violation")]
+    WriteTargetViolation,
+    /// The persisted document policy is invalid.
+    #[serde(rename = "agent_run_invalid_document_policy")]
+    InvalidDocumentPolicy,
+    /// The durable checkpoint payload failed schema validation.
+    #[serde(rename = "agent_run_checkpoint_invalid_schema")]
+    CheckpointInvalidSchema,
+    /// The final answer output failed structural validation.
+    #[serde(rename = "agent_run_invalid_final_output")]
+    InvalidFinalOutput,
+    /// The change plan is still awaiting user confirmation.
+    #[serde(rename = "agent_run_confirmation_pending")]
+    ConfirmationPending,
+    /// The change plan confirmation is missing.
+    #[serde(rename = "agent_run_confirmation_missing")]
+    ConfirmationMissing,
+    /// The sub-agent lifecycle transition is illegal.
+    #[serde(rename = "agent_run_invalid_subagent_lifecycle")]
+    InvalidSubagentLifecycle,
+    /// The sub-agent batch report failed schema validation.
+    #[serde(rename = "agent_run_invalid_subagent_batch_report")]
+    InvalidSubagentBatchReport,
+    /// The terminal Run cannot be retried.
+    #[serde(rename = "agent_run_retry_not_available")]
+    RetryNotAvailable,
+    /// The same client request id was replayed with a different payload.
+    #[serde(rename = "agent_run_idempotency_conflict")]
+    IdempotencyConflict,
+    /// The model referenced a tool call id that this Run never issued.
+    #[serde(rename = "agent_run_unknown_tool_call_id")]
+    UnknownToolCallId,
+    /// A cited web source cannot be verified against the Run's evidence.
+    #[serde(rename = "agent_run_unverified_web_citation")]
+    UnverifiedWebCitation,
+    /// Web evidence is required but the Run has none registered.
+    #[serde(rename = "agent_run_web_evidence_required")]
+    WebEvidenceRequired,
+}
+
+impl std::fmt::Display for SafeRunErrorCode {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
 }
 
 impl SafeRunErrorCode {
@@ -1341,11 +1428,14 @@ impl SafeRunErrorCode {
     /// returned. This is the single typed entry point replacing inline
     /// string-round-trip deserialization at call sites.
     pub(crate) fn from_app_error(error: &crate::error::AppError) -> Self {
-        let crate::error::AppError::Message(message) = error else {
-            return Self::PersistenceFailed;
-        };
-        serde_json::from_value::<Self>(serde_json::Value::String(message.clone()))
-            .unwrap_or(Self::PersistenceFailed)
+        match error {
+            crate::error::AppError::Message(message) => {
+                serde_json::from_value::<Self>(serde_json::Value::String(message.clone()))
+                    .unwrap_or(Self::PersistenceFailed)
+            }
+            crate::error::AppError::Run(code) => *code,
+            _ => Self::PersistenceFailed,
+        }
     }
 
     /// Return the stable wire code used in safe errors and audit records.
@@ -1383,6 +1473,33 @@ impl SafeRunErrorCode {
             Self::ClassifiedContextRequired => "agent_run_classified_context_required",
             Self::ClassifiedContextExpired => "agent_run_classified_context_expired",
             Self::ClassifiedVaultLocked => "agent_run_classified_vault_locked",
+            Self::InvalidChangePlan => "agent_run_invalid_change_plan",
+            Self::ContinuationLockFailed => "agent_run_continuation_lock_failed",
+            Self::ControlNotAvailable => "agent_run_control_not_available",
+            Self::TerminalState => "agent_run_terminal_state",
+            Self::ClassifiedDomainNotSupported => "agent_run_classified_domain_not_supported",
+            Self::EvidenceLockFailed => "agent_run_evidence_lock_failed",
+            Self::InvalidBudgetPolicy => "agent_run_invalid_budget_policy",
+            Self::InvalidEvent => "agent_run_invalid_event",
+            Self::LocalEvidenceInvalid => "agent_run_local_evidence_invalid",
+            Self::InvalidExplicitAction => "agent_run_invalid_explicit_action",
+            Self::ClassifiedHistoryDisabled => "agent_run_classified_history_disabled",
+            Self::CheckpointStageConflict => "agent_run_checkpoint_stage_conflict",
+            Self::AcceptedEventMissing => "agent_run_accepted_event_missing",
+            Self::FinalSubmissionInvalid => "agent_run_final_submission_invalid",
+            Self::WriteTargetViolation => "agent_run_write_target_violation",
+            Self::InvalidDocumentPolicy => "agent_run_invalid_document_policy",
+            Self::CheckpointInvalidSchema => "agent_run_checkpoint_invalid_schema",
+            Self::InvalidFinalOutput => "agent_run_invalid_final_output",
+            Self::ConfirmationPending => "agent_run_confirmation_pending",
+            Self::ConfirmationMissing => "agent_run_confirmation_missing",
+            Self::InvalidSubagentLifecycle => "agent_run_invalid_subagent_lifecycle",
+            Self::InvalidSubagentBatchReport => "agent_run_invalid_subagent_batch_report",
+            Self::RetryNotAvailable => "agent_run_retry_not_available",
+            Self::IdempotencyConflict => "agent_run_idempotency_conflict",
+            Self::UnknownToolCallId => "agent_run_unknown_tool_call_id",
+            Self::UnverifiedWebCitation => "agent_run_unverified_web_citation",
+            Self::WebEvidenceRequired => "agent_run_web_evidence_required",
         }
     }
 }

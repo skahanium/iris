@@ -76,7 +76,7 @@ pub(super) fn validate_current_run_citation_links(
         .map(|citation| citation.url)
         .collect::<HashSet<_>>();
     if allowed_urls.is_empty() {
-        return Err(AppError::msg("agent_run_web_evidence_required"));
+        return Err(AppError::run(SafeRunErrorCode::WebEvidenceRequired));
     }
     validate_web_urls_against_allowed(content, &allowed_urls)
 }
@@ -86,7 +86,7 @@ pub(super) fn validate_web_urls_against_allowed(
     allowed_urls: &HashSet<String>,
 ) -> AppResult<()> {
     if content.contains("http://") {
-        return Err(AppError::msg("agent_run_unverified_web_citation"));
+        return Err(AppError::run(SafeRunErrorCode::UnverifiedWebCitation));
     }
     let mut remainder = content;
     while let Some(offset) = remainder.find("https://") {
@@ -98,7 +98,7 @@ pub(super) fn validate_web_urls_against_allowed(
             .unwrap_or(candidate.len());
         let url = candidate[..end].trim_end_matches(['.', ',', ';', ':']);
         if !allowed_urls.contains(url) {
-            return Err(AppError::msg("agent_run_unverified_web_citation"));
+            return Err(AppError::run(SafeRunErrorCode::UnverifiedWebCitation));
         }
         remainder = &candidate[end..];
     }
@@ -215,11 +215,9 @@ pub(super) fn fail_finalization_with_sink(
                     RunFinalizationStage::EventDelivery,
                     SafeRunErrorCode::EventDeliveryFailed,
                 );
-                return Err(AppError::msg(
-                    SafeRunErrorCode::EventDeliveryFailed.as_str(),
-                ));
+                return Err(AppError::run(SafeRunErrorCode::EventDeliveryFailed));
             }
-            Err(AppError::msg(failure.code.as_str()))
+            Err(AppError::run(failure.code))
         }
         Err(_) => {
             let code = SafeRunErrorCode::PersistenceFailed;
@@ -241,7 +239,7 @@ pub(super) fn fail_finalization_with_sink(
             ) {
                 let _ = sink.emit_ephemeral_failure(&event);
             }
-            Err(AppError::msg(code.as_str()))
+            Err(AppError::run(code))
         }
     }
 }
@@ -450,9 +448,9 @@ pub(super) fn emit_run_terminal(
         ),
     }
     let completed = AgentRunRepository::get_for_session(db, &session.session_key, run_id)
-        .map_err(|_| AppError::msg(SafeRunErrorCode::PersistenceFailed.as_str()))?
+        .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
         .and_then(|response| response.events.last().cloned())
-        .ok_or_else(|| AppError::msg(SafeRunErrorCode::PersistenceFailed.as_str()))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::PersistenceFailed))?;
     if sink.emit(&completed).is_err() {
         log_finalization_failure(
             run_id,
@@ -539,7 +537,34 @@ pub(super) fn safe_failure_message(code: SafeRunErrorCode) -> &'static str {
         | SafeRunErrorCode::IllegalTransition
         | SafeRunErrorCode::StateVersionConflict
         | SafeRunErrorCode::ConfirmationExpired
-        | SafeRunErrorCode::PersistenceFailed => "运行暂时无法完成，请稍后重试",
+        | SafeRunErrorCode::PersistenceFailed
+        | SafeRunErrorCode::InvalidChangePlan
+        | SafeRunErrorCode::ContinuationLockFailed
+        | SafeRunErrorCode::ControlNotAvailable
+        | SafeRunErrorCode::TerminalState
+        | SafeRunErrorCode::ClassifiedDomainNotSupported
+        | SafeRunErrorCode::EvidenceLockFailed
+        | SafeRunErrorCode::InvalidBudgetPolicy
+        | SafeRunErrorCode::InvalidEvent
+        | SafeRunErrorCode::LocalEvidenceInvalid
+        | SafeRunErrorCode::InvalidExplicitAction
+        | SafeRunErrorCode::ClassifiedHistoryDisabled
+        | SafeRunErrorCode::CheckpointStageConflict
+        | SafeRunErrorCode::AcceptedEventMissing
+        | SafeRunErrorCode::FinalSubmissionInvalid
+        | SafeRunErrorCode::WriteTargetViolation
+        | SafeRunErrorCode::InvalidDocumentPolicy
+        | SafeRunErrorCode::CheckpointInvalidSchema
+        | SafeRunErrorCode::InvalidFinalOutput
+        | SafeRunErrorCode::ConfirmationPending
+        | SafeRunErrorCode::ConfirmationMissing
+        | SafeRunErrorCode::InvalidSubagentLifecycle
+        | SafeRunErrorCode::InvalidSubagentBatchReport
+        | SafeRunErrorCode::RetryNotAvailable
+        | SafeRunErrorCode::IdempotencyConflict
+        | SafeRunErrorCode::UnknownToolCallId
+        | SafeRunErrorCode::UnverifiedWebCitation
+        | SafeRunErrorCode::WebEvidenceRequired => "运行暂时无法完成，请稍后重试",
     }
 }
 
@@ -572,7 +597,7 @@ pub(super) fn settle_cancelled_run_with_partial(
     fallback_content: Option<&str>,
 ) -> AppResult<bool> {
     let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     if snapshot.run.state != RunState::Cancelled {
         return Ok(false);
     }

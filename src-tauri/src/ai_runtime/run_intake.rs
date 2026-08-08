@@ -9,8 +9,8 @@ use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunGetResponse,
     AssistantRunRetryRequest, AssistantRunStartRequest, AssistantSessionRef, CapabilityId,
     ContextMode, Effect, Effort, ExecutionEnvelope, ExplicitConstraint, Freshness, MaterialNeed,
-    Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType, SecurityDomain,
-    VerificationRequirement, WebDecisionReason,
+    Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType, SafeRunErrorCode,
+    SecurityDomain, VerificationRequirement, WebDecisionReason,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -239,12 +239,14 @@ impl RunIntake {
         for reference in &mut request.turn.explicit_references {
             if let Some(path) = reference.file_path.as_mut() {
                 *path = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
-                    .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+                    .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
             }
         }
         let envelope = Self::resolve_envelope(&request)?;
         if envelope.security_domain != SecurityDomain::Normal {
-            return Err(AppError::msg("agent_run_classified_domain_not_supported"));
+            return Err(AppError::run(
+                SafeRunErrorCode::ClassifiedDomainNotSupported,
+            ));
         }
         let session = resolve_normal_session(db, request.session.as_ref())?;
         let external_tool_grants = request.external_tool_grants.clone();
@@ -279,17 +281,17 @@ impl RunIntake {
     ) -> AppResult<AssistantRunAccepted> {
         let envelope = Self::resolve_envelope(&request)?;
         if envelope.security_domain != SecurityDomain::Classified {
-            return Err(AppError::msg("agent_run_invalid_request"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
         if envelope.freshness != Freshness::Offline
             || envelope.effort != Effort::Direct
             || envelope.effect != Effect::Answer
         {
-            return Err(AppError::msg("agent_run_permission_denied"));
+            return Err(AppError::run(SafeRunErrorCode::PermissionDenied));
         }
         let session_key = match request.session.as_ref() {
             Some(session) if session.domain != SecurityDomain::Classified => {
-                return Err(AppError::msg("agent_run_session_not_found"))
+                return Err(AppError::run(SafeRunErrorCode::SessionNotFound))
             }
             Some(session) => Some(session.session_key.clone()),
             None => None,
@@ -297,7 +299,7 @@ impl RunIntake {
         let effect = serde_json::to_value(envelope.effect)?
             .as_str()
             .map(str::to_owned)
-            .ok_or_else(|| AppError::msg("agent_run_invalid_request"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
         crate::ai_runtime::classified_session::classified_run_accept(
             vault,
             crate::ai_runtime::classified_session::ClassifiedRunAcceptInput {
@@ -340,7 +342,7 @@ impl RunIntake {
             &accepted.run_id,
         )?
         .and_then(|response| response.events.into_iter().next())
-        .ok_or_else(|| AppError::msg("agent_run_accepted_event_missing"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
         sink.emit(&event)?;
         Ok(accepted)
     }
@@ -356,7 +358,7 @@ impl RunIntake {
             || request.client_request_id.trim().is_empty()
             || request.client_request_id.chars().count() > MAX_CLIENT_REQUEST_ID_CHARS
         {
-            return Err(AppError::msg("agent_run_invalid_request"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
         let accepted = AgentRunRepository::accept_retry(
             db,
@@ -373,7 +375,7 @@ impl RunIntake {
             &accepted.run_id,
         )?
         .and_then(|response| response.events.into_iter().next())
-        .ok_or_else(|| AppError::msg("agent_run_accepted_event_missing"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
         sink.emit(&event)?;
         Ok(accepted)
     }
@@ -385,7 +387,9 @@ impl RunIntake {
         run_id: &str,
     ) -> AppResult<Option<AssistantRunGetResponse>> {
         if session.domain != SecurityDomain::Normal {
-            return Err(AppError::msg("agent_run_classified_domain_not_supported"));
+            return Err(AppError::run(
+                SafeRunErrorCode::ClassifiedDomainNotSupported,
+            ));
         }
         AgentRunRepository::get_for_session(db, &session.session_key, run_id)
     }
@@ -396,7 +400,9 @@ impl RunIntake {
         session: &AssistantSessionRef,
     ) -> AppResult<Option<AssistantRunGetResponse>> {
         if session.domain != SecurityDomain::Normal {
-            return Err(AppError::msg("agent_run_classified_domain_not_supported"));
+            return Err(AppError::run(
+                SafeRunErrorCode::ClassifiedDomainNotSupported,
+            ));
         }
         AgentRunRepository::latest_active_for_session(db, &session.session_key)
     }
@@ -429,11 +435,13 @@ impl RunIntake {
         Option<crate::ai_runtime::run_contract::AssistantRunEvent>,
     )> {
         if request.session.domain != SecurityDomain::Normal {
-            return Err(AppError::msg("agent_run_classified_domain_not_supported"));
+            return Err(AppError::run(
+                SafeRunErrorCode::ClassifiedDomainNotSupported,
+            ));
         }
         let snapshot =
             AgentRunRepository::get_for_session(db, &request.session.session_key, &request.run_id)?
-                .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state == crate::ai_runtime::run_contract::RunState::Cancelled
             && matches!(&request.action, RunControlAction::Cancel)
         {
@@ -513,16 +521,16 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
         || request.turn.message.trim().is_empty()
         || request.turn.message.chars().count() > MAX_USER_MESSAGE_CHARS
     {
-        return Err(AppError::msg("agent_run_invalid_request"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
     if request.model_override.as_ref().is_some_and(|override_| {
         override_.provider_id.trim().is_empty() || override_.model_id.trim().is_empty()
     }) {
-        return Err(AppError::msg("agent_run_invalid_request"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
     if request.security_domain == SecurityDomain::Normal && request.classified_context_ref.is_some()
     {
-        return Err(AppError::msg("agent_run_invalid_request"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
     if request.security_domain == SecurityDomain::Classified
         && (!request.turn.explicit_references.is_empty()
@@ -531,13 +539,13 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
             || request.turn.content_parts.is_some()
             || !request.external_tool_grants.is_empty())
     {
-        return Err(AppError::msg("agent_run_invalid_request"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
     crate::ai_runtime::retrieval_scope::normalize_context_scope(&request.turn.retrieval_scope)?;
     for reference in &request.turn.explicit_references {
         if let Some(path) = reference.file_path.as_deref() {
             crate::ai_runtime::retrieval_scope::normalize_note_path(path)
-                .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+                .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
         }
     }
     validate_display_mentions(request)?;
@@ -566,7 +574,7 @@ fn validate_display_mentions(request: &AssistantRunStartRequest) -> AppResult<()
             || mention.range.from >= mention.range.to
             || mention.range.to > message_len
     }) {
-        return Err(AppError::msg("agent_run_invalid_request"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
     Ok(())
 }
@@ -587,7 +595,7 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
         && action.target.is_none()
         && action.selection_snapshot.is_none()
     {
-        return Err(AppError::msg("agent_run_invalid_request"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
     let valid_reference = |id: &str, hash: &str| {
         request.turn.explicit_references.iter().any(|reference| {
@@ -602,7 +610,7 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
             || target.content_hash.trim().is_empty()
             || !valid_reference(&target.reference_id, &target.content_hash)
         {
-            return Err(AppError::msg("agent_run_invalid_request"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
     }
     if let Some(snapshot) = action.selection_snapshot.as_ref() {
@@ -619,13 +627,13 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
             || !valid_reference(&snapshot.reference_id, &snapshot.content_hash)
             || !range_matches
         {
-            return Err(AppError::msg("agent_run_invalid_request"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
         if let Some(target) = action.target.as_ref() {
             if target.reference_id != snapshot.reference_id
                 || target.content_hash != snapshot.content_hash
             {
-                return Err(AppError::msg("agent_run_invalid_request"));
+                return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
             }
         }
     }
@@ -637,11 +645,11 @@ fn resolve_normal_session(
     requested: Option<&AssistantSessionRef>,
 ) -> AppResult<crate::ai_runtime::normal_session_repository::NormalSession> {
     match requested {
-        Some(session) if session.domain != SecurityDomain::Normal => {
-            Err(AppError::msg("agent_run_classified_domain_not_supported"))
-        }
+        Some(session) if session.domain != SecurityDomain::Normal => Err(AppError::run(
+            SafeRunErrorCode::ClassifiedDomainNotSupported,
+        )),
         Some(session) => NormalSessionRepository::get(db, &session.session_key)?
-            .ok_or_else(|| AppError::msg("agent_run_session_not_found")),
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::SessionNotFound)),
         None => NormalSessionRepository::create(db),
     }
 }

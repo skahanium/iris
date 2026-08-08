@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use crate::ai_runtime::policy_decision_engine::{
     CapabilityDecision, DocumentCapability, DocumentPolicy, PolicyDecisionEngine,
 };
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -52,7 +53,7 @@ pub(crate) fn load_policy_decision_engine(db: &Database) -> AppResult<PolicyDeci
                     .or_default()
                     .push((capability, decision));
             }
-            _ => return Err(AppError::msg("agent_run_invalid_document_policy")),
+            _ => return Err(AppError::run(SafeRunErrorCode::InvalidDocumentPolicy)),
         }
     }
 
@@ -74,7 +75,7 @@ fn parse_document_capability(value: &str) -> AppResult<DocumentCapability> {
         "cite" => Ok(DocumentCapability::Cite),
         "propose_change" => Ok(DocumentCapability::ProposeChange),
         "apply_change" => Ok(DocumentCapability::ApplyChange),
-        _ => Err(AppError::msg("agent_run_invalid_document_policy")),
+        _ => Err(AppError::run(SafeRunErrorCode::InvalidDocumentPolicy)),
     }
 }
 
@@ -82,7 +83,7 @@ fn parse_capability_decision(value: &str) -> AppResult<CapabilityDecision> {
     match value {
         "allow" => Ok(CapabilityDecision::Allow),
         "deny" => Ok(CapabilityDecision::Deny),
-        _ => Err(AppError::msg("agent_run_invalid_document_policy")),
+        _ => Err(AppError::run(SafeRunErrorCode::InvalidDocumentPolicy)),
     }
 }
 

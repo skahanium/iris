@@ -1,3 +1,4 @@
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::{retrieval_scope::RetrievalScope, ContextPacket, RuntimeDocumentSnapshot};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -31,7 +32,7 @@ impl<'a> ToolDispatchContext<'a> {
             .run_id
             .is_some_and(crate::ai_runtime::model_gateway::is_abort_requested)
         {
-            return Err(AppError::msg("agent_run_cancelled"));
+            return Err(AppError::run(SafeRunErrorCode::Cancelled));
         }
         Ok(())
     }
@@ -41,13 +42,13 @@ impl<'a> ToolDispatchContext<'a> {
             return Ok(());
         };
         let expected = crate::ai_runtime::retrieval_scope::normalize_note_path(expected)
-            .map_err(|_| AppError::msg("agent_run_write_target_violation"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::WriteTargetViolation))?;
         let actual = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
-            .map_err(|_| AppError::msg("agent_run_write_target_violation"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::WriteTargetViolation))?;
         if actual == expected {
             Ok(())
         } else {
-            Err(AppError::msg("agent_run_write_target_violation"))
+            Err(AppError::run(SafeRunErrorCode::WriteTargetViolation))
         }
     }
 

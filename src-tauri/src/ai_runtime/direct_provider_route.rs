@@ -4,6 +4,7 @@ use crate::ai_runtime::provider_router::{
     CandidateAvailability, CandidateHealth, ProviderCandidate, ProviderFailure,
     ProviderRequirements, ProviderRouter, SecurityDomain,
 };
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_types::{ProviderConfig, ResolvedReasoningRequest};
 use crate::error::{AppError, AppResult};
 use crate::llm::config::{ResolvedLlmConfig, ResolvedModelPool};
@@ -136,7 +137,7 @@ impl DirectProviderRoute {
             .select_streaming_for_requirements(requirements)
             .get(selected_index)
             .copied()
-            .ok_or_else(|| AppError::msg("agent_run_no_capable_model"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::NoCapableModel))?;
         self.router
             .hydrate_candidate_with(candidate, read_credential)
             .map(|candidate| {

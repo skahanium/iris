@@ -9,7 +9,7 @@ use crate::ai_runtime::agent_tool_loop::ToolLoopProvider;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent, AssistantRunGetRequest,
     AssistantRunGetResponse, AssistantRunRetryRequest, AssistantRunStartRequest,
-    AssistantSessionRef, Effect, Effort, SecurityDomain,
+    AssistantSessionRef, Effect, Effort, SafeRunErrorCode, SecurityDomain,
 };
 use crate::ai_runtime::run_engine::{
     ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink, TauriRunEventSink,
@@ -248,7 +248,7 @@ pub async fn assistant_session_load(
         }
         SecurityDomain::Classified => {
             let _ = request;
-            Err(AppError::msg("agent_run_classified_history_disabled"))
+            Err(AppError::run(SafeRunErrorCode::ClassifiedHistoryDisabled))
         }
     }
 }
@@ -294,7 +294,7 @@ pub async fn assistant_session_rename(
         }
         SecurityDomain::Classified => {
             let _ = request;
-            Err(AppError::msg("agent_run_classified_history_disabled"))
+            Err(AppError::run(SafeRunErrorCode::ClassifiedHistoryDisabled))
         }
     }
 }
@@ -314,7 +314,7 @@ pub async fn assistant_session_delete(
         }
         SecurityDomain::Classified => {
             let _ = request;
-            Err(AppError::msg("agent_run_classified_history_disabled"))
+            Err(AppError::run(SafeRunErrorCode::ClassifiedHistoryDisabled))
         }
     }
 }
@@ -335,7 +335,7 @@ pub async fn assistant_session_retract(
         }
         SecurityDomain::Classified => {
             let _ = request;
-            Err(AppError::msg("agent_run_classified_history_disabled"))
+            Err(AppError::run(SafeRunErrorCode::ClassifiedHistoryDisabled))
         }
     }
 }
@@ -372,23 +372,23 @@ pub async fn assistant_run_start<R: AssistantRunRuntime>(
                 || request.explicit_action.is_some()
                 || !request.external_tool_grants.is_empty()
             {
-                return Err(AppError::msg("agent_run_invalid_request"));
+                return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
             }
             let context_ref = request
                 .classified_context_ref
                 .as_deref()
-                .ok_or_else(|| AppError::msg("agent_run_classified_context_required"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::ClassifiedContextRequired))?;
             if request.model_override.as_ref().is_some_and(|override_| {
                 override_.provider_id.trim().is_empty() || override_.model_id.trim().is_empty()
             }) {
-                return Err(AppError::msg("agent_run_invalid_request"));
+                return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
             }
             let model_override = request.model_override.clone();
             let accepted = state
                 .ai
                 .classified_ephemeral
                 .lock()
-                .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+                .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
                 .accept(
                     &vault,
                     &request.client_request_id,
@@ -399,10 +399,10 @@ pub async fn assistant_run_start<R: AssistantRunRuntime>(
                 .ai
                 .classified_ephemeral
                 .lock()
-                .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+                .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
                 .get(&accepted.run_id)?
                 .and_then(|response| response.events.into_iter().next())
-                .ok_or_else(|| AppError::msg("agent_run_accepted_event_missing"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
             sink.emit(&event)?;
             spawn_classified_direct_run(
                 Arc::clone(&state),
@@ -500,13 +500,13 @@ async fn assistant_run_control_inner<R: tauri::Runtime>(
                 &request.action,
                 crate::ai_runtime::run_contract::RunControlAction::Cancel
             ) {
-                return Err(AppError::msg("agent_run_control_not_available"));
+                return Err(AppError::run(SafeRunErrorCode::ControlNotAvailable));
             }
             let event = state
                 .ai
                 .classified_ephemeral
                 .lock()
-                .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+                .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
                 .cancel(&request.run_id)?;
             sink.emit(&event)?;
             crate::ai_runtime::model_gateway::request_abort(&request.run_id);
@@ -531,7 +531,7 @@ pub async fn assistant_run_get(
                 .ai
                 .classified_ephemeral
                 .lock()
-                .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+                .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
                 .get(run_id),
             None => Ok(None),
         },
@@ -549,7 +549,7 @@ pub async fn assistant_classified_context_open(
         .ai
         .classified_ephemeral
         .lock()
-        .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+        .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
         .open_context(&vault, &path)
 }
 
@@ -560,7 +560,7 @@ pub async fn assistant_classified_context_clear(state: State<'_, Arc<AppState>>)
         .ai
         .classified_ephemeral
         .lock()
-        .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+        .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
         .clear();
     Ok(())
 }
@@ -575,7 +575,7 @@ pub async fn assistant_classified_run_take_result(
         .ai
         .classified_ephemeral
         .lock()
-        .map_err(|_| AppError::msg("agent_run_persistence_failed"))?
+        .map_err(|_| AppError::run(SafeRunErrorCode::PersistenceFailed))?
         .take_result(&request.run_id, &request.context_ref)
 }
 
@@ -590,7 +590,7 @@ fn evaluate_normal_run_policy(
             &accepted.session.session_key,
             &accepted.run_id,
         )?
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     let engine = crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?;
     Ok(engine.evaluate_run(request))
 }

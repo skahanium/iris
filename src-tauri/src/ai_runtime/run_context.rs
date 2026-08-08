@@ -525,13 +525,13 @@ impl RunContextAssembler {
         run_id: &str,
     ) -> AppResult<RunContext> {
         let input = AgentRunRepository::prompt_input_for_session(db, session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if input.explicit_references.len() > MAX_EXPLICIT_MATERIALS {
-            return Err(AppError::msg("agent_run_invalid_explicit_reference"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
         }
 
         let envelope = AgentRunRepository::policy_request_for_session(db, session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
             .envelope;
         let write_target_path = explicit_apply_target_path(&input, &envelope)?;
         let document_policy =
@@ -589,7 +589,7 @@ impl RunContextAssembler {
                             });
                             continue;
                         }
-                        return Err(AppError::msg("agent_run_invalid_explicit_reference"));
+                        return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
                     }
                     total_chars = total_chars.saturating_add(material_chars);
                     materials.push(material);
@@ -669,7 +669,9 @@ impl RunContextAssembler {
             if material_chars > MAX_EXPLICIT_MATERIAL_CHARS
                 || total_chars.saturating_add(material_chars) > MAX_TOTAL_MATERIAL_CHARS
             {
-                return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+                return Err(AppError::run(
+                    SafeRunErrorCode::LocalReferenceIndexUnavailable,
+                ));
             }
             total_chars = total_chars.saturating_add(material_chars);
             materials.push(material);
@@ -678,7 +680,9 @@ impl RunContextAssembler {
             // Request Intake marks this boundary only when the user clearly
             // depends on authorized vault knowledge. Completing from the
             // model or Web alone would silently drop that dependency.
-            return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+            return Err(AppError::run(
+                SafeRunErrorCode::LocalReferenceIndexUnavailable,
+            ));
         }
         // Explicit `@` notes without a folder/tag scope still constrain tool reads
         // to the authorized material paths (search remains hidden by the tool surface).
@@ -756,7 +760,7 @@ fn explicit_apply_target_path(
     let action = input
         .explicit_action
         .as_ref()
-        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_action"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitAction))?;
     let reference_id = action
         .target
         .as_ref()
@@ -767,19 +771,19 @@ fn explicit_apply_target_path(
                 .as_ref()
                 .map(|snapshot| snapshot.reference_id.as_str())
         })
-        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_action"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitAction))?;
     let reference = input
         .explicit_references
         .iter()
         .find(|reference| reference.id == reference_id)
-        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_action"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitAction))?;
     let path = reference
         .file_path
         .as_deref()
-        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_action"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitAction))?;
     crate::ai_runtime::retrieval_scope::normalize_note_path(path)
         .map(Some)
-        .map_err(|_| AppError::msg("agent_run_invalid_explicit_action"))
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitAction))
 }
 
 fn load_previous_run_safety_summary(
@@ -890,28 +894,28 @@ fn resolve_explicit_reference(
     corpus_config: &crate::knowledge::corpora::CorpusConfig,
 ) -> AppResult<ResolvedExplicitReference> {
     if reference.stale || reference.invalid_reason.is_some() {
-        return Err(AppError::msg("agent_run_invalid_explicit_reference"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
     }
     let path = reference
         .file_path
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_reference"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     let path = crate::ai_runtime::retrieval_scope::normalize_note_path(path)
-        .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
-    let vault = vault.ok_or_else(|| AppError::msg("agent_run_invalid_explicit_reference"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
+    let vault = vault.ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     let resolved = crate::storage::paths::validate_user_note_relative_path(vault, &path)
-        .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     let full_content = std::fs::read_to_string(&resolved)
-        .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     let actual_hash = crate::cas::hash::content_hash_str(&full_content);
     let expected_hash = reference
         .content_hash
         .as_deref()
         .filter(|hash| !hash.trim().is_empty())
-        .ok_or_else(|| AppError::msg("agent_run_invalid_explicit_reference"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
     if expected_hash != actual_hash {
-        return Err(AppError::msg("agent_run_explicit_reference_changed"));
+        return Err(AppError::run(SafeRunErrorCode::ExplicitReferenceChanged));
     }
     let requires_range = matches!(
         reference.kind,
@@ -923,7 +927,7 @@ fn resolve_explicit_reference(
         || requires_range && reference.utf8_range.is_none()
         || reference.kind == ContextReferenceKind::Artifact
     {
-        return Err(AppError::msg("agent_run_invalid_explicit_reference"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
     }
     let (source_span_start, source_span_end, content) = if let Some(range) = &reference.utf8_range {
         if range.start >= range.end
@@ -931,7 +935,7 @@ fn resolve_explicit_reference(
             || !full_content.is_char_boundary(range.start)
             || !full_content.is_char_boundary(range.end)
         {
-            return Err(AppError::msg("agent_run_invalid_explicit_reference"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
         }
         (
             range.start as i64,
@@ -950,7 +954,7 @@ fn resolve_explicit_reference(
                 },
             ));
         }
-        return Err(AppError::msg("agent_run_invalid_explicit_reference"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
     }
     Ok(ResolvedExplicitReference::Material(RunContextMaterial {
         role: explicit_reference_material_role(envelope, corpus_config, &path),
@@ -991,7 +995,7 @@ fn retrieve_scoped_materials(
                 },
             )
         })
-        .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::LocalReferenceIndexUnavailable))?;
     let local_index_responded = outcome.diagnostics.iter().any(|diagnostic| {
         matches!(
             diagnostic.layer.as_str(),
@@ -1003,7 +1007,9 @@ fn retrieve_scoped_materials(
         )
     });
     if !local_index_responded {
-        return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+        return Err(AppError::run(
+            SafeRunErrorCode::LocalReferenceIndexUnavailable,
+        ));
     }
     Ok(outcome.packets)
 }
@@ -1015,17 +1021,17 @@ fn retrieve_exact_fallback_materials(
     required_fallbacks: &[ExactScopeFallback],
 ) -> AppResult<Vec<ContextPacket>> {
     let vault =
-        vault.ok_or_else(|| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+        vault.ok_or_else(|| AppError::run(SafeRunErrorCode::LocalReferenceIndexUnavailable))?;
     let mut packets = Vec::with_capacity(required_fallbacks.len());
     for (index, fallback) in required_fallbacks.iter().enumerate() {
         let path = &fallback.path;
         let resolved = crate::storage::paths::validate_user_note_relative_path(vault, path)
-            .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::LocalReferenceIndexUnavailable))?;
         let disk_content = std::fs::read_to_string(resolved)
-            .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::LocalReferenceIndexUnavailable))?;
         let current_file_hash = crate::cas::hash::content_hash_str(&disk_content);
         if current_file_hash != fallback.full_content_hash {
-            return Err(AppError::msg("agent_run_explicit_reference_changed"));
+            return Err(AppError::run(SafeRunErrorCode::ExplicitReferenceChanged));
         }
         let indexed = db
             .with_read_conn(|conn| {
@@ -1069,12 +1075,16 @@ fn retrieve_exact_fallback_materials(
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(Some((title, file_hash, chunks)))
             })
-            .map_err(|_| AppError::msg("agent_run_local_reference_index_unavailable"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::LocalReferenceIndexUnavailable))?;
         let Some((title, Some(indexed_file_hash), chunks)) = indexed else {
-            return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+            return Err(AppError::run(
+                SafeRunErrorCode::LocalReferenceIndexUnavailable,
+            ));
         };
         if indexed_file_hash != current_file_hash {
-            return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+            return Err(AppError::run(
+                SafeRunErrorCode::LocalReferenceIndexUnavailable,
+            ));
         }
         let selected =
             chunks
@@ -1103,7 +1113,9 @@ fn retrieve_exact_fallback_materials(
                     Some((content, heading_path, start, end, content_hash))
                 });
         let Some((content, heading_path, start, end, content_hash)) = selected else {
-            return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+            return Err(AppError::run(
+                SafeRunErrorCode::LocalReferenceIndexUnavailable,
+            ));
         };
         packets.push(ContextPacket {
             id: format!("explicit-fallback-{index}"),
@@ -1128,7 +1140,9 @@ fn retrieve_exact_fallback_materials(
             .iter()
             .any(|packet| packet.source_path.as_deref() == Some(required.path.as_str()))
     }) {
-        return Err(AppError::msg("agent_run_local_reference_index_unavailable"));
+        return Err(AppError::run(
+            SafeRunErrorCode::LocalReferenceIndexUnavailable,
+        ));
     }
     Ok(packets)
 }

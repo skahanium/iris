@@ -10,7 +10,7 @@ use crate::ai_runtime::run_contract::{
     transition_to, AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse,
     AssistantRunSnapshot, AssistantSessionRef, CapabilityId, ConfirmationTargetSummary, Effect,
     Effort, ExecutionEnvelope, ExplicitAction, RiskClass, RunBudgetPolicy, RunEventPayload,
-    RunEventType, RunRecoveryKind, RunState, SecurityDomain,
+    RunEventType, RunRecoveryKind, RunState, SafeRunErrorCode, SecurityDomain,
 };
 use crate::ai_types::{
     ContentPart, ContextReferenceKind, ContextReferenceWire, EditorRangeWire, SourceSpan,
@@ -156,7 +156,7 @@ impl DurableApplyCheckpoint {
                 .iter()
                 .any(|evidence_id| *evidence_id <= 0)
         {
-            return Err(AppError::msg("agent_run_checkpoint_invalid_schema"));
+            return Err(AppError::run(SafeRunErrorCode::CheckpointInvalidSchema));
         }
         Ok(())
     }
@@ -260,7 +260,9 @@ impl AgentRunRepository {
         external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
     ) -> AppResult<AssistantRunAccepted> {
         if input.envelope.security_domain != SecurityDomain::Normal {
-            return Err(AppError::msg("agent_run_classified_domain_not_supported"));
+            return Err(AppError::run(
+                SafeRunErrorCode::ClassifiedDomainNotSupported,
+            ));
         }
         let intake_fingerprint = intake_fingerprint(&input, external_tool_grants)?;
         db.with_conn(|conn| {
@@ -269,7 +271,7 @@ impl AgentRunRepository {
                     accepted_for_client_request(conn, &input.client_request_id)?
                 {
                     if stored_fingerprint.is_some_and(|stored| stored != intake_fingerprint) {
-                        return Err(AppError::msg("agent_run_idempotency_conflict"));
+                        return Err(AppError::run(SafeRunErrorCode::IdempotencyConflict));
                     }
                     return Ok(existing);
                 }
@@ -448,7 +450,7 @@ impl AgentRunRepository {
                     )
                     .optional()?;
                 let Some((session_id, turn_id, effect, effort, security_domain, risk, envelope_json, explicit_action_json, goal_summary, stored_budget_policy_json, prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash)) = source else {
-                    return Err(AppError::msg("agent_run_retry_not_available"));
+                    return Err(AppError::run(SafeRunErrorCode::RetryNotAvailable));
                 };
                 let (_, budget_policy_json) =
                     materialize_budget_policy(&stored_budget_policy_json, &envelope_json)?;
@@ -519,13 +521,13 @@ impl AgentRunRepository {
                     .map_err(not_found_or_db)?;
                 let state = parse_wire::<RunState>(&status)?;
                 if state.is_terminal() {
-                    return Err(AppError::msg("agent_run_terminal_state"));
+                    return Err(AppError::run(SafeRunErrorCode::TerminalState));
                 }
                 if matches!(&input.payload, RunEventPayload::Completed { .. }) {
                     return Err(AppError::msg("agent_run_finalization_required"));
                 }
                 if input.state_version != stored_state_version {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 validate_tool_call_lifecycle(conn, &input.run_id, &input.payload)?;
                 let next_state = state_for_event(&input.payload).unwrap_or(state);
@@ -562,7 +564,7 @@ impl AgentRunRepository {
                     ],
                 )?;
                 if updated != 1 {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 let seq: u64 = conn.query_row(
                 "SELECT COALESCE(MAX(event_seq), 0) + 1 FROM agent_run_events WHERE run_id = ?1",
@@ -602,10 +604,10 @@ impl AgentRunRepository {
                     .map_err(not_found_or_db)?;
                 let state = parse_wire::<RunState>(&status)?;
                 if state.is_terminal() {
-                    return Err(AppError::msg("agent_run_terminal_state"));
+                    return Err(AppError::run(SafeRunErrorCode::TerminalState));
                 }
                 if input.state_version != stored_state_version {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 let effort = parse_wire::<crate::ai_runtime::run_contract::Effort>(&effort)?;
                 if effort != crate::ai_runtime::run_contract::Effort::Durable {
@@ -628,10 +630,10 @@ impl AgentRunRepository {
                             != input.checkpoint.expected_post_content_hashes
                         || !input.checkpoint.stage.follows(latest.stage)
                     {
-                        return Err(AppError::msg("agent_run_checkpoint_stage_conflict"));
+                        return Err(AppError::run(SafeRunErrorCode::CheckpointStageConflict));
                     }
                 } else if input.checkpoint.stage != DurableApplyCheckpointStage::Approved {
-                    return Err(AppError::msg("agent_run_checkpoint_stage_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::CheckpointStageConflict));
                 }
                 let step_seq: i64 = conn.query_row(
                     "SELECT COALESCE(MAX(step_seq), 0) + 1
@@ -652,7 +654,7 @@ impl AgentRunRepository {
                         serde_json::to_value(input.checkpoint.stage)?
                             .as_str()
                             .ok_or_else(|| {
-                                AppError::msg("agent_run_checkpoint_invalid_schema")
+                                AppError::run(SafeRunErrorCode::CheckpointInvalidSchema)
                             })?,
                         "",
                         "",
@@ -667,7 +669,7 @@ impl AgentRunRepository {
                     rusqlite::params![now, input.run_id, stored_state_version],
                 )?;
                 if updated != 1 {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 Ok(())
             })
@@ -690,7 +692,7 @@ impl AgentRunRepository {
         plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
     ) -> AppResult<()> {
         let checkpoint = Self::latest_durable_apply_checkpoint(db, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_confirmation_expired"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
         let base_content_hashes = plan
             .base_content_hashes()
             .iter()
@@ -710,7 +712,7 @@ impl AgentRunRepository {
                 DurableApplyCheckpointStage::Approved | DurableApplyCheckpointStage::Dispatching
             )
         {
-            return Err(AppError::msg("agent_run_confirmation_expired"));
+            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
         Ok(())
     }
@@ -718,7 +720,7 @@ impl AgentRunRepository {
     /// Atomically persist final output, terminal Run state, and completed event.
     pub(crate) fn finalize(db: &Database, input: FinalizeRunInput) -> AppResult<String> {
         if input.content.trim().is_empty() || input.content.chars().count() > 32_000 {
-            return Err(AppError::msg("agent_run_invalid_final_output"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidFinalOutput));
         }
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
@@ -731,13 +733,13 @@ impl AgentRunRepository {
                     .map_err(not_found_or_db)?;
                 let state = parse_wire::<RunState>(&status)?;
                 if state.is_terminal() {
-                    return Err(AppError::msg("agent_run_terminal_state"));
+                    return Err(AppError::run(SafeRunErrorCode::TerminalState));
                 }
                 if input.state_version != stored_version {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 let completed = transition_to(state, RunState::Completed)
-                    .map_err(|_| AppError::msg("agent_run_illegal_transition"))?;
+                    .map_err(|_| AppError::run(SafeRunErrorCode::IllegalTransition))?;
                 ensure_final_evidence_ids_belong_to_run(
                     conn,
                     &input.run_id,
@@ -780,7 +782,7 @@ impl AgentRunRepository {
                         stored_version,
                     ],
                 )?;
-                if updated != 1 { return Err(AppError::msg("agent_run_state_version_conflict")); }
+                if updated != 1 { return Err(AppError::run(SafeRunErrorCode::StateVersionConflict)); }
                 let event_seq: u64 = conn.query_row(
                     "SELECT COALESCE(MAX(event_seq), 0) + 1 FROM agent_run_events WHERE run_id = ?1",
                     [&input.run_id], |row| row.get(0),
@@ -816,7 +818,7 @@ impl AgentRunRepository {
             return Ok(None);
         }
         if trimmed.chars().count() > 32_000 {
-            return Err(AppError::msg("agent_run_invalid_final_output"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidFinalOutput));
         }
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
@@ -940,7 +942,7 @@ impl AgentRunRepository {
                     |row| row.get(0),
                 )?;
                 if count != 1 {
-                    return Err(AppError::msg("agent_run_session_not_found"));
+                    return Err(AppError::run(SafeRunErrorCode::SessionNotFound));
                 }
                 let pending_count: i64 = conn.query_row(
                     "SELECT COUNT(*) FROM agent_run_confirmations
@@ -949,7 +951,7 @@ impl AgentRunRepository {
                     |row| row.get(0),
                 )?;
                 if pending_count != 0 {
-                    return Err(AppError::msg("agent_run_confirmation_pending"));
+                    return Err(AppError::run(SafeRunErrorCode::ConfirmationPending));
                 }
                 let now = chrono::Utc::now().to_rfc3339();
                 conn.execute(
@@ -980,7 +982,7 @@ impl AgentRunRepository {
         summary: &str,
     ) -> AppResult<AssistantRunEvent> {
         if summary.trim().is_empty() || summary.chars().count() > MAX_SAFE_EVENT_TEXT_CHARS {
-            return Err(AppError::msg("agent_run_invalid_change_plan"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
         }
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
@@ -992,13 +994,13 @@ impl AgentRunRepository {
                     )
                     .map_err(not_found_or_db)?;
                 if session_id != plan.session_id() {
-                    return Err(AppError::msg("agent_run_session_not_found"));
+                    return Err(AppError::run(SafeRunErrorCode::SessionNotFound));
                 }
                 if parse_wire::<RunState>(&status)? != RunState::Running {
-                    return Err(AppError::msg("agent_run_illegal_transition"));
+                    return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
                 }
                 if stored_version != state_version {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 let pending_count: i64 = conn.query_row(
                     "SELECT COUNT(*) FROM agent_run_confirmations
@@ -1007,7 +1009,7 @@ impl AgentRunRepository {
                     |row| row.get(0),
                 )?;
                 if pending_count != 0 {
-                    return Err(AppError::msg("agent_run_confirmation_pending"));
+                    return Err(AppError::run(SafeRunErrorCode::ConfirmationPending));
                 }
                 let now = chrono::Utc::now().to_rfc3339();
                 conn.execute(
@@ -1024,7 +1026,7 @@ impl AgentRunRepository {
                     ],
                 )?;
                 let next_state = transition_to(RunState::Running, RunState::AwaitingConfirmation)
-                    .map_err(|_| AppError::msg("agent_run_illegal_transition"))?;
+                    .map_err(|_| AppError::run(SafeRunErrorCode::IllegalTransition))?;
                 let next_state_version = stored_version + 1;
                 let updated = conn.execute(
                     "UPDATE agent_runs
@@ -1039,7 +1041,7 @@ impl AgentRunRepository {
                     ],
                 )?;
                 if updated != 1 {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 let event_seq: u64 = conn.query_row(
                     "SELECT COALESCE(MAX(event_seq), 0) + 1
@@ -1120,7 +1122,7 @@ impl AgentRunRepository {
                     rusqlite::params![now, confirmation_id, run_id, plan_hash, now_unix_ms],
                 )?;
                 if updated != 1 {
-                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                    return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
                 }
                 Ok(())
             })
@@ -1162,7 +1164,7 @@ impl AgentRunRepository {
                     )
                     .map_err(|error| match error {
                         rusqlite::Error::QueryReturnedNoRows => {
-                            AppError::msg("agent_run_confirmation_expired")
+                            AppError::run(SafeRunErrorCode::ConfirmationExpired)
                         }
                         other => other.into(),
                     })?;
@@ -1170,13 +1172,13 @@ impl AgentRunRepository {
                     return Ok(FrozenConfirmationApproval::AlreadyApplied);
                 }
                 if confirmation_status != "pending" {
-                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                    return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
                 }
                 if stored_state_version != expected_state_version {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 if parse_wire::<RunState>(&status)? != RunState::AwaitingConfirmation {
-                    return Err(AppError::msg("agent_run_illegal_transition"));
+                    return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
                 }
                 let (_, normalized_budget_policy_json) =
                     materialize_budget_policy(&stored_budget_policy_json, &envelope_json)?;
@@ -1201,7 +1203,7 @@ impl AgentRunRepository {
                     rusqlite::params![now, confirmation_id, run_id, plan_hash, now_unix_ms],
                 )?;
                 if consumed != 1 {
-                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                    return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
                 }
                 let plan =
                     crate::ai_runtime::frozen_change_plan::FrozenChangePlan::from_persisted_plan_json(
@@ -1211,7 +1213,7 @@ impl AgentRunRepository {
                     || plan.run_id() != run_id
                     || plan.plan_hash() != plan_hash
                 {
-                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                    return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
                 }
                 let checkpoint = DurableApplyCheckpoint::new(
                     confirmation_id,
@@ -1241,7 +1243,7 @@ impl AgentRunRepository {
                     rusqlite::params![next_state_version, now, run_id, stored_state_version],
                 )?;
                 if updated != 1 {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 conn.execute(
                     "INSERT INTO agent_run_steps
@@ -1298,13 +1300,13 @@ impl AgentRunRepository {
                     )
                     .map_err(not_found_or_db)?;
                 if stored_state_version != expected_state_version {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 if parse_wire::<RunState>(&status)? != RunState::Paused
                     || parse_wire::<Effort>(&effort)? != Effort::Durable
                     || parse_wire::<Effect>(&effect)? != Effect::Apply
                 {
-                    return Err(AppError::msg("agent_run_control_not_available"));
+                    return Err(AppError::run(SafeRunErrorCode::ControlNotAvailable));
                 }
                 let payload_json: String = conn
                     .query_row(
@@ -1321,7 +1323,7 @@ impl AgentRunRepository {
                         ..
                     }
                 ) {
-                    return Err(AppError::msg("agent_run_control_not_available"));
+                    return Err(AppError::run(SafeRunErrorCode::ControlNotAvailable));
                 }
                 let confirmation_id: String = conn
                     .query_row(
@@ -1331,9 +1333,9 @@ impl AgentRunRepository {
                         [run_id],
                         |row| row.get(0),
                     )
-                    .map_err(|_| AppError::msg("agent_run_control_not_available"))?;
+                    .map_err(|_| AppError::run(SafeRunErrorCode::ControlNotAvailable))?;
                 let checkpoint = latest_durable_apply_checkpoint_in_conn(conn, run_id)?
-                    .ok_or_else(|| AppError::msg("agent_run_control_not_available"))?;
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::ControlNotAvailable))?;
                 if checkpoint.confirmation_id != confirmation_id
                     || !matches!(
                         checkpoint.stage,
@@ -1341,7 +1343,7 @@ impl AgentRunRepository {
                             | DurableApplyCheckpointStage::Dispatching
                     )
                 {
-                    return Err(AppError::msg("agent_run_control_not_available"));
+                    return Err(AppError::run(SafeRunErrorCode::ControlNotAvailable));
                 }
                 let next_state_version = stored_state_version + 1;
                 let now = chrono::Utc::now().to_rfc3339();
@@ -1352,7 +1354,7 @@ impl AgentRunRepository {
                     rusqlite::params![next_state_version, now, run_id, stored_state_version],
                 )?;
                 if updated != 1 {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 let event_seq: u64 = conn.query_row(
                     "SELECT COALESCE(MAX(event_seq), 0) + 1
@@ -1406,7 +1408,7 @@ impl AgentRunRepository {
                     )
                     .map_err(|error| match error {
                         rusqlite::Error::QueryReturnedNoRows => {
-                            AppError::msg("agent_run_confirmation_expired")
+                            AppError::run(SafeRunErrorCode::ConfirmationExpired)
                         }
                         other => other.into(),
                     })?;
@@ -1414,13 +1416,13 @@ impl AgentRunRepository {
                     return Ok(FrozenConfirmationRejection::AlreadyRejected);
                 }
                 if confirmation_status != "pending" {
-                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                    return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
                 }
                 if stored_state_version != expected_state_version {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 if parse_wire::<RunState>(&status)? != RunState::AwaitingConfirmation {
-                    return Err(AppError::msg("agent_run_illegal_transition"));
+                    return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
                 }
                 let now = chrono::Utc::now().to_rfc3339();
                 let rejected = conn.execute(
@@ -1431,7 +1433,7 @@ impl AgentRunRepository {
                     rusqlite::params![now, confirmation_id, run_id, now_unix_ms],
                 )?;
                 if rejected != 1 {
-                    return Err(AppError::msg("agent_run_confirmation_expired"));
+                    return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
                 }
                 let next_state_version = stored_state_version + 1;
                 let updated = conn.execute(
@@ -1441,7 +1443,7 @@ impl AgentRunRepository {
                     rusqlite::params![next_state_version, now, run_id, stored_state_version],
                 )?;
                 if updated != 1 {
-                    return Err(AppError::msg("agent_run_state_version_conflict"));
+                    return Err(AppError::run(SafeRunErrorCode::StateVersionConflict));
                 }
                 let event_seq: u64 = conn.query_row(
                     "SELECT COALESCE(MAX(event_seq), 0) + 1
@@ -1691,7 +1693,7 @@ impl AgentRunRepository {
             let references: Value = serde_json::from_str(&references_json)?;
             let references = references
                 .as_array()
-                .ok_or_else(|| AppError::msg("agent_run_invalid_request"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))?;
             let explicit_reference_paths = references
                 .iter()
                 .filter_map(|reference| reference.get("filePath"))
@@ -1699,7 +1701,7 @@ impl AgentRunRepository {
                     path.as_str()
                         .filter(|path| !path.trim().is_empty())
                         .map(str::to_string)
-                        .ok_or_else(|| AppError::msg("agent_run_invalid_request"))
+                        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRequest))
                 })
                 .collect::<AppResult<Vec<_>>>()?;
             Ok(Some(
@@ -1735,7 +1737,7 @@ impl AgentRunRepository {
                     |row| row.get(0),
                 )?;
                 if owned != 1 {
-                    return Err(AppError::msg("agent_run_not_found"));
+                    return Err(AppError::run(SafeRunErrorCode::RunNotFound));
                 }
                 let existing = conn
                     .query_row(
@@ -1824,7 +1826,7 @@ impl AgentRunRepository {
                 return Ok(None);
             };
             let explicit_references = serde_json::from_str(&references_json)
-                .map_err(|_| AppError::msg("agent_run_invalid_explicit_reference"))?;
+                .map_err(|_| AppError::run(SafeRunErrorCode::InvalidExplicitReference))?;
             Ok(Some(RunPromptInput {
                 session_id,
                 message_seq_first,
@@ -1834,11 +1836,11 @@ impl AgentRunRepository {
                     .transpose()?,
                 explicit_references,
                 retrieval_scope: serde_json::from_str(&context_scope_json)
-                    .map_err(|_| AppError::msg("agent_run_invalid_retrieval_scope"))?,
+                    .map_err(|_| AppError::run(SafeRunErrorCode::InvalidRetrievalScope))?,
                 explicit_action: explicit_action_json
                     .map(|value| serde_json::from_str(&value))
                     .transpose()
-                    .map_err(|_| AppError::msg("agent_run_invalid_request"))?,
+                    .map_err(|_| AppError::run(SafeRunErrorCode::InvalidRequest))?,
                 prompt_profile_snapshot: prompt_profile_snapshot_json
                     .map(|value| serde_json::from_str(&value))
                     .transpose()
@@ -1898,23 +1900,23 @@ fn materialize_budget_policy(
     envelope_json: &str,
 ) -> AppResult<(RunBudgetPolicy, String)> {
     let envelope: ExecutionEnvelope = serde_json::from_str(envelope_json)
-        .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
     let canonical_policy = RunBudgetPolicy::for_envelope(&envelope);
     let normalized = serde_json::to_string(&canonical_policy)
-        .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
     if stored_policy == "{}" {
         return Ok((canonical_policy, normalized));
     }
     if let Ok(stored_policy) = serde_json::from_str::<RunBudgetPolicy>(stored_policy) {
         if stored_policy != canonical_policy {
-            return Err(AppError::msg("agent_run_invalid_budget_policy"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
         }
         return Ok((stored_policy, normalized));
     }
     let legacy_policy: LegacyRunBudgetPolicyV1 = serde_json::from_str(stored_policy)
-        .map_err(|_| AppError::msg("agent_run_invalid_budget_policy"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidBudgetPolicy))?;
     if legacy_policy != LegacyRunBudgetPolicyV1::from(&canonical_policy) {
-        return Err(AppError::msg("agent_run_invalid_budget_policy"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidBudgetPolicy));
     }
     Ok((canonical_policy, normalized))
 }
@@ -2051,7 +2053,7 @@ fn ensure_normal_session(conn: &Connection, session_id: i64, session_key: &str) 
     if count == 1 {
         Ok(())
     } else {
-        Err(AppError::msg("agent_run_session_not_found"))
+        Err(AppError::run(SafeRunErrorCode::SessionNotFound))
     }
 }
 
@@ -2092,7 +2094,9 @@ fn pending_confirmation_summary(
             |row| row.get::<_, String>(0),
         )
         .map_err(|error| match error {
-            rusqlite::Error::QueryReturnedNoRows => AppError::msg("agent_run_confirmation_missing"),
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::run(SafeRunErrorCode::ConfirmationMissing)
+            }
             other => other.into(),
         })?;
     let payload_json: String = conn.query_row(
@@ -2120,7 +2124,7 @@ fn pending_confirmation_summary(
                 expires_at,
             },
         )),
-        _ => Err(AppError::msg("agent_run_confirmation_missing")),
+        _ => Err(AppError::run(SafeRunErrorCode::ConfirmationMissing)),
     }
 }
 
@@ -2244,20 +2248,20 @@ fn insert_event(conn: &Connection, event: &AssistantRunEvent) -> AppResult<()> {
         rusqlite::params![
             serialized["runId"]
                 .as_str()
-                .ok_or_else(|| AppError::msg("agent_run_invalid_event"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidEvent))?,
             serialized["seq"]
                 .as_u64()
-                .ok_or_else(|| AppError::msg("agent_run_invalid_event"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidEvent))?,
             serialized["stateVersion"]
                 .as_u64()
-                .ok_or_else(|| AppError::msg("agent_run_invalid_event"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidEvent))?,
             serialized["type"]
                 .as_str()
-                .ok_or_else(|| AppError::msg("agent_run_invalid_event"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidEvent))?,
             serde_json::to_string(&serialized["payload"])?,
             serialized["timestamp"]
                 .as_str()
-                .ok_or_else(|| AppError::msg("agent_run_invalid_event"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidEvent))?,
         ],
     )?;
     Ok(())
@@ -2300,7 +2304,7 @@ fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
         } if capability == "spawn_subagent"
             && !crate::ai_runtime::subagent_coordinator::is_persisted_subagent_id(tool_call_id) =>
         {
-            return Err(AppError::msg("agent_run_invalid_subagent_lifecycle"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidSubagentLifecycle));
         }
         RunEventPayload::ToolCompleted {
             capability,
@@ -2315,7 +2319,7 @@ fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
                     summary,
                 )) =>
         {
-            return Err(AppError::msg("agent_run_invalid_subagent_lifecycle"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidSubagentLifecycle));
         }
         _ => {}
     }
@@ -2374,7 +2378,7 @@ fn validate_safe_event_payload(payload: &RunEventPayload) -> AppResult<()> {
                     })
             })
         {
-            return Err(AppError::msg("agent_run_invalid_subagent_batch_report"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidSubagentBatchReport));
         }
     }
     let payload_json = serde_json::to_string(payload)?;
@@ -2442,7 +2446,7 @@ fn validate_tool_call_lifecycle(
         return Err(AppError::msg("agent_run_duplicate_tool_call_id"));
     }
     if !started && (!saw_start || saw_completion) {
-        return Err(AppError::msg("agent_run_unknown_tool_call_id"));
+        return Err(AppError::run(SafeRunErrorCode::UnknownToolCallId));
     }
     Ok(())
 }
@@ -2510,7 +2514,7 @@ fn latest_durable_apply_checkpoint_in_conn(
     stored
         .map(|stored| {
             let checkpoint: DurableApplyCheckpoint = serde_json::from_str(&stored)
-                .map_err(|_| AppError::msg("agent_run_checkpoint_invalid_schema"))?;
+                .map_err(|_| AppError::run(SafeRunErrorCode::CheckpointInvalidSchema))?;
             checkpoint.validate()?;
             Ok(checkpoint)
         })
@@ -2519,7 +2523,7 @@ fn latest_durable_apply_checkpoint_in_conn(
 
 fn not_found_or_db(error: rusqlite::Error) -> AppError {
     if matches!(error, rusqlite::Error::QueryReturnedNoRows) {
-        AppError::msg("agent_run_not_found")
+        AppError::run(SafeRunErrorCode::RunNotFound)
     } else {
         error.into()
     }

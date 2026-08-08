@@ -82,6 +82,13 @@ pub enum AppError {
     },
     #[error("{0}")]
     Message(String),
+    /// A Run lifecycle failure carrying a stable wire code.
+    ///
+    /// The display and serialized message keep the wire code string, so
+    /// string-based classifiers and frontend message matching behave exactly
+    /// as before; callers that need the typed code can match the variant.
+    #[error("{0}")]
+    Run(crate::ai_runtime::run_contract::SafeRunErrorCode),
     /// A provider stream ended after visible content had already been emitted.
     ///
     /// The display keeps the stable wire prefix so string-based classifiers
@@ -97,6 +104,11 @@ pub enum AppError {
 impl AppError {
     pub fn msg(s: impl Into<String>) -> Self {
         Self::Message(s.into())
+    }
+
+    /// Build a typed Run lifecycle error carrying a stable wire code.
+    pub fn run(code: crate::ai_runtime::run_contract::SafeRunErrorCode) -> Self {
+        Self::Run(code)
     }
 
     /// Build a structured provider error (preferred over free-form messages).
@@ -138,6 +150,7 @@ impl AppError {
             Self::Provider { kind, .. } => kind.as_str(),
             // Keep the legacy wire code so frontend error mapping is unchanged.
             Self::Message(_) | Self::StreamInterrupted(_) => "message",
+            Self::Run(code) => code.as_str(),
             Self::CasUnreadable(_) => "cas_unreadable",
         }
     }
@@ -152,6 +165,7 @@ impl AppError {
             Self::Embed(_) => "Embedding error".to_string(),
             Self::Provider { message, .. } => message.clone(),
             Self::Message(s) => s.clone(),
+            Self::Run(code) => code.as_str().to_string(),
             Self::StreamInterrupted(message) => message.clone(),
             Self::CasUnreadable(s) => s.clone(),
         }
@@ -209,6 +223,9 @@ pub fn log_error(error: &AppError) {
         }
         AppError::Message(s) => {
             tracing::error!(kind = "message", detail = %redacted_log_detail(s), "App error")
+        }
+        AppError::Run(code) => {
+            tracing::error!(kind = "run", code = code.as_str(), "Run lifecycle error")
         }
         AppError::StreamInterrupted(s) => {
             tracing::error!(
@@ -297,6 +314,15 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("Embedding error"));
         assert!(!json.contains("/vault/secret.md"));
+    }
+
+    #[test]
+    fn run_variant_serializes_wire_code_and_message() {
+        let err = AppError::run(crate::ai_runtime::run_contract::SafeRunErrorCode::ToolLoopLimit);
+        let value = serde_json::to_value(&err).unwrap();
+        assert_eq!(value["code"], "agent_run_tool_loop_limit");
+        assert_eq!(value["message"], "agent_run_tool_loop_limit");
+        assert_eq!(err.to_string(), "agent_run_tool_loop_limit");
     }
 
     #[test]

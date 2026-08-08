@@ -65,9 +65,9 @@ impl RunEngine {
             return Ok(true);
         };
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state != RunState::Accepted {
-            return Err(AppError::msg("agent_run_illegal_transition"));
+            return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
         let denied = AgentRunRepository::append_event(
             db,
@@ -99,7 +99,7 @@ impl RunEngine {
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
@@ -119,7 +119,7 @@ impl RunEngine {
                 sink.emit(&preparing)?;
                 preparing.state_version()
             }
-            _ => return Err(AppError::msg("agent_run_illegal_transition")),
+            _ => return Err(AppError::run(SafeRunErrorCode::IllegalTransition)),
         };
         let failed = AgentRunRepository::append_event(
             db,
@@ -149,7 +149,7 @@ impl RunEngine {
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state.is_terminal() {
             return Ok(());
         }
@@ -193,12 +193,12 @@ impl RunEngine {
         sink: &impl RunEventSink,
     ) -> AppResult<u64> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state == RunState::Preparing {
             return Ok(snapshot.run.state_version);
         }
         if snapshot.run.state != RunState::Accepted {
-            return Err(AppError::msg("agent_run_illegal_transition"));
+            return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
         let preparing = AgentRunRepository::append_event(
             db,
@@ -230,7 +230,7 @@ impl RunEngine {
         sink: &impl RunEventSink,
     ) -> AppResult<bool> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state.is_terminal()
             || matches!(
                 snapshot.run.state,
@@ -276,13 +276,13 @@ impl RunEngine {
         applied: bool,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state != RunState::Running {
-            return Err(AppError::msg("agent_run_illegal_transition"));
+            return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
         if applied {
             let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?
-                .ok_or_else(|| AppError::msg("agent_run_checkpoint_stage_conflict"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointStageConflict))?;
             AgentRunRepository::append_checkpoint_step(
                 db,
                 crate::ai_runtime::agent_run_repository::AppendRunCheckpointInput {
@@ -342,15 +342,15 @@ impl RunEngine {
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state.is_terminal() {
             if snapshot.run.state == RunState::Cancelled {
                 crate::ai_runtime::model_gateway::clear_abort(run_id);
             }
-            return Err(AppError::msg("agent_run_terminal_state"));
+            return Err(AppError::run(SafeRunErrorCode::TerminalState));
         }
         if snapshot.run.state != RunState::Accepted {
-            return Err(AppError::msg("agent_run_illegal_transition"));
+            return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
         let message = user_message_for_run(db, &session.session_key, run_id)?;
         let preparing = AgentRunRepository::append_event(
@@ -397,7 +397,7 @@ impl RunEngine {
                     },
                 )?;
                 sink.emit(&failed)?;
-                return Err(AppError::msg("agent_run_provider_unavailable"));
+                return Err(AppError::run(SafeRunErrorCode::ProviderUnavailable));
             }
         };
         let answer = match validated_final_model_answer(&answer) {
@@ -662,16 +662,16 @@ impl RunEngine {
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state.is_terminal() {
             if snapshot.run.state == RunState::Cancelled {
                 crate::ai_runtime::model_gateway::clear_abort(run_id);
             }
-            return Err(AppError::msg("agent_run_terminal_state"));
+            return Err(AppError::run(SafeRunErrorCode::TerminalState));
         }
         let budget_policy =
             AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
-                .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         let preparing_version = match snapshot.run.state {
             RunState::Preparing => snapshot.run.state_version,
             RunState::Accepted => {
@@ -691,7 +691,7 @@ impl RunEngine {
                 sink.emit(&preparing)?;
                 preparing.state_version()
             }
-            _ => return Err(AppError::msg("agent_run_illegal_transition")),
+            _ => return Err(AppError::run(SafeRunErrorCode::IllegalTransition)),
         };
         let running = AgentRunRepository::append_event(
             db,
@@ -765,7 +765,7 @@ impl RunEngine {
                 {
                     let current =
                         AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-                            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+                            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
                     if current.run.state == RunState::AwaitingConfirmation {
                         // The executor already committed the immutable plan and its
                         // ConfirmationRequired transition. Do not emit a terminal
@@ -788,7 +788,7 @@ impl RunEngine {
                     },
                 )?;
                 sink.emit(&failed)?;
-                return Err(AppError::msg(code.as_str()));
+                return Err(AppError::run(code));
             }
         };
         if settle_cancelled_run_with_partial(
@@ -1076,16 +1076,16 @@ impl RunEngine {
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state.is_terminal() {
             if snapshot.run.state == RunState::Cancelled {
                 crate::ai_runtime::model_gateway::clear_abort(run_id);
             }
-            return Err(AppError::msg("agent_run_terminal_state"));
+            return Err(AppError::run(SafeRunErrorCode::TerminalState));
         }
         let budget_policy =
             AgentRunRepository::budget_policy_for_session(db, &session.session_key, run_id)?
-                .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         let turn_budget = AgentModelTurnBudget {
             max_prompt_tokens: Some(budget_policy.max_prompt_tokens),
             max_completion_tokens: Some(budget_policy.max_completion_tokens),
@@ -1118,7 +1118,7 @@ impl RunEngine {
                 sink.emit(&preparing)?;
                 preparing.state_version()
             }
-            _ => return Err(AppError::msg("agent_run_illegal_transition")),
+            _ => return Err(AppError::run(SafeRunErrorCode::IllegalTransition)),
         };
         let running = AgentRunRepository::append_event(
             db,
@@ -1180,7 +1180,7 @@ impl RunEngine {
                     },
                 )?;
                 sink.emit(&failed)?;
-                return Err(AppError::msg(code.as_str()));
+                return Err(AppError::run(code));
             }
         };
         if let Some(telemetry) = telemetry {

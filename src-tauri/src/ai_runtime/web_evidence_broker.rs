@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::time::{Duration, Instant};
 
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::{
     ContextPacket, SourceType, TrustLevel, WebEvidenceMeta, WebSearchBackend, WebSourceRank,
 };
@@ -819,9 +820,9 @@ fn mcp_runtime_failure_code(error: &AppError) -> &'static str {
 
 fn sanitize_mcp_runtime_error(error: AppError) -> AppError {
     match mcp_runtime_failure_code(&error) {
-        "mcp_provider_authentication" => AppError::msg("agent_run_web_provider_auth_failed"),
+        "mcp_provider_authentication" => AppError::run(SafeRunErrorCode::WebProviderAuthFailed),
         "mcp_provider_output_too_large" => AppError::msg("mcp_provider_output_too_large"),
-        "mcp_provider_timeout" => AppError::msg("agent_run_web_provider_timeout"),
+        "mcp_provider_timeout" => AppError::run(SafeRunErrorCode::WebProviderTimeout),
         "mcp_provider_transport_error" => AppError::msg("mcp_provider_transport_error"),
         _ => AppError::msg("mcp_provider_runtime_error"),
     }

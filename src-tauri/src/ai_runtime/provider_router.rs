@@ -185,6 +185,8 @@ pub(crate) fn classify_provider_failure_from_app_error(
             }
         }
         AppError::Message(message) => classify_provider_failure_from_message(message),
+        // Typed Run lifecycle codes are never provider-transport failures.
+        AppError::Run(_) => ProviderFailure::Unknown,
         _ => classify_provider_failure_from_message(&error.to_string()),
     }
 }

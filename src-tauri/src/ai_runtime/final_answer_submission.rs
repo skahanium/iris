@@ -6,6 +6,7 @@
 
 use serde::Deserialize;
 
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::{ToolCall, ToolSpec};
 use crate::ai_types::ToolAccessLevel;
 use crate::error::{AppError, AppResult};
@@ -72,7 +73,7 @@ impl FinalAnswerSubmission {
             return Err(AppError::msg("agent_run_final_submission_tool_invalid"));
         }
         let submission = serde_json::from_str::<Self>(&call.function.arguments)
-            .map_err(|_| AppError::msg("agent_run_final_submission_invalid"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::FinalSubmissionInvalid))?;
         if submission.blocks.is_empty()
             || submission.blocks.len() > MAX_FINAL_BLOCKS
             || submission
@@ -99,7 +100,7 @@ impl FinalAnswerSubmission {
                         != block.sources.len()
             })
         {
-            return Err(AppError::msg("agent_run_final_submission_invalid"));
+            return Err(AppError::run(SafeRunErrorCode::FinalSubmissionInvalid));
         }
         Ok(submission)
     }

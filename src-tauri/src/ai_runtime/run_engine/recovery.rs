@@ -111,7 +111,7 @@ impl RunEngine {
                 }
                 DurableRecoveryClassification::AlreadyApplied => {
                     let Ok(plan) = plan else {
-                        return Err(AppError::msg("agent_run_invalid_change_plan"));
+                        return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
                     };
                     append_recovered_tool_completed_if_needed(db, &run_id, state_version, &plan)?;
                     advance_recovered_checkpoint_to_completed(db, &run_id, state_version, &plan)?;
@@ -238,7 +238,7 @@ fn classify_consumed_durable_apply(
 ) -> AppResult<DurableRecoveryClassification> {
     plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
     let request = AgentRunRepository::policy_request_for_session(db, session_key, run_id)?
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     if request.envelope.effect != Effect::Apply || request.envelope.effort != Effort::Durable {
         return Ok(DurableRecoveryClassification::ManualReview);
     }
@@ -496,7 +496,7 @@ fn advance_recovered_checkpoint_to_completed(
     plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
 ) -> AppResult<()> {
     let latest = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?
-        .ok_or_else(|| AppError::msg("agent_run_checkpoint_stage_conflict"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointStageConflict))?;
     let stages: &[DurableApplyCheckpointStage] = match latest.stage() {
         DurableApplyCheckpointStage::Approved => &[
             DurableApplyCheckpointStage::Dispatching,

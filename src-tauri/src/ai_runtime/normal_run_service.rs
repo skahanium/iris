@@ -206,13 +206,17 @@ async fn execute_normal_run_internal(
             .ok()
             .flatten()
             .is_some_and(|response| !response.run.state.is_terminal());
+        let is_explicit_persistence_failure = matches!(
+            &error,
+            crate::error::AppError::Message(message)
+                if message == SafeRunErrorCode::PersistenceFailed.as_str()
+        ) || matches!(
+            &error,
+            crate::error::AppError::Run(SafeRunErrorCode::PersistenceFailed)
+        );
         if still_active
             && safe_code == SafeRunErrorCode::PersistenceFailed
-            && !matches!(
-                &error,
-                crate::error::AppError::Message(message)
-                    if message == SafeRunErrorCode::PersistenceFailed.as_str()
-            )
+            && !is_explicit_persistence_failure
         {
             let _ =
                 RunEngine::fail_active_with_sink(&db, &accepted.session, &accepted.run_id, sink);
@@ -237,7 +241,7 @@ fn evaluate_normal_run_policy(
             &accepted.session.session_key,
             &accepted.run_id,
         )?
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     let engine = crate::ai_runtime::document_policy_repository::load_policy_decision_engine(db)?;
     Ok(engine.evaluate_run(request))
 }

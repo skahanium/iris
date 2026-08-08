@@ -6,6 +6,7 @@ use std::path::{Component, Path};
 use rusqlite::{params_from_iter, Connection};
 use serde::{Deserialize, Serialize};
 
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::knowledge::corpora::{self, CorpusConfig};
 use crate::{error::AppError, error::AppResult};
 
@@ -162,7 +163,7 @@ fn normalize_relative(value: &str, prefix: bool) -> AppResult<String> {
             .next()
             .is_some_and(|segment| segment.ends_with(':'))
     {
-        return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRetrievalScope));
     }
     let mut parts = Vec::new();
     for component in Path::new(&value).components() {
@@ -171,18 +172,18 @@ fn normalize_relative(value: &str, prefix: bool) -> AppResult<String> {
                 let part = part
                     .to_str()
                     .filter(|part| !part.is_empty())
-                    .ok_or_else(|| AppError::msg("agent_run_invalid_retrieval_scope"))?;
+                    .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRetrievalScope))?;
                 parts.push(part);
             }
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
-                return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+                return Err(AppError::run(SafeRunErrorCode::InvalidRetrievalScope));
             }
         }
     }
     let normalized = parts.join("/");
     if normalized.is_empty() || crate::storage::paths::has_reserved_path_root(&normalized) {
-        return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRetrievalScope));
     }
     Ok(if prefix {
         corpora::normalize_prefix(&normalized)
@@ -199,7 +200,7 @@ fn normalize_identifier(value: &str) -> AppResult<String> {
         || value.chars().any(char::is_control)
         || value.contains(['/', '\\'])
     {
-        return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRetrievalScope));
     }
     Ok(value.to_string())
 }
@@ -207,7 +208,7 @@ fn normalize_identifier(value: &str) -> AppResult<String> {
 fn normalize_tag(value: &str) -> AppResult<String> {
     let value = value.trim().trim_start_matches('#').trim().to_lowercase();
     if value.is_empty() || value.chars().any(char::is_control) {
-        return Err(AppError::msg("agent_run_invalid_retrieval_scope"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRetrievalScope));
     }
     Ok(value)
 }
@@ -235,7 +236,7 @@ pub fn resolve_retrieval_scope(
                 .corpus
                 .iter()
                 .find(|corpus| corpus.id == *corpus_id)
-                .ok_or_else(|| AppError::msg("agent_run_invalid_retrieval_scope"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidRetrievalScope))?;
             scope.push_prefix(normalize_relative(&corpus.path_prefix, true)?);
         }
         for prefix in &user.path_prefixes {

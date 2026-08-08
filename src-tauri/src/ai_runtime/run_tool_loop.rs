@@ -200,7 +200,7 @@ impl WebEvidenceReservation {
         let capacity = {
             let mut state = shared
                 .lock()
-                .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?;
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
             let remaining = MAX_WEB_EVIDENCE_PER_RUN.saturating_sub(state.slots_in_use);
             let capacity = remaining.min(INITIAL_WEB_SEARCH_RESULTS);
             if capacity == 0 {
@@ -227,7 +227,7 @@ impl WebEvidenceReservation {
         let mut state = self
             .shared
             .lock()
-            .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?;
         state.slots_in_use = state
             .slots_in_use
             .saturating_sub(self.capacity)
@@ -598,7 +598,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         self.set_web_failure(None)?;
         self.local_evidence_ids
             .lock()
-            .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?
+            .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
             .extend(evidence_ids.iter().copied());
         evidence_reservation.commit(&evidence_ids)?;
         self.record_web_evidence_quality(&packed_items)?;
@@ -698,7 +698,7 @@ impl<'a> NormalRunToolExecutor<'a> {
         plan: &crate::ai_runtime::frozen_change_plan::FrozenChangePlan,
     ) -> AppResult<ToolCallResult> {
         if plan.run_id() != self.accepted.run_id || plan.session_id() != self.context.session_id {
-            return Err(AppError::msg("agent_run_confirmation_expired"));
+            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
         plan.validate_consumed_identity(plan.confirmation_id(), plan.plan_hash())?;
         let entry = catalog_find(plan.operation())
@@ -707,11 +707,11 @@ impl<'a> NormalRunToolExecutor<'a> {
                     && entry.implementation
                         == crate::ai_runtime::tool_catalog::ToolImplementationStatus::Dispatchable
             })
-            .ok_or_else(|| AppError::msg("agent_run_confirmation_expired"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
         let args = plan.change();
         let actual_paths = frozen_relative_paths(entry.name, args, self.context);
         if actual_paths != plan.relative_paths() {
-            return Err(AppError::msg("agent_run_confirmation_expired"));
+            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
         revalidate_frozen_base_hashes(self.state.as_ref(), plan)?;
         let snapshot = AgentRunRepository::get_for_session(
@@ -719,9 +719,9 @@ impl<'a> NormalRunToolExecutor<'a> {
             &self.accepted.session.session_key,
             &self.accepted.run_id,
         )?
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state != crate::ai_runtime::run_contract::RunState::Running {
-            return Err(AppError::msg("agent_run_illegal_transition"));
+            return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
         let gate = ToolExecutionGate {
             run_id: &self.accepted.run_id,
@@ -928,7 +928,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             let registered = AgentEvidenceRepository::register_local(&self.state.db, input)?;
             self.local_evidence_ids
                 .lock()
-                .map_err(|_| AppError::msg("agent_run_evidence_lock_failed"))?
+                .map_err(|_| AppError::run(SafeRunErrorCode::EvidenceLockFailed))?
                 .push(registered.evidence_id);
         }
         Ok(())
@@ -943,30 +943,30 @@ impl<'a> NormalRunToolExecutor<'a> {
         let requested_path = args
             .get("path")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| AppError::msg("agent_run_local_evidence_invalid"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::LocalEvidenceInvalid))?;
         let requested_path =
             crate::ai_runtime::retrieval_scope::normalize_note_path(requested_path)
-                .map_err(|_| AppError::msg("agent_run_local_evidence_invalid"))?;
+                .map_err(|_| AppError::run(SafeRunErrorCode::LocalEvidenceInvalid))?;
         let returned_path = result
             .output
             .get("path")
             .and_then(serde_json::Value::as_str)
             .and_then(|path| crate::ai_runtime::retrieval_scope::normalize_note_path(path).ok())
             .filter(|path| path == &requested_path)
-            .ok_or_else(|| AppError::msg("agent_run_local_evidence_invalid"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::LocalEvidenceInvalid))?;
         let content_hash = result
             .output
             .get("contentHash")
             .and_then(serde_json::Value::as_str)
             .filter(|hash| !hash.trim().is_empty())
-            .ok_or_else(|| AppError::msg("agent_run_local_evidence_invalid"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::LocalEvidenceInvalid))?;
         let source_span = result
             .output
             .get("sourceSpan")
             .and_then(serde_json::Value::as_object)
             .and_then(|span| Some((span.get("start")?.as_i64()?, span.get("end")?.as_i64()?)))
             .filter(|(start, end)| *start >= 0 && end >= start)
-            .ok_or_else(|| AppError::msg("agent_run_local_evidence_invalid"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::LocalEvidenceInvalid))?;
         Ok(LocalEvidenceInput {
             session_id: self.context.session_id,
             run_id: run_id.to_string(),
@@ -1108,7 +1108,7 @@ impl NormalRunToolExecutor<'_> {
                 &self.accepted.session.session_key,
                 &self.accepted.run_id,
             )?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
             .run
             .state_version
         } else {
@@ -1229,13 +1229,17 @@ impl NormalRunToolExecutor<'_> {
                                             self.local_external_evidence_ids
                                                 .lock()
                                                 .map_err(|_| {
-                                                    AppError::msg("agent_run_evidence_lock_failed")
+                                                    AppError::run(
+                                                        SafeRunErrorCode::EvidenceLockFailed,
+                                                    )
                                                 })?
                                                 .push(evidence.evidence_id);
                                             self.external_evidence_ids
                                                 .lock()
                                                 .map_err(|_| {
-                                                    AppError::msg("agent_run_evidence_lock_failed")
+                                                    AppError::run(
+                                                        SafeRunErrorCode::EvidenceLockFailed,
+                                                    )
                                                 })?
                                                 .push(evidence.evidence_id);
                                             ToolCallResult {
@@ -1408,7 +1412,7 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
                     &self.accepted.session.session_key,
                     &self.accepted.run_id,
                 )?
-                .ok_or_else(|| AppError::msg("agent_run_not_found"))?
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?
                 .run
                 .state_version
             } else {
@@ -2011,7 +2015,7 @@ impl NormalRunToolExecutor<'_> {
                 &self.accepted.session.session_key,
                 &self.accepted.run_id,
             )?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
             let persisted = AgentRunRepository::append_event(
                 &self.state.db,
                 AppendRunEventInput {
@@ -2210,11 +2214,11 @@ fn expected_post_content_hashes(
     }
     let path = relative_paths
         .first()
-        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     let base_hash = base_content_hashes
         .iter()
         .find_map(|(candidate, hash)| (candidate == path).then_some(hash))
-        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     let range = args
         .get("range")
         .and_then(serde_json::Value::as_object)
@@ -2224,7 +2228,7 @@ fn expected_post_content_hashes(
                 end: usize::try_from(range.get("end")?.as_u64()?).ok()?,
             })
         })
-        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     let replacement_key = if tool_name == "insert_text_at_cursor" {
         "text"
     } else {
@@ -2233,7 +2237,7 @@ fn expected_post_content_hashes(
     let replacement_text = args
         .get(replacement_key)
         .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     let original_text = args
         .get("original_text")
         .and_then(serde_json::Value::as_str)
@@ -2241,13 +2245,13 @@ fn expected_post_content_hashes(
         .unwrap_or("");
     let vault = state
         .vault_path()
-        .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     let resolved = crate::storage::paths::resolve_vault_path(&vault, path)
-        .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     let current = std::fs::read_to_string(resolved)
-        .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     if crate::cas::hash::content_hash_str(&current) != *base_hash {
-        return Err(AppError::msg("agent_run_invalid_change_plan"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
     }
     let applied = crate::cas::patch::apply_patch(
         &crate::ai_types::PatchProposal {
@@ -2264,7 +2268,7 @@ fn expected_post_content_hashes(
         },
         &current,
     )
-    .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+    .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     Ok(vec![(
         path.clone(),
         crate::cas::hash::content_hash_str(&applied),
@@ -2330,17 +2334,17 @@ fn revalidate_frozen_base_hashes(
     }
     let vault = state
         .vault_path()
-        .map_err(|_| AppError::msg("agent_run_confirmation_expired"))?;
+        .map_err(|_| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
     for (path, expected_hash) in plan.base_content_hashes() {
         if path.starts_with("application://") {
             continue;
         }
         let resolved = crate::storage::paths::resolve_vault_path(&vault, path)
-            .map_err(|_| AppError::msg("agent_run_confirmation_expired"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
         let current = std::fs::read_to_string(resolved)
-            .map_err(|_| AppError::msg("agent_run_confirmation_expired"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::ConfirmationExpired))?;
         if crate::cas::hash::content_hash_str(&current) != *expected_hash {
-            return Err(AppError::msg("agent_run_confirmation_expired"));
+            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
     }
     Ok(())
@@ -2397,7 +2401,7 @@ fn append_model_tool_started(
 ) -> AppResult<u64> {
     let snapshot =
         AgentRunRepository::get_for_session(db, &accepted.session.session_key, &accepted.run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     let event = AgentRunRepository::append_event(
         db,
         AppendRunEventInput {
@@ -2629,7 +2633,7 @@ fn append_capability_degraded(
 ) -> AppResult<()> {
     let snapshot =
         AgentRunRepository::get_for_session(db, &accepted.session.session_key, &accepted.run_id)?
-            .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     let event = AgentRunRepository::append_event(
         db,
         AppendRunEventInput {

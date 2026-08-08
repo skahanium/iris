@@ -37,7 +37,7 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
         max_tokens: u32,
     ) -> AppResult<Self> {
         if max_tokens == 0 {
-            return Err(AppError::msg("agent_run_invalid_request"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
         Ok(Self {
             gateway,
@@ -55,7 +55,7 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
         dispatch: crate::ai_runtime::direct_provider_route::DirectProviderDispatch,
     ) -> AppResult<Self> {
         if dispatch.max_output_tokens == 0 {
-            return Err(AppError::msg("agent_run_invalid_request"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
         }
         Ok(Self {
             gateway,
@@ -341,7 +341,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
             let stored_continuation = self
                 .continuations
                 .lock()
-                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?
                 .get(provider_state_key)
                 .cloned();
             let mut selected_index = stored_continuation
@@ -394,7 +394,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                         let mut continuations = self
                             .continuations
                             .lock()
-                            .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?;
+                            .map_err(|_| AppError::run(SafeRunErrorCode::ContinuationLockFailed))?;
                         if let Some(next) = response.continuation.clone() {
                             continuations.insert(
                                 provider_state_key.to_string(),
@@ -410,20 +410,28 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                         if response.tool_calls.is_empty() {
                             self.selected_indices
                                 .lock()
-                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?
                                 .remove(provider_state_key);
                             self.tool_bound_runs
                                 .lock()
-                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?
                                 .remove(provider_state_key);
                         } else {
                             self.selected_indices
                                 .lock()
-                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?
                                 .insert(provider_state_key.to_string(), selected_index);
                             self.tool_bound_runs
                                 .lock()
-                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?
                                 .insert(provider_state_key.to_string());
                         }
                         return Ok(response);
@@ -436,7 +444,9 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                             || self
                                 .tool_bound_runs
                                 .lock()
-                                .map_err(|_| AppError::msg("agent_run_continuation_lock_failed"))?
+                                .map_err(|_| {
+                                    AppError::run(SafeRunErrorCode::ContinuationLockFailed)
+                                })?
                                 .contains(provider_state_key);
                         let failure = classify_failover_failure(&error);
                         if !may_failover_after_model_attempt(
@@ -464,13 +474,13 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                         let (provider_id, model_id) = self
                             .route
                             .selected_provider_model_for_requirements(self.requirements, next_index)
-                            .ok_or_else(|| AppError::msg("agent_run_no_capable_model"))?;
+                            .ok_or_else(|| AppError::run(SafeRunErrorCode::NoCapableModel))?;
                         let snapshot = AgentRunRepository::get_for_session(
                             self.db,
                             &self.session.session_key,
                             parent_run_id,
                         )?
-                        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+                        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
                         let switched = AgentRunRepository::append_event(
                             self.db,
                             AppendRunEventInput {

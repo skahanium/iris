@@ -15,7 +15,8 @@ use crate::ai_runtime::run_contract::RunEventPayload;
 #[cfg(test)]
 use crate::ai_runtime::run_contract::{
     transition_if_version, AssistantRunAccepted, AssistantRunEvent, AssistantRunGetResponse,
-    AssistantRunSnapshot, AssistantSessionRef, RunEventType, RunState, SecurityDomain,
+    AssistantRunSnapshot, AssistantSessionRef, RunEventType, RunState, SafeRunErrorCode,
+    SecurityDomain,
 };
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
@@ -521,7 +522,7 @@ pub(crate) fn classified_run_accept(
     validate_thread_id(&input.run_id)?;
     validate_thread_id(&input.turn_id)?;
     if input.client_request_id.trim().is_empty() || input.message.trim().is_empty() {
-        return Err(AppError::msg("agent_run_invalid_request"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
 
     if let Some(existing) = find_classified_run_by_client_request(vault, &input.client_request_id)?
@@ -651,7 +652,7 @@ pub(crate) fn classified_run_get(
     run_id: &str,
 ) -> AppResult<Option<AssistantRunGetResponse>> {
     if session.domain != SecurityDomain::Classified {
-        return Err(AppError::msg("agent_run_session_not_found"));
+        return Err(AppError::run(SafeRunErrorCode::SessionNotFound));
     }
     let thread = classified_ai_thread_load(vault, session.session_key.clone())?;
     let Some(run) = thread.runs.iter().find(|run| run.run_id == run_id) else {
@@ -742,7 +743,7 @@ pub(crate) fn classified_run_complete(
     content: String,
 ) -> AppResult<AssistantRunEvent> {
     if session.domain != SecurityDomain::Classified || content.trim().is_empty() {
-        return Err(AppError::msg("agent_run_invalid_request"));
+        return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
     let mut thread = classified_ai_thread_load(vault, session.session_key.clone())?;
     let run_index = find_classified_run_index(&thread, run_id)?;
@@ -797,7 +798,7 @@ pub(crate) fn classified_run_fail(
     code: crate::ai_runtime::run_contract::SafeRunErrorCode,
 ) -> AppResult<Option<AssistantRunEvent>> {
     if session.domain != SecurityDomain::Classified {
-        return Err(AppError::msg("agent_run_session_not_found"));
+        return Err(AppError::run(SafeRunErrorCode::SessionNotFound));
     }
     let mut thread = classified_ai_thread_load(vault, session.session_key.clone())?;
     let run_index = find_classified_run_index(&thread, run_id)?;
@@ -844,7 +845,7 @@ pub(crate) fn classified_run_fail_unfinished(
     code: crate::ai_runtime::run_contract::SafeRunErrorCode,
 ) -> AppResult<Vec<AssistantRunEvent>> {
     let snapshot = classified_run_get(vault, session, run_id)?
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     if snapshot.run.state.is_terminal()
         || matches!(
             snapshot.run.state,
@@ -881,7 +882,7 @@ fn classified_run_transition(
     payload: RunEventPayload,
 ) -> AppResult<AssistantRunEvent> {
     if session.domain != SecurityDomain::Classified {
-        return Err(AppError::msg("agent_run_session_not_found"));
+        return Err(AppError::run(SafeRunErrorCode::SessionNotFound));
     }
     let mut thread = classified_ai_thread_load(vault, session.session_key.clone())?;
     let run_index = find_classified_run_index(&thread, run_id)?;
@@ -915,7 +916,7 @@ fn find_classified_run_index(thread: &ClassifiedAiThread, run_id: &str) -> AppRe
         .runs
         .iter()
         .position(|run| run.run_id == run_id)
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))
 }
 
 #[cfg(test)]
@@ -1003,14 +1004,14 @@ pub(crate) fn classified_run_cancel(
     expected_state_version: u64,
 ) -> AppResult<Option<AssistantRunEvent>> {
     if session.domain != SecurityDomain::Classified {
-        return Err(AppError::msg("agent_run_session_not_found"));
+        return Err(AppError::run(SafeRunErrorCode::SessionNotFound));
     }
     let mut thread = classified_ai_thread_load(vault, session.session_key.clone())?;
     let run_index = thread
         .runs
         .iter()
         .position(|run| run.run_id == run_id)
-        .ok_or_else(|| AppError::msg("agent_run_not_found"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
     let current = run_state_from_wire(&thread.runs[run_index].status)?;
     if current == RunState::Cancelled {
         return Ok(None);

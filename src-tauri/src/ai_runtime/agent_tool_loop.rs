@@ -11,6 +11,7 @@ use std::pin::Pin;
 use crate::ai_runtime::final_answer_submission::{FinalAnswerSubmission, FINAL_ANSWER_TOOL_NAME};
 use crate::ai_runtime::model_gateway::{GatewayResponse, StreamEventObserver};
 use crate::ai_runtime::run_contract::RunBudgetPolicy;
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::ai_runtime::run_engine::RunEventSink;
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall, ToolCallResult, ToolSpec};
 use crate::error::{AppError, AppResult};
@@ -297,7 +298,7 @@ impl AgentToolLoop {
                 .max_completion_tokens
                 .is_some_and(|limit| completion_tokens >= limit)
             {
-                return Err(AppError::msg("agent_run_tool_loop_limit"));
+                return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
             model_turns += 1;
             if let Some(usage) = usage.as_deref_mut() {
@@ -335,7 +336,7 @@ impl AgentToolLoop {
                             completion_tokens.saturating_add(draft_completion_tokens) > limit
                         });
                     if exceeds_turn_output || exceeds_run_completion {
-                        return Err(AppError::msg("agent_run_output_too_long"));
+                        return Err(AppError::run(SafeRunErrorCode::OutputTooLong));
                     }
                     completion_tokens = completion_tokens.saturating_add(draft_completion_tokens);
                     total_tokens = total_tokens.saturating_add(draft_completion_tokens);
@@ -362,7 +363,7 @@ impl AgentToolLoop {
                 .max_prompt_tokens
                 .is_some_and(|limit| turn_prompt_tokens > limit)
             {
-                return Err(AppError::msg("agent_run_tool_loop_limit"));
+                return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
             let exceeds_turn_output = self
                 .turn_budget
@@ -393,12 +394,12 @@ impl AgentToolLoop {
             }
 
             if incomplete_final_draft.is_some() && !response.tool_calls.is_empty() {
-                return Err(AppError::msg("agent_run_incomplete_output"));
+                return Err(AppError::run(SafeRunErrorCode::IncompleteOutput));
             }
 
             if response.tool_calls.is_empty() {
                 if executor.requires_web_evidence() && !executor.has_web_evidence() {
-                    return Err(AppError::msg("agent_run_web_evidence_required"));
+                    return Err(AppError::run(SafeRunErrorCode::WebEvidenceRequired));
                 }
                 if executor.requires_external_evidence() && !executor.has_external_evidence() {
                     return Err(AppError::msg("agent_run_external_evidence_required"));
@@ -442,7 +443,7 @@ impl AgentToolLoop {
                     requires_factual_completion,
                 ) {
                     if incomplete_final_answer_repair_used || model_turns >= self.max_model_turns {
-                        return Err(AppError::msg("agent_run_incomplete_output"));
+                        return Err(AppError::run(SafeRunErrorCode::IncompleteOutput));
                     }
                     incomplete_final_answer_repair_used = true;
                     incomplete_final_draft = Some(content.clone());
@@ -487,7 +488,7 @@ impl AgentToolLoop {
                         crate::ai_runtime::agent_capacity_eval::BudgetOutcome::ToolCallsExhausted,
                     );
                 }
-                return Err(AppError::msg("agent_run_tool_loop_limit"));
+                return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
             }
 
             observer.on_tools_starting()?;
@@ -550,7 +551,7 @@ fn enforce_prompt_budget(
         .max_prompt_tokens
         .is_some_and(|limit| estimate_prompt_tokens(messages, tools) > limit)
     {
-        return Err(AppError::msg("agent_run_tool_loop_limit"));
+        return Err(AppError::run(SafeRunErrorCode::ToolLoopLimit));
     }
     Ok(())
 }
@@ -641,7 +642,7 @@ fn incomplete_answer_continuation_instruction() -> LlmMessage {
 
 fn append_final_answer_continuation(draft: String, continuation: String) -> AppResult<String> {
     if continuation.trim().is_empty() || continuation.trim_start().starts_with(draft.trim()) {
-        return Err(AppError::msg("agent_run_incomplete_output"));
+        return Err(AppError::run(SafeRunErrorCode::IncompleteOutput));
     }
     let separator =
         if draft.ends_with(char::is_whitespace) || continuation.starts_with(char::is_whitespace) {
@@ -672,14 +673,14 @@ fn final_answer_submission(
             .is_empty()
         || !allowed_tools.contains(FINAL_ANSWER_TOOL_NAME)
     {
-        return Err(AppError::msg("agent_run_final_submission_invalid"));
+        return Err(AppError::run(SafeRunErrorCode::FinalSubmissionInvalid));
     }
     FinalAnswerSubmission::from_tool_call(&response.tool_calls[0]).map(Some)
 }
 
 fn ensure_run_not_cancelled(run_id: &str) -> AppResult<()> {
     if crate::ai_runtime::model_gateway::is_abort_requested(run_id) {
-        Err(AppError::msg("agent_run_cancelled"))
+        Err(AppError::run(SafeRunErrorCode::Cancelled))
     } else {
         Ok(())
     }

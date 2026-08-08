@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::ai_runtime::run_contract::SafeRunErrorCode;
 use crate::error::{AppError, AppResult};
 
 /// Inputs that must be frozen before a user can approve a change effect.
@@ -60,7 +61,7 @@ impl FrozenChangePlan {
             )
             || input.rollback_summary.trim().is_empty()
         {
-            return Err(AppError::msg("agent_run_invalid_change_plan"));
+            return Err(AppError::run(SafeRunErrorCode::InvalidChangePlan));
         }
         let canonical = canonical_json(&plan_value(&input));
         let hash = Sha256::digest(canonical.as_bytes());
@@ -106,7 +107,7 @@ impl FrozenChangePlan {
     /// dispatched under a previously approved hash.
     pub(crate) fn from_persisted_plan_json(plan_json: &str) -> AppResult<Self> {
         let value: Value = serde_json::from_str(plan_json)
-            .map_err(|_| AppError::msg("agent_run_invalid_change_plan"))?;
+            .map_err(|_| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
         let input = FrozenChangePlanInput {
             confirmation_id: required_string(&value, "confirmationId")?,
             run_id: required_string(&value, "runId")?,
@@ -114,7 +115,7 @@ impl FrozenChangePlan {
                 .get("sessionId")
                 .and_then(Value::as_i64)
                 .filter(|session_id| *session_id > 0)
-                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?,
             request_id: required_string(&value, "requestId")?,
             tool_call_id: required_string(&value, "toolCallId")?,
             vault_id: required_string(&value, "vaultId")?,
@@ -126,17 +127,17 @@ impl FrozenChangePlan {
                 .get("change")
                 .cloned()
                 .filter(Value::is_object)
-                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?,
             affected_file_count: value
                 .get("affectedFileCount")
                 .and_then(Value::as_u64)
                 .and_then(|count| usize::try_from(count).ok())
-                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?,
             rollback_summary: required_string(&value, "rollbackSummary")?,
             expires_at_unix_ms: value
                 .get("expiresAtUnixMs")
                 .and_then(Value::as_i64)
-                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?,
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?,
         };
         Self::freeze(input)
     }
@@ -153,7 +154,7 @@ impl FrozenChangePlan {
             || plan_hash != self.plan_hash
             || now_unix_ms > self.input.expires_at_unix_ms
         {
-            return Err(AppError::msg("agent_run_confirmation_expired"));
+            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
         Ok(())
     }
@@ -168,7 +169,7 @@ impl FrozenChangePlan {
         plan_hash: &str,
     ) -> AppResult<()> {
         if confirmation_id != self.input.confirmation_id || plan_hash != self.plan_hash {
-            return Err(AppError::msg("agent_run_confirmation_expired"));
+            return Err(AppError::run(SafeRunErrorCode::ConfirmationExpired));
         }
         Ok(())
     }
@@ -210,7 +211,7 @@ fn required_string(value: &Value, field: &str) -> AppResult<String> {
         .and_then(Value::as_str)
         .filter(|item| !item.trim().is_empty())
         .map(str::to_owned)
-        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))
 }
 
 fn required_string_array(value: &Value, field: &str) -> AppResult<Vec<String>> {
@@ -218,13 +219,13 @@ fn required_string_array(value: &Value, field: &str) -> AppResult<Vec<String>> {
         .get(field)
         .and_then(Value::as_array)
         .filter(|items| !items.is_empty())
-        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?
         .iter()
         .map(|item| {
             item.as_str()
                 .filter(|item| !item.trim().is_empty())
                 .map(str::to_owned)
-                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))
         })
         .collect()
 }
@@ -233,22 +234,22 @@ fn required_hash_pairs(value: &Value, field: &str) -> AppResult<Vec<(String, Str
     let pairs = value
         .get(field)
         .and_then(Value::as_array)
-        .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+        .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
     pairs
         .iter()
         .map(|pair| {
             let pair = pair
                 .as_array()
                 .filter(|pair| pair.len() == 2)
-                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
             let path = pair[0]
                 .as_str()
                 .filter(|path| !path.trim().is_empty())
-                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
             let hash = pair[1]
                 .as_str()
                 .filter(|hash| !hash.trim().is_empty())
-                .ok_or_else(|| AppError::msg("agent_run_invalid_change_plan"))?;
+                .ok_or_else(|| AppError::run(SafeRunErrorCode::InvalidChangePlan))?;
             Ok((path.to_owned(), hash.to_owned()))
         })
         .collect()
