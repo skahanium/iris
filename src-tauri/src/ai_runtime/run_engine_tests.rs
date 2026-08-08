@@ -21,7 +21,7 @@ use super::run_contract::{
 };
 use super::run_engine::{
     apply_model_turn_budget, direct_gateway_request, AgentRunStreamObserver, DirectAnswerProvider,
-    RunEngine, RunEventSink, StreamingDirectAnswerProvider,
+    RunEngine, RunEventSink,
 };
 use super::run_intake::RunIntake;
 use crate::ai_runtime::agent_evidence_repository::{
@@ -163,11 +163,12 @@ impl DirectAnswerProvider for MockProvider {
     }
 }
 
-impl StreamingDirectAnswerProvider for MockStreamingProvider {
-    fn answer_streaming<'a>(
+impl ToolLoopProvider for MockStreamingProvider {
+    fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _tools: &'a [crate::ai_runtime::ToolSpec],
         _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
@@ -207,11 +208,12 @@ impl StreamingDirectAnswerProvider for MockStreamingProvider {
     }
 }
 
-impl StreamingDirectAnswerProvider for FixedContentStreamingProvider {
-    fn answer_streaming<'a>(
+impl ToolLoopProvider for FixedContentStreamingProvider {
+    fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _tools: &'a [crate::ai_runtime::ToolSpec],
         _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
@@ -253,11 +255,12 @@ impl StreamingDirectAnswerProvider for FixedContentStreamingProvider {
     }
 }
 
-impl StreamingDirectAnswerProvider for MissingUsageStreamingProvider {
-    fn answer_streaming<'a>(
+impl ToolLoopProvider for MissingUsageStreamingProvider {
+    fn answer_turn<'a>(
         &'a self,
         _run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _tools: &'a [crate::ai_runtime::ToolSpec],
         budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         _observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
@@ -305,11 +308,12 @@ struct StrictWebEvidenceExecutor {
 
 struct UnusedToolLoopExecutor;
 
-impl StreamingDirectAnswerProvider for MetaAnalysisStreamingProvider {
-    fn answer_streaming<'a>(
+impl ToolLoopProvider for MetaAnalysisStreamingProvider {
+    fn answer_turn<'a>(
         &'a self,
         _run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _tools: &'a [crate::ai_runtime::ToolSpec],
         _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         _observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
@@ -338,11 +342,12 @@ impl StreamingDirectAnswerProvider for MetaAnalysisStreamingProvider {
     }
 }
 
-impl StreamingDirectAnswerProvider for NormalAnswerStreamingProvider {
-    fn answer_streaming<'a>(
+impl ToolLoopProvider for NormalAnswerStreamingProvider {
+    fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _tools: &'a [crate::ai_runtime::ToolSpec],
         _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<
@@ -4191,11 +4196,12 @@ async fn multimodal_direct_run_preserves_image_parts_for_the_selected_provider()
         messages: std::sync::Mutex<Vec<crate::ai_runtime::LlmMessage>>,
     }
 
-    impl StreamingDirectAnswerProvider for CapturingProvider {
-        fn answer_streaming<'a>(
+    impl ToolLoopProvider for CapturingProvider {
+        fn answer_turn<'a>(
             &'a self,
             _run_id: &'a str,
             messages: &'a [crate::ai_runtime::LlmMessage],
+            _tools: &'a [crate::ai_runtime::ToolSpec],
             _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
             _observer: &'a mut dyn StreamEventObserver,
         ) -> Pin<
@@ -4306,11 +4312,12 @@ fn terminal_event_count(events: &[super::run_contract::AssistantRunEvent]) -> us
 
 struct LeakingStreamingProvider;
 
-impl StreamingDirectAnswerProvider for LeakingStreamingProvider {
-    fn answer_streaming<'a>(
+impl ToolLoopProvider for LeakingStreamingProvider {
+    fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
         _messages: &'a [crate::ai_runtime::LlmMessage],
+        _tools: &'a [crate::ai_runtime::ToolSpec],
         _budget: crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget,
         observer: &'a mut dyn StreamEventObserver,
     ) -> Pin<

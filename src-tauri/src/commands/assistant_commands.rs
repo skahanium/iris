@@ -5,14 +5,14 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
+use crate::ai_runtime::agent_tool_loop::ToolLoopProvider;
 use crate::ai_runtime::run_contract::{
     AssistantRunAccepted, AssistantRunControlRequest, AssistantRunEvent, AssistantRunGetRequest,
     AssistantRunGetResponse, AssistantRunRetryRequest, AssistantRunStartRequest,
     AssistantSessionRef, Effect, Effort, SecurityDomain,
 };
 use crate::ai_runtime::run_engine::{
-    ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink,
-    StreamingDirectAnswerProvider, TauriRunEventSink,
+    ModelGatewayStreamingDirectAnswerProvider, RunEngine, RunEventSink, TauriRunEventSink,
 };
 use crate::ai_runtime::run_intake::{NormalRunControlOutcome, RunIntake};
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
@@ -969,9 +969,10 @@ fn spawn_classified_direct_run<R: tauri::Runtime>(
             }
         }
         let response = provider
-            .answer_streaming(
+            .answer_turn(
                 &accepted.run_id,
                 &messages,
+                &[],
                 crate::ai_runtime::agent_tool_loop::AgentModelTurnBudget::default(),
                 &mut SilentObserver,
             )

@@ -7,24 +7,6 @@ pub(crate) trait DirectAnswerProvider {
     fn answer(&self, run_id: &str, message: &str) -> AppResult<String>;
 }
 
-/// Async Provider adapter contract for one streaming direct answer.
-pub(crate) trait StreamingDirectAnswerProvider: Send + Sync {
-    /// Produce one direct answer while delivering normalized stream events to the caller.
-    fn answer_streaming<'a>(
-        &'a self,
-        run_id: &'a str,
-        messages: &'a [crate::ai_runtime::LlmMessage],
-        budget: AgentModelTurnBudget,
-        observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
-                + Send
-                + 'a,
-        >,
-    >;
-}
-
 /// Sanitized terminal metadata for a deterministic Web verification stage.
 ///
 /// This deliberately contains no query, URL, provider payload, or credential.
@@ -93,38 +75,6 @@ impl<'a> ModelGatewayStreamingDirectAnswerProvider<'a> {
         let mut provider = Self::from_dispatch(gateway, dispatch)?;
         provider.continuation = continuation;
         Ok(provider)
-    }
-}
-
-impl StreamingDirectAnswerProvider for ModelGatewayStreamingDirectAnswerProvider<'_> {
-    fn answer_streaming<'a>(
-        &'a self,
-        run_id: &'a str,
-        messages: &'a [crate::ai_runtime::LlmMessage],
-        budget: AgentModelTurnBudget,
-        observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
-    ) -> Pin<
-        Box<
-            dyn Future<Output = AppResult<crate::ai_runtime::model_gateway::GatewayResponse>>
-                + Send
-                + 'a,
-        >,
-    > {
-        let mut request = gateway_request_for_messages(
-            self.provider.clone(),
-            messages.to_vec(),
-            &[],
-            self.max_tokens,
-            self.thinking,
-            self.reasoning,
-        );
-        apply_model_turn_budget(&mut request, budget);
-        request.continuation = self.continuation.clone();
-        Box::pin(async move {
-            self.gateway
-                .send_streaming_request_to_observer(run_id, request, observer)
-                .await
-        })
     }
 }
 
@@ -353,11 +303,12 @@ impl<'a> FailoverStreamingDirectAnswerProvider<'a> {
     }
 }
 
-impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_> {
-    fn answer_streaming<'a>(
+impl ToolLoopProvider for FailoverStreamingDirectAnswerProvider<'_> {
+    fn answer_turn<'a>(
         &'a self,
         run_id: &'a str,
         messages: &'a [crate::ai_runtime::LlmMessage],
+        tools: &'a [crate::ai_runtime::ToolSpec],
         budget: AgentModelTurnBudget,
         observer: &'a mut dyn crate::ai_runtime::model_gateway::StreamEventObserver,
     ) -> Pin<
@@ -393,7 +344,7 @@ impl StreamingDirectAnswerProvider for FailoverStreamingDirectAnswerProvider<'_>
                 let provider =
                     ModelGatewayStreamingDirectAnswerProvider::from_dispatch(&gateway, dispatch)?;
                 let response = provider
-                    .answer_streaming(run_id, messages, budget, observer)
+                    .answer_turn(run_id, messages, tools, budget, observer)
                     .await
                     .and_then(|response| {
                         (response

@@ -432,7 +432,7 @@ impl RunEngine {
         db: &Database,
         session: &AssistantSessionRef,
         run_id: &str,
-        provider: &impl StreamingDirectAnswerProvider,
+        provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         let message = user_message_for_run(db, &session.session_key, run_id)?;
@@ -457,7 +457,7 @@ impl RunEngine {
         db: &Database,
         session: &AssistantSessionRef,
         run_id: &str,
-        provider: &impl StreamingDirectAnswerProvider,
+        provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
         telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
     ) -> AppResult<()> {
@@ -484,7 +484,7 @@ impl RunEngine {
         run_id: &str,
         prompt: &str,
         evidence_ids: &[i64],
-        provider: &impl StreamingDirectAnswerProvider,
+        provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         let messages = [direct_user_message(prompt)];
@@ -512,7 +512,7 @@ impl RunEngine {
         prompt: &str,
         evidence_ids: &[i64],
         domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
-        provider: &impl StreamingDirectAnswerProvider,
+        provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         let messages = [direct_user_message(prompt)];
@@ -539,7 +539,7 @@ impl RunEngine {
         messages: &[crate::ai_runtime::LlmMessage],
         evidence_ids: &[i64],
         domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
-        provider: &impl StreamingDirectAnswerProvider,
+        provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
     ) -> AppResult<()> {
         Self::execute_direct_streaming_with_messages_and_sink(
@@ -566,7 +566,7 @@ impl RunEngine {
         messages: &[crate::ai_runtime::LlmMessage],
         evidence_ids: &[i64],
         domain_plan: &crate::ai_runtime::domain_executor::DomainExecutionPlan,
-        provider: &impl StreamingDirectAnswerProvider,
+        provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
         telemetry: &crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap,
     ) -> AppResult<()> {
@@ -1071,7 +1071,7 @@ impl RunEngine {
         messages: &[crate::ai_runtime::LlmMessage],
         evidence_ids: &[i64],
         domain_plan: Option<&crate::ai_runtime::domain_executor::DomainExecutionPlan>,
-        provider: &impl StreamingDirectAnswerProvider,
+        provider: &impl ToolLoopProvider,
         sink: &impl RunEventSink,
         telemetry: Option<&crate::ai_runtime::agent_capacity_eval::EvaluationTelemetryTap>,
     ) -> AppResult<()> {
@@ -1158,7 +1158,7 @@ impl RunEngine {
         };
         let model_started_at = Instant::now();
         let response = provider
-            .answer_streaming(run_id, messages, turn_budget, &mut observer)
+            .answer_turn(run_id, messages, &[], turn_budget, &mut observer)
             .await;
         let response = match response {
             Ok(response) => response,
