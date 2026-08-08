@@ -9,6 +9,9 @@ function read(relativePath: string): string {
 describe("管理中心供应商子页", () => {
   it("LLM 与 MCP 面板支持第三级详情与 overlay providerId", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const llm = read("src/components/settings/LlmRoutingSection.tsx");
     const llmDetail = read("src/components/settings/LlmProviderDetail.tsx");
     const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
@@ -17,7 +20,7 @@ describe("管理中心供应商子页", () => {
     expect(center).toContain("managementCenterProviderId");
     expect(center).toContain("onManagementCenterProviderIdChange");
     expect(center).toContain("onProviderChromeChange");
-    expect(center).toContain("data-management-provider-detail");
+    expect(primitives).toContain("data-management-provider-detail");
     expect(llm).toContain("LlmProviderDetail");
     expect(llm).toContain("LlmProviderListCard");
     expect(llm).not.toContain(

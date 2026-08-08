@@ -12,6 +12,9 @@ const removedVendor = ["mini", "max"].join("");
 describe("management center contract", () => {
   it("uses top tabs for four management sections without the old sidebar", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const overlays = read("src/components/layout/AppOverlays.tsx");
     const app = read("src/App.impl.tsx");
 
@@ -46,6 +49,9 @@ describe("management center contract", () => {
 
   it("keeps knowledge management inline and moves graph to the status bar", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const overlays = read("src/components/layout/AppOverlays.tsx");
     const statusBar = read("src/components/layout/StatusBar.tsx");
     const statusSlot = read("src/components/layout/AppStatusBarSlot.tsx");
@@ -71,15 +77,20 @@ describe("management center contract", () => {
 
   it("only consumes scheduler-owned embedding state across runtime phases", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
+    const helpers = read("src/components/settings/managementCenterHelpers.ts");
     const overlays = read("src/components/layout/AppOverlays.tsx");
     const ipc = read("src/lib/ipc.ts");
 
+    // Scheduler-owned labels come from the panel; embedding failure wording
+    // lives in the extracted helpers.
     for (const label of [
       "旧版检索可用，等待空闲升级",
       "后台重建",
       "已暂停",
       "失败但不影响编辑",
-      "模型不可用，可稍后手动重试。",
       "开发环境未启用",
       "npm run dev:desktop:embedding",
       "暂停",
@@ -88,6 +99,7 @@ describe("management center contract", () => {
     ]) {
       expect(center).toContain(label);
     }
+    expect(helpers).toContain("模型不可用，可稍后手动重试。");
     for (const phase of [
       '"legacy_ready"',
       '"running"',
@@ -109,6 +121,9 @@ describe("management center contract", () => {
 
   it("exposes automatic version tracking as real settings in the notes area", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const app = read("src/App.impl.tsx");
     const lifecycle = read("src/hooks/useAppPersistenceLifecycle.ts");
     const idle = read("src/hooks/useVersionIdle.ts");
@@ -124,10 +139,13 @@ describe("management center contract", () => {
 
   it("allows AI-only drilldown while keeping management sections scrollable", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
 
     expect(center).toContain('data-testid="management-section-ai"');
     expect(center).toContain('data-testid="management-ai-detail"');
-    expect(center).toContain('data-testid="management-detail-back"');
+    expect(primitives).toContain('data-testid="management-detail-back"');
     expect(center).toContain("overflow-y-auto");
     expect(center).toContain("LlmRoutingSection");
     expect(center.toLowerCase()).not.toContain(`${removedVendor}searchsection`);
@@ -140,6 +158,9 @@ describe("management center contract", () => {
 
   it("renders native and MCP web evidence provider management surfaces", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
     const mcpCard = read("src/components/ai/skills/McpProfileCard.tsx");
     const mcpPresets = read("src/components/ai/skills/mcpProviderPresets.ts");
@@ -277,6 +298,9 @@ describe("management center contract", () => {
 
   it("requires a selected MCP web provider in management overview", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
 
     expect(center).toContain("webSearchAvailability");
@@ -296,15 +320,21 @@ describe("management center contract", () => {
 
   it("anchors management switches so the thumb stays inside the track", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
 
-    expect(center).toContain('role="switch"');
-    expect(center).toContain("left-1 top-1");
-    expect(center).toContain("translate-x-5");
+    expect(primitives).toContain('role="switch"');
+    expect(primitives).toContain("left-1 top-1");
+    expect(primitives).toContain("translate-x-5");
     expect(center).not.toContain("translate-x-6");
   });
 
   it("presents system and about information in overview without classified or fake button affordances", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
 
     expect(center).toContain("GNU Affero General Public License v3.0");
     expect(center).not.toContain("openClassified");
@@ -314,6 +344,9 @@ describe("management center contract", () => {
 
   it("prepares notes from the embedded file tree before opening", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const overlays = read("src/components/layout/AppOverlays.tsx");
 
     expect(center).toContain("onPrepareNote");
@@ -323,6 +356,9 @@ describe("management center contract", () => {
 
   it("passes file lifecycle callbacks into the embedded management file tree", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const overlays = read("src/components/layout/AppOverlays.tsx");
 
     for (const prop of [

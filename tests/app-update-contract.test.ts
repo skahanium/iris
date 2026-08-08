@@ -92,6 +92,10 @@ describe("app update contract", () => {
     const statusBar = read("src/components/layout/StatusBar.tsx");
     const slot = read("src/components/layout/AppStatusBarSlot.tsx");
     const about = read("src/components/settings/ManagementCenterPanel.tsx");
+    const helpers = read("src/components/settings/managementCenterHelpers.ts");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
     const app = read("src/App.impl.tsx");
     const hook = read("src/hooks/useAppUpdate.ts");
     const overlays = read("src/components/layout/AppOverlays.tsx");
@@ -108,9 +112,9 @@ describe("app update contract", () => {
     expect(overlays).toContain("hasDirtyDocuments");
     expect(about).toContain("下载更新");
     expect(about).toContain("安装并重启");
-    expect(about).toContain("无法检查更新");
+    expect(helpers).toContain("无法检查更新");
     expect(about).toContain("更新包验证失败");
-    expect(about).toContain("当前平台暂不支持应用内更新");
+    expect(helpers).toContain("当前平台暂不支持应用内更新");
     expect(about).toContain("isWindowsDesktopChrome");
     expect(about).toContain("会关闭 Iris");
     expect(about).not.toContain("发布时间");
@@ -122,6 +126,10 @@ describe("app update contract", () => {
     const hook = read("src/hooks/useAppUpdate.ts");
     const updater = read("src-tauri/src/commands/app_update.rs");
     const about = read("src/components/settings/ManagementCenterPanel.tsx");
+    const helpers = read("src/components/settings/managementCenterHelpers.ts");
+    const primitives = read(
+      "src/components/settings/managementCenterPrimitives.tsx",
+    );
 
     expect(hook).toContain("catch");
     expect(hook).toContain("无法连接更新服务器，请检查网络后重试");
