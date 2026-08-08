@@ -58,5 +58,10 @@
     "id": "mimo",
     "name": "MiMo",
     "defaultModel": "MiMo-V2.5-Pro"
+  },
+  {
+    "id": "ollama",
+    "name": "Ollama",
+    "defaultModel": "qwen2.5:7b"
   }
 ]

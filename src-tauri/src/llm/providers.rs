@@ -25,7 +25,8 @@ pub fn is_allowed_provider(provider_id: &str) -> bool {
 }
 
 pub fn requires_api_key(provider_id: &str) -> bool {
-    is_allowed_provider(provider_id)
+    // Ollama is a local service (loopback) that ignores Authorization headers.
+    is_allowed_provider(provider_id) && provider_id != "ollama"
 }
 
 pub fn requires_base_url(provider_id: &str) -> bool {
@@ -116,6 +117,9 @@ pub fn api_base(provider: &str, custom_base: Option<&str>) -> String {
         "hunyuan" => "https://api.hunyuan.cloud.tencent.com/v1".to_string(),
         "ernie" => "https://qianfan.baidubce.com/v2".to_string(),
         "mimo" => "https://api.xiaomimimo.com/v1".to_string(),
+        // Ollama serves a local OpenAI-compatible endpoint; plain HTTP to the
+        // loopback interface is permitted for this provider only.
+        "ollama" => "http://localhost:11434/v1".to_string(),
         id if is_custom_provider(id) => custom_base.unwrap_or("").to_string(),
         _ => custom_base.unwrap_or("").to_string(),
     }
@@ -205,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_lists_do_not_include_ollama_and_keep_custom_entries() {
+    fn provider_lists_include_ollama_and_keep_custom_entries() {
         let mut routing = crate::llm::config::deepseek_defaults();
         routing.providers.insert(
             "custom_groq".into(),
@@ -223,10 +227,18 @@ mod tests {
             .map(|provider| provider.id)
             .collect();
 
-        assert!(!ids.contains(&"ollama".to_string()));
+        assert!(ids.contains(&"ollama".to_string()));
         assert!(ids.contains(&"custom_groq".to_string()));
         assert!(ids.contains(&"mimo".to_string()));
-        assert!(!is_allowed_provider("ollama"));
+        assert!(is_allowed_provider("ollama"));
+    }
+
+    #[test]
+    fn ollama_is_a_loopback_provider_without_api_key() {
+        assert!(is_allowed_provider("ollama"));
+        assert!(!requires_api_key("ollama"));
+        assert!(!requires_base_url("ollama"));
+        assert_eq!(api_base("ollama", None), "http://localhost:11434/v1");
     }
 
     #[test]

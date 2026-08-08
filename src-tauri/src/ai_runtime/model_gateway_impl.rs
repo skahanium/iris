@@ -171,8 +171,21 @@ impl ModelGateway {
     }
 
     /// Create a gateway with default pinned HTTP client.
+    ///
+    /// When any configured provider points at a loopback endpoint (Ollama on
+    /// localhost), the gateway uses a client that permits plain HTTP to the
+    /// loopback interface; otherwise the strict HTTPS-only client is used.
     pub fn with_defaults(providers: Vec<ProviderConfig>) -> AppResult<Self> {
-        let client = crate::network::cert_pinning::create_https_client()?;
+        let requires_loopback = providers
+            .iter()
+            .any(|provider| crate::security::ipc_policy::is_loopback_url(&provider.base_url));
+        let client = if requires_loopback {
+            crate::network::cert_pinning::loopback_http_client_builder()
+                .build()
+                .map_err(|error| AppError::msg(format!("HTTP client: {error}")))?
+        } else {
+            crate::network::cert_pinning::create_https_client()?
+        };
         Ok(Self::new(client, providers))
     }
 

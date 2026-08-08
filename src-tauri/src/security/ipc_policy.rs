@@ -73,11 +73,45 @@ pub fn validate_https_url(url: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// Validate LLM base URL: all LLM provider endpoints must use HTTPS.
-/// Validates custom LLM base URLs for connectivity probes and routing overrides.
-#[cfg(test)]
+/// True when the URL points at a loopback host (localhost, 127.0.0.0/8, ::1),
+/// where plain-HTTP endpoints such as a local Ollama server are permitted.
+pub fn is_loopback_url(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    let host_lower = host.to_lowercase();
+    if host_lower == "localhost" || host_lower.ends_with(".localhost") {
+        return true;
+    }
+    // The url crate returns IPv6 hosts with brackets, e.g. "[::1]".
+    let bare = host_lower
+        .strip_prefix('[')
+        .and_then(|host| host.strip_suffix(']'))
+        .unwrap_or(&host_lower);
+    bare.parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_loopback())
+}
+
+/// Validate an LLM provider base URL.
+///
+/// Loopback endpoints (e.g. Ollama on localhost) may use plain HTTP; every
+/// other endpoint must stay HTTPS. The web-fetch SSRF path keeps its own
+/// strict HTTPS-only validation via [`validate_https_url`].
 pub fn validate_llm_base_url(url: &str) -> AppResult<()> {
-    validate_https_url(url)
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::msg("URL 不能为空"));
+    }
+    if !is_loopback_url(trimmed) && !trimmed.starts_with("https://") {
+        return Err(AppError::msg("仅允许 HTTPS URL"));
+    }
+    if trimmed.contains('\0') {
+        return Err(AppError::msg("非法 URL"));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -112,21 +146,28 @@ mod tests {
     }
 
     #[test]
-    fn llm_base_url_rejects_all_http() {
-        assert!(validate_llm_base_url("http://127.0.0.1:11434").is_err());
-        assert!(validate_llm_base_url("http://localhost:11434").is_err());
-        assert!(validate_llm_base_url("http://[::1]:11434").is_err());
+    fn llm_base_url_permits_loopback_http_and_rejects_remote_http() {
+        // Loopback endpoints (a local Ollama server) may use plain HTTP.
+        validate_llm_base_url("http://127.0.0.1:11434").unwrap();
+        validate_llm_base_url("http://localhost:11434").unwrap();
+        validate_llm_base_url("http://[::1]:11434").unwrap();
+        // Remote endpoints must stay HTTPS.
         assert!(validate_llm_base_url("http://api.example.com").is_err());
-    }
-
-    #[test]
-    fn llm_base_url_allows_remote_https() {
         validate_llm_base_url("https://api.example.com/v1").unwrap();
+        assert!(validate_llm_base_url("https://evil.com\0hidden").is_err());
     }
 
     #[test]
-    fn llm_base_url_rejects_null_byte() {
-        assert!(validate_llm_base_url("https://evil.com\0hidden").is_err());
+    fn loopback_url_detection_covers_localhost_forms_and_loopback_ips() {
+        assert!(is_loopback_url("http://localhost:11434/v1"));
+        assert!(is_loopback_url("http://localhost"));
+        assert!(is_loopback_url("http://127.0.0.1:11434"));
+        assert!(is_loopback_url("http://127.0.0.2:11434"));
+        assert!(is_loopback_url("http://[::1]:11434"));
+        assert!(!is_loopback_url("https://api.example.com/v1"));
+        assert!(!is_loopback_url("https://example.com"));
+        assert!(!is_loopback_url("not a url"));
+        assert!(!is_loopback_url(""));
     }
 
     #[test]

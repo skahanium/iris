@@ -61,6 +61,22 @@ pub fn https_streaming_client_builder() -> ClientBuilder {
     apply_proxy_policy(base_https_streaming_client_builder())
 }
 
+/// 创建允许 loopback 明文 HTTP 的 client builder（Ollama 本机端点）。
+///
+/// 仅当 LLM provider base URL 指向 loopback（localhost / 127.0.0.0/8 / ::1）
+/// 时使用；该 URL 已经过 `validate_llm_base_url` 校验。请求 URL 由用户配置
+/// 决定，非 loopback 流量仍走 [`https_client_builder`] 的 https_only 客户端。
+pub fn loopback_http_client_builder() -> ClientBuilder {
+    apply_proxy_policy(
+        reqwest::Client::builder()
+            .use_rustls_tls()
+            .https_only(false)
+            .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+            .read_timeout(Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS)),
+    )
+}
+
 /// Drop cached global clients so the next create_* rebuilds with the current proxy policy.
 pub fn invalidate_https_clients() {
     if let Ok(mut guard) = CACHED_CLIENTS.write() {

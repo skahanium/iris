@@ -156,7 +156,7 @@ pub async fn llm_model_registry_refresh(
 ) -> AppResult<LlmModelRegistryRefreshResult> {
     let resolved = config::resolve_for_provider_without_secret(&state.db, &provider_id, None)?;
     let api_key = api_key_for_probe(&provider_id, api_key_override)?;
-    let client = probe_client()?;
+    let client = probe_client(&resolved.base_url)?;
     let model_ids =
         fetch_provider_model_ids(&client, &provider_id, &resolved.base_url, &api_key).await?;
     model_registry::upsert_provider_discovered_models(&state.db, &provider_id, &model_ids)?;
@@ -228,7 +228,7 @@ async fn llm_config_test_provider_inner(
 ) -> AppResult<LlmConfigTestResult> {
     let resolved = config::resolve_for_provider_without_secret(&state.db, &provider_id, None)?;
     let api_key = api_key_for_probe(&provider_id, api_key_override)?;
-    let client = probe_client()?;
+    let client = probe_client(&resolved.base_url)?;
     let probe_url = models_probe_url(&provider_id, &resolved.base_url);
     let mut req = client.get(&probe_url);
     if !api_key.is_empty() {
@@ -291,7 +291,7 @@ async fn llm_model_validate_inner(
     let resolved =
         config::resolve_for_provider_without_secret(&state.db, &provider_id, Some(&model_id))?;
     let api_key = api_key_for_probe(&provider_id, api_key_override)?;
-    let client = probe_client()?;
+    let client = probe_client(&resolved.base_url)?;
     let mut model_list_advisory: Option<String> = None;
 
     if matches!(kind, ModelValidationKind::Text) {
@@ -558,8 +558,15 @@ fn api_key_for_probe(provider_id: &str, api_key: Option<String>) -> AppResult<St
     }
 }
 
-fn probe_client() -> AppResult<reqwest::Client> {
-    crate::network::cert_pinning::https_client_builder()
+fn probe_client(base_url: &str) -> AppResult<reqwest::Client> {
+    // Loopback endpoints (Ollama on localhost) may use plain HTTP; everything
+    // else keeps the strict HTTPS-only client.
+    let builder = if crate::security::ipc_policy::is_loopback_url(base_url) {
+        crate::network::cert_pinning::loopback_http_client_builder()
+    } else {
+        crate::network::cert_pinning::https_client_builder()
+    };
+    builder
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| AppError::msg(format!("HTTP client: {e}")))
@@ -710,5 +717,5 @@ fn validate_route(provider_id: &str, model: &str, routing: &LlmRoutingConfig) ->
 
 fn validate_provider_base_url(url: &str) -> AppResult<()> {
     let trimmed = url.trim();
-    crate::security::ipc_policy::validate_https_url(trimmed)
+    crate::security::ipc_policy::validate_llm_base_url(trimmed)
 }

@@ -634,6 +634,20 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             endpoint_family: EndpointFamily::ResponsesReserved,
             probe_strategy: ProbeStrategy::StaticOnly,
         },
+        ModelCatalogEntry {
+            id: "qwen2.5:7b",
+            provider_id: "ollama",
+            display_name: "Qwen2.5 7B (Ollama)",
+            context_window: 32_768,
+            max_output: 8_192,
+            supports_tools: true,
+            supports_thinking: false,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
     ]
 }
 
@@ -699,7 +713,7 @@ mod tests {
         }
         assert!(catalog_for_settings()
             .iter()
-            .all(|model| model.provider_id != "ollama"));
+            .any(|model| model.provider_id == "ollama" && model.id == "qwen2.5:7b"));
 
         let gpt_4o = find_model("gpt-4o").expect("gpt-4o in catalog");
         assert!(gpt_4o.supports_vision);
