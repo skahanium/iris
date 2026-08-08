@@ -374,19 +374,37 @@ pub fn embedding_generation_ready(conn: &Connection) -> AppResult<bool> {
     else {
         return Ok(false);
     };
-    if phase != "ready"
-        || active_model_id != EMBEDDING_MODEL_ID
+    // Model/dimension mismatches always gate: during migration the legacy
+    // 384-dimensional cache is deliberately never mixed with BGE queries.
+    if active_model_id != EMBEDDING_MODEL_ID
         || target_model_id != EMBEDDING_MODEL_ID
         || target_dimension != EMBEDDING_DIMENSION as i64
-        || indexed != total
     {
         return Ok(false);
     }
-
-    match super::scheduler::generation_coverage_complete(conn) {
-        Ok(complete) => Ok(complete),
-        Err(AppError::Db(_)) => Ok(false),
-        Err(error) => Err(error),
+    match phase.as_str() {
+        "ready" => {
+            if indexed != total {
+                return Ok(false);
+            }
+            match super::scheduler::generation_coverage_complete(conn) {
+                Ok(complete) => Ok(complete),
+                Err(AppError::Db(_)) => Ok(false),
+                Err(error) => Err(error),
+            }
+        }
+        // `paused` is produced by `notify_index_committed` after an edit leaves
+        // new chunks unembedded, and by interrupted first-time generation.
+        // An active BGE model proves the generation reached `ready` before the
+        // pause, so every remaining vector row is valid: edited files lost
+        // their stale vectors through the FK cascade and vec0 triggers, and
+        // missing chunks are filtered naturally by the query layer. Keeping the
+        // global gate open avoids taking the whole vector index offline for
+        // every single edit.
+        "paused" => Ok(true),
+        // First-time generation (legacy_ready/rebuilding/running) and failed
+        // generations stay gated so partial indexes are never queried.
+        _ => Ok(false),
     }
 }
 
@@ -652,6 +670,111 @@ mod tests {
 
         assert!(!ready);
     }
+
+    /// Seed a minimal `embedding_generation_state` row plus the source tables
+    /// used by `generation_coverage_complete`.
+    fn seed_generation(
+        conn: &rusqlite::Connection,
+        phase: &str,
+        active_model: &str,
+        indexed: i64,
+        total: i64,
+    ) {
+        conn.execute_batch(&format!(
+            "CREATE TABLE IF NOT EXISTS embedding_generation_state (
+                singleton        INTEGER PRIMARY KEY CHECK (singleton = 1),
+                active_model_id  TEXT NOT NULL,
+                target_model_id  TEXT NOT NULL,
+                target_dimension INTEGER NOT NULL,
+                phase            TEXT NOT NULL,
+                indexed_items    INTEGER NOT NULL DEFAULT 0,
+                total_items      INTEGER NOT NULL DEFAULT 0,
+                last_error       TEXT,
+                updated_at       TEXT NOT NULL
+             );
+             DELETE FROM embedding_generation_state;
+             INSERT INTO embedding_generation_state
+                 (singleton, active_model_id, target_model_id, target_dimension,
+                  phase, indexed_items, total_items, updated_at)
+             VALUES (1, '{active}', '{target}', {dim}, '{phase}', {indexed}, {total}, datetime('now'));
+             CREATE TABLE IF NOT EXISTS chunks (id INTEGER PRIMARY KEY, file_id INTEGER NOT NULL,
+                 chunk_index INTEGER NOT NULL, content TEXT NOT NULL, char_count INTEGER,
+                 source_start INTEGER, source_end INTEGER, content_hash TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS chunk_embeddings_v2 (
+                 chunk_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL,
+                 source_fingerprint TEXT NOT NULL, model_id TEXT NOT NULL, dimension INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS semantic_anchors (id INTEGER PRIMARY KEY,
+                 file_id INTEGER NOT NULL, content_hash TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS semantic_anchor_embeddings_v2 (
+                 anchor_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL,
+                 source_fingerprint TEXT NOT NULL, model_id TEXT NOT NULL, dimension INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS regulation_index (id INTEGER PRIMARY KEY,
+                 file_id INTEGER NOT NULL, content_hash TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS regulation_embeddings_v2 (
+                 regulation_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL,
+                 source_fingerprint TEXT NOT NULL, model_id TEXT NOT NULL, dimension INTEGER NOT NULL);",
+            active = active_model,
+            target = super::EMBEDDING_MODEL_ID,
+            dim = super::EMBEDDING_DIMENSION,
+        ))
+        .expect("seed generation state");
+    }
+
+    #[test]
+    fn edit_paused_generation_keeps_semantic_search_usable() {
+        // `phase = 'paused'` is produced by `notify_index_committed` when an
+        // edit leaves new chunks unembedded. Stale vectors were already removed
+        // by the FK cascade and vec0 triggers, so the query layer filters the
+        // missing chunks naturally and the global gate must not take the whole
+        // vector index offline for every edit.
+        let conn = rusqlite::Connection::open_in_memory().expect("open database");
+        seed_generation(&conn, "paused", super::EMBEDDING_MODEL_ID, 90, 100);
+
+        let ready = super::embedding_generation_ready(&conn).expect("read generation state");
+        assert!(
+            ready,
+            "edit-paused generation must keep semantic search usable"
+        );
+    }
+
+    #[test]
+    fn paused_generation_that_never_reached_ready_stays_gated() {
+        // A paused generation whose active model is still the legacy one has
+        // never completed a full BGE pass (interrupted first generation); it
+        // must stay gated like the running/rebuilding states.
+        let conn = rusqlite::Connection::open_in_memory().expect("open database");
+        seed_generation(&conn, "paused", "fastembed/AllMiniLML6V2", 30, 100);
+
+        let ready = super::embedding_generation_ready(&conn).expect("read generation state");
+        assert!(!ready);
+    }
+
+    #[test]
+    fn first_time_generation_states_remain_gated() {
+        for phase in ["legacy_ready", "rebuilding", "running", "failed"] {
+            let conn = rusqlite::Connection::open_in_memory().expect("open database");
+            seed_generation(&conn, phase, "fastembed/AllMiniLML6V2", 0, 100);
+
+            let ready = super::embedding_generation_ready(&conn).expect("read generation state");
+            assert!(!ready, "phase {phase} must stay gated");
+        }
+    }
+
+    #[test]
+    fn ready_generation_requires_full_coverage_before_enabling() {
+        let conn = rusqlite::Connection::open_in_memory().expect("open database");
+        // Empty source tables: expected 0 == actual 0, so coverage is complete.
+        seed_generation(&conn, "ready", super::EMBEDDING_MODEL_ID, 0, 0);
+        let ready = super::embedding_generation_ready(&conn).expect("read generation state");
+        assert!(ready);
+
+        // A ready row that still reports missing items must stay gated.
+        let conn = rusqlite::Connection::open_in_memory().expect("open database");
+        seed_generation(&conn, "ready", super::EMBEDDING_MODEL_ID, 90, 100);
+        let ready = super::embedding_generation_ready(&conn).expect("read generation state");
+        assert!(!ready);
+    }
+
     #[test]
     fn storage_format_is_raw_little_endian_f32_for_sqlite_vec() {
         let source = vec![0.25_f32, -1.5_f32, 3.0_f32];

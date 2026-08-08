@@ -167,9 +167,12 @@ fn hybrid_retrieve_with_diagnostics_with_embedder(
 
     if request.layers.graph {
         if let Some(file_id) = request.file_id_context {
+            // A max_results=1 request must still get at least one neighbor;
+            // a zero LIMIT would silently drop the whole graph layer.
+            let graph_limit = request.max_results.max(2) / 2;
             append_layer_result(
                 "graph",
-                search_graph_neighbors(conn, file_id, request.max_results / 2),
+                search_graph_neighbors(conn, file_id, graph_limit),
                 &mut packets,
                 &mut diagnostics,
             );
@@ -860,5 +863,150 @@ mod tests {
         request.scope.paths = vec!["other.md".to_string()];
         let scoped_out = hybrid_retrieve_with_diagnostics(&conn, &request).unwrap();
         assert!(scoped_out.packets.is_empty());
+    }
+
+    #[test]
+    fn graph_layer_keeps_at_least_one_neighbor_for_minimal_max_results() {
+        let db = crate::storage::db::Database::open_in_memory().expect("open database");
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files (id, path, title, content_hash, word_count, created_at, updated_at)
+                 VALUES (1, 'source.md', 'Source', 'hash-1', 1, datetime('now'), datetime('now')),
+                        (2, 'target.md', 'Target', 'hash-2', 1, datetime('now'), datetime('now'))",
+                [],
+            )
+            .expect("insert graph files");
+            conn.execute(
+                "INSERT INTO chunks (id, file_id, chunk_index, content, source_start, source_end,
+                                     content_hash, char_count)
+                 VALUES (1, 2, 0, 'neighbor evidence', 0, 10, 'chunk-hash', 10)",
+                [],
+            )
+            .expect("insert neighbor chunk");
+            conn.execute(
+                "INSERT INTO links (source_id, target_id, context) VALUES (1, 2, '[[Target]]')",
+                [],
+            )
+            .expect("insert wikilink");
+            Ok(())
+        })
+        .expect("seed graph");
+
+        db.with_read_conn(|conn| {
+            for max_results in [1, 2, 4] {
+                let request = RetrievalRequest {
+                    query: "query".into(),
+                    max_results,
+                    layers: RetrievalLayers {
+                        fts: false,
+                        vector: false,
+                        graph: true,
+                        exact: false,
+                        template: false,
+                    },
+                    note_context: None,
+                    file_id_context: Some(1),
+                    scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+                    runtime_documents: Vec::new(),
+                    corpus_config: None,
+                };
+                let outcome = hybrid_retrieve_with_diagnostics(conn, &request).unwrap();
+                let graph_packets: Vec<_> = outcome
+                    .packets
+                    .iter()
+                    .filter(|packet| packet.retrieval_reason.starts_with("graph_"))
+                    .collect();
+                assert!(
+                    !graph_packets.is_empty(),
+                    "graph layer must not be silently dropped for max_results={max_results}"
+                );
+            }
+            Ok(())
+        })
+        .expect("run graph retrieval");
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    #[test]
+    fn vector_layer_survives_stale_vectors_consuming_knn_budget() {
+        let closer = vector_fixture(0.0);
+        let farther = vector_fixture(0.6);
+        let db = crate::storage::db::Database::open_in_memory().expect("open sqlite-vec database");
+        db.with_conn(|conn| {
+            // Stale rows: vectors live in vec0, but the canonical cache
+            // fingerprint no longer matches the current chunk content (e.g. an
+            // interrupted re-embed after an edit). They consume KNN budget
+            // before the fingerprint filter runs, so they must not drain the
+            // whole vector result.
+            for id in 1..=40_i64 {
+                insert_file(conn, id, &format!("stale/{id}.md"));
+                insert_chunk_vector(conn, id, id, &closer);
+                conn.execute(
+                    "UPDATE chunk_embeddings_v2 SET source_fingerprint = 'stale-fingerprint'
+                     WHERE chunk_id = ?1",
+                    [id],
+                )
+                .expect("mark vector stale");
+            }
+            // Fresh rows with matching fingerprints.
+            for id in 41..=43_i64 {
+                insert_file(conn, id, &format!("fresh/{id}.md"));
+                insert_chunk_vector(conn, id, id, &farther);
+            }
+            conn.execute(
+                "UPDATE embedding_generation_state
+                 SET active_model_id = ?1, target_model_id = ?1, target_dimension = ?2,
+                     phase = 'paused', indexed_items = 40, total_items = 43
+                 WHERE singleton = 1",
+                rusqlite::params![
+                    crate::embedding::engine::EMBEDDING_MODEL_ID,
+                    crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+                ],
+            )
+            .expect("mark generation edit-paused");
+            Ok(())
+        })
+        .expect("seed stale and fresh vectors");
+
+        db.with_read_conn(|conn| {
+            let request = RetrievalRequest {
+                query: "needle".into(),
+                max_results: 3,
+                layers: RetrievalLayers {
+                    fts: false,
+                    vector: true,
+                    graph: false,
+                    exact: false,
+                    template: false,
+                },
+                note_context: None,
+                file_id_context: None,
+                scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+                runtime_documents: Vec::new(),
+                corpus_config: None,
+            };
+            let outcome = hybrid_retrieve_with_diagnostics_with_embedder(conn, &request, |_| {
+                Ok(closer.clone())
+            })
+            .expect("retrieve with stale vectors");
+            assert!(
+                outcome.packets.iter().any(|packet| packet
+                    .source_path
+                    .as_deref()
+                    .is_some_and(|path| path.starts_with("fresh/"))),
+                "stale rows must not drain the whole vector result"
+            );
+            assert!(
+                outcome.packets.iter().all(|packet| {
+                    packet
+                        .source_path
+                        .as_deref()
+                        .is_some_and(|path| !path.starts_with("stale/"))
+                }),
+                "stale rows must never surface as evidence"
+            );
+            Ok(())
+        })
+        .expect("run vector retrieval");
     }
 }
