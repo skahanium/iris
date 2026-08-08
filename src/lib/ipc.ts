@@ -698,12 +698,6 @@ export async function listenClassifiedFileTaken(
   );
 }
 
-export async function listenSkillsChanged(
-  handler: () => void,
-): Promise<() => void> {
-  return listen(IPC_EVENTS.SKILLS_CHANGED, () => handler());
-}
-
 export async function listenAssistantRunEvent(
   handler: (event: AssistantRunEvent) => void,
 ): Promise<() => void> {

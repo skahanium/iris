@@ -14,7 +14,6 @@ describe("IPC event registry", () => {
     for (const eventName of [
       "file:changed",
       "classified:file_taken",
-      "skills:changed",
       "assistant:run_event",
       "embedding-index-progress",
       "app-update:status",
@@ -24,6 +23,8 @@ describe("IPC event registry", () => {
       expect(ipc).not.toContain(`listen<${eventName}`);
     }
 
+    // `skills:changed` was retired: nothing on the Rust side ever emitted it.
+    expect(registry).not.toContain("skills:changed");
     expect(registry).not.toContain("ai:harness_trace");
     expect(registry).not.toContain("llm:token");
     expect(registry).not.toContain("ai:tool_confirm_request");

@@ -43,7 +43,6 @@ interface BubbleSelectionPort {
 interface UseAssistantConversationParams {
   bubbleSelection: BubbleSelectionPort;
   clearContextReferences: () => void;
-  clearTaskSurfaces: () => void;
   onInsertToEditor?: (content: string) => void;
   setInput: Dispatch<SetStateAction<string>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
@@ -69,7 +68,6 @@ function exportContent(message: ChatLine): string {
 export function useAssistantConversation({
   bubbleSelection,
   clearContextReferences,
-  clearTaskSurfaces,
   onInsertToEditor,
   setInput,
   setStreaming,
@@ -108,7 +106,6 @@ export function useAssistantConversation({
   }, []);
 
   const handleNewChat = useCallback(() => {
-    clearTaskSurfaces();
     clearContextReferences();
     bubbleSelection.clear();
     setMessages([]);
@@ -118,7 +115,6 @@ export function useAssistantConversation({
   }, [
     bubbleSelection,
     clearContextReferences,
-    clearTaskSurfaces,
     setInput,
     setMessages,
     setStreaming,
@@ -226,17 +222,10 @@ export function useAssistantConversation({
         restoreChatLinesForPersistence(loaded, payloadStoreRef.current),
       );
       bubbleSelection.clear();
-      clearTaskSurfaces();
       clearContextReferences();
       setStreaming(false);
     },
-    [
-      bubbleSelection,
-      clearContextReferences,
-      clearTaskSurfaces,
-      setMessages,
-      setStreaming,
-    ],
+    [bubbleSelection, clearContextReferences, setMessages, setStreaming],
   );
 
   const handleCopySelected = useCallback(async () => {

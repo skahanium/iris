@@ -241,29 +241,6 @@ export interface SandboxProfileSummary {
   limitations: string[];
 }
 
-export interface AiRetryStatusEvent {
-  request_id: string;
-  attempt: number;
-  max_attempts: number;
-  delay_ms: number;
-  reason_kind?:
-    | "http_429"
-    | "http_503"
-    | "http_error"
-    | "stream_read_error"
-    | "request_failed"
-    | "timeout_or_stall"
-    | "unknown";
-  status_code?: number | null;
-}
-
-export interface AiThinkingEvent {
-  request_id: string;
-  round: number;
-  has_internal_thinking?: boolean;
-  content_chars?: number;
-}
-
 export interface BacklinkEntry {
   source_path: string;
   source_title: string;

@@ -137,9 +137,6 @@ export function UnifiedAssistantPanel({
     }
   }, [assistantFocus]);
 
-  // Conversation hook still accepts a clear callback; evidence-pack surfaces are gone.
-  const clearTaskSurfaces = useCallback(() => undefined, []);
-
   const {
     appendAcceptedRetry,
     commitAcceptedTurn,
@@ -157,7 +154,6 @@ export function UnifiedAssistantPanel({
   } = useAssistantConversation({
     bubbleSelection,
     clearContextReferences: bubbleSelection.clearContextReferences,
-    clearTaskSurfaces,
     onInsertToEditor,
     setInput,
     setStreaming,
@@ -601,6 +597,10 @@ export function UnifiedAssistantPanel({
         onMentionHighlight={setMentionHighlight}
         onMentionSelect={selectMention}
         onSelect={syncMentionFromInput}
+        contextReferences={bubbleSelection.contextReferences}
+        onRemoveContextReference={(id) =>
+          bubbleSelection.removeContextReference(id)
+        }
         onStop={stopStreaming}
         onSubmit={() => void send()}
         onValueChange={handleInputChange}

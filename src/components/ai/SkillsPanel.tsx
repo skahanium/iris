@@ -8,7 +8,6 @@ import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
-  listenSkillsChanged,
   skillsConfirm,
   skillsCreateDraft,
   skillsList,
@@ -71,23 +70,6 @@ export function SkillsPanelBody({ open }: { open: boolean }) {
   useEffect(() => {
     if (!open) return;
     void refresh();
-  }, [open, refresh]);
-
-  useEffect(() => {
-    if (!open) return;
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listenSkillsChanged(() => {
-      if (disposed) return;
-      void refresh();
-    }).then((fn) => {
-      if (disposed) fn();
-      else unlisten = fn;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
   }, [open, refresh]);
 
   const filtered = useMemo(

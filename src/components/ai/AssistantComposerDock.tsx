@@ -11,7 +11,9 @@ import { AiComposer } from "@/components/ui/ai-composer";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { MentionCandidate, MentionTextEdit } from "@/lib/ai-context-scope";
+import { contextReferenceDisplayText } from "@/lib/context-reference";
 import type { DisplayMention } from "@/types/ai";
+import type { ContextReference } from "@/types/ai";
 import type { McpCapabilityBindingSummary } from "@/lib/ipc";
 
 import type { ImageAttachment } from "./AiMessageList";
@@ -32,12 +34,14 @@ interface AssistantComposerDockProps {
   streaming: boolean;
   externalBindings: McpCapabilityBindingSummary[];
   selectedExternalBindingIds: string[];
+  contextReferences: ContextReference[];
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onComposerKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onCompositionStart: (e: CompositionEvent<HTMLTextAreaElement>) => void;
   onCompositionEnd: (e: CompositionEvent<HTMLTextAreaElement>) => void;
   onImagesChange: Dispatch<SetStateAction<ImageAttachment[]>>;
   onExternalBindingToggle: (bindingId: string) => void;
+  onRemoveContextReference: (id: string) => void;
   onMentionHighlight: (index: number) => void;
   onMentionSelect: (candidate: MentionCandidate) => void;
   onSubmit: () => void;
@@ -62,12 +66,14 @@ export function AssistantComposerDock({
   streaming,
   externalBindings,
   selectedExternalBindingIds,
+  contextReferences,
   textareaRef,
   onComposerKeyDown,
   onCompositionStart,
   onCompositionEnd,
   onImagesChange,
   onExternalBindingToggle,
+  onRemoveContextReference,
   onMentionHighlight,
   onMentionSelect,
   onSubmit,
@@ -81,6 +87,43 @@ export function AssistantComposerDock({
       data-testid="ai-input"
       className={cn("flex flex-col", assistantFocus && "ai-focus-column")}
     >
+      {contextReferences.length > 0 ? (
+        <div
+          className="border-t border-border-subtle px-3 py-2"
+          data-testid="context-reference-boundary"
+        >
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-foreground">
+              已收集引用
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              随本条问题一并发送
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {contextReferences.map((reference) => (
+              <span
+                key={reference.id}
+                className="inline-flex max-w-[280px] items-center gap-1 rounded-md border border-border-subtle bg-background px-2 py-1 text-xs text-foreground"
+                title={contextReferenceDisplayText(reference)}
+              >
+                <span className="truncate">
+                  {contextReferenceDisplayText(reference)}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`移除引用 ${reference.id}`}
+                  className="ml-0.5 shrink-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={composerDisabled || streaming}
+                  onClick={() => onRemoveContextReference(reference.id)}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {externalBindings.length > 0 ? (
         <div
           className="border-t border-border-subtle px-3 py-2"

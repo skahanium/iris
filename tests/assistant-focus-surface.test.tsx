@@ -373,6 +373,8 @@ describe("Agent 主区阅读（assistant focus surface）", () => {
         onValueChange: () => {},
         onSelect: () => {},
         onStop: () => {},
+        contextReferences: [],
+        onRemoveContextReference: () => {},
       };
       const view = render(
         <AssistantComposerDock {...baseProps} assistantFocus={false} />,

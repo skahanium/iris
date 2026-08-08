@@ -28,7 +28,6 @@ function Probe() {
       clear: bubbleSelectionClear,
     },
     clearContextReferences: vi.fn(),
-    clearTaskSurfaces: vi.fn(),
     setInput: vi.fn(),
     setStreaming: vi.fn(),
     textareaRef: { current: null },
