@@ -124,6 +124,7 @@ export interface LlmConfigGetResponse {
     name: string;
     default_model: string;
     endpointManaged: "builtin" | "custom";
+    requiresApiKey: boolean;
   }[];
   catalog: ModelCatalogEntry[];
   registry: ModelRegistryEntry[];

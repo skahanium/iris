@@ -78,6 +78,7 @@ function deepseekConfig(options?: {
         name: "DeepSeek",
         default_model: "deepseek-v4-flash",
         endpointManaged: "builtin",
+        requiresApiKey: true,
       },
     ],
     catalog: [DEEPSEEK_FLASH_CATALOG],

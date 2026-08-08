@@ -130,36 +130,44 @@ export function LlmProviderDetail({
     >
       <section className="space-y-3 rounded-md border border-border/55 bg-background/60 p-3">
         <p className="text-xs font-medium text-foreground">连接与凭据</p>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            type="password"
-            className="h-8 w-44 text-xs"
-            placeholder="API Key…"
-            value={keyInput}
-            onChange={(event) => onKeyInput(event.target.value)}
-          />
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8"
-            disabled={keySaving}
-            onClick={onSaveKey}
-          >
-            保存 Key
-          </Button>
-          {keyConfigured ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-8"
-              onClick={onClearKey}
-            >
-              清除
-            </Button>
-          ) : null}
-        </div>
+        {provider.requiresApiKey ? (
+          <>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="password"
+                className="h-8 w-44 text-xs"
+                placeholder="API Key…"
+                value={keyInput}
+                onChange={(event) => onKeyInput(event.target.value)}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8"
+                disabled={keySaving}
+                onClick={onSaveKey}
+              >
+                保存 Key
+              </Button>
+              {keyConfigured ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-8"
+                  onClick={onClearKey}
+                >
+                  清除
+                </Button>
+              ) : null}
+            </div>
+          </>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">
+            本机服务无需 API Key
+          </p>
+        )}
         <p className="text-[11px] text-muted-foreground">
           {keyConfigured ? "Key 已配置" : "需要配置 Key"}
           {" · "}

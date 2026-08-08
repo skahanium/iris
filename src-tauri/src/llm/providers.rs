@@ -10,6 +10,8 @@ pub struct LlmProviderInfo {
     pub default_model: String,
     #[serde(rename = "endpointManaged")]
     pub endpoint_managed: String,
+    #[serde(rename = "requiresApiKey")]
+    pub requires_api_key: bool,
 }
 
 /// 设置页允许的厂商：Phase3 内置厂商 + 任意自定义 OpenAI 兼容端点。
@@ -50,6 +52,7 @@ pub fn list_providers() -> Vec<LlmProviderInfo> {
             name: name.clone(),
             default_model: default_model.clone(),
             endpoint_managed: endpoint_managed(id),
+            requires_api_key: requires_api_key(id),
         })
         .collect()
 }
@@ -88,6 +91,7 @@ fn provider_info_from_override(id: &str, row: &ProviderOverride) -> LlmProviderI
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "default".into()),
         endpoint_managed: endpoint_managed(id),
+        requires_api_key: requires_api_key(id),
     }
 }
 

@@ -7,6 +7,7 @@ export interface LlmVisibleProvider {
   configured: boolean;
   custom: boolean;
   endpointManaged: "builtin" | "custom";
+  requiresApiKey: boolean;
 }
 
 export interface LlmEnabledProviderModel {

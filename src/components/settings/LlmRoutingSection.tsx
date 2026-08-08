@@ -390,6 +390,7 @@ export function LlmRoutingSection({
           name: label,
           default_model: "",
           endpointManaged: "custom",
+          requiresApiKey: true,
         },
       ],
     });
@@ -649,6 +650,7 @@ export function LlmRoutingSection({
         configured: Boolean(override),
         custom: isCustomProviderId(providerId),
         endpointManaged: providerInfo(providerId)?.endpointManaged ?? "custom",
+        requiresApiKey: providerInfo(providerId)?.requiresApiKey ?? true,
       };
     });
 

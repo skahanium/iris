@@ -20,6 +20,7 @@ export const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] =
     name: provider.name,
     default_model: provider.defaultModel,
     endpointManaged: "builtin",
+    requiresApiKey: provider.id !== "ollama",
   }));
 
 export const REASONING_STRENGTH_OPTIONS: ReasoningMode[] = [

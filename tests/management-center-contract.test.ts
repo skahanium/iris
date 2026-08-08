@@ -148,6 +148,7 @@ describe("management center contract", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
     const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
     const mcpCard = read("src/components/ai/skills/McpProfileCard.tsx");
+    const mcpListCard = read("src/components/ai/skills/McpProfileListCard.tsx");
     const mcpPresets = read("src/components/ai/skills/mcpProviderPresets.ts");
 
     expect(center).toContain("McpProfilesPanel");
@@ -181,11 +182,11 @@ describe("management center contract", () => {
     expect(mcpPanel).not.toContain("MCP_PROVIDER_PRESETS.map");
     expect(mcpPanel).not.toContain("setDraft(createDraftSummary(preset))");
     expect(mcpCard).toContain("MCP_PROVIDER_PRESETS.map");
-    expect(mcpCard).toContain("主服务");
-    expect(mcpCard).toContain("备用 1");
-    expect(mcpCard).toContain("备用 2");
-    expect(mcpCard).toContain("onMoveSearchRoute");
-    expect(mcpCard).toContain("event.stopPropagation()");
+    expect(mcpListCard).toContain("主服务");
+    expect(mcpListCard).toContain("备用 1");
+    expect(mcpListCard).toContain("备用 2");
+    expect(mcpListCard).toContain("onMoveSearchRoute");
+    expect(mcpListCard).toContain("event.stopPropagation()");
     expect(mcpCard).not.toContain("MCP_PROVIDER_PRESETS.slice(0, 6)");
     expect(mcpCard).not.toContain(
       'variant={presetId === preset.id ? "secondary" : "outline"}',
