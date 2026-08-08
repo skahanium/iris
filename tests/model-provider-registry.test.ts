@@ -23,13 +23,14 @@ describe("model pool settings contract", () => {
   it("keeps model validation as capability facts without slot confirmation", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
     const ipc = read("src/lib/ipc.ts");
+    const helpers = read("src/components/settings/llmRoutingModelHelpers.ts");
     const types = read("src/types/llm.ts");
 
     expect(section).toContain("llmConfigTestProvider");
     expect(section).toContain("llmModelRegistryRefresh");
     expect(section).toContain("llmModelValidate");
     expect(section).toContain("模型池与主备顺序");
-    expect(section).toContain("modelSupportsVision");
+    expect(helpers).toContain("modelSupportsVision");
     expect(section).not.toContain("modelSupportsSlot");
     expect(section).not.toContain("llmModelConfirmCapability");
     expect(ipc).not.toContain("llmModelConfirmCapability");

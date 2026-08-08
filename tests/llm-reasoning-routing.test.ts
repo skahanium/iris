@@ -9,11 +9,12 @@ function read(path: string): string {
 describe("model-level reasoning contract", () => {
   it("shows reasoning as validated model capability, not a slot setting", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const helpers = read("src/components/settings/llmRoutingModelHelpers.ts");
     const types = read("src/types/llm.ts");
 
     expect(section).toContain("reasoningCapabilitySummary");
-    expect(section).toContain("推理可用");
-    expect(section).toContain("推理未知");
+    expect(helpers).toContain("推理可用");
+    expect(helpers).toContain("推理未知");
     expect(section).not.toContain("推理开关");
     expect(section).not.toContain("推理强度");
     expect(types).toContain("ModelCapabilityOverride");
