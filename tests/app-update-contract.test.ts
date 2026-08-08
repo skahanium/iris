@@ -93,9 +93,6 @@ describe("app update contract", () => {
     const slot = read("src/components/layout/AppStatusBarSlot.tsx");
     const about = read("src/components/settings/ManagementCenterPanel.tsx");
     const helpers = read("src/components/settings/managementCenterHelpers.ts");
-    const primitives = read(
-      "src/components/settings/managementCenterPrimitives.tsx",
-    );
     const app = read("src/App.impl.tsx");
     const hook = read("src/hooks/useAppUpdate.ts");
     const overlays = read("src/components/layout/AppOverlays.tsx");
@@ -126,10 +123,6 @@ describe("app update contract", () => {
     const hook = read("src/hooks/useAppUpdate.ts");
     const updater = read("src-tauri/src/commands/app_update.rs");
     const about = read("src/components/settings/ManagementCenterPanel.tsx");
-    const helpers = read("src/components/settings/managementCenterHelpers.ts");
-    const primitives = read(
-      "src/components/settings/managementCenterPrimitives.tsx",
-    );
 
     expect(hook).toContain("catch");
     expect(hook).toContain("无法连接更新服务器，请检查网络后重试");
