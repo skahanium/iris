@@ -82,6 +82,13 @@ pub enum AppError {
     },
     #[error("{0}")]
     Message(String),
+    /// A provider stream ended after visible content had already been emitted.
+    ///
+    /// The display keeps the stable wire prefix so string-based classifiers
+    /// (failover rejection, error surfacing) behave exactly as before, while
+    /// recovery logic can match the typed variant instead of parsing prose.
+    #[error("partial_visible_stream_error: {0}")]
+    StreamInterrupted(String),
     /// A CAS blob exists but cannot be decrypted (wrong/retired key or corruption).
     #[error("{0}")]
     CasUnreadable(String),
@@ -129,7 +136,8 @@ impl AppError {
             Self::Credential(_) => "credential",
             Self::Embed(_) => "embedding",
             Self::Provider { kind, .. } => kind.as_str(),
-            Self::Message(_) => "message",
+            // Keep the legacy wire code so frontend error mapping is unchanged.
+            Self::Message(_) | Self::StreamInterrupted(_) => "message",
             Self::CasUnreadable(_) => "cas_unreadable",
         }
     }
@@ -144,6 +152,7 @@ impl AppError {
             Self::Embed(_) => "Embedding error".to_string(),
             Self::Provider { message, .. } => message.clone(),
             Self::Message(s) => s.clone(),
+            Self::StreamInterrupted(message) => message.clone(),
             Self::CasUnreadable(s) => s.clone(),
         }
     }
@@ -200,6 +209,13 @@ pub fn log_error(error: &AppError) {
         }
         AppError::Message(s) => {
             tracing::error!(kind = "message", detail = %redacted_log_detail(s), "App error")
+        }
+        AppError::StreamInterrupted(s) => {
+            tracing::error!(
+                kind = "stream_interrupted",
+                detail = %redacted_log_detail(s),
+                "Stream interrupted after visible content"
+            )
         }
         AppError::CasUnreadable(s) => {
             tracing::error!(kind = "cas_unreadable", detail = %redacted_log_detail(s), "CAS blob unreadable")

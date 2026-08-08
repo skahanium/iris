@@ -1336,6 +1336,18 @@ pub(crate) enum SafeRunErrorCode {
 }
 
 impl SafeRunErrorCode {
+    /// Extract the stable run error code carried by an `AppError`, when its
+    /// message is a known wire code; otherwise the persistence fallback is
+    /// returned. This is the single typed entry point replacing inline
+    /// string-round-trip deserialization at call sites.
+    pub(crate) fn from_app_error(error: &crate::error::AppError) -> Self {
+        let crate::error::AppError::Message(message) = error else {
+            return Self::PersistenceFailed;
+        };
+        serde_json::from_value::<Self>(serde_json::Value::String(message.clone()))
+            .unwrap_or(Self::PersistenceFailed)
+    }
+
     /// Return the stable wire code used in safe errors and audit records.
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
@@ -1477,4 +1489,34 @@ pub(crate) fn transition_if_version(
             state_version + 1
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SafeRunErrorCode;
+    use crate::error::{AppError, ProviderErrorKind};
+
+    #[test]
+    fn from_app_error_maps_known_wire_codes_typed() {
+        let error = AppError::msg("agent_run_tool_loop_limit");
+        assert_eq!(
+            SafeRunErrorCode::from_app_error(&error),
+            SafeRunErrorCode::ToolLoopLimit
+        );
+    }
+
+    #[test]
+    fn from_app_error_falls_back_for_unknown_or_typed_errors() {
+        let unknown = AppError::msg("some unclassified failure");
+        assert_eq!(
+            SafeRunErrorCode::from_app_error(&unknown),
+            SafeRunErrorCode::PersistenceFailed
+        );
+
+        let structured = AppError::provider(ProviderErrorKind::Timeout, "upstream timeout");
+        assert_eq!(
+            SafeRunErrorCode::from_app_error(&structured),
+            SafeRunErrorCode::PersistenceFailed
+        );
+    }
 }

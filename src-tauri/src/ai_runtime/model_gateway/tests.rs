@@ -44,6 +44,31 @@ fn failover_selects_next_model_pool_candidate_for_provider_level_failure() {
 }
 
 #[test]
+fn failover_accepts_chinese_busy_service_messages_as_provider_level() {
+    let primary = test_provider("primary");
+    let backup = test_provider("backup");
+
+    // Chinese providers (deepseek, zhipu, qwen, kimi, ...) report busy/rate
+    // limits as business payloads with HTTP 200 or without a parseable status
+    // code. The gateway must classify these as provider-level so failover can
+    // move to the next candidate instead of surfacing the error to the user.
+    for message in [
+        "模型服务繁忙，请稍后重试",
+        "服务繁忙，请稍后再试",
+        "系统繁忙，请稍后再试",
+        "服务器繁忙，请稍后重试",
+        "请求过于频繁，请稍后再试",
+        "当前请求已触发限流，请稍后重试",
+    ] {
+        assert!(
+            select_failover_provider(&[primary.clone(), backup.clone()], &primary, message)
+                .is_some(),
+            "expected failover for Chinese busy message: {message}"
+        );
+    }
+}
+
+#[test]
 fn failover_rejects_auth_context_and_user_abort_errors() {
     let primary = test_provider("primary");
     let backup = test_provider("backup");

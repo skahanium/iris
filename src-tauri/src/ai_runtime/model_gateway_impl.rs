@@ -133,7 +133,15 @@ fn is_provider_level_failover_error(message: &str) -> bool {
         || lower.contains("too busy")
         || lower.contains("overloaded")
         || lower.contains("stream_invalid_json")
-        || lower.contains("妯″瀷鏈嶅姟绻佸繖")
+        // Chinese providers report busy/rate limits in business payloads that
+        // may arrive with HTTP 200; without these keywords the failure is
+        // treated as permanent and failover never moves to the next candidate.
+        || lower.contains("模型服务繁忙")
+        || lower.contains("服务繁忙")
+        || lower.contains("系统繁忙")
+        || lower.contains("服务器繁忙")
+        || lower.contains("请求过于频繁")
+        || lower.contains("限流")
 }
 
 fn select_failover_provider(

@@ -433,8 +433,8 @@ impl ToolLoopProvider for InterruptedThenRecoveryProvider {
                     },
                     1,
                 )?;
-                Err(AppError::msg(
-                    "partial_visible_stream_error: upstream connection closed",
+                Err(AppError::StreamInterrupted(
+                    "upstream connection closed".into(),
                 ))
             });
         }

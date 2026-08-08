@@ -581,8 +581,6 @@ impl SseJsonFailureTracker {
         }
     }
 }
-const PARTIAL_VISIBLE_STREAM_ERROR: &str = "partial_visible_stream_error";
-
 fn has_visible_partial(surface: StreamSurface, token_index: u32) -> bool {
     surface.is_visible() && token_index > 0
 }
@@ -619,7 +617,7 @@ fn finish_stream_with_error(
     }
     clear_abort(request_id);
     if visible_partial && !emit_error_event {
-        AppError::msg(format!("{PARTIAL_VISIBLE_STREAM_ERROR}: {sanitized}"))
+        AppError::StreamInterrupted(sanitized)
     } else {
         classify_known_stream_failure(sanitized)
     }

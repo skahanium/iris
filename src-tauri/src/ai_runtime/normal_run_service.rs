@@ -196,10 +196,7 @@ async fn execute_normal_run_internal(
     )
     .await;
     if let Err(error) = execution {
-        let safe_code = serde_json::from_value::<SafeRunErrorCode>(serde_json::Value::String(
-            error.to_string(),
-        ))
-        .unwrap_or(SafeRunErrorCode::PersistenceFailed);
+        let safe_code = SafeRunErrorCode::from_app_error(&error);
         tracing::warn!(
             run_id = %accepted.run_id,
             stage = "execution_exit",
@@ -212,7 +209,11 @@ async fn execute_normal_run_internal(
             .is_some_and(|response| !response.run.state.is_terminal());
         if still_active
             && safe_code == SafeRunErrorCode::PersistenceFailed
-            && error.to_string() != SafeRunErrorCode::PersistenceFailed.as_str()
+            && !matches!(
+                &error,
+                crate::error::AppError::Message(message)
+                    if message == SafeRunErrorCode::PersistenceFailed.as_str()
+            )
         {
             let _ =
                 RunEngine::fail_active_with_sink(&db, &accepted.session, &accepted.run_id, sink);

@@ -626,7 +626,7 @@ fn estimate_tokens(value: &str) -> u32 {
 
 fn can_recover_visible_stream_error(error: &AppError, visible_draft: Option<&str>) -> bool {
     visible_draft.is_some_and(|draft| !draft.trim().is_empty())
-        && matches!(error, AppError::Message(message) if message.starts_with("partial_visible_stream_error:"))
+        && matches!(error, AppError::StreamInterrupted(_))
 }
 
 fn incomplete_answer_continuation_instruction() -> LlmMessage {
