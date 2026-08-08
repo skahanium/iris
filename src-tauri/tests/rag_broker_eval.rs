@@ -897,11 +897,16 @@ fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
     database
         .with_conn(|conn| {
             index_vault_incremental(conn, &fixture_root())?;
+            eprintln!("[rag-gate] fixture indexed");
             populate_fixture_chunk_embeddings(conn);
+            eprintln!("[rag-gate] embeddings populated");
 
             let mut metrics = BrokerMetrics::default();
             let mut vector_evidence = VectorEvidenceMetrics::default();
-            for query in &fixture.queries {
+            for (query_index, query) in fixture.queries.iter().enumerate() {
+                if query_index % 10 == 0 {
+                    eprintln!("[rag-gate] query {query_index}/{}", fixture.queries.len());
+                }
                 // This independent call makes the vector proof non-fungible:
                 // FTS has no opportunity to satisfy a vector assertion.
                 let vector_outcome =
