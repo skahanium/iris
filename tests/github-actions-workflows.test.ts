@@ -127,6 +127,24 @@ function shellCommandSegments(command: string): string[] {
   return segments;
 }
 
+function executableShellCommand(segment: string): string | undefined {
+  let command = segment.trim();
+  if (!command || command.startsWith("#") || /^["']/.test(command)) {
+    return undefined;
+  }
+
+  command = command.replace(/^(?:(?:then|do|elif)\s+)+/, "");
+  while (true) {
+    const assignment = command.match(
+      /^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]+)\s+/,
+    );
+    if (!assignment) break;
+    command = command.slice(assignment[0].length);
+  }
+  command = command.replace(/^command(?:\s+--)?\s+/, "");
+  return command || undefined;
+}
+
 function tauriBuildCommands(
   command: string,
   allowNestedNodeTauriCli = false,
@@ -135,7 +153,9 @@ function tauriBuildCommands(
     String.raw`^(?:${tauriCliLauncher})?(?:${tauriCliBinary}|node\s+\S*tauri-cli\.mjs)(?:\s+--)?\s+build\b[^\r\n]*`,
   );
   const commands = shellCommandSegments(command).flatMap((segment) => {
-    const match = segment.match(build);
+    const executable = executableShellCommand(segment);
+    if (!executable) return [];
+    const match = executable.match(build);
     return match?.[0] ? [match[0]] : [];
   });
 
@@ -157,7 +177,9 @@ function scriptTauriBuildCommands(
   const npmRun = /^npm\s+run\s+([\w:-]+)(.*)$/;
 
   return shellCommandSegments(command).flatMap((segment) => {
-    const match = segment.match(npmRun);
+    const executable = executableShellCommand(segment);
+    if (!executable) return [];
+    const match = executable.match(npmRun);
     if (!match) return [];
     const scriptName = match[1];
     if (!scriptName) return [];
@@ -190,6 +212,33 @@ function forbiddenUbuntuTauriBundleCommands(workflow: string): string[] {
     .map((command) => command.report);
 
   return [...new Set(violations)];
+}
+
+function releaseAssetPathViolations(paths: readonly string[]): string[] {
+  return paths.filter((path) => !isAllowedReleaseAssetPath(path));
+}
+
+function isAllowedReleaseAssetPath(rawPath: string): boolean {
+  const path = rawPath.trim().replace(/[),;]+$/, "");
+  return [
+    /^\.iris-dev\/target\/release\/bundle\/nsis\/\*setup\.exe(?:\.sig)?$/,
+    /^\.iris-dev\/target\/release\/bundle\/dmg\/\*\.dmg$/,
+    /^\.iris-dev\/target\/release\/bundle\/macos\/\*\.app\.tar\.gz(?:\.sig)?$/,
+    /^release-assets\/windows\/\*\*\/\*setup\.exe(?:\.sig)?$/,
+    /^release-assets\/macos\/\*\*\/\*\.dmg$/,
+    /^release-assets\/macos\/\*\*\/\*\.app\.tar\.gz(?:\.sig)?$/,
+    /^release-assets\/(?:windows|macos)$/,
+    /^release-assets\/latest\.json$/,
+  ].some((pattern) => pattern.test(path));
+}
+
+function releaseAssetInputs(workflow: string): string[] {
+  return Array.from(
+    workflow.matchAll(
+      /(?:\.iris-dev\/target\/release\/bundle\/[^\s]+|release-assets\/[^\s]+)/g,
+    ),
+    (match) => match[0] ?? "",
+  );
 }
 
 describe("GitHub Actions workflows", () => {
@@ -351,6 +400,14 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).toContain("cargo test");
     expect(workflow).not.toContain("package:local:win");
     expect(workflow).not.toContain("package:local:mac");
+  });
+
+  it("prepares the independent RAG evaluation job on a cold Ubuntu runner", () => {
+    const ci = readWorkflow(".github/workflows/ci.yml");
+
+    expect(ci).toMatch(
+      /rag-eval:[\s\S]*?Install Linux build dependencies[\s\S]*?libwebkit2gtk-4\.1-dev[\s\S]*?working-directory: src-tauri[\s\S]*?cargo test --test rag_broker_eval/,
+    );
   });
 
   it("uses Ubuntu only to validate sqlite-vec and releases macOS and Windows assets only", () => {
@@ -583,6 +640,21 @@ describe("GitHub Actions workflows", () => {
         ubuntuJob("npx tauri build --no-bundle & npx tauri build"),
       ),
     ).toEqual(["npx tauri build"]);
+    for (const command of [
+      "FOO=bar npx tauri build --bundles appimage",
+      "command npx tauri build",
+      "if true; then npx tauri build; fi",
+      "for os in ubuntu; do command npx tauri build; done",
+    ]) {
+      expect(forbiddenUbuntuTauriBundleCommands(ubuntuJob(command))).toEqual(
+        expect.arrayContaining([expect.stringContaining("npx tauri build")]),
+      );
+    }
+    expect(
+      forbiddenUbuntuTauriBundleCommands(
+        ubuntuJob('if true; then echo "npx tauri build"; fi'),
+      ),
+    ).toEqual([]);
     expect(
       forbiddenUbuntuTauriBundleCommands(
         ubuntuJob("npx tauri build --no-bundle && npx tauri build"),
@@ -636,6 +708,30 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).not.toContain("actions/upload-artifact");
     expect(workflow).not.toContain("gh release");
     expect(workflow).not.toContain("package:local");
+  });
+
+  it("allows only Windows and macOS inputs for release assets", () => {
+    const packageDesktop = readWorkflow(
+      ".github/workflows/package-desktop.yml",
+    );
+    const inputs = releaseAssetInputs(packageDesktop);
+
+    expect(inputs.length).toBeGreaterThan(0);
+    expect(releaseAssetPathViolations(inputs)).toEqual([]);
+    expect(
+      releaseAssetPathViolations([
+        "release-assets/ubuntu/iris.tar.gz",
+        "release-assets/windows/iris.zip",
+      ]),
+    ).toEqual([
+      "release-assets/ubuntu/iris.tar.gz",
+      "release-assets/windows/iris.zip",
+    ]);
+    expect(
+      releaseAssetPathViolations(
+        releaseAssetInputs("path: release-assets/ubuntu/iris.tar.gz\n"),
+      ),
+    ).toEqual(["release-assets/ubuntu/iris.tar.gz"]);
   });
 
   it("verifies updater assets again after a GitHub Release is published", () => {

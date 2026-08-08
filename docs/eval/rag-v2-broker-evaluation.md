@@ -59,8 +59,10 @@ after the verified model smoke; these are the only desktop release targets.
 `sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate` is explicitly
 invoked by the nightly CI ladder with reference machine
 `github-hosted-ubuntu-24.04-x64`. It creates 1k/10k/25k/50k synthetic fixtures
-in fresh test temporary directories. The 1k/10k/25k samples are diagnostic
-only: the release decision is calculated **only from the independent 50k
+by writing only each deterministic generation manifest to a fresh test
+temporary directory and materializing the synthetic records in an in-memory
+SQLite database. The 1k/10k/25k samples are diagnostic only: the release
+decision is calculated **only from the independent 50k
 sample set**, rejecting warm KNN p95 above 750 ms or bounded retrieval p95
 above 1 s. Its log includes the deterministic generation schema and per-scale
 fixture hash, revision, model fingerprint, platform, reference machine and raw
