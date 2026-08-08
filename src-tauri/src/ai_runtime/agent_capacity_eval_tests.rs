@@ -2820,10 +2820,14 @@ fn synthetic_live_candidate() -> LiveProfileCandidate {
 /// Construct an otherwise ordinary live profile whose endpoints are confined
 /// to deterministic loopback protocol peers. This is test-only setup; the
 /// production CLI can create candidates only through source-db discovery.
-fn local_transport_live_candidate(llm_base_url: &str, mcp_url: &str) -> LiveProfileCandidate {
+fn local_transport_live_candidate(
+    provider_id: &str,
+    llm_base_url: &str,
+    mcp_url: &str,
+) -> LiveProfileCandidate {
     LiveProfileCandidate::new_for_local_transport(
         ResolvedLlmConfig {
-            provider_id: "custom_sensitive_provider".into(),
+            provider_id: provider_id.into(),
             model: "sensitive-model-name".into(),
             base_url: llm_base_url.to_string(),
             thinking: false,
@@ -2857,84 +2861,6 @@ fn local_transport_live_candidate(llm_base_url: &str, mcp_url: &str) -> LiveProf
     )
     .expect("test-only loopback profile")
 }
-
-fn live_pilot_llm_scripts() -> Vec<HttpResponseScript> {
-    select_live_pilot_scenarios()
-        .expect("interaction scenarios")
-        .into_iter()
-        .cycle()
-        .take(24)
-        .flat_map(|scenario| {
-            let needs_web = matches!(
-                scenario.evidence_group(),
-                EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
-            );
-            let needs_local = matches!(
-                scenario.evidence_group(),
-                EvidenceGroup::LocalOnly | EvidenceGroup::Hybrid
-            );
-            // The loopback pilot normalizes Offline Web-required rows to its
-            // available local transport so it can prove credential isolation
-            // and protocol dispatch. Keep its scripted model response on the
-            // same deterministic branch; dedicated fault tests cover the
-            // production Offline denial separately.
-            let needs_web_tool = needs_web;
-            let mut parts = Vec::new();
-            if needs_local {
-                parts.push(format!(
-                    "fact-local-{}=value-{} [cite:local-{}]",
-                    scenario.case_id(),
-                    scenario.case_id(),
-                    scenario.case_id()
-                ));
-            }
-            if needs_web {
-                parts.push(format!(
-                    "fact-web-{}=value-{} [cite:web-{}]",
-                    scenario.case_id(),
-                    scenario.case_id(),
-                    scenario.case_id()
-                ));
-            }
-            if parts.is_empty() {
-                parts.push("synthetic bounded answer".to_string());
-            }
-            let final_content = parts.join(" ");
-            if needs_web_tool {
-                vec![
-                    live_pilot_tool_call_script(
-                        "live-pilot-web-call",
-                        "web_search",
-                        r#"{"query":"controlled live pilot query"}"#,
-                    ),
-                    live_pilot_content_script(&final_content),
-                ]
-            } else {
-                vec![live_pilot_content_script(&final_content)]
-            }
-        })
-        .collect()
-}
-
-fn live_pilot_content_script(content: &str) -> HttpResponseScript {
-    let event = serde_json::json!({
-        "choices": [{"delta": {"content": content}}]
-    });
-    HttpResponseScript::sse(&format!("data: {event}\n\ndata: [DONE]\n\n"))
-}
-
-fn live_pilot_tool_call_script(id: &str, name: &str, arguments: &str) -> HttpResponseScript {
-    let event = serde_json::json!({
-        "choices": [{"delta": {"tool_calls": [{
-            "index": 0,
-            "id": id,
-            "type": "function",
-            "function": {"name": name, "arguments": arguments}
-        }]}}]
-    });
-    HttpResponseScript::sse(&format!("data: {event}\n\ndata: [DONE]\n\n"))
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LivePilotMcpCapture {
     method: String,
@@ -4314,11 +4240,13 @@ async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_
         .expect("store unselected credential");
     crate::credentials::credential_access_probe_reset();
 
-    let unbound_llm = spawn_llm_protocol_double(live_pilot_llm_scripts())
-        .await
-        .expect("unbound local LLM transport");
+    // The unbound candidate must be unusable: a dead loopback port refuses
+    // connections under any HTTP client policy (previously it relied on the
+    // gateway rejecting plain-HTTP loopback, which loopback support removed).
+    let unbound_llm_url = "http://127.0.0.1:1".to_string();
     let mut unbound_session = preflight_live_profiles(vec![local_transport_live_candidate(
-        &unbound_llm.base_url,
+        "custom_unbound_provider",
+        &unbound_llm_url,
         "http://127.0.0.1:1/mcp",
     )
     .without_test_mcp_credentials()])
@@ -4336,7 +4264,6 @@ async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_
     )
     .await
     .expect("unbound pilot returns closed failures");
-    drop(unbound_llm);
     assert_eq!(unbound_result.completed_case_count(), 0);
     let unbound_accessed = crate::credentials::credential_access_probe_snapshot();
     assert!(
@@ -4352,6 +4279,7 @@ async fn approved_live_hydration_proves_selected_credentials_and_stateless_http_
         .await
         .expect("local MCP transport");
     let mut session = preflight_live_profiles(vec![local_transport_live_candidate(
+        "custom_sensitive_provider",
         &llm.base_url,
         &mcp.url,
     )
