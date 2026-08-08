@@ -2052,13 +2052,13 @@ fn evaluation_telemetry_aggregates_only_bounded_measurements() {
 #[test]
 fn core_selection_is_stratified_without_claiming_execution_results() {
     let smoke = select_core_scenarios(EvalRunMode::Smoke).expect("smoke selection");
-    assert_eq!(smoke.len(), 12);
+    assert_eq!(smoke.len(), 24);
     assert_eq!(
         smoke
             .iter()
             .filter(|scenario| scenario.is_hard_boundary())
             .count(),
-        4
+        0
     );
     for group in [
         EvidenceGroup::NoRetrieval,
@@ -2071,7 +2071,7 @@ fn core_selection_is_stratified_without_claiming_execution_results() {
                 .iter()
                 .filter(|scenario| scenario.evidence_group() == group)
                 .count(),
-            3
+            6
         );
     }
     assert_eq!(
@@ -2079,21 +2079,21 @@ fn core_selection_is_stratified_without_claiming_execution_results() {
             .iter()
             .filter(|scenario| scenario.language() == ScenarioLanguage::Chinese)
             .count(),
-        8
+        17
     );
     assert_eq!(
         smoke
             .iter()
             .filter(|scenario| scenario.language() == ScenarioLanguage::English)
             .count(),
-        3
+        5
     );
     assert_eq!(
         smoke
             .iter()
             .filter(|scenario| scenario.language() == ScenarioLanguage::Mixed)
             .count(),
-        1
+        2
     );
     assert_eq!(
         select_core_scenarios(EvalRunMode::Full)
@@ -2108,8 +2108,8 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
     let smoke = run_headless_core_evaluation(EvalRunMode::Smoke, None)
         .await
         .expect("headless smoke");
-    assert_eq!(smoke.case_count(), 12);
-    assert_eq!(smoke.boundary_case_count(), 4);
+    assert_eq!(smoke.case_count(), 24);
+    assert_eq!(smoke.boundary_case_count(), 0);
     let serialized = serialize_evaluation_summary(&smoke).expect("strict summary");
     let value: serde_json::Value = serde_json::from_str(&serialized).expect("summary json");
     let keys = value
@@ -2126,6 +2126,7 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
             "evidenceLevel",
             "runMode",
             "caseCount",
+            "completedCaseCount",
             "passed",
             "failed",
             "boundaryCaseCount",
@@ -2137,6 +2138,10 @@ async fn headless_smoke_summary_exposes_only_the_closed_contract() {
         ])
     );
     assert_eq!(value["evidenceLevel"], "headless_deterministic");
+    assert_eq!(value["caseCount"], 24);
+    assert_eq!(value["completedCaseCount"], 24);
+    assert_eq!(value["passed"], 24);
+    assert_eq!(value["failed"], 0);
     assert!(!serialized.contains("请在不检索"));
     for forbidden in [
         "rawPrompt",
@@ -2275,13 +2280,17 @@ async fn deterministic_command_entrypoint_writes_only_the_strict_summary_when_re
 async fn headless_core_runner_reports_a_real_missing_fact_instead_of_self_certifying() {
     let summary = run_headless_core_evaluation(
         EvalRunMode::Smoke,
-        Some(EvalFault::MissingFact { case_id: 13 }),
+        // Smoke covers the complete online matrix. Case 13 is an offline
+        // scenario and therefore belongs to the independent security track;
+        // case 26 is the matching online factual scenario.
+        Some(EvalFault::MissingFact { case_id: 26 }),
     )
     .await
     .expect("headless smoke with deterministic fault");
-    let verdict = summary.case_verdict(13).expect("faulted case verdict");
+    let verdict = summary.case_verdict(26).expect("faulted case verdict");
 
-    assert_eq!(summary.case_count(), 12);
+    assert_eq!(summary.case_count(), 24);
+    assert_eq!(summary.completed_case_count(), 24);
     assert!(summary.passed() < summary.case_count());
     assert_eq!(verdict.fact_correctness().status(), CheckStatus::Fail);
     assert_eq!(

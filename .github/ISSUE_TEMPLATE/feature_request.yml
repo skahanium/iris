@@ -1,0 +1,32 @@
+name: 功能建议
+description: 提出与 Iris 本地优先、Markdown 权威和显式授权原则相容的功能建议。
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案与替代方案
+      description: 请说明用户体验、数据流和不采用的替代方案。
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: 隐私、授权与 Markdown 影响
+      description: 说明是否读取、写入或传输用户内容；写入 Markdown 必须要求显式确认。
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: 迁移、兼容性与许可影响
+      description: 若需要 schema、依赖或协议变更，请说明迁移/回滚和 AGPL 兼容许可。
+    validations:
+      required: true

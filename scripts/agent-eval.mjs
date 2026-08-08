@@ -1,5 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -80,6 +86,22 @@ export function buildAgentEvalChildEnvironment(source, controls = {}) {
     }
   }
   return environment;
+}
+
+export function assertStrictSmokeSummary(summary) {
+  if (!summary || typeof summary !== "object") {
+    throw new Error("agent_eval_smoke_summary_invalid");
+  }
+  if (
+    summary.caseCount !== 24 ||
+    summary.completedCaseCount !== 24 ||
+    summary.completedCaseCount !== summary.caseCount
+  ) {
+    throw new Error("agent_eval_smoke_incomplete");
+  }
+  if (summary.passed !== 24 || summary.failed !== 0) {
+    throw new Error("agent_eval_smoke_failed");
+  }
 }
 
 function canonicalCredentialRoot(raw) {
@@ -364,6 +386,18 @@ function main() {
   if (!existsSync(output)) {
     console.error("agent_eval_summary_missing");
     process.exit(1);
+  }
+  if (mode === "smoke") {
+    try {
+      assertStrictSmokeSummary(JSON.parse(readFileSync(output, "utf8")));
+    } catch (error) {
+      console.error(
+        error instanceof Error
+          ? error.message
+          : "agent_eval_smoke_summary_invalid",
+      );
+      process.exit(1);
+    }
   }
   console.log(`agent_eval_summary=${path.relative(workspaceRoot, output)}`);
 }

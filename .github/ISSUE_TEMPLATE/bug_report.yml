@@ -1,0 +1,33 @@
+name: 缺陷报告
+description: 报告可复现的 Iris 缺陷；请勿粘贴笔记正文、密钥或令牌。
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 最小复现步骤
+      description: 使用合成内容描述环境、步骤、实际结果和预期结果。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Iris 版本与平台
+      placeholder: "例如 1.2.18 / macOS arm64"
+    validations:
+      required: true
+  - type: textarea
+    id: privacy
+    attributes:
+      label: 隐私与数据影响
+      description: 是否涉及本地 Markdown、索引、凭据或外部传输？只说明类别，不提交敏感内容。
+    validations:
+      required: true
+  - type: textarea
+    id: migration
+    attributes:
+      label: 数据库迁移或升级影响
+      description: 若问题发生在升级后，请说明迁移版本和是否可回退。
+    validations:
+      required: true

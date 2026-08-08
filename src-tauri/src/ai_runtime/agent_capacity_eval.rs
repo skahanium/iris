@@ -5359,6 +5359,7 @@ pub(crate) struct EvaluationSummary {
     evidence_level: EvaluationEvidenceLevel,
     run_mode: EvalRunMode,
     case_count: u32,
+    completed_case_count: u32,
     passed: u32,
     failed: u32,
     boundary_case_count: u32,
@@ -5372,6 +5373,10 @@ pub(crate) struct EvaluationSummary {
 impl EvaluationSummary {
     pub(crate) const fn case_count(&self) -> u32 {
         self.case_count
+    }
+
+    pub(crate) const fn completed_case_count(&self) -> u32 {
+        self.completed_case_count
     }
 
     pub(crate) const fn passed(&self) -> u32 {
@@ -5418,32 +5423,13 @@ pub(crate) fn select_core_scenarios(
     let scenarios = generate_core_scenarios()?;
     Ok(match mode {
         EvalRunMode::Full => scenarios,
-        EvalRunMode::Smoke => {
-            let mut chinese_online = HashSet::<EvidenceGroup>::new();
-            let mut minority_online = HashSet::<EvidenceGroup>::new();
-            scenarios
-                .into_iter()
-                .filter(|scenario| {
-                    if scenario.is_hard_boundary() {
-                        return true;
-                    }
-                    if scenario.web_state() != WebState::Online {
-                        return false;
-                    }
-                    if scenario.language() == ScenarioLanguage::Chinese {
-                        return chinese_online.insert(scenario.evidence_group());
-                    }
-                    let expected_minority =
-                        if scenario.evidence_group() == EvidenceGroup::NoRetrieval {
-                            ScenarioLanguage::Mixed
-                        } else {
-                            ScenarioLanguage::English
-                        };
-                    scenario.language() == expected_minority
-                        && minority_online.insert(scenario.evidence_group())
-                })
-                .collect()
-        }
+        // The release smoke is the complete 24-case online interaction
+        // matrix. It cannot turn an incomplete sample into a release signal;
+        // offline and hard-boundary coverage remains in the security track.
+        EvalRunMode::Smoke => scenarios
+            .into_iter()
+            .filter(|scenario| scenario.web_state() == WebState::Online)
+            .collect(),
     })
 }
 
@@ -5646,6 +5632,11 @@ pub(crate) async fn run_headless_core_evaluation(
             .min(u32::MAX as usize) as u32
     };
     let case_count = selected.len().min(u32::MAX as usize) as u32;
+    let completed_case_count = cases
+        .iter()
+        .filter(|case| case.runtime_evidence.terminal_state == EvaluationTerminalState::Completed)
+        .count()
+        .min(u32::MAX as usize) as u32;
     let atoms = cases
         .iter()
         .map(|case| case.quality_atoms)
@@ -5689,6 +5680,7 @@ pub(crate) async fn run_headless_core_evaluation(
         evidence_level: EvaluationEvidenceLevel::HeadlessDeterministic,
         run_mode: mode,
         case_count,
+        completed_case_count,
         passed,
         failed: case_count.saturating_sub(passed),
         boundary_case_count: selected
@@ -9991,6 +9983,7 @@ pub(crate) fn validate_serialized_evaluation_summary(
             "evidenceLevel",
             "runMode",
             "caseCount",
+            "completedCaseCount",
             "passed",
             "failed",
             "boundaryCaseCount",
@@ -10005,10 +9998,17 @@ pub(crate) fn validate_serialized_evaluation_summary(
     exact_string(root.get("evidenceLevel"), &["headless_deterministic"])?;
     exact_string(root.get("runMode"), &["smoke", "full"])?;
     let case_count = bounded_u64(root.get("caseCount"), 48)?;
+    let completed_case_count = bounded_u64(root.get("completedCaseCount"), 48)?;
     let passed = bounded_u64(root.get("passed"), 48)?;
     let failed = bounded_u64(root.get("failed"), 48)?;
     let boundary_case_count = bounded_u64(root.get("boundaryCaseCount"), 4)?;
-    if passed.saturating_add(failed) != case_count {
+    let run_mode = root
+        .get("runMode")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| EvalContractError::new("evaluation_summary_shape_invalid"))?;
+    if (run_mode == "smoke" && completed_case_count != case_count)
+        || passed.saturating_add(failed) != case_count
+    {
         return Err(EvalContractError::new(
             "evaluation_summary_count_inconsistent",
         ));

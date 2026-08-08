@@ -371,17 +371,17 @@
         },
         {
           "level": 20,
-          "passCount": 5,
+          "passCount": 0,
           "repetitions": 5
         },
         {
           "level": 50,
-          "passCount": 5,
+          "passCount": 0,
           "repetitions": 5
         },
         {
           "level": 100,
-          "passCount": 5,
+          "passCount": 0,
           "repetitions": 5
         }
       ],

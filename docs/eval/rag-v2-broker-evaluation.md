@@ -29,12 +29,34 @@ fixture revision.
 
 ## Default gates
 
-- any-source Recall@5 >= 0.80; any-source Recall@30 >= 0.95
+- deterministic semantic-only any-source Recall@5 >= 0.80 and Recall@30 >= 0.95
 - nDCG@10 >= 0.85; MRR@10 is reported for trend comparison
 - no-answer false-positive rate <= 0.10
 - scope leaks == 0
 - at least six queries must be served by metadata FTS
-- warm p95 is reported; it is not compared across different machines
+- citation span/hash validity == 100%
+
+## Provisioned sqlite-vec release gate
+
+`rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates` is a
+separate, explicitly invoked test. It restores the verified pinned BGE model,
+indexes the synthetic fixture, derives `chunk_embeddings_v2`, and runs the
+public hybrid broker with sqlite-vec enabled. A missing model or extension
+fails the gate; an FTS-only result cannot count as a vector pass.
+
+The provisioned thresholds are hybrid any-source Recall@5 >= 0.95 and
+Recall@30 >= 0.98; all-required-source Recall@5 >= 0.90 and Recall@30 >=
+0.95; nDCG@10 >= 0.85; no-answer false-positive rate <= 0.10; scope leaks ==
+0; and end-to-end retrieval p95 <= 1 s. macOS and Windows package jobs run it
+after the verified model smoke; these are the only desktop release targets.
+
+`sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate` is explicitly
+invoked by the nightly CI ladder with reference machine
+`github-hosted-ubuntu-24.04-x64`. It creates 1k/10k/25k/50k synthetic fixtures
+in fresh test temporary directories and rejects warm KNN p95 above 750 ms or
+bounded retrieval p95 above 1 s. Its log includes revision, model fingerprint,
+platform, reference machine and raw samples. Ubuntu is only this CI runner;
+it never produces a Linux package, release asset, upload or publication.
 
 The two recall families have deliberately different semantics:
 
@@ -53,7 +75,7 @@ test computes each metadata-match query once and has a focused contract test
 showing that one of two required paths is insufficient for all-required-source
 recall.
 
-The test disables vector retrieval deliberately. It therefore verifies the
+The default test disables vector retrieval deliberately. It therefore verifies the
 actual hybrid broker, FTS, metadata, scope, rank and ContextPacket route
 without downloading a model. A separately provisioned release environment
 must run the same corpus with BGE v2 and sqlite-vec available before using

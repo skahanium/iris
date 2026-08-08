@@ -32,4 +32,6 @@ jobs:
 
       - name: Run sqlite-vec KNN scale ladder
         working-directory: src-tauri
-        run: cargo test --features sqlite-vec embedding::engine::tests::sqlite_vec_knn_scale_ladder -- --nocapture
+        env:
+          IRIS_RAG_PERFORMANCE_REFERENCE: github-hosted-ubuntu-24.04-x64
+        run: cargo test --features sqlite-vec --test rag_broker_eval sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate -- --ignored --nocapture

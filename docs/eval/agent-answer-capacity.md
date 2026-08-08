@@ -266,8 +266,10 @@ npm run agent:eval:live -- pilot --session session-<64hex> \
   --approve profile-<32hex> --confirm-cost one-24-case-interaction-matrix-pilot
 ```
 
-`agent:eval:smoke` 执行分层核心子集和全部硬边界；`agent:eval` 执行 48 题、
-逐层五次压力执行、硬边界、安全轨、六个组合终端并生成严格白名单报告。
+`agent:eval:smoke` 执行完整 24 条 online headless interaction matrix，且仅当
+`caseCount`、`completedCaseCount` 与 `passed` 均为 24、`failed` 为 0 时通过；
+离线和硬边界由独立安全轨执行。`agent:eval` 执行 48 题、逐层五次压力执行、
+硬边界、安全轨、六个组合终端并生成严格白名单报告。
 安全案例失败会写入 `securityGate=false`，不会阻止报告生成。版本化确定性结果见
 `docs/eval/results/v1.2.15-agent-capacity.json`。`agent:eval:live -- preflight`
 只生成被 Git 忽略的 `target/agent-eval/live-preflight.json`；它不是 live

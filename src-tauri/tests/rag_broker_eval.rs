@@ -17,6 +17,10 @@ use iris_lib::ai_runtime::retrieval_broker::{
     RetrievalLayers, RetrievalRequest,
 };
 use iris_lib::ai_runtime::retrieval_scope::RetrievalScope;
+use iris_lib::embedding::engine::{
+    embed_texts_batch, f32_to_bytes, set_embedding_runtime_enabled, EMBEDDING_DIMENSION,
+    EMBEDDING_MODEL_FINGERPRINT, EMBEDDING_MODEL_ID,
+};
 use iris_lib::indexer::scan::index_vault_incremental;
 use iris_lib::storage::migrate::migrate_up;
 use rusqlite::Connection;
@@ -25,12 +29,22 @@ use serde::Deserialize;
 const FIXTURE_VERSION: &str = "v1.2.6";
 const FIXTURE_STATUS: &str = "historical_frozen";
 const CURRENT_EVALUATION_VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
-const POSITIVE_RECALL_AT_5_MIN: f64 = 0.80;
-const POSITIVE_RECALL_AT_30_MIN: f64 = 0.95;
+const SEMANTIC_ONLY_RECALL_AT_5_MIN: f64 = 0.80;
+const SEMANTIC_ONLY_RECALL_AT_30_MIN: f64 = 0.95;
+const HYBRID_ANY_SOURCE_RECALL_AT_5_MIN: f64 = 0.95;
+const HYBRID_ANY_SOURCE_RECALL_AT_30_MIN: f64 = 0.98;
+const ALL_REQUIRED_SOURCE_RECALL_AT_5_MIN: f64 = 0.90;
+const ALL_REQUIRED_SOURCE_RECALL_AT_30_MIN: f64 = 0.95;
 const NO_ANSWER_FALSE_POSITIVE_RATE_MAX: f64 = 0.10;
 const NDCG_AT_10_MIN: f64 = 0.85;
 const METADATA_MATCH_QUERY_MIN: usize = 10;
 const SCOPE_LEAK_COUNT_MAX: usize = 0;
+const WARM_KNN_P95_MS_MAX: f64 = 750.0;
+const END_TO_END_RETRIEVAL_P95_MS_MAX: f64 = 1_000.0;
+
+fn vector_scale_fixture_sizes() -> [i64; 4] {
+    [1_000, 10_000, 25_000, 50_000]
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -89,6 +103,50 @@ struct BrokerMetrics {
     scope_leaks: usize,
 
     retrieval_latencies_ms: Vec<f64>,
+}
+
+#[derive(Debug, Default)]
+struct VectorPerformanceMetrics {
+    warm_knn_latencies_ms: Vec<f64>,
+    end_to_end_latencies_ms: Vec<f64>,
+}
+
+#[test]
+fn vector_quality_gate_fails_when_all_required_recall_at_30_is_below_095() {
+    let metrics = BrokerMetrics {
+        positive_queries: 50,
+        any_source_hits_at_5: 50,
+        any_source_hits_at_30: 50,
+        all_required_hits_at_5: 50,
+        all_required_hits_at_30: 47,
+        reciprocal_rank_sum: 50.0,
+        normalized_discounted_gain_sum: 50.0,
+        metadata_match_queries: 0,
+        no_answer_queries: 10,
+        no_answer_false_positives: 0,
+        scope_leaks: 0,
+        retrieval_latencies_ms: vec![1.0],
+    };
+
+    assert!(!meets_vector_release_gates(&metrics));
+}
+
+#[test]
+fn vector_performance_gate_fails_when_warm_knn_p95_exceeds_750_ms() {
+    let metrics = VectorPerformanceMetrics {
+        warm_knn_latencies_ms: vec![740.0, 751.0],
+        end_to_end_latencies_ms: vec![100.0, 100.0],
+    };
+
+    assert!(!meets_vector_performance_release_gates(&metrics));
+}
+
+#[test]
+fn scale_fixture_ladder_includes_the_50k_release_boundary() {
+    assert_eq!(
+        vector_scale_fixture_sizes(),
+        [1_000, 10_000, 25_000, 50_000]
+    );
 }
 
 fn metadata_match_increment(diagnostics: &[RetrievalLayerDiagnostic]) -> usize {
@@ -158,14 +216,42 @@ impl BrokerMetrics {
         ratio(self.no_answer_false_positives, self.no_answer_queries)
     }
 
-    fn p95_ms(&mut self) -> f64 {
-        if self.retrieval_latencies_ms.is_empty() {
-            return 0.0;
-        }
-        self.retrieval_latencies_ms.sort_by(f64::total_cmp);
-        let index = ((self.retrieval_latencies_ms.len() - 1) as f64 * 0.95).ceil() as usize;
-        self.retrieval_latencies_ms[index]
+    fn p95_ms(&self) -> f64 {
+        percentile_ms(&self.retrieval_latencies_ms, 0.95)
     }
+}
+
+fn percentile_ms(samples: &[f64], percentile: f64) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let index = ((sorted.len() - 1) as f64 * percentile).ceil() as usize;
+    sorted[index]
+}
+
+fn meets_semantic_release_gates(metrics: &BrokerMetrics) -> bool {
+    metrics.any_source_recall_at_5() >= SEMANTIC_ONLY_RECALL_AT_5_MIN
+        && metrics.any_source_recall_at_30() >= SEMANTIC_ONLY_RECALL_AT_30_MIN
+        && metrics.ndcg_at_10() >= NDCG_AT_10_MIN
+        && metrics.no_answer_false_positive_rate() <= NO_ANSWER_FALSE_POSITIVE_RATE_MAX
+        && metrics.scope_leaks == SCOPE_LEAK_COUNT_MAX
+}
+
+fn meets_vector_release_gates(metrics: &BrokerMetrics) -> bool {
+    metrics.any_source_recall_at_5() >= HYBRID_ANY_SOURCE_RECALL_AT_5_MIN
+        && metrics.any_source_recall_at_30() >= HYBRID_ANY_SOURCE_RECALL_AT_30_MIN
+        && metrics.all_required_source_recall_at_5() >= ALL_REQUIRED_SOURCE_RECALL_AT_5_MIN
+        && metrics.all_required_source_recall_at_30() >= ALL_REQUIRED_SOURCE_RECALL_AT_30_MIN
+        && metrics.ndcg_at_10() >= NDCG_AT_10_MIN
+        && metrics.no_answer_false_positive_rate() <= NO_ANSWER_FALSE_POSITIVE_RATE_MAX
+        && metrics.scope_leaks == SCOPE_LEAK_COUNT_MAX
+}
+
+fn meets_vector_performance_release_gates(metrics: &VectorPerformanceMetrics) -> bool {
+    percentile_ms(&metrics.warm_knn_latencies_ms, 0.95) <= WARM_KNN_P95_MS_MAX
+        && percentile_ms(&metrics.end_to_end_latencies_ms, 0.95) <= END_TO_END_RETRIEVAL_P95_MS_MAX
 }
 
 fn ratio(numerator: usize, denominator: usize) -> f64 {
@@ -229,6 +315,12 @@ fn request_for(query: &EvalQuery) -> RetrievalRequest {
     }
 }
 
+fn vector_request_for(query: &EvalQuery) -> RetrievalRequest {
+    let mut request = request_for(query);
+    request.layers.vector = true;
+    request
+}
+
 fn crate_content_hash(content: &str) -> String {
     iris_lib::cas::hash::content_hash_str(content)
 }
@@ -276,6 +368,97 @@ fn packet_has_valid_citation(packet: &iris_lib::ai_runtime::ContextPacket) -> bo
         && !packet.content_hash.is_empty()
         && span.end > span.start
         && !packet.excerpt.trim().is_empty()
+}
+
+fn fixture_labels_hash() -> String {
+    let labels = std::fs::read_to_string(fixture_root().join("labels.json"))
+        .expect("read fixture labels for result metadata");
+    crate_content_hash(&labels)
+}
+
+fn emit_result_metadata(gate: &str, metrics: &BrokerMetrics) {
+    let revision = option_env!("GITHUB_SHA")
+        .or(option_env!("VERGEN_GIT_SHA"))
+        .unwrap_or("workspace");
+    eprintln!(
+        "RAG evaluation result: {}",
+        serde_json::json!({
+            "gate": gate,
+            "revision": revision,
+            "model": EMBEDDING_MODEL_FINGERPRINT,
+            "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            "fixtureLabelsSha256": fixture_labels_hash(),
+            "rawMetrics": {
+                "positiveQueries": metrics.positive_queries,
+                "noAnswerQueries": metrics.no_answer_queries,
+                "anySourceRecallAt5": metrics.any_source_recall_at_5(),
+                "anySourceRecallAt30": metrics.any_source_recall_at_30(),
+                "allRequiredSourceRecallAt5": metrics.all_required_source_recall_at_5(),
+                "allRequiredSourceRecallAt30": metrics.all_required_source_recall_at_30(),
+                "ndcgAt10": metrics.ndcg_at_10(),
+                "noAnswerFalsePositiveRate": metrics.no_answer_false_positive_rate(),
+                "scopeLeaks": metrics.scope_leaks,
+                "endToEndP95Milliseconds": metrics.p95_ms(),
+            }
+        })
+    );
+}
+
+fn populate_fixture_chunk_embeddings(conn: &Connection) {
+    let mut statement = conn
+        .prepare(
+            "SELECT c.id, c.content, COALESCE(c.content_hash, '')
+             FROM chunks c
+             ORDER BY c.id",
+        )
+        .expect("prepare fixture chunks");
+    let chunks: Vec<(i64, String, String)> = statement
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("query fixture chunks")
+        .collect::<Result<_, _>>()
+        .expect("collect fixture chunks");
+    assert!(
+        !chunks.is_empty(),
+        "fixture must contain chunks for vector evaluation"
+    );
+
+    for batch in chunks.chunks(16) {
+        let texts: Vec<&str> = batch
+            .iter()
+            .map(|(_, content, _)| content.as_str())
+            .collect();
+        let vectors = embed_texts_batch(&texts).expect("embed provisioned vector fixture batch");
+        assert_eq!(vectors.len(), batch.len());
+        for ((chunk_id, _, fingerprint), vector) in batch.iter().zip(vectors) {
+            conn.execute(
+                "INSERT INTO chunk_embeddings_v2
+                     (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    chunk_id,
+                    f32_to_bytes(&vector),
+                    fingerprint,
+                    EMBEDDING_MODEL_ID,
+                    EMBEDDING_DIMENSION as i64,
+                ],
+            )
+            .expect("insert provisioned fixture embedding");
+        }
+    }
+
+    let indexed = i64::try_from(chunks.len()).expect("fixture chunk count fits i64");
+    conn.execute(
+        "UPDATE embedding_generation_state
+         SET active_model_id = ?1,
+             target_model_id = ?1,
+             target_dimension = ?2,
+             phase = 'ready',
+             indexed_items = ?3,
+             total_items = ?3
+         WHERE singleton = 1",
+        rusqlite::params![EMBEDDING_MODEL_ID, EMBEDDING_DIMENSION as i64, indexed],
+    )
+    .expect("mark provisioned vector generation ready");
 }
 
 #[test]
@@ -482,9 +665,10 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
         metrics.scope_leaks,
     );
 
-    assert!(metrics.any_source_recall_at_5() >= POSITIVE_RECALL_AT_5_MIN);
-    assert!(metrics.any_source_recall_at_30() >= POSITIVE_RECALL_AT_30_MIN);
-    assert!(metrics.ndcg_at_10() >= NDCG_AT_10_MIN);
+    assert!(
+        meets_semantic_release_gates(&metrics),
+        "deterministic semantic-only release gates failed"
+    );
     assert!(metrics.metadata_match_queries >= METADATA_MATCH_QUERY_MIN);
     assert!(metrics.no_answer_false_positive_rate() <= NO_ANSWER_FALSE_POSITIVE_RATE_MAX);
     assert_eq!(metrics.scope_leaks, SCOPE_LEAK_COUNT_MAX);
@@ -520,6 +704,235 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
     assert!(
         metrics.ndcg_at_10() >= baseline_ndcg + 0.05,
         "nDCG@10 must improve by at least 0.05 over v1.2.5 ({baseline_ndcg:.3})"
+    );
+    emit_result_metadata("deterministic-semantic", &metrics);
+}
+
+/// Release-only vector gate. It is deliberately ignored in the normal model-free
+/// suite; packaging workflows invoke it explicitly after restoring the verified
+/// BGE model. A missing/invalid model fails this test rather than downgrading to
+/// FTS or claiming a vector-quality result.
+#[test]
+#[ignore = "requires the verified bundled BGE model and sqlite-vec"]
+fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
+    set_embedding_runtime_enabled(true);
+    let fixture = load_fixture();
+    let database = iris_lib::storage::db::Database::open_in_memory()
+        .expect("open provisioned sqlite-vec evaluation database");
+    database
+        .with_conn(|conn| {
+            index_vault_incremental(conn, &fixture_root())?;
+            populate_fixture_chunk_embeddings(conn);
+
+            let mut metrics = BrokerMetrics::default();
+            for query in &fixture.queries {
+                let start = Instant::now();
+                let outcome = hybrid_retrieve_with_diagnostics(conn, &vector_request_for(query))?;
+                metrics
+                    .retrieval_latencies_ms
+                    .push(start.elapsed().as_secs_f64() * 1_000.0);
+
+                let paths: Vec<String> = outcome
+                    .packets
+                    .iter()
+                    .filter_map(|packet| packet.source_path.clone())
+                    .collect();
+                metrics.scope_leaks += paths
+                    .iter()
+                    .filter(|path| !packet_respects_scope(path, &query.scope))
+                    .count();
+
+                if query.expected_paths.is_empty() {
+                    metrics.no_answer_queries += 1;
+                    metrics.no_answer_false_positives += usize::from(!paths.is_empty());
+                    continue;
+                }
+
+                metrics.positive_queries += 1;
+                if first_expected_rank(&paths, &query.expected_paths, 5).is_some() {
+                    metrics.any_source_hits_at_5 += 1;
+                }
+                if first_expected_rank(&paths, &query.expected_paths, 30).is_some() {
+                    metrics.any_source_hits_at_30 += 1;
+                }
+                if all_expected_paths_within(&paths, &query.expected_paths, 5) {
+                    metrics.all_required_hits_at_5 += 1;
+                }
+                if all_expected_paths_within(&paths, &query.expected_paths, 30) {
+                    metrics.all_required_hits_at_30 += 1;
+                }
+                if let Some(rank) = first_expected_rank(&paths, &query.expected_paths, 10) {
+                    metrics.reciprocal_rank_sum += 1.0 / rank as f64;
+                    metrics.normalized_discounted_gain_sum += 1.0 / ((rank + 1) as f64).log2();
+                }
+            }
+
+            emit_result_metadata("provisioned-sqlite-vec", &metrics);
+            assert!(
+                meets_vector_release_gates(&metrics),
+                "provisioned sqlite-vec vector-quality release gates failed"
+            );
+            assert!(
+                metrics.p95_ms() <= END_TO_END_RETRIEVAL_P95_MS_MAX,
+                "provisioned end-to-end p95 {}ms exceeds {}ms",
+                metrics.p95_ms(),
+                END_TO_END_RETRIEVAL_P95_MS_MAX
+            );
+            Ok(())
+        })
+        .expect("run provisioned sqlite-vec evaluation");
+}
+
+/// The scale ladder is an explicitly invoked CI quality evaluation, not a
+/// desktop package build. Fixtures live in fresh temporary directories and the
+/// reference-machine label is mandatory so a random developer workstation can
+/// never be mistaken for a release measurement.
+#[cfg(feature = "sqlite-vec")]
+#[test]
+#[ignore = "requires IRIS_RAG_PERFORMANCE_REFERENCE and is run by the scale-ladder workflow"]
+fn sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate() {
+    let reference_machine = std::env::var("IRIS_RAG_PERFORMANCE_REFERENCE")
+        .expect("IRIS_RAG_PERFORMANCE_REFERENCE is required for a release performance result");
+    let mut all_knn_samples = Vec::new();
+    let mut all_retrieval_samples = Vec::new();
+
+    for scale in vector_scale_fixture_sizes() {
+        let fixture = tempfile::tempdir().expect("create temporary synthetic scale fixture");
+        let fixture_manifest = fixture.path().join("fixture.json");
+        std::fs::write(
+            &fixture_manifest,
+            serde_json::json!({
+                "kind": "synthetic-sqlite-vec-scale-fixture",
+                "records": scale,
+                "containsUserVaultData": false,
+            })
+            .to_string(),
+        )
+        .expect("write synthetic fixture manifest");
+
+        let database = iris_lib::storage::db::Database::open_in_memory()
+            .expect("open sqlite-vec scale database");
+        database
+            .with_conn(|conn| {
+                let mut query_vector = vec![0.0_f32; EMBEDDING_DIMENSION];
+                query_vector[0] = 1.0;
+                let mut distractor_vector = vec![0.0_f32; EMBEDDING_DIMENSION];
+                distractor_vector[1] = 1.0;
+
+                conn.execute_batch("BEGIN")?;
+                conn.execute(
+                    "WITH RECURSIVE ids(id) AS (
+                         VALUES(1) UNION ALL SELECT id + 1 FROM ids WHERE id < ?1
+                     )
+                     INSERT INTO files
+                         (id, path, title, content_hash, word_count, created_at, updated_at)
+                     SELECT id, printf('scale/%d.md', id), printf('Scale %d', id),
+                            printf('file-hash-%d', id), 1,
+                            '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'
+                     FROM ids",
+                    [scale],
+                )?;
+                conn.execute(
+                    "WITH RECURSIVE ids(id) AS (
+                         VALUES(1) UNION ALL SELECT id + 1 FROM ids WHERE id < ?1
+                     )
+                     INSERT INTO chunks
+                         (id, file_id, chunk_index, content, source_start, source_end, content_hash, char_count)
+                     SELECT id, id, 0, CASE WHEN id = ?1 THEN 'needle' ELSE 'bulk' END,
+                            0, 6, printf('chunk-hash-%d', id), 6
+                     FROM ids",
+                    [scale],
+                )?;
+                conn.execute(
+                    "INSERT INTO chunk_embeddings_v2
+                         (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                     SELECT id, ?1, content_hash, ?2, ?3
+                     FROM chunks WHERE id < ?4",
+                    rusqlite::params![
+                        f32_to_bytes(&distractor_vector),
+                        EMBEDDING_MODEL_ID,
+                        EMBEDDING_DIMENSION as i64,
+                        scale,
+                    ],
+                )?;
+                conn.execute(
+                    "INSERT INTO chunk_embeddings_v2
+                         (chunk_id, embedding, source_fingerprint, model_id, dimension)
+                     SELECT id, ?1, content_hash, ?2, ?3
+                     FROM chunks WHERE id = ?4",
+                    rusqlite::params![
+                        f32_to_bytes(&query_vector),
+                        EMBEDDING_MODEL_ID,
+                        EMBEDDING_DIMENSION as i64,
+                        scale,
+                    ],
+                )?;
+                conn.execute_batch("COMMIT")?;
+
+                let query_bytes = f32_to_bytes(&query_vector);
+                let mut warm_samples = Vec::new();
+                let mut retrieval_samples = Vec::new();
+                for _ in 0..20 {
+                    let started = Instant::now();
+                    let mut statement = conn.prepare(
+                        "SELECT chunk_id FROM vec_chunks_v3
+                         WHERE embedding MATCH ?1 AND k = 32",
+                    )?;
+                    let ids: Vec<i64> = statement
+                        .query_map([&query_bytes], |row| row.get(0))?
+                        .collect::<Result<_, _>>()?;
+                    warm_samples.push(started.elapsed().as_secs_f64() * 1_000.0);
+
+                    let retrieval_started = Instant::now();
+                    let needle_found: bool = conn.query_row(
+                        "WITH nearest AS (
+                             SELECT chunk_id FROM vec_chunks_v3
+                             WHERE embedding MATCH ?1 AND k = 32
+                         )
+                         SELECT EXISTS(
+                             SELECT 1 FROM nearest
+                             JOIN chunks ON chunks.id = nearest.chunk_id
+                             JOIN files ON files.id = chunks.file_id
+                             WHERE files.path = ?2
+                         )",
+                        rusqlite::params![query_bytes, format!("scale/{scale}.md")],
+                        |row| row.get(0),
+                    )?;
+                    retrieval_samples
+                        .push(retrieval_started.elapsed().as_secs_f64() * 1_000.0);
+                    assert!(needle_found, "KNN missed scale-{scale} synthetic needle");
+                    assert!(!ids.is_empty(), "KNN returned no candidates at scale {scale}");
+                }
+                all_knn_samples.extend(warm_samples);
+                all_retrieval_samples.extend(retrieval_samples);
+                Ok(())
+            })
+            .expect("run temporary sqlite-vec scale fixture");
+    }
+
+    let metrics = VectorPerformanceMetrics {
+        warm_knn_latencies_ms: all_knn_samples,
+        end_to_end_latencies_ms: all_retrieval_samples,
+    };
+    eprintln!(
+        "RAG vector scale result: {}",
+        serde_json::json!({
+            "revision": option_env!("GITHUB_SHA").unwrap_or("workspace"),
+            "model": EMBEDDING_MODEL_FINGERPRINT,
+            "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            "fixture": "temporary synthetic 1k/10k/25k/50k sqlite-vec fixtures",
+            "referenceMachine": reference_machine,
+            "rawMetrics": {
+                "warmKnnP95Milliseconds": percentile_ms(&metrics.warm_knn_latencies_ms, 0.95),
+                "endToEndRetrievalP95Milliseconds": percentile_ms(&metrics.end_to_end_latencies_ms, 0.95),
+                "warmKnnSamplesMilliseconds": metrics.warm_knn_latencies_ms,
+                "endToEndSamplesMilliseconds": metrics.end_to_end_latencies_ms,
+            }
+        })
+    );
+    assert!(
+        meets_vector_performance_release_gates(&metrics),
+        "sqlite-vec performance release gate failed"
     );
 }
 

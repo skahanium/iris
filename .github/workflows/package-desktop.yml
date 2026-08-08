@@ -110,6 +110,10 @@ jobs:
         shell: pwsh
         run: cargo test --manifest-path src-tauri/Cargo.toml --features sqlite-vec --test embedding_model_smoke -- --ignored
 
+      - name: Run provisioned sqlite-vec RAG release gate
+        shell: pwsh
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features sqlite-vec --test rag_broker_eval rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates -- --ignored --nocapture
+
       - name: Verify Tauri updater signing secrets
         shell: pwsh
         env:
@@ -194,6 +198,10 @@ jobs:
       - name: Smoke test embedded BGE model
         shell: bash
         run: cargo test --manifest-path src-tauri/Cargo.toml --features sqlite-vec --test embedding_model_smoke -- --ignored
+
+      - name: Run provisioned sqlite-vec RAG release gate
+        shell: bash
+        run: cargo test --manifest-path src-tauri/Cargo.toml --features sqlite-vec --test rag_broker_eval rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates -- --ignored --nocapture
 
       - name: Verify Tauri updater signing secrets
         shell: bash

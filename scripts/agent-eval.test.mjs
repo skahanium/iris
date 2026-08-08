@@ -14,6 +14,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertStrictSmokeSummary,
   buildAgentEvalChildEnvironment,
   buildLivePilotChildEnvironment,
   resolveLiveEvaluationPaths,
@@ -23,6 +24,37 @@ const workspaceRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+
+test("smoke release gate requires all 24 deterministic interaction cases to pass", () => {
+  assert.throws(
+    () =>
+      assertStrictSmokeSummary({
+        caseCount: 24,
+        completedCaseCount: 23,
+        passed: 24,
+        failed: 0,
+      }),
+    /agent_eval_smoke_incomplete/,
+  );
+  assert.throws(
+    () =>
+      assertStrictSmokeSummary({
+        caseCount: 24,
+        completedCaseCount: 24,
+        passed: 23,
+        failed: 1,
+      }),
+    /agent_eval_smoke_failed/,
+  );
+  assert.doesNotThrow(() =>
+    assertStrictSmokeSummary({
+      caseCount: 24,
+      completedCaseCount: 24,
+      passed: 24,
+      failed: 0,
+    }),
+  );
+});
 
 test("agent eval child receives toolchain allowlist and never inherits cloud keys", () => {
   const environment = buildAgentEvalChildEnvironment(

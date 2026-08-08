@@ -24,15 +24,20 @@ fixture 只用于测试，不包含真实用户笔记或秘密。当前 RAG v2 �
 
 每次评测保存机器、commit、模型、索引状态、查询标签和结果 JSON。固定基线为 `docs/eval/results/v1.2.5-hybrid.json`。
 
-| 指标                           | v1.2.18 门槛                 |
-| ------------------------------ | ---------------------------- |
-| scope 泄漏                     | 0                            |
-| ContextPacket span/hash 有效性 | 100%                         |
-| 候选 Recall@30                 | ≥ 0.95                       |
-| Recall@5                       | ≥ 0.80                       |
-| 无答案 false-positive rate     | ≤ 0.10                       |
-| nDCG@10、MRR@10                | 相对 v1.2.5 各提升 ≥ 0.05    |
-| 任一标签子集回退               | 不超过 0.02                  |
-| warm p95                       | 不劣于基线 25%，目标 ≤ 500ms |
+| 指标                           | v1.2.18 门槛                               |
+| ------------------------------ | ------------------------------------------ |
+| semantic-only Recall@5/30      | ≥ 0.80 / ≥ 0.95                            |
+| hybrid any-source Recall@5/30  | ≥ 0.95 / ≥ 0.98（已供给 BGE + sqlite-vec） |
+| all-required Recall@5/30       | ≥ 0.90 / ≥ 0.95（已供给 BGE + sqlite-vec） |
+| scope 泄漏                     | 0                                          |
+| ContextPacket span/hash 有效性 | 100%                                       |
+| 无答案 false-positive rate     | ≤ 0.10                                     |
+| nDCG@10                        | ≥ 0.85                                     |
+| 50k warm KNN p95               | ≤ 750ms（声明的参考机）                    |
+| 端到端 retrieval p95           | ≤ 1s（声明的参考机）                       |
 
-评测失败不得以“模型下载、sqlite-vec 未启用或候选不足”跳过并宣称通过；必须明确记录降级状态和失败原因。
+默认 FTS gate 与已供给模型的 sqlite-vec gate 独立执行：后者由 macOS/Windows
+打包流水线显式调用，缺少已验证模型或扩展即失败，不能以 FTS 结果替代。50k scale
+ladder 只在 Ubuntu CI 临时目录生成合成数据，输出 revision、模型指纹、平台、fixture
+描述、参考机与原始样本；它不构建、上传或发布任何 Linux 桌面包。评测失败不得以“模型下载、
+sqlite-vec 未启用或候选不足”跳过并宣称通过；必须明确记录降级状态和失败原因。

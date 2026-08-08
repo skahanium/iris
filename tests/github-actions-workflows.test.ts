@@ -601,7 +601,12 @@ describe("GitHub Actions workflows", () => {
     expect(workflow).toContain('- cron: "0 19 * * *"');
     expect(workflow).toContain("runs-on: ubuntu-24.04");
     expect(workflow).toContain("--features sqlite-vec");
-    expect(workflow).toContain("sqlite_vec_knn_scale_ladder");
+    expect(workflow).toContain(
+      "sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate",
+    );
+    expect(workflow).toContain(
+      "IRIS_RAG_PERFORMANCE_REFERENCE: github-hosted-ubuntu-24.04-x64",
+    );
     expect(workflow).not.toContain("actions/upload-artifact");
     expect(workflow).not.toContain("gh release");
     expect(workflow).not.toContain("package:local");
