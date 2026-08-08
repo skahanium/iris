@@ -734,6 +734,21 @@ describe("GitHub Actions workflows", () => {
     ).toEqual(["release-assets/ubuntu/iris.tar.gz"]);
   });
 
+  it("runs the provisioned vector quality gate on every pull request", () => {
+    const ci = readWorkflow(".github/workflows/ci.yml");
+
+    expect(ci).toMatch(
+      /rag-vector-quality:[\s\S]*?Restore embedded BGE model[\s\S]*?npm run model:prepare[\s\S]*?rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates/,
+    );
+    // The provisioned gate must run after the FTS-only rag-eval job so the
+    // smoke-quality job ordering is preserved.
+    expect(ci.indexOf("rag-eval:")).toBeLessThan(
+      ci.indexOf("rag-vector-quality:"),
+    );
+    // PR workflow still forbids Ubuntu Tauri bundles (covered separately).
+    expect(ci).toContain("timeout-minutes: 30");
+  });
+
   it("verifies updater assets again after a GitHub Release is published", () => {
     const workflow = readWorkflow(".github/workflows/verify-release.yml");
 
