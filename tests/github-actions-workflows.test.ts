@@ -755,14 +755,8 @@ describe("GitHub Actions workflows", () => {
       ".github/workflows/package-desktop.yml",
     );
 
-    // The real-model gate samples half the labelled queries (ORT inference is
-    // an order of magnitude slower on hosted runners).
-    const evalSource = readFileSync(
-      "src-tauri/tests/rag_broker_eval.rs",
-      "utf8",
-    );
-    expect(evalSource).toContain("fixture.queries.iter().step_by(2)");
-    // Package jobs get headroom for the ~33-minute gate plus build + E2E.
+    // The real-model gate runs the full labelled query set; package jobs get
+    // headroom for the ~51-minute gate plus build + E2E.
     expect(packageDesktop).toMatch(
       /package-windows:[\s\S]*?timeout-minutes: 90/,
     );

@@ -10,8 +10,8 @@ use crate::knowledge::corpora::CorpusConfig;
 #[path = "retrieval_broker/diagnostics.rs"]
 mod diagnostics_impl;
 pub use diagnostics_impl::{
-    hybrid_retrieve_with_diagnostics, RetrievalLayerDiagnostic, RetrievalLayerStatus,
-    RetrievalOutcome,
+    hybrid_retrieve_with_diagnostics, hybrid_retrieve_with_diagnostics_with_embedder,
+    RetrievalLayerDiagnostic, RetrievalLayerStatus, RetrievalOutcome,
 };
 
 #[path = "retrieval_broker/exact.rs"]

@@ -63,7 +63,7 @@ pub fn hybrid_retrieve_with_diagnostics(
     })
 }
 
-fn hybrid_retrieve_with_diagnostics_with_embedder(
+pub fn hybrid_retrieve_with_diagnostics_with_embedder(
     conn: &Connection,
     request: &RetrievalRequest,
     embedder: impl FnOnce(&str) -> AppResult<Vec<f32>>,
