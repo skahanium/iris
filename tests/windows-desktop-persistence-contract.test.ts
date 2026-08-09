@@ -86,32 +86,34 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("reopened_editor_body_mismatch");
   });
 
-  it("将真实 Windows E2E 设为发布包构建后的硬门禁", () => {
-    const workflow = read(".github/workflows/package-desktop.yml");
+  it("将真实 Windows E2E 设为 main CI 的单次硬门禁", () => {
+    const workflow = read(".github/workflows/ci.yml");
 
-    expect(workflow).toContain("Install Tauri WebDriver tools");
+    expect(workflow).toContain("Install pinned Tauri WebDriver tools");
     expect(workflow).toContain(
       "cargo install tauri-driver --version 2.0.6 --locked",
     );
     expect(workflow).toContain('Test-Path "$PWD/msedgedriver.exe"');
     expect(workflow).toContain("Run Windows Markdown persistence desktop E2E");
     expect(workflow).toContain("npm run test:desktop:windows");
-    expect(workflow).toMatch(
-      /Package Windows NSIS installer[\s\S]*Run Windows Markdown persistence desktop E2E/,
-    );
+    expect(workflow).toContain("branches: [main]");
+    expect(workflow).toContain("if: github.event_name != 'pull_request'");
   });
 
-  it("将 Windows E2E 接入 PR CI，并固定测试工具版本", () => {
+  it("在 main CI 使用 debug/no-bundle 构建并固定测试工具版本", () => {
     const ci = read(".github/workflows/ci.yml");
     const release = read(".github/workflows/package-desktop.yml");
 
-    expect(ci).toContain("Windows Markdown persistence desktop E2E");
+    expect(ci).toContain("Windows x64 desktop E2E");
     expect(ci).toMatch(/on:\n\s+pull_request:/);
     expect(ci).toContain("runs-on: windows-2022");
-    expect(ci).toContain("npm run tauri -- build --no-bundle");
+    expect(ci).toContain("npm run tauri -- build --debug --no-bundle");
+    expect(ci).toContain("IRIS_DESKTOP_E2E_APP");
     expect(ci).toContain("npm run test:desktop:windows");
-    expect(release).toContain("tauri-driver --version 2.0.6 --locked");
-    expect(release).toContain("--rev 8c4b34f51b45f5cf08013366d703de464ab871d1");
+    expect(ci).toContain("tauri-driver --version 2.0.6 --locked");
+    expect(ci).toContain("--rev 8c4b34f51b45f5cf08013366d703de464ab871d1");
+    expect(release).not.toContain("tauri-driver");
+    expect(release).not.toContain("test:desktop:windows");
   });
 
   it("准确说明 PR 合并门禁由仓库外的分支保护规则配置", () => {

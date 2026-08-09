@@ -234,7 +234,7 @@ fn synthetic_scale_fixture_hash_is_deterministic_and_scale_bound() {
 }
 
 #[test]
-fn scale_fixture_ladder_includes_the_50k_release_boundary() {
+fn scale_fixture_series_includes_the_50k_release_boundary() {
     assert_eq!(
         vector_scale_fixture_sizes(),
         [1_000, 10_000, 25_000, 50_000]
@@ -1033,13 +1033,13 @@ fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
         .expect("run provisioned sqlite-vec evaluation");
 }
 
-/// The scale ladder is an explicitly invoked CI quality evaluation, not a
-/// desktop package build. Fixtures live in fresh temporary directories and the
-/// reference-machine label is mandatory so a random developer workstation can
-/// never be mistaken for a release measurement.
+/// The 50k scale series is explicitly invoked by the release quality job, not
+/// by a desktop package build. Fixtures live in fresh temporary directories and
+/// the reference-machine label is mandatory so a random developer workstation
+/// can never be mistaken for a release measurement.
 #[cfg(feature = "sqlite-vec")]
 #[test]
-#[ignore = "requires IRIS_RAG_PERFORMANCE_REFERENCE and is run by the scale-ladder workflow"]
+#[ignore = "requires IRIS_RAG_PERFORMANCE_REFERENCE and the macOS ARM64 release quality job"]
 fn sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate() {
     let reference_machine = std::env::var("IRIS_RAG_PERFORMANCE_REFERENCE")
         .expect("IRIS_RAG_PERFORMANCE_REFERENCE is required for a release performance result");

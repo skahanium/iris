@@ -15,7 +15,7 @@ use super::truncate;
 
 #[cfg(all(test, feature = "sqlite-vec"))]
 thread_local! {
-    static OBSERVED_KNN_LIMITS: std::cell::RefCell<Vec<(&'static str, usize)>> =
+    static OBSERVED_KNN_LIMITS: std::cell::RefCell<Vec<(&'static str, usize, usize)>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -25,13 +25,17 @@ pub(super) fn clear_observed_knn_limits() {
 }
 
 #[cfg(all(test, feature = "sqlite-vec"))]
-pub(super) fn observed_knn_limits() -> Vec<(&'static str, usize)> {
+pub(super) fn observed_knn_limits() -> Vec<(&'static str, usize, usize)> {
     OBSERVED_KNN_LIMITS.with(|limits| limits.borrow().clone())
 }
 
 #[cfg(all(test, feature = "sqlite-vec"))]
-fn observe_knn_limit(layer: &'static str, limit: usize) {
-    OBSERVED_KNN_LIMITS.with(|limits| limits.borrow_mut().push((layer, limit)));
+fn observe_knn_limit(layer: &'static str, candidate_limit: usize, result_limit: usize) {
+    OBSERVED_KNN_LIMITS.with(|limits| {
+        limits
+            .borrow_mut()
+            .push((layer, candidate_limit, result_limit));
+    });
 }
 
 #[cfg(feature = "sqlite-vec")]
@@ -162,19 +166,111 @@ fn knn_query_parts(
 const MAX_KNN_CANDIDATE_LIMIT: usize = 256;
 
 #[cfg(feature = "sqlite-vec")]
+fn bounded_valid_chunk_count(
+    conn: &Connection,
+    limit: usize,
+    scope: &RetrievalScope,
+) -> AppResult<usize> {
+    bounded_valid_source_count(
+        conn,
+        limit,
+        scope,
+        ("chunks", "c", "id"),
+        ("chunk_embeddings_v2", "chunk_id"),
+    )
+}
+
+#[cfg(feature = "sqlite-vec")]
+fn bounded_valid_structured_count(
+    conn: &Connection,
+    limit: usize,
+    scope: &RetrievalScope,
+    kind: StructuredVectorKind,
+) -> AppResult<usize> {
+    let (source_table, source_alias, source_id, cache_table, cache_id) = match kind {
+        StructuredVectorKind::Anchor => (
+            "semantic_anchors",
+            "source",
+            "id",
+            "semantic_anchor_embeddings_v2",
+            "anchor_id",
+        ),
+        StructuredVectorKind::Regulation => (
+            "regulation_index",
+            "source",
+            "id",
+            "regulation_embeddings_v2",
+            "regulation_id",
+        ),
+    };
+    bounded_valid_source_count(
+        conn,
+        limit,
+        scope,
+        (source_table, source_alias, source_id),
+        (cache_table, cache_id),
+    )
+}
+
+#[cfg(feature = "sqlite-vec")]
+fn bounded_valid_source_count(
+    conn: &Connection,
+    limit: usize,
+    scope: &RetrievalScope,
+    source: (&str, &str, &str),
+    cache: (&str, &str),
+) -> AppResult<usize> {
+    let limit = limit.min(MAX_KNN_CANDIDATE_LIMIT);
+    if limit == 0 {
+        return Ok(0);
+    }
+
+    let (file_subquery, scope_parameters) = scoped_file_subquery(scope, 1);
+    let model_parameter = 1 + scope_parameters.len();
+    let dimension_parameter = model_parameter + 1;
+    let bytes_parameter = model_parameter + 2;
+    let limit_parameter = model_parameter + 3;
+    let (source_table, source_alias, source_id) = source;
+    let (cache_table, cache_id) = cache;
+    let sql = format!(
+        "SELECT COUNT(*)
+         FROM (
+             SELECT {source_alias}.{source_id}
+             FROM {source_table} AS {source_alias}
+             INNER JOIN {cache_table} AS cache
+                     ON cache.{cache_id} = {source_alias}.{source_id}
+             WHERE {source_alias}.file_id IN ({file_subquery})
+               AND cache.model_id = ?{model_parameter}
+               AND cache.dimension = ?{dimension_parameter}
+               AND cache.source_fingerprint = COALESCE({source_alias}.content_hash, '')
+               AND length(cache.embedding) = ?{bytes_parameter}
+             LIMIT ?{limit_parameter}
+         ) AS bounded_valid_sources"
+    );
+    let mut parameters = scope_parameters;
+    parameters.push(Value::Text(engine::EMBEDDING_MODEL_ID.to_string()));
+    parameters.push(Value::Integer(engine::EMBEDDING_DIMENSION as i64));
+    parameters.push(Value::Integer(
+        (engine::EMBEDDING_DIMENSION * std::mem::size_of::<f32>()) as i64,
+    ));
+    parameters.push(Value::Integer(limit as i64));
+    let count: i64 = conn.query_row(&sql, params_from_iter(parameters.iter()), |row| row.get(0))?;
+    usize::try_from(count)
+        .map_err(|_| AppError::Embed("sqlite-vec valid source count exceeds usize range".into()))
+}
+
+#[cfg(feature = "sqlite-vec")]
 pub(super) fn search_vector_chunks(
     conn: &Connection,
     query_embedding: &[f32],
     limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
-    #[cfg(all(test, feature = "sqlite-vec"))]
-    observe_knn_limit("vector_chunks", limit);
-    // The KNN budget runs before the fingerprint/model filter, so a burst of
-    // stale rows can consume it and drain the filtered result. Expand the
-    // budget geometrically until the filtered result meets the target or the
-    // ceiling is reached; stale rows can then never silently empty the layer.
-    let mut candidate_limit = limit;
+    let valid_target = bounded_valid_chunk_count(conn, limit, scope)?;
+    if valid_target == 0 {
+        return Ok(Vec::new());
+    }
+    let mut candidate_limit = limit.min(MAX_KNN_CANDIDATE_LIMIT);
     loop {
         let packets = search_vector_chunks_with_candidate(
             conn,
@@ -183,10 +279,12 @@ pub(super) fn search_vector_chunks(
             limit,
             scope,
         )?;
-        if packets.len() >= limit || candidate_limit >= MAX_KNN_CANDIDATE_LIMIT {
+        if packets.len() >= valid_target || candidate_limit >= MAX_KNN_CANDIDATE_LIMIT {
             return Ok(packets);
         }
-        candidate_limit = candidate_limit.saturating_mul(2);
+        candidate_limit = candidate_limit
+            .saturating_mul(2)
+            .min(MAX_KNN_CANDIDATE_LIMIT);
     }
 }
 
@@ -198,6 +296,8 @@ fn search_vector_chunks_with_candidate(
     result_limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
+    #[cfg(all(test, feature = "sqlite-vec"))]
+    observe_knn_limit("vector_chunks", candidate_limit, result_limit);
     let Some((parameters, file_subquery, model_parameter)) =
         knn_query_parts(query_embedding, candidate_limit, result_limit, scope)?
     else {
@@ -280,8 +380,6 @@ pub(super) fn search_vector_anchors(
     limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
-    #[cfg(all(test, feature = "sqlite-vec"))]
-    observe_knn_limit("vector_anchors", limit);
     search_structured_vectors(
         conn,
         query_embedding,
@@ -298,8 +396,6 @@ pub(super) fn search_vector_regulations(
     limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
-    #[cfg(all(test, feature = "sqlite-vec"))]
-    observe_knn_limit("vector_regulations", limit);
     search_structured_vectors(
         conn,
         query_embedding,
@@ -324,8 +420,11 @@ fn search_structured_vectors(
     scope: &RetrievalScope,
     kind: StructuredVectorKind,
 ) -> AppResult<Vec<ContextPacket>> {
-    // Same stale-row expansion as `search_vector_chunks`.
-    let mut candidate_limit = limit;
+    let valid_target = bounded_valid_structured_count(conn, limit, scope, kind)?;
+    if valid_target == 0 {
+        return Ok(Vec::new());
+    }
+    let mut candidate_limit = limit.min(MAX_KNN_CANDIDATE_LIMIT);
     loop {
         let packets = search_structured_vectors_with_candidate(
             conn,
@@ -335,10 +434,12 @@ fn search_structured_vectors(
             scope,
             kind,
         )?;
-        if packets.len() >= limit || candidate_limit >= MAX_KNN_CANDIDATE_LIMIT {
+        if packets.len() >= valid_target || candidate_limit >= MAX_KNN_CANDIDATE_LIMIT {
             return Ok(packets);
         }
-        candidate_limit = candidate_limit.saturating_mul(2);
+        candidate_limit = candidate_limit
+            .saturating_mul(2)
+            .min(MAX_KNN_CANDIDATE_LIMIT);
     }
 }
 
@@ -351,6 +452,15 @@ fn search_structured_vectors_with_candidate(
     scope: &RetrievalScope,
     kind: StructuredVectorKind,
 ) -> AppResult<Vec<ContextPacket>> {
+    #[cfg(all(test, feature = "sqlite-vec"))]
+    observe_knn_limit(
+        match kind {
+            StructuredVectorKind::Anchor => "vector_anchors",
+            StructuredVectorKind::Regulation => "vector_regulations",
+        },
+        candidate_limit,
+        result_limit,
+    );
     let Some((parameters, file_subquery, model_parameter)) =
         knn_query_parts(query_embedding, candidate_limit, result_limit, scope)?
     else {

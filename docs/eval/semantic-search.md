@@ -4,9 +4,9 @@
 
 ## 当前 v1.2.19 基线
 
-当前基线使用 `Xenova/bge-small-zh-v1.5`（512 维）。`sqlite-vec` v3 是 macOS、Windows 和 Linux 桌面构建默认启用的有界 KNN 后端；扩展不可用时检索会明确报告状态并保留 FTS，不会回退为 Rust 全表 cosine 扫描。AI retrieval broker 还融合 FTS、链接、锚点和法规候选。
+当前基线使用 `Xenova/bge-small-zh-v1.5`（512 维）。`sqlite-vec` v3 是 macOS ARM64 与 Windows x64 桌面构建默认启用的有界 KNN 后端；扩展不可用时检索会明确报告状态并保留 FTS，不会回退为 Rust 全表 cosine 扫描。AI retrieval broker 还融合 FTS、链接、锚点和法规候选。
 
-评测从 `hybrid_retrieve → Rank → scope → ContextPacket` 全链路执行。发布资产只面向 macOS + Windows；Ubuntu/Linux 只作为 CI 与编排 runner，继续执行 sqlite-vec 质量验证，但绝不构建、上传或发布 Linux 包。
+评测从 `hybrid_retrieve → Rank → scope → ContextPacket` 全链路执行。macOS + Windows 是仅有的平台范围：CI、打包和发布验证只使用 `macos-15`（ARM64）与 `windows-2022`（x64）。
 
 ## Fixture 与标签
 
@@ -37,12 +37,11 @@ fixture 只用于测试，不包含真实用户笔记或秘密。当前 RAG v2 �
 | 50k warm KNN p95               | ≤ 750ms（声明的参考机）                    |
 | 端到端 retrieval p95           | ≤ 1s（声明的参考机）                       |
 
-默认 FTS gate 与已供给模型的 sqlite-vec gate 独立执行：后者由 macOS/Windows
-打包流水线显式调用，缺少已验证模型或扩展即失败，不能以 FTS 结果替代。已供给 gate 对每条
+默认的确定性 FTS/RAG gate 包含在普通 CI 的完整 `cargo test` 中；已供给模型的
+sqlite-vec gate 仅由 tag 的 macOS ARM64 发布质量 job 单次调用，缺少已验证模型或扩展即失败，不能以 FTS 结果替代。已供给 gate 对每条
 fixture 查询再执行 vector-only broker 调用，要求 `vector_chunks=ok`、向量结果命中并通过
-向量包 span/hash 100% 校验。50k scale ladder 只在 Ubuntu CI 的临时目录写入确定性生成
+向量包 span/hash 100% 校验。50k gate 只在同一 macOS ARM64 发布质量 job 的临时目录写入确定性生成
 manifest，并在内存 SQLite 数据库物化合成记录；输出 revision、模型指纹、平台、每个规模的
 fixture 生成哈希、参考机与原始样本；发布 p95
-仅使用独立 50k 样本，绝不混入 1k/10k/25k。tag 的 `release-quality` 还会在同一 commit
-同步执行该 50k gate，Windows/macOS 打包必须等待其通过。它不构建、上传或发布任何 Linux 桌面包。评测失败不得以“模型下载、
+仅使用独立 50k 样本，绝不混入 1k/10k/25k。最终草稿 Release 同时依赖该质量 job 与两个平台包；三个 job 在快速 source guard 后并行执行。评测失败不得以“模型下载、
 sqlite-vec 未启用或候选不足”跳过并宣称通过；必须明确记录降级状态和失败原因。

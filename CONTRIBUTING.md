@@ -44,23 +44,10 @@
 - [Microsoft Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)（选择"使用 C++ 的桌面开发"工作负载）
 - [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（Windows 11 已预装）
 
-### Linux 额外要求
+### 支持平台
 
-```bash
-# Ubuntu/Debian
-sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
-  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
-
-# Fedora
-sudo dnf install webkit2gtk4.1-devel openssl-devel libappindicator-gtk3-devel librsvg2-devel
-
-# Arch
-sudo pacman -S webkit2gtk-4.1 base-devel openssl libappindicator-gtk3 librsvg
-```
-
-### 发布平台
-
-官方 Release 只构建和发布 macOS + Windows 包及 Release assets。Ubuntu/Linux 仅作为 CI 与编排 runner，保留 sqlite-vec 的质量验证，不构建、上传或发布 Linux package/Release asset。
+CI、桌面打包和官方 Release 仅面向 macOS ARM64 与 Windows x64。macOS 使用
+`macos-15`，Windows 使用 `windows-2022`；两个正式桌面包都默认启用 sqlite-vec。
 
 ### 启动开发
 

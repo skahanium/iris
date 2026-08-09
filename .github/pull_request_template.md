@@ -17,4 +17,4 @@
 
 ## 发布影响
 
-- [ ] 若影响桌面发布，已确认资产仅面向 macOS 和 Windows；不得新增 Linux/Ubuntu 包或发布资产
+- [ ] 若影响桌面发布，已确认资产仅面向 macOS ARM64 和 Windows x64

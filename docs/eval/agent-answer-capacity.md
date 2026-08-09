@@ -277,8 +277,10 @@ npm run agent:eval:live -- pilot --session session-<64hex> \
 同目录的 `live-pilot-session-<64hex>.json`，不会包含 prompt、answer、route
 或凭据。
 
-PR CI 必须执行 smoke 与前端/Rust 依赖审计；发布质量门禁同时执行 smoke、完整
-`agent:eval` 版本化基线以及两类审计，任一命令失败都不能进入 Windows/macOS 打包。
+PR CI 的 macOS ARM64 quality job 执行 smoke、前端/Rust 依赖审计和完整通用测试；
+tag 的 macOS ARM64 发布质量 job 只补充执行一次完整 `agent:eval` 版本化基线。
+发布 source guard 要求同一 SHA 已有成功的 main push CI（其中包含 Windows x64
+桌面 E2E）；最终草稿 Release 同时依赖完整 Agent 基线和两个平台包。
 
 ## 终验记录（v1.2.15 优雅补齐）
 

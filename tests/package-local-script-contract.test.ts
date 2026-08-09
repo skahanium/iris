@@ -16,14 +16,15 @@ describe("local packaging script contract", () => {
     expect(tauriCli).toContain("model:prepare");
   });
 
-  it("runs a real embedding inference smoke test after release model preparation", () => {
-    const workflow = readFileSync(
-      ".github/workflows/package-desktop.yml",
-      "utf8",
-    );
+  it("runs a real embedding inference smoke test inside the self-contained package script", () => {
+    const source = script();
 
-    expect(workflow).toContain("embedding_model_smoke");
-    expect(workflow).toContain("--ignored");
+    expect(source).toContain("model:prepare");
+    expect(source).toContain("embedding_model_smoke");
+    expect(source).toContain("--ignored");
+    expect(source.indexOf("model:prepare")).toBeLessThan(
+      source.indexOf("embedding_model_smoke"),
+    );
   });
 
   it("exposes macOS and Windows self-package npm scripts", () => {

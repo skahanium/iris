@@ -622,11 +622,11 @@ mod tests {
                 assert_eq!(
                     observed_knn_limits(),
                     vec![
-                        ("vector_chunks", 32),
-                        ("vector_anchors", 32),
-                        ("vector_regulations", 32),
+                        ("vector_chunks", 32, 32),
+                        ("vector_anchors", 32, 32),
+                        ("vector_regulations", 32, 32),
                     ],
-                    "all Agent vector layers must receive the independent KNN floor"
+                    "naturally underfilled layers must execute exactly one bounded KNN query"
                 );
                 assert!(outcome.packets.iter().all(|packet| {
                     matches!(
@@ -985,10 +985,16 @@ mod tests {
                 runtime_documents: Vec::new(),
                 corpus_config: None,
             };
+            clear_observed_knn_limits();
             let outcome = hybrid_retrieve_with_diagnostics_with_embedder(conn, &request, |_| {
                 Ok(closer.clone())
             })
             .expect("retrieve with stale vectors");
+            assert_eq!(
+                observed_knn_limits(),
+                vec![("vector_chunks", 32, 32), ("vector_chunks", 64, 32)],
+                "only stale neighbors may expand the candidate budget; the result limit stays fixed"
+            );
             assert!(
                 outcome.packets.iter().any(|packet| packet
                     .source_path
@@ -1008,5 +1014,70 @@ mod tests {
             Ok(())
         })
         .expect("run vector retrieval");
+    }
+
+    #[cfg(feature = "sqlite-vec")]
+    #[test]
+    fn vector_knn_never_exceeds_the_declared_candidate_ceiling() {
+        let closer = vector_fixture(0.0);
+        let farther = vector_fixture(0.8);
+        let db = crate::storage::db::Database::open_in_memory().expect("open sqlite-vec database");
+        db.with_conn(|conn| {
+            for id in 1..=300_i64 {
+                insert_file(conn, id, &format!("stale/{id}.md"));
+                insert_chunk_vector(conn, id, id, &closer);
+                conn.execute(
+                    "UPDATE chunk_embeddings_v2 SET source_fingerprint = 'stale-fingerprint'
+                     WHERE chunk_id = ?1",
+                    [id],
+                )?;
+            }
+            insert_file(conn, 301, "fresh/301.md");
+            insert_chunk_vector(conn, 301, 301, &farther);
+            conn.execute(
+                "UPDATE embedding_generation_state
+                 SET active_model_id = ?1, target_model_id = ?1, target_dimension = ?2,
+                     phase = 'paused', indexed_items = 300, total_items = 301
+                 WHERE singleton = 1",
+                rusqlite::params![
+                    crate::embedding::engine::EMBEDDING_MODEL_ID,
+                    crate::embedding::engine::EMBEDDING_DIMENSION as i64,
+                ],
+            )?;
+            Ok(())
+        })
+        .expect("seed candidate ceiling fixture");
+
+        db.with_read_conn(|conn| {
+            clear_observed_knn_limits();
+            let request = RetrievalRequest {
+                query: "needle".into(),
+                max_results: 50,
+                layers: RetrievalLayers {
+                    fts: false,
+                    vector: true,
+                    graph: false,
+                    exact: false,
+                    template: false,
+                },
+                note_context: None,
+                file_id_context: None,
+                scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
+                runtime_documents: Vec::new(),
+                corpus_config: None,
+            };
+            let outcome = hybrid_retrieve_with_diagnostics_with_embedder(conn, &request, |_| {
+                Ok(closer.clone())
+            })?;
+
+            assert!(outcome.packets.is_empty());
+            assert_eq!(
+                observed_knn_limits(),
+                vec![("vector_chunks", 200, 200), ("vector_chunks", 256, 200)],
+                "candidate expansion must stop at 256 without changing the result limit"
+            );
+            Ok(())
+        })
+        .expect("run candidate ceiling retrieval");
     }
 }

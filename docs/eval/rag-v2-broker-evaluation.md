@@ -53,12 +53,14 @@ cannot hide an unavailable vector layer or an invalid vector citation.
 The provisioned thresholds are hybrid any-source Recall@5 >= 0.95 and
 Recall@30 >= 0.98; all-required-source Recall@5 >= 0.90 and Recall@30 >=
 0.95; nDCG@10 >= 0.85; no-answer false-positive rate <= 0.10; scope leaks ==
-0; and end-to-end retrieval p95 <= 1 s. macOS and Windows package jobs run it
-after the verified model smoke; these are the only desktop release targets.
+0; and end-to-end retrieval p95 <= 1 s. The tag-triggered macOS ARM64 release
+quality job runs this gate once after preparing the verified model; package
+jobs do not repeat it. macOS + Windows are the only desktop release targets,
+specifically macOS ARM64 and Windows x64.
 
 `sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate` is explicitly
-invoked by the nightly CI ladder with reference machine
-`github-hosted-ubuntu-24.04-x64`. It creates 1k/10k/25k/50k synthetic fixtures
+invoked by the macOS ARM64 release quality job with reference machine
+`github-hosted-macos-15-arm64`. It creates 1k/10k/25k/50k synthetic fixtures
 by writing only each deterministic generation manifest to a fresh test
 temporary directory and materializing the synthetic records in an in-memory
 SQLite database. The 1k/10k/25k samples are diagnostic only: the release
@@ -66,11 +68,9 @@ decision is calculated **only from the independent 50k
 sample set**, rejecting warm KNN p95 above 750 ms or bounded retrieval p95
 above 1 s. Its log includes the deterministic generation schema and per-scale
 fixture hash, revision, model fingerprint, platform, reference machine and raw
-per-scale samples. Ubuntu is only this CI runner;
-it never produces a Linux package, release asset, upload or publication.
-The tag-triggered `release-quality` job runs the same 50k gate against the
-tag's own commit and the Windows/macOS package jobs depend on that job, so a
-passing nightly run can never substitute for release evidence.
+per-scale samples. This gate runs once against the tag's own commit. The final
+draft release depends on it and on both platform packages, so neither a prior
+CI run nor a package artifact can substitute for same-commit release evidence.
 
 The two recall families have deliberately different semantics:
 
@@ -93,9 +93,8 @@ The default test disables vector retrieval deliberately. It therefore verifies t
 actual hybrid broker, FTS, metadata, scope, rank and ContextPacket route
 without downloading a model. A separately provisioned release environment
 must run the same corpus with BGE v2 and sqlite-vec available before using
-vector-quality claims. Release packages and assets are macOS + Windows only;
-Ubuntu/Linux remains a CI and orchestration runner for the same sqlite-vec
-quality checks and never produces a Linux package or release asset.
+vector-quality claims. Release packages and assets are limited to macOS ARM64
+and Windows x64.
 
 ## Citation-integrity release gate
 

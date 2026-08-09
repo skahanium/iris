@@ -160,7 +160,7 @@ Expected: migration identifier and v3 tables do not yet exist.
 
 - [ ] **Step 3: Implement migration and dependency policy**
 
-Pin `sqlite-vec` to `=0.1.9`, enable it by default on macOS, Windows and Linux, and define `vec_chunks_v3`, `vec_anchors_v3`, and `vec_regulations_v3` with `float[512] distance_metric=cosine`. For each of `chunk_embeddings_v2`、`semantic_anchor_embeddings_v2`、`regulation_embeddings_v2`, write a complete SQL trigger trio for insert/update/delete into its corresponding v3 table; do not add a Rust dual-write path. Preserve all three v2 caches as the canonical rebuild sources. If runtime extension loading fails, leave vector status unavailable and retain FTS; release packaging must fail before distribution if the default extension cannot load.
+Pin `sqlite-vec` to `=0.1.9`, enable it by default for the supported macOS ARM64 and Windows x64 desktop targets, and define `vec_chunks_v3`, `vec_anchors_v3`, and `vec_regulations_v3` with `float[512] distance_metric=cosine`. For each of `chunk_embeddings_v2`、`semantic_anchor_embeddings_v2`、`regulation_embeddings_v2`, write a complete SQL trigger trio for insert/update/delete into its corresponding v3 table; do not add a Rust dual-write path. Preserve all three v2 caches as the canonical rebuild sources. If runtime extension loading fails, leave vector status unavailable and retain FTS; release packaging must fail before distribution if the default extension cannot load.
 
 - [ ] **Step 4: Write a failing KNN test**
 
@@ -370,7 +370,7 @@ Expected: old tables and non-vector packaging references still exist.
 
 - [ ] **Step 3: Implement migration, cleanup and release evidence**
 
-Delete the search-cache cleanup invocation and implementation after migration 062. The down migration recreates historic schemas only. Make sqlite-vec release-default on Windows/macOS/Linux, add vector migration/KNN tests to PR CI, and add release-platform smoke plus a nightly 1k/10k/25k/50k performance ladder. Update stale version/model claims in docs; `docs:check` must reject factual drift.
+Delete the search-cache cleanup invocation and implementation after migration 062. The down migration recreates historic schemas only. Make sqlite-vec release-default on macOS ARM64 and Windows x64, keep deterministic vector migration/KNN tests inside the complete PR `cargo test`, and run release-platform smoke plus the 1k/10k/25k/50k performance gate once in the macOS ARM64 release quality job. Update stale version/model claims in docs; `docs:check` must reject factual drift.
 
 - [ ] **Step 4: Verify release gates**
 

@@ -139,8 +139,8 @@ function checkReleaseDocumentationFacts() {
     },
     {
       path: "CONTRIBUTING.md",
-      required: ["macOS + Windows", "Ubuntu/Linux", "sqlite-vec"],
-      forbidden: [],
+      required: ["macOS ARM64", "Windows x64", "sqlite-vec"],
+      forbidden: ["Ubuntu/Linux", "Linux 额外要求"],
     },
   ];
 

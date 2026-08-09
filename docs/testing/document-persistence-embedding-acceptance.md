@@ -20,7 +20,7 @@
 3. 生命周期：可信 remount 快照可在编辑器未就绪时写入；没有可信快照时 `barrier`、关闭、标签关闭、切换库和更新安装都失败并保留编辑。写入失败后重试必须可恢复。
 4. 写入服务：原子替换使用同目录唯一临时文件并同步；失败保留旧文件、并发临时文件互不冲突。普通保存、创建、AI 应用、版本恢复、模板、分类迁移/导出和链接级联都走统一服务。索引异常返回 `degraded`，不回滚正文，并排队修复。
 5. `054` 迁移：up/down 均可验证；零进度旧 `rebuilding` 变为 `legacy_ready`。启动残留 `running`/`paused`/旧 `rebuilding`，以及带 `interrupted_restart` 或 `model_unavailable` 的历史失败，必须先重新统计当前模型、维度、来源指纹和向量长度的覆盖：完整 generation 恢复为 `ready` 并清除错误；缺失或失配转为 `paused`，保留已有批次并在空闲后续建，且不在同一进程无限自动重试。
-6. 嵌入调度器：重复启动返回 `already_running`；调试运行时禁用返回 `disabled` 且不触发模型加载或持久化状态改写；一次自动空闲启动、手动暂停/恢复、模型缺失的下次启动恢复、安全失败码、进度事件、部分向量续建和内容未变但覆盖缺失的增量修复均有测试。完整 generation 经启动扫描或索引提交通知后必须保持 `ready` 且不加载模型；相同模型、维度和来源指纹的有效向量必须保留，未知或不匹配项必须重算。发布 workflow 必须在模型准备后运行固定文本的真实推理冒烟测试。
+6. 嵌入调度器：重复启动返回 `already_running`；调试运行时禁用返回 `disabled` 且不触发模型加载或持久化状态改写；一次自动空闲启动、手动暂停/恢复、模型缺失的下次启动恢复、安全失败码、进度事件、部分向量续建和内容未变但覆盖缺失的增量修复均有测试。完整 generation 经启动扫描或索引提交通知后必须保持 `ready` 且不加载模型；相同模型、维度和来源指纹的有效向量必须保留，未知或不匹配项必须重算。自包含的 macOS ARM64 / Windows x64 打包脚本必须按“准备模型 → 固定文本真实推理冒烟 → 构建 → 验证”执行一次，workflow 不得在脚本外重复这些步骤。
 7. 连接边界：使用阻塞式 `EmbeddingBatcher` 测试，确认模型推理进行时普通 `file_write` 仍能及时完成，证明推理没有持有 SQLite 连接。
 
 ## Windows 真机 E2E（发布前必须完成）
@@ -34,7 +34,7 @@
 
 在此闭环真实执行并留存证据前，状态只能写作“待验收”，不能声称 Windows E2E 已通过。
 
-自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中确认重命名后的新 `[data-path]` editor surface 已稳定进入 `visible`，明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。E2E 不捕捉 React 生命周期的瞬时 `staging` 帧；重挂载期间保存的快照安全约束由确定性的组件与持久化生命周期测试覆盖。该入口会在 PR CI 与发布打包 workflow 中运行；PR 是否因该检查而禁止合并，取决于仓库外 GitHub 分支保护规则是否将该状态设为 required。发布 workflow 内的 Windows 打包步骤则在该 E2E 成功前不会上传工件。静态 Vitest 契约不能替代其 Windows 运行日志。
+自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中确认重命名后的新 `[data-path]` editor surface 已稳定进入 `visible`，明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。E2E 不捕捉 React 生命周期的瞬时 `staging` 帧；重挂载期间保存的快照安全约束由确定性的组件与持久化生命周期测试覆盖。该入口只在 main push（或手动触发）的 `Windows x64 desktop E2E` job 中运行一次，PR 不启动 Windows job。发布 source guard 必须确认 tag 的同一 SHA 已存在成功的 main push CI，因此发布打包不得重复 Windows E2E。PR 合并门禁由仓库外 GitHub 分支保护规则要求 `CI / macOS ARM64 quality` 并保持分支最新。静态 Vitest 契约不能替代 main CI 的 Windows 运行日志。
 
 ### Windows E2E 的稳定边界
 
