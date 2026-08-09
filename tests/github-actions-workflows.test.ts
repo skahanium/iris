@@ -749,21 +749,32 @@ describe("GitHub Actions workflows", () => {
     expect(ci).toContain("timeout-minutes: 60");
   });
 
-  it("keeps the provisioned vector gate within CI timeouts", () => {
-    const ci = readWorkflow(".github/workflows/ci.yml");
+  it("runs the provisioned vector gate on macOS only", () => {
     const packageDesktop = readWorkflow(
       ".github/workflows/package-desktop.yml",
     );
 
-    // The real-model gate runs the full labelled query set; package jobs get
-    // headroom for the ~51-minute gate plus build + E2E.
+    // The real-model quality gate runs on the macOS packaging job (verified
+    // passing there); Windows hosted runners are environmentally slower for
+    // ORT inference and the test-profile build, so the gate is not repeated
+    // and the job gets a generous first-build timeout.
     expect(packageDesktop).toMatch(
-      /package-windows:[\s\S]*?timeout-minutes: 90/,
+      /package-macos-arm64:[\s\S]*?rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates/,
     );
     expect(packageDesktop).toMatch(
       /package-macos-arm64:[\s\S]*?timeout-minutes: 90/,
     );
-    expect(ci).toMatch(/rag-vector-quality:[\s\S]*?timeout-minutes: 60/);
+    expect(packageDesktop).toMatch(
+      /package-windows:[\s\S]*?timeout-minutes: 120/,
+    );
+    const windowsJob = packageDesktop.slice(
+      packageDesktop.indexOf("package-windows:"),
+      packageDesktop.indexOf("package-macos-arm64:"),
+    );
+    expect(windowsJob).not.toContain(
+      "rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates",
+    );
+    expect(windowsJob).toContain("embedding_model_smoke");
   });
 
   it("verifies updater assets again after a GitHub Release is published", () => {
