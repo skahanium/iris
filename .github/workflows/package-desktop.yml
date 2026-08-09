@@ -101,7 +101,7 @@ jobs:
   package-windows:
     name: Windows x64 NSIS
     runs-on: windows-2022
-    timeout-minutes: 60
+    timeout-minutes: 90
     needs: release-quality
 
     steps:
@@ -190,7 +190,7 @@ jobs:
   package-macos-arm64:
     name: macOS arm64 DMG
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     needs: release-quality
 
     steps:

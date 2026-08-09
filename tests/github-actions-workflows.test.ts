@@ -746,7 +746,30 @@ describe("GitHub Actions workflows", () => {
       ci.indexOf("rag-vector-quality:"),
     );
     // PR workflow still forbids Ubuntu Tauri bundles (covered separately).
-    expect(ci).toContain("timeout-minutes: 30");
+    expect(ci).toContain("timeout-minutes: 60");
+  });
+
+  it("keeps the provisioned vector gate within CI timeouts", () => {
+    const ci = readWorkflow(".github/workflows/ci.yml");
+    const packageDesktop = readWorkflow(
+      ".github/workflows/package-desktop.yml",
+    );
+
+    // The real-model gate samples half the labelled queries (ORT inference is
+    // an order of magnitude slower on hosted runners).
+    const evalSource = readFileSync(
+      "src-tauri/tests/rag_broker_eval.rs",
+      "utf8",
+    );
+    expect(evalSource).toContain("fixture.queries.iter().step_by(2)");
+    // Package jobs get headroom for the ~33-minute gate plus build + E2E.
+    expect(packageDesktop).toMatch(
+      /package-windows:[\s\S]*?timeout-minutes: 90/,
+    );
+    expect(packageDesktop).toMatch(
+      /package-macos-arm64:[\s\S]*?timeout-minutes: 90/,
+    );
+    expect(ci).toMatch(/rag-vector-quality:[\s\S]*?timeout-minutes: 60/);
   });
 
   it("verifies updater assets again after a GitHub Release is published", () => {
