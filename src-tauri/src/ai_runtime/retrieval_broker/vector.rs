@@ -117,7 +117,8 @@ fn scoped_file_subquery(scope: &RetrievalScope, first_parameter: usize) -> (Stri
 #[cfg(feature = "sqlite-vec")]
 fn knn_query_parts(
     query_embedding: &[f32],
-    limit: usize,
+    candidate_limit: usize,
+    result_limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Option<(Vec<Value>, String, usize)>> {
     if query_embedding.len() != engine::EMBEDDING_DIMENSION {
@@ -127,12 +128,17 @@ fn knn_query_parts(
             engine::EMBEDDING_DIMENSION
         )));
     }
-    if limit == 0 {
+    if candidate_limit == 0 {
         return Ok(None);
     }
-    let candidate_limit = i64::try_from(limit)
+    // The candidate budget may be expanded geometrically to recover rows
+    // consumed by stale vectors before the fingerprint filter; the final
+    // result limit stays fixed so fusion (MMR is O(n^2)) never sees an
+    // inflated candidate pool.
+    let candidate_limit = i64::try_from(candidate_limit)
         .map_err(|_| AppError::Embed("sqlite-vec result limit exceeds SQLite range".into()))?;
-    let result_limit = candidate_limit;
+    let result_limit = i64::try_from(result_limit)
+        .map_err(|_| AppError::Embed("sqlite-vec result limit exceeds SQLite range".into()))?;
     let (file_subquery, scope_parameters) = scoped_file_subquery(scope, 3);
     let model_parameter = 3 + scope_parameters.len();
     let mut parameters = vec![
@@ -170,8 +176,13 @@ pub(super) fn search_vector_chunks(
     // ceiling is reached; stale rows can then never silently empty the layer.
     let mut candidate_limit = limit;
     loop {
-        let packets =
-            search_vector_chunks_with_candidate(conn, query_embedding, candidate_limit, scope)?;
+        let packets = search_vector_chunks_with_candidate(
+            conn,
+            query_embedding,
+            candidate_limit,
+            limit,
+            scope,
+        )?;
         if packets.len() >= limit || candidate_limit >= MAX_KNN_CANDIDATE_LIMIT {
             return Ok(packets);
         }
@@ -184,10 +195,11 @@ fn search_vector_chunks_with_candidate(
     conn: &Connection,
     query_embedding: &[f32],
     candidate_limit: usize,
+    result_limit: usize,
     scope: &RetrievalScope,
 ) -> AppResult<Vec<ContextPacket>> {
     let Some((parameters, file_subquery, model_parameter)) =
-        knn_query_parts(query_embedding, candidate_limit, scope)?
+        knn_query_parts(query_embedding, candidate_limit, result_limit, scope)?
     else {
         return Ok(Vec::new());
     };
@@ -319,6 +331,7 @@ fn search_structured_vectors(
             conn,
             query_embedding,
             candidate_limit,
+            limit,
             scope,
             kind,
         )?;
@@ -334,11 +347,12 @@ fn search_structured_vectors_with_candidate(
     conn: &Connection,
     query_embedding: &[f32],
     candidate_limit: usize,
+    result_limit: usize,
     scope: &RetrievalScope,
     kind: StructuredVectorKind,
 ) -> AppResult<Vec<ContextPacket>> {
     let Some((parameters, file_subquery, model_parameter)) =
-        knn_query_parts(query_embedding, candidate_limit, scope)?
+        knn_query_parts(query_embedding, candidate_limit, result_limit, scope)?
     else {
         return Ok(Vec::new());
     };
