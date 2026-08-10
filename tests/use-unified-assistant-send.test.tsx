@@ -140,6 +140,38 @@ describe("useUnifiedAssistantSend", () => {
     expect(consume).toHaveBeenCalledTimes(1);
   });
 
+  it("does not route a stale ordinary selection candidate into classified Runs", async () => {
+    start.mockResolvedValue({
+      runId: "run-classified",
+      turnId: "turn-classified",
+      session: { domain: "classified", sessionKey: "classified-1" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    renderProbe(
+      normalOptions({
+        aiDomain: "classified",
+        session: { domain: "classified", sessionKey: "classified-1" },
+        contextReferences: [],
+        displayMentions: [],
+        classifiedContextRef: "opaque-current-document-context",
+        includeCurrentClassifiedDocument: true,
+        editorSelectionCandidate: {
+          key: "notes/source.md:1:4:selected",
+          preview: "selected",
+          status: "ready",
+          reference: normalOptions().contextReferences[0]!,
+          message: null,
+        },
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start.mock.calls[0]?.[0].turn.explicitReferences).toEqual([]);
+    expect(start.mock.calls[0]?.[0].turn.displayMentions).toEqual([]);
+  });
+
   it("consumes one editor selection reference after adding it to one normal-domain Run", async () => {
     const consumeOneShotContextReference = vi.fn();
     const reference = normalOptions().contextReferences[0]!;

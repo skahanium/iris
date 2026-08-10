@@ -88,6 +88,8 @@ export function useAiSidecarBridge({
   const selectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const currentSelectionKeyRef = useRef<string | null>(null);
   const suppressedSelectionKeyRef = useRef<string | null>(null);
+  const observedDocumentKeyRef = useRef(documentKey);
+  const observedAssistantVisibleRef = useRef(assistantVisible);
   const isDocumentDirtyRef = useRef(isDocumentDirty);
   isDocumentDirtyRef.current = isDocumentDirty;
   const mountedRef = useRef(true);
@@ -248,6 +250,24 @@ export function useAiSidecarBridge({
 
   const syncSelectionCandidate = useCallback(() => {
     const ed = editor ?? editorRef.current;
+    const documentChanged = observedDocumentKeyRef.current !== documentKey;
+    const visibilityChanged =
+      observedAssistantVisibleRef.current !== assistantVisible;
+    if (documentChanged) {
+      observedDocumentKeyRef.current = documentKey;
+      currentSelectionKeyRef.current = null;
+      suppressedSelectionKeyRef.current = null;
+      clearSelectionCandidate();
+      return;
+    }
+    if (visibilityChanged) {
+      observedAssistantVisibleRef.current = assistantVisible;
+      // A hidden Agent destroys the live candidate. Reopening it is an
+      // explicit new presentation opportunity, so a manually dismissed or
+      // already-consumed selection may be established again.
+      suppressedSelectionKeyRef.current = null;
+      currentSelectionKeyRef.current = null;
+    }
     if (!ed || !assistantVisible || !selectionEnabled) {
       clearSelectionCandidate();
       return;
@@ -290,6 +310,8 @@ export function useAiSidecarBridge({
     selectionEnabled,
     validateSelection,
   ]);
+  const syncSelectionCandidateRef = useRef(syncSelectionCandidate);
+  syncSelectionCandidateRef.current = syncSelectionCandidate;
 
   useEffect(() => {
     const ed = editor ?? editorRef.current;
@@ -308,14 +330,8 @@ export function useAiSidecarBridge({
   }, [clearSelectionCandidate, editor, editorRef, syncSelectionCandidate]);
 
   useEffect(() => {
-    syncSelectionCandidate();
-  }, [
-    assistantVisible,
-    documentDirty,
-    documentKey,
-    selectionEnabled,
-    syncSelectionCandidate,
-  ]);
+    syncSelectionCandidateRef.current();
+  }, [assistantVisible, documentDirty, selectionEnabled]);
 
   const consumeEditorSelectionReference = useCallback(() => {
     suppressedSelectionKeyRef.current = currentSelectionKeyRef.current;

@@ -1,5 +1,6 @@
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
+import { waitFor } from "@testing-library/react";
 import { act, createElement, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +29,7 @@ describe("assistant sidecar selection reference bridge", () => {
   let editor: Editor;
   let dirty = false;
   let visible = true;
+  let documentKey = "notes/sidecar.md";
   let api: ReturnType<typeof useAiSidecarBridge>;
   const markdown = "侧边栏选区引用测试";
   let validSignature: FileSignatureResult;
@@ -37,7 +39,7 @@ describe("assistant sidecar selection reference bridge", () => {
     api = useAiSidecarBridge({
       editorRef,
       editor,
-      documentKey: "notes/sidecar.md",
+      documentKey,
       assistantVisible: visible,
       selectionEnabled: true,
       isDocumentDirty: () => dirty,
@@ -54,6 +56,7 @@ describe("assistant sidecar selection reference bridge", () => {
   beforeEach(async () => {
     dirty = false;
     visible = true;
+    documentKey = "notes/sidecar.md";
     editor = new Editor({
       extensions: [StarterKit],
       content: `<p>${markdown}</p>`,
@@ -95,7 +98,7 @@ describe("assistant sidecar selection reference bridge", () => {
   });
 
   it("creates a disk-verified candidate as soon as a selection exists", async () => {
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(api.editorSelectionCandidate?.status).toBe("ready"),
     );
     expect(api.editorSelectionCandidate).toMatchObject({
@@ -152,13 +155,13 @@ describe("assistant sidecar selection reference bridge", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 220));
     });
-    await vi.waitFor(() => expect(mockFileSignature).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockFileSignature).toHaveBeenCalledTimes(2));
 
     await act(async () => {
       resolveSecond(validSignature);
       await Promise.resolve();
     });
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(api.editorSelectionCandidate?.status).toBe("ready"),
     );
     await act(async () => {
@@ -184,9 +187,20 @@ describe("assistant sidecar selection reference bridge", () => {
       root?.render(createElement(Host));
       await flushValidation();
     });
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(api.editorSelectionCandidate?.status).toBe("ready"),
     );
+  });
+
+  it("clears the candidate immediately when the active document changes", async () => {
+    await waitFor(() =>
+      expect(api.editorSelectionCandidate?.status).toBe("ready"),
+    );
+    documentKey = "notes/other.md";
+    await act(async () => {
+      root?.render(createElement(Host));
+    });
+    expect(api.editorSelectionCandidate).toBeNull();
   });
 
   it("suppresses the current selection after dismissing it", () => {
@@ -194,5 +208,25 @@ describe("assistant sidecar selection reference bridge", () => {
     expect(api.editorSelectionCandidate).toBeNull();
     act(() => editor.commands.setTextSelection({ from: 1, to: 5 }));
     expect(api.editorSelectionCandidate).toBeNull();
+  });
+
+  it("allows a dismissed selection to re-establish after Agent is reopened", async () => {
+    await waitFor(() =>
+      expect(api.editorSelectionCandidate?.status).toBe("ready"),
+    );
+    act(() => api.dismissEditorSelectionReference());
+    visible = false;
+    await act(async () => {
+      root?.render(createElement(Host));
+    });
+    expect(api.editorSelectionCandidate).toBeNull();
+
+    visible = true;
+    await act(async () => {
+      root?.render(createElement(Host));
+    });
+    await waitFor(() =>
+      expect(api.editorSelectionCandidate?.status).toBe("ready"),
+    );
   });
 });
