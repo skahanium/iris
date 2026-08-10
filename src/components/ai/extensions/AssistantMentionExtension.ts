@@ -140,18 +140,37 @@ export const AssistantMentionExtension =
     },
 
     addProseMirrorPlugins() {
-      const buildSuggestion = (char: "@" | "#", pluginKey: string) =>
+      const dismissedRanges: Record<
+        "at" | "hash",
+        { from: number; to: number } | null
+      > = {
+        at: null,
+        hash: null,
+      };
+      const buildSuggestion = (char: "@" | "#", pluginKey: "at" | "hash") =>
         Suggestion<MentionCandidate>({
           editor: this.editor,
           char,
           allowSpaces: true,
+          // The custom Unicode-aware boundary below is authoritative. TipTap's
+          // ASCII prefix filter would otherwise reject Chinese fullwidth
+          // brackets before `@` / `#`.
+          allowedPrefixes: null,
           pluginKey:
             pluginKey === "at"
               ? assistantMentionPluginKeys.at
               : assistantMentionPluginKeys.hash,
-          allow: ({ editor, range }) =>
-            (this.options.enabled?.() ?? true) &&
-            isMentionBoundary(editor, range.from),
+          allow: ({ editor, range }) => {
+            const dismissed = dismissedRanges[pluginKey];
+            if (dismissed?.from === range.from && dismissed.to === range.to) {
+              return false;
+            }
+            dismissedRanges[pluginKey] = null;
+            return (
+              (this.options.enabled?.() ?? true) &&
+              isMentionBoundary(editor, range.from)
+            );
+          },
           items: ({ query }) => this.options.getCandidates(char, query),
           command: ({ editor, range, props }) => {
             const candidate = normalizeCandidate(props as MentionCandidate);
@@ -215,8 +234,10 @@ export const AssistantMentionExtension =
               },
               onKeyDown(props) {
                 if (props.event.key === "Escape") {
+                  dismissedRanges[pluginKey] = { ...props.range };
                   popup?.destroy();
-                  return false;
+                  props.view.dispatch(props.view.state.tr);
+                  return true;
                 }
                 return component?.ref?.onKeyDown(props.event) ?? false;
               },

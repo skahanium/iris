@@ -1,7 +1,6 @@
-import { Paperclip, Send, Square, X } from "lucide-react";
+import { Send, Square } from "lucide-react";
 import type {
   ClipboardEvent,
-  DragEvent,
   KeyboardEvent,
   ReactNode,
   RefObject,
@@ -27,8 +26,7 @@ import {
   createAssistantComposerExtensions,
   insertAssistantMention,
 } from "@/lib/assistant-composer-extensions";
-import type { DisplayMention, SecurityDomain } from "@/types/ai";
-import type { ImageAttachmentDto } from "@/types/ipc";
+import type { DisplayMention } from "@/types/ai";
 import { cn } from "@/lib/utils";
 
 export interface AssistantComposerHandle {
@@ -39,7 +37,7 @@ export interface AssistantComposerHandle {
   insertMention: (candidate: MentionCandidate) => boolean;
 }
 
-interface AiComposerProps {
+export interface AiComposerProps {
   value: string;
   displayMentions?: DisplayMention[];
   onChange: (value: string, mentions: DisplayMention[]) => void;
@@ -51,45 +49,17 @@ interface AiComposerProps {
   placeholder?: string;
   className?: string;
   composerRef?: RefObject<AssistantComposerHandle | null>;
-  domain?: SecurityDomain;
+  scopeKey?: string;
   mentionEnabled?: boolean;
   getMentionCandidates?: (
     prefix: "@" | "#",
     query: string,
   ) => MentionCandidate[];
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
-  contextShelf?: ReactNode;
-  images?: ImageAttachmentDto[];
-  onImagesChange?: (images: ImageAttachmentDto[]) => void;
-}
-
-const MAX_IMAGE_SIZE = 20 * 1024 * 1024;
-const ALLOWED_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () =>
-      resolve((reader.result as string).split(",")[1] ?? "");
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-async function processImageFiles(files: File[]): Promise<ImageAttachmentDto[]> {
-  const output: ImageAttachmentDto[] = [];
-  for (const file of files) {
-    if (file.size > MAX_IMAGE_SIZE || !ALLOWED_MIME.includes(file.type))
-      continue;
-    output.push({
-      id: crypto.randomUUID(),
-      dataBase64: await fileToBase64(file),
-      mimeType: file.type,
-      fileName: file.name,
-      sizeBytes: file.size,
-    });
-  }
-  return output;
+  header?: ReactNode;
+  leadingActions?: ReactNode;
+  hasSupplementalContent?: boolean;
+  onPaste?: (event: ClipboardEvent<HTMLDivElement>) => void;
 }
 
 interface ComposerSnapshot {
@@ -98,7 +68,7 @@ interface ComposerSnapshot {
   displayMentions: DisplayMention[];
 }
 
-/** AI sidecar Composer with a plain-text projection and atomic local mentions. */
+/** Generic TipTap Composer primitive with a plain-text projection and atomic mentions. */
 export function AiComposer({
   value,
   onChange,
@@ -110,13 +80,14 @@ export function AiComposer({
   placeholder = "提问…",
   className,
   composerRef,
-  domain = "normal",
-  mentionEnabled = domain === "normal",
+  scopeKey = "default",
+  mentionEnabled = true,
   getMentionCandidates = () => [],
   onKeyDown,
-  contextShelf,
-  images,
-  onImagesChange,
+  header,
+  leadingActions,
+  hasSupplementalContent = false,
+  onPaste,
 }: AiComposerProps) {
   const getCandidatesRef = useRef(getMentionCandidates);
   getCandidatesRef.current = getMentionCandidates;
@@ -134,16 +105,13 @@ export function AiComposer({
   streamingRef.current = streaming;
   const submitDisabledRef = useRef(submitDisabled);
   submitDisabledRef.current = submitDisabled;
-  const imagesRef = useRef(images);
-  imagesRef.current = images;
-  const domainRef = useRef(domain);
-  domainRef.current = domain;
-  const activeDomainRef = useRef(domain);
+  const supplementalContentRef = useRef(hasSupplementalContent);
+  supplementalContentRef.current = hasSupplementalContent;
+  const scopeKeyRef = useRef(scopeKey);
+  scopeKeyRef.current = scopeKey;
+  const activeScopeKeyRef = useRef(scopeKey);
   const emittedTextRef = useRef(value);
-  const snapshotsRef = useRef<
-    Partial<Record<SecurityDomain, ComposerSnapshot>>
-  >({});
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const snapshotsRef = useRef<Record<string, ComposerSnapshot>>({});
 
   const mentionExtension = useMemo(
     () =>
@@ -184,7 +152,7 @@ export function AiComposer({
             if (
               !streamingRef.current &&
               !submitDisabledRef.current &&
-              (valueRef.current.trim() || imagesRef.current?.length)
+              (valueRef.current.trim() || supplementalContentRef.current)
             ) {
               onSubmitRef.current();
             }
@@ -207,7 +175,7 @@ export function AiComposer({
       text: projection.text,
       displayMentions: projection.displayMentions,
     };
-    snapshotsRef.current[domainRef.current] = snapshot;
+    snapshotsRef.current[scopeKeyRef.current] = snapshot;
     emittedTextRef.current = projection.text;
     onChangeRef.current(projection.text, projection.displayMentions);
   }, []);
@@ -215,10 +183,10 @@ export function AiComposer({
 
   useEffect(() => {
     if (!editor) return;
-    const previousDomain = activeDomainRef.current;
-    if (previousDomain !== domain) {
-      activeDomainRef.current = domain;
-      const snapshot = snapshotsRef.current[domain];
+    const previousScopeKey = activeScopeKeyRef.current;
+    if (previousScopeKey !== scopeKey) {
+      activeScopeKeyRef.current = scopeKey;
+      const snapshot = snapshotsRef.current[scopeKey];
       editor.commands.setContent(
         snapshot?.doc ?? assistantComposerDocFromText(value),
         false,
@@ -228,14 +196,14 @@ export function AiComposer({
     }
     if (value === emittedTextRef.current) return;
     editor.commands.setContent(assistantComposerDocFromText(value), false);
-    snapshotsRef.current[domain] = {
+    snapshotsRef.current[scopeKey] = {
       doc: editor.getJSON(),
       text: value,
       displayMentions: [],
     };
     emittedTextRef.current = value;
     onChangeRef.current(value, []);
-  }, [domain, editor, emitProjection, value]);
+  }, [editor, emitProjection, scopeKey, value]);
 
   useImperativeHandle(
     composerRef,
@@ -259,124 +227,29 @@ export function AiComposer({
     [editor, emitProjection],
   );
 
-  const handlePaste = useCallback(
-    async (event: ClipboardEvent<HTMLDivElement>) => {
-      if (!onImagesChange) return;
-      const files = Array.from(event.clipboardData.items)
-        .filter((item) => item.type.startsWith("image/"))
-        .map((item) => item.getAsFile())
-        .filter((file): file is File => file !== null);
-      if (files.length === 0) return;
-      event.preventDefault();
-      const next = await processImageFiles(files);
-      if (next.length > 0) onImagesChange([...(images ?? []), ...next]);
-    },
-    [images, onImagesChange],
-  );
-
-  const handleDrop = useCallback(
-    async (event: DragEvent<HTMLDivElement>) => {
-      if (!onImagesChange) return;
-      const files = Array.from(event.dataTransfer.files).filter((file) =>
-        file.type.startsWith("image/"),
-      );
-      if (files.length === 0) return;
-      event.preventDefault();
-      const next = await processImageFiles(files);
-      if (next.length > 0) onImagesChange([...(images ?? []), ...next]);
-    },
-    [images, onImagesChange],
-  );
-
-  const handleFileSelect = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      if (!onImagesChange) return;
-      const next = await processImageFiles(
-        Array.from(event.target.files ?? []),
-      );
-      if (next.length > 0) onImagesChange([...(images ?? []), ...next]);
-      event.target.value = "";
-    },
-    [images, onImagesChange],
-  );
-
   return (
     <div
       className={cn(
         "shrink-0 border-t border-border-subtle bg-ai-composer p-3",
         className,
       )}
-      onDrop={(event) => void handleDrop(event)}
-      onDragOver={(event) => {
-        if (Array.from(event.dataTransfer.types).includes("Files"))
-          event.preventDefault();
-      }}
     >
       <div className="ai-composer-workbench relative rounded-lg border border-border/80 bg-surface-elevated focus-within:ring-2 focus-within:ring-primary/25">
-        {contextShelf}
+        {header}
         <div className="flex items-end gap-2 p-2">
           <div className="flex min-w-0 flex-1 flex-col">
-            {images && images.length > 0 ? (
-              <div className="mb-1.5 flex flex-wrap gap-1.5">
-                {images.map((image) => (
-                  <div
-                    key={image.id}
-                    className="group relative h-10 w-10 overflow-hidden rounded-md border border-border/50"
-                  >
-                    <img
-                      src={`data:${image.mimeType};base64,${image.dataBase64}`}
-                      className="h-full w-full object-cover"
-                      alt={image.fileName || ""}
-                    />
-                    <button
-                      type="button"
-                      className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                      onClick={() =>
-                        onImagesChange?.(
-                          (images ?? []).filter((item) => item.id !== image.id),
-                        )
-                      }
-                      aria-label="移除图片"
-                    >
-                      <X className="h-2.5 w-2.5" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
             <div
               className={cn(
                 "ai-composer-editor-shell max-h-32 min-h-[2.5rem] overflow-y-auto",
                 editor?.isEmpty && "is-empty",
               )}
-              onPaste={(event) => void handlePaste(event)}
+              onPaste={onPaste}
             >
               <EditorContent editor={editor} />
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            {onImagesChange ? (
-              <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(event) => void handleFileSelect(event)}
-                />
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                  onClick={() => fileInputRef.current?.click()}
-                  aria-label="添加图片"
-                >
-                  <Paperclip className="h-4 w-4" />
-                </Button>
-              </>
-            ) : null}
+            {leadingActions}
             {streaming && onStop ? (
               <Button
                 type="button"
@@ -397,7 +270,7 @@ export function AiComposer({
                 disabled={
                   disabled ||
                   submitDisabled ||
-                  (!value.trim() && !(images && images.length > 0))
+                  (!value.trim() && !hasSupplementalContent)
                 }
                 aria-label="发送"
                 onClick={onSubmit}

@@ -349,14 +349,16 @@ pub async fn assistant_run_start<R: AssistantRunRuntime>(
     let sink = TauriRunEventSink::new(&app_handle);
     match request.security_domain {
         SecurityDomain::Normal => {
-            let accepted = RunIntake::start_with_sink(&state.db, request, &sink)?;
-            spawn_normal_direct_run(
-                Arc::clone(&state),
-                app_handle,
-                accepted.clone(),
-                state.vault_path().ok(),
-            );
-            Ok(accepted)
+            let outcome = RunIntake::start_with_sink_outcome(&state.db, request, &sink)?;
+            if outcome.is_new {
+                spawn_normal_direct_run(
+                    Arc::clone(&state),
+                    app_handle,
+                    outcome.accepted.clone(),
+                    state.vault_path().ok(),
+                );
+            }
+            Ok(outcome.accepted)
         }
         SecurityDomain::Classified => {
             let vault = state.vault_path()?;

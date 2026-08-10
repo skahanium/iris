@@ -114,6 +114,21 @@ fn required_web_query_uses_explicitly_authorized_material_to_resolve_a_deictic_q
 }
 
 #[test]
+fn required_web_query_sanitizes_the_authorized_subject_before_disclosure() {
+    let query = required_web_query_from_authorized_material(
+        "这是什么时候召开的会议？",
+        &[],
+        ["  中国共产党\u{0000}\n第十八次全国代表大会\t  ".to_string()],
+    );
+
+    assert_eq!(
+        query,
+        "中国共产党 第十八次全国代表大会 这是什么时候召开的会议？"
+    );
+    assert!(!query.chars().any(char::is_control));
+}
+
+#[test]
 fn required_web_query_never_uses_automatic_local_retrieval_without_explicit_authorization() {
     let query = required_web_query_from_authorized_material(
         "这是什么时候召开的会议？",

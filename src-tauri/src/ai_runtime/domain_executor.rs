@@ -212,7 +212,7 @@ impl DomainExecutor {
             && !allowed_materials.is_empty()
         {
             instructions.push(
-                "用户已通过 @ 附带授权材料（包括文档选区），内容在 <authorized-material> 中。优先直接基于这些材料作答；\
+                "用户已通过 @ 附带授权材料（包括文档选区），内容在 <untrusted-material-data> 的 JSON 数据中。优先直接基于这些材料作答；\
                  问题中的“这”“该”“上述”等指代表达优先指向本轮授权材料，不要因语义分类或题目内容重新过滤这些材料；\
                  除非材料明确标注为不完整片段且问题需要未包含段落，否则不要对同一路径再次调用 search、\
                  read_note 或 get_outline。"
@@ -334,7 +334,7 @@ fn build_style_blueprint(materials: &[&DomainMaterial]) -> StyleBlueprint {
 }
 
 fn render_authorized_materials(materials: &[&DomainMaterial]) -> String {
-    materials
+    let materials = materials
         .iter()
         .filter(|material| {
             matches!(
@@ -342,28 +342,59 @@ fn render_authorized_materials(materials: &[&DomainMaterial]) -> String {
                 DomainMaterialOrigin::UserAuthorizedMaterial
             )
         })
-        .map(|material| {
-            format!(
-                "<authorized-material label=\"{}\">\n{}\n</authorized-material>",
-                material.label, material.content
-            )
+        .map(|material| PromptMaterialData {
+            role: "user_authorized",
+            label: &material.label,
+            content: &material.content,
         })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        .collect::<Vec<_>>();
+    render_untrusted_material_data(&materials)
 }
 
 fn render_local_retrieval(materials: &[&DomainMaterial]) -> String {
-    materials
+    let materials = materials
         .iter()
         .filter_map(|material| match material.origin {
-            DomainMaterialOrigin::LocalRetrieval { role } => Some(format!(
-                "<local-retrieval-evidence role=\"{}\" label=\"{}\">\n{}\n</local-retrieval-evidence>",
-                role.as_str(), material.label, material.content
-            )),
+            DomainMaterialOrigin::LocalRetrieval { role } => Some(PromptMaterialData {
+                role: role.as_str(),
+                label: &material.label,
+                content: &material.content,
+            }),
             DomainMaterialOrigin::UserAuthorizedMaterial => None,
         })
-        .collect::<Vec<_>>()
-        .join("\n\n")
+        .collect::<Vec<_>>();
+    render_untrusted_material_data(&materials)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptMaterialData<'a> {
+    role: &'a str,
+    label: &'a str,
+    content: &'a str,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PromptMaterialBlock<'a> {
+    schema_version: u8,
+    materials: &'a [PromptMaterialData<'a>],
+}
+
+fn render_untrusted_material_data(materials: &[PromptMaterialData<'_>]) -> String {
+    if materials.is_empty() {
+        return String::new();
+    }
+    let serialized = serde_json::to_string(&PromptMaterialBlock {
+        schema_version: 1,
+        materials,
+    })
+    .expect("prompt material block serialization is infallible");
+    let serialized = serialized
+        .replace('&', "\\u0026")
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e");
+    format!("<untrusted-material-data>\n{serialized}\n</untrusted-material-data>")
 }
 
 fn collect_exemplar_fact_candidates(materials: &[&DomainMaterial]) -> Vec<String> {

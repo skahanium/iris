@@ -146,6 +146,17 @@ function classifiedSubmissionError(reason: unknown): string {
   return "请求未能提交，请稍后重试。";
 }
 
+function normalSubmissionError(reason: unknown): string {
+  const message = invokeErrorMessage(reason);
+  if (
+    message.includes("agent_run_explicit_reference_changed") ||
+    message.includes("agent_run_invalid_explicit_reference")
+  ) {
+    return "引用的文件已发生变化，请重新附加后再发送。";
+  }
+  return "请求未能提交，请稍后重试。";
+}
+
 /** Starts the single production Run path from a user-authored prompt. */
 export function useUnifiedAssistantSend({
   aiDomain,
@@ -384,13 +395,14 @@ export function useUnifiedAssistantSend({
       if (aiDomain === "classified") clearClassifiedDocumentConsent?.();
       setActivityHint("正在准备回答…");
     } catch (reason) {
+      pendingStartRef.current = null;
       setStreaming(false);
       setActivityHint(null);
       if (aiDomain === "classified") {
         setError(classifiedSubmissionError(reason));
         return;
       }
-      setError("请求未能提交，请稍后重试。");
+      setError(normalSubmissionError(reason));
     } finally {
       startingRef.current = false;
       setIsStarting(false);

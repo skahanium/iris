@@ -951,8 +951,8 @@ fn resolve_explicit_reference(
             | ContextReferenceKind::Paragraph
             | ContextReferenceKind::Heading
     );
-    if reference.kind == ContextReferenceKind::Note && reference.utf8_range.is_some()
-        || requires_range && reference.utf8_range.is_none()
+    if (reference.kind == ContextReferenceKind::Note && reference.utf8_range.is_some())
+        || (requires_range && reference.utf8_range.is_none())
         || reference.kind == ContextReferenceKind::Artifact
     {
         return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));

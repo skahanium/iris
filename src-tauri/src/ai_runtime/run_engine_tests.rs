@@ -4120,7 +4120,7 @@ async fn streaming_prompt_execution_binds_registered_evidence_to_final_message()
             source_span_end: 8,
             heading_path: None,
             content_hash: "evidence-hash".into(),
-            retrieval_reason: Some("explicit_reference".into()),
+            retrieval_reason: Some("fts_keyword_match".into()),
             score: None,
         },
     )

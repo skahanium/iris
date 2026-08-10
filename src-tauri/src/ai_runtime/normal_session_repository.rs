@@ -54,6 +54,13 @@ pub(crate) struct NormalSessionRepository;
 
 impl NormalSessionRepository {
     /// Create one normal-domain session without an implicit scene or note target.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "test fixtures create sessions directly; production intake creates them atomically"
+        )
+    )]
     pub(crate) fn create(db: &Database) -> AppResult<NormalSession> {
         let session_key = format!("run_session:{}", uuid::Uuid::new_v4());
         let now = chrono::Utc::now().to_rfc3339();

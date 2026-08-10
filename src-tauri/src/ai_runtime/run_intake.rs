@@ -1,8 +1,8 @@
 //! Deterministic, scene-free Request Intake for unified Agent Runs.
 
 use crate::ai_runtime::agent_run_repository::{
-    AcceptRunInput, AgentRunRepository, FrozenConfirmationApproval, FrozenConfirmationRejection,
-    RetryRunInput,
+    AcceptRunInput, AcceptRunOutcome, AgentRunRepository, FrozenConfirmationApproval,
+    FrozenConfirmationRejection, RetryRunInput,
 };
 use crate::ai_runtime::normal_session_repository::NormalSessionRepository;
 use crate::ai_runtime::run_contract::{
@@ -231,10 +231,24 @@ impl RunIntake {
     }
 
     /// Atomically accept a normal-domain Run before routing or context assembly.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "unit and evaluation fixtures accept without an event sink"
+        )
+    )]
     pub(crate) fn start(
         db: &Database,
-        mut request: AssistantRunStartRequest,
+        request: AssistantRunStartRequest,
     ) -> AppResult<AssistantRunAccepted> {
+        Self::start_outcome(db, request).map(|outcome| outcome.accepted)
+    }
+
+    fn start_outcome(
+        db: &Database,
+        mut request: AssistantRunStartRequest,
+    ) -> AppResult<AcceptRunOutcome> {
         request.turn.retrieval_scope = crate::ai_runtime::retrieval_scope::normalize_context_scope(
             &request.turn.retrieval_scope,
         )?;
@@ -250,13 +264,22 @@ impl RunIntake {
                 SafeRunErrorCode::ClassifiedDomainNotSupported,
             ));
         }
-        let session = resolve_normal_session(db, request.session.as_ref())?;
+        let session = request
+            .session
+            .as_ref()
+            .map(|session| resolve_existing_normal_session(db, session))
+            .transpose()?;
+        let create_session = session.is_none();
+        let session_id = session.as_ref().map_or(0, |session| session.session_id);
+        let session_key = session
+            .as_ref()
+            .map_or_else(String::new, |session| session.session_key.clone());
         let external_tool_grants = request.external_tool_grants.clone();
-        AgentRunRepository::accept_with_external_grants(
+        AgentRunRepository::accept_with_external_grants_outcome(
             db,
             AcceptRunInput {
-                session_id: session.session_id,
-                session_key: session.session_key,
+                session_id,
+                session_key,
                 client_request_id: request.client_request_id,
                 run_id: uuid::Uuid::new_v4().to_string(),
                 turn_id: uuid::Uuid::new_v4().to_string(),
@@ -269,6 +292,7 @@ impl RunIntake {
                 envelope,
             },
             &external_tool_grants,
+            create_session,
         )
     }
 
@@ -332,21 +356,43 @@ impl RunIntake {
     }
 
     /// Accept and emit the already durable accepted event.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "unit and evaluation fixtures inspect the accepted identity directly"
+        )
+    )]
     pub(crate) fn start_with_sink(
         db: &Database,
         request: AssistantRunStartRequest,
         sink: &impl crate::ai_runtime::run_engine::RunEventSink,
     ) -> AppResult<AssistantRunAccepted> {
-        let accepted = Self::start(db, request)?;
+        Self::start_with_sink_outcome(db, request, sink).map(|outcome| outcome.accepted)
+    }
+
+    /// Accept and notify once; idempotent replays return the original identity
+    /// without emitting or scheduling the same Run again.
+    pub(crate) fn start_with_sink_outcome(
+        db: &Database,
+        request: AssistantRunStartRequest,
+        sink: &impl crate::ai_runtime::run_engine::RunEventSink,
+    ) -> AppResult<AcceptRunOutcome> {
+        let outcome = Self::start_outcome(db, request)?;
+        if !outcome.is_new {
+            return Ok(outcome);
+        }
         let event = AgentRunRepository::get_for_session(
             db,
-            &accepted.session.session_key,
-            &accepted.run_id,
+            &outcome.accepted.session.session_key,
+            &outcome.accepted.run_id,
         )?
         .and_then(|response| response.events.into_iter().next())
         .ok_or_else(|| AppError::run(SafeRunErrorCode::AcceptedEventMissing))?;
-        sink.emit(&event)?;
-        Ok(accepted)
+        // The durable event is authoritative. A transient IPC notification
+        // failure must not strand a newly accepted Run before execution.
+        let _ = sink.emit(&event);
+        Ok(outcome)
     }
 
     /// Accept a fresh retry for the latest failed user turn without duplicating it.
@@ -553,6 +599,7 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
     }) {
         return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
     }
+    validate_context_references(&request.turn.explicit_references)?;
     if request.security_domain == SecurityDomain::Normal && request.classified_context_ref.is_some()
     {
         return Err(AppError::run(SafeRunErrorCode::InvalidRequest));
@@ -588,6 +635,61 @@ fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
         Ok(())
     } else {
         validate_explicit_action(request)
+    }
+}
+
+fn validate_context_references(
+    references: &[crate::ai_types::ContextReferenceWire],
+) -> AppResult<()> {
+    let valid_hash = |hash: &str| {
+        hash.len() == 64
+            && hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    };
+    let invalid = references.len() > 12
+        || references.iter().any(|reference| {
+            reference.id.trim().is_empty()
+                || reference.id.chars().count() > 160
+                || reference.id.chars().any(char::is_control)
+                || matches!(
+                    reference.kind,
+                    crate::ai_types::ContextReferenceKind::Artifact
+                )
+                || reference
+                    .file_path
+                    .as_deref()
+                    .is_none_or(|value| value.trim().is_empty() || value.chars().count() > 1_024)
+                || reference.excerpt.chars().count() > 512
+                || reference
+                    .heading_path
+                    .as_ref()
+                    .is_some_and(|value| value.chars().count() > 512)
+                || reference
+                    .anchor
+                    .as_ref()
+                    .is_some_and(|value| value.chars().count() > 256)
+                || reference
+                    .invalid_reason
+                    .as_ref()
+                    .is_some_and(|value| value.chars().count() > 256)
+                || reference
+                    .content_hash
+                    .as_deref()
+                    .is_none_or(|hash| !valid_hash(hash))
+                || reference
+                    .utf8_range
+                    .as_ref()
+                    .is_some_and(|range| range.start >= range.end)
+                || reference
+                    .editor_range
+                    .as_ref()
+                    .is_some_and(|range| range.from >= range.to)
+        });
+    if invalid {
+        Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference))
+    } else {
+        Ok(())
     }
 }
 
@@ -665,17 +767,16 @@ fn validate_explicit_action(request: &AssistantRunStartRequest) -> AppResult<()>
     Ok(())
 }
 
-fn resolve_normal_session(
+fn resolve_existing_normal_session(
     db: &Database,
-    requested: Option<&AssistantSessionRef>,
+    requested: &AssistantSessionRef,
 ) -> AppResult<crate::ai_runtime::normal_session_repository::NormalSession> {
     match requested {
-        Some(session) if session.domain != SecurityDomain::Normal => Err(AppError::run(
+        session if session.domain != SecurityDomain::Normal => Err(AppError::run(
             SafeRunErrorCode::ClassifiedDomainNotSupported,
         )),
-        Some(session) => NormalSessionRepository::get(db, &session.session_key)?
+        session => NormalSessionRepository::get(db, &session.session_key)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::SessionNotFound)),
-        None => NormalSessionRepository::create(db),
     }
 }
 /// Return whether the user explicitly requested delegated or parallel work.

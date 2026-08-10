@@ -34,6 +34,99 @@ fn request() -> AssistantRunStartRequest {
     }
 }
 
+fn valid_content_hash() -> String {
+    "a".repeat(64)
+}
+
+fn valid_reference() -> crate::ai_types::ContextReferenceWire {
+    crate::ai_types::ContextReferenceWire {
+        id: "reference".into(),
+        kind: crate::ai_types::ContextReferenceKind::Note,
+        file_path: Some("notes/reference.md".into()),
+        content_hash: Some(valid_content_hash()),
+        utf8_range: None,
+        editor_range: None,
+        excerpt: String::new(),
+        heading_path: None,
+        anchor: None,
+        stale: false,
+        invalid_reason: None,
+    }
+}
+
+#[test]
+fn context_reference_wire_rejects_unknown_fields() {
+    let mut value = serde_json::to_value(valid_reference()).expect("reference json");
+    value["unexpectedField"] = serde_json::json!(true);
+
+    assert!(serde_json::from_value::<crate::ai_types::ContextReferenceWire>(value).is_err());
+}
+
+#[test]
+fn intake_rejects_unbounded_or_malformed_explicit_references() {
+    let invalid_references = [
+        crate::ai_types::ContextReferenceWire {
+            file_path: None,
+            ..valid_reference()
+        },
+        crate::ai_types::ContextReferenceWire {
+            content_hash: None,
+            ..valid_reference()
+        },
+        crate::ai_types::ContextReferenceWire {
+            id: "x".repeat(161),
+            ..valid_reference()
+        },
+        crate::ai_types::ContextReferenceWire {
+            content_hash: Some("A".repeat(64)),
+            ..valid_reference()
+        },
+        crate::ai_types::ContextReferenceWire {
+            excerpt: "x".repeat(513),
+            ..valid_reference()
+        },
+        crate::ai_types::ContextReferenceWire {
+            utf8_range: Some(crate::ai_types::SourceSpan { start: 4, end: 4 }),
+            ..valid_reference()
+        },
+        crate::ai_types::ContextReferenceWire {
+            editor_range: Some(crate::ai_types::EditorRangeWire { from: 2, to: 1 }),
+            ..valid_reference()
+        },
+        crate::ai_types::ContextReferenceWire {
+            kind: crate::ai_types::ContextReferenceKind::Artifact,
+            ..valid_reference()
+        },
+    ];
+
+    for (index, reference) in invalid_references.into_iter().enumerate() {
+        let mut invalid = request();
+        invalid.client_request_id = format!("invalid-reference-{index}");
+        invalid.turn.explicit_references = vec![reference];
+        assert_eq!(
+            RunIntake::start(&Database::open_in_memory().expect("database"), invalid)
+                .expect_err("invalid reference must be rejected")
+                .to_string(),
+            "agent_run_invalid_explicit_reference"
+        );
+    }
+
+    let mut too_many = request();
+    too_many.client_request_id = "too-many-references".into();
+    too_many.turn.explicit_references = (0..13)
+        .map(|index| crate::ai_types::ContextReferenceWire {
+            id: format!("reference-{index}"),
+            ..valid_reference()
+        })
+        .collect();
+    assert_eq!(
+        RunIntake::start(&Database::open_in_memory().expect("database"), too_many)
+            .expect_err("reference count must be bounded")
+            .to_string(),
+        "agent_run_invalid_explicit_reference"
+    );
+}
+
 #[test]
 fn explicit_external_grant_is_frozen_atomically_and_enters_the_run_surface() {
     use super::mcp_external_tools::{
@@ -384,6 +477,16 @@ impl RunEventSink for RecordingSink {
     }
 }
 
+struct RejectingSink;
+
+impl RunEventSink for RejectingSink {
+    fn emit(&self, _event: &super::run_contract::AssistantRunEvent) -> AppResult<()> {
+        Err(crate::error::AppError::msg(
+            "simulated_event_delivery_failure",
+        ))
+    }
+}
+
 #[test]
 fn intake_rejects_actions_that_do_not_bind_to_the_explicit_reference() {
     let mut invalid = request();
@@ -391,7 +494,7 @@ fn intake_rejects_actions_that_do_not_bind_to_the_explicit_reference() {
         effect: Effect::Draft,
         target: Some(ExplicitTarget {
             reference_id: "missing-reference".to_string(),
-            content_hash: "hash".to_string(),
+            content_hash: valid_content_hash(),
         }),
         selection_snapshot: None,
     });
@@ -445,7 +548,7 @@ fn intake_rejects_normal_reference_scope_and_display_metadata_in_classified_doma
             id: "ordinary-note".into(),
             kind: crate::ai_types::ContextReferenceKind::Note,
             file_path: Some("notes/ordinary.md".into()),
-            content_hash: Some("hash".into()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: None,
             editor_range: None,
             excerpt: String::new(),
@@ -568,7 +671,7 @@ fn intake_normalizes_explicit_reference_paths_before_persistence() {
             id: "note".into(),
             kind: crate::ai_types::ContextReferenceKind::Note,
             file_path: Some(" ./notes\\a.md ".into()),
-            content_hash: Some("hash".into()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: None,
             editor_range: None,
             excerpt: String::new(),
@@ -603,7 +706,7 @@ fn intake_rejects_unsafe_explicit_reference_paths_before_persistence() {
             id: "unsafe".into(),
             kind: crate::ai_types::ContextReferenceKind::Note,
             file_path: Some("../outside.md".into()),
-            content_hash: Some("hash".into()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: None,
             editor_range: None,
             excerpt: String::new(),
@@ -642,7 +745,7 @@ fn intake_rejects_selection_snapshot_with_inconsistent_utf8_range() {
             id: "selection-reference".to_string(),
             kind: crate::ai_types::ContextReferenceKind::Selection,
             file_path: Some("notes/a.md".to_string()),
-            content_hash: Some("selection-hash".to_string()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: Some(crate::ai_types::SourceSpan { start: 0, end: 3 }),
             editor_range: None,
             excerpt: String::new(),
@@ -656,7 +759,7 @@ fn intake_rejects_selection_snapshot_with_inconsistent_utf8_range() {
         target: None,
         selection_snapshot: Some(SelectionSnapshot {
             reference_id: "selection-reference".to_string(),
-            content_hash: "selection-hash".to_string(),
+            content_hash: valid_content_hash(),
             utf8_range: crate::ai_types::SourceSpan { start: 0, end: 8 },
             text: "短文本".to_string(),
         }),
@@ -682,7 +785,7 @@ fn intake_ignores_and_never_persists_client_selection_snapshot_text() {
             id: "selection-reference".into(),
             kind: crate::ai_types::ContextReferenceKind::Selection,
             file_path: Some("notes/a.md".into()),
-            content_hash: Some("selection-hash".into()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: Some(crate::ai_types::SourceSpan { start: 0, end: 5 }),
             editor_range: None,
             excerpt: "also untrusted".into(),
@@ -696,7 +799,7 @@ fn intake_ignores_and_never_persists_client_selection_snapshot_text() {
         target: None,
         selection_snapshot: Some(SelectionSnapshot {
             reference_id: "selection-reference".into(),
-            content_hash: "selection-hash".into(),
+            content_hash: valid_content_hash(),
             utf8_range: crate::ai_types::SourceSpan { start: 0, end: 5 },
             text: "CLIENT BODY MUST BE IGNORED".into(),
         }),
@@ -762,6 +865,76 @@ fn intake_emits_the_already_persisted_accepted_event_on_the_unified_sink() {
     assert_eq!(events.len(), 1);
     assert_eq!(events[0]["runId"], accepted.run_id);
     assert_eq!(events[0]["type"], "accepted");
+}
+
+#[test]
+fn intake_idempotent_replay_does_not_emit_the_accepted_event_twice() {
+    let db = Database::open_in_memory().expect("database");
+    let sink = RecordingSink::default();
+
+    let first = RunIntake::start_with_sink(&db, request(), &sink).expect("first acceptance");
+    let replay = RunIntake::start_with_sink(&db, request(), &sink).expect("idempotent replay");
+
+    assert_eq!(replay, first);
+    let events = sink.0.lock().expect("recording sink lock");
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0]["type"], "accepted");
+}
+
+#[test]
+fn intake_event_delivery_failure_does_not_strand_or_duplicate_the_run() {
+    let db = Database::open_in_memory().expect("database");
+
+    let first = RunIntake::start_with_sink(&db, request(), &RejectingSink)
+        .expect("durable acceptance survives notification loss");
+    let replay = RunIntake::start_with_sink(&db, request(), &RecordingSink::default())
+        .expect("client recovers the original identity");
+
+    assert_eq!(replay, first);
+    db.with_read_conn(|conn| {
+        let facts: (i64, i64, i64) = (
+            conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM agent_runs", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM agent_run_events", [], |row| {
+                row.get(0)
+            })?,
+        );
+        assert_eq!(facts, (1, 1, 1));
+        Ok(())
+    })
+    .expect("single durable intake");
+}
+
+#[test]
+fn concurrent_intake_replays_converge_on_one_run() {
+    let directory = tempfile::tempdir().expect("temporary database directory");
+    let db = Database::open(&directory.path().join("concurrent.sqlite3")).expect("database");
+    let sink = RecordingSink::default();
+
+    let accepted = std::thread::scope(|scope| {
+        let handles = (0..4)
+            .map(|_| scope.spawn(|| RunIntake::start_with_sink(&db, request(), &sink)))
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("intake thread").expect("accepted"))
+            .collect::<Vec<_>>()
+    });
+
+    assert!(accepted.iter().all(|item| item == &accepted[0]));
+    assert_eq!(sink.0.lock().expect("recording sink lock").len(), 1);
+    db.with_read_conn(|conn| {
+        let facts: (i64, i64, i64) = (
+            conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM session_messages", [], |row| {
+                row.get(0)
+            })?,
+            conn.query_row("SELECT COUNT(*) FROM agent_runs", [], |row| row.get(0))?,
+        );
+        assert_eq!(facts, (1, 1, 1));
+        Ok(())
+    })
+    .expect("single concurrent intake");
 }
 
 #[test]
@@ -1756,7 +1929,7 @@ fn explicit_file_reference_answer_stays_direct_when_it_is_local_only() {
             id: "note-liu".into(),
             kind: crate::ai_types::ContextReferenceKind::Note,
             file_path: Some("线索/问题线索工作思路（刘CG）.md".into()),
-            content_hash: Some("hash-liu".into()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: None,
             editor_range: None,
             excerpt: String::new(),
@@ -1789,7 +1962,7 @@ fn explicit_reference_with_retrieval_scope_still_uses_tool_loop() {
             id: "note-liu".into(),
             kind: crate::ai_types::ContextReferenceKind::Note,
             file_path: Some("线索/问题线索工作思路（刘CG）.md".into()),
-            content_hash: Some("hash-liu".into()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: None,
             editor_range: None,
             excerpt: String::new(),
@@ -1945,7 +2118,7 @@ fn explicit_local_reference_does_not_downgrade_a_comparison_with_public_evidence
             id: "authorized-note".into(),
             kind: crate::ai_types::ContextReferenceKind::Note,
             file_path: Some("notes/authorized.md".into()),
-            content_hash: Some("hash-authorized".into()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: None,
             editor_range: None,
             excerpt: String::new(),
@@ -2204,7 +2377,7 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
                         id: "directive-note".into(),
                         kind: crate::ai_types::ContextReferenceKind::Note,
                         file_path: Some("notes/directive.md".into()),
-                        content_hash: Some("directive-hash".into()),
+                        content_hash: Some(valid_content_hash()),
                         utf8_range: None,
                         editor_range: None,
                         excerpt: String::new(),
@@ -2217,7 +2390,7 @@ fn intake_directive_text_matrix_ignores_quoted_data_and_honors_real_constraints(
                     effect: Effect::Apply,
                     target: Some(ExplicitTarget {
                         reference_id: "directive-note".into(),
-                        content_hash: "directive-hash".into(),
+                        content_hash: valid_content_hash(),
                     }),
                     selection_snapshot: None,
                 });
@@ -2307,7 +2480,7 @@ fn intake_freezes_the_run_budget_policy_matrix() {
             id: "budget-note".into(),
             kind: crate::ai_types::ContextReferenceKind::Note,
             file_path: Some("notes/budget.md".into()),
-            content_hash: Some("budget-hash".into()),
+            content_hash: Some(valid_content_hash()),
             utf8_range: None,
             editor_range: None,
             excerpt: String::new(),
@@ -2320,7 +2493,7 @@ fn intake_freezes_the_run_budget_policy_matrix() {
         effect: Effect::Apply,
         target: Some(ExplicitTarget {
             reference_id: "budget-note".into(),
-            content_hash: "budget-hash".into(),
+            content_hash: valid_content_hash(),
         }),
         selection_snapshot: None,
     });

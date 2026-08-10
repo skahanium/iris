@@ -173,6 +173,27 @@ async fn read_note_accepts_valid_path() {
 }
 
 #[tokio::test]
+async fn read_note_truncation_keeps_full_file_hash_and_span() {
+    let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
+    let full_content = "# Test\nHello world";
+    let args = serde_json::json!({ "path": "notes/test.md", "max_chars": 6 });
+
+    let result = note_impl::read_note(&state, &ctx, &args)
+        .await
+        .expect("read note with bounded model payload");
+
+    assert_eq!(result["content"], "# Test");
+    assert_eq!(result["truncated"], true);
+    assert_eq!(
+        result["contentHash"],
+        crate::cas::hash::content_hash_str(full_content)
+    );
+    assert_eq!(result["sourceSpan"]["start"], 0);
+    assert_eq!(result["sourceSpan"]["end"], full_content.len());
+}
+
+#[tokio::test]
 async fn read_note_rejects_document_policy_before_opening_the_file() {
     let (state, _dir) = test_state();
     let mut policy = crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine::new(

@@ -6,6 +6,7 @@ import {
   AiComposer,
   type AssistantComposerHandle,
 } from "@/components/ui/ai-composer";
+import { assistantMentionPluginKeys } from "@/lib/assistant-composer-extensions";
 
 describe("AiComposer atomic mentions", () => {
   let host: HTMLDivElement;
@@ -188,5 +189,105 @@ describe("AiComposer atomic mentions", () => {
       );
     });
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes an active mention candidate list on Escape", async () => {
+    const composerRef = {
+      current: null,
+    } as React.MutableRefObject<AssistantComposerHandle | null>;
+    await act(async () => {
+      root.render(
+        <AiComposer
+          value=""
+          composerRef={composerRef}
+          getMentionCandidates={() => [
+            {
+              id: "A/Guide.md",
+              kind: "file",
+              value: "A/Guide.md",
+              label: "Guide",
+            },
+          ]}
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+        />,
+      );
+    });
+    const editor = composerRef.current!.getEditor()!;
+    await act(async () => {
+      editor.chain().focus().insertContent("@Gui").run();
+    });
+    expect(
+      (
+        assistantMentionPluginKeys.at.getState(editor.state) as
+          | { active: boolean }
+          | undefined
+      )?.active,
+    ).toBe(true);
+
+    act(() => {
+      host
+        .querySelector<HTMLElement>('[contenteditable="true"]')!
+        .dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Escape",
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+    });
+    expect(
+      (
+        assistantMentionPluginKeys.at.getState(editor.state) as
+          | { active: boolean }
+          | undefined
+      )?.active,
+    ).toBe(false);
+  });
+
+  it("keeps same-name files distinct and supports a Chinese fullwidth boundary", async () => {
+    const onChange = vi.fn();
+    const composerRef = {
+      current: null,
+    } as React.MutableRefObject<AssistantComposerHandle | null>;
+    await act(async () => {
+      root.render(
+        <AiComposer
+          value=""
+          composerRef={composerRef}
+          getMentionCandidates={() => [
+            {
+              id: "A/Guide.md",
+              kind: "file",
+              value: "A/Guide.md",
+              label: "Guide",
+            },
+            {
+              id: "B/Guide.md",
+              kind: "file",
+              value: "B/Guide.md",
+              label: "Guide",
+            },
+          ]}
+          onChange={onChange}
+          onSubmit={vi.fn()}
+        />,
+      );
+    });
+    const editor = composerRef.current!.getEditor()!;
+    await act(async () => {
+      editor.chain().focus().insertContent("（@Gui").run();
+    });
+    expect(
+      composerRef.current?.insertMention({
+        id: "B/Guide.md",
+        kind: "file",
+        value: "B/Guide.md",
+        label: "Guide",
+      }),
+    ).toBe(true);
+    expect(onChange).toHaveBeenLastCalledWith("（Guide", [
+      expect.objectContaining({ kind: "file", value: "B/Guide.md" }),
+    ]);
   });
 });

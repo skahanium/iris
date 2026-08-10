@@ -419,6 +419,7 @@ async fn dispatch_normal_run_after_context(
                 context.envelope.effort != Effort::Durable,
             ),
             context.envelope.context,
+            &context.retrieval_scope,
         );
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
@@ -749,6 +750,7 @@ async fn dispatch_required_web_verified_run(
     let mut tools = ToolRegistry::constrain_for_run_context(
         registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
         context.envelope.context,
+        &context.retrieval_scope,
     )
     .into_iter()
     .filter(|tool| tool.name != "web_search")
@@ -919,22 +921,47 @@ fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> S
         })
         .map(|material| material.content.clone())
         .collect::<Vec<_>>();
-    required_web_query_from_authorized_material(
+    let has_automatic_local_material = context.materials.iter().any(|material| {
+        matches!(
+            material.origin,
+            crate::ai_runtime::domain_executor::DomainMaterialOrigin::LocalRetrieval { .. }
+        )
+    });
+    required_web_query_from_context_sources(
         &context.user_message,
         &prior_users_newest_first,
         authorized_materials,
+        has_automatic_local_material,
     )
 }
 
 /// Use only material the user explicitly authorized for this Run to make a
 /// short deictic question searchable. Automatic local retrieval is deliberately
 /// absent from this API, so it cannot be disclosed by query construction.
+#[cfg(test)]
 pub(crate) fn required_web_query_from_authorized_material(
     current: &str,
     prior_users_newest_first: &[String],
     authorized_materials: impl IntoIterator<Item = String>,
 ) -> String {
-    let query = required_web_query_from_user_history(current, prior_users_newest_first);
+    required_web_query_from_context_sources(
+        current,
+        prior_users_newest_first,
+        authorized_materials,
+        false,
+    )
+}
+
+fn required_web_query_from_context_sources(
+    current: &str,
+    prior_users_newest_first: &[String],
+    authorized_materials: impl IntoIterator<Item = String>,
+    has_automatic_local_material: bool,
+) -> String {
+    let query = public_web_query_for_mixed_local_context(
+        &required_web_query_from_user_history(current, prior_users_newest_first),
+        has_automatic_local_material,
+    );
     if !is_context_dependent_web_follow_up(&query) {
         return query;
     }
@@ -948,12 +975,52 @@ pub(crate) fn required_web_query_from_authorized_material(
 }
 
 fn compact_authorized_query_subject(material: &str) -> Option<String> {
-    material
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(|line| line.chars().take(96).collect::<String>())
-        .filter(|line| !line.is_empty())
+    let mut subject = String::new();
+    let mut previous_was_space = true;
+    let mut written = 0_usize;
+    for character in material.chars() {
+        if character.is_control() || character.is_whitespace() {
+            if !previous_was_space && written < 96 {
+                subject.push(' ');
+                written += 1;
+            }
+            previous_was_space = true;
+            continue;
+        }
+        if written == 96 {
+            break;
+        }
+        subject.push(character);
+        written += 1;
+        previous_was_space = false;
+    }
+    let subject = subject.trim().to_string();
+    (!subject.is_empty()).then_some(subject)
+}
+
+/// Keep automatic local-retrieval wording out of a strict Web query while
+/// preserving fail-closed behavior when no public clause can be identified.
+fn public_web_query_for_mixed_local_context(query: &str, has_local_material: bool) -> String {
+    if !has_local_material {
+        return query.to_string();
+    }
+    const WEB_CUES: [&str; 10] = [
+        "联网", "最新", "公开", "核实", "检索", "web", "current", "public", "browse", "search",
+    ];
+    let lowercase = query.to_ascii_lowercase();
+    let Some(start) = WEB_CUES.iter().filter_map(|cue| lowercase.find(cue)).min() else {
+        return query.to_string();
+    };
+    let public_clause = query[start..]
+        .split_inclusive(['。', '！', '？', '\n'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    if public_clause.chars().count() < 4 {
+        query.to_string()
+    } else {
+        public_clause.to_string()
+    }
 }
 
 /// Build a compact search query without blindly concatenating every adjacent

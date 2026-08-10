@@ -37,4 +37,12 @@ describe("ManagementCenterPanel system and legal notice", () => {
     expect(source).toContain("GNU Affero General Public License v3.0");
     expect(source).not.toContain("开发者水印");
   });
+
+  it("keeps the authorized-material disclosure beside the Web switch", () => {
+    const source = read("src/components/settings/ManagementCenterPanel.tsx");
+
+    expect(source).toContain(
+      "联网时，显式附带材料中的检索主题可能发送给所选搜索服务",
+    );
+  });
 });

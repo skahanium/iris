@@ -95,9 +95,10 @@ impl ToolRegistry {
     pub(crate) fn constrain_for_run_context(
         tools: Vec<ToolSpec>,
         context_mode: crate::ai_runtime::run_contract::ContextMode,
+        retrieval_scope: &crate::ai_runtime::retrieval_scope::RetrievalScope,
     ) -> Vec<ToolSpec> {
         use crate::ai_runtime::run_contract::ContextMode;
-        if context_mode != ContextMode::ExplicitReferences {
+        if context_mode != ContextMode::ExplicitReferences || !retrieval_scope.is_unrestricted() {
             return tools;
         }
         const ALLOWED: &[&str] = &[
@@ -236,6 +237,7 @@ mod tests {
         let constrained = ToolRegistry::constrain_for_run_context(
             surface,
             crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,
+            &crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
         );
         let names: Vec<_> = constrained.iter().map(|tool| tool.name.as_str()).collect();
         assert!(names.contains(&"read_note"));
@@ -260,6 +262,7 @@ mod tests {
         let constrained = ToolRegistry::constrain_for_run_context(
             surface,
             crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,
+            &crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
         );
 
         assert!(constrained.iter().any(|tool| tool.name == "spawn_subagent"));
@@ -273,7 +276,29 @@ mod tests {
         let scoped = ToolRegistry::constrain_for_run_context(
             surface,
             crate::ai_runtime::run_contract::ContextMode::ExplicitScope,
+            &crate::ai_runtime::retrieval_scope::RetrievalScope {
+                path_prefixes: vec!["线索/".into()],
+                ..Default::default()
+            },
         );
+        assert!(scoped.iter().any(|tool| tool.name == "search_hybrid"));
+        assert!(scoped.iter().any(|tool| tool.name == "list_vault"));
+    }
+
+    #[test]
+    fn explicit_references_with_folder_scope_keep_scoped_search_tools() {
+        let registry = ToolRegistry::new();
+        let surface =
+            registry.tools_for_authorized_capabilities(&[CapabilityId::new("vault.read")], false);
+        let scoped = ToolRegistry::constrain_for_run_context(
+            surface,
+            crate::ai_runtime::run_contract::ContextMode::ExplicitReferences,
+            &crate::ai_runtime::retrieval_scope::RetrievalScope {
+                path_prefixes: vec!["线索/".into()],
+                ..Default::default()
+            },
+        );
+
         assert!(scoped.iter().any(|tool| tool.name == "search_hybrid"));
         assert!(scoped.iter().any(|tool| tool.name == "list_vault"));
     }

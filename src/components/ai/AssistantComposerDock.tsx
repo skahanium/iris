@@ -5,10 +5,7 @@ import {
   type RefObject,
 } from "react";
 
-import {
-  AiComposer,
-  type AssistantComposerHandle,
-} from "@/components/ui/ai-composer";
+import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
 import { cn } from "@/lib/utils";
 import type { MentionCandidate, MentionTextEdit } from "@/lib/ai-context-scope";
 import type { McpCapabilityBindingSummary } from "@/lib/ipc";
@@ -21,6 +18,7 @@ import type { EditorSelectionCandidate } from "@/types/editor-selection";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
+import { AssistantAiComposer } from "./AssistantAiComposer";
 import { AssistantContextShelf } from "./AssistantContextShelf";
 
 interface AssistantComposerDockProps {
@@ -149,11 +147,10 @@ export function AssistantComposerDock({
         </div>
       ) : null}
       <AiComposerContextMenu composerRef={activeComposerRef}>
-        <AiComposer
+        <AssistantAiComposer
           value={input}
           composerRef={activeComposerRef}
           domain={activeDomain}
-          mentionEnabled={activeDomain === "normal"}
           getMentionCandidates={getMentionCandidates}
           onChange={(value, mentions) => onValueChange(value, mentions)}
           onSubmit={onSubmit}

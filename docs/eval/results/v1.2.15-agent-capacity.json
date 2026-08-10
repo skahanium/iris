@@ -168,8 +168,8 @@
       "zeroToleranceGate": true
     },
     "performance": {
-      "modelTurns": 48,
-      "toolCalls": 12,
+      "modelTurns": 36,
+      "toolCalls": 0,
       "totalModelTimeP50Ms": null,
       "totalModelTimeP95Ms": null,
       "ttftP50Ms": null,
@@ -667,23 +667,23 @@
           "repetitions": 5
         },
         {
+          "level": 9,
+          "passCount": 0,
+          "repetitions": 5
+        },
+        {
           "level": 12,
-          "passCount": 5,
+          "passCount": 0,
           "repetitions": 5
         },
         {
           "level": 13,
           "passCount": 0,
           "repetitions": 5
-        },
-        {
-          "level": 14,
-          "passCount": 0,
-          "repetitions": 5
         }
       ],
-      "nextLevel": 13,
-      "stableLevel": 12,
+      "nextLevel": 9,
+      "stableLevel": 8,
       "validationStatus": "stable_boundary_observed",
       "witness": "normal_run_web_executor"
     },

@@ -97,22 +97,31 @@ describe("GitHub Actions workflows", () => {
     );
   });
 
-  it("allows only pinned macOS ARM64 and Windows x64 runners", () => {
+  it("uses pinned platform runners and Ubuntu only for platform-neutral release work", () => {
+    const allWorkflows = [ciPath, packagePath, verifyPath]
+      .map(readWorkflow)
+      .join("\n");
     for (const path of [ciPath, packagePath, verifyPath]) {
-      const runners = Object.values(workflowJobs(path)).map((job) =>
-        isRecord(job) ? job["runs-on"] : undefined,
-      );
-      expect(runners.length).toBeGreaterThan(0);
-      expect(
-        runners.every(
-          (runner) => runner === "macos-15" || runner === "windows-2022",
-        ),
-      ).toBe(true);
-      expect(readWorkflow(path)).not.toMatch(
-        /ubuntu-|linux|apt-get|appimage|flatpak|snapcraft|\.deb\b|\.rpm\b/i,
-      );
       expect(readWorkflow(path)).not.toContain("matrix:");
     }
+    expect(allWorkflows).not.toMatch(
+      /apt-get|appimage|flatpak|snapcraft|\.deb\b|\.rpm\b/i,
+    );
+    expect(workflowJob(packagePath, "validate-release-source")["runs-on"]).toBe(
+      "ubuntu-24.04",
+    );
+    expect(workflowJob(packagePath, "draft-release")["runs-on"]).toBe(
+      "ubuntu-24.04",
+    );
+    expect(workflowJob(packagePath, "package-macos-arm64")["runs-on"]).toBe(
+      "macos-15",
+    );
+    expect(workflowJob(packagePath, "package-windows-x64")["runs-on"]).toBe(
+      "windows-2022",
+    );
+    expect(workflowJob(verifyPath, "verify-release")["runs-on"]).toBe(
+      "macos-15",
+    );
   });
 
   it("runs one macOS quality job for PRs and adds Windows E2E only outside PRs", () => {
@@ -123,6 +132,9 @@ describe("GitHub Actions workflows", () => {
 
     expect(Object.keys(jobs)).toEqual([
       "quality-macos-arm64",
+      "release-readiness-agent",
+      "release-readiness-rag",
+      "release-readiness-sqlite-vec",
       "windows-desktop-e2e",
     ]);
     expect(workflow).toContain("pull_request:");
@@ -139,6 +151,16 @@ describe("GitHub Actions workflows", () => {
     expect(jobText(ciPath, "windows-desktop-e2e")).toContain(
       "npm run test:desktop:windows",
     );
+    for (const jobId of [
+      "release-readiness-agent",
+      "release-readiness-rag",
+      "release-readiness-sqlite-vec",
+    ]) {
+      expect(workflowJob(ciPath, jobId).if).toBe(
+        "github.event_name != 'pull_request'",
+      );
+      expect(workflowJob(ciPath, jobId).needs).toBeUndefined();
+    }
   });
 
   it("keeps all common checks once in the macOS quality job", () => {
@@ -196,43 +218,41 @@ describe("GitHub Actions workflows", () => {
     expect(validation).toContain("npm run docs:check");
     expect(validation).toContain("TAURI_SIGNING_PRIVATE_KEY");
     expect(validation).toContain("TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
+    expect(validation).not.toContain("npm ci");
   });
 
-  it("starts release quality and both packages in parallel after validation", () => {
-    for (const jobId of [
-      "release-quality-macos-arm64",
-      "package-macos-arm64",
-      "package-windows-x64",
-    ]) {
+  it("starts both package jobs in parallel after source validation", () => {
+    for (const jobId of ["package-macos-arm64", "package-windows-x64"]) {
       expect(workflowJob(packagePath, jobId).needs).toBe(
         "validate-release-source",
       );
     }
+    expect(workflowJobs(packagePath)).not.toHaveProperty(
+      "release-quality-macos-arm64",
+    );
     expect(
-      workflowJob(packagePath, "release-quality-macos-arm64")["runs-on"],
-    ).toBe("macos-15");
+      workflowJob(packagePath, "package-macos-arm64")["timeout-minutes"],
+    ).toBe(45);
     expect(
-      workflowJob(packagePath, "release-quality-macos-arm64")[
-        "timeout-minutes"
-      ],
-    ).toBe(30);
+      workflowJob(packagePath, "package-windows-x64")["timeout-minutes"],
+    ).toBe(45);
   });
 
-  it("runs real-model, full Agent and 50k gates exactly once in macOS release quality", () => {
+  it("runs real-model, full Agent and 50k gates exactly once on the main SHA", () => {
     const ci = readWorkflow(ciPath);
     const release = readWorkflow(packagePath);
-    const quality = jobText(packagePath, "release-quality-macos-arm64");
     const combined = `${ci}\n${release}`;
 
-    expect(ci).not.toContain("npm run agent:eval\n");
-    expect(quality).toContain("npm run agent:eval");
-    expect(quality).toContain(
+    expect(jobText(ciPath, "release-readiness-agent")).toContain(
+      "npm run agent:eval",
+    );
+    expect(jobText(ciPath, "release-readiness-rag")).toContain(
       "rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates",
     );
-    expect(quality).toContain(
+    expect(jobText(ciPath, "release-readiness-sqlite-vec")).toContain(
       "sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate",
     );
-    expect(quality).toContain(
+    expect(jobText(ciPath, "release-readiness-sqlite-vec")).toContain(
       'IRIS_RAG_PERFORMANCE_REFERENCE":"github-hosted-macos-15-arm64',
     );
     expect(
@@ -266,16 +286,12 @@ describe("GitHub Actions workflows", () => {
     }
   });
 
-  it("drafts a release only after quality and both platform packages", () => {
+  it("drafts a release only after both platform packages", () => {
     const workflow = readWorkflow(packagePath);
     const draft = workflowJob(packagePath, "draft-release");
 
-    expect(draft["runs-on"]).toBe("macos-15");
-    expect(draft.needs).toEqual([
-      "release-quality-macos-arm64",
-      "package-macos-arm64",
-      "package-windows-x64",
-    ]);
+    expect(draft["runs-on"]).toBe("ubuntu-24.04");
+    expect(draft.needs).toEqual(["package-macos-arm64", "package-windows-x64"]);
     expect(draft.if).toBe("startsWith(github.ref, 'refs/tags/v')");
     expect(workflow).toContain("contents: write");
     expect(workflow).toContain("actions/download-artifact@v7");

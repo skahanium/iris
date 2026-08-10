@@ -928,7 +928,14 @@ export function ManagementCenterPanel({
                 <SettingRow
                   icon={Globe2}
                   title={webSearch ? "联网已开启" : "联网已关闭"}
-                  detail={`联网：${webSearchDetail}`}
+                  detail={
+                    <div className="space-y-1">
+                      <p>{`联网：${webSearchDetail}`}</p>
+                      <p>
+                        联网时，显式附带材料中的检索主题可能发送给所选搜索服务；自动本地检索正文不会外发。
+                      </p>
+                    </div>
+                  }
                 >
                   <SwitchControl
                     checked={webSearch && webSearchAvailability.canEnable}

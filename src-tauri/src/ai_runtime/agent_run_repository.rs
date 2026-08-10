@@ -55,6 +55,13 @@ pub(crate) struct AcceptRunInput {
     pub(crate) envelope: ExecutionEnvelope,
 }
 
+/// Durable acceptance result used to distinguish a new Run from an idempotent replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AcceptRunOutcome {
+    pub(crate) accepted: AssistantRunAccepted,
+    pub(crate) is_new: bool,
+}
+
 /// Immutable facts required to create a new attempt from an existing user turn.
 #[derive(Debug, Clone)]
 pub(crate) struct RetryRunInput {
@@ -259,12 +266,27 @@ impl AgentRunRepository {
         input: AcceptRunInput,
         external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
     ) -> AppResult<AssistantRunAccepted> {
+        Self::accept_with_external_grants_outcome(db, input, external_tool_grants, false)
+            .map(|outcome| outcome.accepted)
+    }
+
+    /// Atomically accept a Run and report whether this call created it.
+    ///
+    /// `create_session` reserves session creation for the same transaction as
+    /// Run acceptance. This keeps a response-loss replay from creating an
+    /// orphan session or changing the idempotency fingerprint.
+    pub(crate) fn accept_with_external_grants_outcome(
+        db: &Database,
+        input: AcceptRunInput,
+        external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
+        create_session: bool,
+    ) -> AppResult<AcceptRunOutcome> {
         if input.envelope.security_domain != SecurityDomain::Normal {
             return Err(AppError::run(
                 SafeRunErrorCode::ClassifiedDomainNotSupported,
             ));
         }
-        let intake_fingerprint = intake_fingerprint(&input, external_tool_grants)?;
+        let intake_fingerprint = intake_fingerprint(&input, external_tool_grants, create_session)?;
         db.with_conn(|conn| {
             in_immediate_transaction(conn, |conn| {
                 if let Some((existing, stored_fingerprint)) =
@@ -273,13 +295,27 @@ impl AgentRunRepository {
                     if stored_fingerprint.is_some_and(|stored| stored != intake_fingerprint) {
                         return Err(AppError::run(SafeRunErrorCode::IdempotencyConflict));
                     }
-                    return Ok(existing);
+                    return Ok(AcceptRunOutcome {
+                        accepted: existing,
+                        is_new: false,
+                    });
                 }
 
-                ensure_normal_session(conn, input.session_id, &input.session_key)?;
+                let now = chrono::Utc::now().to_rfc3339();
+                let (session_id, session_key) = if create_session {
+                    let session_key = format!("run_session:{}", uuid::Uuid::new_v4());
+                    conn.execute(
+                        "INSERT INTO sessions (session_key, created_at, updated_at)
+                         VALUES (?1, ?2, ?2)",
+                        rusqlite::params![session_key, now],
+                    )?;
+                    (conn.last_insert_rowid(), session_key)
+                } else {
+                    ensure_normal_session(conn, input.session_id, &input.session_key)?;
+                    (input.session_id, input.session_key.clone())
+                };
                 let (prompt_profile_snapshot_json, prompt_contract_version, prompt_contract_hash) =
                     load_prompt_contract_snapshot(conn)?;
-                let now = chrono::Utc::now().to_rfc3339();
                 let content_parts_json = input
                     .content_parts
                     .as_ref()
@@ -311,7 +347,7 @@ impl AgentRunRepository {
 
                 let seq: i64 = conn.query_row(
                     "SELECT COALESCE(MAX(seq), 0) + 1 FROM session_messages WHERE session_id = ?1",
-                    [input.session_id],
+                    [session_id],
                     |row| row.get(0),
                 )?;
                 conn.execute(
@@ -320,7 +356,7 @@ impl AgentRunRepository {
                   turn_id, explicit_references_json, context_scope_json, display_mentions_json)
                  VALUES (?1, ?2, 'user', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     rusqlite::params![
-                        input.session_id,
+                        session_id,
                         seq,
                         input.message,
                         content_parts_json,
@@ -342,7 +378,7 @@ impl AgentRunRepository {
                     rusqlite::params![
                         input.run_id,
                         input.client_request_id,
-                        input.session_id,
+                        session_id,
                         input.turn_id,
                         effect,
                         effort,
@@ -372,7 +408,7 @@ impl AgentRunRepository {
                     &now,
                     RunEventPayload::Accepted {
                         turn_id: input.turn_id.clone(),
-                        session_key: input.session_key.clone(),
+                        session_key: session_key.clone(),
                         freshness: Some(input.envelope.freshness),
                         web_reason: Some(input.envelope.web_reason),
                     },
@@ -381,19 +417,22 @@ impl AgentRunRepository {
                 insert_event(conn, &event)?;
                 conn.execute(
                     "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
-                    rusqlite::params![now, input.session_id],
+                    rusqlite::params![now, session_id],
                 )?;
 
-                Ok(AssistantRunAccepted {
-                    client_request_id: input.client_request_id,
-                    run_id: input.run_id,
-                    turn_id: input.turn_id,
-                    session: AssistantSessionRef {
-                        domain: SecurityDomain::Normal,
-                        session_key: input.session_key,
+                Ok(AcceptRunOutcome {
+                    accepted: AssistantRunAccepted {
+                        client_request_id: input.client_request_id,
+                        run_id: input.run_id,
+                        turn_id: input.turn_id,
+                        session: AssistantSessionRef {
+                            domain: SecurityDomain::Normal,
+                            session_key,
+                        },
+                        state: RunState::Accepted,
+                        state_version: 0,
                     },
-                    state: RunState::Accepted,
-                    state_version: 0,
+                    is_new: true,
                 })
             })
         })
@@ -2210,11 +2249,12 @@ fn accepted_for_client_request(
 fn intake_fingerprint(
     input: &AcceptRunInput,
     external_tool_grants: &[crate::ai_runtime::run_contract::ExternalToolGrantRef],
+    create_session: bool,
 ) -> AppResult<String> {
     #[derive(Serialize)]
     #[serde(rename_all = "camelCase")]
     struct IntakeFingerprint<'a> {
-        session_key: &'a str,
+        session_key: Option<&'a str>,
         message: &'a str,
         content_parts: &'a Option<Vec<ContentPart>>,
         explicit_references: &'a [ContextReferenceWire],
@@ -2226,7 +2266,7 @@ fn intake_fingerprint(
     }
 
     let canonical = serde_json::to_vec(&IntakeFingerprint {
-        session_key: &input.session_key,
+        session_key: (!create_session).then_some(input.session_key.as_str()),
         message: &input.message,
         content_parts: &input.content_parts,
         explicit_references: &input.explicit_references,

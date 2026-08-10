@@ -261,11 +261,6 @@ export function useAiSidecarBridge({
     }
     if (visibilityChanged) {
       observedAssistantVisibleRef.current = assistantVisible;
-      // A hidden Agent destroys the live candidate. Reopening it is an
-      // explicit new presentation opportunity, so a manually dismissed or
-      // already-consumed selection may be established again.
-      suppressedSelectionKeyRef.current = null;
-      currentSelectionKeyRef.current = null;
     }
     if (!ed || !assistantVisible || !selectionEnabled) {
       clearSelectionCandidate();
@@ -349,6 +344,9 @@ export function useAiSidecarBridge({
   const sendSelectionToAi = useCallback(
     async (options?: { prefill?: string }) => {
       setPrefillMessage(options?.prefill ?? null);
+      // This command is the user's explicit request to attach the current
+      // selection again, even if that exact candidate was dismissed earlier.
+      suppressedSelectionKeyRef.current = null;
       syncSelectionCandidate();
     },
     [syncSelectionCandidate],

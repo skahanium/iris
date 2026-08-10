@@ -25,6 +25,7 @@ pub const EMBEDDING_MODEL_FINGERPRINT: &str =
     "Xenova/bge-small-zh-v1.5@fcecc3c5fef6becfa2b2bdda15c1c938857be534#sha256:69a0b846f4f116b5e6aabf9546ea6754d02264f3211a13a1bd69b31b8040749a";
 pub const EMBEDDING_DIMENSION: usize = 512;
 const QUERY_INSTRUCTION: &str = "\u{4e3a}\u{8fd9}\u{4e2a}\u{53e5}\u{5b50}\u{751f}\u{6210}\u{8868}\u{793a}\u{4ee5}\u{7528}\u{4e8e}\u{68c0}\u{7d22}\u{76f8}\u{5173}\u{6587}\u{7ae0}\u{ff1a}";
+const QUERY_BATCH_SIZE: usize = 16;
 const BUNDLED_MODEL_SUBDIRECTORY: &str = "models/bge-small-zh-v1.5";
 const READY_MARKER: &str = ".iris-model-ready.json";
 const REQUIRED_MODEL_FILES: [&str; 5] = [
@@ -288,6 +289,40 @@ pub fn embed_text(text: &str) -> AppResult<Vec<f32>> {
 /// Generate a retrieval-query embedding with BGE's Chinese retrieval instruction.
 pub fn embed_query(query: &str) -> AppResult<Vec<f32>> {
     embed_text(&format!("{QUERY_INSTRUCTION}{query}"))
+}
+
+/// Batch-embed retrieval queries while preserving BGE's query instruction.
+///
+/// The model is locked once and queries are submitted in bounded batches so
+/// release evaluation avoids one ORT invocation per labelled query without
+/// ever using the document-embedding path for query vectors.
+pub fn embed_queries_batch(queries: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+    if queries.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut model = get_embedder()?;
+    let mut output = Vec::with_capacity(queries.len());
+    for batch in queries.chunks(QUERY_BATCH_SIZE) {
+        let instructed = instructed_queries(batch);
+        let texts = instructed.iter().map(String::as_str).collect::<Vec<_>>();
+        let embeddings = model
+            .embed(&texts, None)
+            .map_err(|error| AppError::Embed(error.to_string()))?;
+        output.extend(
+            embeddings
+                .into_iter()
+                .map(validate_embedding_dimension)
+                .collect::<AppResult<Vec<_>>>()?,
+        );
+    }
+    Ok(output)
+}
+
+fn instructed_queries(queries: &[&str]) -> Vec<String> {
+    queries
+        .iter()
+        .map(|query| format!("{QUERY_INSTRUCTION}{query}"))
+        .collect()
 }
 
 /// Batch-embed multiple texts in a single model call for better throughput.
@@ -607,7 +642,10 @@ fn truncate_snippet(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes_to_f32, f32_to_bytes, initialize_once, validate_bundled_model_directory};
+    use super::{
+        bytes_to_f32, f32_to_bytes, initialize_once, instructed_queries,
+        validate_bundled_model_directory,
+    };
     use std::fs;
     use std::sync::{Mutex, OnceLock};
     #[cfg(feature = "sqlite-vec")]
@@ -659,6 +697,21 @@ mod tests {
         let model = initialize_once(&cell, &initialization, || Ok(7_u8)).unwrap();
         assert_eq!(*model, 7);
         assert_eq!(cell.get(), Some(&7));
+    }
+
+    #[test]
+    fn query_batches_preserve_the_bge_retrieval_instruction() {
+        let queries = instructed_queries(&["合同解除条件", "项目里程碑"]);
+
+        assert_eq!(queries.len(), 2);
+        assert_eq!(
+            queries[0],
+            format!("{}合同解除条件", super::QUERY_INSTRUCTION)
+        );
+        assert_eq!(
+            queries[1],
+            format!("{}项目里程碑", super::QUERY_INSTRUCTION)
+        );
     }
 
     #[test]
@@ -886,6 +939,7 @@ mod tests {
 
     #[cfg(feature = "sqlite-vec")]
     #[test]
+    #[ignore = "50k scale ladder runs once per main SHA in release-readiness"]
     fn sqlite_vec_knn_scale_ladder() {
         for scale in [1_000_i64, 10_000, 25_000, 50_000] {
             let db = crate::storage::db::Database::open_in_memory()

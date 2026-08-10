@@ -223,7 +223,7 @@ describe("assistant sidecar selection reference bridge", () => {
     expect(api.editorSelectionCandidate?.key).not.toBe(acceptedCandidateKey);
   });
 
-  it("allows a dismissed selection to re-establish after Agent is reopened", async () => {
+  it("keeps a dismissed selection suppressed after Agent is reopened", async () => {
     await waitFor(() =>
       expect(api.editorSelectionCandidate?.status).toBe("ready"),
     );
@@ -237,6 +237,20 @@ describe("assistant sidecar selection reference bridge", () => {
     visible = true;
     await act(async () => {
       root?.render(createElement(Host));
+    });
+    expect(api.editorSelectionCandidate).toBeNull();
+  });
+
+  it("allows the user to explicitly request the same dismissed selection again", async () => {
+    await waitFor(() =>
+      expect(api.editorSelectionCandidate?.status).toBe("ready"),
+    );
+    act(() => api.dismissEditorSelectionReference());
+    expect(api.editorSelectionCandidate).toBeNull();
+
+    await act(async () => {
+      await api.sendSelectionToAi();
+      await flushValidation();
     });
     await waitFor(() =>
       expect(api.editorSelectionCandidate?.status).toBe("ready"),

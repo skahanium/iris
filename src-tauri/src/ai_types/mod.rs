@@ -545,7 +545,7 @@ pub struct EditorRangeWire {
 
 /// Wire-safe context reference passed through `assistant_run_start`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ContextReferenceWire {
     pub id: String,
     pub kind: ContextReferenceKind,

@@ -84,7 +84,7 @@ export interface SourceSpan {
 /** Explicit user-authorized reference supplied to exactly one Run. */
 export interface ContextReference {
   id: string;
-  kind: "selection" | "paragraph" | "heading" | "note";
+  kind: "selection" | "paragraph" | "heading" | "note" | "artifact";
   filePath: string | null;
   contentHash: string | null;
   utf8Range: SourceSpan | null;

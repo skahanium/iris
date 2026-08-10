@@ -18,8 +18,9 @@ use iris_lib::ai_runtime::retrieval_broker::{
 };
 use iris_lib::ai_runtime::retrieval_scope::RetrievalScope;
 use iris_lib::embedding::engine::{
-    embed_texts_batch, f32_to_bytes, set_embedding_runtime_enabled, EMBEDDING_DIMENSION,
-    EMBEDDING_MODEL_FINGERPRINT, EMBEDDING_MODEL_ID,
+    embed_queries_batch, embed_texts_batch, ensure_embedding_model_available, f32_to_bytes,
+    set_embedding_runtime_enabled, EMBEDDING_DIMENSION, EMBEDDING_MODEL_FINGERPRINT,
+    EMBEDDING_MODEL_ID,
 };
 use iris_lib::error::{AppError, AppResult};
 use iris_lib::indexer::scan::index_vault_incremental;
@@ -913,31 +914,44 @@ fn cached_embedder(
 #[ignore = "requires the verified bundled BGE model and sqlite-vec"]
 fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
     set_embedding_runtime_enabled(true);
+    let gate_started = Instant::now();
+    let model_load_started = Instant::now();
+    ensure_embedding_model_available().expect("load verified bundled BGE model");
+    let model_load_ms = model_load_started.elapsed().as_millis();
     let fixture = load_fixture();
     let database = iris_lib::storage::db::Database::open_in_memory()
         .expect("open provisioned sqlite-vec evaluation database");
     database
         .with_conn(|conn| {
+            let indexing_started = Instant::now();
             index_vault_incremental(conn, &fixture_root())?;
-            eprintln!("[rag-gate] fixture indexed");
+            let indexing_ms = indexing_started.elapsed().as_millis();
+            let document_embedding_started = Instant::now();
             populate_fixture_chunk_embeddings(conn);
-            eprintln!("[rag-gate] embeddings populated");
+            let document_embedding_ms = document_embedding_started.elapsed().as_millis();
 
             let mut metrics = BrokerMetrics::default();
             let mut vector_evidence = VectorEvidenceMetrics::default();
             // Real-model ORT inference dominates the gate runtime on hosted
             // runners, so each labelled query is embedded exactly once and
             // both broker calls (vector-only + hybrid) read from the cache.
-            let query_embeddings: std::collections::HashMap<String, Vec<f32>> =
-                fixture
-                    .queries
-                    .iter()
-                    .map(|query| {
-                        let embedding = iris_lib::embedding::engine::embed_query(&query.query)
-                            .expect("embed labelled query");
-                        (query.query.clone(), embedding)
-                    })
-                    .collect();
+            let query_embedding_started = Instant::now();
+            let query_texts = fixture
+                .queries
+                .iter()
+                .map(|query| query.query.as_str())
+                .collect::<Vec<_>>();
+            let query_vectors =
+                embed_queries_batch(&query_texts).expect("batch-embed labelled queries");
+            assert_eq!(query_vectors.len(), fixture.queries.len());
+            let query_embeddings: std::collections::HashMap<String, Vec<f32>> = fixture
+                .queries
+                .iter()
+                .map(|query| query.query.clone())
+                .zip(query_vectors)
+                .collect();
+            let query_embedding_ms = query_embedding_started.elapsed().as_millis();
+            let retrieval_started = Instant::now();
             for (query_index, query) in fixture.queries.iter().enumerate() {
                 if query_index % 10 == 0 {
                     eprintln!("[rag-gate] query {query_index}/{}", fixture.queries.len());
@@ -996,6 +1010,19 @@ fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
                     metrics.normalized_discounted_gain_sum += 1.0 / ((rank + 1) as f64).log2();
                 }
             }
+            let retrieval_and_scoring_ms = retrieval_started.elapsed().as_millis();
+
+            eprintln!(
+                "RAG stage timings: {}",
+                serde_json::json!({
+                    "modelLoadMs": model_load_ms,
+                    "fixtureIndexMs": indexing_ms,
+                    "documentEmbeddingMs": document_embedding_ms,
+                    "queryEmbeddingMs": query_embedding_ms,
+                    "retrievalAndScoringMs": retrieval_and_scoring_ms,
+                    "totalMs": gate_started.elapsed().as_millis(),
+                })
+            );
 
             emit_result_metadata("provisioned-sqlite-vec", &metrics);
             eprintln!(

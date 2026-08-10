@@ -2116,10 +2116,11 @@ pub(crate) fn generate_pressure_staircases() -> Result<Vec<PressureStaircase>, E
         },
         PressureStaircase {
             dimension: PressureDimension::WebEvidenceCount,
-            // The initial strict-Web prefetch is intentionally capped at eight
-            // provider results. The next measured point is the full twelve-row
-            // Run budget, followed immediately by the rejected thirteenth.
-            levels: vec![1, 2, 4, 8, 12, 13, 14],
+            // This axis measures the one deterministic strict-Web prefetch,
+            // which is capped at eight provider results. The separate Run Web
+            // reservation tests retain the twelve-row aggregate budget and
+            // the hard-boundary suite keeps proving that thirteen is blocked.
+            levels: vec![1, 2, 4, 8, 9, 12, 13],
         },
         PressureStaircase {
             dimension: PressureDimension::WebLatency,
@@ -5789,12 +5790,6 @@ async fn execute_headless_core_case_with_local_body(
             })
             .map_err(|_| EvalContractError::new("eval_vault_index_failed"))?;
     }
-    let requires_online_web = scenario.web_state() == WebState::Online
-        && scenario
-            .manifest
-            .required_sources
-            .iter()
-            .any(|source| source.kind == SourceKind::Web);
     let explicit_references = if scenario
         .manifest
         .local_authorization
@@ -5834,32 +5829,13 @@ async fn execute_headless_core_case_with_local_body(
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     };
-    let envelope = RunIntake::resolve_envelope(&request)
-        .map_err(|_| EvalContractError::new("eval_run_intake_failed"))?;
     let sink = HeadlessEvaluationSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
         .map_err(|_| EvalContractError::new("eval_run_intake_failed"))?;
-    // Keep the headless protocol double aligned with the accepted production
-    // dispatch. Strict simple facts now use the verified Direct route: Web is
-    // prefetched by the executor and the provider receives no tool surface.
-    // Research and high-stakes cases still exercise the bounded ToolLoop.
-    let scripts = if requires_online_web
-        && envelope.effort == crate::ai_runtime::run_contract::Effort::ToolLoop
-    {
-        vec![
-            sse_tool_call(
-                &format!("agent-capacity-web-call-{}", scenario.case_id()),
-                "web_search",
-                &serde_json::json!({
-                    "query": format!("agent-capacity-case:{}", scenario.case_id()),
-                })
-                .to_string(),
-            ),
-            sse_content(&final_content),
-        ]
-    } else {
-        vec![sse_content(&final_content)]
-    };
+    // Required Web evidence is now a real deterministic prefetch before the
+    // provider turn. The protocol double must answer from that injected
+    // evidence instead of fabricating a duplicate model-initiated search.
+    let scripts = vec![sse_content(&final_content)];
     let llm = spawn_llm_protocol_double(scripts)
         .await
         .map_err(|_| EvalContractError::new("eval_llm_double_failed"))?;
@@ -7241,11 +7217,7 @@ pub(crate) async fn execute_pressure_staircases(
         .levels
         .iter()
         .copied()
-        .map(|level| {
-            repeat_pressure_level(level, |value| {
-                probe_explicit_material_limit(value as usize, true)
-            })
-        })
+        .map(|level| repeat_pressure_level(level, probe_explicit_material_pressure_level))
         .collect::<Result<Vec<_>, _>>()?;
     let material_chars = schedule(PressureDimension::LocalMaterialChars)?
         .levels
@@ -7650,24 +7622,23 @@ fn probe_explicit_material_limit(
     let vault = directory.path().join("vault");
     std::fs::create_dir_all(vault.join("notes"))
         .map_err(|_| EvalContractError::new("boundary_vault_failed"))?;
-    let body = "bounded material";
-    std::fs::write(vault.join("notes/material.md"), body)
-        .map_err(|_| EvalContractError::new("boundary_vault_failed"))?;
-    let hash = crate::cas::hash::content_hash_str(body);
-    let references = (0..count)
-        .map(|index| {
-            synthetic_reference(
-                format!("material-{index}"),
-                crate::ai_types::ContextReferenceKind::Note,
-                "notes/material.md",
-                &hash,
-                None,
-            )
-        })
-        .collect();
+    let mut references = Vec::with_capacity(count);
+    for index in 0..count {
+        let body = format!("bounded material {index}");
+        let path = format!("notes/material-{index}.md");
+        std::fs::write(vault.join(&path), &body)
+            .map_err(|_| EvalContractError::new("boundary_vault_failed"))?;
+        references.push(synthetic_reference(
+            format!("material-{index}"),
+            crate::ai_types::ContextReferenceKind::Note,
+            &path,
+            &crate::cas::hash::content_hash_str(&body),
+            None,
+        ));
+    }
     let state = crate::app::AppState::new(directory.path().join("data"))
         .map_err(|_| EvalContractError::new("boundary_state_failed"))?;
-    let accepted = crate::ai_runtime::run_intake::RunIntake::start(
+    let intake = crate::ai_runtime::run_intake::RunIntake::start(
         &state.db,
         boundary_request(
             format!("boundary-material-{count}"),
@@ -7675,19 +7646,32 @@ fn probe_explicit_material_limit(
             references,
             false,
         ),
-    )
-    .map_err(|_| EvalContractError::new("boundary_intake_failed"))?;
+    );
+    if !should_accept {
+        return Ok(
+            intake.is_err_and(|error| error.to_string() == "agent_run_invalid_explicit_reference")
+        );
+    }
+    let accepted = intake.map_err(|_| EvalContractError::new("boundary_intake_failed"))?;
     let result = crate::ai_runtime::run_context::RunContextAssembler::assemble(
         &state.db,
         Some(&vault),
         &accepted.session.session_key,
         &accepted.run_id,
     );
-    Ok(if should_accept {
-        result.is_ok_and(|context| context.materials.len() == count)
-    } else {
-        result.is_err_and(|error| error.to_string() == "agent_run_invalid_explicit_reference")
-    })
+    Ok(result.is_ok_and(|context| context.materials.len() == count))
+}
+
+#[cfg(test)]
+fn probe_explicit_material_pressure_level(count: u32) -> Result<bool, EvalContractError> {
+    if count <= 12 {
+        return probe_explicit_material_limit(count as usize, true);
+    }
+    // A pressure observation records whether the tested load is usable. The
+    // separate hard-boundary probe verifies that the thirteenth reference is
+    // rejected with the precise intake error; here that expected rejection is
+    // therefore a failed capacity observation, not an evaluation failure.
+    Ok(!probe_explicit_material_limit(count as usize, false)?)
 }
 
 #[cfg(test)]
@@ -8386,11 +8370,10 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
         .tool_calls
         .lock()
         .map_err(|_| EvalContractError::new("boundary_sink_lock_failed"))?;
-    let expected_tool_calls = if result_count >= 8 { 2 } else { 1 };
     Ok(
         snapshot.run.state == crate::ai_runtime::run_contract::RunState::Completed
             && captures.len() == 1
-            && calls.len() == expected_tool_calls
+            && calls.len() == 1
             && evidence_count == result_count.min(12)
             && result_count <= 12,
     )
@@ -11176,20 +11159,7 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
         .into_iter()
         .map(|scenario| {
             let case_id = scenario.case_id();
-            // See `execute_live_pilot_case`: this local-double proof treats
-            // its loopback Web transport as available for every Web-required
-            // scenario, including matrix rows that model production Offline.
-            let requires_online_web = matches!(
-                scenario.evidence_group(),
-                EvidenceGroup::WebOnly | EvidenceGroup::Hybrid
-            );
-            (
-                case_id,
-                (
-                    requires_online_web,
-                    live_pilot_dynamic_final_content(&scenario),
-                ),
-            )
+            (case_id, live_pilot_dynamic_final_content(&scenario))
         })
         .collect::<HashMap<_, _>>();
     let captures = Arc::new(Mutex::new(Vec::new()));
@@ -11200,22 +11170,11 @@ pub(crate) async fn spawn_live_pilot_dynamic_llm_protocol_double(
                 crate::error::AppError::msg("live_pilot_dynamic_double_accept_failed")
             })?;
             let captured = read_http_request(&mut socket).await?;
-            let (case_id, _, has_web_result) = live_pilot_dynamic_request_shape(&captured.body)?;
-            let (requires_online_web, final_content) = plans.get(&case_id).ok_or_else(|| {
+            let (case_id, _, _) = live_pilot_dynamic_request_shape(&captured.body)?;
+            let final_content = plans.get(&case_id).ok_or_else(|| {
                 crate::error::AppError::msg("live_pilot_dynamic_double_case_unknown")
             })?;
-            let script = if *requires_online_web && !has_web_result {
-                sse_tool_call(
-                    &format!("live-pilot-web-call-{case_id}"),
-                    "web_search",
-                    &serde_json::json!({
-                        "query": format!("agent-live-pilot-case:{case_id}"),
-                    })
-                    .to_string(),
-                )
-            } else {
-                sse_content(final_content)
-            };
+            let script = sse_content(final_content);
             task_captures
                 .lock()
                 .map_err(|_| crate::error::AppError::msg("eval_protocol_double_lock_failed"))?

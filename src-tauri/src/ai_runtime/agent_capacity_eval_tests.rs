@@ -2476,7 +2476,7 @@ fn pressure_plan_covers_every_dimension_with_geometric_levels_and_six_terminal_c
         .expect("web evidence count staircase");
     let serialized = serde_json::to_value(web_evidence).expect("serialized staircase");
     assert_eq!(serialized["dimension"], "web_evidence_count");
-    assert_eq!(web_evidence.levels(), &[1, 2, 4, 8, 12, 13, 14]);
+    assert_eq!(web_evidence.levels(), &[1, 2, 4, 8, 9, 12, 13]);
 }
 
 #[test]
@@ -2687,7 +2687,7 @@ async fn every_pressure_level_has_five_real_observations_and_closed_boundary_evi
         (PressureDimension::LocalMaterial, 12, 13),
         (PressureDimension::LocalMaterialChars, 32_000, 32_001),
         (PressureDimension::ToolLoop, 24, 25),
-        (PressureDimension::WebEvidenceCount, 12, 13),
+        (PressureDimension::WebEvidenceCount, 8, 9),
         (PressureDimension::Output, 32_000, 32_001),
     ] {
         let execution = executions

@@ -533,6 +533,61 @@ describe("useUnifiedAssistantSend", () => {
     expect(consumeEditorSelectionReference).not.toHaveBeenCalled();
   });
 
+  it("rebuilds file signatures and request identity after an automatic replay also fails", async () => {
+    getFileSignature
+      .mockResolvedValueOnce({
+        path: "notes/Guide.md",
+        contentHash: "first-content-hash",
+        utf8Bytes: 10,
+      })
+      .mockResolvedValueOnce({
+        path: "notes/Guide.md",
+        contentHash: "second-content-hash",
+        utf8Bytes: 11,
+      });
+    start.mockRejectedValue(new Error("transport unavailable"));
+    renderProbe(normalOptions({ contextReferences: [] }));
+
+    await act(async () => api?.send());
+    await act(async () => api?.send());
+
+    expect(start).toHaveBeenCalledTimes(4);
+    expect(getFileSignature).toHaveBeenCalledTimes(2);
+    expect(start.mock.calls[0]?.[0].clientRequestId).toBe(
+      start.mock.calls[1]?.[0].clientRequestId,
+    );
+    expect(start.mock.calls[2]?.[0].clientRequestId).toBe(
+      start.mock.calls[3]?.[0].clientRequestId,
+    );
+    expect(start.mock.calls[2]?.[0].clientRequestId).not.toBe(
+      start.mock.calls[0]?.[0].clientRequestId,
+    );
+    expect(
+      start.mock.calls[0]?.[0].turn.explicitReferences.at(-1)?.contentHash,
+    ).toBe("first-content-hash");
+    expect(
+      start.mock.calls[2]?.[0].turn.explicitReferences.at(-1)?.contentHash,
+    ).toBe("second-content-hash");
+  });
+
+  it("explains that changed explicit references must be attached again", async () => {
+    const setError = vi.fn();
+    start.mockRejectedValue(new Error("agent_run_explicit_reference_changed"));
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        setError,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(setError).toHaveBeenLastCalledWith(
+      "引用的文件已发生变化，请重新附加后再发送。",
+    );
+  });
+
   it("replays an uncertain acceptance once with the original client request id", async () => {
     const commitAcceptedTurn = vi.fn();
     start

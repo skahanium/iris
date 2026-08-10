@@ -1712,7 +1712,7 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
         .join("\n");
     assert!(prompt.contains("内容依据"));
     assert!(prompt.contains("写法参考"));
-    assert!(prompt.contains("<authorized-material"));
+    assert!(prompt.contains("<untrusted-material-data>"));
     assert!(!prompt.contains("role=\"authority\""));
     assert!(!prompt.contains("role=\"exemplar\""));
     assert!(!prompt.contains("role=\"reference\""));
