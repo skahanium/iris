@@ -34,6 +34,14 @@ interface AppShellProps {
   overlays?: ReactNode;
 }
 
+type NavigatorTransitionState = "closed" | "visible" | "exiting";
+
+function prefersReducedMotion(): boolean {
+  return (
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
+  );
+}
+
 export function AppShell({
   tabBar,
   editor,
@@ -71,6 +79,38 @@ export function AppShell({
   } = layout;
   // 有效主平面：禅模式临时显示文档（§5.1），不覆盖 assistant_focus 意图。
   const mainHidden = !zen && projection.primarySurface === "assistant_focus";
+  const navigatorRequested =
+    navigator !== null &&
+    navigator !== undefined &&
+    projection.navigator !== "closed";
+  const [navigatorTransition, setNavigatorTransition] =
+    useState<NavigatorTransitionState>(() =>
+      navigatorRequested ? "visible" : "closed",
+    );
+  const navigatorRequestedRef = useRef(navigatorRequested);
+  navigatorRequestedRef.current = navigatorRequested;
+
+  useEffect(() => {
+    if (navigatorRequested) {
+      setNavigatorTransition("visible");
+      return;
+    }
+    setNavigatorTransition((current) => {
+      if (current === "closed") return current;
+      return zen || prefersReducedMotion() ? "closed" : "exiting";
+    });
+  }, [navigatorRequested, zen]);
+
+  const handleNavigatorAnimationEnd = useCallback(
+    (event: React.AnimationEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+      if (event.animationName !== "iris-fade-out") return;
+      if (navigatorTransition === "exiting" && !navigatorRequestedRef.current) {
+        setNavigatorTransition("closed");
+      }
+    },
+    [navigatorTransition],
+  );
 
   // 受控意图同步：外部状态（快捷键/标题栏/面板动作）变化时写入布局策略；
   // resize 只改实测尺寸，不经过这些通道，因此不会改写用户意图。
@@ -235,16 +275,24 @@ export function AppShell({
   );
 
   const navigatorNode =
-    navigator && projection.navigator !== "closed" ? (
+    navigator && navigatorTransition !== "closed" ? (
       <div
         data-testid="workspace-navigator"
         data-presentation={projection.navigator}
-        aria-hidden={mainHidden || undefined}
+        data-transition={
+          navigatorTransition === "exiting" ? "exiting" : "entering"
+        }
+        aria-hidden={
+          mainHidden || navigatorTransition === "exiting" || undefined
+        }
         className={cn(
           "h-full min-h-0 overflow-hidden border-r border-border-subtle",
           projection.navigator === "pinned"
             ? "relative z-navigator shrink-0"
             : "absolute inset-y-0 left-0 z-navigator-overlay bg-panel shadow-overlay",
+          navigatorTransition === "exiting"
+            ? "pointer-events-none motion-safe:animate-iris-fade-out motion-reduce:animate-none"
+            : "motion-safe:animate-iris-fade-in motion-reduce:animate-none",
           mainHidden && "pointer-events-none invisible",
         )}
         style={{
@@ -252,7 +300,11 @@ export function AppShell({
             projection.navigator === "pinned"
               ? "18rem"
               : "min(18rem, calc(100% - 3rem))",
+          // Keep the last keyframe until React unmounts after exit; without it,
+          // the browser briefly restores opacity to 1 and the drawer flashes.
+          animationFillMode: "both",
         }}
+        onAnimationEnd={handleNavigatorAnimationEnd}
       >
         {navigator}
       </div>

@@ -465,8 +465,8 @@ export function WorkspaceNavigator({
       data-testid="workspace-navigator"
       className="relative flex h-full min-h-0 flex-col bg-panel text-xs"
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-2">
-        <span className="min-w-0 flex-1 text-ui font-medium text-foreground">
+      <div className="flex shrink-0 items-center justify-center border-b border-border-subtle px-3 py-2">
+        <span className="min-w-0 text-ui font-medium text-foreground">
           笔记库
         </span>
       </div>

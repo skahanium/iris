@@ -95,6 +95,15 @@ function fireResize(widthPx: number) {
   });
 }
 
+function fireAnimationEnd(element: Element, animationName: string) {
+  const event = new Event("animationend", { bubbles: true });
+  Object.defineProperty(event, "animationName", {
+    configurable: true,
+    value: animationName,
+  });
+  fireEvent(element, event);
+}
+
 describe("AppShell 自适应布局：单实例稳定挂载与投影", () => {
   let computedStyleSpy: ReturnType<typeof vi.spyOn>;
 
@@ -310,6 +319,83 @@ describe("AppShell 自适应布局：单实例稳定挂载与投影", () => {
         .getByTestId("workspace-navigator")
         .getAttribute("data-presentation"),
     ).toBe("peek");
+  });
+
+  it("导航关闭时淡出后卸载，关闭中重新打开不受旧动画影响", () => {
+    const view = renderShell({ navigatorOpen: true });
+    fireResize(2000);
+
+    const renderWithNavigatorOpen = (navigatorOpen: boolean) => {
+      view.rerender(
+        <AppShell
+          tabBar={<Sentinel label="tab" />}
+          editor={<Sentinel label="editor" />}
+          aiPanel={<Sentinel label="agent" />}
+          navigator={<Sentinel label="navigator" />}
+          statusBar={<Sentinel label="status" />}
+          navigatorOpen={navigatorOpen}
+        />,
+      );
+      fireResize(2000);
+    };
+
+    renderWithNavigatorOpen(false);
+
+    const closingNavigator = screen.getByTestId("workspace-navigator");
+    expect(closingNavigator.getAttribute("data-transition")).toBe("exiting");
+    expect(closingNavigator.getAttribute("aria-hidden")).toBe("true");
+    expect(closingNavigator.className).toContain("pointer-events-none");
+    expect(closingNavigator.className).toContain(
+      "motion-safe:animate-iris-fade-out",
+    );
+    expect(closingNavigator.style.animationFillMode).toBe("both");
+    fireAnimationEnd(closingNavigator, "iris-fade-in");
+    expect(screen.getByTestId("workspace-navigator")).toBe(closingNavigator);
+
+    renderWithNavigatorOpen(true);
+
+    const reopenedNavigator = screen.getByTestId("workspace-navigator");
+    expect(reopenedNavigator.getAttribute("data-transition")).toBe("entering");
+    fireEvent.animationEnd(reopenedNavigator);
+    expect(screen.getByTestId("workspace-navigator")).toBe(reopenedNavigator);
+
+    renderWithNavigatorOpen(false);
+    const finalClosingNavigator = screen.getByTestId("workspace-navigator");
+    fireAnimationEnd(finalClosingNavigator, "iris-fade-out");
+    expect(screen.queryByTestId("workspace-navigator")).toBeNull();
+  });
+
+  it("减弱动效时导航关闭立即卸载", () => {
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: true }),
+    });
+
+    try {
+      const view = renderShell({ navigatorOpen: true });
+      fireResize(2000);
+      expect(screen.getByTestId("workspace-navigator")).toBeTruthy();
+
+      view.rerender(
+        <AppShell
+          tabBar={<Sentinel label="tab" />}
+          editor={<Sentinel label="editor" />}
+          aiPanel={<Sentinel label="agent" />}
+          navigator={<Sentinel label="navigator" />}
+          statusBar={<Sentinel label="status" />}
+          navigatorOpen={false}
+        />,
+      );
+      fireResize(2000);
+
+      expect(screen.queryByTestId("workspace-navigator")).toBeNull();
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    }
   });
 
   it("focus 时面板与内容容器不残留侧车像素宽度，占满主工作区", () => {

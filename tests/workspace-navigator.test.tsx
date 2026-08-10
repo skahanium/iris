@@ -246,7 +246,9 @@ describe("WorkspaceNavigator", () => {
     renderNavigator();
     await screen.findByTestId("workspace-navigator-tree");
 
-    expect(screen.getByText("笔记库")).toBeTruthy();
+    const title = screen.getByText("笔记库");
+    expect(title).toBeTruthy();
+    expect(title.parentElement?.className).toContain("justify-center");
     expect(screen.queryByRole("button", { name: /固定笔记库导航/ })).toBeNull();
     expect(screen.queryByText("Ctrl/Cmd+\\")).toBeNull();
   });

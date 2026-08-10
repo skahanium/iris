@@ -58,7 +58,7 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 | `--text-ui`      | 13px | 菜单项、列表次行     |
 | `--text-body`    | 14px | 表单与面板正文       |
 
-动效通常为 150–200ms（`--motion-fast` / `--motion-base` / `--motion-exit`）；`prefers-reduced-motion` 下必须降级。浮层进场仅 opacity（见正文规则）；禁止依赖未实现的 `animate-in` 空类名。
+动效通常为 150–200ms（`--motion-fast` / `--motion-base` / `--motion-exit`）；`prefers-reduced-motion` 下必须降级。浮层进场仅 opacity（见正文规则）；文件树抽屉打开/关闭均使用透明度动效，关闭后才卸载，禁止通过位移或宽度动画推动正文；禁止依赖未实现的 `animate-in` 空类名。
 
 ## Typography（正文）
 
