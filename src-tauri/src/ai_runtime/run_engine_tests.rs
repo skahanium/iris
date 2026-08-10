@@ -4375,8 +4375,9 @@ async fn domain_verifier_rejects_exemplar_fact_before_any_visible_delta_or_final
         },
         "起草一份检查通知",
         &[DomainMaterial {
-            role: DomainMaterialRole::Exemplar,
-            origin: DomainMaterialOrigin::UserAuthorizedMaterial,
+            origin: DomainMaterialOrigin::LocalRetrieval {
+                role: DomainMaterialRole::Exemplar,
+            },
             label: "通知范文".into(),
             content: "北京市教育局将于2026年3月12日组织专项检查。".into(),
         }],

@@ -41,8 +41,8 @@ const MAX_RECENT_CONVERSATION_TOKENS: u32 = 8_000;
 /// One authorized local source body held only while building a Provider request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RunContextMaterial {
-    /// Policy-assigned role for this already-authorized source.
-    pub(crate) role: DomainMaterialRole,
+    /// Mutually exclusive source boundary for this already-authorized source.
+    pub(crate) origin: DomainMaterialOrigin,
     pub(crate) source_path: String,
     pub(crate) content_hash: String,
     pub(crate) source_span_start: i64,
@@ -99,8 +99,7 @@ impl RunContext {
             .materials
             .iter()
             .map(|material| DomainMaterial {
-                role: material.role,
-                origin: material_prompt_origin(material),
+                origin: material.origin,
                 label: material.source_path.clone(),
                 content: material.content.clone(),
             })
@@ -565,6 +564,8 @@ impl RunContextAssembler {
             )?;
         let mut materials = Vec::with_capacity(input.explicit_references.len());
         let mut fallback_paths = Vec::new();
+        let mut seen_fallback_paths = HashSet::new();
+        let mut seen_explicit_materials = HashSet::new();
         let mut total_chars = 0usize;
         for reference in &input.explicit_references {
             if reference.file_path.as_deref().is_some_and(|path| {
@@ -576,17 +577,31 @@ impl RunContextAssembler {
                     || scope.decision_for(DocumentCapability::SendToModel)
                         == CapabilityDecision::Deny
             }) {
-                continue;
+                return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
             }
-            match resolve_explicit_reference(vault, reference, &envelope, &corpus_config)? {
+            match resolve_explicit_reference(vault, reference)? {
                 ResolvedExplicitReference::Material(material) => {
+                    let material_key = (
+                        material.source_path.clone(),
+                        material.content_hash.clone(),
+                        material.source_span_start,
+                        material.source_span_end,
+                    );
+                    if !seen_explicit_materials.insert(material_key) {
+                        continue;
+                    }
                     let material_chars = material.content.chars().count();
                     if total_chars.saturating_add(material_chars) > MAX_TOTAL_MATERIAL_CHARS {
                         if reference.kind == ContextReferenceKind::Note {
-                            fallback_paths.push(ExactScopeFallback {
+                            let fallback = ExactScopeFallback {
                                 path: material.source_path,
                                 full_content_hash: material.content_hash,
-                            });
+                            };
+                            if seen_fallback_paths
+                                .insert((fallback.path.clone(), fallback.full_content_hash.clone()))
+                            {
+                                fallback_paths.push(fallback);
+                            }
                             continue;
                         }
                         return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
@@ -595,7 +610,11 @@ impl RunContextAssembler {
                     materials.push(material);
                 }
                 ResolvedExplicitReference::ExactScopeFallback(path) => {
-                    fallback_paths.push(path);
+                    if seen_fallback_paths
+                        .insert((path.path.clone(), path.full_content_hash.clone()))
+                    {
+                        fallback_paths.push(path);
+                    }
                 }
             }
         }
@@ -662,7 +681,12 @@ impl RunContextAssembler {
             })
         });
         for packet in &local_retrieval_packets {
-            let Some(material) = material_from_packet(packet, &envelope) else {
+            let is_authorized_fallback = packet
+                .source_path
+                .as_deref()
+                .is_some_and(|path| fallback_paths.iter().any(|fallback| fallback.path == path));
+            let Some(material) = material_from_packet(packet, &envelope, is_authorized_fallback)
+            else {
                 continue;
             };
             let material_chars = material.content.chars().count();
@@ -731,7 +755,7 @@ impl RunContextAssembler {
                         session_id: context.session_id,
                         run_id: run_id.to_string(),
                         message_seq_first: context.message_seq_first,
-                        material_role: evidence_material_role(material.role),
+                        material_role: legacy_evidence_material_role(material.origin),
                         title: material.source_path.clone(),
                         source_path: material.source_path.clone(),
                         source_span_start: material.source_span_start,
@@ -869,12 +893,18 @@ fn load_previous_run_safety_summary(
     )))
 }
 
-fn evidence_material_role(role: DomainMaterialRole) -> MaterialRole {
-    match role {
-        DomainMaterialRole::Authority => MaterialRole::Authority,
-        DomainMaterialRole::Exemplar => MaterialRole::Exemplar,
-        DomainMaterialRole::Reference => MaterialRole::Reference,
-        DomainMaterialRole::Lookup => MaterialRole::Lookup,
+/// Map the internal origin to the unchanged evidence-table role column.
+/// User-authorized rows intentionally use the compatibility `Reference`
+/// value; prompt and source-summary routing use the origin/reason instead.
+fn legacy_evidence_material_role(origin: DomainMaterialOrigin) -> MaterialRole {
+    match origin {
+        DomainMaterialOrigin::UserAuthorizedMaterial => MaterialRole::Reference,
+        DomainMaterialOrigin::LocalRetrieval { role } => match role {
+            DomainMaterialRole::Authority => MaterialRole::Authority,
+            DomainMaterialRole::Exemplar => MaterialRole::Exemplar,
+            DomainMaterialRole::Reference => MaterialRole::Reference,
+            DomainMaterialRole::Lookup => MaterialRole::Lookup,
+        },
     }
 }
 enum ResolvedExplicitReference {
@@ -890,8 +920,6 @@ struct ExactScopeFallback {
 fn resolve_explicit_reference(
     vault: Option<&Path>,
     reference: &StoredExplicitReference,
-    envelope: &ExecutionEnvelope,
-    corpus_config: &crate::knowledge::corpora::CorpusConfig,
 ) -> AppResult<ResolvedExplicitReference> {
     if reference.stale || reference.invalid_reason.is_some() {
         return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
@@ -957,7 +985,7 @@ fn resolve_explicit_reference(
         return Err(AppError::run(SafeRunErrorCode::InvalidExplicitReference));
     }
     Ok(ResolvedExplicitReference::Material(RunContextMaterial {
-        role: explicit_reference_material_role(envelope, corpus_config, &path),
+        origin: DomainMaterialOrigin::UserAuthorizedMaterial,
         source_path: path,
         content_hash: actual_hash,
         source_span_start,
@@ -1150,6 +1178,7 @@ fn retrieve_exact_fallback_materials(
 fn material_from_packet(
     packet: &ContextPacket,
     envelope: &ExecutionEnvelope,
+    user_authorized: bool,
 ) -> Option<RunContextMaterial> {
     let path = packet.source_path.as_deref()?;
     let span = packet.source_span.as_ref()?;
@@ -1157,8 +1186,15 @@ fn material_from_packet(
         return None;
     }
     let corpus_kind = packet.corpus.as_ref().map(|corpus| corpus.kind.as_str());
+    let origin = if user_authorized {
+        DomainMaterialOrigin::UserAuthorizedMaterial
+    } else {
+        DomainMaterialOrigin::LocalRetrieval {
+            role: resolve_domain_material_role(envelope, &packet.retrieval_reason, corpus_kind),
+        }
+    };
     Some(RunContextMaterial {
-        role: resolve_domain_material_role(envelope, &packet.retrieval_reason, corpus_kind),
+        origin,
         source_path: path.to_string(),
         content_hash: packet.content_hash.clone(),
         source_span_start: span.start as i64,
@@ -1166,17 +1202,6 @@ fn material_from_packet(
         content: packet.excerpt.clone(),
         retrieval_reason: packet.retrieval_reason.clone(),
     })
-}
-
-fn material_prompt_origin(material: &RunContextMaterial) -> DomainMaterialOrigin {
-    if matches!(
-        material.retrieval_reason.as_str(),
-        "explicit_reference" | "explicit_reference_exact_path_fallback"
-    ) {
-        DomainMaterialOrigin::UserAuthorizedMaterial
-    } else {
-        DomainMaterialOrigin::LocalRetrieval
-    }
 }
 
 /// Narrow a mixed local-and-Web request to its local clause before retrieval.
@@ -1263,16 +1288,6 @@ fn resolve_domain_material_role(
     DomainMaterialRole::Reference
 }
 
-fn explicit_reference_material_role(
-    envelope: &ExecutionEnvelope,
-    corpus_config: &crate::knowledge::corpora::CorpusConfig,
-    path: &str,
-) -> DomainMaterialRole {
-    let corpus_kind = crate::knowledge::corpora::corpus_for_path(corpus_config, path)
-        .map(|entry| entry.kind.as_str());
-    resolve_domain_material_role(envelope, "explicit_reference", corpus_kind)
-}
-
 #[cfg(test)]
 mod fallback_version_tests {
     use super::*;
@@ -1320,29 +1335,12 @@ mod fallback_version_tests {
             stale: false,
             invalid_reason: None,
         };
-        let envelope = ExecutionEnvelope {
-            effect: crate::ai_runtime::run_contract::Effect::Answer,
-            context: crate::ai_runtime::run_contract::ContextMode::None,
-            freshness: crate::ai_runtime::run_contract::Freshness::Offline,
-            web_reason: crate::ai_runtime::run_contract::WebDecisionReason::LegacyUnknown,
-            verification_requirement:
-                crate::ai_runtime::run_contract::VerificationRequirement::None,
-            effort: crate::ai_runtime::run_contract::Effort::Direct,
-            security_domain: crate::ai_runtime::run_contract::SecurityDomain::Normal,
-            risk: crate::ai_runtime::run_contract::RiskClass::ReadOnly,
-            modalities: vec![crate::ai_runtime::run_contract::Modality::Text],
-            material_needs: vec![MaterialNeed::Reference],
-            required_capabilities: Vec::new(),
-            explicit_constraints: Vec::new(),
+        let fallback = match resolve_explicit_reference(Some(&vault), &reference)
+            .expect("first read validates version A")
+        {
+            ResolvedExplicitReference::ExactScopeFallback(fallback) => fallback,
+            ResolvedExplicitReference::Material(_) => panic!("long note must use fallback"),
         };
-        let corpus_config = crate::knowledge::corpora::CorpusConfig::default();
-        let fallback =
-            match resolve_explicit_reference(Some(&vault), &reference, &envelope, &corpus_config)
-                .expect("first read validates version A")
-            {
-                ResolvedExplicitReference::ExactScopeFallback(fallback) => fallback,
-                ResolvedExplicitReference::Material(_) => panic!("long note must use fallback"),
-            };
 
         std::fs::write(vault.join("notes/changing.md"), &version_b).expect("version B");
         let hash_b = crate::cas::hash::content_hash_str(&version_b);

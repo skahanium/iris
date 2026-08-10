@@ -1,4 +1,4 @@
-use super::domain_executor::DomainMaterialRole;
+use super::domain_executor::DomainMaterialOrigin;
 use super::run_context::{
     classify_context_assembly_failure, RunContext, RunContextAssembler, RunContextMaterial,
 };
@@ -896,6 +896,19 @@ fn oversized_note_falls_back_to_exact_scope_retrieval_without_truncating_fulltex
     let db = Database::open_in_memory().expect("database");
     index_scoped_note(&db, "notes/long.md", "Long", &body, indexed_excerpt);
     let session = NormalSessionRepository::create(&db).expect("session");
+    let long_reference = ContextReferenceWire {
+        id: "long-note".into(),
+        kind: ContextReferenceKind::Note,
+        file_path: Some("notes/long.md".into()),
+        content_hash: Some(crate::cas::hash::content_hash_str(&body)),
+        utf8_range: None,
+        editor_range: None,
+        excerpt: "client truncation must be ignored".into(),
+        heading_path: None,
+        anchor: None,
+        stale: false,
+        invalid_reason: None,
+    };
     AgentRunRepository::accept(
         &db,
         AcceptRunInput {
@@ -906,19 +919,7 @@ fn oversized_note_falls_back_to_exact_scope_retrieval_without_truncating_fulltex
             turn_id: "turn-long-note-fallback".into(),
             message: "long-note-needle".into(),
             content_parts: None,
-            explicit_references: vec![ContextReferenceWire {
-                id: "long-note".into(),
-                kind: ContextReferenceKind::Note,
-                file_path: Some("notes/long.md".into()),
-                content_hash: Some(crate::cas::hash::content_hash_str(&body)),
-                utf8_range: None,
-                editor_range: None,
-                excerpt: "client truncation must be ignored".into(),
-                heading_path: None,
-                anchor: None,
-                stale: false,
-                invalid_reason: None,
-            }],
+            explicit_references: vec![long_reference.clone(), long_reference],
             context_scope: Default::default(),
             display_mentions: vec![],
             explicit_action: None,
@@ -941,6 +942,9 @@ fn oversized_note_falls_back_to_exact_scope_retrieval_without_truncating_fulltex
     assert_eq!(context.materials.len(), 1);
     assert_eq!(context.materials[0].source_path, "notes/long.md");
     assert_eq!(context.materials[0].content, indexed_excerpt);
+    let plan = context.domain_plan();
+    assert!(plan.rendered_authorized_material.contains(indexed_excerpt));
+    assert!(plan.rendered_local_retrieval.is_empty());
     assert!(
         !context.retrieval_scope.is_unrestricted(),
         "explicit @ notes constrain tool reads to authorized paths"
@@ -1381,6 +1385,10 @@ fn explicit_materials_register_as_run_owned_evidence_without_storing_bodies() {
             .expect("registered evidence");
 
     assert_eq!(evidence_ids.len(), 1);
+    let provenance_policy =
+        AgentEvidenceRepository::provenance_policy(&db, "run-evidence-ledger-context", false)
+            .expect("provenance policy");
+    assert_eq!(provenance_policy.authorized_material_count, 1);
     db.with_read_conn(|conn| {
         let (source_path, body_column_count): (String, i64) = conn.query_row(
             "SELECT source_path, COUNT(*) OVER () FROM session_evidence WHERE id = ?1",
@@ -1679,7 +1687,7 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
             crate::ai_runtime::policy_decision_engine::DocumentPolicy::allow_all(),
         ),
         materials: vec![RunContextMaterial {
-            role: DomainMaterialRole::Reference,
+            origin: DomainMaterialOrigin::UserAuthorizedMaterial,
             source_path: "notes/attached.md".into(),
             content_hash: "hash".into(),
             source_span_start: 0,
@@ -1704,7 +1712,11 @@ fn prompt_applies_the_domain_executor_rules_without_expanding_explicit_context()
         .join("\n");
     assert!(prompt.contains("内容依据"));
     assert!(prompt.contains("写法参考"));
-    assert!(prompt.contains("role=\"reference\""));
+    assert!(prompt.contains("<authorized-material"));
+    assert!(!prompt.contains("role=\"authority\""));
+    assert!(!prompt.contains("role=\"exemplar\""));
+    assert!(!prompt.contains("role=\"reference\""));
+    assert!(!prompt.contains("role=\"lookup\""));
     assert!(prompt.contains("用户明确附上的事实"));
     assert!(!prompt.contains("当前活动文档"));
 }

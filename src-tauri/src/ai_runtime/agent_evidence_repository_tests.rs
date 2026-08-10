@@ -117,6 +117,17 @@ fn local_evidence_is_bound_to_its_normal_run_and_never_persists_a_body() {
         Ok(())
     })
     .expect("stored local evidence metadata");
+
+    let summary = AgentEvidenceRepository::source_summary_for_current_run(
+        &db,
+        "evidence-run",
+        &[evidence.evidence_id],
+    )
+    .expect("source summary");
+    assert!(summary
+        .entries()
+        .iter()
+        .any(|entry| entry.category == "authorized_material" && entry.count == 1));
 }
 
 #[test]

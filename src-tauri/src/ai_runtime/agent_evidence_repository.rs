@@ -16,7 +16,11 @@ use crate::storage::db::Database;
 const MAX_BOUNDED_WEB_EXCERPT_CHARS: usize = 2_000;
 const MAX_METADATA_CHARS: usize = 2_000;
 
-/// Role the explicitly registered material serves for this Run.
+/// Legacy storage role for evidence rows.
+///
+/// Prompt routing never uses this role for user-authorized material. Those
+/// rows retain `Reference` only for the unchanged SQLite shape and are
+/// projected as `UserAuthorizedMaterial` from their retrieval reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MaterialRole {
@@ -39,7 +43,7 @@ pub(crate) struct LocalEvidenceInput {
     pub(crate) run_id: String,
     /// First message sequence that can cite this evidence.
     pub(crate) message_seq_first: i64,
-    /// Explicit purpose of the material for this Run.
+    /// Legacy storage purpose for this Run's evidence row.
     pub(crate) material_role: MaterialRole,
     /// Safe display title.
     pub(crate) title: String,
@@ -146,7 +150,7 @@ impl AgentEvidenceRepository {
         db.with_read_conn(|conn| {
             let mut statement = conn.prepare(
                 "SELECT run_evidence.evidence_id, run_evidence.registration_source,
-                        evidence.source_type, evidence.url
+                        evidence.source_type, evidence.url, evidence.retrieval_reason
                  FROM agent_run_evidence run_evidence
                  JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
                  WHERE run_evidence.run_id = ?1 AND evidence.retired_at IS NULL",
@@ -158,13 +162,24 @@ impl AgentEvidenceRepository {
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
                         row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
             let origins = rows.into_iter().filter_map(
-                |(evidence_id, registration_source, source_type, url)| {
+                |(evidence_id, registration_source, source_type, url, retrieval_reason)| {
                     if !selected.contains(&evidence_id) {
                         return None;
+                    }
+                    if retrieval_reason.as_deref().is_some_and(|reason| {
+                        matches!(
+                            reason,
+                            "explicit_reference" | "explicit_reference_exact_path_fallback"
+                        )
+                    }) {
+                        return Some(
+                            crate::ai_runtime::provenance::InformationOrigin::UserAuthorizedMaterial,
+                        );
                     }
                     match (registration_source.as_str(), source_type.as_str()) {
                         ("context", "local") => Some(
@@ -195,20 +210,24 @@ impl AgentEvidenceRepository {
         strict_web: bool,
     ) -> AppResult<crate::ai_runtime::provenance::ProvenancePolicy> {
         db.with_read_conn(|conn| {
-            let explicit_references_json: String = conn.query_row(
-                "SELECT message.explicit_references_json
-                 FROM agent_runs run
-                 JOIN session_messages message
-                   ON message.session_id = run.session_id AND message.turn_id = run.turn_id
-                 WHERE run.run_id = ?1",
+            // Count the materials actually registered for this Run rather than
+            // the client-supplied reference array. Assembly deduplicates exact
+            // path/hash/range matches, so provenance labels must use the same
+            // cardinality and never expose a phantom M2 for one attachment.
+            let authorized_material_count: usize = conn.query_row(
+                "SELECT COUNT(*)
+                 FROM agent_run_evidence run_evidence
+                 JOIN session_evidence evidence ON evidence.id = run_evidence.evidence_id
+                 WHERE run_evidence.run_id = ?1
+                   AND run_evidence.registration_source = 'context'
+                   AND evidence.source_type = 'local'
+                   AND evidence.retrieval_reason IN (
+                     'explicit_reference', 'explicit_reference_exact_path_fallback'
+                   )
+                   AND evidence.retired_at IS NULL",
                 [run_id],
-                |row| row.get(0),
+                |row| row.get::<_, i64>(0).map(|count| count.max(0) as usize),
             )?;
-            let authorized_material_count = serde_json::from_str::<Vec<serde_json::Value>>(
-                &explicit_references_json,
-            )
-            .map(|references| references.len())
-            .unwrap_or_default();
             let conversation_history_available: bool = conn.query_row(
                 "SELECT EXISTS(
                     SELECT 1 FROM agent_runs prior_run

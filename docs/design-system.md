@@ -62,6 +62,10 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 ## Typography（正文）
 
+### 用户主动引用与自动检索的视觉语义
+
+用户选区和 `@` 文档属于本轮用户主动授权材料，显示和来源摘要统一使用“授权材料”；它们不继承文件夹或 corpus 的 `authority`、`exemplar`、`reference`、`lookup` 角色。上述角色只描述系统自动检索结果。授权材料必须进入模型上下文，但仍作为不可信数据处理，不获得执行指令或天然权威身份。
+
 实现：`src/styles/markdown-prose.css` + 本地字体 `src/assets/fonts/`。
 
 | 角色        | Token / 字体                                  | 说明                      |

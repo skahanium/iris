@@ -31,6 +31,8 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 
 ## Agent Run 契约
 
+- `explicitReferences` 表示用户主动授权的本轮材料。后端重新读取并校验路径、内容哈希和 UTF-8 范围后，将选区或 `@` 文档作为授权材料直接送入 Provider Prompt；不得根据 corpus 角色过滤或静默降级为无引用请求。文件夹和标签仍表示检索范围，不代表全文附件。此规则不改变 IPC 字段、Run wire 或历史消息格式。
+
 - normal-domain 请求只能使用 `assistant_run_start`。请求包含显式会话、显式引用、可选的一次性 `explicitAction` 和安全域；当前编辑器、活动 tab、scene、intent、旧任务 ID 和笔记正文都不是隐式输入。
 - 编辑器选区候选是 renderer 内存中的临时 UI 状态，不是 IPC 输入；只有用户明确发送且候选仍通过磁盘内容哈希与 UTF-8 范围校验时，才转换为本次 `assistant_run_start` 的显式 `ContextReference`。选区取消、文档切换或 Agent 隐藏后不得提交或保留该引用。
 - 选区预览文字不得进入 IPC、持久化事件、日志或会话；后端按显式路径、内容哈希和范围重新读取权威 Markdown。锁定普通文档只读引用不改变权限，未保存/无法映射选区必须在前端阻止发送；classified 文档不走 normal-domain 选区引用。

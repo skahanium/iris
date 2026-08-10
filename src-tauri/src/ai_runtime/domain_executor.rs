@@ -39,15 +39,16 @@ pub(crate) enum DomainMaterialOrigin {
     /// A note, selection, or exact fallback directly selected by the user.
     UserAuthorizedMaterial,
     /// A result retrieved from the eligible local vault for this Run.
-    LocalRetrieval,
+    LocalRetrieval {
+        /// The planner-assigned role used only for automatic retrieval.
+        role: DomainMaterialRole,
+    },
 }
 
 /// One source body already approved by policy and held only for this Run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DomainMaterial {
-    /// The policy-assigned use of this source.
-    pub(crate) role: DomainMaterialRole,
-    /// The provenance boundary that determines the prompt data channel.
+    /// The mutually exclusive source boundary for this material.
     pub(crate) origin: DomainMaterialOrigin,
     /// Safe source label for prompt-local citation and diagnostics.
     pub(crate) label: String,
@@ -178,7 +179,12 @@ impl DomainExecutor {
 
         let allowed_materials = materials
             .iter()
-            .filter(|material| material_allowed(material.role, has_authority, has_exemplar))
+            .filter(|material| match material.origin {
+                DomainMaterialOrigin::UserAuthorizedMaterial => true,
+                DomainMaterialOrigin::LocalRetrieval { role } => {
+                    material_allowed(role, has_authority, has_exemplar)
+                }
+            })
             .collect::<Vec<_>>();
         let style_blueprint = active_executors
             .contains(&DomainExecutorKind::OfficialWriting)
@@ -206,7 +212,8 @@ impl DomainExecutor {
             && !allowed_materials.is_empty()
         {
             instructions.push(
-                "用户已通过 @ 附带授权材料，内容在 <authorized-material> 中。优先直接基于这些材料作答；\
+                "用户已通过 @ 附带授权材料（包括文档选区），内容在 <authorized-material> 中。优先直接基于这些材料作答；\
+                 问题中的“这”“该”“上述”等指代表达优先指向本轮授权材料，不要因语义分类或题目内容重新过滤这些材料；\
                  除非材料明确标注为不完整片段且问题需要未包含段落，否则不要对同一路径再次调用 search、\
                  read_note 或 get_outline。"
                     .to_string(),
@@ -232,14 +239,8 @@ impl DomainExecutor {
         DomainExecutionPlan {
             active_executors,
             prompt_instructions: instructions.join("\n\n"),
-            rendered_authorized_material: render_materials(
-                &allowed_materials,
-                DomainMaterialOrigin::UserAuthorizedMaterial,
-            ),
-            rendered_local_retrieval: render_materials(
-                &allowed_materials,
-                DomainMaterialOrigin::LocalRetrieval,
-            ),
+            rendered_authorized_material: render_authorized_materials(&allowed_materials),
+            rendered_local_retrieval: render_local_retrieval(&allowed_materials),
             style_blueprint,
             requested_capabilities: Vec::new(),
             access_trace: Vec::new(),
@@ -253,19 +254,16 @@ impl DomainExecutor {
     }
 }
 
-fn novel_plan(envelope: &ExecutionEnvelope, materials: &[DomainMaterial]) -> DomainExecutionPlan {
-    let references_are_explicit = matches!(
-        envelope.context,
-        ContextMode::ExplicitReferences | ContextMode::ExplicitScope
-    );
-    let allowed_materials = if references_are_explicit {
-        materials
-            .iter()
-            .filter(|material| material.role == DomainMaterialRole::Reference)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+fn novel_plan(_envelope: &ExecutionEnvelope, materials: &[DomainMaterial]) -> DomainExecutionPlan {
+    let allowed_materials = materials
+        .iter()
+        .filter(|material| {
+            matches!(
+                material.origin,
+                DomainMaterialOrigin::UserAuthorizedMaterial
+            )
+        })
+        .collect::<Vec<_>>();
     let access_trace = if allowed_materials.is_empty() {
         vec![DomainAccessTrace::ConversationOnly]
     } else {
@@ -278,14 +276,8 @@ fn novel_plan(envelope: &ExecutionEnvelope, materials: &[DomainMaterial]) -> Dom
     DomainExecutionPlan {
         active_executors: vec![DomainExecutorKind::NovelBoundary],
         prompt_instructions: "小说创作只可使用当前 Conversation、此 Run 明确 @ 的 reference，以及显式传入的编辑器快照。不得读取当前活动文档、其他 tab、同目录或最近打开文件；不得自动检索人物卡、设定集、历史章节、corpus、authority、exemplar 或 reference。若需要连续性，提示用户明确 @ 对应章节或设定。".to_string(),
-        rendered_authorized_material: render_materials(
-            &allowed_materials,
-            DomainMaterialOrigin::UserAuthorizedMaterial,
-        ),
-        rendered_local_retrieval: render_materials(
-            &allowed_materials,
-            DomainMaterialOrigin::LocalRetrieval,
-        ),
+        rendered_authorized_material: render_authorized_materials(&allowed_materials),
+        rendered_local_retrieval: render_local_retrieval(&allowed_materials),
         style_blueprint: None,
         requested_capabilities: Vec::new(),
         access_trace,
@@ -323,9 +315,14 @@ fn official_writing_instruction() -> String {
 }
 
 fn build_style_blueprint(materials: &[&DomainMaterial]) -> StyleBlueprint {
-    let has_exemplar = materials
-        .iter()
-        .any(|material| material.role == DomainMaterialRole::Exemplar);
+    let has_exemplar = materials.iter().any(|material| {
+        matches!(
+            material.origin,
+            DomainMaterialOrigin::LocalRetrieval {
+                role: DomainMaterialRole::Exemplar
+            }
+        )
+    });
     let instructions = if has_exemplar {
         "沿用范文所示的文种结构、段落职责、正式客观的抽象语气、常用抽象句式和规范格式；仅保留可泛化的表达模式，不包含具体人名、机构名、日期、数字或事件结论。"
     } else {
@@ -336,21 +333,34 @@ fn build_style_blueprint(materials: &[&DomainMaterial]) -> StyleBlueprint {
     }
 }
 
-fn render_materials(materials: &[&DomainMaterial], origin: DomainMaterialOrigin) -> String {
-    let element = match origin {
-        DomainMaterialOrigin::UserAuthorizedMaterial => "authorized-material",
-        DomainMaterialOrigin::LocalRetrieval => "local-retrieval-evidence",
-    };
+fn render_authorized_materials(materials: &[&DomainMaterial]) -> String {
     materials
         .iter()
-        .filter(|material| material.origin == origin)
+        .filter(|material| {
+            matches!(
+                material.origin,
+                DomainMaterialOrigin::UserAuthorizedMaterial
+            )
+        })
         .map(|material| {
             format!(
-                "<{element} role=\"{}\" label=\"{}\">\n{}\n</{element}>",
-                material.role.as_str(),
-                material.label,
-                material.content
+                "<authorized-material label=\"{}\">\n{}\n</authorized-material>",
+                material.label, material.content
             )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn render_local_retrieval(materials: &[&DomainMaterial]) -> String {
+    materials
+        .iter()
+        .filter_map(|material| match material.origin {
+            DomainMaterialOrigin::LocalRetrieval { role } => Some(format!(
+                "<local-retrieval-evidence role=\"{}\" label=\"{}\">\n{}\n</local-retrieval-evidence>",
+                role.as_str(), material.label, material.content
+            )),
+            DomainMaterialOrigin::UserAuthorizedMaterial => None,
         })
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -358,10 +368,14 @@ fn render_materials(materials: &[&DomainMaterial], origin: DomainMaterialOrigin)
 
 fn collect_exemplar_fact_candidates(materials: &[&DomainMaterial]) -> Vec<String> {
     let mut candidates = BTreeSet::new();
-    for material in materials
-        .iter()
-        .filter(|material| material.role == DomainMaterialRole::Exemplar)
-    {
+    for material in materials.iter().filter(|material| {
+        matches!(
+            material.origin,
+            DomainMaterialOrigin::LocalRetrieval {
+                role: DomainMaterialRole::Exemplar
+            }
+        )
+    }) {
         collect_numeric_candidates(&material.content, &mut candidates);
         collect_entity_candidates(&material.content, &mut candidates);
     }
@@ -370,10 +384,14 @@ fn collect_exemplar_fact_candidates(materials: &[&DomainMaterial]) -> Vec<String
 
 fn supported_fact_text(user_message: &str, materials: &[&DomainMaterial]) -> String {
     let mut text = user_message.to_string();
-    for material in materials
-        .iter()
-        .filter(|material| material.role != DomainMaterialRole::Exemplar)
-    {
+    for material in materials.iter().filter(|material| {
+        !matches!(
+            material.origin,
+            DomainMaterialOrigin::LocalRetrieval {
+                role: DomainMaterialRole::Exemplar
+            }
+        )
+    }) {
         text.push('\n');
         text.push_str(&material.content);
     }
