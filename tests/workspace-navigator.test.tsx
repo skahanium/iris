@@ -253,6 +253,18 @@ describe("WorkspaceNavigator", () => {
     expect(screen.queryByText("Ctrl/Cmd+\\")).toBeNull();
   });
 
+  it("上下两个浏览区各自受限滚动，并使用可见的细滚动条", async () => {
+    renderNavigator();
+
+    const tree = await screen.findByTestId("workspace-navigator-tree");
+    const fileList = await screen.findByTestId("workspace-navigator-file-list");
+
+    expect(tree.className).toContain("iris-workspace-navigator-scroll");
+    expect(fileList.className).toContain("iris-workspace-navigator-scroll");
+    expect(fileList.parentElement?.className).toContain("flex");
+    expect(fileList.parentElement?.className).toContain("min-h-0");
+  });
+
   it("文件右键菜单在触发位置打开，并保留重命名、锁定和回收站生命周期", async () => {
     renderNavigator();
     await screen.findByTestId("workspace-navigator-tree");

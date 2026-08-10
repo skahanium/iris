@@ -78,7 +78,7 @@ export function WorkspaceNavigatorFileList({
       data-testid="workspace-navigator-file-list"
       role="list"
       aria-label="当前文件夹文件"
-      className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1"
+      className="iris-workspace-navigator-scroll min-h-0 flex-1 overflow-y-auto px-1.5 py-1"
     >
       <div style={{ height: totalSize, position: "relative" }}>
         {rows.map((virtualRow) => {

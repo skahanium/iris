@@ -718,7 +718,7 @@ export function WorkspaceNavigator({
             {selectedFolder ? folderNameFromPath(selectedFolder) : "根目录"}
           </div>
           <div
-            className="min-h-0 flex-1 transition-opacity duration-150 motion-reduce:transition-none"
+            className="flex min-h-0 flex-1 flex-col transition-opacity duration-150 motion-reduce:transition-none"
             key={selectedFolder}
           >
             <WorkspaceNavigatorFileList

@@ -148,7 +148,7 @@ export function WorkspaceNavigatorTree({
       aria-label="文件夹"
       tabIndex={0}
       data-testid="workspace-navigator-tree"
-      className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1 focus:outline-none"
+      className="iris-workspace-navigator-scroll min-h-0 flex-1 overflow-y-auto px-1.5 py-1 focus:outline-none"
       onKeyDown={handleKeyDown}
     >
       {rows.map((row, index) => {

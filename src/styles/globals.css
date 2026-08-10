@@ -1959,6 +1959,35 @@
   background-clip: padding-box;
 }
 
+/* v1.2.19 上下分层导航：两个区域独立滚动，内容溢出时保留可见滑块。 */
+.iris-workspace-navigator-scroll {
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.42) transparent;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.iris-workspace-navigator-scroll::-webkit-scrollbar {
+  width: 0.625rem;
+}
+
+.iris-workspace-navigator-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.iris-workspace-navigator-scroll::-webkit-scrollbar-thumb {
+  min-height: 2.5rem;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.42);
+  background-clip: padding-box;
+}
+
+.iris-workspace-navigator-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.6);
+}
+
 /* v1.2.19 Agent 主区阅读内容列：消费 --ai-focus-measure（70rem），
    与文档保护宽度 --prose-measure 分离，不硬编码 px。 */
 .ai-focus-column {
