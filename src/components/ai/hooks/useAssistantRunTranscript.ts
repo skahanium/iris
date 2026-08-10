@@ -218,11 +218,7 @@ export function useAssistantRunTranscript({
               ),
           ),
         );
-        setError(
-          event.payload.kind === "failed"
-            ? event.payload.message
-            : "本次运行未能完成。",
-        );
+        setError(userVisibleRunFailure(run, event));
         return;
       case "cancelled":
         setStreaming(false);
@@ -279,6 +275,22 @@ export function useAssistantRunTranscript({
     setStreaming,
     takeClassifiedResult,
   ]);
+}
+
+function userVisibleRunFailure(
+  run: AssistantRunEventState,
+  event: NonNullable<AssistantRunEventState["events"]>[number],
+): string {
+  if (
+    event.payload.kind === "failed" &&
+    event.payload.code === "agent_run_provider_unavailable" &&
+    run.webSearched
+  ) {
+    return "联网检索已完成，但模型服务暂时不可用。请稍后重试或在设置中更换模型。";
+  }
+  return event.payload.kind === "failed"
+    ? event.payload.message
+    : "本次运行未能完成。";
 }
 
 function sameProcessItems(

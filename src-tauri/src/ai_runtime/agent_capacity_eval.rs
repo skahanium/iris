@@ -5795,41 +5795,6 @@ async fn execute_headless_core_case_with_local_body(
             .required_sources
             .iter()
             .any(|source| source.kind == SourceKind::Web);
-    let scripts = if requires_online_web {
-        vec![
-            sse_tool_call(
-                &format!("agent-capacity-web-call-{}", scenario.case_id()),
-                "web_search",
-                &serde_json::json!({
-                    "query": format!("agent-capacity-case:{}", scenario.case_id()),
-                })
-                .to_string(),
-            ),
-            sse_content(&final_content),
-        ]
-    } else {
-        vec![sse_content(&final_content)]
-    };
-    let llm = spawn_llm_protocol_double(scripts)
-        .await
-        .map_err(|_| EvalContractError::new("eval_llm_double_failed"))?;
-    let mut routing = LlmRoutingConfig::default();
-    routing.providers.clear();
-    routing.providers.insert(
-        "custom".to_string(),
-        ProviderOverride {
-            base_url: Some(llm.base_url.clone()),
-            enabled_models: Some(vec!["agent-capacity-contract".to_string()]),
-            ..Default::default()
-        },
-    );
-    routing.default_model = Some(ModelReference {
-        provider_id: "custom".to_string(),
-        model_id: "agent-capacity-contract".to_string(),
-    });
-    crate::llm::config::save(&state.db, &routing)
-        .map_err(|_| EvalContractError::new("eval_route_setup_failed"))?;
-    state.set_test_streaming_client(direct_loopback_test_client());
     let explicit_references = if scenario
         .manifest
         .local_authorization
@@ -5869,9 +5834,52 @@ async fn execute_headless_core_case_with_local_body(
         security_domain: SecurityDomain::Normal,
         classified_context_ref: None,
     };
+    let envelope = RunIntake::resolve_envelope(&request)
+        .map_err(|_| EvalContractError::new("eval_run_intake_failed"))?;
     let sink = HeadlessEvaluationSink::default();
     let accepted = RunIntake::start_with_sink(&state.db, request, &sink)
         .map_err(|_| EvalContractError::new("eval_run_intake_failed"))?;
+    // Keep the headless protocol double aligned with the accepted production
+    // dispatch. Strict simple facts now use the verified Direct route: Web is
+    // prefetched by the executor and the provider receives no tool surface.
+    // Research and high-stakes cases still exercise the bounded ToolLoop.
+    let scripts = if requires_online_web
+        && envelope.effort == crate::ai_runtime::run_contract::Effort::ToolLoop
+    {
+        vec![
+            sse_tool_call(
+                &format!("agent-capacity-web-call-{}", scenario.case_id()),
+                "web_search",
+                &serde_json::json!({
+                    "query": format!("agent-capacity-case:{}", scenario.case_id()),
+                })
+                .to_string(),
+            ),
+            sse_content(&final_content),
+        ]
+    } else {
+        vec![sse_content(&final_content)]
+    };
+    let llm = spawn_llm_protocol_double(scripts)
+        .await
+        .map_err(|_| EvalContractError::new("eval_llm_double_failed"))?;
+    let mut routing = LlmRoutingConfig::default();
+    routing.providers.clear();
+    routing.providers.insert(
+        "custom".to_string(),
+        ProviderOverride {
+            base_url: Some(llm.base_url.clone()),
+            enabled_models: Some(vec!["agent-capacity-contract".to_string()]),
+            ..Default::default()
+        },
+    );
+    routing.default_model = Some(ModelReference {
+        provider_id: "custom".to_string(),
+        model_id: "agent-capacity-contract".to_string(),
+    });
+    crate::llm::config::save(&state.db, &routing)
+        .map_err(|_| EvalContractError::new("eval_route_setup_failed"))?;
+    state.set_test_streaming_client(direct_loopback_test_client());
     let telemetry = EvaluationTelemetryTap::default();
     execute_normal_run_with_eval_telemetry(
         std::sync::Arc::clone(&state),

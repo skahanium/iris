@@ -1995,6 +1995,35 @@ fn web_enabled_short_greeting_remains_a_direct_offline_answer() {
 }
 
 #[test]
+fn short_failure_follow_up_in_an_existing_session_is_a_local_conversation_meta_question() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.session = Some(super::run_contract::AssistantSessionRef {
+        domain: SecurityDomain::Normal,
+        session_key: "existing-session".into(),
+    });
+    request.turn.message = "怎么了？为什么失败了？".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::Offline);
+    assert_eq!(envelope.effort, Effort::Direct);
+    assert_eq!(envelope.web_reason, WebDecisionReason::ConversationMeta);
+}
+
+#[test]
+fn web_enabled_single_external_fact_uses_a_direct_budget_after_required_evidence() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "When was the first iPhone announced?".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.freshness, Freshness::WebRequired);
+    assert_eq!(envelope.effort, Effort::Direct);
+}
+
+#[test]
 fn explicit_subagent_request_adds_only_the_child_run_capability() {
     let mut request = request();
     request.web_enabled = true;

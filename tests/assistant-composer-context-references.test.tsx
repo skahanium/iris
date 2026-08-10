@@ -32,7 +32,7 @@ function renderDock({
   contextReferences?: ContextReference[];
   onRemoveContextReference?: (id: string) => void;
   editorSelectionCandidate?: EditorSelectionCandidate | null;
-  onDismissEditorSelectionReference?: () => void;
+  onDismissEditorSelectionReference?: (candidateKey: string) => void;
 } = {}) {
   return render(
     <AssistantComposerDock
@@ -129,6 +129,8 @@ describe("AssistantComposerDock context references", () => {
       candidate.querySelector("[data-context-leading-marker]"),
     ).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "移除当前选区引用" }));
-    expect(onDismissEditorSelectionReference).toHaveBeenCalledTimes(1);
+    expect(onDismissEditorSelectionReference).toHaveBeenCalledWith(
+      "notes/alpha.md:1:4:selected",
+    );
   });
 });

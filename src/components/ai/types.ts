@@ -10,7 +10,8 @@ export interface UnifiedAssistantPanelProps {
   /** Consume only the frozen candidate key accepted by this Run. */
   consumeEditorSelectionReference?: (candidateKey?: string) => void;
   editorSelectionCandidate?: EditorSelectionCandidate | null;
-  onDismissEditorSelectionReference?: () => void;
+  /** Remove this live selection reference without changing the editor selection. */
+  onDismissEditorSelectionReference?: (candidateKey: string) => void;
   runtimeDocumentCandidates?: FileListItem[];
   webSearch?: boolean;
   /** Per-composer model override. The backend validates all hard capabilities. */

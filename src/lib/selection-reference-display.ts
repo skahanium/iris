@@ -11,8 +11,11 @@ function fileNameForPath(value: string): string | undefined {
  * carrying the selected note body into chat history.
  */
 export function selectionReferenceDisplayFromExplicitReferences(
-  references: readonly unknown[],
+  references: unknown,
 ): SelectionReferenceDisplay | null {
+  // Older rows can contain null or an object-shaped JSON value. A malformed
+  // reference marker must not prevent the entire historical session opening.
+  if (!Array.isArray(references)) return null;
   for (const value of references) {
     if (typeof value !== "object" || value === null) continue;
     const reference = value as { kind?: unknown; filePath?: unknown };

@@ -279,6 +279,7 @@ impl AgentToolLoop {
         let mut completion_tokens = 0_u32;
         let mut total_tokens = 0_u32;
         let mut fingerprints = HashMap::<String, u32>::new();
+        let mut successful_fingerprints = HashSet::<String>::new();
         let mut final_submission_repair_used = false;
         let mut incomplete_final_answer_repair_used = false;
         let mut incomplete_final_draft = None::<String>;
@@ -508,12 +509,20 @@ impl AgentToolLoop {
                     rejected_result(call, "tool_arguments_invalid")
                 } else {
                     let fingerprint = tool_fingerprint(call);
-                    let count = fingerprints.entry(fingerprint).or_insert(0);
-                    *count += 1;
-                    if *count > MAX_REPEAT_CALLS {
-                        rejected_result(call, "tool_call_repeated")
+                    if successful_fingerprints.contains(&fingerprint) {
+                        rejected_result(call, "tool_call_already_succeeded")
                     } else {
-                        executor.execute(run_id, call, tool_calls).await?
+                        let count = fingerprints.entry(fingerprint.clone()).or_insert(0);
+                        *count += 1;
+                        if *count > MAX_REPEAT_CALLS {
+                            rejected_result(call, "tool_call_repeated")
+                        } else {
+                            let result = executor.execute(run_id, call, tool_calls).await?;
+                            if result.success {
+                                successful_fingerprints.insert(fingerprint);
+                            }
+                            result
+                        }
                     }
                 };
                 let (message, truncated) = tool_result_message(call, &result);

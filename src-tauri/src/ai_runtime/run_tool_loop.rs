@@ -433,20 +433,26 @@ impl<'a> NormalRunToolExecutor<'a> {
             .and_then(serde_json::Value::as_str)
             .filter(|query| !query.trim().is_empty())
             .ok_or_else(|| AppError::msg("tool_arguments_invalid"))?;
-        let local_materials = self
+        let automatic_local_materials = self
             .context
             .materials
             .iter()
+            .filter(|material| {
+                matches!(
+                    material.origin,
+                    crate::ai_runtime::domain_executor::DomainMaterialOrigin::LocalRetrieval { .. }
+                )
+            })
             .map(|material| material.content.clone())
             .collect::<Vec<_>>();
-        let query_contains_authorized_material = record_web_query_taint_witness(
+        let query_contains_automatic_local_material = record_web_query_taint_witness(
             &self.state.db,
             &self.accepted.run_id,
             u32::try_from(state_version).unwrap_or(u32::MAX),
             query,
-            local_materials,
+            automatic_local_materials,
         )?;
-        if query_contains_authorized_material {
+        if query_contains_automatic_local_material {
             self.set_web_failure(Some(WebFailure::with_reason(
                 SafeRunErrorCode::WebEvidenceInvalid,
                 false,
@@ -1664,10 +1670,9 @@ impl NormalRunToolExecutor<'_> {
     ) -> AppResult<ToolCallResult> {
         let started = Instant::now();
         let registry = ToolRegistry::for_run(&self.state.db, run_id)?;
-        let parent_surface = ToolRegistry::constrain_for_explicit_references(
+        let parent_surface = ToolRegistry::constrain_for_run_context(
             registry.tools_for_authorized_capabilities(&self.authorized_capabilities, true),
             self.context.envelope.context,
-            &self.context.retrieval_scope,
         );
         let inherited_tool_names = parent_surface
             .iter()

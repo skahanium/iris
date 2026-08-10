@@ -11,7 +11,7 @@ interface AssistantContextShelfProps {
   contextReferences: ContextReference[];
   composerDisabled: boolean;
   streaming: boolean;
-  onDismissCandidate?: () => void;
+  onDismissCandidate?: (candidateKey: string) => void;
   onRemoveReference: (id: string) => void;
 }
 
@@ -128,7 +128,7 @@ export function AssistantContextShelf({
             aria-label="移除当前选区引用"
             className="iris-context-shelf-remove"
             disabled={composerDisabled || streaming}
-            onClick={onDismissCandidate}
+            onClick={() => onDismissCandidate?.(visibleCandidate.key)}
           >
             <X aria-hidden="true" className="h-3.5 w-3.5" />
           </button>

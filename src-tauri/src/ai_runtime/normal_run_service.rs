@@ -22,7 +22,7 @@ use crate::ai_runtime::run_engine::{
     FailoverStreamingProvider, RunEngine, RunEventSink, WebVerificationFailure,
 };
 use crate::ai_runtime::run_intake::RunIntake;
-use crate::ai_runtime::run_tool_loop::{NormalRunToolExecutor, INITIAL_WEB_SEARCH_RESULTS};
+use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall};
 use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
@@ -413,13 +413,12 @@ async fn dispatch_normal_run_after_context(
             .flatten()
             .unwrap_or_default();
         let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-        let tools = ToolRegistry::constrain_for_explicit_references(
+        let tools = ToolRegistry::constrain_for_run_context(
             registry.tools_for_authorized_capabilities(
                 authorized_capabilities,
                 context.envelope.effort != Effort::Durable,
             ),
             context.envelope.context,
-            &context.retrieval_scope,
         );
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
@@ -636,43 +635,12 @@ async fn dispatch_required_web_verified_run(
             return Err(AppError::msg(SafeRunErrorCode::WebEvidenceInvalid.as_str()));
         }
     };
-    let mut evidence_results = vec![first_prefetch
+    let evidence_results = vec![first_prefetch
         .output
         .get("results")
         .cloned()
         .unwrap_or_else(|| serde_json::json!([]))];
     let prefetch_succeeded = first_prefetch.success;
-    let first_prefetch_count = first_prefetch
-        .output
-        .get("count")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or_default() as usize;
-    // Start with a compact search result set, then use only the remaining
-    // evidence budget for an independent supplement. This keeps the first
-    // provider request bounded while allowing a factual answer to draw on up
-    // to the full Run-level evidence budget.
-    if prefetch_succeeded && first_prefetch_count >= INITIAL_WEB_SEARCH_RESULTS {
-        let supplement = crate::ai_runtime::agent_tool_loop::ToolLoopExecutor::execute(
-            &executor,
-            &accepted.run_id,
-            &ToolCall::new(
-                "required-web-evidence-supplement",
-                "web_search",
-                serde_json::json!({ "query": supplementary_web_query(&query) }).to_string(),
-            ),
-            2,
-        )
-        .await;
-        if let Ok(result) = supplement {
-            evidence_results.push(
-                result
-                    .output
-                    .get("results")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!([])),
-            );
-        }
-    }
     if !prefetch_succeeded || !executor.has_web_evidence() {
         let (code, failure_reason, retryable, attempt_count) =
             executor.web_verification_failure_details();
@@ -705,6 +673,72 @@ async fn dispatch_required_web_verified_run(
             reasoning_content: None,
         },
     );
+    let mut verified_evidence_ids = registered_evidence_ids.to_vec();
+    verified_evidence_ids.extend(executor.evidence_ids());
+    verified_evidence_ids.sort_unstable();
+    verified_evidence_ids.dedup();
+
+    // A simple external fact is already fully planned: obtain one required
+    // evidence packet, then let the existing Direct Run path produce one
+    // tool-free answer. Do not promote it into the general Agent loop merely
+    // because Web verification was required.
+    if context.envelope.effort == Effort::Direct {
+        let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
+            endpoint_family: None,
+            streaming: true,
+            tools: false,
+            vision: context.envelope.modalities.contains(&Modality::Image),
+            reasoning: false,
+            min_input_budget_tokens: crate::ai_runtime::text_support::estimate_tokens(
+                &serde_json::to_string(messages).map_err(AppError::from)?,
+            ),
+            min_output_budget_tokens: 512,
+            security_domain: crate::ai_runtime::provider_router::SecurityDomain::External,
+        };
+        let route = resolve_normal_route(
+            db,
+            accepted,
+            context,
+            requirements.min_input_budget_tokens,
+            requirements.vision,
+            false,
+            sink,
+        )?;
+        let provider =
+            FailoverStreamingProvider::new(route, requirements, db, &accepted.session, sink);
+        #[cfg(test)]
+        let provider = if let Some(client) = state.test_streaming_client() {
+            provider.with_test_streaming_client(client)
+        } else {
+            provider
+        };
+        return if let Some(telemetry) = telemetry {
+            RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_eval_telemetry(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                messages,
+                &verified_evidence_ids,
+                domain_plan,
+                &provider,
+                sink,
+                telemetry,
+            )
+            .await
+        } else {
+            RunEngine::execute_direct_streaming_with_messages_evidence_and_domain_plan_with_sink(
+                db,
+                &accepted.session,
+                &accepted.run_id,
+                messages,
+                &verified_evidence_ids,
+                domain_plan,
+                &provider,
+                sink,
+            )
+            .await
+        };
+    }
     // Required Web evidence is prefetched deterministically, but authorized
     // vault retrieval and explicitly granted external reads may still be
     // necessary for a hybrid answer. Continue withholding `web_search` from
@@ -712,10 +746,9 @@ async fn dispatch_required_web_verified_run(
     // proof for this execution.
     let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-    let mut tools = ToolRegistry::constrain_for_explicit_references(
+    let mut tools = ToolRegistry::constrain_for_run_context(
         registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
         context.envelope.context,
-        &context.retrieval_scope,
     )
     .into_iter()
     .filter(|tool| tool.name != "web_search")
@@ -875,9 +908,52 @@ fn required_web_query(context: &crate::ai_runtime::run_context::RunContext) -> S
         .filter(|message| message.role == "user")
         .map(|message| message.content.clone())
         .collect::<Vec<_>>();
-    let query =
-        required_web_query_from_user_history(&context.user_message, &prior_users_newest_first);
-    public_web_query_for_mixed_local_context(&query, !context.materials.is_empty())
+    let authorized_materials = context
+        .materials
+        .iter()
+        .filter(|material| {
+            matches!(
+                material.origin,
+                crate::ai_runtime::domain_executor::DomainMaterialOrigin::UserAuthorizedMaterial
+            )
+        })
+        .map(|material| material.content.clone())
+        .collect::<Vec<_>>();
+    required_web_query_from_authorized_material(
+        &context.user_message,
+        &prior_users_newest_first,
+        authorized_materials,
+    )
+}
+
+/// Use only material the user explicitly authorized for this Run to make a
+/// short deictic question searchable. Automatic local retrieval is deliberately
+/// absent from this API, so it cannot be disclosed by query construction.
+pub(crate) fn required_web_query_from_authorized_material(
+    current: &str,
+    prior_users_newest_first: &[String],
+    authorized_materials: impl IntoIterator<Item = String>,
+) -> String {
+    let query = required_web_query_from_user_history(current, prior_users_newest_first);
+    if !is_context_dependent_web_follow_up(&query) {
+        return query;
+    }
+    let Some(subject) = authorized_materials
+        .into_iter()
+        .find_map(|material| compact_authorized_query_subject(&material))
+    else {
+        return query;
+    };
+    format!("{subject} {query}").chars().take(360).collect()
+}
+
+fn compact_authorized_query_subject(material: &str) -> Option<String> {
+    material
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(96).collect::<String>())
+        .filter(|line| !line.is_empty())
 }
 
 /// Build a compact search query without blindly concatenating every adjacent
@@ -912,39 +988,6 @@ pub(crate) fn required_web_query_from_user_history(
     query.chars().take(MAX_QUERY_CHARS).collect()
 }
 
-/// Keep strict Web prefetch independent from a mixed request's local clause.
-///
-/// A strict run fetches Web evidence before the model can reformulate a query.
-/// When the request also depends on local material, sending the whole sentence
-/// can repeat a private phrase verbatim and must be blocked by the Web taint
-/// gate. Prefer the first explicit public/Web clause; if none is identifiable,
-/// preserve the original query so the gate remains fail-closed.
-pub(crate) fn public_web_query_for_mixed_local_context(
-    query: &str,
-    has_local_material: bool,
-) -> String {
-    if !has_local_material {
-        return query.to_string();
-    }
-    const WEB_CUES: [&str; 10] = [
-        "联网", "最新", "公开", "核实", "检索", "web", "current", "public", "browse", "search",
-    ];
-    let lowercase = query.to_ascii_lowercase();
-    let Some(start) = WEB_CUES.iter().filter_map(|cue| lowercase.find(cue)).min() else {
-        return query.to_string();
-    };
-    let public_clause = query[start..]
-        .split_inclusive(['。', '！', '？', '\n'])
-        .next()
-        .unwrap_or_default()
-        .trim();
-    if public_clause.chars().count() < 4 {
-        query.to_string()
-    } else {
-        public_clause.to_string()
-    }
-}
-
 fn is_web_retry_instruction(message: &str) -> bool {
     let normalized = message
         .chars()
@@ -966,12 +1009,6 @@ fn is_context_dependent_web_follow_up(message: &str) -> bool {
             || compact.to_ascii_lowercase().contains("this")
             || compact.to_ascii_lowercase().contains("that")
             || compact.to_ascii_lowercase().contains(" it "))
-}
-
-fn supplementary_web_query(query: &str) -> String {
-    format!(
-        "Find an independent authoritative or corroborating HTTPS source for the factual claims in this request.\n{query}"
-    )
 }
 
 fn strict_web_duration_bucket(duration: Duration) -> &'static str {

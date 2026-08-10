@@ -42,7 +42,7 @@ interface AssistantComposerDockProps {
   onImagesChange: Dispatch<SetStateAction<ImageAttachment[]>>;
   onExternalBindingToggle: (bindingId: string) => void;
   onRemoveContextReference: (id: string) => void;
-  onDismissEditorSelectionReference?: () => void;
+  onDismissEditorSelectionReference?: (candidateKey: string) => void;
   onSubmit: () => void;
   onValueChange: (
     value: string,

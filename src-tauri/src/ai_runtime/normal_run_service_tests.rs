@@ -10,7 +10,7 @@ use super::mcp_runtime_registry::{upsert_web_evidence_provider, WebEvidenceProvi
 use super::model_gateway::ModelGateway;
 use super::normal_run_service::{
     build_cached_skill_activation, execute_normal_run, execute_normal_run_with_eval_telemetry,
-    public_web_query_for_mixed_local_context, required_web_query_from_user_history,
+    required_web_query_from_authorized_material, required_web_query_from_user_history,
     strict_follow_up_capabilities,
 };
 use super::normal_session_repository::NormalSessionRepository;
@@ -102,14 +102,26 @@ fn required_web_query_uses_last_substantive_turn_for_a_retry_instruction() {
 }
 
 #[test]
-fn mixed_local_and_web_request_uses_only_its_public_clause_for_the_required_web_query() {
-    let query = public_web_query_for_mixed_local_context(
-        "结合本地风险登记与最新公开依赖状态，给出风险判断。",
-        true,
+fn required_web_query_uses_explicitly_authorized_material_to_resolve_a_deictic_question() {
+    let query = required_web_query_from_authorized_material(
+        "这是什么时候召开的会议？",
+        &[],
+        ["中国共产党第十八次全国代表大会".to_string()],
     );
 
-    assert_eq!(query, "最新公开依赖状态，给出风险判断。");
-    assert!(!query.contains("本地风险登记"));
+    assert!(query.contains("中国共产党第十八次全国代表大会"));
+    assert!(query.contains("这是什么时候召开的会议"));
+}
+
+#[test]
+fn required_web_query_never_uses_automatic_local_retrieval_without_explicit_authorization() {
+    let query = required_web_query_from_authorized_material(
+        "这是什么时候召开的会议？",
+        &[],
+        std::iter::empty::<String>(),
+    );
+
+    assert_eq!(query, "这是什么时候召开的会议？");
 }
 
 #[test]
@@ -528,7 +540,10 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
     let state = AppState::new(directory.path().join("data")).expect("application state");
     install_headless_contract_mcp(&state);
     let sink = RecordingSink::default();
-    let accepted = RunIntake::start_with_sink(&state.db, web_tool_loop_request(), &sink)
+    let mut research_request = web_tool_loop_request();
+    research_request.turn.message =
+        "Investigate and compare multiple sources about synthetic evidence.".into();
+    let accepted = RunIntake::start_with_sink(&state.db, research_request, &sink)
         .expect("accepted web tool-loop run");
     let context = RunContextAssembler::assemble(
         &state.db,

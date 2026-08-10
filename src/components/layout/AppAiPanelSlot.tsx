@@ -37,7 +37,7 @@ interface AppAiPanelSlotProps {
   aiDomain: AiDomain;
   classifiedPath: string | null;
   consumeEditorSelectionReference?: (candidateKey?: string) => void;
-  dismissEditorSelectionReference?: () => void;
+  dismissEditorSelectionReference?: (candidateKey?: string) => void;
   editorSelectionCandidate?: EditorSelectionCandidate | null;
   editorInteractionLocked?: boolean;
   runtimeDocumentCandidates?: FileListItem[];

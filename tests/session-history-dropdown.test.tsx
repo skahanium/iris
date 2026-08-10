@@ -84,7 +84,9 @@ describe("SessionHistoryDropdown", () => {
       seq: 1,
       role: "user",
       content: "hello Guide",
-      explicitReferences: [],
+      // Legacy/malformed persisted rows may contain an object instead of the
+      // current array wire shape. Loading history must still succeed.
+      explicitReferences: {} as unknown as unknown[],
       contextScope: {
         paths: [],
         pathPrefixes: [],

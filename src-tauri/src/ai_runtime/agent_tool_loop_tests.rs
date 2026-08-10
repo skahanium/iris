@@ -931,6 +931,70 @@ async fn tool_loop_returns_tool_results_to_the_next_model_turn_before_finalizing
 }
 
 #[tokio::test]
+async fn successful_equivalent_tool_call_is_not_executed_twice() {
+    let mut repeated_call = tool_call();
+    repeated_call.id = "call-2".into();
+    let provider = ScriptedProvider {
+        responses: Mutex::new(VecDeque::from([
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![tool_call()],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: None,
+                tool_calls: vec![repeated_call],
+                usage: Default::default(),
+                finish_reason: "tool_calls".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+            super::model_gateway::GatewayResponse {
+                content: Some("final answer".into()),
+                tool_calls: Vec::new(),
+                usage: Default::default(),
+                finish_reason: "stop".into(),
+                reasoning_content: None,
+                continuation: None,
+            },
+        ])),
+        calls: AtomicU32::new(0),
+        second_turn_messages: Mutex::new(Vec::new()),
+    };
+    let executor = RecordingExecutor {
+        calls: AtomicU32::new(0),
+        web_evidence: false,
+    };
+    let mut observer = NoopObserver;
+
+    standard_tool_loop()
+        .execute(
+            &provider,
+            &executor,
+            "run-successful-tool-dedup",
+            Vec::new(),
+            vec![ToolSpec {
+                name: "system_time_now".into(),
+                description: "Get time".into(),
+                input_schema: serde_json::json!({ "type": "object" }),
+                access_level: crate::ai_runtime::ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                capability_affinity: Vec::new(),
+            }],
+            &mut observer,
+        )
+        .await
+        .expect("the model can finalize after a duplicate call is rejected");
+
+    assert_eq!(executor.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
 async fn malformed_spawn_subagent_arguments_reach_the_bounded_executor() {
     let provider = ScriptedProvider {
         responses: Mutex::new(VecDeque::from([

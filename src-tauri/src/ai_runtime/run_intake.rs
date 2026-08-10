@@ -115,11 +115,13 @@ impl RunIntake {
         });
         let effort = match effect {
             Effect::Apply => Effort::Durable,
-            _ if freshness != Freshness::Offline
+            _ if freshness == Freshness::WebPreferred
                 || has_images
                 || has_retrieval_scope(request)
                 || !request.external_tool_grants.is_empty()
                 || child_run_requested
+                || is_high_stakes_current_request(&directive_text)
+                || requires_multi_step_research(&directive_text)
                 || needs_offline_vault_tool_loop(request, &directive_text) =>
             {
                 Effort::ToolLoop
@@ -515,6 +517,29 @@ impl RunIntake {
     }
 }
 
+/// Keep ordinary externally verifiable facts on the strict one-search Direct
+/// route. ToolLoop is reserved for requests that explicitly ask the model to
+/// conduct an investigation across multiple sources or steps.
+fn requires_multi_step_research(message: &str) -> bool {
+    contains_any(
+        message,
+        &[
+            "compare sources",
+            "compare and contrast",
+            "investigate",
+            "cross-check",
+            "deep research",
+            "multi-source",
+            "多来源",
+            "多资料",
+            "对比研究",
+            "交叉核验",
+            "调研",
+            "调查",
+        ],
+    )
+}
+
 fn validate_start_request(request: &AssistantRunStartRequest) -> AppResult<()> {
     if request.client_request_id.trim().is_empty()
         || request.client_request_id.chars().count() > MAX_CLIENT_REQUEST_ID_CHARS
@@ -723,6 +748,9 @@ impl ExclusionClassifier {
             return offline(WebDecisionReason::ConversationMeta);
         }
         if is_conversation_meta_request(directive_text) {
+            return offline(WebDecisionReason::ConversationMeta);
+        }
+        if request.session.is_some() && is_short_runtime_follow_up(directive_text) {
             return offline(WebDecisionReason::ConversationMeta);
         }
         if !explicit_web {
@@ -1120,6 +1148,32 @@ fn is_conversation_meta_request(message: &str) -> bool {
                 message,
                 &["为什么", "为何", "怎么", "还联网", "why", "how come"],
             ))
+}
+
+/// A short follow-up about a failure or the assistant's behavior belongs to
+/// the immediately active conversation, not to the public Web. Requiring an
+/// existing session prevents an isolated question such as "why did it fail"
+/// from silently changing its ordinary factual meaning.
+fn is_short_runtime_follow_up(message: &str) -> bool {
+    let compact = message.trim();
+    compact.chars().count() <= 32
+        && contains_any(
+            compact,
+            &[
+                "why",
+                "how come",
+                "what happened",
+                "failed",
+                "failure",
+                "error",
+                "怎么了",
+                "为什么",
+                "为何",
+                "失败",
+                "出错",
+                "报错",
+            ],
+        )
 }
 
 fn is_volatile_external_request(message: &str) -> bool {

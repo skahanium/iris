@@ -197,9 +197,13 @@ describe("assistant sidecar selection reference bridge", () => {
     expect(api.editorSelectionCandidate).toBeNull();
   });
 
-  it("suppresses the current selection after dismissing it", () => {
-    act(() => api.dismissEditorSelectionReference());
+  it("suppresses the current selection after dismissing its exact candidate without collapsing the editor selection", () => {
+    const dismissedKey = api.editorSelectionCandidate?.key;
+    expect(dismissedKey).toBeTruthy();
+
+    act(() => api.dismissEditorSelectionReference(dismissedKey));
     expect(api.editorSelectionCandidate).toBeNull();
+    expect(editor.state.selection.empty).toBe(false);
     act(() => editor.commands.setTextSelection({ from: 1, to: 5 }));
     expect(api.editorSelectionCandidate).toBeNull();
   });

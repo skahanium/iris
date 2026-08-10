@@ -34,4 +34,12 @@ describe("selection reference history projection", () => {
       ]),
     ).toEqual({ fileName: "valid.md" });
   });
+
+  it("treats malformed historical payloads as no selection marker", () => {
+    for (const references of [null, {}, "not-an-array", 42]) {
+      expect(
+        selectionReferenceDisplayFromExplicitReferences(references),
+      ).toBeNull();
+    }
+  });
 });
