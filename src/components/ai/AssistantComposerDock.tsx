@@ -15,6 +15,7 @@ import { contextReferenceDisplayText } from "@/lib/context-reference";
 import type { DisplayMention } from "@/types/ai";
 import type { ContextReference } from "@/types/ai";
 import type { McpCapabilityBindingSummary } from "@/lib/ipc";
+import type { EditorSelectionCandidate } from "@/types/editor-selection";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
@@ -35,6 +36,7 @@ interface AssistantComposerDockProps {
   externalBindings: McpCapabilityBindingSummary[];
   selectedExternalBindingIds: string[];
   contextReferences: ContextReference[];
+  editorSelectionCandidate?: EditorSelectionCandidate | null;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   onComposerKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onCompositionStart: (e: CompositionEvent<HTMLTextAreaElement>) => void;
@@ -42,6 +44,7 @@ interface AssistantComposerDockProps {
   onImagesChange: Dispatch<SetStateAction<ImageAttachment[]>>;
   onExternalBindingToggle: (bindingId: string) => void;
   onRemoveContextReference: (id: string) => void;
+  onDismissEditorSelectionReference?: () => void;
   onMentionHighlight: (index: number) => void;
   onMentionSelect: (candidate: MentionCandidate) => void;
   onSubmit: () => void;
@@ -67,6 +70,7 @@ export function AssistantComposerDock({
   externalBindings,
   selectedExternalBindingIds,
   contextReferences,
+  editorSelectionCandidate = null,
   textareaRef,
   onComposerKeyDown,
   onCompositionStart,
@@ -74,6 +78,7 @@ export function AssistantComposerDock({
   onImagesChange,
   onExternalBindingToggle,
   onRemoveContextReference,
+  onDismissEditorSelectionReference,
   onMentionHighlight,
   onMentionSelect,
   onSubmit,
@@ -87,6 +92,39 @@ export function AssistantComposerDock({
       data-testid="ai-input"
       className={cn("flex flex-col", assistantFocus && "ai-focus-column")}
     >
+      {editorSelectionCandidate ? (
+        <div
+          className="border-t border-border-subtle px-3 py-2"
+          data-testid="editor-selection-candidate"
+        >
+          <div className="flex min-w-0 items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5 text-xs text-foreground">
+            <span
+              className="min-w-0 flex-1 truncate"
+              title={editorSelectionCandidate.preview}
+            >
+              {editorSelectionCandidate.preview || "当前选区"}
+            </span>
+            {editorSelectionCandidate.status !== "ready" ? (
+              <span className="shrink-0 text-[11px] text-muted-foreground">
+                {editorSelectionCandidate.status === "save_required"
+                  ? "保存后可引用"
+                  : editorSelectionCandidate.status === "invalid"
+                    ? "无法引用"
+                    : "校验中"}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              aria-label="移除当前选区引用"
+              className="shrink-0 text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={composerDisabled || streaming}
+              onClick={onDismissEditorSelectionReference}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      ) : null}
       {contextReferences.length > 0 ? (
         <div
           className="border-t border-border-subtle px-3 py-2"

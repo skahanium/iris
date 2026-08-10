@@ -7,6 +7,7 @@ import {
   type UnifiedAssistantSendOptions,
 } from "@/components/ai/hooks/useUnifiedAssistantSend";
 import type { DisplayMention } from "@/types/ai";
+import type { EditorSelectionCandidate } from "@/types/editor-selection";
 
 const start = vi.fn();
 const getFileSignature = vi.fn();
@@ -82,6 +83,63 @@ afterEach(() => {
 });
 
 describe("useUnifiedAssistantSend", () => {
+  it("blocks sending while the live editor selection candidate is not ready", async () => {
+    const setError = vi.fn();
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        editorSelectionCandidate: {
+          key: "notes/source.md:1:4:selected",
+          preview: "selected",
+          status: "save_required",
+          reference: null,
+          message: "请先保存文档后再引用该选区",
+        } satisfies EditorSelectionCandidate,
+        setError,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start).not.toHaveBeenCalled();
+    expect(setError).toHaveBeenCalledWith("请先保存文档后再引用该选区");
+  });
+
+  it("includes a ready live editor selection candidate in the next normal Run", async () => {
+    const reference = normalOptions().contextReferences[0]!;
+    start.mockResolvedValue({
+      runId: "run-live-selection",
+      turnId: "turn-live-selection",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    const consume = vi.fn();
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        editorSelectionCandidate: {
+          key: "notes/source.md:1:4:selected",
+          preview: "selected",
+          status: "ready",
+          reference,
+          message: null,
+        } satisfies EditorSelectionCandidate,
+        oneShotContextReference: reference,
+        consumeOneShotContextReference: consume,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start.mock.calls[0]?.[0].turn.explicitReferences).toEqual([
+      reference,
+    ]);
+    expect(consume).toHaveBeenCalledTimes(1);
+  });
+
   it("consumes one editor selection reference after adding it to one normal-domain Run", async () => {
     const consumeOneShotContextReference = vi.fn();
     const reference = normalOptions().contextReferences[0]!;

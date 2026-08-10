@@ -212,14 +212,13 @@ describe("command palette", () => {
     expect(filtered.some((i) => i.id === "slash-summarize")).toBe(false);
   });
 
-  it("keeps send-selection-ai for global shortcut path", () => {
+  it("does not expose manual send-selection in the command palette", () => {
     const items = buildCommandPaletteItems({
       hasVault: true,
       hasActiveNote: true,
     });
-    expect(items.find((i) => i.id === "send-selection-ai")?.action).toEqual({
-      type: "sendSelectionToAi",
-    });
+    expect(items.some((i) => i.id === "send-selection-ai")).toBe(false);
+    expect(JSON.stringify(items)).not.toContain("sendSelectionToAi");
   });
 
   it("separates document find, document replace, and global search shortcuts", () => {

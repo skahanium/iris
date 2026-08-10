@@ -123,4 +123,15 @@ describe("app shortcuts", () => {
       expect(byId.get(id)?.chord, id).toBeUndefined();
     }
   });
+
+  it("does not register a manual send-selection shortcut", () => {
+    const shortcuts = buildAppShortcutItems({
+      hasVault: true,
+      hasActiveNote: true,
+    });
+    expect(shortcuts.some((item) => item.id === "send-selection-ai")).toBe(
+      false,
+    );
+    expect(JSON.stringify(shortcuts)).not.toContain("sendSelectionToAi");
+  });
 });

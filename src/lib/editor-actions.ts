@@ -257,6 +257,30 @@ export function filterEditorActions(
     if (!action.scopes.includes(scope)) return false;
     if (!action.surfaces.includes(surface)) return false;
 
+    // The editor context menu is intentionally limited to native clipboard
+    // operations. AI actions remain available through the slash menu and
+    // dedicated Agent surfaces, but should not compete with copy/paste when a
+    // user is working with a text selection.
+    if (
+      surface === "context_menu" &&
+      scope === "editor" &&
+      action.menuGroup !== "clipboard"
+    ) {
+      return false;
+    }
+
+    // A locked/read-only editor can still expose the safe clipboard actions,
+    // but must not present editing commands that cannot be executed.
+    if (
+      surface === "context_menu" &&
+      scope === "editor" &&
+      ctx.isLocked &&
+      action.id !== "copy" &&
+      action.id !== "select-all"
+    ) {
+      return false;
+    }
+
     if (surface === "slash" && ctx.hasSelection) {
       if (
         action.requiresSelection ||

@@ -20,16 +20,21 @@ describe("editor-actions", () => {
     streaming: false,
   };
 
-  it("context menu includes selection AI when text is selected", () => {
+  it("context menu keeps only clipboard actions when text is selected", () => {
     const ids = filterEditorActions(
       "context_menu",
       "editor",
       withSelection,
     ).map((a) => a.id);
-    expect(ids).toContain("rewrite");
-    expect(ids).toContain("send-to-ai");
-    expect(ids).toContain("cite");
-    expect(ids).toContain("check");
+    expect(ids).toEqual(["cut", "copy", "paste", "select-all"]);
+  });
+
+  it("locked context menu exposes only copy and select-all", () => {
+    const ids = filterEditorActions("context_menu", "editor", {
+      ...withSelection,
+      isLocked: true,
+    }).map((a) => a.id);
+    expect(ids).toEqual(["copy", "select-all"]);
   });
 
   it("slash menu hides selection AI when text is selected", () => {
@@ -49,8 +54,7 @@ describe("editor-actions", () => {
     const ids = filterEditorActions("context_menu", "editor", documentOnly).map(
       (a) => a.id,
     );
-    expect(ids).toContain("copy");
-    expect(ids).toContain("paste");
+    expect(ids).toEqual(["copy", "paste", "select-all"]);
   });
 
   it("disables inline AI while streaming", () => {

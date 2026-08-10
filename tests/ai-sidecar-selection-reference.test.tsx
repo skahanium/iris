@@ -1,6 +1,5 @@
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import { readFileSync } from "node:fs";
 import { act, createElement, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -28,36 +27,33 @@ describe("assistant sidecar selection reference bridge", () => {
   let container: HTMLDivElement;
   let editor: Editor;
   let dirty = false;
-  let status = "";
+  let visible = true;
   let api: ReturnType<typeof useAiSidecarBridge>;
-  const markdown = "侧栏共享精确选区";
+  const markdown = "侧边栏选区引用测试";
   let validSignature: FileSignatureResult;
-
-  function deferred<T>() {
-    let resolve!: (value: T) => void;
-    let reject!: (reason?: unknown) => void;
-    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-      resolve = resolvePromise;
-      reject = rejectPromise;
-    });
-    return { promise, reject, resolve };
-  }
 
   function Host() {
     const editorRef = useRef<Editor | null>(editor);
     api = useAiSidecarBridge({
       editorRef,
+      editor,
+      documentKey: "notes/sidecar.md",
+      assistantVisible: visible,
+      selectionEnabled: true,
       isDocumentDirty: () => dirty,
-      setAiStatus: (message) => {
-        status = message;
-      },
     });
     return null;
   }
 
+  async function flushValidation() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 260));
+    });
+  }
+
   beforeEach(async () => {
     dirty = false;
-    status = "";
+    visible = true;
     editor = new Editor({
       extensions: [StarterKit],
       content: `<p>${markdown}</p>`,
@@ -87,8 +83,7 @@ describe("assistant sidecar selection reference bridge", () => {
     root = createRoot(container);
     await act(async () => {
       root?.render(createElement(Host));
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushValidation();
     });
   });
 
@@ -99,106 +94,105 @@ describe("assistant sidecar selection reference bridge", () => {
     container.remove();
   });
 
-  it("exposes the same disk-verified ContextReference for a sidecar consumer", async () => {
-    await act(async () => {
-      await api.sendSelectionToAi({ prefill: "解释选区" });
+  it("creates a disk-verified candidate as soon as a selection exists", async () => {
+    await vi.waitFor(() =>
+      expect(api.editorSelectionCandidate?.status).toBe("ready"),
+    );
+    expect(api.editorSelectionCandidate).toMatchObject({
+      status: "ready",
+      preview: "侧边栏选区引用测试".slice(0, 4),
+      reference: {
+        kind: "selection",
+        filePath: "notes/sidecar.md",
+        contentHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+      },
     });
-
-    expect(api.editorSelectionReference).toMatchObject({
-      kind: "selection",
-      filePath: "notes/sidecar.md",
-      contentHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
-      utf8Range: { start: 0, end: 12 },
-      excerpt: "",
-    });
-    expect(api.prefillMessage).toBe("解释选区");
   });
 
-  it("keeps the sidecar closed and exposes no body when the note is dirty", async () => {
-    dirty = true;
-
-    await act(async () => {
-      await api.sendSelectionToAi();
-    });
-
+  it("clears the candidate when the selection is collapsed", () => {
+    act(() => editor.commands.setTextSelection({ from: 3, to: 3 }));
+    expect(api.editorSelectionCandidate).toBeNull();
     expect(api.editorSelectionReference).toBeNull();
-    expect(status).toBe(EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE);
+  });
+
+  it("shows save-required state for dirty documents without exposing content", async () => {
+    dirty = true;
+    act(() => editor.commands.setTextSelection({ from: 1, to: 6 }));
+    await flushValidation();
+    expect(api.editorSelectionCandidate).toMatchObject({
+      status: "save_required",
+      reference: null,
+      message: EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE,
+    });
     expect(JSON.stringify(api)).not.toContain(markdown);
   });
 
-  it("keeps the later selection when an older signature request finishes last", async () => {
-    const firstSignature = deferred<FileSignatureResult>();
-    const secondSignature = deferred<FileSignatureResult>();
+  it("ignores an older disk verification when the selection changes", async () => {
+    let resolveFirst!: (value: FileSignatureResult) => void;
+    let resolveSecond!: (value: FileSignatureResult) => void;
     mockFileSignature
-      .mockImplementationOnce(() => firstSignature.promise)
-      .mockImplementationOnce(() => secondSignature.promise);
-    editor.commands.setTextSelection({ from: 1, to: 3 });
-    let firstRequest!: Promise<void>;
+      .mockImplementationOnce(
+        () =>
+          new Promise<FileSignatureResult>((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<FileSignatureResult>((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+
+    act(() => editor.commands.setTextSelection({ from: 1, to: 3 }));
     await act(async () => {
-      firstRequest = api.sendSelectionToAi({ prefill: "旧选区" });
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+    act(() => editor.commands.setTextSelection({ from: 5, to: 7 }));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 220));
+    });
+    await vi.waitFor(() => expect(mockFileSignature).toHaveBeenCalledTimes(2));
+
+    await act(async () => {
+      resolveSecond(validSignature);
       await Promise.resolve();
     });
-    editor.commands.setTextSelection({ from: 5, to: 7 });
-    let secondRequest!: Promise<void>;
+    await vi.waitFor(() =>
+      expect(api.editorSelectionCandidate?.status).toBe("ready"),
+    );
     await act(async () => {
-      secondRequest = api.sendSelectionToAi({ prefill: "新选区" });
+      resolveFirst(validSignature);
       await Promise.resolve();
     });
 
-    await act(async () => {
-      secondSignature.resolve(validSignature);
-      await secondRequest;
+    expect(api.editorSelectionReference?.editorRange).toEqual({
+      from: 5,
+      to: 7,
     });
-    await act(async () => {
-      firstSignature.resolve(validSignature);
-      await firstRequest;
-    });
-
-    expect(api.editorSelectionReference?.utf8Range).toEqual({
-      start: 12,
-      end: 18,
-    });
-    expect(api.prefillMessage).toBe("新选区");
   });
 
-  it("ignores a pending signature failure after unmount", async () => {
-    const signature = deferred<FileSignatureResult>();
-    mockFileSignature.mockImplementationOnce(() => signature.promise);
-    let request!: Promise<void>;
+  it("removes the candidate while Agent is hidden and restores it on reopen", async () => {
+    visible = false;
     await act(async () => {
-      request = api.sendSelectionToAi();
-      await Promise.resolve();
+      root?.render(createElement(Host));
     });
+    expect(api.editorSelectionCandidate).toBeNull();
 
-    act(() => root?.unmount());
-    root = null;
-    signature.reject(new Error("late failure"));
-    await request;
-
-    expect(status).toBe("");
+    visible = true;
+    await act(async () => {
+      root?.render(createElement(Host));
+      await flushValidation();
+    });
+    await vi.waitFor(() =>
+      expect(api.editorSelectionCandidate?.status).toBe("ready"),
+    );
   });
 
-  it("plumbs the one-shot reference from App into the unified sender", () => {
-    const app = readFileSync("src/App.impl.tsx", "utf8");
-    const slot = readFileSync(
-      "src/components/layout/AppAiPanelSlot.tsx",
-      "utf8",
-    );
-    const panel = readFileSync(
-      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
-      "utf8",
-    );
-
-    expect(app).toContain(
-      "editorSelectionReference={editorSelectionReference}",
-    );
-    expect(app).toContain(
-      "consumeEditorSelectionReference={consumeEditorSelectionReference}",
-    );
-    expect(slot).toContain(
-      "oneShotContextReference={editorSelectionReference}",
-    );
-    expect(panel).toContain("oneShotContextReference");
-    expect(panel).toContain("consumeOneShotContextReference");
+  it("suppresses the current selection after dismissing it", () => {
+    act(() => api.dismissEditorSelectionReference());
+    expect(api.editorSelectionCandidate).toBeNull();
+    act(() => editor.commands.setTextSelection({ from: 1, to: 5 }));
+    expect(api.editorSelectionCandidate).toBeNull();
   });
 });

@@ -11,8 +11,8 @@ function lineCount(path: string): number {
 
 describe("App shell refactor contract", () => {
   it("keeps App.impl.tsx below the current shell split checkpoint", () => {
-    // 1100: workspace foreground / status-bar chrome alignment + tab reconciliation.
-    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(1100);
+    // 1120: workspace foreground / status-bar chrome alignment + live selection bridge.
+    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(1120);
   });
 
   it("moves AI sidecar bridge state behind a dedicated hook", () => {

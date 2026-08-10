@@ -21,6 +21,7 @@ import type {
   SecurityDomain,
 } from "@/types/ai";
 import type { FileSignatureResult } from "@/types/ipc";
+import type { EditorSelectionCandidate } from "@/types/editor-selection";
 
 export interface UnifiedAssistantSendOptions {
   aiDomain: SecurityDomain;
@@ -33,6 +34,7 @@ export interface UnifiedAssistantSendOptions {
   session: AssistantSessionRef | null;
   contextReferences: ContextReference[];
   oneShotContextReference?: ContextReference | null;
+  editorSelectionCandidate?: EditorSelectionCandidate | null;
   consumeOneShotContextReference?: () => void;
   displayMentions: DisplayMention[];
   retrievalScope: ContextScope;
@@ -144,6 +146,7 @@ export function useUnifiedAssistantSend({
   session,
   contextReferences,
   oneShotContextReference = null,
+  editorSelectionCandidate = null,
   consumeOneShotContextReference,
   displayMentions,
   retrievalScope,
@@ -180,6 +183,17 @@ export function useUnifiedAssistantSend({
       setError("图片请求需要附带文字说明。");
       return;
     }
+    if (
+      aiDomain === "normal" &&
+      editorSelectionCandidate &&
+      editorSelectionCandidate.status !== "ready"
+    ) {
+      setError(
+        editorSelectionCandidate.message ??
+          "选区正在校验，请保存或移除选区引用后再发送",
+      );
+      return;
+    }
     if (aiDomain === "classified") {
       if (!includeCurrentClassifiedDocument || !classifiedContextRef) {
         setError("请先点击“引用当前涉密文档”，该授权仅对本次提问生效。");
@@ -214,6 +228,13 @@ export function useUnifiedAssistantSend({
       modelOverride,
       externalToolGrants,
       classifiedContextRef,
+      editorSelectionCandidate:
+        aiDomain === "normal" && editorSelectionCandidate
+          ? {
+              key: editorSelectionCandidate.key,
+              status: editorSelectionCandidate.status,
+            }
+          : null,
     });
     const pending = pendingStartRef.current;
     const reusable = pending?.draftKey === draftKey ? pending : null;
@@ -335,6 +356,7 @@ export function useUnifiedAssistantSend({
     clearExternalToolGrants,
     composerDisabled,
     contextReferences,
+    editorSelectionCandidate,
     oneShotContextReference,
     consumeOneShotContextReference,
     displayMentions,

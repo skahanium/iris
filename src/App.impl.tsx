@@ -136,6 +136,7 @@ function App() {
   const [findReplaceMode, setFindReplaceMode] =
     useState<FindReplaceMode>("find");
   const [classifiedOpen, setClassifiedOpen] = useState(false);
+  const [assistantVisible, setAssistantVisible] = useState(true);
   const [persistenceBlocker, setPersistenceBlocker] =
     useState<PersistenceBlocker | null>(null);
   const [vaultIndexEpoch, setVaultIndexEpoch] = useState(0);
@@ -272,27 +273,6 @@ function App() {
     async () => undefined,
   );
   useWorkspaceSessionSnapshot({ activePath, tabs, vaultPath });
-  const {
-    aiPanelOpen,
-    assistantChrome,
-    consumeEditorSelectionReference,
-    editorSelectionReference,
-    setAiPanelOpen,
-    setAssistantChrome,
-    setWebSearch,
-    setWebSearchProviderId,
-    sendSelectionToAi,
-    toggleWebSearch,
-    refreshWebSearchProviders,
-    webSearchAvailability,
-    webSearchEnabled: webSearch,
-    webSearchProviderId,
-    webSearchProviders,
-  } = useAiSidecarBridge({
-    editorRef,
-    isDocumentDirty: () => dirtyRef.current,
-    setAiStatus,
-  });
   const openClassifiedPaths = useMemo(
     () => tabs.filter((t) => isClassifiedVaultPath(t.path)).map((t) => t.path),
     [tabs],
@@ -702,6 +682,39 @@ function App() {
     scheduleUndoRedoStateRefresh,
   } = useEditorUndoRedoState({ activePath, editorRef });
 
+  const activeDocumentDirty = Boolean(
+    tabs.find((tab) => tab.path === activePath)?.dirty,
+  );
+  const {
+    aiPanelOpen,
+    assistantChrome,
+    consumeEditorSelectionReference,
+    dismissEditorSelectionReference,
+    editorSelectionCandidate,
+    editorSelectionReference,
+    setAiPanelOpen,
+    setAssistantChrome,
+    setWebSearch,
+    setWebSearchProviderId,
+    sendSelectionToAi,
+    toggleWebSearch,
+    refreshWebSearchProviders,
+    webSearchAvailability,
+    webSearchEnabled: webSearch,
+    webSearchProviderId,
+    webSearchProviders,
+  } = useAiSidecarBridge({
+    editorRef,
+    editor: editorInstance,
+    documentKey: activeDocumentSessionId ?? activePath,
+    documentDirty: activeDocumentDirty,
+    assistantVisible,
+    selectionEnabled:
+      Boolean(activePath) && !activeMediaTab && !activeNoteIsClassified,
+    isDocumentDirty: () => dirtyRef.current,
+    setAiStatus,
+  });
+
   const handleEditorReady = useCallback(
     (editor: Editor | null) => {
       editorReadyForPersistenceRef.current = editor != null;
@@ -793,7 +806,6 @@ function App() {
     overlays,
     resetZoom,
     saveOutlineOpen,
-    sendSelectionToAi,
     setAiPanelOpen,
     setClassifiedOpen,
     setOutlineOpen,
@@ -872,6 +884,7 @@ function App() {
       <AppShell
         aiPanelOpen={aiPanelOpen}
         onAiPanelOpenChange={setAiPanelOpen}
+        onAssistantVisibilityChange={setAssistantVisible}
         zen={zen}
         navigator={<WorkspaceNavigator {...navigatorBridge} />}
         tabBar={
@@ -939,6 +952,8 @@ function App() {
             aiDomain={aiDomain}
             classifiedPath={classifiedPath}
             consumeEditorSelectionReference={consumeEditorSelectionReference}
+            dismissEditorSelectionReference={dismissEditorSelectionReference}
+            editorSelectionCandidate={editorSelectionCandidate}
             editorSelectionReference={editorSelectionReference}
             editorInteractionLocked={isEditorPersistenceBlocked}
             runtimeDocumentCandidates={assistantRuntimeDocumentCandidates}

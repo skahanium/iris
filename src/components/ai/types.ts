@@ -3,6 +3,7 @@ import type {
   AiDomain,
   ContextReference,
 } from "@/types/ai";
+import type { EditorSelectionCandidate } from "@/types/editor-selection";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileListItem } from "@/types/ipc";
 
@@ -12,6 +13,8 @@ export interface UnifiedAssistantPanelProps {
   classifiedPath?: string | null;
   oneShotContextReference?: ContextReference | null;
   consumeOneShotContextReference?: () => void;
+  editorSelectionCandidate?: EditorSelectionCandidate | null;
+  onDismissEditorSelectionReference?: () => void;
   runtimeDocumentCandidates?: FileListItem[];
   webSearch?: boolean;
   /** Per-composer model override. The backend validates all hard capabilities. */

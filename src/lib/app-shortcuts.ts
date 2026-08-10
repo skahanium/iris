@@ -27,8 +27,7 @@ export type AppShortcutAction =
   | { type: "rescanVault" }
   | { type: "zoomIn" }
   | { type: "zoomOut" }
-  | { type: "zoomReset" }
-  | { type: "sendSelectionToAi" };
+  | { type: "zoomReset" };
 
 export interface AppShortcutItem {
   id: string;
@@ -182,11 +181,6 @@ export function buildAppShortcutItems(
       id: "toggle-ai",
       chord: { key: "A", mod: true, shift: true },
       action: { type: "toggleAiPanel" },
-    },
-    {
-      id: "send-selection-ai",
-      disabled: noteOnly,
-      action: { type: "sendSelectionToAi" },
     },
     {
       id: "toggle-web-search",

@@ -23,8 +23,6 @@ export interface EditorContextMenuDomainContext {
 
 const closed: EditorContextMenuState = { open: false, x: 0, y: 0 };
 
-const SELECTION_CONTEXT_HINT_KEY = "iris.hint.selection-context";
-
 interface EditorSelectionRange {
   from: number;
   to: number;
@@ -33,7 +31,7 @@ interface EditorSelectionRange {
 export function useEditorContextMenu(
   editor: Editor | null,
   hasNote: boolean,
-  onSelectionHint?: () => void,
+  _onSelectionHint?: () => void,
   locked = false,
   domainContext: EditorContextMenuDomainContext = {},
 ) {
@@ -164,30 +162,13 @@ export function useEditorContextMenu(
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent) => {
-      if (locked) return;
       if (!editor || !hasNote) return;
       event.preventDefault();
       event.stopPropagation();
       restoreSelectionForContextMenu();
-      const { from, to } = editor.state.selection;
-      if (
-        from !== to &&
-        onSelectionHint &&
-        !localStorage.getItem(SELECTION_CONTEXT_HINT_KEY)
-      ) {
-        localStorage.setItem(SELECTION_CONTEXT_HINT_KEY, "1");
-        onSelectionHint();
-      }
       openAt(event.clientX, event.clientY);
     },
-    [
-      editor,
-      hasNote,
-      locked,
-      onSelectionHint,
-      openAt,
-      restoreSelectionForContextMenu,
-    ],
+    [editor, hasNote, openAt, restoreSelectionForContextMenu],
   );
 
   return {

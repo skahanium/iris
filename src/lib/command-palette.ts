@@ -27,7 +27,6 @@ export type CommandPaletteAction =
   | { type: "zoomIn" }
   | { type: "zoomOut" }
   | { type: "zoomReset" }
-  | { type: "sendSelectionToAi" }
   | { type: "noop" };
 
 export interface CommandPaletteItem {
@@ -283,15 +282,6 @@ export function buildCommandPaletteItems(
       icon: "PanelRight",
       chord: { key: "A", mod: true, shift: true },
       action: { type: "toggleAiPanel" },
-    },
-    {
-      id: "send-selection-ai",
-      label: "将选中文本发送到 AI",
-      group: "AI",
-      keywords: "send selection quote 引用 选中",
-      icon: "Sparkles",
-      disabled: noteOnly,
-      action: { type: "sendSelectionToAi" },
     },
     {
       id: "toggle-web-search",

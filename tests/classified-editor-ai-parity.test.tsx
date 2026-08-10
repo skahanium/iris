@@ -50,11 +50,10 @@ describe("classified editor AI parity contract", () => {
   });
 
   describe("right-click actions present for classified editor when unlocked", () => {
-    it("useEditorContextMenu skips menu when locked but allows when unlocked", () => {
+    it("useEditorContextMenu keeps locked documents available for clipboard actions", () => {
       const src = read("src/hooks/useEditorContextMenu.ts");
       expect(src).toContain("locked = false");
-      expect(src).toMatch(/if\s*\(\s*locked\s*\)\s*return/);
-      // When not locked, the menu should open normally
+      expect(src).not.toMatch(/if\s*\(\s*locked\s*\)\s*return/);
       expect(src).toContain("openAt(event.clientX, event.clientY)");
     });
 
@@ -86,11 +85,13 @@ describe("classified editor AI parity contract", () => {
       expect(src).not.toContain("涉密笔记不能接收 AI 插入");
     });
 
-    it("send selection to AI only opens the Run panel after an explicit selection", () => {
+    it("selection candidates stay live-linked and do not open the Run panel implicitly", () => {
       const src = read("src/hooks/useAiSidecarBridge.ts");
       expect(src).toContain("createEditorContextReference");
       expect(src).toContain("editorSelectionReference");
-      expect(src).toContain("setAiPanelOpen(true)");
+      expect(src).toContain("editorSelectionCandidate");
+      expect(src).toContain("assistantVisible");
+      expect(src).not.toContain("setAiPanelOpen(true)");
       expect(src).not.toContain("isClassifiedVaultPath");
       expect(src).not.toContain("getNoteContent");
       expect(src).not.toContain("setSelectionQuote");

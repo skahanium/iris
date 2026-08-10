@@ -8,7 +8,10 @@ import {
   type RefObject,
 } from "react";
 
-import { createEditorContextReference } from "@/lib/context-reference";
+import {
+  createEditorContextReference,
+  EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE,
+} from "@/lib/context-reference";
 import {
   getWebSearchAvailability,
   type WebSearchProviderOption,
@@ -25,17 +28,46 @@ import {
   type AssistantChromeSnapshot,
 } from "@/types/assistant-chrome";
 import type { ContextReference } from "@/types/ai";
+import type { EditorSelectionCandidate } from "@/types/editor-selection";
+
+const SELECTION_VALIDATION_DEBOUNCE_MS = 120;
+const ALWAYS_CLEAN = () => false;
+
+function selectionPreview(editor: Editor, from: number, to: number): string {
+  return editor.state.doc
+    .textBetween(from, to, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function selectionKey(
+  editor: Editor,
+  documentKey: string | null | undefined,
+): string | null {
+  const { from, to } = editor.state.selection;
+  if (from === to) return null;
+  return `${documentKey ?? ""}:${from}:${to}:${selectionPreview(editor, from, to)}`;
+}
 
 interface UseAiSidecarBridgeParams {
   editorRef: RefObject<Editor | null>;
+  editor?: Editor | null;
+  documentKey?: string | null;
+  documentDirty?: boolean;
+  assistantVisible?: boolean;
+  selectionEnabled?: boolean;
   isDocumentDirty?: () => boolean;
-  setAiStatus: (message: string) => void;
+  setAiStatus?: (message: string) => void;
 }
 
 export function useAiSidecarBridge({
   editorRef,
-  isDocumentDirty = () => false,
-  setAiStatus,
+  editor = null,
+  documentKey = null,
+  documentDirty,
+  assistantVisible = true,
+  selectionEnabled = true,
+  isDocumentDirty = ALWAYS_CLEAN,
 }: UseAiSidecarBridgeParams) {
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
@@ -48,11 +80,16 @@ export function useAiSidecarBridge({
   const [webSearchProvidersLoaded, setWebSearchProvidersLoaded] =
     useState(false);
   const [prefillMessage, setPrefillMessage] = useState<string | null>(null);
-  const [editorSelectionReference, setEditorSelectionReference] =
-    useState<ContextReference | null>(null);
+  const [editorSelectionCandidate, setEditorSelectionCandidate] =
+    useState<EditorSelectionCandidate | null>(null);
   const [assistantChrome, setAssistantChrome] =
     useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
   const selectionRequestGenerationRef = useRef(0);
+  const selectionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const currentSelectionKeyRef = useRef<string | null>(null);
+  const suppressedSelectionKeyRef = useRef<string | null>(null);
+  const isDocumentDirtyRef = useRef(isDocumentDirty);
+  isDocumentDirtyRef.current = isDocumentDirty;
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -60,6 +97,7 @@ export function useAiSidecarBridge({
     return () => {
       mountedRef.current = false;
       selectionRequestGenerationRef.current += 1;
+      if (selectionTimerRef.current) clearTimeout(selectionTimerRef.current);
     };
   }, []);
 
@@ -153,44 +191,156 @@ export function useAiSidecarBridge({
     });
   }, []);
 
-  const sendSelectionToAi = useCallback(
-    async (options?: { prefill?: string }) => {
+  const clearSelectionCandidate = useCallback(() => {
+    selectionRequestGenerationRef.current += 1;
+    if (selectionTimerRef.current) {
+      clearTimeout(selectionTimerRef.current);
+      selectionTimerRef.current = null;
+    }
+    setEditorSelectionCandidate(null);
+  }, []);
+
+  const validateSelection = useCallback(
+    async (ed: Editor, key: string, preview: string) => {
       const generation = ++selectionRequestGenerationRef.current;
-      setEditorSelectionReference(null);
-      const ed = editorRef.current;
-      if (!ed) {
-        setAiStatus("请先在编辑器中选中文本");
+      if (documentDirty ?? isDocumentDirtyRef.current()) {
+        setEditorSelectionCandidate({
+          key,
+          preview,
+          status: "save_required",
+          reference: null,
+          message: EDITOR_REFERENCE_SAVE_REQUIRED_MESSAGE,
+        });
         return;
       }
       const result = await createEditorContextReference({
         editor: ed,
         kind: "selection",
-        isDirty: isDocumentDirty,
+        isDirty: isDocumentDirtyRef.current,
       });
       if (
         !mountedRef.current ||
-        generation !== selectionRequestGenerationRef.current
+        generation !== selectionRequestGenerationRef.current ||
+        currentSelectionKeyRef.current !== key
       ) {
         return;
       }
       if (!result.ok) {
-        setAiStatus(result.message);
+        setEditorSelectionCandidate({
+          key,
+          preview,
+          status: result.reason === "dirty" ? "save_required" : "invalid",
+          reference: null,
+          message: result.message,
+        });
         return;
       }
-      setEditorSelectionReference(result.reference);
-      setPrefillMessage(options?.prefill ?? null);
-      setAiPanelOpen(true);
+      setEditorSelectionCandidate({
+        key,
+        preview,
+        status: "ready",
+        reference: result.reference,
+        message: null,
+      });
     },
-    [editorRef, isDocumentDirty, setAiStatus],
+    [documentDirty],
   );
+
+  const syncSelectionCandidate = useCallback(() => {
+    const ed = editor ?? editorRef.current;
+    if (!ed || !assistantVisible || !selectionEnabled) {
+      clearSelectionCandidate();
+      return;
+    }
+    const key = selectionKey(ed, documentKey);
+    currentSelectionKeyRef.current = key;
+    if (!key) {
+      suppressedSelectionKeyRef.current = null;
+      clearSelectionCandidate();
+      return;
+    }
+    if (suppressedSelectionKeyRef.current === key) {
+      clearSelectionCandidate();
+      return;
+    }
+    suppressedSelectionKeyRef.current = null;
+    // Invalidate any in-flight disk verification before scheduling the newest
+    // selection, including content updates that leave the same range intact.
+    selectionRequestGenerationRef.current += 1;
+    const { from, to } = ed.state.selection;
+    const preview = selectionPreview(ed, from, to);
+    setEditorSelectionCandidate({
+      key,
+      preview,
+      status: "validating",
+      reference: null,
+      message: null,
+    });
+    if (selectionTimerRef.current) clearTimeout(selectionTimerRef.current);
+    selectionTimerRef.current = setTimeout(() => {
+      selectionTimerRef.current = null;
+      void validateSelection(ed, key, preview);
+    }, SELECTION_VALIDATION_DEBOUNCE_MS);
+  }, [
+    assistantVisible,
+    clearSelectionCandidate,
+    documentKey,
+    editor,
+    editorRef,
+    selectionEnabled,
+    validateSelection,
+  ]);
+
+  useEffect(() => {
+    const ed = editor ?? editorRef.current;
+    if (!ed) {
+      clearSelectionCandidate();
+      return;
+    }
+    ed.on("selectionUpdate", syncSelectionCandidate);
+    ed.on("update", syncSelectionCandidate);
+    syncSelectionCandidate();
+    return () => {
+      ed.off("selectionUpdate", syncSelectionCandidate);
+      ed.off("update", syncSelectionCandidate);
+      clearSelectionCandidate();
+    };
+  }, [clearSelectionCandidate, editor, editorRef, syncSelectionCandidate]);
+
+  useEffect(() => {
+    syncSelectionCandidate();
+  }, [
+    assistantVisible,
+    documentDirty,
+    documentKey,
+    selectionEnabled,
+    syncSelectionCandidate,
+  ]);
+
   const consumeEditorSelectionReference = useCallback(() => {
-    setEditorSelectionReference(null);
-  }, []);
+    suppressedSelectionKeyRef.current = currentSelectionKeyRef.current;
+    clearSelectionCandidate();
+  }, [clearSelectionCandidate]);
+
+  const dismissEditorSelectionReference = consumeEditorSelectionReference;
+
+  const sendSelectionToAi = useCallback(
+    async (options?: { prefill?: string }) => {
+      setPrefillMessage(options?.prefill ?? null);
+      syncSelectionCandidate();
+    },
+    [syncSelectionCandidate],
+  );
+
+  const editorSelectionReference: ContextReference | null =
+    editorSelectionCandidate?.reference ?? null;
 
   return {
     aiPanelOpen,
     assistantChrome,
     consumeEditorSelectionReference,
+    dismissEditorSelectionReference,
+    editorSelectionCandidate,
     editorSelectionReference,
     prefillMessage,
     setAiPanelOpen,

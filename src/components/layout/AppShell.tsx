@@ -23,6 +23,7 @@ interface AppShellProps {
   /** 用户是否希望 Agent 侧车开启（受控意图；resize 不经过此通道，不会改写）。 */
   aiPanelOpen?: boolean;
   onAiPanelOpenChange?: (open: boolean) => void;
+  onAssistantVisibilityChange?: (visible: boolean) => void;
   /** 用户是否希望文件导航打开（受控意图；Task 5/7 接线）。 */
   navigatorOpen?: boolean;
   /** 用户固定偏好（受控意图；Task 7 接线）。 */
@@ -50,6 +51,7 @@ export function AppShell({
   navigator,
   aiPanelOpen,
   onAiPanelOpenChange,
+  onAssistantVisibilityChange,
   navigatorOpen,
   pinPreferred,
   primarySurface,
@@ -144,6 +146,9 @@ export function AppShell({
   useEffect(() => {
     if (navigatorOpen !== undefined) setNavigatorOpen(navigatorOpen);
   }, [navigatorOpen, setNavigatorOpen]);
+  useEffect(() => {
+    onAssistantVisibilityChange?.(!zen && projection.assistant !== "collapsed");
+  }, [onAssistantVisibilityChange, projection.assistant, zen]);
   useEffect(() => {
     if (pinPreferred !== undefined) setPinPreferred(pinPreferred);
   }, [pinPreferred, setPinPreferred]);

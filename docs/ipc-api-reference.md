@@ -32,6 +32,8 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 ## Agent Run 契约
 
 - normal-domain 请求只能使用 `assistant_run_start`。请求包含显式会话、显式引用、可选的一次性 `explicitAction` 和安全域；当前编辑器、活动 tab、scene、intent、旧任务 ID 和笔记正文都不是隐式输入。
+- 编辑器选区候选是 renderer 内存中的临时 UI 状态，不是 IPC 输入；只有用户明确发送且候选仍通过磁盘内容哈希与 UTF-8 范围校验时，才转换为本次 `assistant_run_start` 的显式 `ContextReference`。选区取消、文档切换或 Agent 隐藏后不得提交或保留该引用。
+- 选区预览文字不得进入 IPC、持久化事件、日志或会话；后端按显式路径、内容哈希和范围重新读取权威 Markdown。锁定普通文档只读引用不改变权限，未保存/无法映射选区必须在前端阻止发送；classified 文档不走 normal-domain 选区引用。
 - normal-domain 生命周期事件只有 `assistant:run_event`。事件先持久化再发送；前端断流后使用 `assistant_run_get` 回放，不订阅 `llm:*`、`ai:*`、Harness 或工具确认事件。回放日志不包含工具参数或原始输出，只返回安全快照和受限过程展示。
 - `assistant_run_control` 以预期 state version 进行幂等控制；取消、确认和恢复不使用平行的 task/harness API。
 - `assistant_run_get` 的断流回放不是进程级执行恢复：Direct 与 ToolLoop 不支持进程级续跑，进程中断后不能由事件重新发起模型或工具。Durable Run 的暂停与检查点仅在其冻结计划、用户确认和内容 hash 复核均满足时才可进入恢复路径。

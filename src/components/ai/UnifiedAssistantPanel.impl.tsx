@@ -60,6 +60,8 @@ export function UnifiedAssistantPanel({
   classifiedPath = null,
   oneShotContextReference = null,
   consumeOneShotContextReference,
+  editorSelectionCandidate = null,
+  onDismissEditorSelectionReference,
   runtimeDocumentCandidates = [],
   webSearch = false,
   modelOverride = null,
@@ -298,6 +300,7 @@ export function UnifiedAssistantPanel({
     session: runSession,
     contextReferences: bubbleSelection.contextReferences,
     oneShotContextReference,
+    editorSelectionCandidate,
     consumeOneShotContextReference,
     displayMentions,
     retrievalScope,
@@ -598,6 +601,8 @@ export function UnifiedAssistantPanel({
         onMentionSelect={selectMention}
         onSelect={syncMentionFromInput}
         contextReferences={bubbleSelection.contextReferences}
+        editorSelectionCandidate={editorSelectionCandidate}
+        onDismissEditorSelectionReference={onDismissEditorSelectionReference}
         onRemoveContextReference={(id) =>
           bubbleSelection.removeContextReference(id)
         }

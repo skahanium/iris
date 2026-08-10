@@ -31,7 +31,6 @@ interface UseAppShortcutsParams {
   overlays: OverlayPort;
   resetZoom: () => void;
   saveOutlineOpen: (open: boolean) => void;
-  sendSelectionToAi: () => void;
   setAiPanelOpen: (updater: (open: boolean) => boolean) => void;
   setClassifiedOpen: (open: boolean) => void;
   setOutlineOpen: (updater: (open: boolean) => boolean) => void;
@@ -55,7 +54,6 @@ export function useAppShortcuts({
   overlays,
   resetZoom,
   saveOutlineOpen,
-  sendSelectionToAi,
   setAiPanelOpen,
   setClassifiedOpen,
   setOutlineOpen,
@@ -140,9 +138,6 @@ export function useAppShortcuts({
         case "zoomReset":
           resetZoom();
           break;
-        case "sendSelectionToAi":
-          sendSelectionToAi();
-          break;
         default: {
           const _exhaustive: never = action;
           return _exhaustive;
@@ -159,7 +154,6 @@ export function useAppShortcuts({
       overlays,
       resetZoom,
       saveOutlineOpen,
-      sendSelectionToAi,
       setAiPanelOpen,
       setClassifiedOpen,
       setOutlineOpen,
