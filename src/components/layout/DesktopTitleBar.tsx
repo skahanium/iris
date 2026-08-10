@@ -78,7 +78,10 @@ function TitlebarNavigatorEntry() {
       aria-label={label}
       aria-pressed={open}
       title={label}
-      onMouseDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       onClick={chrome.toggleNavigator}
     >
       <FolderTree className="h-4 w-4" />
@@ -221,6 +224,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
           data-tauri-drag-region-exclude
           className="flex min-w-0 flex-1 items-center overflow-hidden rounded-md px-1 py-1 text-left focus:outline-none"
           onMouseDown={(event) => {
+            event.preventDefault();
             event.stopPropagation();
           }}
           onClick={() => {
@@ -255,6 +259,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
           )}
           aria-label={`关闭 ${tab.title}`}
           onMouseDown={(event) => {
+            event.preventDefault();
             event.stopPropagation();
           }}
           onClick={(event) => {
@@ -316,7 +321,10 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                   className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
                   aria-label="更多笔记"
                   aria-expanded={moreOpen}
-                  onMouseDown={(event) => event.stopPropagation()}
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
                   onClick={() => setMoreOpen((value) => !value)}
                 >
                   <MoreHorizontal className="h-4 w-4" />
@@ -351,6 +359,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
               className="iris-focus-soft inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
               aria-label="新建笔记"
               onMouseDown={(event) => {
+                event.preventDefault();
                 event.stopPropagation();
               }}
               onClick={onNew}

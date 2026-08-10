@@ -241,7 +241,7 @@ export function AppShell({
         data-presentation={projection.navigator}
         aria-hidden={mainHidden || undefined}
         className={cn(
-          "border-r border-border-subtle",
+          "h-full min-h-0 overflow-hidden border-r border-border-subtle",
           projection.navigator === "pinned"
             ? "relative z-navigator shrink-0"
             : "absolute inset-y-0 left-0 z-navigator-overlay bg-panel shadow-overlay",

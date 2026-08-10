@@ -105,6 +105,8 @@ function renderTitleBar(
     },
   ],
   actions: WorkspaceChromeActions = mockChromeActions(),
+  onClose: (path: string) => void = () => undefined,
+  onNew: () => void = () => undefined,
 ) {
   setTauriRuntime(true);
   host = document.createElement("div");
@@ -120,8 +122,8 @@ function renderTitleBar(
           tabs,
           activePath: tabs[0]?.path ?? null,
           onSelect: () => undefined,
-          onClose: () => undefined,
-          onNew: () => undefined,
+          onClose,
+          onNew,
         }),
       ),
     );
@@ -491,6 +493,47 @@ describe("desktop title bar", () => {
     expect(closeButton).not.toBeNull();
     expect(tabSegment).not.toBeNull();
     expect(tabSegment?.textContent).toContain("Sample Note");
+  });
+
+  it("does not move focus to titlebar controls when clicked with a mouse", () => {
+    const onClose = vi.fn();
+    const onNew = vi.fn();
+    const toggleNavigator = vi.fn();
+    renderTitleBar(
+      undefined,
+      mockChromeActions({ toggleNavigator }),
+      onClose,
+      onNew,
+    );
+
+    const closeButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label$="Sample Note"]',
+    );
+    const navigatorButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="titlebar-navigator-entry"]',
+    );
+    const newButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="rail-new-note-button"]',
+    );
+    expect(closeButton).not.toBeNull();
+    expect(navigatorButton).not.toBeNull();
+    expect(newButton).not.toBeNull();
+
+    for (const button of [closeButton, navigatorButton, newButton]) {
+      const mouseDown = new MouseEvent("mousedown", {
+        bubbles: true,
+        cancelable: true,
+      });
+      button?.dispatchEvent(mouseDown);
+      expect(mouseDown.defaultPrevented).toBe(true);
+    }
+
+    fireEvent.click(closeButton!);
+    fireEvent.click(navigatorButton!);
+    fireEvent.click(newButton!);
+    expect(onClose).toHaveBeenCalledWith("/vault/sample-note.md");
+    expect(toggleNavigator).toHaveBeenCalledTimes(1);
+    expect(onNew).toHaveBeenCalledTimes(1);
   });
 
   it("does not expose artifact ids in tab tooltips", () => {

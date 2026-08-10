@@ -27,14 +27,19 @@ describe("document title field layout", () => {
     );
   });
 
-  it("clamps long titles and keeps focus geometry stable", () => {
+  it("auto-grows long titles without an internal scrollbar", () => {
     const css = read("src/styles/globals.css");
+    const titleRule = css.match(
+      /\.iris-document-title-field \.iris-doc-title \{[\s\S]*?\n\s*\}/,
+    )?.[0];
+
+    expect(titleRule).toBeDefined();
 
     expect(css).toContain("--doc-title-line-height: 1.2");
-    expect(css).toContain("--doc-title-max-lines: 3");
-    expect(css).toContain("--doc-title-focus-max-lines: 6");
     expect(css).toContain("overflow-wrap: anywhere");
-    expect(css).toContain("max-height: calc(");
+    expect(titleRule).toContain("overflow-y: hidden");
+    expect(titleRule).not.toContain("overflow-y: auto");
+    expect(titleRule).not.toContain("max-height: calc(");
     expect(css).toContain("text-center font-bold text-editor-ink");
     expect(css).not.toContain(
       ".iris-document-title-field:focus-within .iris-doc-title",

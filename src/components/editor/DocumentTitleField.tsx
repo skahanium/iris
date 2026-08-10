@@ -100,12 +100,8 @@ function DocumentTitleFieldInner({
     const selStart = el.selectionStart;
     const selEnd = el.selectionEnd;
     const active = document.activeElement === el;
-    const prevHeight = el.style.height;
-    const nextHeight = `${el.scrollHeight}px`;
-    if (prevHeight === nextHeight) {
-      return;
-    }
 
+    // Reset before measuring so deleting text can shrink the uncontrolled textarea.
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
     if (active) {

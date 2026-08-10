@@ -258,6 +258,47 @@ describe("DocumentTitleField parent state", () => {
     host.remove();
   });
 
+  it("grows and shrinks with the measured title content", async () => {
+    await act(async () => {
+      root.render(
+        createElement(TitleHarness, {
+          value: "short",
+          resetKey: "note-a.md",
+          onChange: () => undefined,
+        }),
+      );
+    });
+
+    const field = host.querySelector(
+      '[data-testid="document-title"]',
+    ) as HTMLTextAreaElement;
+    Object.defineProperty(field, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        const intrinsicHeight = field.value.length > 10 ? 96 : 32;
+        const currentHeight = Number.parseFloat(field.style.height);
+        return field.style.height === "auto"
+          ? intrinsicHeight
+          : Math.max(
+              intrinsicHeight,
+              Number.isFinite(currentHeight) ? currentHeight : 0,
+            );
+      },
+    });
+
+    await act(async () => {
+      field.value = "a title that needs two lines";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(field.style.height).toBe("96px");
+
+    await act(async () => {
+      field.value = "short";
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(field.style.height).toBe("32px");
+  });
+
   it("updates parent state from input events", async () => {
     await act(async () => {
       root.render(

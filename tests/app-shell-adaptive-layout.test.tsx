@@ -228,6 +228,17 @@ describe("AppShell 自适应布局：单实例稳定挂载与投影", () => {
     expect(mountCounts.navigator).toBe(navigatorMounts);
   });
 
+  it("keeps the navigator a block container while constraining its viewport", () => {
+    renderShell({ navigatorOpen: true });
+    fireResize(2000);
+
+    const navigatorNode = screen.getByTestId("workspace-navigator");
+    expect(navigatorNode.className).toContain("h-full");
+    expect(navigatorNode.className).toContain("min-h-0");
+    expect(navigatorNode.className).toContain("overflow-hidden");
+    expect(navigatorNode.className).not.toContain("flex");
+  });
+
   it("peek 悬浮呈现使用高于目录岛的 z 层（z-navigator-overlay），pinned 保持 z-navigator", () => {
     renderShell({
       navigatorOpen: true,
