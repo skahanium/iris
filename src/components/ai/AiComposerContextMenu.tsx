@@ -1,6 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, type RefObject } from "react";
 
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
+import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
 import {
   filterEditorActions,
   groupContextMenuActions,
@@ -8,25 +9,19 @@ import {
   type EditorActionContext,
 } from "@/lib/editor-actions";
 import {
-  applyTextFieldCaret,
   copyTextFieldSelection,
   IrisClipboardError,
   pasteIntoTextField,
 } from "@/lib/iris-clipboard";
-import type { MentionTextEdit } from "@/lib/ai-context-scope";
 
 interface AiComposerContextMenuProps {
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
-  value: string;
-  onValueChange: (value: string, edit?: MentionTextEdit) => void;
+  composerRef: RefObject<AssistantComposerHandle | null>;
   children: React.ReactNode;
 }
 
-/** AI 输入框自定义右键（剪贴板） */
+/** AI 输入框自定义右键：剪切、复制、粘贴、全选。 */
 export function AiComposerContextMenu({
-  textareaRef,
-  value,
-  onValueChange,
+  composerRef,
   children,
 }: AiComposerContextMenuProps) {
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number }>({
@@ -34,6 +29,28 @@ export function AiComposerContextMenu({
     x: 0,
     y: 0,
   });
+  const editor = composerRef.current?.getEditor() ?? null;
+  const selection = editor?.state.selection;
+  const selectedText =
+    editor && selection && !selection.empty
+      ? editor.state.doc.textBetween(selection.from, selection.to, "\n", "\n")
+      : "";
+  const ctx: EditorActionContext = {
+    hasNote: true,
+    hasSelection: selectedText.length > 0,
+    streaming: false,
+  };
+  const groups = groupContextMenuActions(
+    filterEditorActions("context_menu", "ai_composer", ctx),
+  ).map(({ group, items }) => ({
+    group,
+    items: items.map((action) => ({
+      id: action.id,
+      label: action.label,
+      icon: action.icon,
+      disabled: !isEditorActionEnabled(action, ctx),
+    })),
+  }));
 
   const handleContextMenu = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
@@ -41,64 +58,52 @@ export function AiComposerContextMenu({
     setMenu({ open: true, x: event.clientX, y: event.clientY });
   }, []);
 
-  const ctx: EditorActionContext = {
-    hasNote: true,
-    hasSelection:
-      textareaRef.current != null &&
-      textareaRef.current.selectionStart !== textareaRef.current.selectionEnd,
-    streaming: false,
-  };
-
-  const groups = groupContextMenuActions(
-    filterEditorActions("context_menu", "ai_composer", ctx),
-  ).map(({ group, items }) => ({
-    group,
-    items: items.map((a) => ({
-      id: a.id,
-      label: a.label,
-      icon: a.icon,
-      disabled: !isEditorActionEnabled(a, ctx),
-    })),
-  }));
-
   const runAction = useCallback(
     async (id: string) => {
-      const el = textareaRef.current;
-      if (!el) return;
-      const start = el.selectionStart ?? 0;
-      const end = el.selectionEnd ?? start;
-      const selection = { start, end };
-
+      const currentEditor = composerRef.current?.getEditor();
+      if (!currentEditor) return;
+      const range = currentEditor.state.selection;
+      const text = !range.empty
+        ? currentEditor.state.doc.textBetween(range.from, range.to, "\n", "\n")
+        : "";
       try {
         switch (id) {
           case "copy":
-            await copyTextFieldSelection(value, selection);
+            if (text)
+              await copyTextFieldSelection(text, {
+                start: 0,
+                end: text.length,
+              });
+            break;
+          case "cut":
+            if (text) {
+              await copyTextFieldSelection(text, {
+                start: 0,
+                end: text.length,
+              });
+              currentEditor.commands.deleteSelection();
+            }
             break;
           case "paste": {
-            const pasted = await pasteIntoTextField(value, selection);
-            if (!pasted) return;
-            onValueChange(pasted.value, {
-              from: start,
-              to: end,
-              insertedTextLength:
-                pasted.value.length - (value.length - (end - start)),
+            const pasted = await pasteIntoTextField(text, {
+              start: 0,
+              end: text.length,
             });
-            applyTextFieldCaret(el, pasted.caret);
+            if (pasted)
+              currentEditor.chain().focus().insertContent(pasted.value).run();
             break;
           }
           case "select-all":
-            el.select();
+            currentEditor.commands.selectAll();
             break;
           default:
             break;
         }
-      } catch (err) {
-        if (err instanceof IrisClipboardError) {
-          // ignore
-        }
+      } catch (error) {
+        if (error instanceof IrisClipboardError) return;
       }
     },
-    [onValueChange, textareaRef, value],
+    [composerRef],
   );
 
   return (

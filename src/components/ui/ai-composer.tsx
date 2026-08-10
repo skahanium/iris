@@ -1,131 +1,104 @@
-﻿import { Paperclip, Send, Square, X } from "lucide-react";
+import { Paperclip, Send, Square, X } from "lucide-react";
 import type {
-  CompositionEvent,
+  ClipboardEvent,
+  DragEvent,
   KeyboardEvent,
   ReactNode,
   RefObject,
 } from "react";
-import { useCallback, useLayoutEffect, useRef } from "react";
+import {
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from "react";
+import { EditorContent, useEditor } from "@tiptap/react";
+import type { Editor, JSONContent } from "@tiptap/core";
 
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import type { MentionCandidate } from "@/lib/ai-context-scope";
 import {
-  displayMentionTooltip,
-  validDisplayMentions,
-  type MentionTextEdit,
-} from "@/lib/ai-context-scope";
-import type { DisplayMention } from "@/types/ai";
+  assistantComposerDocFromText,
+  projectAssistantComposerDoc,
+} from "@/lib/assistant-composer-doc";
+import {
+  AssistantMentionExtension,
+  createAssistantComposerExtensions,
+  insertAssistantMention,
+} from "@/lib/assistant-composer-extensions";
+import type { DisplayMention, SecurityDomain } from "@/types/ai";
 import type { ImageAttachmentDto } from "@/types/ipc";
+import { cn } from "@/lib/utils";
+
+export interface AssistantComposerHandle {
+  appendPlainText: (text: string) => void;
+  clear: () => void;
+  focus: () => void;
+  getEditor: () => Editor | null;
+  insertMention: (candidate: MentionCandidate) => boolean;
+}
 
 interface AiComposerProps {
   value: string;
-  onChange: (value: string, edit?: MentionTextEdit) => void;
+  displayMentions?: DisplayMention[];
+  onChange: (value: string, mentions: DisplayMention[]) => void;
   onSubmit: () => void;
   onStop?: () => void;
   streaming?: boolean;
   disabled?: boolean;
+  submitDisabled?: boolean;
   placeholder?: string;
   className?: string;
-  textareaRef?: RefObject<HTMLTextAreaElement | null>;
-  onComposerKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
-  onCompositionStart?: (e: CompositionEvent<HTMLTextAreaElement>) => void;
-  onCompositionEnd?: (e: CompositionEvent<HTMLTextAreaElement>) => void;
-  onSelect?: () => void;
-  mentionPopover?: ReactNode;
-  displayMentions?: DisplayMention[];
-  /** @deprecated 工具/检索状态已移至底栏，保留以兼容旧调用 */
-  statusHint?: string | null;
-  /** 已附加的图片列表 */
+  composerRef?: RefObject<AssistantComposerHandle | null>;
+  domain?: SecurityDomain;
+  mentionEnabled?: boolean;
+  getMentionCandidates?: (
+    prefix: "@" | "#",
+    query: string,
+  ) => MentionCandidate[];
+  onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
+  contextShelf?: ReactNode;
   images?: ImageAttachmentDto[];
-  /** 图片列表变更回调 */
   onImagesChange?: (images: ImageAttachmentDto[]) => void;
 }
 
-const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB
+const MAX_IMAGE_SIZE = 20 * 1024 * 1024;
 const ALLOWED_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-
-interface BeforeInputSnapshot {
-  value: string;
-  selectionStart: number;
-  selectionEnd: number;
-  inputType: string;
-}
-
-function editFromBeforeInput(
-  snapshot: BeforeInputSnapshot,
-  nextValue: string,
-): MentionTextEdit | undefined {
-  const { selectionStart, selectionEnd } = snapshot;
-  if (selectionStart !== selectionEnd) {
-    const insertedTextLength =
-      nextValue.length -
-      (snapshot.value.length - (selectionEnd - selectionStart));
-    return insertedTextLength >= 0
-      ? { from: selectionStart, to: selectionEnd, insertedTextLength }
-      : undefined;
-  }
-
-  if (snapshot.inputType.startsWith("delete")) {
-    const deletedTextLength = snapshot.value.length - nextValue.length;
-    if (deletedTextLength < 0) return undefined;
-    if (snapshot.inputType.endsWith("Backward")) {
-      return {
-        from: Math.max(0, selectionStart - deletedTextLength),
-        to: selectionStart,
-        insertedTextLength: 0,
-      };
-    }
-    return {
-      from: selectionStart,
-      to: Math.min(snapshot.value.length, selectionStart + deletedTextLength),
-      insertedTextLength: 0,
-    };
-  }
-
-  if (snapshot.inputType.startsWith("insert")) {
-    const insertedTextLength = nextValue.length - snapshot.value.length;
-    return insertedTextLength >= 0
-      ? {
-          from: selectionStart,
-          to: selectionStart,
-          insertedTextLength,
-        }
-      : undefined;
-  }
-
-  return undefined;
-}
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = (reader.result as string).split(",")[1] ?? "";
-      resolve(result);
-    };
+    reader.onload = () =>
+      resolve((reader.result as string).split(",")[1] ?? "");
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 }
 
 async function processImageFiles(files: File[]): Promise<ImageAttachmentDto[]> {
-  const out: ImageAttachmentDto[] = [];
+  const output: ImageAttachmentDto[] = [];
   for (const file of files) {
-    if (file.size > MAX_IMAGE_SIZE) continue;
-    if (!ALLOWED_MIME.includes(file.type)) continue;
-    const dataBase64 = await fileToBase64(file);
-    out.push({
+    if (file.size > MAX_IMAGE_SIZE || !ALLOWED_MIME.includes(file.type))
+      continue;
+    output.push({
       id: crypto.randomUUID(),
-      dataBase64,
+      dataBase64: await fileToBase64(file),
       mimeType: file.type,
       fileName: file.name,
       sizeBytes: file.size,
     });
   }
-  return out;
+  return output;
 }
 
-/** AI 侧栏多行输入区 */
+interface ComposerSnapshot {
+  doc: JSONContent;
+  text: string;
+  displayMentions: DisplayMention[];
+}
+
+/** AI sidecar Composer with a plain-text projection and atomic local mentions. */
 export function AiComposer({
   value,
   onChange,
@@ -133,205 +106,199 @@ export function AiComposer({
   onStop,
   streaming = false,
   disabled = false,
+  submitDisabled = false,
   placeholder = "提问…",
   className,
-  textareaRef,
-  onComposerKeyDown,
-  onCompositionStart,
-  onCompositionEnd,
-  onSelect,
-  mentionPopover,
-  displayMentions = [],
+  composerRef,
+  domain = "normal",
+  mentionEnabled = domain === "normal",
+  getMentionCandidates = () => [],
+  onKeyDown,
+  contextShelf,
   images,
   onImagesChange,
 }: AiComposerProps) {
+  const getCandidatesRef = useRef(getMentionCandidates);
+  getCandidatesRef.current = getMentionCandidates;
+  const mentionEnabledRef = useRef(mentionEnabled);
+  mentionEnabledRef.current = mentionEnabled;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
+  const onKeyDownRef = useRef(onKeyDown);
+  onKeyDownRef.current = onKeyDown;
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const streamingRef = useRef(streaming);
+  streamingRef.current = streaming;
+  const submitDisabledRef = useRef(submitDisabled);
+  submitDisabledRef.current = submitDisabled;
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
+  const domainRef = useRef(domain);
+  domainRef.current = domain;
+  const activeDomainRef = useRef(domain);
+  const emittedTextRef = useRef(value);
+  const snapshotsRef = useRef<
+    Partial<Record<SecurityDomain, ComposerSnapshot>>
+  >({});
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const mentionLayerRef = useRef<HTMLDivElement>(null);
-  const composingRef = useRef(false);
-  const beforeInputRef = useRef<BeforeInputSnapshot | null>(null);
-  const selectionSnapshotRef = useRef<BeforeInputSnapshot | null>(null);
-  const visibleMentions = validDisplayMentions(value, displayMentions);
 
-  const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    selectionSnapshotRef.current = {
-      value: e.currentTarget.value,
-      selectionStart: e.currentTarget.selectionStart,
-      selectionEnd: e.currentTarget.selectionEnd,
-      inputType: "",
+  const mentionExtension = useMemo(
+    () =>
+      AssistantMentionExtension.configure({
+        enabled: () => mentionEnabledRef.current,
+        getCandidates: (prefix, query) =>
+          getCandidatesRef.current(prefix, query),
+      }),
+    [],
+  );
+  const extensions = useMemo(
+    () => createAssistantComposerExtensions({ mentionExtension }),
+    [mentionExtension],
+  );
+  const emitProjectionRef = useRef<(instance: Editor) => void>(() => undefined);
+
+  const editor = useEditor(
+    {
+      extensions,
+      content: assistantComposerDocFromText(value),
+      immediatelyRender: true,
+      shouldRerenderOnTransaction: false,
+      editorProps: {
+        attributes: {
+          "aria-label": "AI 输入",
+          class: "ai-composer-editor prose-none outline-none",
+          "data-placeholder": placeholder,
+          role: "textbox",
+        },
+        handleKeyDown: (_view, event) => {
+          if (event.isComposing || event.keyCode === 229) return false;
+          onKeyDownRef.current?.(
+            event as unknown as KeyboardEvent<HTMLDivElement>,
+          );
+          if (event.defaultPrevented) return true;
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            if (
+              !streamingRef.current &&
+              !submitDisabledRef.current &&
+              (valueRef.current.trim() || imagesRef.current?.length)
+            ) {
+              onSubmitRef.current();
+            }
+            return true;
+          }
+          return false;
+        },
+      },
+      onUpdate: ({ editor: updatedEditor }) => {
+        emitProjectionRef.current(updatedEditor);
+      },
+    },
+    [],
+  );
+
+  const emitProjection = useCallback((instance: Editor) => {
+    const projection = projectAssistantComposerDoc(instance.state.doc);
+    const snapshot: ComposerSnapshot = {
+      doc: instance.getJSON(),
+      text: projection.text,
+      displayMentions: projection.displayMentions,
     };
-    if (
-      composingRef.current ||
-      e.nativeEvent.isComposing ||
-      e.nativeEvent.keyCode === 229
-    ) {
+    snapshotsRef.current[domainRef.current] = snapshot;
+    emittedTextRef.current = projection.text;
+    onChangeRef.current(projection.text, projection.displayMentions);
+  }, []);
+  emitProjectionRef.current = emitProjection;
+
+  useEffect(() => {
+    if (!editor) return;
+    const previousDomain = activeDomainRef.current;
+    if (previousDomain !== domain) {
+      activeDomainRef.current = domain;
+      const snapshot = snapshotsRef.current[domain];
+      editor.commands.setContent(
+        snapshot?.doc ?? assistantComposerDocFromText(value),
+        false,
+      );
+      emitProjection(editor);
       return;
     }
-    onComposerKeyDown?.(e);
-    if (e.defaultPrevented) return;
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (!streaming && (value.trim() || (images && images.length > 0)))
-        onSubmit();
-    }
-  };
-
-  const handleBeforeInput = (event: React.FormEvent<HTMLTextAreaElement>) => {
-    const nativeEvent = event.nativeEvent as InputEvent;
-    beforeInputRef.current = {
-      value: event.currentTarget.value,
-      selectionStart: event.currentTarget.selectionStart,
-      selectionEnd: event.currentTarget.selectionEnd,
-      inputType:
-        nativeEvent.inputType ||
-        (typeof nativeEvent.data === "string" ? "insertText" : ""),
+    if (value === emittedTextRef.current) return;
+    editor.commands.setContent(assistantComposerDocFromText(value), false);
+    snapshotsRef.current[domain] = {
+      doc: editor.getJSON(),
+      text: value,
+      displayMentions: [],
     };
-  };
+    emittedTextRef.current = value;
+    onChangeRef.current(value, []);
+  }, [domain, editor, emitProjection, value]);
 
-  const captureSelection = (textarea: HTMLTextAreaElement) => {
-    selectionSnapshotRef.current = {
-      value: textarea.value,
-      selectionStart: textarea.selectionStart,
-      selectionEnd: textarea.selectionEnd,
-      inputType: "",
-    };
-  };
-
-  // Keep edit snapshots aligned when the parent restores text/cursor after @ insert.
-  useLayoutEffect(() => {
-    const textarea = textareaRef?.current;
-    if (!textarea || textarea.value !== value) return;
-    captureSelection(textarea);
-  }, [textareaRef, value]);
-
-  const handleSelection = (
-    event: React.SyntheticEvent<HTMLTextAreaElement>,
-  ) => {
-    captureSelection(event.currentTarget);
-    onSelect?.();
-  };
-
-  const handleCompositionStart = (
-    event: CompositionEvent<HTMLTextAreaElement>,
-  ) => {
-    composingRef.current = true;
-    onCompositionStart?.(event);
-  };
-
-  const handleCompositionEnd = (
-    event: CompositionEvent<HTMLTextAreaElement>,
-  ) => {
-    composingRef.current = false;
-    onCompositionEnd?.(event);
-  };
+  useImperativeHandle(
+    composerRef,
+    () => ({
+      appendPlainText(text) {
+        if (!editor || !text) return;
+        editor.chain().focus().insertContent(text).run();
+      },
+      clear() {
+        if (!editor) return;
+        editor.commands.clearContent(true);
+        emitProjection(editor);
+      },
+      focus() {
+        editor?.commands.focus();
+      },
+      getEditor: () => editor,
+      insertMention: (candidate) =>
+        editor ? insertAssistantMention(editor, candidate) : false,
+    }),
+    [editor, emitProjection],
+  );
 
   const handlePaste = useCallback(
-    async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    async (event: ClipboardEvent<HTMLDivElement>) => {
       if (!onImagesChange) return;
-      const items = Array.from(e.clipboardData.items);
-      const imageFiles = items
+      const files = Array.from(event.clipboardData.items)
         .filter((item) => item.type.startsWith("image/"))
         .map((item) => item.getAsFile())
-        .filter((f): f is File => f !== null);
-      if (imageFiles.length > 0) {
-        e.preventDefault();
-        const newImages = await processImageFiles(imageFiles);
-        if (newImages.length > 0) {
-          onImagesChange([...(images ?? []), ...newImages]);
-        }
-      }
+        .filter((file): file is File => file !== null);
+      if (files.length === 0) return;
+      event.preventDefault();
+      const next = await processImageFiles(files);
+      if (next.length > 0) onImagesChange([...(images ?? []), ...next]);
     },
     [images, onImagesChange],
   );
 
   const handleDrop = useCallback(
-    async (e: React.DragEvent) => {
+    async (event: DragEvent<HTMLDivElement>) => {
       if (!onImagesChange) return;
-      const files = Array.from(e.dataTransfer.files).filter((f) =>
-        f.type.startsWith("image/"),
+      const files = Array.from(event.dataTransfer.files).filter((file) =>
+        file.type.startsWith("image/"),
       );
-      if (files.length > 0) {
-        e.preventDefault();
-        const newImages = await processImageFiles(files);
-        if (newImages.length > 0) {
-          onImagesChange([...(images ?? []), ...newImages]);
-        }
-      }
+      if (files.length === 0) return;
+      event.preventDefault();
+      const next = await processImageFiles(files);
+      if (next.length > 0) onImagesChange([...(images ?? []), ...next]);
     },
     [images, onImagesChange],
   );
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    if (Array.from(e.dataTransfer.types).includes("Files")) {
-      e.preventDefault();
-    }
-  }, []);
 
   const handleFileSelect = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
       if (!onImagesChange) return;
-      const files = Array.from(e.target.files || []);
-      if (files.length > 0) {
-        const newImages = await processImageFiles(files);
-        if (newImages.length > 0) {
-          onImagesChange([...(images ?? []), ...newImages]);
-        }
-      }
-      e.target.value = "";
-    },
-    [images, onImagesChange],
-  );
-
-  const removeImage = useCallback(
-    (id: string) => {
-      onImagesChange?.((images ?? []).filter((i) => i.id !== id));
-    },
-    [images, onImagesChange],
-  );
-
-  const handleTextAreaScroll = useCallback(
-    (event: React.UIEvent<HTMLTextAreaElement>) => {
-      const layer = mentionLayerRef.current;
-      if (!layer) return;
-      layer.scrollTop = event.currentTarget.scrollTop;
-      layer.scrollLeft = event.currentTarget.scrollLeft;
-    },
-    [],
-  );
-
-  const mentionOverlay = (() => {
-    if (visibleMentions.length === 0) return null;
-    const nodes: ReactNode[] = [];
-    let cursor = 0;
-    visibleMentions.forEach((mention, index) => {
-      if (mention.range.from > cursor) {
-        nodes.push(value.slice(cursor, mention.range.from));
-      }
-      nodes.push(
-        <span
-          key={`${mention.kind}:${mention.value}:${mention.range.from}:${index}`}
-          className="ai-composer-display-mention pointer-events-auto cursor-help"
-          title={displayMentionTooltip(mention)}
-          onMouseDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const textarea =
-              event.currentTarget.parentElement?.parentElement?.querySelector<HTMLTextAreaElement>(
-                "textarea",
-              );
-            if (!textarea) return;
-            textarea.focus();
-            textarea.setSelectionRange(mention.range.to, mention.range.to);
-            captureSelection(textarea);
-          }}
-        >
-          {value.slice(mention.range.from, mention.range.to)}
-        </span>,
+      const next = await processImageFiles(
+        Array.from(event.target.files ?? []),
       );
-      cursor = mention.range.to;
-    });
-    if (cursor < value.length) nodes.push(value.slice(cursor));
-    return nodes;
-  })();
+      if (next.length > 0) onImagesChange([...(images ?? []), ...next]);
+      event.target.value = "";
+    },
+    [images, onImagesChange],
+  );
 
   return (
     <div
@@ -339,148 +306,106 @@ export function AiComposer({
         "shrink-0 border-t border-border-subtle bg-ai-composer p-3",
         className,
       )}
-      onDrop={handleDrop}
-      onDragOver={handleDragOver}
+      onDrop={(event) => void handleDrop(event)}
+      onDragOver={(event) => {
+        if (Array.from(event.dataTransfer.types).includes("Files"))
+          event.preventDefault();
+      }}
     >
-      <div className="ai-composer-workbench relative flex items-end gap-2 rounded-lg border border-border/80 bg-surface-elevated p-2 focus-within:ring-2 focus-within:ring-primary/25">
-        {mentionPopover ? (
-          <div className="absolute bottom-full left-0 right-0 z-20 mb-1.5">
-            {mentionPopover}
-          </div>
-        ) : null}
-        <div className="flex min-w-0 flex-1 flex-col">
-          {images && images.length > 0 && (
-            <div className="mb-1.5 flex flex-wrap gap-1.5">
-              {images.map((img) => (
-                <div
-                  key={img.id}
-                  className="group relative h-10 w-10 overflow-hidden rounded-md border border-border/50"
-                >
-                  <img
-                    src={`data:${img.mimeType};base64,${img.dataBase64}`}
-                    className="h-full w-full object-cover"
-                    alt={img.fileName || ""}
-                  />
-                  <button
-                    type="button"
-                    className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100"
-                    onClick={() => removeImage(img.id)}
-                    aria-label="移除图片"
+      <div className="ai-composer-workbench relative rounded-lg border border-border/80 bg-surface-elevated focus-within:ring-2 focus-within:ring-primary/25">
+        {contextShelf}
+        <div className="flex items-end gap-2 p-2">
+          <div className="flex min-w-0 flex-1 flex-col">
+            {images && images.length > 0 ? (
+              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                {images.map((image) => (
+                  <div
+                    key={image.id}
+                    className="group relative h-10 w-10 overflow-hidden rounded-md border border-border/50"
                   >
-                    <X className="h-2.5 w-2.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="relative min-h-[2.5rem] w-full">
-            {mentionOverlay ? (
-              <div
-                ref={mentionLayerRef}
-                aria-hidden="true"
-                data-testid="ai-mention-highlight-layer"
-                className="ai-composer-mention-layer pointer-events-none absolute inset-0 z-[2] max-h-32 min-h-[2.5rem] overflow-hidden whitespace-pre-wrap break-words text-[15px] leading-[1.52] text-foreground"
-              >
-                {mentionOverlay}
+                    <img
+                      src={`data:${image.mimeType};base64,${image.dataBase64}`}
+                      className="h-full w-full object-cover"
+                      alt={image.fileName || ""}
+                    />
+                    <button
+                      type="button"
+                      className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-0 transition-opacity group-hover:opacity-100"
+                      onClick={() =>
+                        onImagesChange?.(
+                          (images ?? []).filter((item) => item.id !== image.id),
+                        )
+                      }
+                      aria-label="移除图片"
+                    >
+                      <X className="h-2.5 w-2.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
             ) : null}
-            <textarea
-              ref={textareaRef}
-              rows={2}
-              value={value}
-              disabled={disabled && !streaming}
-              placeholder={
-                images && images.length > 0 ? "描述图片内容…" : placeholder
-              }
-              aria-label="AI 输入"
+            <div
               className={cn(
-                "relative z-[1] max-h-32 min-h-[2.5rem] w-full resize-none bg-transparent text-[15px] leading-[1.52] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50",
-                mentionOverlay && "ai-composer-textarea-with-mentions",
+                "ai-composer-editor-shell max-h-32 min-h-[2.5rem] overflow-y-auto",
+                editor?.isEmpty && "is-empty",
               )}
-              onBeforeInput={handleBeforeInput}
-              onChange={(event) => {
-                const nativeEvent = event.nativeEvent as InputEvent;
-                const baseSnapshot =
-                  beforeInputRef.current ?? selectionSnapshotRef.current;
-                beforeInputRef.current = null;
-                const snapshot = baseSnapshot
-                  ? {
-                      ...baseSnapshot,
-                      inputType:
-                        baseSnapshot.inputType ||
-                        nativeEvent.inputType ||
-                        (typeof nativeEvent.data === "string"
-                          ? "insertText"
-                          : ""),
-                    }
-                  : null;
-                onChange(
-                  event.target.value,
-                  snapshot
-                    ? editFromBeforeInput(snapshot, event.target.value)
-                    : undefined,
-                );
-                captureSelection(event.currentTarget);
-              }}
-              onCompositionStart={handleCompositionStart}
-              onCompositionEnd={handleCompositionEnd}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onScroll={handleTextAreaScroll}
-              onSelect={handleSelection}
-              onClick={handleSelection}
-            />
+              onPaste={(event) => void handlePaste(event)}
+            >
+              <EditorContent editor={editor} />
+            </div>
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {onImagesChange && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={handleFileSelect}
-              />
+          <div className="flex shrink-0 items-center gap-1">
+            {onImagesChange ? (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(event) => void handleFileSelect(event)}
+                />
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="添加图片"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
+              </>
+            ) : null}
+            {streaming && onStop ? (
               <Button
                 type="button"
                 size="icon"
-                variant="ghost"
-                className="h-8 w-8"
-                onClick={() => fileInputRef.current?.click()}
-                aria-label="添加图片"
+                variant="secondary"
+                className="h-9 w-9"
+                aria-label="停止生成"
+                onClick={onStop}
               >
-                <Paperclip className="h-4 w-4" />
+                <Square className="h-3.5 w-3.5" />
               </Button>
-            </>
-          )}
-          {streaming && onStop ? (
-            <Button
-              type="button"
-              size="icon"
-              variant="secondary"
-              className="h-9 w-9"
-              aria-label="停止生成"
-              onClick={onStop}
-            >
-              <Square className="h-3.5 w-3.5" />
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              size="icon"
-              variant="brand"
-              className="h-9 w-9"
-              disabled={
-                disabled || (!value.trim() && !(images && images.length > 0))
-              }
-              aria-label="发送"
-              onClick={onSubmit}
-            >
-              <Send className="h-4 w-4" />
-            </Button>
-          )}
+            ) : (
+              <Button
+                type="button"
+                size="icon"
+                variant="brand"
+                className="h-9 w-9"
+                disabled={
+                  disabled ||
+                  submitDisabled ||
+                  (!value.trim() && !(images && images.length > 0))
+                }
+                aria-label="发送"
+                onClick={onSubmit}
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

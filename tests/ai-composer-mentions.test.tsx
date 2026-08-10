@@ -2,9 +2,12 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AiComposer } from "@/components/ui/ai-composer";
+import {
+  AiComposer,
+  type AssistantComposerHandle,
+} from "@/components/ui/ai-composer";
 
-describe("AiComposer display mention overlay", () => {
+describe("AiComposer atomic mentions", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -19,180 +22,171 @@ describe("AiComposer display mention overlay", () => {
     host.remove();
   });
 
-  it("keeps one accessible textarea over an aria-hidden, length-identical highlight layer", async () => {
-    const value = "ask Guide\nnext";
+  it("renders one accessible contenteditable Composer with an atomic mention node", async () => {
+    const composerRef = {
+      current: null,
+    } as React.MutableRefObject<AssistantComposerHandle | null>;
     await act(async () => {
       root.render(
         <AiComposer
-          value={value}
-          displayMentions={[
-            {
-              kind: "file",
-              value: "Policies/Guide.md",
-              label: "Guide",
-              range: { from: 4, to: 9 },
-            },
-          ]}
+          value="请查 Guide"
+          composerRef={composerRef}
           onChange={vi.fn()}
           onSubmit={vi.fn()}
         />,
       );
     });
-
-    const textarea = host.querySelector("textarea");
-    const layer = host.querySelector<HTMLElement>(
-      '[data-testid="ai-mention-highlight-layer"]',
-    );
-    const mention = layer?.querySelector(".ai-composer-display-mention");
-    expect(host.querySelectorAll("textarea")).toHaveLength(1);
-    expect(textarea?.getAttribute("aria-label")).toBe("AI 输入");
-    expect(layer?.getAttribute("aria-hidden")).toBe("true");
-    expect(layer?.textContent).toBe(value);
-    expect(mention?.textContent).toBe("Guide");
-    expect(mention?.getAttribute("title")).toBe("文档：Policies/Guide.md");
-    expect(layer?.className).toContain("z-[2]");
-    expect(mention?.className).toContain("pointer-events-auto");
-    expect(textarea?.className).toContain("ai-composer-textarea-with-mentions");
-
-    textarea?.setSelectionRange(0, 0);
-    const mentionMouseDown = new MouseEvent("mousedown", {
-      bubbles: true,
-      cancelable: true,
-    });
-    act(() => mention?.dispatchEvent(mentionMouseDown));
-    expect(mentionMouseDown.defaultPrevented).toBe(true);
-    expect(document.activeElement).toBe(textarea);
-    expect(textarea?.selectionStart).toBe(9);
-  });
-
-  it("synchronizes textarea scrolling with the highlight layer", async () => {
+    const editor = composerRef.current?.getEditor();
+    expect(host.querySelectorAll("textarea")).toHaveLength(0);
+    expect(host.querySelector('[contenteditable="true"]')).not.toBeNull();
     await act(async () => {
-      root.render(
-        <AiComposer
-          value={`ask Guide\n${"line\n".repeat(20)}`}
-          displayMentions={[
+      editor?.commands.setContent(
+        {
+          type: "doc",
+          content: [
             {
-              kind: "file",
-              value: "Policies/Guide.md",
-              label: "Guide",
-              range: { from: 4, to: 9 },
+              type: "paragraph",
+              content: [
+                { type: "text", text: "请查 " },
+                {
+                  type: "assistantMention",
+                  attrs: { kind: "file", value: "Guide.md", label: "Guide" },
+                },
+              ],
             },
-          ]}
-          onChange={vi.fn()}
-          onSubmit={vi.fn()}
-        />,
+          ],
+        },
+        true,
       );
     });
-
-    const textarea = host.querySelector("textarea")!;
-    const layer = host.querySelector<HTMLElement>(
-      '[data-testid="ai-mention-highlight-layer"]',
-    )!;
-    textarea.scrollTop = 24;
-    textarea.scrollLeft = 3;
-    act(() => textarea.dispatchEvent(new Event("scroll", { bubbles: true })));
-
-    expect(layer.scrollTop).toBe(24);
-    expect(layer.scrollLeft).toBe(3);
+    expect(host.querySelector(".ai-composer-mention-node")).toHaveTextContent(
+      "Guide",
+    );
+    expect(host.querySelector(".ai-composer-mention-node svg")).not.toBeNull();
   });
 
-  it("does not prevent or submit Enter while an IME composition is being confirmed", async () => {
-    const onSubmit = vi.fn();
-    await act(async () => {
-      root.render(
-        <AiComposer value="中文" onChange={vi.fn()} onSubmit={onSubmit} />,
-      );
-    });
-    const textarea = host.querySelector("textarea")!;
-
-    act(() =>
-      textarea.dispatchEvent(
-        new CompositionEvent("compositionstart", { bubbles: true }),
-      ),
-    );
-    const confirmingEnter = new KeyboardEvent("keydown", {
-      key: "Enter",
-      bubbles: true,
-      cancelable: true,
-      isComposing: true,
-    });
-    act(() => textarea.dispatchEvent(confirmingEnter));
-
-    expect(confirmingEnter.defaultPrevented).toBe(false);
-    expect(onSubmit).not.toHaveBeenCalled();
-
-    act(() =>
-      textarea.dispatchEvent(
-        new CompositionEvent("compositionend", { bubbles: true }),
-      ),
-    );
-    const normalEnter = new KeyboardEvent("keydown", {
-      key: "Enter",
-      bubbles: true,
-      cancelable: true,
-    });
-    act(() => textarea.dispatchEvent(normalEnter));
-
-    expect(normalEnter.defaultPrevented).toBe(true);
-    expect(onSubmit).toHaveBeenCalledTimes(1);
-  });
-
-  it("reports the exact pre-edit selection transaction from native textarea input", async () => {
+  it("projects atom mentions on update and clears them as a whole node", async () => {
     const onChange = vi.fn();
+    const composerRef = {
+      current: null,
+    } as React.MutableRefObject<AssistantComposerHandle | null>;
     await act(async () => {
       root.render(
         <AiComposer
-          value="Guide Guide"
+          value=""
+          composerRef={composerRef}
           onChange={onChange}
           onSubmit={vi.fn()}
         />,
       );
     });
-    const textarea = host.querySelector("textarea")!;
-    textarea.focus();
-    textarea.setSelectionRange(0, 0);
-    act(() => textarea.dispatchEvent(new Event("select", { bubbles: true })));
-    act(() => document.dispatchEvent(new Event("selectionchange")));
-    act(() =>
-      textarea.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "v",
-          ctrlKey: true,
-          bubbles: true,
-        }),
-      ),
-    );
+    const editor = composerRef.current!.getEditor()!;
+    await act(async () => {
+      editor.commands.setContent(
+        {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "前 " },
+                {
+                  type: "assistantMention",
+                  attrs: {
+                    kind: "folder",
+                    value: "Research/",
+                    label: "Research",
+                  },
+                },
+                { type: "text", text: " 后" },
+              ],
+            },
+          ],
+        },
+        true,
+      );
+    });
+    expect(onChange).toHaveBeenLastCalledWith("前 Research 后", [
+      expect.objectContaining({
+        kind: "folder",
+        value: "Research/",
+        label: "Research",
+        range: { from: 2, to: 10 },
+      }),
+    ]);
 
-    act(() =>
-      textarea.dispatchEvent(
-        new InputEvent("beforeinput", {
+    const nodePosition = 1 + "前 ".length;
+    editor.commands.setNodeSelection(nodePosition);
+    editor.commands.deleteSelection();
+    expect(editor.getText()).toBe("前  后");
+    let hasMention = false;
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "assistantMention") hasMention = true;
+    });
+    expect(hasMention).toBe(false);
+  });
+
+  it("does not submit Enter while the contenteditable is composing", async () => {
+    const onSubmit = vi.fn();
+    const composerRef = {
+      current: null,
+    } as React.MutableRefObject<AssistantComposerHandle | null>;
+    await act(async () => {
+      root.render(
+        <AiComposer
+          value="中文"
+          composerRef={composerRef}
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+      isComposing: true,
+    });
+    act(() => editor.dispatchEvent(event));
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("uses the latest draft when Enter submits", async () => {
+    const onSubmit = vi.fn();
+    const composerRef = {
+      current: null,
+    } as React.MutableRefObject<AssistantComposerHandle | null>;
+    await act(async () => {
+      root.render(
+        <AiComposer
+          value=""
+          composerRef={composerRef}
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+    await act(async () => {
+      root.render(
+        <AiComposer
+          value="新的问题"
+          composerRef={composerRef}
+          onChange={vi.fn()}
+          onSubmit={onSubmit}
+        />,
+      );
+    });
+    const editor = host.querySelector<HTMLElement>('[contenteditable="true"]')!;
+    act(() => {
+      editor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
           bubbles: true,
           cancelable: true,
-          data: "Guide ",
-          inputType: "insertText",
-        }),
-      ),
-    );
-    const valueSetter = Object.getOwnPropertyDescriptor(
-      HTMLTextAreaElement.prototype,
-      "value",
-    )?.set;
-    act(() => {
-      valueSetter?.call(textarea, "Guide Guide Guide");
-      textarea.setSelectionRange(6, 6);
-      textarea.dispatchEvent(
-        new InputEvent("input", {
-          bubbles: true,
-          data: "Guide ",
-          inputType: "insertText",
         }),
       );
     });
-
-    expect(onChange).toHaveBeenCalledWith("Guide Guide Guide", {
-      from: 0,
-      to: 0,
-      insertedTextLength: 6,
-    });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });

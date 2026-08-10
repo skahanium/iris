@@ -50,8 +50,9 @@ export interface UnifiedAssistantSendOptions {
     images?: ImageAttachment[],
     displayMentions?: DisplayMention[],
   ) => void;
+  clearComposer?: () => void;
   clearContextReferences: () => void;
-  setInput: (value: string) => void;
+  setInput?: (value: string) => void;
   setImages: (images: ImageAttachment[]) => void;
   setSession: (session: AssistantSessionRef | null) => void;
   setStreaming: (streaming: boolean) => void;
@@ -157,6 +158,7 @@ export function useUnifiedAssistantSend({
   start,
   getFileSignature = fileSignature,
   commitAcceptedTurn,
+  clearComposer,
   clearContextReferences,
   setInput,
   setImages,
@@ -330,7 +332,8 @@ export function useUnifiedAssistantSend({
       );
       setStreaming(true);
       setSession(aiDomain === "classified" ? null : accepted.session);
-      setInput("");
+      if (clearComposer) clearComposer();
+      else setInput?.("");
       setImages([]);
       clearContextReferences();
       clearExternalToolGrants?.();
@@ -353,6 +356,7 @@ export function useUnifiedAssistantSend({
     classifiedContextRef,
     commitAcceptedTurn,
     clearContextReferences,
+    clearComposer,
     clearExternalToolGrants,
     composerDisabled,
     contextReferences,

@@ -56,6 +56,26 @@ export function displayMentionTooltip(mention: DisplayMention): string {
 interface MentionCandidateOptions {
   prefix?: "@" | "#";
   tags?: TagGroup[];
+  folderPrefixes?: string[];
+}
+
+/** Normalize mention queries without making vault paths platform-specific. */
+export function normalizeMentionQuery(value: string): string {
+  return value
+    .normalize("NFKC")
+    .replace(/\\/g, "/")
+    .replace(/\p{White_Space}+/gu, "")
+    .toLowerCase();
+}
+
+function mentionCandidateScore(candidate: MentionCandidate, query: string) {
+  if (!query) return 0;
+  const label = normalizeMentionQuery(candidate.label);
+  const value = normalizeMentionQuery(candidate.value);
+  if (label.startsWith(query)) return 0;
+  if (label.includes(query)) return 1;
+  if (value.includes(query)) return 2;
+  return Number.POSITIVE_INFINITY;
 }
 
 export function collectFolderPrefixes(files: FileListItem[]): string[] {
@@ -82,7 +102,7 @@ export function buildMentionCandidates(
   query: string,
   options: MentionCandidateOptions = {},
 ): MentionCandidate[] {
-  const q = query.trim().toLowerCase();
+  const q = normalizeMentionQuery(query);
   const prefix = options.prefix ?? "@";
 
   if (prefix === "#") {
@@ -93,11 +113,25 @@ export function buildMentionCandidates(
         label: tag.name,
         value: tag.name,
       }))
-      .filter((candidate) => !q || candidate.label.toLowerCase().includes(q))
-      .slice(0, 40);
+      .map((candidate, index) => ({
+        candidate,
+        score: mentionCandidateScore(candidate, q),
+        index,
+      }))
+      .filter(({ score }) => Number.isFinite(score))
+      .sort(
+        (left, right) => left.score - right.score || left.index - right.index,
+      )
+      .slice(0, 40)
+      .map(({ candidate }) => candidate);
   }
 
-  const folders = collectFolderPrefixes(files)
+  const folderPrefixes = new Set([
+    ...collectFolderPrefixes(files),
+    ...(options.folderPrefixes ?? []).map(normalizeFolderPrefix),
+  ]);
+  const folders = [...folderPrefixes]
+    .sort()
     .map((folderPrefix) => ({
       id: `folder:${folderPrefix}`,
       kind: "folder" as const,
@@ -105,12 +139,12 @@ export function buildMentionCandidates(
       subtitle: folderPrefix,
       value: folderPrefix,
     }))
-    .filter(
-      (candidate) =>
-        !q ||
-        candidate.label.toLowerCase().includes(q) ||
-        candidate.value.toLowerCase().includes(q),
-    );
+    .map((candidate, index) => ({
+      candidate,
+      score: mentionCandidateScore(candidate, q),
+      index,
+    }))
+    .filter(({ score }) => Number.isFinite(score));
 
   const documents = files
     .map((file) => ({
@@ -120,14 +154,21 @@ export function buildMentionCandidates(
       subtitle: noteListSubtitle(file.path),
       value: file.path.replace(/\\/g, "/"),
     }))
-    .filter(
-      (candidate) =>
-        !q ||
-        candidate.label.toLowerCase().includes(q) ||
-        candidate.value.toLowerCase().includes(q),
-    );
+    .map((candidate, index) => ({
+      candidate,
+      score: mentionCandidateScore(candidate, q),
+      index,
+    }))
+    .filter(({ score }) => Number.isFinite(score));
 
-  return [...folders, ...documents].slice(0, 40);
+  return [...folders, ...documents]
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .slice(0, 40)
+    .map(({ candidate }) => candidate);
+}
+
+function isMentionBoundary(value: string): boolean {
+  return /[\s([{「（【〔［《〈“‘]/u.test(value);
 }
 
 export function findActiveMentionQuery(
@@ -135,17 +176,26 @@ export function findActiveMentionQuery(
   cursor: number,
 ): { start: number; query: string; prefix: "@" | "#" } | null {
   const before = text.slice(0, cursor);
-  const at = before.lastIndexOf("@");
-  const hash = before.lastIndexOf("#");
-  const latest = Math.max(at, hash);
-  if (latest < 0) return null;
-  const prefix: "@" | "#" = latest === at ? "@" : "#";
-  const segment = before.slice(latest + 1);
-  if (segment.includes("\n") || segment.includes(" ")) return null;
-  if (latest > 0 && !/[\s([{「]/.test(before[latest - 1] ?? "")) {
-    return null;
+  for (let index = before.length - 1; index >= 0; index -= 1) {
+    const marker = before[index];
+    if (marker !== "@" && marker !== "#") continue;
+    const preceding = before[index - 1];
+    if (preceding && !isMentionBoundary(preceding)) continue;
+    const segment = before.slice(index + 1);
+    if (
+      /\r?\n/u.test(segment) ||
+      segment.includes("@") ||
+      segment.includes("#")
+    ) {
+      continue;
+    }
+    return {
+      start: index,
+      query: segment,
+      prefix: marker,
+    };
   }
-  return { start: latest, query: segment, prefix };
+  return null;
 }
 
 export function insertDisplayMention(

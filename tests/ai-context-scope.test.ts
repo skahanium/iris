@@ -5,6 +5,7 @@ import {
   findActiveMentionQuery,
   insertDisplayMention,
   mentionsToContextScope,
+  normalizeMentionQuery,
   reconcileDisplayMentions,
 } from "@/lib/ai-context-scope";
 import type { DisplayMention } from "@/types/ai";
@@ -62,6 +63,40 @@ describe("ai-context-scope", () => {
       label: "Notes",
       subtitle: "Research/Notes/",
     });
+  });
+
+  it("normalizes whitespace and includes explicit empty folders in @ candidates", () => {
+    const candidates = buildMentionCandidates(
+      [
+        ...files,
+        {
+          path: "Research/问题  线索.md",
+          title: "问题  线索",
+          updatedAt: "2026-01-02",
+          isLocked: false,
+        },
+      ],
+      "问题\u00a0线索",
+      {
+        prefix: "@",
+        folderPrefixes: ["问题 线索/"],
+      },
+    );
+
+    expect(normalizeMentionQuery(" 问题\t线索 ")).toBe("问题线索");
+    expect(
+      candidates.some(
+        (candidate) =>
+          candidate.kind === "file" &&
+          candidate.value === "Research/问题  线索.md",
+      ),
+    ).toBe(true);
+    expect(
+      candidates.some(
+        (candidate) =>
+          candidate.kind === "folder" && candidate.value === "问题 线索/",
+      ),
+    ).toBe(true);
   });
 
   it("builds tag candidates only for a # query", () => {
@@ -239,5 +274,11 @@ describe("ai-context-scope", () => {
       prefix: "#",
     });
     expect(findActiveMentionQuery("hello Guide", 11)).toBeNull();
+    expect(findActiveMentionQuery("hello @问题 线索", 12)).toEqual({
+      start: 6,
+      query: "问题 线索",
+      prefix: "@",
+    });
+    expect(findActiveMentionQuery("mail@example.com", 16)).toBeNull();
   });
 });

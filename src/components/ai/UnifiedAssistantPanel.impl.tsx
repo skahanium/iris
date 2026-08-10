@@ -5,6 +5,7 @@ import { AssistantRunWebVerificationFailed } from "@/components/ai/AssistantRunC
 import { AssistantRunConfirmation } from "@/components/ai/AssistantRunConfirmation";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
+import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
 import { cn } from "@/lib/utils";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
@@ -106,7 +107,7 @@ export function UnifiedAssistantPanel({
     includeCurrentClassifiedDocument,
     setIncludeCurrentClassifiedDocument,
   ] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<AssistantComposerHandle | null>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const assistantPanelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
@@ -157,9 +158,8 @@ export function UnifiedAssistantPanel({
     bubbleSelection,
     clearContextReferences: bubbleSelection.clearContextReferences,
     onInsertToEditor,
-    setInput,
     setStreaming,
-    textareaRef,
+    composerRef,
   });
   const resetAssistantRunRef = useRef(resetAssistantRun);
   const handleNewChatRef = useRef(handleNewChat);
@@ -235,24 +235,13 @@ export function UnifiedAssistantPanel({
 
   const {
     displayMentions,
-    handleCompositionEnd,
-    handleCompositionStart,
-    handleComposerKeyDown,
+    getMentionCandidates,
     handleInputChange,
-    mentionCandidates,
-    mentionHighlight,
-    mentionNavDeltaRef,
-    mentionOpen,
-    mentionPrefix,
-    mentionQuery,
     retrievalScope,
-    selectMention,
-    setMentionHighlight,
-    syncMentionFromInput,
   } = useAssistantContextScope({
-    input,
     setInput,
-    textareaRef,
+    domain: aiDomain,
+    composerRef,
     runtimeDocumentCandidates,
   });
 
@@ -315,8 +304,8 @@ export function UnifiedAssistantPanel({
     clearExternalToolGrants: () => setSelectedExternalBindingIds([]),
     start: assistantRun.start,
     commitAcceptedTurn,
+    clearComposer: () => composerRef.current?.clear(),
     clearContextReferences: bubbleSelection.clearContextReferences,
-    setInput,
     setImages,
     setSession: setRunSession,
     setStreaming,
@@ -575,20 +564,13 @@ export function UnifiedAssistantPanel({
         images={images}
         input={input}
         displayMentions={displayMentions}
-        mentionCandidates={mentionCandidates}
-        mentionHighlight={mentionHighlight}
-        mentionNavDeltaRef={mentionNavDeltaRef}
-        mentionOpen={mentionOpen}
-        mentionPrefix={mentionPrefix}
-        mentionQuery={mentionQuery}
         streaming={streaming}
         externalBindings={externalBindings}
         selectedExternalBindingIds={selectedExternalBindingIds}
-        textareaRef={textareaRef}
+        composerRef={composerRef}
+        domain={aiDomain}
+        getMentionCandidates={getMentionCandidates}
         assistantFocus={assistantFocus}
-        onComposerKeyDown={handleComposerKeyDown}
-        onCompositionStart={handleCompositionStart}
-        onCompositionEnd={handleCompositionEnd}
         onImagesChange={setImages}
         onExternalBindingToggle={(bindingId) =>
           setSelectedExternalBindingIds((selected) =>
@@ -597,9 +579,6 @@ export function UnifiedAssistantPanel({
               : [...selected, bindingId],
           )
         }
-        onMentionHighlight={setMentionHighlight}
-        onMentionSelect={selectMention}
-        onSelect={syncMentionFromInput}
         contextReferences={bubbleSelection.contextReferences}
         editorSelectionCandidate={editorSelectionCandidate}
         onDismissEditorSelectionReference={onDismissEditorSelectionReference}

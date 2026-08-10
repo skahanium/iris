@@ -1,149 +1,120 @@
 import { FileText, Folder, Hash } from "lucide-react";
-import { useLayoutEffect, useRef } from "react";
+import {
+  forwardRef,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import {
-  IrisSurfaceMenuGroup,
   IrisSurfaceMenuItem,
   IrisSurfaceMenuPanel,
 } from "@/components/ui/iris-surface-menu";
 import { ensureOptionVisible } from "@/lib/command-palette-scroll";
 import type { MentionCandidate } from "@/lib/ai-context-scope";
-import { cn } from "@/lib/utils";
 
-interface AiMentionPopoverProps {
-  open: boolean;
-  query: string;
-  prefix: "@" | "#";
-  candidates: MentionCandidate[];
-  highlight: number;
-  onHighlight: (index: number) => void;
-  navDeltaRef: React.MutableRefObject<1 | -1 | 0>;
-  onSelect: (candidate: MentionCandidate) => void;
-  className?: string;
+export interface AiMentionPopoverRef {
+  onKeyDown: (event: KeyboardEvent) => boolean;
 }
 
-/** @ 补全（文件夹/文档）和 # 补全（标签）列表。 */
-export function AiMentionPopover({
-  open,
-  query: _query,
-  prefix,
-  candidates,
-  highlight,
-  onHighlight,
-  navDeltaRef,
-  onSelect,
-  className,
-}: AiMentionPopoverProps) {
+interface AiMentionPopoverProps {
+  prefix: "@" | "#";
+  query: string;
+  items: MentionCandidate[];
+  command: (candidate: MentionCandidate) => void;
+}
+
+/** IrisSurfaceMenu-backed popup used by the TipTap mention suggestion plugin. */
+export const AiMentionPopover = forwardRef<
+  AiMentionPopoverRef,
+  AiMentionPopoverProps
+>(function AiMentionPopover({ prefix, query: _query, items, command }, ref) {
   const listRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  const [highlight, setHighlight] = useState(0);
+  const safeHighlight = Math.min(highlight, Math.max(0, items.length - 1));
 
   useLayoutEffect(() => {
-    if (!open || navDeltaRef.current === 0) return;
+    setHighlight(0);
+  }, [items]);
+
+  useLayoutEffect(() => {
     const list = listRef.current;
-    const el = optionRefs.current[highlight];
-    if (!list || !el) return;
-    requestAnimationFrame(() => {
-      ensureOptionVisible(list, el, navDeltaRef.current);
-      navDeltaRef.current = 0;
-    });
-  }, [highlight, open, candidates.length, navDeltaRef]);
+    const option = optionRefs.current[safeHighlight];
+    if (!list || !option) return;
+    ensureOptionVisible(list, option, 1);
+  }, [safeHighlight]);
 
-  if (!open) return null;
-
-  const tags = candidates.filter((c) => c.kind === "tag");
-  const folders = candidates.filter((c) => c.kind === "folder");
-  const files = candidates.filter((c) => c.kind === "file");
-
-  let index = 0;
+  useImperativeHandle(
+    ref,
+    () => ({
+      onKeyDown(event) {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          setHighlight((current) => Math.min(current + 1, items.length - 1));
+          return true;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          setHighlight((current) => Math.max(current - 1, 0));
+          return true;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          const item = items[safeHighlight];
+          if (!item) return false;
+          event.preventDefault();
+          command(item);
+          return true;
+        }
+        return false;
+      },
+    }),
+    [command, items, safeHighlight],
+  );
 
   return (
     <IrisSurfaceMenuPanel
-      className={cn("max-h-52 w-full", className)}
+      className="max-h-64 w-[min(26rem,calc(100vw-2rem))]"
       role="listbox"
-      aria-label={prefix === "@" ? "@ 范围补全" : "# 标签补全"}
+      aria-label={prefix === "@" ? "@ 文件和文件夹" : "# 标签"}
     >
       <div
         ref={listRef}
-        className="max-h-52 overflow-y-auto overscroll-contain outline-none"
+        className="max-h-64 overflow-y-auto overscroll-contain"
       >
-        {candidates.length === 0 ? (
+        {items.length === 0 ? (
           <p className="px-3 py-3 text-center text-xs text-muted-foreground">
             无匹配项
           </p>
         ) : (
-          <>
-            {tags.length > 0 ? (
-              <IrisSurfaceMenuGroup title="标签">
-                {tags.map((c) => {
-                  const i = index++;
-                  return (
-                    <IrisSurfaceMenuItem
-                      key={c.id}
-                      id={c.id}
-                      label={c.label}
-                      active={highlight === i}
-                      icon={<Hash className="h-4 w-4" />}
-                      buttonRef={(el) => {
-                        optionRefs.current[i] = el;
-                      }}
-                      onMouseEnter={() => onHighlight(i)}
-                      onSelect={() => onSelect(c)}
-                    />
-                  );
-                })}
-              </IrisSurfaceMenuGroup>
-            ) : null}
-            {folders.length > 0 ? (
-              <IrisSurfaceMenuGroup title="文件夹">
-                {folders.map((c) => {
-                  const i = index++;
-                  return (
-                    <IrisSurfaceMenuItem
-                      key={c.id}
-                      id={c.id}
-                      label={c.label}
-                      subtitle={
-                        c.subtitle && c.subtitle !== c.label
-                          ? c.subtitle
-                          : undefined
-                      }
-                      active={highlight === i}
-                      icon={<Folder className="h-4 w-4" />}
-                      buttonRef={(el) => {
-                        optionRefs.current[i] = el;
-                      }}
-                      onMouseEnter={() => onHighlight(i)}
-                      onSelect={() => onSelect(c)}
-                    />
-                  );
-                })}
-              </IrisSurfaceMenuGroup>
-            ) : null}
-            {files.length > 0 ? (
-              <IrisSurfaceMenuGroup title="文档">
-                {files.map((c) => {
-                  const i = index++;
-                  return (
-                    <IrisSurfaceMenuItem
-                      key={c.id}
-                      id={c.id}
-                      label={c.label}
-                      subtitle={c.subtitle}
-                      active={highlight === i}
-                      icon={<FileText className="h-4 w-4" />}
-                      buttonRef={(el) => {
-                        optionRefs.current[i] = el;
-                      }}
-                      onMouseEnter={() => onHighlight(i)}
-                      onSelect={() => onSelect(c)}
-                    />
-                  );
-                })}
-              </IrisSurfaceMenuGroup>
-            ) : null}
-          </>
+          items.map((item, current) => {
+            const icon =
+              item.kind === "tag" ? (
+                <Hash className="h-4 w-4" />
+              ) : item.kind === "folder" ? (
+                <Folder className="h-4 w-4" />
+              ) : (
+                <FileText className="h-4 w-4" />
+              );
+            return (
+              <IrisSurfaceMenuItem
+                key={item.id}
+                id={item.id}
+                label={item.label}
+                subtitle={item.subtitle}
+                active={safeHighlight === current}
+                icon={icon}
+                buttonRef={(element) => {
+                  optionRefs.current[current] = element;
+                }}
+                onMouseEnter={() => setHighlight(current)}
+                onSelect={() => command(item)}
+              />
+            );
+          })
         )}
       </div>
     </IrisSurfaceMenuPanel>
   );
-}
+});

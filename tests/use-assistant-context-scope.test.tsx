@@ -1,8 +1,9 @@
-import { act, createElement, type RefObject } from "react";
+import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { useAssistantContextScope } from "@/components/ai/hooks/useAssistantContextScope";
+import type { DisplayMention, SecurityDomain } from "@/types/ai";
 import type { FileListItem, TagGroup } from "@/types/ipc";
 
 const files: FileListItem[] = [
@@ -12,379 +13,162 @@ const files: FileListItem[] = [
     updatedAt: "2026-01-01",
     isLocked: false,
   },
-  {
-    path: "Research/Notes/Alpha.md",
-    title: "Alpha",
-    updatedAt: "2026-01-01",
-    isLocked: false,
-  },
 ];
 
 type HookApi = ReturnType<typeof useAssistantContextScope>;
 
 function Harness({
-  input,
-  loadVaultFiles = async () => files,
-  loadVaultTags = async () => [],
-  runtimeDocumentCandidates = [],
-  onInput,
   onReady,
-  textareaRef,
+  onInput,
+  loadVaultFiles,
+  loadVaultFolders,
+  loadVaultTags,
+  domain,
 }: {
-  input: string;
-  loadVaultFiles?: () => Promise<FileListItem[]>;
-  loadVaultTags?: () => Promise<TagGroup[]>;
-  runtimeDocumentCandidates?: FileListItem[];
-  onInput: (next: string | ((prev: string) => string)) => void;
   onReady: (api: HookApi) => void;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  onInput: (next: string | ((previous: string) => string)) => void;
+  loadVaultFiles: () => Promise<FileListItem[]>;
+  loadVaultFolders: () => Promise<string[]>;
+  loadVaultTags: () => Promise<TagGroup[]>;
+  domain: SecurityDomain;
 }) {
   const api = useAssistantContextScope({
-    input,
     setInput: onInput,
-    textareaRef,
+    domain,
     loadVaultFiles,
+    loadVaultFolders,
     loadVaultTags,
-    runtimeDocumentCandidates,
   });
   onReady(api);
   return null;
 }
 
 describe("useAssistantContextScope", () => {
-  let container: HTMLDivElement;
   let root: Root;
-  let textarea: HTMLTextAreaElement;
+  let container: HTMLDivElement;
   let input: string;
   let api!: HookApi;
-  let textareaRef: RefObject<HTMLTextAreaElement | null>;
   let loadVaultFiles: () => Promise<FileListItem[]>;
+  let loadVaultFolders: () => Promise<string[]>;
   let loadVaultTags: () => Promise<TagGroup[]>;
-  let runtimeDocumentCandidates: FileListItem[];
-
-  function setInput(next: string | ((prev: string) => string)) {
-    input = typeof next === "function" ? next(input) : next;
-    render();
-  }
+  let domain: SecurityDomain;
 
   function render() {
     root.render(
       createElement(Harness, {
-        input,
-        loadVaultFiles,
-        loadVaultTags,
-        runtimeDocumentCandidates,
-        onInput: setInput,
-        onReady: (value) => {
-          api = value;
+        onReady: (next) => {
+          api = next;
         },
-        textareaRef,
+        onInput: (next) => {
+          input = typeof next === "function" ? next(input) : next;
+        },
+        loadVaultFiles,
+        loadVaultFolders,
+        loadVaultTags,
+        domain,
       }),
     );
-  }
-
-  function moveCursorToEnd() {
-    textarea.value = input;
-    textarea.selectionStart = input.length;
-    textarea.selectionEnd = input.length;
   }
 
   beforeEach(async () => {
     input = "";
     container = document.createElement("div");
-    document.body.appendChild(container);
+    document.body.append(container);
     root = createRoot(container);
-    textarea = document.createElement("textarea");
-    textareaRef = { current: textarea };
     loadVaultFiles = async () => files;
+    loadVaultFolders = async () => ["Empty Folder/"];
     loadVaultTags = async () => [{ name: "project", files: [files[0]!] }];
-    runtimeDocumentCandidates = [];
+    domain = "normal";
     await act(async () => {
       render();
-    });
-    await act(async () => {
       await Promise.resolve();
     });
   });
 
   afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
+    act(() => root.unmount());
     container.remove();
   });
 
-  it("builds mention candidates only while a mention query is active", async () => {
+  it("loads files, empty folders and tags through one candidate source", async () => {
     await act(async () => {
-      setInput("ask @Pol");
+      await Promise.resolve();
     });
-    moveCursorToEnd();
-    await act(async () => {
-      api.syncMentionFromInput();
-    });
-
-    expect(api.mentionOpen).toBe(true);
-    expect(api.mentionQuery).toBe("Pol");
     expect(
-      api.mentionCandidates.some((item) => item.value === "Policies/"),
+      api
+        .getMentionCandidates("@", "empty")
+        .some((candidate) => candidate.value === "Empty Folder/"),
     ).toBe(true);
-
-    await act(async () => {
-      setInput("ask normally");
-    });
-    moveCursorToEnd();
-    await act(async () => {
-      api.syncMentionFromInput();
-    });
-
-    expect(api.mentionOpen).toBe(false);
-    expect(api.mentionCandidates).toEqual([]);
+    expect(api.getMentionCandidates("@", "guid")[0]?.value).toBe(
+      "Policies/Guide.md",
+    );
+    expect(api.getMentionCandidates("#", "pro")[0]?.kind).toBe("tag");
   });
 
-  it("selects a candidate as readable text with separate display metadata", async () => {
-    await act(async () => {
-      setInput("ask @");
-    });
-    moveCursorToEnd();
-    await act(async () => {
-      api.syncMentionFromInput();
-    });
-
-    const guide = api.mentionCandidates.find(
-      (candidate) => candidate.value === "Policies/Guide.md",
-    );
-    expect(guide).toBeTruthy();
-
-    await act(async () => {
-      api.selectMention(guide!);
-    });
-    expect(input).toBe("ask Guide ");
-    expect(input).not.toMatch(/@|\[|\]/);
-    expect(api.displayMentions).toEqual([
+  it("accepts the Composer projection without range reconciliation", () => {
+    const mentions: DisplayMention[] = [
       {
         kind: "file",
         value: "Policies/Guide.md",
         label: "Guide",
         range: { from: 4, to: 9 },
       },
-    ]);
+    ];
+    act(() => {
+      api.handleInputChange("ask Guide 继续", mentions);
+    });
+    expect(input).toBe("ask Guide 继续");
+    expect(api.displayMentions).toEqual(mentions);
+  });
+
+  it("keeps retrieval scope separate from file display mentions", () => {
+    act(() => {
+      api.handleInputChange("ask Guide project", [
+        {
+          kind: "file",
+          value: "Policies/Guide.md",
+          label: "Guide",
+          range: { from: 4, to: 9 },
+        },
+        {
+          kind: "folder",
+          value: "Empty Folder/",
+          label: "Empty Folder",
+          range: { from: 10, to: 21 },
+        },
+        {
+          kind: "tag",
+          value: "project",
+          label: "project",
+          range: { from: 22, to: 29 },
+        },
+      ]);
+    });
     expect(api.retrievalScope).toEqual({
       paths: [],
-      pathPrefixes: [],
-      requiredTags: [],
-    });
-  });
-
-  it("keeps Chinese fullwidth-parenthesis mentions after continued typing without an edit snapshot", async () => {
-    const label = "问题线索工作思路（刘CG）";
-    await act(async () => setInput("根据 @刘"));
-    moveCursorToEnd();
-    await act(async () => api.syncMentionFromInput());
-    await act(async () =>
-      api.selectMention({
-        id: `file:线索/${label}.md`,
-        kind: "file",
-        label,
-        subtitle: `线索/${label}.md`,
-        value: `线索/${label}.md`,
-      }),
-    );
-    expect(api.displayMentions).toEqual([
-      {
-        kind: "file",
-        value: `线索/${label}.md`,
-        label,
-        range: { from: 3, to: 3 + label.length },
-      },
-    ]);
-
-    const withMention = input;
-    const suffix = "，我们应该怎样分析刘CG的责任？";
-    await act(async () => api.handleInputChange(`${withMention}${suffix}`));
-    expect(api.displayMentions).toEqual([
-      {
-        kind: "file",
-        value: `线索/${label}.md`,
-        label,
-        range: { from: 3, to: 3 + label.length },
-      },
-    ]);
-    expect(input).toBe(`${withMention}${suffix}`);
-  });
-
-  it("shifts or safely unbinds annotations as the editable text changes", async () => {
-    await act(async () => {
-      setInput("ask @");
-    });
-    moveCursorToEnd();
-    await act(async () => api.syncMentionFromInput());
-    const guide = api.mentionCandidates.find(
-      (candidate) => candidate.value === "Policies/Guide.md",
-    )!;
-    await act(async () => api.selectMention(guide));
-
-    await act(async () =>
-      api.handleInputChange(`please ${input}`, {
-        from: 0,
-        to: 0,
-        insertedTextLength: 7,
-      }),
-    );
-    expect(api.displayMentions[0]?.range).toEqual({ from: 11, to: 16 });
-
-    await act(async () =>
-      api.handleInputChange("please ask GuXide ", {
-        from: 13,
-        to: 13,
-        insertedTextLength: 1,
-      }),
-    );
-    expect(api.displayMentions).toEqual([]);
-  });
-
-  it("keeps the second repeated label bound when the same text is inserted at the start", async () => {
-    await act(async () => setInput("Guide @"));
-    moveCursorToEnd();
-    await act(async () => api.syncMentionFromInput());
-    const guide = api.mentionCandidates.find(
-      (candidate) => candidate.value === "Policies/Guide.md",
-    )!;
-    await act(async () => api.selectMention(guide));
-    expect(api.displayMentions[0]?.range).toEqual({ from: 6, to: 11 });
-
-    await act(async () =>
-      api.handleInputChange("Guide Guide Guide ", {
-        from: 0,
-        to: 0,
-        insertedTextLength: 6,
-      }),
-    );
-
-    expect(api.displayMentions[0]?.range).toEqual({ from: 12, to: 17 });
-    expect(input.slice(12, 17)).toBe("Guide");
-  });
-
-  it("loads # tag candidates and maps them only to retrieval scope", async () => {
-    await act(async () => setInput("ask #pro"));
-    moveCursorToEnd();
-    await act(async () => {
-      api.syncMentionFromInput();
-      await Promise.resolve();
-    });
-
-    const project = api.mentionCandidates.find(
-      (candidate) => candidate.value === "project",
-    );
-    expect(project?.kind).toBe("tag");
-    await act(async () => api.selectMention(project!));
-
-    expect(input).toBe("ask project ");
-    expect(api.retrievalScope).toEqual({
-      paths: [],
-      pathPrefixes: [],
+      pathPrefixes: ["Empty Folder/"],
       requiredTags: ["project"],
     });
   });
 
-  it("closes the mention popover on Escape", async () => {
-    await act(async () => {
-      setInput("ask @Res");
-    });
-    moveCursorToEnd();
-    await act(async () => {
-      api.syncMentionFromInput();
-    });
-    expect(api.mentionOpen).toBe(true);
-
-    const preventDefault = vi.fn();
+  it("isolates display mentions by security domain", () => {
+    const mention: DisplayMention = {
+      kind: "file",
+      value: "Policies/Guide.md",
+      label: "Guide",
+      range: { from: 0, to: 5 },
+    };
     act(() => {
-      api.handleComposerKeyDown({
-        key: "Escape",
-        preventDefault,
-      } as unknown as React.KeyboardEvent<HTMLTextAreaElement>);
+      api.handleInputChange("Guide", [mention]);
     });
+    expect(api.displayMentions).toEqual([mention]);
 
-    expect(preventDefault).toHaveBeenCalled();
-    expect(api.mentionOpen).toBe(false);
-  });
+    domain = "classified";
+    act(render);
+    expect(api.displayMentions).toEqual([]);
 
-  it("refreshes stale vault files when opening mention suggestions", async () => {
-    let currentFiles = files;
-    loadVaultFiles = async () => currentFiles;
-    await act(async () => {
-      render();
-      await Promise.resolve();
-    });
-    currentFiles = [
-      ...files,
-      {
-        path: "Drafts/新建文档.md",
-        title: "新建文档",
-        updatedAt: "2026-01-02",
-        isLocked: false,
-      },
-    ];
-
-    await act(async () => {
-      setInput("ask @新");
-    });
-    moveCursorToEnd();
-    await act(async () => {
-      api.syncMentionFromInput();
-      await Promise.resolve();
-    });
-
-    expect(
-      api.mentionCandidates.some((item) => item.value === "Drafts/新建文档.md"),
-    ).toBe(true);
-  });
-
-  it("keeps @ file candidates available when tag metadata cannot be loaded", async () => {
-    loadVaultTags = async () => Promise.reject(new Error("tag index offline"));
-    await act(async () => {
-      render();
-      await Promise.resolve();
-    });
-    await act(async () => setInput("ask @Guid"));
-    moveCursorToEnd();
-    await act(async () => {
-      api.syncMentionFromInput();
-      await Promise.resolve();
-    });
-
-    expect(
-      api.mentionCandidates.some(
-        (candidate) => candidate.value === "Policies/Guide.md",
-      ),
-    ).toBe(true);
-  });
-
-  it("includes runtime document candidates that are not yet returned by fileList", async () => {
-    runtimeDocumentCandidates = [
-      {
-        path: "Drafts/运行期文档.md",
-        title: "运行期文档",
-        updatedAt: "2026-01-02",
-        isLocked: false,
-      },
-    ];
-    await act(async () => {
-      render();
-    });
-
-    await act(async () => {
-      setInput("ask @运行");
-    });
-    moveCursorToEnd();
-    await act(async () => {
-      api.syncMentionFromInput();
-      await Promise.resolve();
-    });
-
-    expect(
-      api.mentionCandidates.some(
-        (item) => item.value === "Drafts/运行期文档.md",
-      ),
-    ).toBe(true);
+    domain = "normal";
+    act(render);
+    expect(api.displayMentions).toEqual([mention]);
   });
 });

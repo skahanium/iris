@@ -123,6 +123,10 @@ describe("AssistantComposerDock context references", () => {
     const candidate = screen.getByTestId("editor-selection-candidate");
     expect(candidate).toHaveTextContent("selected text preview");
     expect(candidate).not.toHaveTextContent("alpha.md");
+    expect(candidate.className).toContain("iris-context-shelf");
+    expect(
+      candidate.querySelector("[data-context-leading-marker]"),
+    ).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "移除当前选区引用" }));
     expect(onDismissEditorSelectionReference).toHaveBeenCalledTimes(1);
   });

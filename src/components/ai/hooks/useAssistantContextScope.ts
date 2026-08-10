@@ -5,56 +5,56 @@ import {
   useRef,
   useState,
   type Dispatch,
-  type KeyboardEvent,
-  type CompositionEvent,
   type RefObject,
   type SetStateAction,
 } from "react";
-import { flushSync } from "react-dom";
 
-import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
 import {
   buildMentionCandidates,
-  findActiveMentionQuery,
-  insertDisplayMention,
   mentionsToContextScope,
-  reconcileDisplayMentions,
-  validDisplayMentions,
   type MentionTextEdit,
   type MentionCandidate,
 } from "@/lib/ai-context-scope";
-import { fileList, tagList } from "@/lib/ipc";
-import type { DisplayMention } from "@/types/ai";
+import { fileList, folderList, tagList } from "@/lib/ipc";
+import type { DisplayMention, SecurityDomain } from "@/types/ai";
 import type { FileListItem, TagGroup } from "@/types/ipc";
+import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
 
 interface UseAssistantContextScopeOptions {
-  input: string;
   setInput: Dispatch<SetStateAction<string>>;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  domain?: SecurityDomain;
+  input?: string;
+  textareaRef?: RefObject<HTMLTextAreaElement | null>;
   loadVaultFiles?: () => Promise<FileListItem[]>;
+  loadVaultFolders?: () => Promise<string[]>;
   loadVaultTags?: () => Promise<TagGroup[]>;
   runtimeDocumentCandidates?: FileListItem[];
+  composerRef?: RefObject<AssistantComposerHandle | null>;
 }
 
 export function useAssistantContextScope({
-  input,
   setInput,
-  textareaRef,
+  domain = "normal",
   loadVaultFiles = fileList,
+  loadVaultFolders = folderList,
   loadVaultTags = tagList,
   runtimeDocumentCandidates = [],
+  composerRef,
 }: UseAssistantContextScopeOptions) {
   const [vaultFiles, setVaultFiles] = useState<FileListItem[]>([]);
+  const [vaultFolders, setVaultFolders] = useState<string[]>([]);
   const [vaultTags, setVaultTags] = useState<TagGroup[]>([]);
   const [displayMentions, setDisplayMentions] = useState<DisplayMention[]>([]);
-  const [mentionOpen, setMentionOpen] = useState(false);
-  const [mentionStart, setMentionStart] = useState(0);
-  const [mentionQuery, setMentionQuery] = useState("");
-  const [mentionPrefix, setMentionPrefix] = useState<"@" | "#">("@");
   const loadSeqRef = useRef(0);
-  const previousInputRef = useRef(input);
-  const displayMentionsRef = useRef<DisplayMention[]>([]);
-  const composingRef = useRef(false);
+  const domainRef = useRef(domain);
+  domainRef.current = domain;
+  const displayMentionsByDomainRef = useRef<
+    Partial<Record<SecurityDomain, DisplayMention[]>>
+  >({ normal: [], classified: [] });
+
+  useEffect(() => {
+    setDisplayMentions(displayMentionsByDomainRef.current[domain] ?? []);
+  }, [domain]);
 
   const retrievalScope = useMemo(
     () => mentionsToContextScope(displayMentions),
@@ -66,213 +66,75 @@ export function useAssistantContextScope({
     for (const item of runtimeDocumentCandidates) byPath.set(item.path, item);
     return [...byPath.values()];
   }, [runtimeDocumentCandidates, vaultFiles]);
-  const mentionCandidates = useMemo(
-    () =>
-      mentionOpen
-        ? buildMentionCandidates(mentionSourceFiles, mentionQuery, {
-            prefix: mentionPrefix,
-            tags: vaultTags,
-          })
-        : [],
-    [mentionOpen, mentionPrefix, mentionQuery, mentionSourceFiles, vaultTags],
+  const getMentionCandidates = useCallback(
+    (prefix: "@" | "#", query: string) =>
+      buildMentionCandidates(mentionSourceFiles, query, {
+        prefix,
+        folderPrefixes: vaultFolders,
+        tags: vaultTags,
+      }),
+    [mentionSourceFiles, vaultFolders, vaultTags],
   );
 
   const refreshMentionSources = useCallback(() => {
     const seq = loadSeqRef.current + 1;
     loadSeqRef.current = seq;
-    return Promise.allSettled([loadVaultFiles(), loadVaultTags()]).then(
-      ([filesResult, tagsResult]) => {
-        if (loadSeqRef.current === seq) {
-          setVaultFiles(
-            filesResult.status === "fulfilled" ? filesResult.value : [],
-          );
-          setVaultTags(
-            tagsResult.status === "fulfilled" ? tagsResult.value : [],
-          );
-        }
-      },
-    );
-  }, [loadVaultFiles, loadVaultTags]);
+    return Promise.allSettled([
+      loadVaultFiles(),
+      loadVaultFolders(),
+      loadVaultTags(),
+    ]).then(([filesResult, foldersResult, tagsResult]) => {
+      if (loadSeqRef.current === seq) {
+        setVaultFiles(
+          filesResult.status === "fulfilled" ? filesResult.value : [],
+        );
+        setVaultFolders(
+          foldersResult.status === "fulfilled" ? foldersResult.value : [],
+        );
+        setVaultTags(tagsResult.status === "fulfilled" ? tagsResult.value : []);
+      }
+    });
+  }, [loadVaultFiles, loadVaultFolders, loadVaultTags]);
 
   useEffect(() => {
     void refreshMentionSources();
   }, [refreshMentionSources]);
 
   useEffect(() => {
-    if (mentionOpen) void refreshMentionSources();
-  }, [mentionOpen, refreshMentionSources]);
-
-  useEffect(() => {
     return () => {
       loadSeqRef.current += 1;
     };
-  }, [loadVaultFiles, loadVaultTags]);
+  }, [loadVaultFiles, loadVaultFolders, loadVaultTags]);
 
   const commitDisplayMentions = useCallback((mentions: DisplayMention[]) => {
-    displayMentionsRef.current = mentions;
+    displayMentionsByDomainRef.current[domainRef.current] = mentions;
     setDisplayMentions(mentions);
   }, []);
 
-  useEffect(() => {
-    const previous = previousInputRef.current;
-    if (previous === input) return;
-    const nextMentions = reconcileDisplayMentions(
-      previous,
-      input,
-      displayMentionsRef.current,
-    );
-    previousInputRef.current = input;
-    commitDisplayMentions(nextMentions);
-  }, [commitDisplayMentions, input]);
-
   const handleInputChange = useCallback(
-    (nextInput: string, edit?: MentionTextEdit) => {
-      const previous = previousInputRef.current;
-      const nextMentions = reconcileDisplayMentions(
-        previous,
-        nextInput,
-        displayMentionsRef.current,
-        edit,
-      );
-      previousInputRef.current = nextInput;
-      commitDisplayMentions(nextMentions);
+    (
+      nextInput: string,
+      mentionsOrEdit: DisplayMention[] | MentionTextEdit = [],
+    ) => {
+      const mentions = Array.isArray(mentionsOrEdit) ? mentionsOrEdit : [];
+      commitDisplayMentions(mentions);
       setInput(nextInput);
     },
     [commitDisplayMentions, setInput],
   );
 
-  const syncMentionFromInput = useCallback(() => {
-    if (composingRef.current) {
-      setMentionOpen(false);
-      return;
-    }
-    const ta = textareaRef.current;
-    if (!ta) {
-      setMentionOpen(false);
-      return;
-    }
-    const active = findActiveMentionQuery(input, ta.selectionStart);
-    if (active) {
-      setMentionOpen(true);
-      setMentionStart(active.start);
-      setMentionQuery(active.query);
-      setMentionPrefix(active.prefix);
-    } else {
-      setMentionOpen(false);
-    }
-  }, [input, textareaRef]);
-
-  useEffect(() => {
-    syncMentionFromInput();
-  }, [input, syncMentionFromInput]);
-
   const selectMention = useCallback(
     (candidate: MentionCandidate) => {
-      const ta = textareaRef.current;
-      const cursor = ta?.selectionStart ?? input.length;
-      const next = insertDisplayMention(input, cursor, mentionStart, candidate);
-      const shifted = reconcileDisplayMentions(
-        input,
-        next.text,
-        displayMentionsRef.current,
-        {
-          from: mentionStart,
-          to: cursor,
-          insertedTextLength: next.cursor - mentionStart,
-        },
-      );
-      const nextMentions = validDisplayMentions(next.text, [
-        ...shifted,
-        next.mention,
-      ]);
-      previousInputRef.current = next.text;
-      commitDisplayMentions(nextMentions);
-      flushSync(() => {
-        setInput(next.text);
-      });
-      setMentionOpen(false);
-      const el = textareaRef.current;
-      if (el) {
-        el.focus();
-        el.setSelectionRange(next.cursor, next.cursor);
-      }
-      // Focus/selection fallback if the textarea remounts after the sync update.
-      requestAnimationFrame(() => {
-        const latest = textareaRef.current;
-        if (!latest) return;
-        if (document.activeElement !== latest) latest.focus();
-        if (
-          latest.selectionStart !== next.cursor ||
-          latest.selectionEnd !== next.cursor
-        ) {
-          latest.setSelectionRange(next.cursor, next.cursor);
-        }
-      });
+      composerRef?.current?.insertMention(candidate);
     },
-    [commitDisplayMentions, input, mentionStart, setInput, textareaRef],
-  );
-
-  const handleCompositionStart = useCallback(
-    (_event: CompositionEvent<HTMLTextAreaElement>) => {
-      composingRef.current = true;
-      setMentionOpen(false);
-    },
-    [],
-  );
-
-  const handleCompositionEnd = useCallback(
-    (_event: CompositionEvent<HTMLTextAreaElement>) => {
-      composingRef.current = false;
-      requestAnimationFrame(syncMentionFromInput);
-    },
-    [syncMentionFromInput],
-  );
-
-  const {
-    highlight: mentionHighlight,
-    handleKeyDown: handleMentionKeyDown,
-    setHighlight: setMentionHighlight,
-    navDeltaRef: mentionNavDeltaRef,
-  } = useListboxKeyboard({
-    length: mentionCandidates.length,
-    enabled: mentionOpen && mentionCandidates.length > 0,
-    wrap: false,
-    resetKey: `${mentionQuery}:${mentionCandidates.length}`,
-    onActivate: (index) => {
-      const item = mentionCandidates[index];
-      if (item) selectMention(item);
-    },
-  });
-
-  const handleComposerKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (mentionOpen) {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          setMentionOpen(false);
-          return;
-        }
-        if (handleMentionKeyDown(event)) return;
-      }
-    },
-    [handleMentionKeyDown, mentionOpen],
+    [composerRef],
   );
 
   return {
     displayMentions,
-    handleCompositionEnd,
-    handleCompositionStart,
-    handleComposerKeyDown,
+    getMentionCandidates,
     handleInputChange,
-    mentionCandidates,
-    mentionHighlight,
-    mentionNavDeltaRef,
-    mentionOpen,
-    mentionPrefix,
-    mentionQuery,
     retrievalScope,
     selectMention,
-    setMentionHighlight,
-    syncMentionFromInput,
   };
 }

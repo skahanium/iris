@@ -22,6 +22,7 @@ import type {
   AssistantSessionRef,
   DisplayMention,
 } from "@/types/ai";
+import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
 
 import type { ChatLine, ImageAttachment } from "../AiMessageList";
 
@@ -44,9 +45,10 @@ interface UseAssistantConversationParams {
   bubbleSelection: BubbleSelectionPort;
   clearContextReferences: () => void;
   onInsertToEditor?: (content: string) => void;
-  setInput: Dispatch<SetStateAction<string>>;
+  setInput?: Dispatch<SetStateAction<string>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
-  textareaRef: RefObject<HTMLTextAreaElement | null>;
+  composerRef?: RefObject<AssistantComposerHandle | null>;
+  textareaRef?: RefObject<HTMLTextAreaElement | null>;
 }
 
 function selectedMessages(
@@ -69,8 +71,9 @@ export function useAssistantConversation({
   bubbleSelection,
   clearContextReferences,
   onInsertToEditor,
-  setInput,
   setStreaming,
+  composerRef,
+  setInput,
   textareaRef,
 }: UseAssistantConversationParams) {
   const payloadStoreRef = useRef(getAiPayloadStore());
@@ -110,11 +113,13 @@ export function useAssistantConversation({
     bubbleSelection.clear();
     setMessages([]);
     setRunSession(null);
-    setInput("");
+    if (composerRef?.current) composerRef.current.clear();
+    else setInput?.("");
     setStreaming(false);
   }, [
     bubbleSelection,
     clearContextReferences,
+    composerRef,
     setInput,
     setMessages,
     setStreaming,
@@ -207,12 +212,20 @@ export function useAssistantConversation({
         .split("\n")
         .map((line) => `> ${line}`)
         .join("\n");
-      setInput((previous) =>
-        previous.trim() ? `${previous.trim()}\n\n${quote}\n\n` : `${quote}\n\n`,
-      );
-      textareaRef.current?.focus();
+      const composer = composerRef?.current;
+      if (composer) {
+        composer.appendPlainText(quote + "\n\n");
+        composer.focus();
+      } else {
+        setInput?.((previous) =>
+          previous.trim()
+            ? `${previous.trim()}\n\n${quote}\n\n`
+            : `${quote}\n\n`,
+        );
+        textareaRef?.current?.focus();
+      }
     },
-    [setInput, textareaRef],
+    [composerRef, setInput, textareaRef],
   );
 
   const handleLoadSession = useCallback(
