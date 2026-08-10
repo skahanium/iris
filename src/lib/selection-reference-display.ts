@@ -22,7 +22,7 @@ export function selectionReferenceDisplayFromExplicitReferences(
     )
       continue;
     const fileName = fileNameForPath(reference.filePath);
-    return fileName ? { fileName } : null;
+    if (fileName) return { fileName };
   }
   return null;
 }

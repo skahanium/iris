@@ -36,7 +36,7 @@ function AssistantPanelLoading() {
 interface AppAiPanelSlotProps {
   aiDomain: AiDomain;
   classifiedPath: string | null;
-  consumeEditorSelectionReference?: () => void;
+  consumeEditorSelectionReference?: (candidateKey?: string) => void;
   dismissEditorSelectionReference?: () => void;
   editorSelectionCandidate?: EditorSelectionCandidate | null;
   editorInteractionLocked?: boolean;

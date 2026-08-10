@@ -332,10 +332,17 @@ export function useAiSidecarBridge({
     syncSelectionCandidateRef.current();
   }, [assistantVisible, documentDirty, selectionEnabled]);
 
-  const consumeEditorSelectionReference = useCallback(() => {
-    suppressedSelectionKeyRef.current = currentSelectionKeyRef.current;
-    clearSelectionCandidate();
-  }, [clearSelectionCandidate]);
+  const consumeEditorSelectionReference = useCallback(
+    (candidateKey?: string) => {
+      const keyToSuppress = candidateKey ?? currentSelectionKeyRef.current;
+      if (!keyToSuppress) return;
+      suppressedSelectionKeyRef.current = keyToSuppress;
+      if (currentSelectionKeyRef.current === keyToSuppress) {
+        clearSelectionCandidate();
+      }
+    },
+    [clearSelectionCandidate],
+  );
 
   const dismissEditorSelectionReference = consumeEditorSelectionReference;
 

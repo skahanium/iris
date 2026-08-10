@@ -7,7 +7,8 @@ import type { FileListItem } from "@/types/ipc";
 export interface UnifiedAssistantPanelProps {
   aiDomain?: AiDomain;
   classifiedPath?: string | null;
-  consumeEditorSelectionReference?: () => void;
+  /** Consume only the frozen candidate key accepted by this Run. */
+  consumeEditorSelectionReference?: (candidateKey?: string) => void;
   editorSelectionCandidate?: EditorSelectionCandidate | null;
   onDismissEditorSelectionReference?: () => void;
   runtimeDocumentCandidates?: FileListItem[];

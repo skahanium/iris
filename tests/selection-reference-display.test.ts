@@ -25,4 +25,13 @@ describe("selection reference history projection", () => {
       ]),
     ).toBeNull();
   });
+
+  it("continues past malformed selection records to a valid marker", () => {
+    expect(
+      selectionReferenceDisplayFromExplicitReferences([
+        { kind: "selection", filePath: "   " },
+        { kind: "selection", filePath: "notes/valid.md" },
+      ]),
+    ).toEqual({ fileName: "valid.md" });
+  });
 });

@@ -6,7 +6,7 @@ import {
   useUnifiedAssistantSend,
   type UnifiedAssistantSendOptions,
 } from "@/components/ai/hooks/useUnifiedAssistantSend";
-import type { DisplayMention } from "@/types/ai";
+import type { AssistantRunAccepted, DisplayMention } from "@/types/ai";
 import type { EditorSelectionCandidate } from "@/types/editor-selection";
 
 const start = vi.fn();
@@ -241,6 +241,81 @@ describe("useUnifiedAssistantSend", () => {
       reference,
     ]);
     expect(consumeEditorSelectionReference).toHaveBeenCalledTimes(1);
+  });
+
+  it("freezes the sent candidate key while a Run is awaiting acceptance", async () => {
+    let resolveStart: ((accepted: AssistantRunAccepted) => void) | undefined;
+    const firstReference = normalOptions().contextReferences[0]!;
+    const secondReference = {
+      ...firstReference,
+      id: "selection-ref-2",
+      filePath: "notes/other.md",
+    };
+    const consumeEditorSelectionReference = vi.fn();
+    let replaceCandidate:
+      | ((candidate: EditorSelectionCandidate | null) => void)
+      | undefined;
+    const options = normalOptions({
+      contextReferences: [],
+      displayMentions: [],
+      consumeEditorSelectionReference,
+    });
+    function StatefulProbe() {
+      const [candidate, setCandidate] =
+        useState<EditorSelectionCandidate | null>({
+          key: "notes/source.md:1:4:selected",
+          preview: "党的十八大",
+          status: "ready",
+          reference: firstReference,
+          message: null,
+        });
+      replaceCandidate = setCandidate;
+      api = useUnifiedAssistantSend({
+        ...options,
+        editorSelectionCandidate: candidate,
+      });
+      return null;
+    }
+    start.mockImplementation(
+      () =>
+        new Promise<AssistantRunAccepted>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    act(() => root?.render(<StatefulProbe />));
+
+    const sendPromise = api!.send();
+    await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      replaceCandidate?.({
+        key: "notes/other.md:1:4:selected",
+        preview: "另一段文字",
+        status: "ready",
+        reference: secondReference,
+        message: null,
+      });
+      resolveStart?.({
+        runId: "run-frozen-selection",
+        turnId: "turn-frozen-selection",
+        clientRequestId: "client-frozen-selection",
+        session: { domain: "normal", sessionKey: "session-1" },
+        state: "accepted",
+        stateVersion: 1,
+      });
+    });
+    await act(async () => {
+      await sendPromise;
+    });
+
+    expect(start.mock.calls[0]?.[0].turn.explicitReferences).toEqual([
+      firstReference,
+    ]);
+    expect(consumeEditorSelectionReference).toHaveBeenCalledWith(
+      "notes/source.md:1:4:selected",
+    );
   });
 
   it("does not repeat a consumed editor selection reference on the next Run", async () => {

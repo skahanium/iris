@@ -204,6 +204,21 @@ describe("assistant sidecar selection reference bridge", () => {
     expect(api.editorSelectionCandidate).toBeNull();
   });
 
+  it("does not clear a newer selection when an older accepted Run is consumed", async () => {
+    await waitFor(() =>
+      expect(api.editorSelectionCandidate?.status).toBe("ready"),
+    );
+    const acceptedCandidateKey = api.editorSelectionCandidate!.key;
+    act(() => editor.commands.setTextSelection({ from: 5, to: 7 }));
+    await waitFor(() =>
+      expect(api.editorSelectionCandidate?.key).not.toBe(acceptedCandidateKey),
+    );
+
+    act(() => api.consumeEditorSelectionReference(acceptedCandidateKey));
+
+    expect(api.editorSelectionCandidate?.key).not.toBe(acceptedCandidateKey);
+  });
+
   it("allows a dismissed selection to re-establish after Agent is reopened", async () => {
     await waitFor(() =>
       expect(api.editorSelectionCandidate?.status).toBe("ready"),

@@ -35,7 +35,7 @@ export interface UnifiedAssistantSendOptions {
   session: AssistantSessionRef | null;
   contextReferences: ContextReference[];
   editorSelectionCandidate?: EditorSelectionCandidate | null;
-  consumeEditorSelectionReference?: () => void;
+  consumeEditorSelectionReference?: (candidateKey?: string) => void;
   displayMentions: DisplayMention[];
   retrievalScope: ContextScope;
   webSearch: boolean;
@@ -67,6 +67,7 @@ interface PendingStart {
   images: ImageAttachment[];
   displayMentions: DisplayMention[];
   consumesEditorSelectionReference: boolean;
+  selectionCandidateKey?: string;
   selectionReference?: SelectionReferenceDisplay;
 }
 
@@ -336,6 +337,9 @@ export function useUnifiedAssistantSend({
           images,
           displayMentions: draft.displayMentions,
           consumesEditorSelectionReference: selectedReference !== null,
+          selectionCandidateKey: selectedReference
+            ? editorSelectionCandidate?.key
+            : undefined,
           selectionReference: selectionReferenceDisplay,
         };
         pendingStartRef.current = pendingStart;
@@ -353,7 +357,7 @@ export function useUnifiedAssistantSend({
       };
       pendingStartRef.current = null;
       if (pendingStart.consumesEditorSelectionReference)
-        consumeEditorSelectionReference?.();
+        consumeEditorSelectionReference?.(pendingStart.selectionCandidateKey);
       if (pendingStart.selectionReference) {
         commitAcceptedTurn(
           message,
