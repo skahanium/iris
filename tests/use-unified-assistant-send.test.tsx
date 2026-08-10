@@ -127,8 +127,7 @@ describe("useUnifiedAssistantSend", () => {
           reference,
           message: null,
         } satisfies EditorSelectionCandidate,
-        oneShotContextReference: reference,
-        consumeOneShotContextReference: consume,
+        consumeEditorSelectionReference: consume,
       }),
     );
 
@@ -138,6 +137,45 @@ describe("useUnifiedAssistantSend", () => {
       reference,
     ]);
     expect(consume).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the ready candidate as the single source of the selection reference", async () => {
+    const reference = normalOptions().contextReferences[0]!;
+    const commitAcceptedTurn = vi.fn();
+    start.mockResolvedValue({
+      runId: "run-candidate-only",
+      turnId: "turn-candidate-only",
+      session: { domain: "normal", sessionKey: "session-1" },
+      state: "accepted",
+      stateVersion: 1,
+    });
+    renderProbe(
+      normalOptions({
+        contextReferences: [],
+        displayMentions: [],
+        editorSelectionCandidate: {
+          key: "notes/source.md:1:4:selected",
+          preview: "党的十八大",
+          status: "ready",
+          reference,
+          message: null,
+        } satisfies EditorSelectionCandidate,
+        commitAcceptedTurn,
+      }),
+    );
+
+    await act(async () => api?.send());
+
+    expect(start.mock.calls[0]?.[0].turn.explicitReferences).toEqual([
+      reference,
+    ]);
+    expect(commitAcceptedTurn).toHaveBeenCalledWith(
+      "请总结 Guide",
+      expect.objectContaining({ runId: "run-candidate-only" }),
+      [],
+      [],
+      { preview: "党的十八大", fileName: "source.md" },
+    );
   });
 
   it("does not route a stale ordinary selection candidate into classified Runs", async () => {
@@ -173,7 +211,7 @@ describe("useUnifiedAssistantSend", () => {
   });
 
   it("consumes one editor selection reference after adding it to one normal-domain Run", async () => {
-    const consumeOneShotContextReference = vi.fn();
+    const consumeEditorSelectionReference = vi.fn();
     const reference = normalOptions().contextReferences[0]!;
     start.mockResolvedValue({
       runId: "run-one-shot",
@@ -186,8 +224,14 @@ describe("useUnifiedAssistantSend", () => {
       normalOptions({
         contextReferences: [],
         displayMentions: [],
-        oneShotContextReference: reference,
-        consumeOneShotContextReference,
+        editorSelectionCandidate: {
+          key: "notes/source.md:1:4:selected",
+          preview: "selected",
+          status: "ready",
+          reference,
+          message: null,
+        } satisfies EditorSelectionCandidate,
+        consumeEditorSelectionReference,
       }),
     );
 
@@ -196,7 +240,7 @@ describe("useUnifiedAssistantSend", () => {
     expect(start.mock.calls[0]?.[0].turn.explicitReferences).toEqual([
       reference,
     ]);
-    expect(consumeOneShotContextReference).toHaveBeenCalledTimes(1);
+    expect(consumeEditorSelectionReference).toHaveBeenCalledTimes(1);
   });
 
   it("does not repeat a consumed editor selection reference on the next Run", async () => {
@@ -206,13 +250,18 @@ describe("useUnifiedAssistantSend", () => {
       displayMentions: [],
     });
     function StatefulProbe() {
-      const [oneShotReference, setOneShotReference] = useState<
-        typeof reference | null
-      >(reference);
+      const [candidate, setCandidate] =
+        useState<EditorSelectionCandidate | null>({
+          key: "notes/source.md:1:4:selected",
+          preview: "selected",
+          status: "ready",
+          reference,
+          message: null,
+        });
       api = useUnifiedAssistantSend({
         ...options,
-        oneShotContextReference: oneShotReference,
-        consumeOneShotContextReference: () => setOneShotReference(null),
+        editorSelectionCandidate: candidate,
+        consumeEditorSelectionReference: () => setCandidate(null),
       });
       return null;
     }
@@ -383,15 +432,21 @@ describe("useUnifiedAssistantSend", () => {
 
   it("does not create transcript slots when Run acceptance fails", async () => {
     const commitAcceptedTurn = vi.fn();
-    const consumeOneShotContextReference = vi.fn();
-    const oneShotContextReference = normalOptions().contextReferences[0]!;
+    const consumeEditorSelectionReference = vi.fn();
+    const reference = normalOptions().contextReferences[0]!;
     start.mockRejectedValue(new Error("agent_run_persistence_failed"));
     renderProbe(
       normalOptions({
         contextReferences: [],
         displayMentions: [],
-        oneShotContextReference,
-        consumeOneShotContextReference,
+        editorSelectionCandidate: {
+          key: "notes/source.md:1:4:selected",
+          preview: "selected",
+          status: "ready",
+          reference,
+          message: null,
+        } satisfies EditorSelectionCandidate,
+        consumeEditorSelectionReference,
         commitAcceptedTurn,
       }),
     );
@@ -400,7 +455,7 @@ describe("useUnifiedAssistantSend", () => {
 
     expect(start).toHaveBeenCalledTimes(2);
     expect(commitAcceptedTurn).not.toHaveBeenCalled();
-    expect(consumeOneShotContextReference).not.toHaveBeenCalled();
+    expect(consumeEditorSelectionReference).not.toHaveBeenCalled();
   });
 
   it("replays an uncertain acceptance once with the original client request id", async () => {

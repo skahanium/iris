@@ -115,7 +115,6 @@ describe("assistant sidecar selection reference bridge", () => {
   it("clears the candidate when the selection is collapsed", () => {
     act(() => editor.commands.setTextSelection({ from: 3, to: 3 }));
     expect(api.editorSelectionCandidate).toBeNull();
-    expect(api.editorSelectionReference).toBeNull();
   });
 
   it("shows save-required state for dirty documents without exposing content", async () => {
@@ -167,11 +166,6 @@ describe("assistant sidecar selection reference bridge", () => {
     await act(async () => {
       resolveFirst(validSignature);
       await Promise.resolve();
-    });
-
-    expect(api.editorSelectionReference?.editorRange).toEqual({
-      from: 5,
-      to: 7,
     });
   });
 

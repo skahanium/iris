@@ -18,6 +18,7 @@ import type {
   ContextScope,
   DisplayMention,
   ExternalToolGrantRef,
+  SelectionReferenceDisplay,
   SecurityDomain,
 } from "@/types/ai";
 import type { FileSignatureResult } from "@/types/ipc";
@@ -33,9 +34,8 @@ export interface UnifiedAssistantSendOptions {
   composerDisabled: boolean;
   session: AssistantSessionRef | null;
   contextReferences: ContextReference[];
-  oneShotContextReference?: ContextReference | null;
   editorSelectionCandidate?: EditorSelectionCandidate | null;
-  consumeOneShotContextReference?: () => void;
+  consumeEditorSelectionReference?: () => void;
   displayMentions: DisplayMention[];
   retrievalScope: ContextScope;
   webSearch: boolean;
@@ -49,6 +49,7 @@ export interface UnifiedAssistantSendOptions {
     accepted: AssistantRunAccepted,
     images?: ImageAttachment[],
     displayMentions?: DisplayMention[],
+    selectionReference?: SelectionReferenceDisplay,
   ) => void;
   clearComposer?: () => void;
   clearContextReferences: () => void;
@@ -65,7 +66,16 @@ interface PendingStart {
   request: AssistantRunStartRequest;
   images: ImageAttachment[];
   displayMentions: DisplayMention[];
-  consumesOneShotReference: boolean;
+  consumesEditorSelectionReference: boolean;
+  selectionReference?: SelectionReferenceDisplay;
+}
+
+function selectionFileName(
+  path: string | null | undefined,
+): string | undefined {
+  const normalized = path?.replace(/\\/g, "/").trim();
+  if (!normalized) return undefined;
+  return normalized.split("/").filter(Boolean).at(-1);
 }
 
 async function referencesForFileMentions(
@@ -146,9 +156,8 @@ export function useUnifiedAssistantSend({
   composerDisabled,
   session,
   contextReferences,
-  oneShotContextReference = null,
   editorSelectionCandidate = null,
-  consumeOneShotContextReference,
+  consumeEditorSelectionReference,
   displayMentions,
   retrievalScope,
   webSearch,
@@ -214,6 +223,32 @@ export function useUnifiedAssistantSend({
       }
     }
 
+    if (
+      aiDomain === "normal" &&
+      editorSelectionCandidate?.status === "ready" &&
+      (!editorSelectionCandidate.reference ||
+        editorSelectionCandidate.reference.stale ||
+        editorSelectionCandidate.reference.invalidReason)
+    ) {
+      setError("选区引用已失效，请重新选择或移除该选区后重试");
+      return;
+    }
+
+    const selectedReference =
+      aiDomain === "normal" &&
+      editorSelectionCandidate?.status === "ready" &&
+      editorSelectionCandidate.reference &&
+      !editorSelectionCandidate.reference.stale &&
+      !editorSelectionCandidate.reference.invalidReason
+        ? editorSelectionCandidate.reference
+        : null;
+    const selectionReferenceDisplay = selectedReference
+      ? {
+          preview: editorSelectionCandidate?.preview.trim() || undefined,
+          fileName: selectionFileName(selectedReference.filePath),
+        }
+      : undefined;
+
     const draftKey = JSON.stringify({
       aiDomain,
       message,
@@ -237,26 +272,20 @@ export function useUnifiedAssistantSend({
               status: editorSelectionCandidate.status,
             }
           : null,
+      selectedReference,
     });
     const pending = pendingStartRef.current;
     const reusable = pending?.draftKey === draftKey ? pending : null;
     const explicitReferences = contextReferences.filter(
       (reference) => !reference.stale && !reference.invalidReason,
     );
-    const oneShotReference =
-      aiDomain === "normal" &&
-      oneShotContextReference &&
-      !oneShotContextReference.stale &&
-      !oneShotContextReference.invalidReason
-        ? oneShotContextReference
-        : null;
     if (
-      oneShotReference &&
+      selectedReference &&
       !explicitReferences.some(
-        (reference) => reference.id === oneShotReference.id,
+        (reference) => reference.id === selectedReference.id,
       )
     ) {
-      explicitReferences.push(oneShotReference);
+      explicitReferences.push(selectedReference);
     }
     startingRef.current = true;
     setIsStarting(true);
@@ -306,7 +335,8 @@ export function useUnifiedAssistantSend({
           },
           images,
           displayMentions: draft.displayMentions,
-          consumesOneShotReference: oneShotReference !== null,
+          consumesEditorSelectionReference: selectedReference !== null,
+          selectionReference: selectionReferenceDisplay,
         };
         pendingStartRef.current = pendingStart;
       }
@@ -322,14 +352,24 @@ export function useUnifiedAssistantSend({
         clientRequestId: pendingStart.request.clientRequestId,
       };
       pendingStartRef.current = null;
-      if (pendingStart.consumesOneShotReference)
-        consumeOneShotContextReference?.();
-      commitAcceptedTurn(
-        message,
-        boundAcceptance,
-        pendingStart.images,
-        pendingStart.displayMentions,
-      );
+      if (pendingStart.consumesEditorSelectionReference)
+        consumeEditorSelectionReference?.();
+      if (pendingStart.selectionReference) {
+        commitAcceptedTurn(
+          message,
+          boundAcceptance,
+          pendingStart.images,
+          pendingStart.displayMentions,
+          pendingStart.selectionReference,
+        );
+      } else {
+        commitAcceptedTurn(
+          message,
+          boundAcceptance,
+          pendingStart.images,
+          pendingStart.displayMentions,
+        );
+      }
       setStreaming(true);
       setSession(aiDomain === "classified" ? null : accepted.session);
       if (clearComposer) clearComposer();
@@ -361,8 +401,7 @@ export function useUnifiedAssistantSend({
     composerDisabled,
     contextReferences,
     editorSelectionCandidate,
-    oneShotContextReference,
-    consumeOneShotContextReference,
+    consumeEditorSelectionReference,
     displayMentions,
     images,
     input,

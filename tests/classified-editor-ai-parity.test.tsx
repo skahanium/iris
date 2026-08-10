@@ -88,7 +88,7 @@ describe("classified editor AI parity contract", () => {
     it("selection candidates stay live-linked and do not open the Run panel implicitly", () => {
       const src = read("src/hooks/useAiSidecarBridge.ts");
       expect(src).toContain("createEditorContextReference");
-      expect(src).toContain("editorSelectionReference");
+      expect(src).toContain("editorSelectionCandidate");
       expect(src).toContain("editorSelectionCandidate");
       expect(src).toContain("assistantVisible");
       expect(src).not.toContain("setAiPanelOpen(true)");

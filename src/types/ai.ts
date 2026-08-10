@@ -316,6 +316,12 @@ export interface DisplayMention {
   range: DisplayMentionRange;
 }
 
+/** Runtime-only presentation for a committed editor selection reference. */
+export interface SelectionReferenceDisplay {
+  preview?: string;
+  fileName?: string;
+}
+
 /** Immutable structured input for one assistant turn. */
 export interface AssistantTurnDraft {
   message: string;

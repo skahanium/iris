@@ -1,8 +1,4 @@
-import type {
-  AgentModelOverride,
-  AiDomain,
-  ContextReference,
-} from "@/types/ai";
+import type { AgentModelOverride, AiDomain } from "@/types/ai";
 import type { EditorSelectionCandidate } from "@/types/editor-selection";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileListItem } from "@/types/ipc";
@@ -11,8 +7,7 @@ import type { FileListItem } from "@/types/ipc";
 export interface UnifiedAssistantPanelProps {
   aiDomain?: AiDomain;
   classifiedPath?: string | null;
-  oneShotContextReference?: ContextReference | null;
-  consumeOneShotContextReference?: () => void;
+  consumeEditorSelectionReference?: () => void;
   editorSelectionCandidate?: EditorSelectionCandidate | null;
   onDismissEditorSelectionReference?: () => void;
   runtimeDocumentCandidates?: FileListItem[];

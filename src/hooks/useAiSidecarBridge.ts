@@ -27,7 +27,6 @@ import {
   EMPTY_ASSISTANT_CHROME,
   type AssistantChromeSnapshot,
 } from "@/types/assistant-chrome";
-import type { ContextReference } from "@/types/ai";
 import type { EditorSelectionCandidate } from "@/types/editor-selection";
 
 const SELECTION_VALIDATION_DEBOUNCE_MS = 120;
@@ -348,16 +347,12 @@ export function useAiSidecarBridge({
     [syncSelectionCandidate],
   );
 
-  const editorSelectionReference: ContextReference | null =
-    editorSelectionCandidate?.reference ?? null;
-
   return {
     aiPanelOpen,
     assistantChrome,
     consumeEditorSelectionReference,
     dismissEditorSelectionReference,
     editorSelectionCandidate,
-    editorSelectionReference,
     prefillMessage,
     setAiPanelOpen,
     setAssistantChrome,

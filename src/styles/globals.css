@@ -1198,6 +1198,21 @@
     background: hsl(var(--ai-user-bg));
   }
 
+  .ai-message-selection-reference {
+    display: flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    gap: 0.35rem;
+    margin: 0.35rem 0.75rem 0.55rem;
+    border-left: 2px solid hsl(var(--knowledge-accent) / 0.7);
+    background: hsl(var(--surface-inset) / 0.45);
+    padding: 0.25rem 0.45rem;
+    color: hsl(var(--ai-mention));
+    font-size: var(--text-caption);
+    line-height: 1.35;
+  }
+
   .ai-composer-workbench {
     border-color: hsl(var(--ai-workspace-border) / 0.9);
     background: hsl(var(--surface-elevated));

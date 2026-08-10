@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { invokeErrorMessage } from "@/lib/credentials";
 import { projectAssistantProcessEvents } from "@/lib/assistant-process";
+import { selectionReferenceDisplayFromExplicitReferences } from "@/lib/selection-reference-display";
 import { ensureTerminalAnswerComplete } from "@/lib/ensure-answer-complete-process";
 import {
   assistantSessionDelete,
@@ -34,36 +35,45 @@ function formatRelativeTime(iso: string): string {
 }
 
 function toChatLines(messages: AssistantSessionMessage[]): ChatLine[] {
-  return messages.map((message) => ({
-    role: message.role as ChatLine["role"],
-    content: message.content,
-    ...(message.runId ? { runId: message.runId } : {}),
-    ...(message.turnId ? { turnId: message.turnId } : {}),
-    ...(message.turnState ? { turnState: message.turnState } : {}),
-    ...(message.retryable ? { retryable: true } : {}),
-    ...(message.role === "assistant" && message.processEvents?.length
-      ? {
-          processItems: ensureTerminalAnswerComplete(
-            projectAssistantProcessEvents(message.processEvents),
-            "completed",
-          ),
-        }
-      : {}),
-    ...(message.displayMentions.length > 0
-      ? { displayMentions: message.displayMentions }
-      : {}),
-    ...(message.webCitations && message.webCitations.length > 0
-      ? { webCitations: message.webCitations }
-      : {}),
-    ...(message.citationBinding
-      ? { citationBinding: message.citationBinding }
-      : {}),
-    ...(message.sourceSummary?.length
-      ? { sourceSummary: message.sourceSummary }
-      : {}),
-    seq: message.seq,
-    created_at: message.createdAt,
-  }));
+  return messages.map((message) => {
+    const selectionReference =
+      message.role === "user"
+        ? selectionReferenceDisplayFromExplicitReferences(
+            message.explicitReferences,
+          )
+        : null;
+    return {
+      role: message.role as ChatLine["role"],
+      content: message.content,
+      ...(message.runId ? { runId: message.runId } : {}),
+      ...(message.turnId ? { turnId: message.turnId } : {}),
+      ...(message.turnState ? { turnState: message.turnState } : {}),
+      ...(message.retryable ? { retryable: true } : {}),
+      ...(message.role === "assistant" && message.processEvents?.length
+        ? {
+            processItems: ensureTerminalAnswerComplete(
+              projectAssistantProcessEvents(message.processEvents),
+              "completed",
+            ),
+          }
+        : {}),
+      ...(message.displayMentions.length > 0
+        ? { displayMentions: message.displayMentions }
+        : {}),
+      ...(selectionReference ? { selectionReference } : {}),
+      ...(message.webCitations && message.webCitations.length > 0
+        ? { webCitations: message.webCitations }
+        : {}),
+      ...(message.citationBinding
+        ? { citationBinding: message.citationBinding }
+        : {}),
+      ...(message.sourceSummary?.length
+        ? { sourceSummary: message.sourceSummary }
+        : {}),
+      seq: message.seq,
+      created_at: message.createdAt,
+    };
+  });
 }
 
 interface SessionHistoryDropdownProps {

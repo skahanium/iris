@@ -691,7 +691,6 @@ function App() {
     consumeEditorSelectionReference,
     dismissEditorSelectionReference,
     editorSelectionCandidate,
-    editorSelectionReference,
     setAiPanelOpen,
     setAssistantChrome,
     setWebSearch,
@@ -954,7 +953,6 @@ function App() {
             consumeEditorSelectionReference={consumeEditorSelectionReference}
             dismissEditorSelectionReference={dismissEditorSelectionReference}
             editorSelectionCandidate={editorSelectionCandidate}
-            editorSelectionReference={editorSelectionReference}
             editorInteractionLocked={isEditorPersistenceBlocked}
             runtimeDocumentCandidates={assistantRuntimeDocumentCandidates}
             handleInsertToEditor={handleAssistantInsertToEditor}

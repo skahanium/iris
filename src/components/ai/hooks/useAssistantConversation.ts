@@ -21,6 +21,7 @@ import type {
   AssistantRunAccepted,
   AssistantSessionRef,
   DisplayMention,
+  SelectionReferenceDisplay,
 } from "@/types/ai";
 import type { AssistantComposerHandle } from "@/components/ui/ai-composer";
 
@@ -152,6 +153,7 @@ export function useAssistantConversation({
       accepted: AssistantRunAccepted,
       images?: ImageAttachment[],
       displayMentions?: DisplayMention[],
+      selectionReference?: SelectionReferenceDisplay,
     ) => {
       const user: ChatLine = {
         role: "user",
@@ -161,6 +163,7 @@ export function useAssistantConversation({
         turnId: accepted.turnId,
       };
       if (displayMentions?.length) user.displayMentions = displayMentions;
+      if (selectionReference) user.selectionReference = selectionReference;
       if (images?.length) user.images = images;
       const assistant: ChatLine = {
         role: "assistant",

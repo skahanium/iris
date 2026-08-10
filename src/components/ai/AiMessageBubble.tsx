@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, TextQuote } from "lucide-react";
 
 import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 
@@ -30,6 +30,7 @@ import type { AssistantProcessItem } from "@/lib/assistant-process";
 import type {
   CitationBinding,
   DisplayMention,
+  SelectionReferenceDisplay,
   SourceSummaryEntry,
   WebCitationEntry,
 } from "@/types/ai";
@@ -60,6 +61,7 @@ interface AiMessageBubbleProps {
 
   /** Validated inline presentation metadata, separate from prompt input. */
   displayMentions?: DisplayMention[];
+  selectionReference?: SelectionReferenceDisplay;
 
   /** Runtime-only safe process events. Never persisted as message content. */
   processItems?: AssistantProcessItem[];
@@ -649,6 +651,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   images,
 
   displayMentions,
+  selectionReference,
 
   processItems = [],
   webCitations = [],
@@ -716,6 +719,25 @@ export const AiMessageBubble = memo(function AiMessageBubble({
           data-prose-surface="conversation"
           dangerouslySetInnerHTML={{ __html: toTrustedHtml(userHtml) }}
         />
+        {selectionReference ? (
+          <div
+            className="ai-message-selection-reference"
+            title={selectionReference.fileName}
+            aria-label={
+              selectionReference.preview
+                ? `已附带选区：${selectionReference.preview}`
+                : `已附带选区${selectionReference.fileName ? `：${selectionReference.fileName}` : ""}`
+            }
+          >
+            <TextQuote aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">
+              {selectionReference.preview || "已附带选区"}
+              {!selectionReference.preview && selectionReference.fileName
+                ? ` · ${selectionReference.fileName}`
+                : null}
+            </span>
+          </div>
+        ) : null}
       </div>
     );
   }

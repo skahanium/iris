@@ -2,7 +2,7 @@ import { lazy, Suspense, useMemo } from "react";
 
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useWorkspaceChromeActions } from "@/hooks/useWorkspaceChromeActions";
-import type { AiDomain, ContextReference } from "@/types/ai";
+import type { AiDomain } from "@/types/ai";
 import type { EditorSelectionCandidate } from "@/types/editor-selection";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileListItem } from "@/types/ipc";
@@ -38,7 +38,6 @@ interface AppAiPanelSlotProps {
   classifiedPath: string | null;
   consumeEditorSelectionReference?: () => void;
   dismissEditorSelectionReference?: () => void;
-  editorSelectionReference?: ContextReference | null;
   editorSelectionCandidate?: EditorSelectionCandidate | null;
   editorInteractionLocked?: boolean;
   runtimeDocumentCandidates?: FileListItem[];
@@ -54,7 +53,6 @@ export function AppAiPanelSlot({
   classifiedPath,
   consumeEditorSelectionReference,
   dismissEditorSelectionReference,
-  editorSelectionReference = null,
   editorSelectionCandidate = null,
   editorInteractionLocked = false,
   runtimeDocumentCandidates = [],
@@ -82,8 +80,7 @@ export function AppAiPanelSlot({
         <UnifiedAssistantPanel
           aiDomain={aiDomain}
           classifiedPath={classifiedPath}
-          oneShotContextReference={editorSelectionReference}
-          consumeOneShotContextReference={consumeEditorSelectionReference}
+          consumeEditorSelectionReference={consumeEditorSelectionReference}
           editorSelectionCandidate={editorSelectionCandidate}
           onDismissEditorSelectionReference={dismissEditorSelectionReference}
           runtimeDocumentCandidates={mentionRuntimeCandidates}

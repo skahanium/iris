@@ -75,6 +75,28 @@ describe("AiMessageBubble inline display mentions", () => {
     expect(proseCss).toContain("color: hsl(var(--ai-mention))");
   });
 
+  it("shows a read-only selection reference strip without changing message text", async () => {
+    await act(async () => {
+      root.render(
+        createElement(AiMessageBubble, {
+          role: "user",
+          content: "这是什么时候的会议？",
+          selectionReference: {
+            preview: "党的十八大",
+            fileName: "党纪国法.md",
+          },
+        }),
+      );
+    });
+
+    const reference = host.querySelector(".ai-message-selection-reference");
+    expect(reference).toHaveTextContent("党的十八大");
+    expect(reference).toHaveAttribute("aria-label", "已附带选区：党的十八大");
+    expect(host.querySelector(".ai-message-body")?.textContent).toContain(
+      "这是什么时候的会议？",
+    );
+  });
+
   it("keeps Chinese fullwidth-parenthesis note titles as inline mentions", async () => {
     const label = "问题线索工作思路（王Y）";
     const content = `你如何看待 ${label} 中反映的这些线索？`;

@@ -16,6 +16,7 @@ import type {
   CitationBinding,
   DisplayMention,
   RunState,
+  SelectionReferenceDisplay,
   ToolCallInfo,
   WebCitationEntry,
 } from "@/types/ai";
@@ -46,6 +47,8 @@ export interface ChatLine {
   images?: ImageAttachment[];
   /** Inline presentation metadata, separate from retrieval and model input. */
   displayMentions?: DisplayMention[];
+  /** Runtime/history-safe marker for a committed editor selection reference. */
+  selectionReference?: SelectionReferenceDisplay;
   seq?: number;
   created_at?: string;
   toolCalls?: ToolCallInfo[];
@@ -486,6 +489,7 @@ export const AiMessageList = memo(function AiMessageList({
               selected={isSelected}
               images={m.images}
               displayMentions={m.displayMentions}
+              selectionReference={m.selectionReference}
             />
             {m.turnState === "failed" ? (
               <p className="text-[10px] text-muted-foreground">
