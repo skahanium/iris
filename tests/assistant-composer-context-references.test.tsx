@@ -122,6 +122,7 @@ describe("AssistantComposerDock context references", () => {
 
     const candidate = screen.getByTestId("editor-selection-candidate");
     expect(candidate).toHaveTextContent("selected text preview");
+    expect(candidate).not.toHaveTextContent("当前选区");
     expect(candidate).not.toHaveTextContent("alpha.md");
     expect(candidate.className).toContain("iris-context-shelf");
     expect(

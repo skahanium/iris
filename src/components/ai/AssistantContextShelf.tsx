@@ -106,6 +106,7 @@ export function AssistantContextShelf({
               : "iris-context-shelf-enter",
           )}
           data-testid="editor-selection-candidate"
+          aria-label={`选区引用：${visibleCandidate.preview || "未命名选区"}`}
           aria-hidden={candidateExiting || undefined}
         >
           <span data-context-leading-marker aria-hidden="true" />
@@ -114,7 +115,6 @@ export function AssistantContextShelf({
             className="h-4 w-4 shrink-0 text-primary/70"
           />
           <span className="min-w-0 flex-1 truncate">
-            <span className="mr-1.5 font-medium text-foreground">当前选区</span>
             <span
               className="text-muted-foreground"
               title={visibleCandidate.preview}
