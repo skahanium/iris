@@ -10,4 +10,9 @@
       <title>Item without closing tag
       <description>Unclosed description element.
     </item>
+    <item>
+      <guid>malformed-2026-08-02</guid>
+      <title>Second item also unclosed
+      <description>Another unclosed description element.
+    </item>
   </channel>

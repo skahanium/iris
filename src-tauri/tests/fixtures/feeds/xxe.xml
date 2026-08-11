@@ -16,5 +16,11 @@
       <link>https://example.com/xxe/one</link>
       <description>&xxe;</description>
     </item>
+    <item>
+      <guid>xxe-2026-08-02</guid>
+      <title>Second entity reference item</title>
+      <link>https://example.com/xxe/two</link>
+      <description>&xxe; repeated in a second item.</description>
+    </item>
   </channel>
 </rss>
