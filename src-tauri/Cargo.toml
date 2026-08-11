@@ -50,6 +50,12 @@ regex = "1"
 walkdir = "2"
 fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
 scraper = "0.27"
+# RSS/Atom/JSON Feed 解析（MIT）：避免自写多格式解析器；sanitize feature 在解析
+# 时清理 HTML 字段。精确版本锁定，避免预 1.0 转换行为漂移。
+feed-rs = { version = "=2.4.0", features = ["sanitize"] }
+# HTML → Markdown（Apache-2.0）：避免自写 HTML 转换器。精确版本锁定，
+# 预 1.0 行为可能变化；不再引入第三个 sanitizer crate（复用 feed-rs 与前端 DOMPurify）。
+htmd = "=0.5.5"
 toml = "0.8"
 # sqlite-vec is the default bounded semantic-search backend on desktop. Keep the
 # stable version exact because its pre-1.0 FFI and vec0 behavior may change.
