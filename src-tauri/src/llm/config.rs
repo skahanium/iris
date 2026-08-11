@@ -10,6 +10,7 @@ use crate::ai_types::{
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
 use crate::llm::model_registry::{self, ModelRegistryEntry};
+use crate::llm::provider_contract::provider_protocol_contract;
 use crate::llm::providers::{api_base, credential_service, requires_base_url};
 use crate::storage::db::Database;
 
@@ -208,6 +209,73 @@ mod model_pool_tests {
         assert_eq!(route.resolved.provider_id, "mimo");
         assert_eq!(route.resolved.model, "mimo-v2.5");
         assert!(route.resolved.supports_tools);
+    }
+
+    #[test]
+    fn custom_openai_endpoint_is_chat_only_even_when_its_model_id_matches_a_builtin() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://example.test/v1".into()),
+                enabled_models: Some(vec!["gpt-4o-mini".into()]),
+                ..Default::default()
+            },
+        );
+        routing.candidate_order = vec![ModelReference {
+            provider_id: "custom".into(),
+            model_id: "gpt-4o-mini".into(),
+        }];
+
+        let chat = resolve_model_pool_from_config(&routing, requirements())
+            .expect("custom endpoint remains available for ordinary chat");
+        assert!(!chat.resolved.supports_tools);
+
+        let error = resolve_model_pool_from_config(
+            &routing,
+            ModelPoolRequirements {
+                needs_tools: true,
+                ..requirements()
+            },
+        )
+        .expect_err("unverified custom endpoint must not enter the Agent pool");
+        assert_eq!(error.to_string(), "agent_run_no_capable_model");
+    }
+
+    #[test]
+    fn sanitization_upgrades_legacy_minimax_tag_reasoning_override() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "minimax".into(),
+            ProviderOverride {
+                model_capabilities: std::collections::HashMap::from([(
+                    "MiniMax-M3".into(),
+                    ModelCapabilityOverride {
+                        reasoning_adapter: Some(ReasoningAdapter::OpenAiCompatibleTagStream),
+                        reasoning_control: Some(ReasoningControl::Tag),
+                        reasoning_visibility: Some(ReasoningVisibility::PlainContentRisk),
+                        supported_modes: Some(
+                            crate::llm::model_catalog::TAG_REASONING_MODES.to_vec(),
+                        ),
+                        default_mode: Some(ReasoningMode::Auto),
+                        disable_supported: Some(true),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            },
+        );
+
+        sanitize_routing(&mut routing);
+        let capability = routing.providers["minimax"].model_capabilities["MiniMax-M3"].clone();
+        assert_eq!(
+            capability.reasoning_adapter,
+            Some(ReasoningAdapter::MiniMaxReasoningDetails)
+        );
+        assert_eq!(
+            capability.reasoning_visibility,
+            Some(ReasoningVisibility::HiddenChannel)
+        );
     }
 
     #[test]
@@ -857,7 +925,7 @@ pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
 
 /// Remove unknown providers while preserving Phase3 built-ins and custom endpoints.
 fn sanitize_routing(config: &mut LlmRoutingConfig) {
-    for provider in config.providers.values_mut() {
+    for (provider_id, provider) in &mut config.providers {
         if let Some(model) = provider.default_model.as_deref() {
             provider.default_model = Some(normalize_legacy_model_id(model).into());
         }
@@ -867,6 +935,22 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
             }
             models.sort();
             models.dedup();
+        }
+        if provider_id == "minimax" {
+            for (model_id, capability) in &mut provider.model_capabilities {
+                if is_minimax_reasoning_risk(provider_id, model_id)
+                    && capability.reasoning_adapter
+                        == Some(ReasoningAdapter::OpenAiCompatibleTagStream)
+                {
+                    capability.reasoning_adapter = Some(ReasoningAdapter::MiniMaxReasoningDetails);
+                    capability.reasoning_control = Some(ReasoningControl::Switch);
+                    capability.reasoning_visibility = Some(ReasoningVisibility::HiddenChannel);
+                    capability.supported_modes =
+                        Some(crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec());
+                    capability.default_mode = Some(ReasoningMode::Auto);
+                    capability.disable_supported = Some(true);
+                }
+            }
         }
     }
     config.providers.retain(|id, _| {
@@ -1148,6 +1232,7 @@ fn resolve_model_reference(
         &reference.model_id,
         model_spec,
     );
+    let protocol = provider_protocol_contract(&reference.provider_id, &reference.model_id);
 
     Ok(ResolvedLlmConfig {
         provider_id: reference.provider_id.clone(),
@@ -1158,8 +1243,8 @@ fn resolve_model_reference(
         input_budget,
         output_budget,
         endpoint_family: model_spec.endpoint_family,
-        supports_streaming: model_spec.supports_streaming,
-        supports_tools: model_spec.supports_tools,
+        supports_streaming: model_spec.supports_streaming && protocol.streaming,
+        supports_tools: model_spec.supports_tools && protocol.tools,
         supports_vision,
         supports_reasoning: reasoning_capability.can_request(),
     })
@@ -1196,11 +1281,14 @@ impl ReasoningCapability {
     }
 }
 
-/// Enable only the provider-native summary surface required by the normal Run
-/// process stream. Other providers retain their existing answer-only behavior
-/// until they have an equally explicit, safe summary contract.
+/// Enable only provider-native reasoning surfaces whose output can be isolated
+/// from the visible answer and replayed safely during a same-provider tool turn.
 fn default_dispatch_reasoning(capability: &ReasoningCapability) -> ResolvedReasoningRequest {
-    if capability.adapter != ReasoningAdapter::OpenAiResponses || !capability.can_request() {
+    if !matches!(
+        capability.adapter,
+        ReasoningAdapter::OpenAiResponses | ReasoningAdapter::MiniMaxReasoningDetails
+    ) || !capability.can_request()
+    {
         return ResolvedReasoningRequest::disabled();
     }
     ResolvedReasoningRequest {
@@ -1336,10 +1424,10 @@ fn infer_reasoning_capability(
     }
     if is_minimax_reasoning_risk(&provider, &model) {
         return ReasoningCapability {
-            adapter: ReasoningAdapter::OpenAiCompatibleTagStream,
-            control: ReasoningControl::Tag,
-            visibility: ReasoningVisibility::PlainContentRisk,
-            supported_modes: crate::llm::model_catalog::TAG_REASONING_MODES.to_vec(),
+            adapter: ReasoningAdapter::MiniMaxReasoningDetails,
+            control: ReasoningControl::Switch,
+            visibility: ReasoningVisibility::HiddenChannel,
+            supported_modes: crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec(),
             default_mode: ReasoningMode::Auto,
             disable_supported: true,
         };
@@ -1415,6 +1503,7 @@ pub fn resolve_for_provider_without_secret(
 
     let reasoning_capability =
         reasoning_capability_for_model(&routing, provider_id, &model_id, model_spec);
+    let protocol = provider_protocol_contract(provider_id, &model_id);
     let resolved = ResolvedLlmConfig {
         provider_id: provider_id.to_string(),
         model: model_id,
@@ -1424,8 +1513,8 @@ pub fn resolve_for_provider_without_secret(
         input_budget: (model_spec.context_window as f32 * 0.75) as usize,
         output_budget: model_spec.max_output,
         endpoint_family: model_spec.endpoint_family,
-        supports_streaming: model_spec.supports_streaming,
-        supports_tools: model_spec.supports_tools,
+        supports_streaming: model_spec.supports_streaming && protocol.streaming,
+        supports_tools: model_spec.supports_tools && protocol.tools,
         supports_vision: model_spec.supports_vision,
         supports_reasoning: reasoning_capability.can_request(),
     };

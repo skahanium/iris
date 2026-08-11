@@ -117,7 +117,7 @@ pub fn api_base(provider: &str, custom_base: Option<&str>) -> String {
         "zhipu" => "https://open.bigmodel.cn/api/paas/v4".to_string(),
         "kimi" => "https://api.moonshot.cn/v1".to_string(),
         "doubao" => "https://ark.cn-beijing.volces.com/api/v3".to_string(),
-        "minimax" => "https://api.minimax.chat/v1".to_string(),
+        "minimax" => "https://api.minimaxi.com/v1".to_string(),
         "hunyuan" => "https://api.hunyuan.cloud.tencent.com/v1".to_string(),
         "ernie" => "https://qianfan.baidubce.com/v2".to_string(),
         "mimo" => "https://api.xiaomimimo.com/v1".to_string(),
@@ -284,5 +284,10 @@ mod tests {
             "https://example.test/v1"
         );
         assert_eq!(api_base("custom", None), "");
+    }
+
+    #[test]
+    fn minimax_uses_the_current_openai_compatible_base_url() {
+        assert_eq!(api_base("minimax", None), "https://api.minimaxi.com/v1");
     }
 }

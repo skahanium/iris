@@ -134,7 +134,10 @@ fn messages_for_api_replays_reasoning_only_when_the_provider_continuation_requir
         )]),
         reasoning_content: Some("internal chain of thought".into()),
     }];
-    let api = super::messages_for_api_with_reasoning_continuation(&messages, true);
+    let api = super::messages_for_api_with_reasoning_continuation(
+        &messages,
+        crate::ai_types::ReasoningAdapter::DeepSeekReasoningContent,
+    );
     assert_eq!(api[0]["reasoning_content"], "internal chain of thought");
     assert_eq!(api[0]["tool_calls"][0]["type"], "function");
 }
@@ -186,6 +189,7 @@ fn ordinary_openai_compatible_tool_continuation_never_replays_reasoning_content(
         stream: true,
         thinking: false,
         reasoning: crate::ai_types::ResolvedReasoningRequest {
+            mode: crate::ai_types::ReasoningMode::Auto,
             requested: true,
             adapter: crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream,
             ..crate::ai_types::ResolvedReasoningRequest::disabled()
@@ -249,6 +253,110 @@ fn deepseek_tool_continuation_preserves_reasoning_content_and_provider_control()
     );
     assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
     assert_eq!(body["messages"][1]["role"], "tool");
+}
+
+#[test]
+fn minimax_m3_tool_continuation_preserves_reasoning_details_and_uses_native_controls() {
+    let provider = ProviderConfig {
+        name: "minimax".into(),
+        base_url: "https://api.minimaxi.com/v1".into(),
+        model: "MiniMax-M3".into(),
+        api_key: Some(zeroize::Zeroizing::new("test".to_string())),
+        endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+    };
+    let messages = vec![
+        LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new().into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall::new(
+                "call_1",
+                "web_search",
+                r#"{"query":"MiniMax M3"}"#,
+            )]),
+            reasoning_content: Some(r#"[{"type":"reasoning.text","text":"private"}]"#.into()),
+        },
+        LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"title":"Example"}"#.into(),
+            tool_call_id: Some("call_1".into()),
+            tool_calls: None,
+            reasoning_content: None,
+        },
+    ];
+    let body = build_chat_completions_body(&GatewayRequest {
+        provider,
+        messages,
+        tools: vec![],
+        max_tokens: Some(1024),
+        input_token_budget: None,
+        temperature: None,
+        stream: false,
+        thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest {
+            mode: crate::ai_types::ReasoningMode::Auto,
+            requested: true,
+            adapter: crate::ai_types::ReasoningAdapter::MiniMaxReasoningDetails,
+            ..crate::ai_types::ResolvedReasoningRequest::disabled()
+        },
+        continuation: None,
+        skip_stub_ids: vec![],
+    });
+
+    assert_eq!(body["thinking"]["type"], "adaptive");
+    assert_eq!(body["reasoning_split"], true);
+    assert_eq!(
+        body["messages"][0]["reasoning_details"][0]["type"],
+        "reasoning.text"
+    );
+    assert!(body["messages"][0].get("reasoning_content").is_none());
+}
+
+#[test]
+fn minimax_response_keeps_private_reasoning_details_out_of_visible_content() {
+    let request = GatewayRequest {
+        provider: ProviderConfig {
+            name: "minimax".into(),
+            base_url: "https://api.minimaxi.com/v1".into(),
+            model: "MiniMax-M3".into(),
+            api_key: None,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        messages: vec![],
+        tools: vec![],
+        max_tokens: None,
+        input_token_budget: None,
+        temperature: None,
+        stream: false,
+        thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
+        continuation: None,
+        skip_stub_ids: vec![],
+    };
+    let response = super::parse_gateway_response(
+        &request,
+        &serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "content": "<|minimax|><think>private</think>Searching now",
+                    "reasoning_details": [{"type":"reasoning.text","text":"private"}],
+                    "tool_calls": [{
+                        "id":"call_1",
+                        "type":"function",
+                        "function":{"name":"web_search","arguments":"{\"query\":\"MiniMax\"}"}
+                    }]
+                }
+            }]
+        }),
+    );
+
+    assert_eq!(response.content.as_deref(), Some("Searching now"));
+    assert_eq!(response.tool_calls.len(), 1);
+    assert_eq!(
+        response.reasoning_content.as_deref(),
+        Some(r#"[{"text":"private","type":"reasoning.text"}]"#)
+    );
 }
 
 #[test]

@@ -99,10 +99,10 @@ impl ModelCatalogEntry {
                 disable_supported: true,
             }),
             "minimax" if is_minimax_reasoning_risk(self.id) => Some(CatalogReasoningCapability {
-                adapter: ReasoningAdapter::OpenAiCompatibleTagStream,
-                control: ReasoningControl::Tag,
-                visibility: ReasoningVisibility::PlainContentRisk,
-                supported_modes: TAG_REASONING_MODES,
+                adapter: ReasoningAdapter::MiniMaxReasoningDetails,
+                control: ReasoningControl::Switch,
+                visibility: ReasoningVisibility::HiddenChannel,
+                supported_modes: SWITCH_REASONING_MODES,
                 default_mode: ReasoningMode::Auto,
                 disable_supported: true,
             }),
@@ -733,6 +733,13 @@ mod tests {
             fallback.probe_strategy,
             crate::ai_types::ProbeStrategy::OpenAiModelsThenChat
         );
+        assert!(
+            !crate::llm::provider_contract::provider_protocol_contract(
+                fallback.provider_id,
+                fallback.id
+            )
+            .tools
+        );
     }
 
     #[test]
@@ -807,8 +814,12 @@ mod tests {
             .reasoning_capability()
             .unwrap();
         assert_eq!(
+            minimax.adapter,
+            crate::ai_types::ReasoningAdapter::MiniMaxReasoningDetails
+        );
+        assert_eq!(
             minimax.visibility,
-            crate::ai_types::ReasoningVisibility::PlainContentRisk
+            crate::ai_types::ReasoningVisibility::HiddenChannel
         );
     }
 
@@ -886,7 +897,13 @@ mod tests {
                 continue;
             }
             assert!(
-                model.supports_tools,
+                !model.supports_tools
+                    || crate::llm::provider_contract::provider_protocol_contract(
+                        model.provider_id,
+                        model.id
+                    )
+                    .tools
+                    || model.provider_id == "custom",
                 "{} should support tools (chat completions entry)",
                 model.id
             );

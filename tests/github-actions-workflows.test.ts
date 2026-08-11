@@ -124,7 +124,7 @@ describe("GitHub Actions workflows", () => {
     );
   });
 
-  it("runs one macOS quality job for PRs and bounded release readiness outside PRs", () => {
+  it("runs one bounded macOS quality job for PRs and main, with expensive gates manual", () => {
     const workflow = readWorkflow(ciPath);
     const jobs = workflowJobs(ciPath);
     const quality = workflowJob(ciPath, "quality-macos-arm64");
@@ -141,7 +141,7 @@ describe("GitHub Actions workflows", () => {
     expect(quality.name).toBe("macOS ARM64 quality");
     expect(quality["runs-on"]).toBe("macos-15");
     expect(windows.name).toBe("Windows x64 desktop E2E");
-    expect(windows.if).toBe("github.event_name != 'pull_request'");
+    expect(windows.if).toBe("github.event_name == 'workflow_dispatch'");
     expect(windows["runs-on"]).toBe("windows-2022");
     expect(jobText(ciPath, "windows-desktop-e2e")).toContain(
       "npm run tauri -- build --debug --no-bundle",
@@ -150,7 +150,7 @@ describe("GitHub Actions workflows", () => {
       "npm run test:desktop:windows",
     );
     const readiness = workflowJob(ciPath, "release-readiness-macos-arm64");
-    expect(readiness.if).toBe("github.event_name != 'pull_request'");
+    expect(readiness.if).toBe("github.event_name == 'workflow_dispatch'");
     expect(readiness.needs).toBeUndefined();
     expect(readiness["runs-on"]).toBe("macos-15");
     expect(readiness["timeout-minutes"]).toBe(30);

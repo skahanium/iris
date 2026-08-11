@@ -358,7 +358,7 @@ fn parse_gateway_response(request: &GatewayRequest, json: &serde_json::Value) ->
     match request.provider.endpoint_family {
         EndpointFamily::AnthropicMessages => parse_anthropic_response(json),
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
-            parse_openai_compatible_response(json)
+            parse_openai_compatible_response(request, json)
         }
     }
 }
@@ -414,14 +414,28 @@ fn parse_openai_responses_response(json: &serde_json::Value) -> GatewayResponse 
     }
 }
 
-fn parse_openai_compatible_response(json: &serde_json::Value) -> GatewayResponse {
+fn parse_openai_compatible_response(
+    request: &GatewayRequest,
+    json: &serde_json::Value,
+) -> GatewayResponse {
     let content = json["choices"][0]["message"]["content"]
         .as_str()
-        .map(|s| s.to_string());
+        .map(|text| {
+            crate::ai_runtime::text_support::sanitize_provider_visible_content(
+                &request.provider.name,
+                text,
+            )
+        })
+        .filter(|text| !text.is_empty());
 
-    let reasoning_content = json["choices"][0]["message"]["reasoning_content"]
-        .as_str()
-        .map(|s| s.to_string());
+    let message = &json["choices"][0]["message"];
+    let reasoning_content = if request.provider.name.eq_ignore_ascii_case("minimax") {
+        message["reasoning_details"]
+            .as_array()
+            .and_then(|details| serde_json::to_string(details).ok())
+    } else {
+        message["reasoning_content"].as_str().map(str::to_string)
+    };
 
     let tool_calls = json["choices"][0]["message"]["tool_calls"]
         .as_array()

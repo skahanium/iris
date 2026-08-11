@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error as StdError;
 use std::time::{Duration, Instant};
 
+use crate::ai_runtime::text_support::sanitize_provider_visible_content;
 use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult, ProviderErrorKind};
 
@@ -427,6 +428,7 @@ impl StreamReadFailureDiagnostic {
 struct VisibleStreamSanitizer {
     raw: String,
     emitted: String,
+    provider_id: String,
 }
 
 enum VisibleSanitizeOutcome {
@@ -448,6 +450,13 @@ impl VisibleSanitizeOutcome {
 impl VisibleStreamSanitizer {
     fn new() -> Self {
         Self::default()
+    }
+
+    fn for_provider(provider_id: &str) -> Self {
+        Self {
+            provider_id: provider_id.to_string(),
+            ..Self::default()
+        }
     }
 
     fn sanitize_delta(&mut self, delta: &str, done: bool) -> VisibleSanitizeOutcome {
@@ -482,18 +491,22 @@ impl VisibleStreamSanitizer {
     /// A leading planning prefix stays private until a non-planning paragraph appears; it is never
     /// released merely because it is long.
     fn sanitize_visible_stream_prefix(&self, raw: &str, done: bool) -> String {
-        let without_meta = sanitize_meta_analysis_prefix_for_stream(raw, done);
+        let without_meta = sanitize_meta_analysis_prefix_for_stream(raw, done, &self.provider_id);
 
         if done {
             without_meta
         } else {
-            withhold_partial_reasoning_open_suffix(&without_meta)
+            withhold_partial_provider_control_suffix(
+                &withhold_partial_reasoning_open_suffix(&without_meta),
+                &self.provider_id,
+            )
         }
     }
 }
 
-fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool) -> String {
-    let normalized = crate::ai_runtime::text_support::sanitize_meta_analysis_prefix(text);
+fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool, provider_id: &str) -> String {
+    let normalized =
+        crate::ai_runtime::text_support::sanitize_provider_visible_content(provider_id, text);
     if !done
         && crate::ai_runtime::text_support::starts_with_meta_analysis_or_partial_prefix(text)
         && (normalized.is_empty() || normalized == text.trim())
@@ -501,6 +514,50 @@ fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool) -> String {
         return String::new();
     }
     normalized
+}
+
+fn withhold_partial_provider_control_suffix(visible: &str, provider_id: &str) -> String {
+    if !provider_id.eq_ignore_ascii_case("minimax") {
+        return visible.to_string();
+    }
+    const CONTROL: &str = "<|minimax|>";
+    let mut keep_len = visible.len();
+    for prefix_len in 1..CONTROL.len() {
+        if visible.ends_with(&CONTROL[..prefix_len]) {
+            keep_len = keep_len.min(visible.len().saturating_sub(prefix_len));
+        }
+    }
+    visible[..keep_len].to_string()
+}
+
+fn append_minimax_reasoning_details(
+    value: &serde_json::Value,
+    details: &mut Vec<serde_json::Value>,
+) {
+    match value {
+        serde_json::Value::Array(items) => details.extend(items.iter().cloned()),
+        serde_json::Value::Object(_) => details.push(value.clone()),
+        _ => {}
+    }
+}
+
+fn minimax_reasoning_continuation(
+    details: Vec<serde_json::Value>,
+    fallback_reasoning: String,
+) -> Option<String> {
+    if !details.is_empty() {
+        return serde_json::to_string(&details).ok();
+    }
+    // `reasoning_split` should yield structured details. Some compatible
+    // gateways still stream only a dedicated text delta; preserve it in the
+    // documented details envelope rather than dropping a tool continuation.
+    (!fallback_reasoning.is_empty()).then(|| {
+        serde_json::json!([{
+            "type": "reasoning.text",
+            "text": fallback_reasoning,
+        }])
+        .to_string()
+    })
 }
 
 fn withhold_partial_reasoning_open_suffix(visible: &str) -> String {
@@ -860,12 +917,14 @@ pub async fn send_streaming_request_to_observer(
 
     let mut full_content = String::new();
     let mut full_reasoning = String::new();
+    let mut minimax_reasoning_details = Vec::new();
+    let is_minimax = provider_id.eq_ignore_ascii_case("minimax");
     let mut usage = TokenUsage::default();
     let mut token_index: u32 = 0;
     let mut anthropic_state = AnthropicStreamState::default();
     let mut json_failure_tracker = SseJsonFailureTracker::default();
     let mut visible_sanitizer = if surface.sanitizes_visible_output() {
-        Some(VisibleStreamSanitizer::new())
+        Some(VisibleStreamSanitizer::for_provider(&request.provider.name))
     } else {
         None
     };
@@ -1102,6 +1161,12 @@ pub async fn send_streaming_request_to_observer(
             if let Some(reasoning) = json["choices"][0]["delta"]["reasoning_content"].as_str() {
                 full_reasoning.push_str(reasoning);
             }
+            if is_minimax {
+                append_minimax_reasoning_details(
+                    &json["choices"][0]["delta"]["reasoning_details"],
+                    &mut minimax_reasoning_details,
+                );
+            }
 
             // Accumulate tool call deltas by index
             if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
@@ -1150,15 +1215,22 @@ pub async fn send_streaming_request_to_observer(
                             ));
                         }
                     }) else {
+                        let content = sanitize_provider_visible_content(
+                            &request.provider.name,
+                            &full_content,
+                        );
                         return Ok(GatewayResponse {
-                            content: Some(full_content),
+                            content: (!content.is_empty()).then_some(content),
                             tool_calls: vec![],
                             usage,
                             finish_reason: "stop".into(),
-                            reasoning_content: if full_reasoning.is_empty() {
-                                None
+                            reasoning_content: if is_minimax {
+                                minimax_reasoning_continuation(
+                                    minimax_reasoning_details,
+                                    full_reasoning,
+                                )
                             } else {
-                                Some(full_reasoning)
+                                (!full_reasoning.is_empty()).then_some(full_reasoning)
                             },
                             continuation: None,
                         });
@@ -1221,6 +1293,17 @@ pub async fn send_streaming_request_to_observer(
                             classified,
                             &mut token_index,
                         )?;
+                    }
+                    if let Some(reasoning) =
+                        json["choices"][0]["delta"]["reasoning_content"].as_str()
+                    {
+                        full_reasoning.push_str(reasoning);
+                    }
+                    if is_minimax {
+                        append_minimax_reasoning_details(
+                            &json["choices"][0]["delta"]["reasoning_details"],
+                            &mut minimax_reasoning_details,
+                        );
                     }
                     if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
                         for tc_delta in tc_deltas {
@@ -1300,15 +1383,21 @@ pub async fn send_streaming_request_to_observer(
         content: if full_content.is_empty() {
             None
         } else {
-            Some(full_content)
+            Some(
+                crate::ai_runtime::text_support::sanitize_provider_visible_content(
+                    &provider_id,
+                    &full_content,
+                ),
+            )
+            .filter(|content| !content.is_empty())
         },
         tool_calls,
         usage,
         finish_reason: "stop".to_string(),
-        reasoning_content: if full_reasoning.is_empty() {
-            None
+        reasoning_content: if is_minimax {
+            minimax_reasoning_continuation(minimax_reasoning_details, full_reasoning)
         } else {
-            Some(full_reasoning)
+            (!full_reasoning.is_empty()).then_some(full_reasoning)
         },
         continuation: None,
     })
@@ -1851,6 +1940,37 @@ mod tests {
             "正文开始"
         );
         assert_eq!(sanitizer.finish().as_test_delta(), "");
+    }
+
+    #[test]
+    fn minimax_stream_sanitizer_withholds_split_control_tokens() {
+        let mut sanitizer = VisibleStreamSanitizer::for_provider("minimax");
+
+        assert_eq!(
+            sanitizer.sanitize_delta("<|mini", false).as_test_delta(),
+            ""
+        );
+        assert_eq!(
+            sanitizer
+                .sanitize_delta("max|><think>private</think>Visible", false)
+                .as_test_delta(),
+            "Visible"
+        );
+        assert_eq!(sanitizer.finish().as_test_delta(), "");
+    }
+
+    #[test]
+    fn minimax_stream_reasoning_details_are_kept_only_for_the_tool_continuation() {
+        let mut details = Vec::new();
+        append_minimax_reasoning_details(
+            &serde_json::json!([{"type":"reasoning.text","text":"private"}]),
+            &mut details,
+        );
+
+        assert_eq!(
+            minimax_reasoning_continuation(details, String::new()).as_deref(),
+            Some(r#"[{"text":"private","type":"reasoning.text"}]"#)
+        );
     }
 
     #[test]

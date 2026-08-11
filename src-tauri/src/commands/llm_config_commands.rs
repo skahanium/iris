@@ -485,10 +485,10 @@ fn inferred_reasoning_probe_capability(
     }
     if is_minimax_reasoning_risk(&provider, &model) {
         return Some(config::ModelCapabilityOverride {
-            reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream),
-            reasoning_control: Some(crate::ai_types::ReasoningControl::Tag),
-            reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::PlainContentRisk),
-            supported_modes: Some(crate::llm::model_catalog::TAG_REASONING_MODES.to_vec()),
+            reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::MiniMaxReasoningDetails),
+            reasoning_control: Some(crate::ai_types::ReasoningControl::Switch),
+            reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::HiddenChannel),
+            supported_modes: Some(crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec()),
             default_mode: Some(crate::ai_types::ReasoningMode::Auto),
             disable_supported: Some(true),
             user_verified_at: None,
@@ -718,4 +718,28 @@ fn validate_route(provider_id: &str, model: &str, routing: &LlmRoutingConfig) ->
 fn validate_provider_base_url(url: &str) -> AppResult<()> {
     let trimmed = url.trim();
     crate::security::ipc_policy::validate_llm_base_url(trimmed)
+}
+
+#[cfg(test)]
+mod reasoning_probe_tests {
+    use super::*;
+
+    #[test]
+    fn minimax_probe_preserves_the_native_hidden_reasoning_contract() {
+        let capability = inferred_reasoning_probe_capability("minimax", "MiniMax-M3")
+            .expect("MiniMax M3 has a reasoning contract");
+
+        assert_eq!(
+            capability.reasoning_adapter,
+            Some(crate::ai_types::ReasoningAdapter::MiniMaxReasoningDetails)
+        );
+        assert_eq!(
+            capability.reasoning_control,
+            Some(crate::ai_types::ReasoningControl::Switch)
+        );
+        assert_eq!(
+            capability.reasoning_visibility,
+            Some(crate::ai_types::ReasoningVisibility::HiddenChannel)
+        );
+    }
 }

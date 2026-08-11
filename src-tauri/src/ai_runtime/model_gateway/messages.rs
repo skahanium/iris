@@ -1,4 +1,4 @@
-use crate::ai_types::{LlmMessage, MessageRole, ToolCall};
+use crate::ai_types::{LlmMessage, MessageRole, ReasoningAdapter, ToolCall};
 
 /// Ensure every `tool` message follows an assistant message listing its `tool_call_id`.
 /// Repairs checkpoints produced before tool_calls were persisted on assistant turns.
@@ -144,7 +144,7 @@ pub fn tool_api_message_chain_valid(messages: &[LlmMessage]) -> bool {
 
 /// Serialize messages for provider APIs (tool_calls need `type`, tool role needs `tool_call_id`).
 pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
-    messages_for_api_with_reasoning_continuation(messages, false)
+    messages_for_api_with_reasoning_continuation(messages, ReasoningAdapter::None)
 }
 
 /// Serialize one same-provider tool continuation.
@@ -154,7 +154,7 @@ pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
 /// ordinary history, evidence, memory, or a cross-provider fallback input.
 pub(crate) fn messages_for_api_with_reasoning_continuation(
     messages: &[LlmMessage],
-    replay_reasoning_content: bool,
+    reasoning_adapter: ReasoningAdapter,
 ) -> Vec<serde_json::Value> {
     messages
         .iter()
@@ -187,11 +187,19 @@ pub(crate) fn messages_for_api_with_reasoning_continuation(
                     "content": content,
                     "tool_calls": tool_calls,
                 });
-                if replay_reasoning_content {
-                    let Some(reasoning) = &m.reasoning_content else {
-                        return msg;
-                    };
-                    msg["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+                let Some(reasoning) = &m.reasoning_content else {
+                    return msg;
+                };
+                match reasoning_adapter {
+                    ReasoningAdapter::DeepSeekReasoningContent => {
+                        msg["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+                    }
+                    ReasoningAdapter::MiniMaxReasoningDetails => {
+                        if let Ok(details) = serde_json::from_str::<serde_json::Value>(reasoning) {
+                            msg["reasoning_details"] = details;
+                        }
+                    }
+                    _ => {}
                 }
                 return msg;
             }

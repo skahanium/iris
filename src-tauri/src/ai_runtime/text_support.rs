@@ -56,6 +56,22 @@ pub fn sanitize_meta_analysis_prefix(text: &str) -> String {
     kept.join("\n\n")
 }
 
+/// Remove only the documented MiniMax chat-template control token from a model
+/// response. This is deliberately provider-scoped: user-authored text and
+/// control markers from other providers must never be rewritten here.
+pub fn sanitize_provider_visible_content(provider_id: &str, text: &str) -> String {
+    let without_provider_controls = if provider_id.eq_ignore_ascii_case("minimax") {
+        strip_minimax_control_tokens(text)
+    } else {
+        text.to_string()
+    };
+    sanitize_meta_analysis_prefix(&without_provider_controls)
+}
+
+fn strip_minimax_control_tokens(text: &str) -> String {
+    text.replace("<|minimax|>", "")
+}
+
 /// Whether a partial streaming prefix must remain private until it can be classified.
 pub(crate) fn starts_with_meta_analysis_or_partial_prefix(text: &str) -> bool {
     let trimmed = text.trim_start();
@@ -201,6 +217,30 @@ fn strip_reasoning_tags(content: &str) -> String {
         visible.truncate(partial_start);
     }
     visible
+}
+
+#[cfg(test)]
+mod provider_protocol_tests {
+    use super::*;
+
+    #[test]
+    fn minimax_control_tokens_and_tagged_reasoning_never_reach_visible_content() {
+        assert_eq!(
+            sanitize_provider_visible_content(
+                "minimax",
+                "<|minimax|><think>private</think>Visible answer"
+            ),
+            "Visible answer"
+        );
+    }
+
+    #[test]
+    fn provider_scoped_cleanup_does_not_rewrite_user_text_for_other_models() {
+        assert_eq!(
+            sanitize_provider_visible_content("deepseek", "literal <|minimax|> marker"),
+            "literal <|minimax|> marker"
+        );
+    }
 }
 
 fn find_partial_reasoning_open(content: &str) -> Option<usize> {

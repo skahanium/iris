@@ -23,6 +23,7 @@ export type ReasoningAdapter =
   | "anthropic_extended_thinking"
   | "gemini_thinking_config"
   | "deep_seek_reasoning_content"
+  | "mini_max_reasoning_details"
   | "glm_thinking"
   | "qwen_chat_template"
   | "open_ai_compatible_tag_stream"

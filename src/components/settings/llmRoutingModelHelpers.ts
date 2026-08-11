@@ -352,8 +352,8 @@ export function catalogReasoningCapability(
   if (catalog?.providerId === "minimax" && catalog.supportsThinking) {
     return {
       supported: true,
-      control: "tag",
-      tagOnly: true,
+      control: "switch",
+      tagOnly: false,
       supportedModes: REASONING_SWITCH_OPTIONS,
       defaultMode: "auto",
       disableSupported: true,

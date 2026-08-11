@@ -192,6 +192,9 @@ pub enum ReasoningAdapter {
     AnthropicExtendedThinking,
     GeminiThinkingConfig,
     DeepSeekReasoningContent,
+    /// MiniMax M3 separates private reasoning into `reasoning_details` and
+    /// requires that opaque data on the next function-call turn.
+    MiniMaxReasoningDetails,
     GlmThinking,
     QwenChatTemplate,
     OpenAiCompatibleTagStream,
@@ -277,6 +280,7 @@ impl ResolvedReasoningRequest {
                     | ReasoningAdapter::AnthropicExtendedThinking
                     | ReasoningAdapter::GeminiThinkingConfig
                     | ReasoningAdapter::DeepSeekReasoningContent
+                    | ReasoningAdapter::MiniMaxReasoningDetails
                     | ReasoningAdapter::GlmThinking
                     | ReasoningAdapter::ProviderSpecificStatic
             )
@@ -313,6 +317,7 @@ mod reasoning_request_tests {
             ReasoningAdapter::AnthropicExtendedThinking,
             ReasoningAdapter::GeminiThinkingConfig,
             ReasoningAdapter::DeepSeekReasoningContent,
+            ReasoningAdapter::MiniMaxReasoningDetails,
             ReasoningAdapter::GlmThinking,
             ReasoningAdapter::ProviderSpecificStatic,
         ] {

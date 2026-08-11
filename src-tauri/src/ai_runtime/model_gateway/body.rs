@@ -240,7 +240,7 @@ fn build_chat_completions_body_inner(request: &GatewayRequest) -> serde_json::Va
         "model": request.provider.model,
         "messages": messages_for_api_with_reasoning_continuation(
             messages,
-            requires_reasoning_content_tool_continuation(request),
+            reasoning_tool_continuation_adapter(request),
         ),
     });
 
@@ -364,6 +364,19 @@ fn build_openai_responses_body_inner(request: &GatewayRequest) -> serde_json::Va
 
 fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) {
     let reasoning = effective_reasoning_request(request);
+    // MiniMax M3 exposes its internal analysis inline unless `reasoning_split`
+    // is requested. Keep the response shape private even when the user turns
+    // thinking off, so a normal chat response cannot leak control markup.
+    if reasoning.adapter == ReasoningAdapter::MiniMaxReasoningDetails {
+        body["reasoning_split"] = serde_json::json!(true);
+        body["thinking"] = serde_json::json!({
+            "type": if reasoning.requested && reasoning.mode != ReasoningMode::Off {
+                "adaptive"
+            } else {
+                "disabled"
+            }
+        });
+    }
     if !reasoning.requested {
         return;
     }
@@ -372,6 +385,7 @@ fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) 
             body["extra_body"]["thinking"] = serde_json::json!({ "type": "enabled" });
             body["reasoning_effort"] = serde_json::json!(deepseek_effort_for_mode(reasoning.mode));
         }
+        ReasoningAdapter::MiniMaxReasoningDetails => {}
         ReasoningAdapter::OpenAiCompatibleTagStream | ReasoningAdapter::None => {}
         ReasoningAdapter::GlmThinking => {
             body["thinking"] = serde_json::json!({
@@ -401,15 +415,22 @@ fn effective_reasoning_request(request: &GatewayRequest) -> ResolvedReasoningReq
     }
 }
 
-/// The OpenAI-compatible `reasoning_content` field is a provider-private
-/// continuation requirement for DeepSeek's reasoning adapter only. Other
-/// adapters may emit reasoning during a turn, but they must not receive it
-/// back in a chat-completions tool continuation.
-fn requires_reasoning_content_tool_continuation(request: &GatewayRequest) -> bool {
+/// Return the exact provider-private reasoning field that must accompany an
+/// assistant tool request on the next same-provider turn. No reasoning value
+/// is replayed for ordinary chat history or a different provider.
+fn reasoning_tool_continuation_adapter(request: &GatewayRequest) -> ReasoningAdapter {
     let reasoning = effective_reasoning_request(request);
-    reasoning.requested
-        && reasoning.adapter == ReasoningAdapter::DeepSeekReasoningContent
+    if reasoning.requested
         && request.provider.endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
+        && matches!(
+            reasoning.adapter,
+            ReasoningAdapter::DeepSeekReasoningContent | ReasoningAdapter::MiniMaxReasoningDetails
+        )
+    {
+        reasoning.adapter
+    } else {
+        ReasoningAdapter::None
+    }
 }
 
 fn apply_anthropic_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) {
@@ -483,6 +504,7 @@ fn reasoning_adapter_supported_by_endpoint(
             endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
         }
         ReasoningAdapter::DeepSeekReasoningContent
+        | ReasoningAdapter::MiniMaxReasoningDetails
         | ReasoningAdapter::GlmThinking
         | ReasoningAdapter::QwenChatTemplate
         | ReasoningAdapter::OpenAiCompatibleTagStream

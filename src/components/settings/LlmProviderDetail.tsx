@@ -18,16 +18,25 @@ import type {
 
 function ModelDebugDetails({
   model,
+  chatOnly,
 }: {
   model: LlmEnabledProviderModel["catalog"];
+  chatOnly: boolean;
 }) {
   if (!model) {
     return (
       <details className="text-[10px] text-muted-foreground">
         <summary className="cursor-pointer select-none">详情</summary>
-        <span className="mt-1 inline-block rounded border border-border/50 px-1.5 py-0.5">
-          manual model
-        </span>
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          <span className="rounded border border-border/50 px-1.5 py-0.5">
+            manual model
+          </span>
+          {chatOnly ? (
+            <span className="rounded border border-border/50 px-1.5 py-0.5">
+              chat-only
+            </span>
+          ) : null}
+        </div>
       </details>
     );
   }
@@ -36,6 +45,7 @@ function ModelDebugDetails({
     model.supportsTools ? "tools" : null,
     model.supportsStreaming ? "streaming" : null,
     model.supportsThinking ? "reasoning" : null,
+    chatOnly ? "chat-only" : null,
     `${Math.round(model.contextWindow / 1000)}k ctx`,
     model.endpointFamily,
   ].filter((tag): tag is string => Boolean(tag));
@@ -295,9 +305,14 @@ export function LlmProviderDetail({
                         : "text-[11px] text-muted-foreground"
                     }
                   >
-                    {summary}
+                    {isCustomProviderId(provider.id) && !result
+                      ? `${summary} · Chat-only（Agent 协议未验证）`
+                      : summary}
                   </span>
-                  <ModelDebugDetails model={model.catalog} />
+                  <ModelDebugDetails
+                    model={model.catalog}
+                    chatOnly={isCustomProviderId(provider.id)}
+                  />
                 </div>
               </div>
             );
