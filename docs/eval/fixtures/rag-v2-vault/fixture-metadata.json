@@ -2,7 +2,7 @@
   "schemaVersion": "iris-rag-fixture-metadata-v1",
   "fixtureVersion": "v1.2.6",
   "fixtureStatus": "historical_frozen",
-  "currentEvaluationVersion": "v1.2.20",
+  "currentEvaluationVersion": "v1.2.21",
   "labelsSha256": "488729ff6efb110e0f58b48b8ca538b597d84f759e60269d13b5fcf1d5ab2668",
-  "purpose": "This v1.2.6 label set is frozen for deterministic comparison. v1.2.20 evaluates the current broker against it and does not claim a new fixture revision."
+  "purpose": "This v1.2.6 label set is frozen for deterministic comparison. v1.2.21 evaluates the current broker against it and does not claim a new fixture revision."
 }
