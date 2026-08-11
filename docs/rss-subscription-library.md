@@ -49,6 +49,14 @@ Iris 应把 RSS 建成一个独立的「订阅资料库」，而不是把每篇�
 
 微信公众号内容只有在上游能提供合法、稳定 Feed 时才能进入 Iris。RSS 基础设施提升的是订阅、沉淀与本地检索能力，不等价于获得微信全量搜索能力。
 
+### 2.4 单人项目施工原则
+
+- 首轮只新增两个事实表、一个 Rust `feed` 模块和一组前端 Feed 组件。
+- 复用现有 Scheduler、HTTP/代理策略、SQLite、Markdown 渲染、虚拟列表和文档持久化链路。
+- 不建设 provider 框架、同步 job 表、遥测系统、插件接口或新的 UI 基础组件。
+- 只有解析和 HTML → Markdown 确实缺少现有 Rust 能力，因此最多新增 `feed-rs`、`htmd` 两个直接依赖。
+- 容量回归按个人资料库的 100 个订阅源、10,000 篇文章设计，不以企业级聚合服务为目标。
+
 ## 3. 信息架构
 
 顶层入口名称使用「订阅」，资料库品牌文案可以使用「藏书阁」，但导航和辅助功能使用明确的功能名。
@@ -205,7 +213,7 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 
 ### 6.4 重转策略
 
-`conversion_version` 是代码常量。升级转换规则时新增有界后台重转任务，只处理旧版本或 degraded 条目；保持 `read_at`、`starred_at`、`archived_at`、`received_at` 和稳定 `id` 不变。重转失败保留旧 Markdown，不覆盖可读版本。
+`conversion_version` 是代码常量。基础版只记录版本，不提前实现后台重转器。将来确实修改转换规则时再新增有界重转 migration/任务，并保持 `read_at`、`starred_at`、`archived_at`、`received_at` 和稳定 `id` 不变。
 
 ## 7. 同步与去重
 
@@ -223,8 +231,8 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 - 保存并发送 `ETag` / `If-None-Match`、`Last-Modified` / `If-Modified-Since`。
 - `304` 更新检查和下次同步时间，不触碰文章。
 - 默认间隔 60 分钟；最短 15 分钟，最长 7 天。
-- 后台每分钟扫描到期源；全局最多 4 个并发，同一主机最多 1 个。
-- 瞬态失败按 5 分钟、15 分钟、1 小时、6 小时、24 小时退避，并加入确定性抖动。
+- 复用现有 Scheduler 每 15 分钟扫描一次到期源；单轮最多 2 个并发，不新增独立任务系统。
+- 瞬态失败按 15 分钟、1 小时、6 小时、24 小时退避，不加入难以诊断的随机策略。
 - 手动刷新可绕过 `next_fetch_at`，但不能绕过并发锁、地址校验和响应上限。
 
 ### 7.3 稳定键
@@ -305,16 +313,12 @@ WHERE archived_at IS NOT NULL
 src/components/feed/
 ├── FeedWorkspace.tsx
 ├── FeedSidebar.tsx
-├── FeedToolbar.tsx
 ├── FeedItemList.tsx
-├── FeedItemRow.tsx
 ├── FeedReader.tsx
-├── FeedEmptyState.tsx
-├── FeedSourceDialog.tsx
-└── FeedSyncStatus.tsx
+└── FeedSourceDialog.tsx
 ```
 
-业务数据读取放在 `src/hooks/useFeedLibrary.ts`，查询/状态逻辑放在 `src/lib/feed-*`；`components/ui/` 不得加入 RSS 业务逻辑。
+业务数据读取放在 `src/hooks/useFeedLibrary.ts`，安全渲染放在 `src/lib/feed-reader.ts`；简单行项目、空态、工具栏和状态提示先作为上述组件的局部组件，不为文件数量而拆分。`components/ui/` 不得加入 RSS 业务逻辑。
 
 ### 10.4 交互与可访问性
 
@@ -355,10 +359,10 @@ src/components/feed/
 - `feed_source_add` / `feed_source_list` / `feed_source_update` / `feed_source_remove`
 - `feed_item_list` / `feed_item_get` / `feed_item_set_state` / `feed_items_mark_read`
 - `feed_search`
-- `feed_sync_start` / `feed_sync_status`
+- `feed_sync_source` / `feed_sync_all`
 - `feed_opml_import` / `feed_opml_export`
 
-同步事件只投影 `jobId`、`sourceId`、阶段、计数和稳定错误码。所有 IPC 同步更新 Rust command、`src/types/ipc.ts`、`src/lib/ipc.ts`、事件类型、测试与 `docs/ipc-api-reference.md`。
+同步事件只投影 `sourceId`、变更类型、计数和稳定错误码，用于通知前端重新查询；不建设 job 恢复协议。所有 IPC 同步更新 Rust command、`src/types/ipc.ts`、`src/lib/ipc.ts`、事件类型、测试与 `docs/ipc-api-reference.md`。
 
 ## 13. 可选外部设施与 MCP 决策
 
@@ -371,19 +375,18 @@ RSS MCP 通常围绕「让模型临时列出/读取 Feed」设计，不能替代
 - [FreshRSS](https://github.com/FreshRSS/FreshRSS)（AGPL-3.0）可通过 Google Reader API 作为自托管同步源。
 - [Miniflux](https://github.com/miniflux/v2)（Apache-2.0）提供 REST API，但服务端本身依赖 Go/PostgreSQL，不应嵌入 Iris。
 
-它们应实现为 `FeedProvider` 的可选远端适配器，与 `NativeFeedProvider` 共用同一内部 item/source 契约。首轮不得为了未来适配提前增加 provider 表、凭据或复杂抽象；等单机原生路径稳定后再立项。
+如果原生单机路径长期稳定且确有多设备同步需求，再为其中一个服务单独立项。首轮不创建 `FeedProvider` trait、provider 表、凭据字段或通用适配层。
 
 ## 14. 阶段门禁
 
-| 阶段           | 可交付能力                            | 进入下一阶段的硬门禁                 |
-| -------------- | ------------------------------------- | ------------------------------------ |
-| 0 契约冻结     | fixture、威胁模型、依赖评审、性能基线 | 产品决策签字；依赖许可/MSRV/审计通过 |
-| 1 本地资料库   | migration、repository、FTS、状态机    | up/down/idempotent；不触碰 Vault     |
-| 2 获取与转换   | 安全抓取、解析、Markdown、去重        | 格式 corpus、SSRF/XXE/超限测试通过   |
-| 3 同步闭环     | 添加、发现、手动/自动同步、事件       | 304、退避、崩溃恢复、状态保持通过    |
-| 4 阅读工作区   | 收件箱、列表、阅读、搜索、状态操作    | 800–1920 布局、a11y、主题、键盘通过  |
-| 5 可迁移与沉淀 | OPML、退订策略、保存为笔记            | 导入幂等、导出往返、写盘屏障通过     |
-| 6 发布硬化     | 性能、真机、升级、回滚、文档          | 全量质量命令、三平台证据、零 P0/P1   |
+| 阶段             | 可交付能力                              | 进入下一阶段的硬门禁                  |
+| ---------------- | --------------------------------------- | ------------------------------------- |
+| 0 契约与 fixture | 产品决定、格式/安全语料、依赖评审       | 关键决定确认；许可/MSRV/审计通过      |
+| 1 本地资料库     | migration、repository、FTS、状态机      | up/down/idempotent；不触碰 Vault      |
+| 2 同步核心       | 安全抓取、Markdown、去重、手动/自动同步 | 格式、SSRF/XXE、304、状态保持通过     |
+| 3 IPC            | 类型安全的订阅读写与同步命令            | Rust/TypeScript/文档契约一致          |
+| 4 阅读工作区     | 收件箱、列表、阅读、搜索、状态操作      | 800–1920 布局、a11y、主题、键盘通过   |
+| 5 迁移与发布     | OPML、保存为笔记、升级、回滚            | 全量质量命令及 macOS/Windows 验收通过 |
 
 ## 15. 产品决策点
 

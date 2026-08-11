@@ -1,14 +1,22 @@
 # Iris RSS Subscription Library Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task with review checkpoints.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在不接入 Agent/RAG/MCP、也不自动改写用户 Vault 的前提下，为 Iris 交付可离线、可迁移、可搜索的 RSS 订阅资料库。
 
-**Architecture:** 订阅源、文章 Markdown、原始源载荷和阅读状态存入应用级 SQLite；Rust 负责安全获取、Feed 解析、HTML → Markdown、增量同步和 FTS，React 只接收净化后的 DTO 并提供独立订阅工作区。收件箱是查询，显式「保存为笔记」复用现有文档持久化协调器。原生 RSS 是唯一首期 provider；FreshRSS/Miniflux/MCP 延后。
+**Architecture:** 订阅源、文章 Markdown、转换前载荷和阅读状态存入应用级 SQLite；Rust 负责安全获取、Feed 解析、HTML → Markdown、增量同步和 FTS，React 只接收净化后的 DTO。实现只增加两张事实表和一个 `feed` 模块；同步复用现有 Scheduler，不建设通用 provider 或任务系统。收件箱是查询，显式「保存为笔记」复用现有文档持久化协调器。
 
 **Tech Stack:** Tauri 2.x、Rust 1.85、tokio、rusqlite/SQLite FTS5、reqwest/rustls、feed-rs、htmd、React 19、TypeScript、TailwindCSS + shadcn/ui、marked、DOMPurify、Vitest、Cargo test。
 
-**Global Constraints:** 遵守根目录 `AGENTS.md`；测试先行；禁止 `unsafe`；新增依赖必须与 AGPL-3.0 兼容并记录选择理由；IPC 必须同步 Rust/TypeScript/文档；migration 必须含 down；不建立 worktree；不触碰用户 `.md`，除非用户明确执行「保存为笔记」。产品与数据契约以 [RSS 订阅资料库规范](../../rss-subscription-library.md) 为准。
+## Global Constraints
+
+- 遵守根目录 `AGENTS.md`，测试先行，禁止新增 `unsafe`。
+- 这是单人项目：优先复用现有模块，不为未来需求预建通用抽象。
+- 支持和验收平台限定为 macOS、Windows。
+- 新增依赖必须与 AGPL-3.0 兼容并在变更说明中记录理由。
+- IPC 同步更新 Rust、`src/types/ipc.ts`、`src/lib/ipc.ts`、测试和文档。
+- migration 必须有 down；不创建 worktree；除明确「保存为笔记」外不触碰用户 `.md`。
+- 产品与数据契约以 [RSS 订阅资料库规范](../../rss-subscription-library.md) 为准。
 
 ---
 
@@ -17,11 +25,10 @@
 ```text
 阶段 0 契约与依赖
   → 阶段 1 Schema/Repository
-  → 阶段 2 安全获取/转换
-  → 阶段 3 同步/IPC
+  → 阶段 2 安全获取/转换/同步
+  → 阶段 3 IPC
   → 阶段 4 React 阅读工作区
-  → 阶段 5 OPML/保存为笔记
-  → 阶段 6 性能、升级、真机与发布
+  → 阶段 5 OPML/保存为笔记/发布
 ```
 
 阶段 1–3 是后端纵向闭环，不能并行修改同一 migration/command 注册。阶段 4 可在 IPC DTO 冻结后开始。每个阶段独立提交、独立回归；任何硬门禁失败都留在当前阶段修复，不把风险推到发布阶段。
@@ -69,14 +76,12 @@
 - [ ] 运行 `rg -n "微信|mp.weixin|真实" src-tauri/tests/fixtures/feeds src-tauri/tests/fixtures/opml`，确认没有真实内容。
 - [ ] 提交：`test(rss): 添加订阅格式与安全基线语料`。
 
-### Task 0.3：依赖许可、MSRV 与体积评审
+### Task 0.3：加入最小解析依赖
 
 **Files:**
 
 - Modify: `src-tauri/Cargo.toml`
 - Modify: `src-tauri/Cargo.lock`
-- Create: `src-tauri/tests/feed_dependency_contract.rs`
-- Create: `docs/ops/rss-dependency-review.md`
 
 先加入精确版本，避免预 1.0 转换行为漂移：
 
@@ -85,16 +90,14 @@ feed-rs = { version = "=2.4.0", features = ["sanitize"] }
 htmd = "=0.5.5"
 ```
 
-- [ ] 先创建 `feed_dependency_contract.rs`，固定批准的顶层 crate 名、精确版本、许可证和 Rust 1.85 构建前提；在未加入依赖时运行 `cargo test --manifest-path src-tauri/Cargo.toml --test feed_dependency_contract`，预期 RED。
-- [ ] 添加依赖并记录：选择理由、考虑过的自写解析/前端 turndown/MCP 替代、许可证、Rust 1.85 构建结果、二进制体积差值。
-- [ ] 运行 `cargo tree --manifest-path src-tauri/Cargo.toml -i feed-rs` 与 `cargo tree ... -i htmd`，审查新增传递依赖。
+- [ ] 在变更说明中记录：`feed-rs` 避免自写多格式解析，`htmd` 避免自写 HTML → Markdown；两者分别为 MIT、Apache-2.0。
+- [ ] 添加两个精确依赖，不再加入第三个 sanitizer crate；使用 `feed-rs` 自带 sanitize feature 和前端现有 DOMPurify。
+- [ ] 运行 `cargo tree --manifest-path src-tauri/Cargo.toml -i feed-rs` 与 `cargo tree --manifest-path src-tauri/Cargo.toml -i htmd`，确认没有不兼容许可证。
 - [ ] 运行 `cargo check --manifest-path src-tauri/Cargo.toml`，预期 Rust 1.85 构建成功。
 - [ ] 运行 `npm run audit:rust`，预期无未登记高危漏洞。
-- [ ] 运行仓库许可门禁；若当前无统一脚本，在 `feed::dependency_contract` 中至少固定顶层许可事实，不凭文档声称全树通过。
-- [ ] 比较 `npm run tauri build --debug` 前后产物；把 macOS/Windows 各自数据留到阶段 6，不在单平台推断。
 - [ ] 提交：`chore(rss): 引入受审查的 Feed 解析与转换依赖`。
 
-**阶段 0 退出条件：** 六项产品决策冻结；fixture 可读；两个 crate 的许可、MSRV、安全审计和本机体积证据齐全。否则不得创建 `063` migration。
+**阶段 0 退出条件：** 六项产品决策冻结；fixture 可读；两个 crate 的许可、Rust 1.85 构建和安全审计通过。否则不得创建 `063` migration。
 
 ## 阶段 1：应用级资料库与 Repository
 
@@ -300,7 +303,7 @@ pub struct FeedItemDetail {
 
 **阶段 1 退出条件：** migration up/down/idempotent；CRUD/FTS/状态机全部在内存 SQLite 通过；无网络、无 UI、无 Vault 写入。
 
-## 阶段 2：安全获取、解析与 Markdown 标准化
+## 阶段 2：安全获取、解析、Markdown 与同步
 
 ### Task 2.1：抽取可复用的公共 HTTPS 出站校验
 
@@ -343,7 +346,7 @@ pub(crate) const MAX_REDIRECTS: usize = 5;
 - [ ] 运行 `cargo test ... feed::fetch_tests`，预期 GREEN。
 - [ ] 提交：`feat(rss): 实现安全有界的订阅获取`。
 
-### Task 2.3：解析、规范化和重转
+### Task 2.3：解析与规范化
 
 **Files:**
 
@@ -385,7 +388,6 @@ pub(crate) struct NormalizedItem {
 - [ ] 相对链接只以安全的文章 HTTPS URL 为 base；不安全 URL 转纯文本。
 - [ ] `content_text` 从最终 Markdown 确定性去标记生成，不使用浏览器 DOM。
 - [ ] 标题上限 500 Unicode scalar，正文 Markdown 上限 4 MiB；超限以稳定规则截断并标 degraded。
-- [ ] 实现 `renormalize_outdated_batch(conn, limit)`，失败保留旧正文并仅更新错误状态。
 - [ ] 运行 normalize tests，预期 GREEN；再运行 `cargo test --manifest-path src-tauri/Cargo.toml`。
 - [ ] 提交：`feat(rss): 将订阅内容规范化为安全 Markdown`。
 
@@ -403,11 +405,7 @@ pub(crate) struct NormalizedItem {
 - [ ] 运行 discovery tests，预期 GREEN。
 - [ ] 提交：`feat(rss): 添加订阅源自动发现`。
 
-**阶段 2 退出条件：** 全部格式 fixture 正确；SSRF、XXE、重定向、超限和危险 HTML 测试通过；转换结果可读且原始载荷未出后端。
-
-## 阶段 3：同步协调器、调度与 IPC
-
-### Task 3.1：实现单源同步事务
+### Task 2.5：实现单源同步事务
 
 **Files:**
 
@@ -420,29 +418,31 @@ pub(crate) struct NormalizedItem {
 - [ ] 首次同步在同一事务判断 source 尚无 item；默认给历史项目写 `read_at=received_at`。
 - [ ] 成功清零 failures，保存 validators 和 `next_fetch_at`；304 同样视为成功。
 - [ ] 失败只更新 `last_checked_at/last_error_code/last_error_at/consecutive_failures/next_fetch_at`，保留旧 validators 与文章。
-- [ ] 退避固定为 5m/15m/1h/6h/24h，再用 `SHA256(source_id + failure_count)` 生成 ±10% 确定性抖动，保证测试可复现。
+- [ ] 退避固定为 15m/1h/6h/24h，不加入随机抖动。
 - [ ] 运行 sync tests，预期 GREEN。
 - [ ] 提交：`feat(rss): 完成订阅源增量同步事务`。
 
-### Task 3.2：实现全局协调器与后台调度
+### Task 2.6：复用现有 Scheduler 做自动同步
 
 **Files:**
 
-- Create: `src-tauri/src/feed/coordinator.rs`
-- Create: `src-tauri/src/feed/scheduler.rs`
-- Create: `src-tauri/src/feed/coordinator_tests.rs`
 - Modify: `src-tauri/src/app.rs`
-- Modify: `src-tauri/src/lib.rs`
+- Modify: `src-tauri/src/scheduler.rs`
+- Modify: `src-tauri/src/feed/sync.rs`
+- Modify: `src-tauri/src/feed/sync_tests.rs`
 
-- [ ] RED 测试：同源互斥、全局 4 并发、同 host 1 并发、force 不绕锁、取消后可重试、到期扫描、暂停源跳过。
-- [ ] `AppState` 持有 `Arc<FeedSyncCoordinator>`；协调器只保存 running source 集和 semaphore，不保存文章或 URL。
-- [ ] 启动后延迟 30 秒第一次扫描，此后每 60 秒扫描；应用退出依赖 tokio task drop/cancel，不阻塞窗口关闭。
-- [ ] source 完成后发 `feed:sync_progress`，payload 仅含 `jobId/sourceId/phase/newItems/updatedItems/errorCode`。
-- [ ] 无窗口/事件发送失败不影响数据库同步成功。
-- [ ] 运行 coordinator tests 和现有 scheduler tests。
-- [ ] 提交：`feat(rss): 添加有界订阅同步调度器`。
+- [ ] RED 测试：同一 source 不能重复同步、暂停源跳过、到期查询只返回 2 个批次、失败后互斥标记释放。
+- [ ] `AppState` 只增加一个 `FeedSyncService`；服务内部用 `tokio::sync::Mutex<HashSet<String>>` 防止同源重复，不创建 job 表或通用任务状态机。
+- [ ] 在现有 `Scheduler` 增加 15 分钟 tick，每轮从 repository 取最多 2 个到期源并并发同步；不新增第二套 scheduler 文件。
+- [ ] 手动刷新与自动刷新调用同一个 `sync_source`；应用重启依靠数据库中的 `next_fetch_at` 恢复。
+- [ ] 运行 feed sync tests 和现有 scheduler tests，预期 GREEN。
+- [ ] 提交：`feat(rss): 复用现有调度器同步订阅`。
 
-### Task 3.3：冻结 IPC DTO 和命令
+**阶段 2 退出条件：** 全部格式 fixture 正确；SSRF、XXE、重定向、超限、危险 HTML、304、更新保状态和自动到期同步测试通过。
+
+## 阶段 3：冻结 IPC 契约
+
+### Task 3.1：增加类型安全命令
 
 **Files:**
 
@@ -466,12 +466,10 @@ export interface FeedItemStatePatch {
   isArchived?: boolean;
 }
 
-export interface FeedSyncProgressEvent {
-  jobId: string;
+export interface FeedChangedEvent {
   sourceId: string;
-  phase: "started" | "succeeded" | "failed";
+  kind: "sync_succeeded" | "sync_failed" | "items_changed";
   newItems: number;
-  updatedItems: number;
   errorCode: string | null;
 }
 ```
@@ -480,12 +478,12 @@ export interface FeedSyncProgressEvent {
 - [ ] 注册规范 §12 的全部命令；命令只做验证/授权边界和 service 调用，不内嵌 SQL。
 - [ ] `feed_item_set_state` 要求 patch 至少一个字段；所有 ID/URL/string 长度有界。
 - [ ] `feed_items_mark_read` 接收冻结 `FeedItemQuery`，返回影响行数。
-- [ ] `feed_sync_start` 立即返回 `{ jobId, acceptedSourceIds }`，后台事件报告结果；`feed_sync_status` 支持 UI 重连。
+- [ ] `feed_sync_source` 等待单源完成并返回计数；`feed_sync_all` 复用同一 service、最多 2 个并发。事件只提示 UI 重新查询，不建立 job 恢复协议。
 - [ ] 更新 IPC 文档，明确 raw payload 永不出 IPC、同步事件不含 URL/正文。
 - [ ] 运行 `npm run test -- feed-ipc-contract`、`npm run typecheck` 和 Rust command tests。
 - [ ] 提交：`feat(ipc): 暴露类型安全的订阅资料库契约`。
 
-**阶段 3 退出条件：** 可通过 IPC 完成发现→订阅→同步→列表→详情→状态→搜索；后台调度有界、可恢复；无 UI 也能以测试闭环。
+**阶段 3 退出条件：** 可通过 IPC 完成发现→订阅→同步→列表→详情→状态→搜索；Rust、TypeScript、事件与 IPC 文档一致。
 
 ## 阶段 4：React 订阅工作区
 
@@ -494,12 +492,11 @@ export interface FeedSyncProgressEvent {
 **Files:**
 
 - Create: `src/hooks/useFeedLibrary.ts`
-- Create: `src/lib/feed-query-state.ts`
 - Create: `src/lib/feed-reader.ts`
 - Create: `tests/use-feed-library.test.tsx`
 - Create: `tests/feed-reader.test.ts`
 
-- [ ] RED 测试：初始 inbox、source/view 切换、分页竞态、Abort/epoch 丢弃旧响应、同步事件刷新、乐观状态失败回滚、今日边界。
+- [ ] RED 测试：初始 inbox、source/view 切换、迟到响应丢弃、同步事件刷新、状态失败回滚、今日边界。
 - [ ] Hook 保存 `view/sourceId/search/selectedItemId/page/status`，不把文章正文写 localStorage。
 - [ ] 每次筛选变化递增 request epoch；迟到响应不得覆盖新视图。
 - [ ] `feed-reader.ts` 只负责 Markdown 渲染配置、DOMPurify allowlist、外链拦截和远程图片占位。
@@ -538,17 +535,13 @@ export type AppWorkspaceMode = "documents" | "feeds";
 
 - Create: `src/components/feed/FeedWorkspace.tsx`
 - Create: `src/components/feed/FeedSidebar.tsx`
-- Create: `src/components/feed/FeedToolbar.tsx`
 - Create: `src/components/feed/FeedItemList.tsx`
-- Create: `src/components/feed/FeedItemRow.tsx`
 - Create: `src/components/feed/FeedReader.tsx`
-- Create: `src/components/feed/FeedEmptyState.tsx`
-- Create: `src/components/feed/FeedSyncStatus.tsx`
 - Create: `tests/feed-workspace.test.tsx`
 - Modify: `src/styles/globals.css`
 - Modify: `docs/design-system.md`
 
-- [ ] 先写组件 RED 测试：五个文章视图与同步失败源视图、未读计数、空态、loading/error、虚拟列表、打开延迟已读、快捷键、批量已读、同步状态、远程图片默认阻止。
+- [ ] 先写组件 RED 测试：五个文章视图与同步失败源视图、未读计数、空态、loading/error、打开延迟已读、快捷键、批量已读、同步状态、远程图片默认阻止。
 - [ ] `FeedItemList` 使用现有 `@tanstack/react-virtual`，稳定 key 为 item ID；不得复制虚拟化实现。
 - [ ] `FeedReader` 正文应用 `--prose-measure`，标题聚焦，显示来源/日期/转换降级提示和外部打开动作。
 - [ ] 宽屏来源导航可折叠；1024–1365 用抽屉；800–1023 使用列表/阅读单平面状态机。
@@ -562,16 +555,14 @@ export type AppWorkspaceMode = "documents" | "feeds";
 **Files:**
 
 - Create: `src/components/feed/FeedSourceDialog.tsx`
-- Create: `src/components/feed/FeedSourceMenu.tsx`
-- Create: `src/components/feed/FeedSearch.tsx`
 - Create: `tests/feed-source-management.test.tsx`
-- Create: `tests/feed-search.test.tsx`
 
 - [ ] RED 测试：URL 发现、多候选选择、历史未读选项、编辑标题/分组/间隔、暂停、两种退订、搜索 debounce/清空/分页/错误。
 - [ ] 添加流程拆为「发现」和「确认订阅」；多候选不可自动全选。
 - [ ] 删除订阅及文章显示计数并二次确认；保留文章选择实际将 source 置 disabled，不删除。
 - [ ] 搜索 200ms debounce；输入法 composition 中不发请求；Escape 清空并回到先前视图。
 - [ ] 同步失败提供「重试」和安全原因文案，不展示 URL/HTTP body/stack。
+- [ ] 搜索框、source menu 和添加表单直接作为 `FeedWorkspace`/`FeedSourceDialog` 的局部组件；只有文件超过约 300 行且职责确实独立时再拆分。
 - [ ] 运行对应测试，预期 GREEN。
 - [ ] 提交：`feat(rss): 完成订阅管理与本地搜索体验`。
 
@@ -630,41 +621,22 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - [ ] 运行 note export、持久化协调器和文件生命周期测试。
 - [ ] 提交：`feat(rss): 支持显式保存订阅文章为笔记`。
 
-**阶段 5 退出条件：** OPML 幂等和往返通过；用户可退出 Iris 数据生态；保存笔记完全经过现有 Markdown 权威写盘路径且无自动写入。
-
-## 阶段 6：性能、升级、回滚与发布硬化
-
-### Task 6.1：性能与容量基线
+### Task 5.3：容量、升级与故障回归
 
 **Files:**
 
-- Create: `src-tauri/benches/feed_benchmarks.rs`
-- Modify: `src-tauri/Cargo.toml`
-- Create: `docs/eval/results/rss-library-performance-baseline.json`
-
-- [ ] 生成合成数据集：500 sources、100,000 items、平均 8 KiB Markdown；不得包含真实内容。
-- [ ] 基准：单源 100 item upsert、inbox 首屏 50、FTS top 50、详情读取、1,000 item 重转、OPML 500 sources。
-- [ ] 目标：常规开发机 warm query p95 列表 <100ms、搜索 <200ms、详情 <50ms；同步事务不持锁执行网络/转换。
-- [ ] 记录机器、OS、commit、SQLite/feature、样本数和原始统计；未达标先 EXPLAIN QUERY PLAN，再决定索引，不盲目加表。
-- [ ] 前端用 React Profiler/测试证明 100k 数据仍只渲染 viewport rows。
-- [ ] 提交：`perf(rss): 建立订阅资料库容量基线`。
-
-### Task 6.2：升级、故障与回滚演练
-
-**Files:**
-
+- Create: `src-tauri/tests/feed_library_capacity.rs`
 - Modify: `docs/testing/rss-subscription-library-manual-checklist.md`
-- Create: `docs/ops/rss-library-recovery.md`
 
-- [ ] 从 v1.2.20 数据库副本启动，验证 `063` 自动应用且现有笔记/会话/设置不变。
-- [ ] 在 migration、同步事务、FTS trigger、Markdown 重转中注入失败，验证回滚和旧内容可读。
-- [ ] 断网、代理切换、DNS 失败、证书失败、429、500、超时、超限、磁盘满分别演练。
-- [ ] 验证应用崩溃后 running job 不残留；重启按 `next_fetch_at` 或手动刷新恢复。
-- [ ] down migration 仅用于开发/测试；正式版本不自动降级数据库。恢复手册要求先备份应用数据目录。
-- [ ] 验证删除订阅的二次确认和 OPML 导出先行建议。
-- [ ] 提交：`docs(rss): 添加订阅故障恢复与回滚手册`。
+- [ ] 用合成文本建立 100 个 source、10,000 个 item 的 integration test；断言 inbox 首屏、FTS 查询和详情读取正确，不保存机器相关的毫秒硬阈值。
+- [ ] 用 `EXPLAIN QUERY PLAN` 断言 inbox 和 source 列表使用既有索引；只有查询确实全表扫描时才调整索引。
+- [ ] 从加入 RSS 前的应用数据库副本启动，确认 `063` 自动应用且现有笔记、会话、设置不变。
+- [ ] 手工验证断网、代理切换、DNS/证书失败、429/500、超时、超限和磁盘满；旧文章始终可读。
+- [ ] 验证应用退出后无需恢复 job 状态；重启只按 `next_fetch_at` 或手动刷新继续。
+- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml --test feed_library_capacity`，预期 GREEN。
+- [ ] 提交：`test(rss): 添加订阅容量与升级回归`。
 
-### Task 6.3：全量自动化质量门禁
+### Task 5.4：全量自动化质量门禁
 
 按顺序执行并保存 exit code；任一失败不得声称完成：
 
@@ -683,7 +655,7 @@ export type AppWorkspaceMode = "documents" | "feeds";
 
 预期：全部 exit 0；审计无未登记高危；E2E 不依赖公网源，使用本地受控 HTTPS fixture server 或 mock transport。
 
-### Task 6.4：三平台与全尺寸人工验收
+### Task 5.5：macOS、Windows 与全尺寸人工验收
 
 **Files:**
 
@@ -692,16 +664,16 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - Modify: `ARCHITECTURE.md`（只有实际存在时）
 - Modify: `ROADMAP.md`
 
-- [ ] macOS、Windows、Linux 各验证冷启动、添加、同步、离线阅读、OPML、外链、保存笔记、应用重启。
+- [ ] macOS、Windows 各验证冷启动、添加、同步、离线阅读、OPML、外链、保存笔记、应用重启。
 - [ ] 完成全尺寸/主题/缩放/键盘/读屏/reduced-motion 矩阵并附日期、构建、平台证据。
 - [ ] 验证 800×600 无遮挡、1366 不强制三栏、1920 正文不无限拉宽。
 - [ ] 验证远程图片默认零请求，用户加载后只请求 HTTPS 且 no-referrer。
 - [ ] 验证日志抽样无 URL、标题、正文、OPML 或请求头。
 - [ ] 实际功能完成后才更新 ARCHITECTURE/CHANGELOG；ROADMAP 状态改为「已交付」必须引用全部门禁证据。
-- [ ] 使用 `superpowers:requesting-code-review` 做最终审查；修复后重跑 Task 6.3 受影响及全量门禁。
+- [ ] 由项目所有者完成最终 diff 审查；修复后重跑 Task 5.4 的全量门禁。
 - [ ] 最终提交：`feat(rss): 交付本地优先的订阅资料库`。
 
-**阶段 6 退出条件：** 自动化全绿；三平台与全尺寸人工证据齐全；升级与恢复演练完成；零 P0/P1；文档描述与实际代码一致。
+**阶段 5 退出条件：** OPML 往返与保存笔记通过；自动化全绿；macOS/Windows 和全尺寸清单完成；升级/故障回归完成；没有发布阻断，文档与代码一致。
 
 ---
 
@@ -709,12 +681,11 @@ export type AppWorkspaceMode = "documents" | "feeds";
 
 以下工作必须另写规格和实施计划，不得顺手扩张首轮：
 
-1. `FeedProvider` 抽象与 FreshRSS Google Reader API 单向/双向同步。
-2. Miniflux REST 适配及加密凭据管理。
-3. 合法网页全文抓取与 Readability。
-4. 订阅内容进入全局搜索的分组结果。
-5. 用户逐 Run 授权 Agent 读取订阅资料库、证据账本和引用投影。
-6. 公众号搜索服务的合法数据源、许可、账号风险和可持续性评估。
+1. FreshRSS 或 Miniflux 同步；只有真实需求出现后再选择其一设计。
+2. 合法网页全文抓取与 Readability。
+3. 订阅内容进入全局搜索的分组结果。
+4. 用户逐 Run 授权 Agent 读取订阅资料库。
+5. 公众号搜索服务的合法数据源、许可、账号风险和可持续性评估。
 
 ## 自审记录
 
