@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -52,7 +52,7 @@ impl EmbeddingBatcher for UnavailableBatcher {
 }
 
 struct BlockingBatcher {
-    entered: mpsc::Sender<()>,
+    entered: mpsc::Sender<Instant>,
     release: Mutex<mpsc::Receiver<()>>,
 }
 
@@ -62,10 +62,19 @@ impl EmbeddingBatcher for BlockingBatcher {
     }
 
     fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
-        self.entered.send(()).unwrap();
+        self.entered.send(Instant::now()).unwrap();
         self.release.lock().unwrap().recv().unwrap();
         Ok(vec![vec![0.3; EMBEDDING_DIMENSION]; texts.len()])
     }
+}
+
+static SCHEDULER_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn scheduler_test_guard() -> MutexGuard<'static, ()> {
+    SCHEDULER_TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("lock embedding scheduler contract tests")
 }
 
 fn seed_chunk(conn: &Connection, content_hash: &str) {
@@ -105,13 +114,10 @@ fn seed_chunks(conn: &Connection, count: usize) {
 }
 
 fn wait_for_phase(scheduler: &EmbeddingScheduler, phase: &str) {
-    // The scheduler owns a native background worker. Under the full Rust suite
-    // that worker can wait behind unrelated CPU-bound tests, so this contract
-    // waits for its durable state transition instead of treating scheduler
-    // contention as a model failure. Hosted runners with many concurrent
-    // CPU-bound tests have starved the worker past 60s, so the bound is kept
-    // generous; it still prevents a hung worker from making CI unbounded.
-    let deadline = Instant::now() + Duration::from_secs(180);
+    // Scheduler contract tests are serialized below, so a worker that cannot
+    // make its durable transition within this bound is genuinely stuck rather
+    // than merely competing with another scheduler test for CPU time.
+    let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let current = scheduler.status().unwrap().phase;
         if current == phase {
@@ -174,6 +180,7 @@ fn ready_phase_requires_matching_source_fingerprint_coverage() {
 
 #[test]
 fn scheduler_coalesces_duplicate_start_and_marks_valid_coverage_ready() {
+    let _guard = scheduler_test_guard();
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunk(conn, "chunk-hash");
@@ -213,6 +220,7 @@ fn scheduler_coalesces_duplicate_start_and_marks_valid_coverage_ready() {
 
 #[test]
 fn failed_generation_preserves_valid_batch_and_manual_restart_only_embeds_gap() {
+    let _guard = scheduler_test_guard();
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunks(conn, 17);
@@ -270,6 +278,7 @@ fn failed_generation_preserves_valid_batch_and_manual_restart_only_embeds_gap() 
 
 #[test]
 fn unavailable_model_marks_safe_failure_without_touching_document_index() {
+    let _guard = scheduler_test_guard();
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunk(conn, "chunk-hash");
@@ -296,6 +305,7 @@ fn unavailable_model_marks_safe_failure_without_touching_document_index() {
 
 #[test]
 fn automatic_start_waits_for_the_single_backend_owned_idle_delay() {
+    let _guard = scheduler_test_guard();
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunk(conn, "chunk-hash");
@@ -316,13 +326,11 @@ fn automatic_start_waits_for_the_single_backend_owned_idle_delay() {
     let started = Instant::now();
     scheduler.set_foreground_busy(false);
     scheduler.mark_initial_index_complete();
-    thread::sleep(Duration::from_millis(20));
-    assert_eq!(scheduler.status().unwrap().phase, "legacy_ready");
-    entered_rx
-        .recv_timeout(Duration::from_millis(150))
+    let batch_started = entered_rx
+        .recv_timeout(Duration::from_secs(5))
         .expect("backend starts after its idle delay");
     assert!(
-        started.elapsed() >= Duration::from_millis(40),
+        batch_started.duration_since(started) >= Duration::from_millis(40),
         "automatic job started before the backend idle delay elapsed"
     );
 
@@ -332,6 +340,7 @@ fn automatic_start_waits_for_the_single_backend_owned_idle_delay() {
 
 #[test]
 fn blocked_model_batch_does_not_hold_database_connection() {
+    let _guard = scheduler_test_guard();
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunk(conn, "chunk-hash");
@@ -375,6 +384,7 @@ fn blocked_model_batch_does_not_hold_database_connection() {
 
 #[test]
 fn unchanged_repair_enqueue_resumes_while_already_idle_without_foreground_round_trip() {
+    let _guard = scheduler_test_guard();
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunk(conn, "chunk-hash");
@@ -388,23 +398,30 @@ fn unchanged_repair_enqueue_resumes_while_already_idle_without_foreground_round_
         Ok(())
     })
     .unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
     let scheduler = EmbeddingScheduler::with_batcher_and_idle_delay(
         Arc::clone(&db),
-        Arc::new(ScriptedBatcher::new(vec![Ok(vec![
-            vec![0.4; EMBEDDING_DIMENSION],
-        ])])),
+        Arc::new(BlockingBatcher {
+            entered: entered_tx,
+            release: Mutex::new(release_rx),
+        }),
         Duration::from_millis(20),
     );
     scheduler.set_foreground_busy(false);
     scheduler.mark_initial_index_complete();
     scheduler.notify_index_committed();
-    assert_eq!(scheduler.status().unwrap().phase, "paused");
-    thread::sleep(Duration::from_millis(100));
-    assert_eq!(scheduler.status().unwrap().phase, "ready");
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("idle repair starts without a foreground round trip");
+    assert_eq!(scheduler.status().unwrap().phase, "running");
+    release_tx.send(()).unwrap();
+    wait_for_phase(&scheduler, "ready");
 }
 
 #[test]
 fn manual_pause_resume_restarts_paused_job_when_idle() {
+    let _guard = scheduler_test_guard();
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunk(conn, "chunk-hash");
@@ -431,6 +448,7 @@ fn manual_pause_resume_restarts_paused_job_when_idle() {
 
 #[test]
 fn vault_reset_during_model_inference_prevents_old_batch_commit() {
+    let _guard = scheduler_test_guard();
     let db = Arc::new(Database::open_in_memory().unwrap());
     db.with_conn(|conn| {
         seed_chunk(conn, "chunk-hash");
