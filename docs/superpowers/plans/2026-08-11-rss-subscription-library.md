@@ -42,11 +42,11 @@
 - Modify: `docs/rss-subscription-library.md`
 - Modify: `ROADMAP.md`
 
-- [ ] 与 maintainer 逐项确认：跨 Vault 共享、历史默认已读、远程图片默认阻止、HTTPS-only、不自动清理、保存为独立笔记。
-- [ ] 特别确认「跨 Vault 共享」；若改变，先修订规范和本文所有 `AppState.db` 假设，再开始 migration。
-- [ ] 在规格文档头部把状态从「规划基线」改为「已冻结」，记录日期，不写版本号承诺。
-- [ ] 运行 `npm run docs:check`，预期 exit 0。
-- [ ] 提交：`docs(rss): 冻结订阅资料库产品契约`。
+- [x] 与 maintainer 逐项确认：跨 Vault 共享、历史默认已读、远程图片默认阻止、HTTPS-only、不自动清理、保存为独立笔记。
+- [x] 特别确认「跨 Vault 共享」；若改变，先修订规范和本文所有 `AppState.db` 假设，再开始 migration。
+- [x] 在规格文档头部把状态从「规划基线」改为「已冻结」，记录日期，不写版本号承诺。
+- [x] 运行 `npm run docs:check`，预期 exit 0。
+- [x] 提交：`docs(rss): 冻结订阅资料库产品契约`。
 
 ### Task 0.2：建立格式、安全与更新 fixture
 
@@ -68,13 +68,13 @@
 - Create: `src-tauri/tests/fixtures/opml/oversized-title.opml`
 - Modify: `docs/testing/rss-subscription-library-manual-checklist.md`
 
-- [ ] 每个 Feed fixture 固定 2–5 个条目，使用 `example.com`，不得含真实用户订阅或版权正文。
-- [ ] `item-update-v2.xml` 保持 GUID，只改变标题、正文、`updated`，用于证明阅读状态不被更新覆盖。
-- [ ] `unsafe-html.xml` 覆盖 script、style、iframe、表单、事件属性、`javascript:`、相对链接和远程图片。
-- [ ] `xxe.xml` 同时覆盖 `DOCTYPE` 与 `ENTITY`，期望在 parser 前以稳定码 `feed_xml_unsafe_declaration` 拒绝。
-- [ ] 手工清单先写成未执行状态，覆盖 `800/1024/1280/1366/1440/1920 × 600/800/1080`、亮暗主题、200% 缩放、键盘、读屏、reduced motion、离线、代理、升级与回滚。
-- [ ] 运行 `rg -n "微信|mp.weixin|真实" src-tauri/tests/fixtures/feeds src-tauri/tests/fixtures/opml`，确认没有真实内容。
-- [ ] 提交：`test(rss): 添加订阅格式与安全基线语料`。
+- [x] 每个 Feed fixture 固定 2–5 个条目，使用 `example.com`，不得含真实用户订阅或版权正文。
+- [x] `item-update-v2.xml` 保持 GUID，只改变标题、正文、`updated`，用于证明阅读状态不被更新覆盖。
+- [x] `unsafe-html.xml` 覆盖 script、style、iframe、表单、事件属性、`javascript:`、相对链接和远程图片。
+- [x] `xxe.xml` 同时覆盖 `DOCTYPE` 与 `ENTITY`，期望在 parser 前以稳定码 `feed_xml_unsafe_declaration` 拒绝。
+- [x] 手工清单先写成未执行状态，覆盖 `800/1024/1280/1366/1440/1920 × 600/800/1080`、亮暗主题、200% 缩放、键盘、读屏、reduced motion、离线、代理、升级与回滚。
+- [x] 运行 `rg -n "微信|mp.weixin|真实" src-tauri/tests/fixtures/feeds src-tauri/tests/fixtures/opml`，确认没有真实内容。
+- [x] 提交：`test(rss): 添加订阅格式与安全基线语料`。
 
 ### Task 0.3：加入最小解析依赖
 
@@ -90,12 +90,12 @@ feed-rs = { version = "=2.4.0", features = ["sanitize"] }
 htmd = "=0.5.5"
 ```
 
-- [ ] 在变更说明中记录：`feed-rs` 避免自写多格式解析，`htmd` 避免自写 HTML → Markdown；两者分别为 MIT、Apache-2.0。
-- [ ] 添加两个精确依赖，不再加入第三个 sanitizer crate；使用 `feed-rs` 自带 sanitize feature 和前端现有 DOMPurify。
-- [ ] 运行 `cargo tree --manifest-path src-tauri/Cargo.toml -i feed-rs` 与 `cargo tree --manifest-path src-tauri/Cargo.toml -i htmd`，确认没有不兼容许可证。
-- [ ] 运行 `cargo check --manifest-path src-tauri/Cargo.toml`，预期 Rust 1.85 构建成功。
-- [ ] 运行 `npm run audit:rust`，预期无未登记高危漏洞。
-- [ ] 提交：`chore(rss): 引入受审查的 Feed 解析与转换依赖`。
+- [x] 在变更说明中记录：`feed-rs` 避免自写多格式解析，`htmd` 避免自写 HTML → Markdown；两者分别为 MIT、Apache-2.0。
+- [x] 添加两个精确依赖，不再加入第三个 sanitizer crate；使用 `feed-rs` 自带 sanitize feature 和前端现有 DOMPurify。
+- [x] 运行 `cargo tree --manifest-path src-tauri/Cargo.toml -i feed-rs` 与 `cargo tree --manifest-path src-tauri/Cargo.toml -i htmd`，确认没有不兼容许可证。
+- [x] 运行 `cargo check --manifest-path src-tauri/Cargo.toml`，预期 Rust 1.85 构建成功。
+- [x] 运行 `npm run audit:rust`，预期无未登记高危漏洞。
+- [x] 提交：`chore(rss): 引入受审查的 Feed 解析与转换依赖`。
 
 **阶段 0 退出条件：** 六项产品决策冻结；fixture 可读；两个 crate 的许可、Rust 1.85 构建和安全审计通过。否则不得创建 `063` migration。
 

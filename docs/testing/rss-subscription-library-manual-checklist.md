@@ -121,4 +121,4 @@
 - [ ] 自动化门禁全部 exit 0。
 - [ ] macOS 与 Windows 主流程完成，失败项已记录且不存在发布阻断。
 - [ ] `ARCHITECTURE.md`、`docs/ipc-api-reference.md`、`ROADMAP.md`、`CHANGELOG.md` 与实际代码一致。
-- [ ] 只有以上条件满足，才可将路线图状态从「规划中」改为「已交付」。
+- [ ] 只有以上条件满足，才可将路线图状态从「契约已冻结」改为「已交付」。
