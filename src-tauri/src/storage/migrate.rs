@@ -163,6 +163,8 @@ const MIGRATION_061_DOWN: &str = include_str!("../../migrations/061_sqlite_vec_v
 const MIGRATION_062_UP: &str = include_str!("../../migrations/062_remove_legacy_search_graph.sql");
 const MIGRATION_062_DOWN: &str =
     include_str!("../../migrations/062_remove_legacy_search_graph.down.sql");
+const MIGRATION_063_UP: &str = include_str!("../../migrations/063_feed_library.sql");
+const MIGRATION_063_DOWN: &str = include_str!("../../migrations/063_feed_library.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -656,6 +658,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_062_UP,
         false,
     )?;
+    apply_migration(conn, "063_feed_library", MIGRATION_063_UP, false)?;
 
     Ok(())
 }
@@ -667,6 +670,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "063_feed_library", MIGRATION_063_DOWN);
     rollback_migration(conn, "062_remove_legacy_search_graph", MIGRATION_062_DOWN);
     rollback_migration(conn, "061_sqlite_vec_v3", MIGRATION_061_DOWN);
     rollback_migration(conn, "060_skill_activation_embeddings", MIGRATION_060_DOWN);
@@ -2672,5 +2676,111 @@ mod tests {
             .map(|c| c > 0)
             .unwrap();
         assert!(!gone);
+    }
+
+    #[test]
+    fn migration_063_creates_feed_library_and_fts() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["feed_sources", "feed_items", "feed_items_fts"] {
+            assert!(table_exists(&conn, table), "missing {table} after migrate_up");
+        }
+
+        let object_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type IN ('index', 'trigger')
+                   AND name LIKE 'idx_feed_%' OR (type = 'trigger' AND name LIKE 'feed_items_fts_%')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(object_count, 9, "expected 6 indexes + 3 FTS triggers");
+
+        // 插入一条源与文章，验证 FTS trigger 真实联动。
+        conn.execute(
+            "INSERT INTO feed_sources
+             (id, feed_url, title, created_at, updated_at)
+             VALUES ('src-1', 'https://example.com/feed.xml', 'Example', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO feed_items
+             (id, source_id, external_key, title, content_markdown, content_text,
+              source_payload, source_payload_kind, content_hash, conversion_version,
+              conversion_status, received_at, created_at, updated_at)
+             VALUES ('item-1', 'src-1', 'key-1', 'Searchable Title', '# body', 'body text',
+                      '<p>payload</p>', 'html', 'hash-1', 1, 'ok',
+                      '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z', '2026-08-01T08:00:00Z')",
+            [],
+        )
+        .unwrap();
+
+        let fts_hits: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM feed_items_fts WHERE feed_items_fts MATCH 'Searchable'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_hits, 1, "FTS trigger must mirror inserted content_text/title");
+    }
+
+    #[test]
+    fn migration_063_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        assert!(table_exists(&conn, "feed_sources"));
+        assert!(table_exists(&conn, "feed_items"));
+        assert!(table_exists(&conn, "feed_items_fts"));
+
+        rollback_migration(&conn, "063_feed_library", MIGRATION_063_DOWN);
+
+        assert!(!table_exists(&conn, "feed_sources"), "feed_sources must be dropped");
+        assert!(!table_exists(&conn, "feed_items"), "feed_items must be dropped");
+        assert!(!table_exists(&conn, "feed_items_fts"), "feed_items_fts must be dropped");
+        let leftover: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE (type = 'index' AND name LIKE 'idx_feed_%')
+                    OR (type = 'trigger' AND name LIKE 'feed_items_fts_%')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(leftover, 0, "indexes/triggers must be dropped with the tables");
+
+        // 回滚不得触碰其他应用状态。
+        assert!(table_exists(&conn, "files"), "unrelated tables must survive down");
+        assert!(table_exists(&conn, "_migrations"));
+    }
+
+    #[test]
+    fn migration_063_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        migrate_up(&conn).unwrap();
+
+        let applied: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM _migrations WHERE name = '063_feed_library'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(applied, 1, "063 must be registered exactly once");
+
+        let tables: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name IN ('feed_sources', 'feed_items', 'feed_items_fts')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 3);
     }
 }
