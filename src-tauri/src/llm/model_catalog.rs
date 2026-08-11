@@ -98,11 +98,11 @@ impl ModelCatalogEntry {
                 default_mode: ReasoningMode::Auto,
                 disable_supported: true,
             }),
-            "minimax" if is_minimax_reasoning_risk(self.id) => Some(CatalogReasoningCapability {
+            "minimax" if is_minimax_m3_model(self.id) => Some(CatalogReasoningCapability {
                 adapter: ReasoningAdapter::MiniMaxReasoningDetails,
                 control: ReasoningControl::Switch,
                 visibility: ReasoningVisibility::HiddenChannel,
-                supported_modes: SWITCH_REASONING_MODES,
+                supported_modes: MINIMAX_M3_REASONING_MODES,
                 default_mode: ReasoningMode::Auto,
                 disable_supported: true,
             }),
@@ -129,6 +129,8 @@ impl ModelCatalogEntry {
 
 pub const SWITCH_REASONING_MODES: &[ReasoningMode] =
     &[ReasoningMode::Off, ReasoningMode::On, ReasoningMode::Auto];
+pub const MINIMAX_M3_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::Off, ReasoningMode::Auto];
+pub const MINIMAX_ALWAYS_ON_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::On];
 pub const TAG_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::Off, ReasoningMode::Auto];
 pub const DEEPSEEK_REASONING_MODES: &[ReasoningMode] = &[
     ReasoningMode::Off,
@@ -176,9 +178,13 @@ fn is_qwen_reasoning_model(model: &str) -> bool {
     model.to_ascii_lowercase().contains("qwen3")
 }
 
-fn is_minimax_reasoning_risk(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    model.contains("minimax") || model == "minimax-m3"
+pub(crate) fn is_minimax_m3_model(model: &str) -> bool {
+    model.trim().eq_ignore_ascii_case("MiniMax-M3")
+}
+
+pub(crate) fn is_minimax_m2_model(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    model == "minimax-m2" || model.starts_with("minimax-m2.") || model.starts_with("minimax-m2-")
 }
 
 const ONE_M: u32 = 1_048_576;
@@ -821,6 +827,12 @@ mod tests {
             minimax.visibility,
             crate::ai_types::ReasoningVisibility::HiddenChannel
         );
+        assert_eq!(
+            minimax.supported_modes,
+            &[ReasoningMode::Off, ReasoningMode::Auto]
+        );
+        assert_eq!(minimax.default_mode, ReasoningMode::Auto);
+        assert!(minimax.disable_supported);
     }
 
     #[test]

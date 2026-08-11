@@ -5845,13 +5845,13 @@ async fn execute_headless_core_case_with_local_body(
         "custom".to_string(),
         ProviderOverride {
             base_url: Some(llm.base_url.clone()),
-            enabled_models: Some(vec!["agent-capacity-contract".to_string()]),
+            enabled_models: Some(vec!["iris-test-verified-tools-agent-capacity".to_string()]),
             ..Default::default()
         },
     );
     routing.default_model = Some(ModelReference {
         provider_id: "custom".to_string(),
-        model_id: "agent-capacity-contract".to_string(),
+        model_id: "iris-test-verified-tools-agent-capacity".to_string(),
     });
     crate::llm::config::save(&state.db, &routing)
         .map_err(|_| EvalContractError::new("eval_route_setup_failed"))?;
@@ -8314,13 +8314,13 @@ async fn probe_web_evidence_level(result_count: u32) -> Result<bool, EvalContrac
         "custom".to_string(),
         ProviderOverride {
             base_url: Some(llm.base_url.clone()),
-            enabled_models: Some(vec!["boundary-web".to_string()]),
+            enabled_models: Some(vec!["iris-test-verified-tools-boundary-web".to_string()]),
             ..Default::default()
         },
     );
     routing.default_model = Some(ModelReference {
         provider_id: "custom".to_string(),
-        model_id: "boundary-web".to_string(),
+        model_id: "iris-test-verified-tools-boundary-web".to_string(),
     });
     crate::llm::config::save(&state.db, &routing)
         .map_err(|_| EvalContractError::new("boundary_route_failed"))?;
@@ -8721,13 +8721,15 @@ async fn execute_security_tool_boundary(
         "custom".to_string(),
         ProviderOverride {
             base_url: Some(llm.base_url.clone()),
-            enabled_models: Some(vec!["security-boundary".to_string()]),
+            enabled_models: Some(vec![
+                "iris-test-verified-tools-security-boundary".to_string()
+            ]),
             ..Default::default()
         },
     );
     routing.default_model = Some(ModelReference {
         provider_id: "custom".to_string(),
-        model_id: "security-boundary".to_string(),
+        model_id: "iris-test-verified-tools-security-boundary".to_string(),
     });
     crate::llm::config::save(&state.db, &routing)
         .map_err(|_| EvalContractError::new("security_route_failed"))?;

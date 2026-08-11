@@ -128,6 +128,7 @@ Agent 提交状态必须区分本地与远端事实：`已保存`、`正在连�
 
 - LLM / MCP 供应商配置采用三级导航：AI 子页列表 → 供应商卡片 → 详情子页；详情顶栏使用 `ChevronLeft` 返回上一级，不引入 URL 路由。
 - 详情页默认只展示连接凭据与核心操作（LLM 模型列表、MCP 预设与 API Key）；端点、映射、凭据引用等放入「高级设置」`Collapsible`，默认收起，分隔线使用 `border-border-subtle`。
+- 自定义 LLM 端点的连通性、文本或视觉验证不代表 Agent 工具与多轮续接协议已经验证。每个自定义模型在所有验证状态下都必须常显「仅支持对话；Agent 工具协议尚未验证」，不得用“验证成功”覆盖或隐藏该限制。
 - 进入供应商详情时同步更新 overlay 的 `managementCenterProviderId`，以支持深链恢复与面板内导航一致。
 - 供应商列表行使用 `rounded-lg border-border/65 bg-background/55` 的整行可点区域；钻取入口用右侧 `ChevronRight`，勿用裸「配置」文案。MCP 联网候选直接在行内常显「主服务／备用 1／备用 2」标签；上移、下移是详情箭头前的纯图标控件，鼠标悬停或键盘聚焦时显示、粗指针环境保持可见，必须有 tooltip 与 `aria-label`，且不得嵌套在行点击按钮内。状态点：`bg-success`（就绪/Key 已配置/映射完整）、`bg-amber-500`（待完善）、`bg-muted-foreground/60`（未启用）；须配 `aria-label`。
 - AI 子页标题（如「模型与供应商」「联网与证据」）**仅**出现在 [ManagementCenterPanel](src/components/settings/ManagementCenterPanel.tsx) 顶栏；进入供应商详情时顶栏标题改为供应商名、返回回到列表，子组件不得再嵌套同名返回按钮或重复 H3。
@@ -145,7 +146,7 @@ Agent 提交状态必须区分本地与远端事实：`已保存`、`正在连�
 - 过程区不得显示工具参数、搜索词、URL、笔记路径、工具原始输出、provider 内部对象或原始 reasoning channel。过程项使用受限高度滚动，完整展示已持久化的安全事件，并应使用可访问的展开控件。
 - AI 活动状态须投影到 Composer 和/或 StatusBar；禁止只写不读的 activity hint。
 - 普通域 `@` 文件/文件夹与 `#` 标签在输入框和用户消息中只以内联名称呈现，使用 `--ai-mention` 浅绿色前景色；输入中的节点可使用轻量类型图标，但不得显示 `@`、方括号、胶囊或额外“引用”行。真实相对路径与类型仅用于安全 tooltip；涉密域不创建或恢复 mention 节点。
-- 标题栏、Rail 和 Tab 溢出应维持当前平台窗口行为；鼠标点击顶部栏控件不得触发焦点光晕，键盘聚焦仍保留可见焦点提示；人工验收见 `docs/testing/`。
+- 标题栏、Rail 和 Tab 溢出应维持当前平台窗口行为；鼠标点击顶部栏控件不得触发焦点光晕，键盘聚焦仍保留可见焦点提示；macOS 原生 traffic lights 的垂直中心线必须与统一的 44px 标题栏中心线一致（Tauri logical `y = 22`）；人工验收见 `docs/testing/`。
 - 顶栏底色与编辑区同源（`bg-background`），不使用 `surface-chrome`，避免与编辑区形成灰带；活动 Tab 用 inset rim light（顶/左高光）+ 底部内阴影呈现玻璃质感，inactive Tab 保持透明。Tab 固定宽度 `9rem`（溢出压缩至 `4.5rem`），不随标题长度变化。
 - 编辑器在中文上下文自动把 ASCII 标点转为全角（`.` `,` `:` `;` `!` `?` `(` `)` → `。` `，` `：` `；` `！` `？` `（` `）`；`"` `'` 按当前文本块内未配对计数转为 `“”` `‘’`）。仅当紧邻前一个字符属于 CJK 上下文（Han/Hiragana/Katakana/Hangul/全角符号）时转换，保护 `1.` 有序列表、URL、英文段落与 markdown 触发符；codeBlock 与 inline code 不转换。默认开启，管理中心「笔记 → 保存策略」可关。
 

@@ -276,6 +276,100 @@ mod model_pool_tests {
             capability.reasoning_visibility,
             Some(ReasoningVisibility::HiddenChannel)
         );
+        assert_eq!(
+            capability.supported_modes,
+            Some(vec![ReasoningMode::Off, ReasoningMode::Auto])
+        );
+    }
+
+    #[test]
+    fn minimax_reasoning_contract_distinguishes_m3_from_always_on_m2() {
+        let m3 = infer_reasoning_capability(
+            "minimax",
+            "MiniMax-M3",
+            find_model("MiniMax-M3").expect("M3 catalog entry"),
+        );
+        assert_eq!(
+            m3.supported_modes,
+            vec![ReasoningMode::Off, ReasoningMode::Auto]
+        );
+        assert_eq!(m3.default_mode, ReasoningMode::Auto);
+        assert!(m3.disable_supported);
+
+        let m2 = infer_reasoning_capability("minimax", "MiniMax-M2.7", fallback_model("minimax"));
+        assert_eq!(m2.adapter, ReasoningAdapter::MiniMaxReasoningDetails);
+        assert_eq!(m2.supported_modes, vec![ReasoningMode::On]);
+        assert_eq!(m2.default_mode, ReasoningMode::On);
+        assert!(!m2.disable_supported);
+    }
+
+    #[test]
+    fn custom_endpoint_does_not_infer_native_minimax_reasoning_from_model_name() {
+        let capability =
+            infer_reasoning_capability("custom", "MiniMax-M3", fallback_model("custom"));
+
+        assert_eq!(capability.adapter, ReasoningAdapter::None);
+        assert_eq!(capability.control, ReasoningControl::None);
+        assert!(!capability.can_request());
+    }
+
+    #[test]
+    fn sanitization_removes_stale_native_minimax_override_from_custom_endpoint() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://example.test/v1".into()),
+                model_capabilities: std::collections::HashMap::from([(
+                    "MiniMax-M3".into(),
+                    ModelCapabilityOverride {
+                        reasoning_adapter: Some(ReasoningAdapter::MiniMaxReasoningDetails),
+                        reasoning_control: Some(ReasoningControl::Switch),
+                        reasoning_visibility: Some(ReasoningVisibility::HiddenChannel),
+                        supported_modes: Some(vec![ReasoningMode::Off, ReasoningMode::Auto]),
+                        default_mode: Some(ReasoningMode::Auto),
+                        disable_supported: Some(true),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            },
+        );
+
+        sanitize_routing(&mut routing);
+
+        assert!(routing.providers["custom"].model_capabilities.is_empty());
+    }
+
+    #[test]
+    fn sanitization_preserves_user_verified_minimax_override_on_custom_endpoint() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://example.test/v1".into()),
+                model_capabilities: std::collections::HashMap::from([(
+                    "MiniMax-M3".into(),
+                    ModelCapabilityOverride {
+                        reasoning_adapter: Some(ReasoningAdapter::MiniMaxReasoningDetails),
+                        reasoning_control: Some(ReasoningControl::Switch),
+                        reasoning_visibility: Some(ReasoningVisibility::HiddenChannel),
+                        supported_modes: Some(vec![ReasoningMode::Off, ReasoningMode::Auto]),
+                        default_mode: Some(ReasoningMode::Auto),
+                        disable_supported: Some(true),
+                        user_verified_at: Some("2026-08-11T00:00:00Z".into()),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            },
+        );
+
+        sanitize_routing(&mut routing);
+
+        assert!(routing.providers["custom"]
+            .model_capabilities
+            .contains_key("MiniMax-M3"));
     }
 
     #[test]
@@ -938,19 +1032,45 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
         }
         if provider_id == "minimax" {
             for (model_id, capability) in &mut provider.model_capabilities {
-                if is_minimax_reasoning_risk(provider_id, model_id)
-                    && capability.reasoning_adapter
-                        == Some(ReasoningAdapter::OpenAiCompatibleTagStream)
-                {
-                    capability.reasoning_adapter = Some(ReasoningAdapter::MiniMaxReasoningDetails);
-                    capability.reasoning_control = Some(ReasoningControl::Switch);
-                    capability.reasoning_visibility = Some(ReasoningVisibility::HiddenChannel);
-                    capability.supported_modes =
-                        Some(crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec());
-                    capability.default_mode = Some(ReasoningMode::Auto);
-                    capability.disable_supported = Some(true);
+                let native_contract = if crate::llm::model_catalog::is_minimax_m3_model(model_id) {
+                    Some((
+                        crate::llm::model_catalog::MINIMAX_M3_REASONING_MODES,
+                        ReasoningMode::Auto,
+                        true,
+                    ))
+                } else if crate::llm::model_catalog::is_minimax_m2_model(model_id) {
+                    Some((
+                        crate::llm::model_catalog::MINIMAX_ALWAYS_ON_REASONING_MODES,
+                        ReasoningMode::On,
+                        false,
+                    ))
+                } else {
+                    None
+                };
+                if let Some((supported_modes, default_mode, disable_supported)) = native_contract {
+                    if matches!(
+                        capability.reasoning_adapter,
+                        Some(
+                            ReasoningAdapter::OpenAiCompatibleTagStream
+                                | ReasoningAdapter::MiniMaxReasoningDetails
+                        )
+                    ) {
+                        capability.reasoning_adapter =
+                            Some(ReasoningAdapter::MiniMaxReasoningDetails);
+                        capability.reasoning_control = Some(ReasoningControl::Switch);
+                        capability.reasoning_visibility = Some(ReasoningVisibility::HiddenChannel);
+                        capability.supported_modes = Some(supported_modes.to_vec());
+                        capability.default_mode = Some(default_mode);
+                        capability.disable_supported = Some(disable_supported);
+                    }
                 }
             }
+        }
+        if crate::llm::providers::is_custom_provider(provider_id) {
+            provider.model_capabilities.retain(|_, capability| {
+                capability.reasoning_adapter != Some(ReasoningAdapter::MiniMaxReasoningDetails)
+                    || capability.user_verified_at.is_some()
+            });
         }
     }
     config.providers.retain(|id, _| {
@@ -1338,15 +1458,19 @@ fn infer_reasoning_capability(
 ) -> ReasoningCapability {
     let provider = provider_id.to_ascii_lowercase();
     let model = model_id.to_ascii_lowercase();
-    if let Some(catalog_capability) = model_spec.reasoning_capability() {
-        return ReasoningCapability {
-            adapter: catalog_capability.adapter,
-            control: catalog_capability.control,
-            visibility: catalog_capability.visibility,
-            supported_modes: catalog_capability.supported_modes.to_vec(),
-            default_mode: catalog_capability.default_mode,
-            disable_supported: catalog_capability.disable_supported,
-        };
+    if model_spec.provider_id.eq_ignore_ascii_case(provider_id)
+        && model_spec.id.eq_ignore_ascii_case(model_id)
+    {
+        if let Some(catalog_capability) = model_spec.reasoning_capability() {
+            return ReasoningCapability {
+                adapter: catalog_capability.adapter,
+                control: catalog_capability.control,
+                visibility: catalog_capability.visibility,
+                supported_modes: catalog_capability.supported_modes.to_vec(),
+                default_mode: catalog_capability.default_mode,
+                disable_supported: catalog_capability.disable_supported,
+            };
+        }
     }
     if provider == "deepseek"
         && (model.starts_with("deepseek-")
@@ -1422,14 +1546,24 @@ fn infer_reasoning_capability(
             disable_supported: true,
         };
     }
-    if is_minimax_reasoning_risk(&provider, &model) {
+    if provider == "minimax" && crate::llm::model_catalog::is_minimax_m3_model(&model) {
         return ReasoningCapability {
             adapter: ReasoningAdapter::MiniMaxReasoningDetails,
             control: ReasoningControl::Switch,
             visibility: ReasoningVisibility::HiddenChannel,
-            supported_modes: crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec(),
+            supported_modes: crate::llm::model_catalog::MINIMAX_M3_REASONING_MODES.to_vec(),
             default_mode: ReasoningMode::Auto,
             disable_supported: true,
+        };
+    }
+    if provider == "minimax" && crate::llm::model_catalog::is_minimax_m2_model(&model) {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::MiniMaxReasoningDetails,
+            control: ReasoningControl::Switch,
+            visibility: ReasoningVisibility::HiddenChannel,
+            supported_modes: crate::llm::model_catalog::MINIMAX_ALWAYS_ON_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::On,
+            disable_supported: false,
         };
     }
     ReasoningCapability::none()
@@ -1440,10 +1574,6 @@ fn is_openai_reasoning_model(model: &str) -> bool {
         || model.starts_with("o3")
         || model.starts_with("o4")
         || model.starts_with("gpt-5")
-}
-
-fn is_minimax_reasoning_risk(provider: &str, model: &str) -> bool {
-    provider.contains("minimax") || model.contains("minimax") || model == "minimax-m3"
 }
 
 fn normalize_legacy_model_id(model: &str) -> &str {

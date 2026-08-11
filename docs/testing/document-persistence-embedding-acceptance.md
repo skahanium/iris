@@ -34,7 +34,7 @@
 
 在此闭环真实执行并留存证据前，状态只能写作“待验收”，不能声称 Windows E2E 已通过。
 
-自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中确认重命名后的新 `[data-path]` editor surface 已稳定进入 `visible`，明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。E2E 不捕捉 React 生命周期的瞬时 `staging` 帧；重挂载期间保存的快照安全约束由确定性的组件与持久化生命周期测试覆盖。该入口只在 main push（或手动触发）的 `Windows x64 desktop E2E` job 中运行一次，PR 不启动 Windows job。发布 source guard 必须确认 tag 的同一 SHA 已存在成功的 main push CI，因此发布打包不得重复 Windows E2E。PR 合并门禁由仓库外 GitHub 分支保护规则要求 `CI / macOS ARM64 quality` 并保持分支最新。静态 Vitest 契约不能替代 main CI 的 Windows 运行日志。
+自动化入口为 `npm run test:desktop:windows`。它必须在真实 Tauri WebView 中确认重命名后的新 `[data-path]` editor surface 已稳定进入 `visible`，明确将选择定位到文末，输入唯一正文并立即保存、关闭、重启，再先作磁盘字节断言并通过最近笔记 UI 重新打开断言标题与全文。E2E 不捕捉 React 生命周期的瞬时 `staging` 帧；重挂载期间保存的快照安全约束由确定性的组件与持久化生命周期测试覆盖。该入口只在人工触发的发布就绪流程中由 `Windows x64 desktop E2E` job 运行一次，PR 与普通 main push 都不启动 Windows job。发布 source guard 必须同时确认 tag 的同一 SHA 已存在成功的 main push CI 和成功的人工发布就绪 CI，因此发布打包不得重复 Windows E2E。PR 合并门禁由仓库外 GitHub 分支保护规则要求 `CI / macOS ARM64 quality` 并保持分支最新。静态 Vitest 契约不能替代人工发布就绪 CI 的 Windows 运行日志。
 
 ### Windows E2E 的稳定边界
 

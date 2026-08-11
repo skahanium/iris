@@ -492,15 +492,12 @@ impl VisibleStreamSanitizer {
     /// released merely because it is long.
     fn sanitize_visible_stream_prefix(&self, raw: &str, done: bool) -> String {
         let without_meta = sanitize_meta_analysis_prefix_for_stream(raw, done, &self.provider_id);
-
-        if done {
+        let without_partial_reasoning = if done {
             without_meta
         } else {
-            withhold_partial_provider_control_suffix(
-                &withhold_partial_reasoning_open_suffix(&without_meta),
-                &self.provider_id,
-            )
-        }
+            withhold_partial_reasoning_open_suffix(&without_meta)
+        };
+        withhold_partial_provider_control_suffix(&without_partial_reasoning, &self.provider_id)
     }
 }
 
@@ -534,11 +531,91 @@ fn append_minimax_reasoning_details(
     value: &serde_json::Value,
     details: &mut Vec<serde_json::Value>,
 ) {
-    match value {
-        serde_json::Value::Array(items) => details.extend(items.iter().cloned()),
-        serde_json::Value::Object(_) => details.push(value.clone()),
-        _ => {}
+    let incoming = match value {
+        serde_json::Value::Array(items) => items.iter().collect::<Vec<_>>(),
+        serde_json::Value::Object(_) => vec![value],
+        _ => return,
+    };
+
+    for (position, item) in incoming.into_iter().enumerate() {
+        let Some(item_object) = item.as_object() else {
+            continue;
+        };
+        let matching_index = details
+            .iter()
+            .position(|existing| minimax_reasoning_detail_stably_matches(existing, item))
+            .or_else(|| {
+                details
+                    .get(position)
+                    .filter(|existing| minimax_reasoning_detail_position_matches(existing, item))
+                    .map(|_| position)
+            });
+        let Some(matching_index) = matching_index else {
+            details.push(item.clone());
+            continue;
+        };
+        let Some(existing_object) = details[matching_index].as_object_mut() else {
+            details[matching_index] = item.clone();
+            continue;
+        };
+
+        let merged_text = match (
+            existing_object
+                .get("text")
+                .and_then(serde_json::Value::as_str),
+            item_object.get("text").and_then(serde_json::Value::as_str),
+        ) {
+            (Some(existing), Some(incoming)) if incoming.starts_with(existing) => {
+                Some(incoming.to_string())
+            }
+            (Some(existing), Some(incoming)) if existing.starts_with(incoming) => {
+                Some(existing.to_string())
+            }
+            (Some(existing), Some(incoming)) => Some(format!("{existing}{incoming}")),
+            (None, Some(incoming)) => Some(incoming.to_string()),
+            _ => None,
+        };
+        for (key, value) in item_object {
+            if key != "text" {
+                existing_object.insert(key.clone(), value.clone());
+            }
+        }
+        if let Some(text) = merged_text {
+            existing_object.insert("text".to_string(), serde_json::Value::String(text));
+        }
     }
+}
+
+fn minimax_reasoning_detail_stably_matches(
+    existing: &serde_json::Value,
+    incoming: &serde_json::Value,
+) -> bool {
+    let (Some(existing), Some(incoming)) = (existing.as_object(), incoming.as_object()) else {
+        return false;
+    };
+    if let Some(id) = incoming.get("id") {
+        return existing.get("id") == Some(id);
+    }
+    if let Some(index) = incoming.get("index") {
+        return existing.get("index") == Some(index)
+            && existing.get("type") == incoming.get("type");
+    }
+    false
+}
+
+fn minimax_reasoning_detail_position_matches(
+    existing: &serde_json::Value,
+    incoming: &serde_json::Value,
+) -> bool {
+    let (Some(existing), Some(incoming)) = (existing.as_object(), incoming.as_object()) else {
+        return false;
+    };
+    existing.get("id").is_none()
+        && existing.get("index").is_none()
+        && incoming.get("id").is_none()
+        && incoming.get("index").is_none()
+        && existing.get("type").is_some()
+        && existing.get("type") == incoming.get("type")
 }
 
 fn minimax_reasoning_continuation(
@@ -1960,6 +2037,19 @@ mod tests {
     }
 
     #[test]
+    fn minimax_stream_sanitizer_discards_partial_control_token_at_end_of_stream() {
+        let mut sanitizer = VisibleStreamSanitizer::for_provider("minimax");
+
+        assert_eq!(
+            sanitizer
+                .sanitize_delta("Visible<|mini", false)
+                .as_test_delta(),
+            "Visible"
+        );
+        assert_eq!(sanitizer.finish().as_test_delta(), "");
+    }
+
+    #[test]
     fn minimax_stream_reasoning_details_are_kept_only_for_the_tool_continuation() {
         let mut details = Vec::new();
         append_minimax_reasoning_details(
@@ -1970,6 +2060,77 @@ mod tests {
         assert_eq!(
             minimax_reasoning_continuation(details, String::new()).as_deref(),
             Some(r#"[{"text":"private","type":"reasoning.text"}]"#)
+        );
+    }
+
+    #[test]
+    fn minimax_stream_reasoning_details_merge_cumulative_snapshots() {
+        let mut details = Vec::new();
+        append_minimax_reasoning_details(
+            &serde_json::json!([{
+                "index": 0,
+                "type": "reasoning.text",
+                "text": "private"
+            }]),
+            &mut details,
+        );
+        append_minimax_reasoning_details(
+            &serde_json::json!([{
+                "index": 0,
+                "type": "reasoning.text",
+                "text": "private plan"
+            }]),
+            &mut details,
+        );
+
+        assert_eq!(
+            minimax_reasoning_continuation(details, String::new()).as_deref(),
+            Some(r#"[{"index":0,"text":"private plan","type":"reasoning.text"}]"#)
+        );
+    }
+
+    #[test]
+    fn minimax_stream_reasoning_details_merge_incremental_fragments() {
+        let mut details = Vec::new();
+        append_minimax_reasoning_details(
+            &serde_json::json!({
+                "id": "reasoning-1",
+                "type": "reasoning.text",
+                "text": "private "
+            }),
+            &mut details,
+        );
+        append_minimax_reasoning_details(
+            &serde_json::json!({
+                "id": "reasoning-1",
+                "type": "reasoning.text",
+                "text": "plan"
+            }),
+            &mut details,
+        );
+
+        assert_eq!(
+            minimax_reasoning_continuation(details, String::new()).as_deref(),
+            Some(r#"[{"id":"reasoning-1","text":"private plan","type":"reasoning.text"}]"#)
+        );
+    }
+
+    #[test]
+    fn minimax_stream_reasoning_details_preserve_distinct_same_type_items() {
+        let mut details = Vec::new();
+        append_minimax_reasoning_details(
+            &serde_json::json!([
+                {"type": "reasoning.text", "text": "first"},
+                {"type": "reasoning.text", "text": "second"}
+            ]),
+            &mut details,
+        );
+
+        assert_eq!(
+            minimax_reasoning_continuation(details, String::new()).as_deref(),
+            Some(
+                r#"[{"text":"first","type":"reasoning.text"},{"text":"second","type":"reasoning.text"}]"#
+            )
         );
     }
 

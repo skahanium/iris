@@ -18,12 +18,15 @@ API Key 不属于路由 JSON；它以 `iris.llm.{provider_id}` 服务名进入 I
 
 模型目录、provider 刷新结果和模型验证事实共同决定模型是否可用于文本、视觉、长上下文或 reasoning。未知模型不会因名称猜测获得高风险能力。原始 chain-of-thought、`reasoning_content` 及 `<think>` 类块不作为普通对话内容持久化、展示、记忆、证据账本或归因引用。若 provider 协议明确要求同一 Run 的 continuation，`reasoning_content` 只可随该协议 continuation 传递；它绝不进入后续历史轮次。只有 provider 显式给出的 reasoning summary 才可作为独立、受限长度且已脱敏的 Run 过程事件显示和恢复，不能替代或反推原始推理。
 
+内置 MiniMax 端点按公开模型协议显式分族：M3 只提供 `off/auto`，M2.x 的 thinking 不可关闭并固定为 `on`；两者都用顶层 `reasoning_split=true` 隔离推理详情，只有 M3 发送 `thinking.type`。流式 `reasoning_details` 按同一块的累积快照或增量片段合并，完整 assistant 续轮状态仅在同一 Run 的工具 continuation 中回放。模型名出现在自定义端点时不会继承这些内置能力。
+
 解析后的候选保留输入/输出 token 预算。视觉直答和工具循环都从同一模型池筛选，并将图片消息原样交给选中的视觉模型。
 
 ## HTTPS 与连通性
 
 - 自定义 provider 必须使用 HTTPS；`http://`、loopback HTTP 和通用 settings 写入会被拒绝。
 - provider 连通性检测与模型验证是独立操作：前者检查端点与凭据，后者按指定模型发起受控文本或视觉探测。
+- 自定义 provider 的上述探测不验证 tools、tool-call continuation 或 reasoning 协议；当前一律保持 chat-only，设置页在验证成功后仍持续显示该限制。
 - `connectivity_status` 返回脱敏的 LLM 状态、已选模型和联网 provider 配置状态；不返回 API Key、笔记正文或完整 prompt。
 
 ## 联网证据

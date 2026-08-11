@@ -86,7 +86,7 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(runner).toContain("reopened_editor_body_mismatch");
   });
 
-  it("将真实 Windows E2E 设为 main CI 的单次硬门禁", () => {
+  it("将真实 Windows E2E 设为人工发布就绪流程的单次硬门禁", () => {
     const workflow = read(".github/workflows/ci.yml");
 
     expect(workflow).toContain("Install pinned Tauri WebDriver tools");
@@ -97,10 +97,10 @@ describe("Windows 桌面 Markdown 持久化 E2E 入口", () => {
     expect(workflow).toContain("Run Windows Markdown persistence desktop E2E");
     expect(workflow).toContain("npm run test:desktop:windows");
     expect(workflow).toContain("branches: [main]");
-    expect(workflow).toContain("if: github.event_name != 'pull_request'");
+    expect(workflow).toContain("if: github.event_name == 'workflow_dispatch'");
   });
 
-  it("在 main CI 使用 debug/no-bundle 构建并固定测试工具版本", () => {
+  it("在人工发布就绪 CI 使用 debug/no-bundle 构建并固定测试工具版本", () => {
     const ci = read(".github/workflows/ci.yml");
     const release = read(".github/workflows/package-desktop.yml");
 

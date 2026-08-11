@@ -58,6 +58,8 @@ export const REASONING_EFFORT_OPTIONS: ReasoningMode[] = [
 ];
 
 export const REASONING_SWITCH_OPTIONS: ReasoningMode[] = ["off", "on", "auto"];
+const MINIMAX_M3_REASONING_OPTIONS: ReasoningMode[] = ["off", "auto"];
+const MINIMAX_ALWAYS_ON_REASONING_OPTIONS: ReasoningMode[] = ["on"];
 export const UNSUPPORTED_REASONING_CAPABILITY: ReasoningUiCapability = {
   supported: false,
   control: "none",
@@ -203,18 +205,6 @@ export function modelCapabilitySummary(
   return `${base} · ${reasoningSummary}`;
 }
 
-export function modelLooksTagReasoningRisk(
-  providerId: string,
-  modelId: string,
-): boolean {
-  const provider = providerId.toLowerCase();
-  return (
-    provider.includes("minimax") ||
-    /minimax/i.test(modelId) ||
-    /^minimax-m3$/i.test(modelId)
-  );
-}
-
 export function modelLooksOpenAiReasoning(
   providerId: string,
   modelId: string,
@@ -283,6 +273,31 @@ export function catalogReasoningCapability(
   modelId: string,
   catalog: ModelCatalogEntry | undefined,
 ): ReasoningUiCapability | null {
+  if (providerId.toLowerCase() === "minimax" && /^minimax-m3$/i.test(modelId)) {
+    return {
+      supported: true,
+      control: "switch",
+      tagOnly: false,
+      supportedModes: MINIMAX_M3_REASONING_OPTIONS,
+      defaultMode: "auto",
+      disableSupported: true,
+      source: "catalog",
+    };
+  }
+  if (
+    providerId.toLowerCase() === "minimax" &&
+    /^minimax-m2(?:[.-]|$)/i.test(modelId)
+  ) {
+    return {
+      supported: true,
+      control: "switch",
+      tagOnly: false,
+      supportedModes: MINIMAX_ALWAYS_ON_REASONING_OPTIONS,
+      defaultMode: "on",
+      disableSupported: false,
+      source: "catalog",
+    };
+  }
   if (modelLooksDeepSeekReasoning(providerId, modelId)) {
     return {
       supported: true,
@@ -343,17 +358,6 @@ export function catalogReasoningCapability(
       supported: true,
       control: "tag",
       tagOnly: true,
-      supportedModes: REASONING_SWITCH_OPTIONS,
-      defaultMode: "auto",
-      disableSupported: true,
-      source: "catalog",
-    };
-  }
-  if (catalog?.providerId === "minimax" && catalog.supportsThinking) {
-    return {
-      supported: true,
-      control: "switch",
-      tagOnly: false,
       supportedModes: REASONING_SWITCH_OPTIONS,
       defaultMode: "auto",
       disableSupported: true,

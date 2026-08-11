@@ -778,13 +778,13 @@ async fn normal_service_executes_depth_one_child_run_on_the_real_provider_route(
         "custom".into(),
         ProviderOverride {
             base_url: Some(llm.base_url.clone()),
-            enabled_models: Some(vec!["child-run-model".into()]),
+            enabled_models: Some(vec!["iris-test-verified-tools-child-run".into()]),
             ..Default::default()
         },
     );
     routing.default_model = Some(ModelReference {
         provider_id: "custom".into(),
-        model_id: "child-run-model".into(),
+        model_id: "iris-test-verified-tools-child-run".into(),
     });
     crate::llm::config::save(&state.db, &routing).expect("normal service route setup");
     state.set_test_streaming_client(reqwest::Client::new());

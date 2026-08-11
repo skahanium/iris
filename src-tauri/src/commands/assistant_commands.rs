@@ -1311,7 +1311,7 @@ mod normal_run_desktop_adapter_tests {
         configure_test_llm(
             &state,
             llm.base_url.clone(),
-            "assistant-start-external-model",
+            "iris-test-verified-tools-assistant-external",
         );
         let app = tauri::test::mock_builder()
             .manage(Arc::clone(&state))
@@ -1400,7 +1400,7 @@ mod normal_run_desktop_adapter_tests {
         configure_test_llm(
             &state,
             bypass_llm.base_url.clone(),
-            "assistant-start-external-bypass-model",
+            "iris-test-verified-tools-assistant-external-bypass",
         );
         let mut bypass_request = granted_request;
         bypass_request.client_request_id = "assistant-start-external-bypass".into();

@@ -142,7 +142,7 @@ afterEach(async () => {
 });
 
 describe("desktop title bar", () => {
-  it("macOS config uses decorated overlay shell with native traffic lights", () => {
+  it("macOS config vertically centers native traffic lights in the 44px titlebar", () => {
     const macosSource = read("src-tauri/tauri.macos.conf.json");
     const macos = JSON.parse(macosSource) as {
       app?: {
@@ -158,7 +158,7 @@ describe("desktop title bar", () => {
     expect(macosSource).toContain('"transparent": false');
     expect(macos.app?.windows?.[0]?.trafficLightPosition).toEqual({
       x: 14,
-      y: 24,
+      y: 22,
     });
     expect(macosSource).not.toContain("Tauri App");
   });

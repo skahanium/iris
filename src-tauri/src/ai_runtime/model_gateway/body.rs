@@ -364,18 +364,20 @@ fn build_openai_responses_body_inner(request: &GatewayRequest) -> serde_json::Va
 
 fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) {
     let reasoning = effective_reasoning_request(request);
-    // MiniMax M3 exposes its internal analysis inline unless `reasoning_split`
-    // is requested. Keep the response shape private even when the user turns
-    // thinking off, so a normal chat response cannot leak control markup.
+    // MiniMax exposes a stable private channel through `reasoning_split`.
+    // Only M3 accepts `thinking.type`; M2.x always thinks and ignores the
+    // disable switch, so no unsupported control is sent for that family.
     if reasoning.adapter == ReasoningAdapter::MiniMaxReasoningDetails {
         body["reasoning_split"] = serde_json::json!(true);
-        body["thinking"] = serde_json::json!({
-            "type": if reasoning.requested && reasoning.mode != ReasoningMode::Off {
-                "adaptive"
-            } else {
-                "disabled"
-            }
-        });
+        if crate::llm::model_catalog::is_minimax_m3_model(&request.provider.model) {
+            body["thinking"] = serde_json::json!({
+                "type": if reasoning.requested && reasoning.mode != ReasoningMode::Off {
+                    "adaptive"
+                } else {
+                    "disabled"
+                }
+            });
+        }
     }
     if !reasoning.requested {
         return;
@@ -865,6 +867,25 @@ mod phase3_adapter_contract_tests {
 
         assert!(body.get("thinking").is_none());
         assert!(body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn minimax_m2_keeps_reasoning_split_without_sending_unsupported_thinking_control() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.provider.model = "MiniMax-M2.7".into();
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::On,
+            adapter: ReasoningAdapter::MiniMaxReasoningDetails,
+            control: crate::ai_types::ReasoningControl::Switch,
+            visibility: crate::ai_types::ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let body = build_chat_completions_body(&request);
+
+        assert_eq!(body["reasoning_split"], true);
+        assert!(body.get("thinking").is_none());
     }
 
     #[test]

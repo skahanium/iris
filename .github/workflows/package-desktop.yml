@@ -40,7 +40,7 @@ jobs:
             exit 1
           fi
 
-      - name: Require successful same-SHA main push CI
+      - name: Require successful same-SHA CI and release readiness
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -54,6 +54,17 @@ jobs:
             --jq '.total_count')"
           if [ "$successful_runs" -lt 1 ]; then
             echo "::error::No successful main push run of ci.yml exists for release SHA $GITHUB_SHA."
+            exit 1
+          fi
+          readiness_runs="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs" \
+            -f head_sha="$GITHUB_SHA" \
+            -f branch=main \
+            -f event=workflow_dispatch \
+            -f status=success \
+            --jq '.total_count')"
+          if [ "$readiness_runs" -lt 1 ]; then
+            echo "::error::No successful manual release-readiness run of ci.yml exists for release SHA $GITHUB_SHA. Dispatch CI on main for this exact commit before packaging."
             exit 1
           fi
 

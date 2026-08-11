@@ -58,6 +58,14 @@ impl ProviderProtocolContract {
 /// remain chat-only until a future explicit live capability probe establishes a
 /// provider-specific contract.
 pub fn provider_protocol_contract(provider_id: &str, model_id: &str) -> ProviderProtocolContract {
+    // Test fixtures may opt into an explicit verified contract. This branch is
+    // absent from release builds, so production custom endpoints stay chat-only.
+    #[cfg(test)]
+    if crate::llm::providers::is_custom_provider(provider_id)
+        && model_id.starts_with("iris-test-verified-tools-")
+    {
+        return ProviderProtocolContract::openai_compatible();
+    }
     match provider_id {
         provider if provider == "custom" || provider.starts_with("custom_") => {
             ProviderProtocolContract::chat_only()
@@ -136,6 +144,18 @@ mod tests {
         let contract = provider_protocol_contract("custom_openrouter", "unknown");
         assert!(!contract.tools);
         assert_eq!(contract.tool_continuation, ToolContinuationMode::Disabled);
+    }
+
+    #[test]
+    fn explicit_test_protocol_fixture_keeps_tool_loop_coverage_without_relaxing_custom_endpoints() {
+        let contract =
+            provider_protocol_contract("custom", "iris-test-verified-tools-agent-capacity");
+
+        assert!(contract.tools);
+        assert_eq!(
+            contract.tool_continuation,
+            ToolContinuationMode::OpenAiChatCompletions
+        );
     }
 
     #[test]

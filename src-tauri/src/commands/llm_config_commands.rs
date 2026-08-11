@@ -483,14 +483,28 @@ fn inferred_reasoning_probe_capability(
             probe_verified_at: Some(now),
         });
     }
-    if is_minimax_reasoning_risk(&provider, &model) {
+    if provider == "minimax" && crate::llm::model_catalog::is_minimax_m3_model(&model) {
         return Some(config::ModelCapabilityOverride {
             reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::MiniMaxReasoningDetails),
             reasoning_control: Some(crate::ai_types::ReasoningControl::Switch),
             reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::HiddenChannel),
-            supported_modes: Some(crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec()),
+            supported_modes: Some(crate::llm::model_catalog::MINIMAX_M3_REASONING_MODES.to_vec()),
             default_mode: Some(crate::ai_types::ReasoningMode::Auto),
             disable_supported: Some(true),
+            user_verified_at: None,
+            probe_verified_at: Some(now),
+        });
+    }
+    if provider == "minimax" && crate::llm::model_catalog::is_minimax_m2_model(&model) {
+        return Some(config::ModelCapabilityOverride {
+            reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::MiniMaxReasoningDetails),
+            reasoning_control: Some(crate::ai_types::ReasoningControl::Switch),
+            reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::HiddenChannel),
+            supported_modes: Some(
+                crate::llm::model_catalog::MINIMAX_ALWAYS_ON_REASONING_MODES.to_vec(),
+            ),
+            default_mode: Some(crate::ai_types::ReasoningMode::On),
+            disable_supported: Some(false),
             user_verified_at: None,
             probe_verified_at: Some(now),
         });
@@ -530,10 +544,6 @@ fn is_mimo_thinking_model(model: &str) -> bool {
     model.starts_with("mimo-v2.5") && !model.contains("asr") && !model.contains("tts")
         || model == "mimo-v2.5-pro"
         || model == "mimo-v2.5-pro-ultraspeed"
-}
-
-fn is_minimax_reasoning_risk(provider: &str, model: &str) -> bool {
-    provider.contains("minimax") || model.contains("minimax") || model == "minimax-m3"
 }
 
 fn check_model_list_for_validation(model_id: &str, ids: &[String]) -> ModelListValidationCheck {
@@ -741,5 +751,38 @@ mod reasoning_probe_tests {
             capability.reasoning_visibility,
             Some(crate::ai_types::ReasoningVisibility::HiddenChannel)
         );
+        assert_eq!(
+            capability.supported_modes,
+            Some(vec![
+                crate::ai_types::ReasoningMode::Off,
+                crate::ai_types::ReasoningMode::Auto,
+            ])
+        );
+        assert_eq!(
+            capability.default_mode,
+            Some(crate::ai_types::ReasoningMode::Auto)
+        );
+        assert_eq!(capability.disable_supported, Some(true));
+    }
+
+    #[test]
+    fn minimax_m2_probe_records_always_on_reasoning() {
+        let capability = inferred_reasoning_probe_capability("minimax", "MiniMax-M2.7")
+            .expect("MiniMax M2 has a reasoning contract");
+
+        assert_eq!(
+            capability.supported_modes,
+            Some(vec![crate::ai_types::ReasoningMode::On])
+        );
+        assert_eq!(
+            capability.default_mode,
+            Some(crate::ai_types::ReasoningMode::On)
+        );
+        assert_eq!(capability.disable_supported, Some(false));
+    }
+
+    #[test]
+    fn custom_probe_does_not_claim_native_minimax_reasoning() {
+        assert!(inferred_reasoning_probe_capability("custom", "MiniMax-M3").is_none());
     }
 }

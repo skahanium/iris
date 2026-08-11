@@ -305,8 +305,8 @@ export function LlmProviderDetail({
                         : "text-[11px] text-muted-foreground"
                     }
                   >
-                    {isCustomProviderId(provider.id) && !result
-                      ? `${summary} · Chat-only（Agent 协议未验证）`
+                    {isCustomProviderId(provider.id)
+                      ? `${summary} · 仅支持对话；Agent 工具协议尚未验证`
                       : summary}
                   </span>
                   <ModelDebugDetails

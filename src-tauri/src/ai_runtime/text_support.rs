@@ -56,9 +56,9 @@ pub fn sanitize_meta_analysis_prefix(text: &str) -> String {
     kept.join("\n\n")
 }
 
-/// Remove only the documented MiniMax chat-template control token from a model
-/// response. This is deliberately provider-scoped: user-authored text and
-/// control markers from other providers must never be rewritten here.
+/// Defensively remove a MiniMax-shaped chat-template control marker observed
+/// from compatible gateways. It is not part of the public API contract, so
+/// cleanup stays provider-scoped and never rewrites user text for other models.
 pub fn sanitize_provider_visible_content(provider_id: &str, text: &str) -> String {
     let without_provider_controls = if provider_id.eq_ignore_ascii_case("minimax") {
         strip_minimax_control_tokens(text)

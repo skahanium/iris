@@ -40,7 +40,6 @@ import {
   catalogReasoningCapability,
   findModelCatalogForProvider,
   modelCapabilitySummary,
-  modelLooksTagReasoningRisk,
   nextCustomProviderId,
   normalizeCandidateOrder,
   parseModelIds,
@@ -567,10 +566,7 @@ export function LlmRoutingSection({
         source: override.userVerifiedAt ? "user" : "probe",
       };
     }
-    if (
-      override?.reasoningAdapter === "open_ai_compatible_tag_stream" ||
-      modelLooksTagReasoningRisk(providerId, modelId)
-    ) {
+    if (override?.reasoningAdapter === "open_ai_compatible_tag_stream") {
       return {
         supported: true,
         control: "tag",

@@ -7,7 +7,9 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { LlmProviderDetail } from "@/components/settings/LlmProviderDetail";
 import { LlmRoutingSection } from "@/components/settings/LlmRoutingSection";
+import { modelCapabilitySummary } from "@/components/settings/llmRoutingModelHelpers";
 import { llmConfigGet } from "@/lib/ipc";
 import type { LlmConfigGetResponse, ModelCatalogEntry } from "@/types/llm";
 
@@ -152,5 +154,65 @@ describe("添加模型按钮回归（v1.2.18 状态覆盖 bug）", () => {
       expect(enabledList.textContent).toContain("未添加模型时不会激活"),
     );
     expect(enabledList.textContent).not.toContain("deepseek-v4-flash");
+  });
+});
+
+describe("自定义端点 Agent 能力提示", () => {
+  afterEach(cleanup);
+
+  it("模型验证成功后仍明确说明 Agent 工具协议尚未验证", () => {
+    render(
+      <LlmProviderDetail
+        provider={{
+          id: "custom",
+          name: "本地网关",
+          enabledModels: ["local-model"],
+          configured: true,
+          custom: true,
+          endpointManaged: "custom",
+          requiresApiKey: true,
+        }}
+        override={{
+          baseUrl: "https://gateway.example.test/v1",
+          enabledModels: ["local-model"],
+        }}
+        providerModels={[
+          { id: "local-model", catalog: undefined, registry: undefined },
+        ]}
+        providerResult={undefined}
+        requiresBaseUrl
+        baseUrl="https://gateway.example.test/v1"
+        keyInput=""
+        keyConfigured
+        keySaving={false}
+        testing={null}
+        refreshingProvider={null}
+        newModelInput=""
+        testResults={{
+          "custom:local-model": {
+            ok: true,
+            message: "文本可用 · 视觉不支持 · 推理未知",
+          },
+        }}
+        modelSummary={modelCapabilitySummary}
+        reasoningSummaryForModel={() => "推理未知"}
+        onKeyInput={vi.fn()}
+        onSaveKey={vi.fn()}
+        onClearKey={vi.fn()}
+        onTestProvider={vi.fn()}
+        onRefreshModels={vi.fn()}
+        onDeleteProvider={vi.fn()}
+        onBaseUrlChange={vi.fn()}
+        onLabelChange={vi.fn()}
+        onNewModelInputChange={vi.fn()}
+        onAddModel={vi.fn()}
+        onValidateModel={vi.fn()}
+        onRemoveModel={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText(/仅支持对话；Agent 工具协议尚未验证/),
+    ).toBeInTheDocument();
   });
 });

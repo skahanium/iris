@@ -96,8 +96,8 @@ jobs:
     name: Release readiness / macOS ARM64
     # Keep the ordinary main/PR gate deterministic and bounded. The expensive
     # model-provisioned RAG and desktop-release checks remain available as an
-    # explicit pre-release dispatch, while tag packaging still requires a
-    # successful same-SHA main CI run.
+    # explicit pre-release dispatch. Desktop packaging requires both the
+    # successful same-SHA main push run and this successful manual run.
     if: github.event_name == 'workflow_dispatch'
     runs-on: macos-15
     timeout-minutes: 30

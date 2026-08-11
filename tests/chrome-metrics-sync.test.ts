@@ -93,7 +93,7 @@ describe("chrome metrics SSOT", () => {
     );
   });
 
-  it("macOS uses decorated overlay shell with native traffic lights", () => {
+  it("macOS centers native traffic lights on the titlebar centerline", () => {
     const macosSource = read("src-tauri/tauri.macos.conf.json");
     const macos = JSON.parse(macosSource) as {
       app?: {
@@ -108,7 +108,10 @@ describe("chrome metrics SSOT", () => {
     expect(macosSource).toContain('"transparent": false');
     expect(macosSource).toContain('"titleBarStyle": "Overlay"');
     expect(macosSource).toContain('"hiddenTitle": true');
-    expect(mainWindow?.trafficLightPosition).toEqual({ x: 14, y: 24 });
+    expect(mainWindow?.trafficLightPosition).toEqual({
+      x: 14,
+      y: MACOS_TITLEBAR_HEIGHT_PX / 2,
+    });
     expect(read("src/lib/platform-chrome.ts")).toContain(
       "return isTauriRuntime() && !isMacOSDesktopChrome()",
     );

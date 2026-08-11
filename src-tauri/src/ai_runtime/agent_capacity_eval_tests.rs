@@ -2787,7 +2787,7 @@ fn synthetic_live_candidate() -> LiveProfileCandidate {
     LiveProfileCandidate::new(
         ResolvedLlmConfig {
             provider_id: "custom_sensitive_provider".into(),
-            model: "sensitive-model-name".into(),
+            model: "iris-test-verified-tools-sensitive-model".into(),
             base_url: "https://private-provider.invalid/v1".into(),
             thinking: false,
             reasoning: ResolvedReasoningRequest::disabled(),
@@ -2828,7 +2828,7 @@ fn local_transport_live_candidate(
     LiveProfileCandidate::new_for_local_transport(
         ResolvedLlmConfig {
             provider_id: provider_id.into(),
-            model: "sensitive-model-name".into(),
+            model: "iris-test-verified-tools-sensitive-model".into(),
             base_url: llm_base_url.to_string(),
             thinking: false,
             reasoning: ResolvedReasoningRequest::disabled(),
@@ -3277,7 +3277,7 @@ fn live_preflight_exposes_only_anonymous_profile_ids_and_closed_capability_finge
     );
     for forbidden in [
         "custom_sensitive_provider",
-        "sensitive-model-name",
+        "iris-test-verified-tools-sensitive-model",
         "private-provider.invalid",
         "sensitive-mcp-name",
         "Sensitive Search Service",
@@ -3293,7 +3293,7 @@ fn live_preflight_exposes_only_anonymous_profile_ids_and_closed_capability_finge
 fn live_preflight_can_limit_candidates_to_the_user_approved_model_names() {
     let selected = filter_live_profile_candidates_by_model_allowlist(
         vec![synthetic_live_candidate()],
-        Some("sensitive-model-name"),
+        Some("iris-test-verified-tools-sensitive-model"),
     )
     .expect("approved model remains selectable");
     assert_eq!(selected.len(), 1);
@@ -3380,7 +3380,7 @@ fn approved_live_profile_is_copied_to_an_isolated_temporary_state_without_status
             .candidate_order
             .first()
             .map(|model| model.model_id.as_str()),
-        Some("sensitive-model-name")
+        Some("iris-test-verified-tools-sensitive-model")
     );
     assert_eq!(providers.len(), 1);
     assert_eq!(providers[0].id, "sensitive-mcp-name");
@@ -3592,7 +3592,7 @@ fn live_session_handoff_contains_only_random_handles_expiry_and_anonymous_finger
     let serialized = std::fs::read_to_string(&output).expect("session state");
     for forbidden in [
         "custom_sensitive_provider",
-        "sensitive-model-name",
+        "iris-test-verified-tools-sensitive-model",
         "private-provider.invalid",
         "sensitive-mcp-name",
         "Sensitive Search Service",

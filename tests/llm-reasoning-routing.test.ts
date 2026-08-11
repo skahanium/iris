@@ -2,6 +2,9 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { catalogReasoningCapability } from "@/components/settings/llmRoutingModelHelpers";
+import type { ModelCatalogEntry } from "@/types/llm";
+
 function read(path: string): string {
   return readFileSync(path, "utf8");
 }
@@ -31,5 +34,37 @@ describe("model-level reasoning contract", () => {
     expect(section).not.toContain("routing.slots");
     expect(types).toContain("candidateOrder: ModelReference[]");
     expect(types).not.toContain("SlotRoute");
+  });
+
+  it("models MiniMax M3 as switchable and M2 as always-on only on the native provider", () => {
+    const m3Catalog = {
+      providerId: "minimax",
+      supportsThinking: true,
+    } as ModelCatalogEntry;
+
+    expect(
+      catalogReasoningCapability("minimax", "MiniMax-M3", m3Catalog),
+    ).toMatchObject({
+      supported: true,
+      control: "switch",
+      supportedModes: ["off", "auto"],
+      defaultMode: "auto",
+      disableSupported: true,
+    });
+    expect(
+      catalogReasoningCapability("minimax", "MiniMax-M2.7", undefined),
+    ).toMatchObject({
+      supported: true,
+      control: "switch",
+      supportedModes: ["on"],
+      defaultMode: "on",
+      disableSupported: false,
+    });
+    expect(
+      catalogReasoningCapability("custom", "MiniMax-M3", undefined),
+    ).toBeNull();
+
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+    expect(section).not.toContain("modelLooksTagReasoningRisk");
   });
 });

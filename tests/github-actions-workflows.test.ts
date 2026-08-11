@@ -195,7 +195,7 @@ describe("GitHub Actions workflows", () => {
     expect(release).toContain("workspaces: src-tauri -> ../.iris-dev/target");
   });
 
-  it("validates main ancestry and a successful same-SHA main push CI run", () => {
+  it("validates main ancestry plus same-SHA push CI and manual release readiness", () => {
     const workflow = readWorkflow(packagePath);
     const validation = jobText(packagePath, "validate-release-source");
 
@@ -203,10 +203,14 @@ describe("GitHub Actions workflows", () => {
     expect(validation).toContain("fetch-depth");
     expect(validation).toContain("git merge-base --is-ancestor");
     expect(validation).toContain("actions/workflows/ci.yml/runs");
-    expect(workflow).toContain('-f head_sha="$GITHUB_SHA"');
-    expect(workflow).toContain("-f branch=main");
+    expect(occurrenceCount(workflow, '-f head_sha="$GITHUB_SHA"')).toBe(2);
+    expect(occurrenceCount(workflow, "-f branch=main")).toBe(2);
     expect(workflow).toContain("-f event=push");
-    expect(workflow).toContain("-f status=success");
+    expect(workflow).toContain("-f event=workflow_dispatch");
+    expect(occurrenceCount(workflow, "-f status=success")).toBe(2);
+    expect(validation).toContain(
+      "No successful manual release-readiness run of ci.yml exists",
+    );
     expect(validation).toContain("npm run version:check");
     expect(validation).toContain("npm run docs:check");
     expect(validation).toContain("TAURI_SIGNING_PRIVATE_KEY");
