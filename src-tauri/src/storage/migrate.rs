@@ -2684,7 +2684,10 @@ mod tests {
         migrate_up(&conn).unwrap();
 
         for table in ["feed_sources", "feed_items", "feed_items_fts"] {
-            assert!(table_exists(&conn, table), "missing {table} after migrate_up");
+            assert!(
+                table_exists(&conn, table),
+                "missing {table} after migrate_up"
+            );
         }
 
         let object_count: i64 = conn
@@ -2725,7 +2728,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(fts_hits, 1, "FTS trigger must mirror inserted content_text/title");
+        assert_eq!(
+            fts_hits, 1,
+            "FTS trigger must mirror inserted content_text/title"
+        );
     }
 
     #[test]
@@ -2739,9 +2745,18 @@ mod tests {
 
         rollback_migration(&conn, "063_feed_library", MIGRATION_063_DOWN);
 
-        assert!(!table_exists(&conn, "feed_sources"), "feed_sources must be dropped");
-        assert!(!table_exists(&conn, "feed_items"), "feed_items must be dropped");
-        assert!(!table_exists(&conn, "feed_items_fts"), "feed_items_fts must be dropped");
+        assert!(
+            !table_exists(&conn, "feed_sources"),
+            "feed_sources must be dropped"
+        );
+        assert!(
+            !table_exists(&conn, "feed_items"),
+            "feed_items must be dropped"
+        );
+        assert!(
+            !table_exists(&conn, "feed_items_fts"),
+            "feed_items_fts must be dropped"
+        );
         let leftover: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
@@ -2751,10 +2766,16 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(leftover, 0, "indexes/triggers must be dropped with the tables");
+        assert_eq!(
+            leftover, 0,
+            "indexes/triggers must be dropped with the tables"
+        );
 
         // 回滚不得触碰其他应用状态。
-        assert!(table_exists(&conn, "files"), "unrelated tables must survive down");
+        assert!(
+            table_exists(&conn, "files"),
+            "unrelated tables must survive down"
+        );
         assert!(table_exists(&conn, "_migrations"));
     }
 

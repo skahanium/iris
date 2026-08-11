@@ -10,6 +10,7 @@ mod config_manifest;
 mod credentials;
 pub mod embedding;
 pub mod error;
+pub mod feed;
 pub mod hygiene;
 pub mod indexer;
 pub mod knowledge;
