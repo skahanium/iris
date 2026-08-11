@@ -8,8 +8,9 @@
 //! deliberately disables vectors, so the default CI path never downloads a
 //! model.  Vector quality belongs to a separately provisioned model gate.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use iris_lib::ai_runtime::retrieval_broker::{
@@ -50,6 +51,7 @@ const METADATA_MATCH_QUERY_MIN: usize = 10;
 const SCOPE_LEAK_COUNT_MAX: usize = 0;
 const WARM_KNN_P95_MS_MAX: f64 = 750.0;
 const END_TO_END_RETRIEVAL_P95_MS_MAX: f64 = 1_000.0;
+const PROVISIONED_RAG_WORKER_COUNT: usize = 4;
 
 fn vector_scale_fixture_sizes() -> [i64; 4] {
     [1_000, 10_000, 25_000, 50_000]
@@ -132,6 +134,13 @@ struct VectorEvidenceMetrics {
     expected_hits_at_30: usize,
     packet_count: usize,
     citation_violations: usize,
+}
+
+#[derive(Debug)]
+struct ProvisionedQueryMetrics {
+    query_index: usize,
+    broker: BrokerMetrics,
+    vector_evidence: VectorEvidenceMetrics,
 }
 
 #[test]
@@ -242,6 +251,33 @@ fn scale_fixture_series_includes_the_50k_release_boundary() {
     );
 }
 
+#[test]
+fn provisioned_rag_query_batches_cover_every_query_once_with_four_workers() {
+    let batches = provisioned_rag_query_batches(60);
+
+    assert_eq!(batches.len(), 4);
+    assert!(batches.iter().all(|batch| batch.len() == 15));
+
+    let mut indices = batches.into_iter().flatten().collect::<Vec<_>>();
+    indices.sort_unstable();
+    assert_eq!(indices, (0..60).collect::<Vec<_>>());
+}
+
+fn provisioned_rag_query_batches(query_count: usize) -> Vec<Vec<usize>> {
+    let worker_count = query_count.min(PROVISIONED_RAG_WORKER_COUNT);
+    if worker_count == 0 {
+        return Vec::new();
+    }
+
+    (0..worker_count)
+        .map(|worker_index| {
+            (worker_index..query_count)
+                .step_by(worker_count)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 fn metadata_match_increment(diagnostics: &[RetrievalLayerDiagnostic]) -> usize {
     usize::from(diagnostics.iter().any(|diagnostic| {
         diagnostic.layer == "metadata" && diagnostic.status == RetrievalLayerStatus::Ok
@@ -273,6 +309,22 @@ fn metadata_match_query_is_counted_once_when_diagnostics_repeat() {
 }
 
 impl BrokerMetrics {
+    fn merge(&mut self, other: Self) {
+        self.positive_queries += other.positive_queries;
+        self.any_source_hits_at_5 += other.any_source_hits_at_5;
+        self.any_source_hits_at_30 += other.any_source_hits_at_30;
+        self.all_required_hits_at_5 += other.all_required_hits_at_5;
+        self.all_required_hits_at_30 += other.all_required_hits_at_30;
+        self.reciprocal_rank_sum += other.reciprocal_rank_sum;
+        self.normalized_discounted_gain_sum += other.normalized_discounted_gain_sum;
+        self.metadata_match_queries += other.metadata_match_queries;
+        self.no_answer_queries += other.no_answer_queries;
+        self.no_answer_false_positives += other.no_answer_false_positives;
+        self.scope_leaks += other.scope_leaks;
+        self.retrieval_latencies_ms
+            .extend(other.retrieval_latencies_ms);
+    }
+
     fn any_source_recall_at_5(&self) -> f64 {
         ratio(self.any_source_hits_at_5, self.positive_queries)
     }
@@ -311,6 +363,18 @@ impl BrokerMetrics {
 
     fn p95_ms(&self) -> f64 {
         percentile_ms(&self.retrieval_latencies_ms, 0.95)
+    }
+}
+
+impl VectorEvidenceMetrics {
+    fn merge(&mut self, other: Self) {
+        self.query_count += other.query_count;
+        self.vector_chunks_ok_queries += other.vector_chunks_ok_queries;
+        self.positive_queries += other.positive_queries;
+        self.expected_hits_at_5 += other.expected_hits_at_5;
+        self.expected_hits_at_30 += other.expected_hits_at_30;
+        self.packet_count += other.packet_count;
+        self.citation_violations += other.citation_violations;
     }
 }
 
@@ -556,6 +620,82 @@ fn observe_vector_evidence(
         usize::from(first_expected_rank(&chunk_paths, &query.expected_paths, 5).is_some());
     metrics.expected_hits_at_30 +=
         usize::from(first_expected_rank(&chunk_paths, &query.expected_paths, 30).is_some());
+}
+
+fn broker_metrics_for(
+    query: &EvalQuery,
+    outcome: &iris_lib::ai_runtime::retrieval_broker::RetrievalOutcome,
+    retrieval_latency_ms: f64,
+) -> BrokerMetrics {
+    let mut metrics = BrokerMetrics {
+        retrieval_latencies_ms: vec![retrieval_latency_ms],
+        ..BrokerMetrics::default()
+    };
+    let paths = outcome
+        .packets
+        .iter()
+        .filter_map(|packet| packet.source_path.clone())
+        .collect::<Vec<_>>();
+    metrics.scope_leaks = paths
+        .iter()
+        .filter(|path| !packet_respects_scope(path, &query.scope))
+        .count();
+
+    if query.expected_paths.is_empty() {
+        metrics.no_answer_queries = 1;
+        metrics.no_answer_false_positives = usize::from(!paths.is_empty());
+        return metrics;
+    }
+
+    metrics.positive_queries = 1;
+    metrics.any_source_hits_at_5 =
+        usize::from(first_expected_rank(&paths, &query.expected_paths, 5).is_some());
+    metrics.any_source_hits_at_30 =
+        usize::from(first_expected_rank(&paths, &query.expected_paths, 30).is_some());
+    metrics.all_required_hits_at_5 =
+        usize::from(all_expected_paths_within(&paths, &query.expected_paths, 5));
+    metrics.all_required_hits_at_30 =
+        usize::from(all_expected_paths_within(&paths, &query.expected_paths, 30));
+    if let Some(rank) = first_expected_rank(&paths, &query.expected_paths, 10) {
+        metrics.reciprocal_rank_sum = 1.0 / rank as f64;
+        metrics.normalized_discounted_gain_sum = 1.0 / ((rank + 1) as f64).log2();
+    }
+    metrics
+}
+
+fn evaluate_provisioned_query(
+    conn: &Connection,
+    query_index: usize,
+    query: &EvalQuery,
+    query_embeddings: &HashMap<String, Vec<f32>>,
+) -> AppResult<ProvisionedQueryMetrics> {
+    // This independent call makes the vector proof non-fungible: FTS has no
+    // opportunity to satisfy a vector assertion.
+    let vector_outcome = hybrid_retrieve_with_diagnostics_with_embedder(
+        conn,
+        &vector_only_request_for(query),
+        cached_embedder(query_embeddings),
+    )?;
+    let mut vector_evidence = VectorEvidenceMetrics::default();
+    observe_vector_evidence(query, &vector_outcome, &mut vector_evidence);
+
+    let retrieval_started = Instant::now();
+    let outcome = hybrid_retrieve_with_diagnostics_with_embedder(
+        conn,
+        &vector_request_for(query),
+        cached_embedder(query_embeddings),
+    )?;
+    let broker = broker_metrics_for(
+        query,
+        &outcome,
+        retrieval_started.elapsed().as_secs_f64() * 1_000.0,
+    );
+
+    Ok(ProvisionedQueryMetrics {
+        query_index,
+        broker,
+        vector_evidence,
+    })
 }
 
 fn emit_result_metadata(gate: &str, metrics: &BrokerMetrics) {
@@ -900,7 +1040,7 @@ fn rag_v2_hybrid_broker_meets_deterministic_fixture_gates() {
 /// runners; caching the labelled queries once halves the inference calls
 /// without weakening the full 60-query quality signal.
 fn cached_embedder(
-    cache: &std::collections::HashMap<String, Vec<f32>>,
+    cache: &HashMap<String, Vec<f32>>,
 ) -> impl FnOnce(&str) -> AppResult<Vec<f32>> + '_ {
     move |query: &str| {
         cache
@@ -921,7 +1061,7 @@ fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
     let fixture = load_fixture();
     let database = iris_lib::storage::db::Database::open_in_memory()
         .expect("open provisioned sqlite-vec evaluation database");
-    database
+    let (indexing_ms, document_embedding_ms) = database
         .with_conn(|conn| {
             let indexing_started = Instant::now();
             index_vault_incremental(conn, &fixture_root())?;
@@ -929,135 +1069,121 @@ fn rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates() {
             let document_embedding_started = Instant::now();
             populate_fixture_chunk_embeddings(conn);
             let document_embedding_ms = document_embedding_started.elapsed().as_millis();
-
-            let mut metrics = BrokerMetrics::default();
-            let mut vector_evidence = VectorEvidenceMetrics::default();
-            // Real-model ORT inference dominates the gate runtime on hosted
-            // runners, so each labelled query is embedded exactly once and
-            // both broker calls (vector-only + hybrid) read from the cache.
-            let query_embedding_started = Instant::now();
-            let query_texts = fixture
-                .queries
-                .iter()
-                .map(|query| query.query.as_str())
-                .collect::<Vec<_>>();
-            let query_vectors =
-                embed_queries_batch(&query_texts).expect("batch-embed labelled queries");
-            assert_eq!(query_vectors.len(), fixture.queries.len());
-            let query_embeddings: std::collections::HashMap<String, Vec<f32>> = fixture
-                .queries
-                .iter()
-                .map(|query| query.query.clone())
-                .zip(query_vectors)
-                .collect();
-            let query_embedding_ms = query_embedding_started.elapsed().as_millis();
-            let retrieval_started = Instant::now();
-            for (query_index, query) in fixture.queries.iter().enumerate() {
-                if query_index % 10 == 0 {
-                    eprintln!("[rag-gate] query {query_index}/{}", fixture.queries.len());
-                }
-                // This independent call makes the vector proof non-fungible:
-                // FTS has no opportunity to satisfy a vector assertion.
-                let vector_outcome =
-                    hybrid_retrieve_with_diagnostics_with_embedder(
-                        conn,
-                        &vector_only_request_for(query),
-                        cached_embedder(&query_embeddings),
-                    )?;
-                observe_vector_evidence(query, &vector_outcome, &mut vector_evidence);
-
-                let start = Instant::now();
-                let outcome = hybrid_retrieve_with_diagnostics_with_embedder(
-                    conn,
-                    &vector_request_for(query),
-                    cached_embedder(&query_embeddings),
-                )?;
-                metrics
-                    .retrieval_latencies_ms
-                    .push(start.elapsed().as_secs_f64() * 1_000.0);
-
-                let paths: Vec<String> = outcome
-                    .packets
-                    .iter()
-                    .filter_map(|packet| packet.source_path.clone())
-                    .collect();
-                metrics.scope_leaks += paths
-                    .iter()
-                    .filter(|path| !packet_respects_scope(path, &query.scope))
-                    .count();
-
-                if query.expected_paths.is_empty() {
-                    metrics.no_answer_queries += 1;
-                    metrics.no_answer_false_positives += usize::from(!paths.is_empty());
-                    continue;
-                }
-
-                metrics.positive_queries += 1;
-                if first_expected_rank(&paths, &query.expected_paths, 5).is_some() {
-                    metrics.any_source_hits_at_5 += 1;
-                }
-                if first_expected_rank(&paths, &query.expected_paths, 30).is_some() {
-                    metrics.any_source_hits_at_30 += 1;
-                }
-                if all_expected_paths_within(&paths, &query.expected_paths, 5) {
-                    metrics.all_required_hits_at_5 += 1;
-                }
-                if all_expected_paths_within(&paths, &query.expected_paths, 30) {
-                    metrics.all_required_hits_at_30 += 1;
-                }
-                if let Some(rank) = first_expected_rank(&paths, &query.expected_paths, 10) {
-                    metrics.reciprocal_rank_sum += 1.0 / rank as f64;
-                    metrics.normalized_discounted_gain_sum += 1.0 / ((rank + 1) as f64).log2();
-                }
-            }
-            let retrieval_and_scoring_ms = retrieval_started.elapsed().as_millis();
-
-            eprintln!(
-                "RAG stage timings: {}",
-                serde_json::json!({
-                    "modelLoadMs": model_load_ms,
-                    "fixtureIndexMs": indexing_ms,
-                    "documentEmbeddingMs": document_embedding_ms,
-                    "queryEmbeddingMs": query_embedding_ms,
-                    "retrievalAndScoringMs": retrieval_and_scoring_ms,
-                    "totalMs": gate_started.elapsed().as_millis(),
-                })
-            );
-
-            emit_result_metadata("provisioned-sqlite-vec", &metrics);
-            eprintln!(
-                "RAG provisioned vector evidence: {}",
-                serde_json::json!({
-                    "revision": option_env!("GITHUB_SHA").unwrap_or("workspace"),
-                    "model": EMBEDDING_MODEL_FINGERPRINT,
-                    "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
-                    "fixtureLabelsSha256": fixture_labels_hash(),
-                    "rawMetrics": {
-                        "queries": vector_evidence.query_count,
-                        "vectorChunksOkQueries": vector_evidence.vector_chunks_ok_queries,
-                        "positiveQueries": vector_evidence.positive_queries,
-                        "expectedHitRecallAt5": ratio(vector_evidence.expected_hits_at_5, vector_evidence.positive_queries),
-                        "expectedHitRecallAt30": ratio(vector_evidence.expected_hits_at_30, vector_evidence.positive_queries),
-                        "vectorPackets": vector_evidence.packet_count,
-                        "vectorCitationViolations": vector_evidence.citation_violations,
-                    }
-                })
-            );
-            assert!(
-                meets_vector_release_gates(&metrics),
-                "provisioned sqlite-vec vector-quality release gates failed"
-            );
-            assert!(
-                meets_provisioned_vector_evidence_gates(&vector_evidence),
-                "provisioned sqlite-vec vector evidence gate failed; FTS-only results are not accepted"
-            );
-            // No end-to-end latency assertion here: real-model ORT inference
-            // latency on hosted runners is environmental, not a regression
-            // signal. Retrieval performance is enforced by the synthetic 50k
-            // release gate (release-quality, no ORT inference).
-            Ok(())
+            Ok((indexing_ms, document_embedding_ms))
         })
-        .expect("run provisioned sqlite-vec evaluation");
+        .expect("prepare provisioned sqlite-vec evaluation");
+
+    // Real-model ORT inference dominates the gate runtime on hosted runners,
+    // so each labelled query is embedded exactly once before read-only query
+    // evaluation is distributed across a bounded subset of the read pool.
+    let query_embedding_started = Instant::now();
+    let query_texts = fixture
+        .queries
+        .iter()
+        .map(|query| query.query.as_str())
+        .collect::<Vec<_>>();
+    let query_vectors = embed_queries_batch(&query_texts).expect("batch-embed labelled queries");
+    assert_eq!(query_vectors.len(), fixture.queries.len());
+    let query_embeddings: HashMap<String, Vec<f32>> = fixture
+        .queries
+        .iter()
+        .map(|query| query.query.clone())
+        .zip(query_vectors)
+        .collect();
+    let query_embedding_ms = query_embedding_started.elapsed().as_millis();
+    let retrieval_started = Instant::now();
+    let completed_queries = AtomicUsize::new(0);
+    let mut query_metrics = std::thread::scope(|scope| {
+        let mut handles = provisioned_rag_query_batches(fixture.queries.len())
+            .into_iter()
+            .map(|batch| {
+                scope.spawn(|| {
+                    let mut worker_metrics = Vec::with_capacity(batch.len());
+                    for query_index in batch {
+                        let query = &fixture.queries[query_index];
+                        let result = database
+                            .with_read_conn(|conn| {
+                                evaluate_provisioned_query(
+                                    conn,
+                                    query_index,
+                                    query,
+                                    &query_embeddings,
+                                )
+                            })
+                            .unwrap_or_else(|error| {
+                                panic!("provisioned broker failed for {}: {error}", query.id)
+                            });
+                        worker_metrics.push(result);
+                        let completed = completed_queries.fetch_add(1, Ordering::Relaxed) + 1;
+                        if completed % 10 == 0 || completed == fixture.queries.len() {
+                            eprintln!(
+                                "[rag-gate] completed {completed}/{} queries",
+                                fixture.queries.len()
+                            );
+                        }
+                    }
+                    worker_metrics
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let mut merged = Vec::with_capacity(fixture.queries.len());
+        for handle in handles.drain(..) {
+            merged.extend(handle.join().expect("provisioned RAG worker panicked"));
+        }
+        merged
+    });
+    query_metrics.sort_by_key(|metrics| metrics.query_index);
+    let mut metrics = BrokerMetrics::default();
+    let mut vector_evidence = VectorEvidenceMetrics::default();
+    for query_metric in query_metrics {
+        metrics.merge(query_metric.broker);
+        vector_evidence.merge(query_metric.vector_evidence);
+    }
+    let retrieval_and_scoring_ms = retrieval_started.elapsed().as_millis();
+
+    eprintln!(
+        "RAG stage timings: {}",
+        serde_json::json!({
+            "modelLoadMs": model_load_ms,
+            "fixtureIndexMs": indexing_ms,
+            "documentEmbeddingMs": document_embedding_ms,
+            "queryEmbeddingMs": query_embedding_ms,
+            "retrievalAndScoringMs": retrieval_and_scoring_ms,
+            "totalMs": gate_started.elapsed().as_millis(),
+        })
+    );
+
+    emit_result_metadata("provisioned-sqlite-vec", &metrics);
+    eprintln!(
+        "RAG provisioned vector evidence: {}",
+        serde_json::json!({
+            "revision": option_env!("GITHUB_SHA").unwrap_or("workspace"),
+            "model": EMBEDDING_MODEL_FINGERPRINT,
+            "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            "fixtureLabelsSha256": fixture_labels_hash(),
+            "rawMetrics": {
+                "queries": vector_evidence.query_count,
+                "vectorChunksOkQueries": vector_evidence.vector_chunks_ok_queries,
+                "positiveQueries": vector_evidence.positive_queries,
+                "expectedHitRecallAt5": ratio(vector_evidence.expected_hits_at_5, vector_evidence.positive_queries),
+                "expectedHitRecallAt30": ratio(vector_evidence.expected_hits_at_30, vector_evidence.positive_queries),
+                "vectorPackets": vector_evidence.packet_count,
+                "vectorCitationViolations": vector_evidence.citation_violations,
+            }
+        })
+    );
+    assert!(
+        meets_vector_release_gates(&metrics),
+        "provisioned sqlite-vec vector-quality release gates failed"
+    );
+    assert!(
+        meets_provisioned_vector_evidence_gates(&vector_evidence),
+        "provisioned sqlite-vec vector evidence gate failed; FTS-only results are not accepted"
+    );
+    // No end-to-end latency assertion here: real-model ORT inference latency
+    // on hosted runners is environmental, not a regression signal. Retrieval
+    // performance is enforced by the synthetic 50k release gate.
 }
 
 /// The 50k scale series is explicitly invoked by the release quality job, not

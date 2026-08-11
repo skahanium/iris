@@ -92,8 +92,8 @@ jobs:
       - name: Audit Rust dependencies
         run: npm run audit:rust
 
-  release-readiness-agent:
-    name: Release readiness / Agent full
+  release-readiness-macos-arm64:
+    name: Release readiness / macOS ARM64
     if: github.event_name != 'pull_request'
     runs-on: macos-15
     timeout-minutes: 30
@@ -119,30 +119,6 @@ jobs:
       - name: Run Agent full baseline gate
         run: npm run agent:eval
 
-  release-readiness-rag:
-    name: Release readiness / real-model RAG
-    if: github.event_name != 'pull_request'
-    runs-on: macos-15
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 20
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> ../.iris-dev/target
-          shared-key: macos-arm64
-
       - name: Restore embedded BGE model
         uses: actions/cache@v5
         with:
@@ -154,25 +130,6 @@ jobs:
 
       - name: Run provisioned sqlite-vec RAG gate
         run: cargo test --manifest-path src-tauri/Cargo.toml --features sqlite-vec --test rag_broker_eval rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates -- --ignored --nocapture
-
-  release-readiness-sqlite-vec:
-    name: Release readiness / 50k sqlite-vec
-    if: github.event_name != 'pull_request'
-    runs-on: macos-15
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> ../.iris-dev/target
-          shared-key: macos-arm64
 
       - name: Run 50k sqlite-vec performance gate
         env:

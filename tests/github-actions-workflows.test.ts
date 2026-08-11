@@ -124,7 +124,7 @@ describe("GitHub Actions workflows", () => {
     );
   });
 
-  it("runs one macOS quality job for PRs and adds Windows E2E only outside PRs", () => {
+  it("runs one macOS quality job for PRs and bounded release readiness outside PRs", () => {
     const workflow = readWorkflow(ciPath);
     const jobs = workflowJobs(ciPath);
     const quality = workflowJob(ciPath, "quality-macos-arm64");
@@ -132,9 +132,7 @@ describe("GitHub Actions workflows", () => {
 
     expect(Object.keys(jobs)).toEqual([
       "quality-macos-arm64",
-      "release-readiness-agent",
-      "release-readiness-rag",
-      "release-readiness-sqlite-vec",
+      "release-readiness-macos-arm64",
       "windows-desktop-e2e",
     ]);
     expect(workflow).toContain("pull_request:");
@@ -151,16 +149,11 @@ describe("GitHub Actions workflows", () => {
     expect(jobText(ciPath, "windows-desktop-e2e")).toContain(
       "npm run test:desktop:windows",
     );
-    for (const jobId of [
-      "release-readiness-agent",
-      "release-readiness-rag",
-      "release-readiness-sqlite-vec",
-    ]) {
-      expect(workflowJob(ciPath, jobId).if).toBe(
-        "github.event_name != 'pull_request'",
-      );
-      expect(workflowJob(ciPath, jobId).needs).toBeUndefined();
-    }
+    const readiness = workflowJob(ciPath, "release-readiness-macos-arm64");
+    expect(readiness.if).toBe("github.event_name != 'pull_request'");
+    expect(readiness.needs).toBeUndefined();
+    expect(readiness["runs-on"]).toBe("macos-15");
+    expect(readiness["timeout-minutes"]).toBe(30);
   });
 
   it("keeps all common checks once in the macOS quality job", () => {
@@ -238,21 +231,21 @@ describe("GitHub Actions workflows", () => {
     ).toBe(45);
   });
 
-  it("runs real-model, full Agent and 50k gates exactly once on the main SHA", () => {
+  it("runs real-model, full Agent and 50k gates exactly once in one bounded macOS job", () => {
     const ci = readWorkflow(ciPath);
     const release = readWorkflow(packagePath);
     const combined = `${ci}\n${release}`;
 
-    expect(jobText(ciPath, "release-readiness-agent")).toContain(
-      "npm run agent:eval",
-    );
-    expect(jobText(ciPath, "release-readiness-rag")).toContain(
+    const readiness = jobText(ciPath, "release-readiness-macos-arm64");
+
+    expect(readiness).toContain("npm run agent:eval");
+    expect(readiness).toContain(
       "rag_v2_provisioned_sqlite_vec_model_meets_release_quality_gates",
     );
-    expect(jobText(ciPath, "release-readiness-sqlite-vec")).toContain(
+    expect(readiness).toContain(
       "sqlite_vec_50k_scale_fixture_meets_warm_knn_release_gate",
     );
-    expect(jobText(ciPath, "release-readiness-sqlite-vec")).toContain(
+    expect(readiness).toContain(
       'IRIS_RAG_PERFORMANCE_REFERENCE":"github-hosted-macos-15-arm64',
     );
     expect(
