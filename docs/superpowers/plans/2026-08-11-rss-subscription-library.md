@@ -109,9 +109,9 @@ htmd = "=0.5.5"
 - Create: `src-tauri/migrations/063_feed_library.down.sql`
 - Modify: `src-tauri/src/storage/migrate.rs`
 
-- [ ] 先在 `migrate.rs` 测试模块添加 `migration_063_creates_feed_library_and_fts`、`migration_063_roundtrip`、`migration_063_is_idempotent`。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml storage::migrate::tests::migration_063 -- --nocapture`，预期 RED：migration 未注册。
-- [ ] `063_feed_library.sql` 完整创建以下两个事实表：
+- [x] 先在 `migrate.rs` 测试模块添加 `migration_063_creates_feed_library_and_fts`、`migration_063_roundtrip`、`migration_063_is_idempotent`。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml storage::migrate::tests::migration_063 -- --nocapture`，预期 RED：migration 未注册。
+- [x] `063_feed_library.sql` 完整创建以下两个事实表：
 
 ```sql
 CREATE TABLE feed_sources (
@@ -169,7 +169,7 @@ CREATE TABLE feed_items (
 );
 ```
 
-- [ ] 在同一 migration 完整加入以下索引与 FTS trigger：
+- [x] 在同一 migration 完整加入以下索引与 FTS trigger：
 
 ```sql
 CREATE INDEX idx_feed_sources_due
@@ -210,11 +210,11 @@ CREATE TRIGGER feed_items_fts_au AFTER UPDATE OF title, author_name, content_tex
 END;
 ```
 
-- [ ] down 脚本按 trigger → FTS → `feed_items` → `feed_sources` 顺序删除，不修改其他表。
-- [ ] 在 `migrate.rs` 增加 `MIGRATION_063_UP/DOWN`，up 末尾注册，down 开头回滚。
-- [ ] 运行 migration 三项测试，预期 GREEN。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml storage::migrate::tests::migration_registry_covers_all_sql_files`，预期 GREEN。
-- [ ] 提交：`feat(storage): 添加订阅资料库迁移`。
+- [x] down 脚本按 trigger → FTS → `feed_items` → `feed_sources` 顺序删除，不修改其他表。
+- [x] 在 `migrate.rs` 增加 `MIGRATION_063_UP/DOWN`，up 末尾注册，down 开头回滚。
+- [x] 运行 migration 三项测试，预期 GREEN。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml storage::migrate::tests::migration_registry_covers_all_sql_files`，预期 GREEN。
+- [x] 提交：`feat(storage): 添加订阅资料库迁移`。
 
 ### Task 1.2：定义领域类型与 Repository 契约
 
@@ -291,15 +291,15 @@ pub struct FeedItemDetail {
 }
 ```
 
-- [ ] 先写 repository RED 测试：source CRUD、收件箱派生、三个状态轴独立、cursor 稳定、source cascade、FTS 更新、详情 DTO 无 `source_payload`。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml feed::repository_tests -- --nocapture`，预期 RED。
-- [ ] 实现 `FeedRepository`，所有批量 upsert 使用一个 SQLite 事务；`limit` clamp 到 `1..=200`。
-- [ ] 列表摘要从 `content_text` 截断到 240 Unicode scalar，不切坏 UTF-8；详情只返回规范化 Markdown。
-- [ ] FTS 查询转义用户输入，不拼接原始 SQL；空查询返回验证错误。
-- [ ] item 更新只在 `content_hash` 改变时替换内容字段，绝不覆盖三个状态时间戳和 `received_at`。
-- [ ] 运行 repository 测试，预期 GREEN。
-- [ ] 运行 `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`。
-- [ ] 提交：`feat(storage): 实现订阅资料库仓储层`。
+- [x] 先写 repository RED 测试：source CRUD、收件箱派生、三个状态轴独立、cursor 稳定、source cascade、FTS 更新、详情 DTO 无 `source_payload`。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml feed::repository_tests -- --nocapture`，预期 RED。
+- [x] 实现 `FeedRepository`，所有批量 upsert 使用一个 SQLite 事务；`limit` clamp 到 `1..=200`。
+- [x] 列表摘要从 `content_text` 截断到 240 Unicode scalar，不切坏 UTF-8；详情只返回规范化 Markdown。
+- [x] FTS 查询转义用户输入，不拼接原始 SQL；空查询返回验证错误。
+- [x] item 更新只在 `content_hash` 改变时替换内容字段，绝不覆盖三个状态时间戳和 `received_at`。
+- [x] 运行 repository 测试，预期 GREEN。
+- [x] 运行 `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`。
+- [x] 提交：`feat(storage): 实现订阅资料库仓储层`。
 
 **阶段 1 退出条件：** migration up/down/idempotent；CRUD/FTS/状态机全部在内存 SQLite 通过；无网络、无 UI、无 Vault 写入。
 

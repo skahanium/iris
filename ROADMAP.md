@@ -18,7 +18,7 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 
 ## 后续里程碑 — RSS 订阅资料库（版本待定；契约已冻结）
 
-目标是在不把外部文章自动混入用户 Vault、也不依赖 Agent/MCP 的前提下，建立可离线、可迁移、可搜索的本地订阅资料库。完整产品与架构边界见 [RSS 订阅资料库规范](./docs/rss-subscription-library.md)，逐项施工见 [实施计划](./docs/superpowers/plans/2026-08-11-rss-subscription-library.md)，全尺寸与真机验收见 [人工清单](./docs/testing/rss-subscription-library-manual-checklist.md)。本项不改变当前 Agent/RAG 可靠性优先级，也不抢占 v1.2.19/v1.2.20 的既定门禁；阶段 0 已确认六项产品决策并冻结契约（2026-08-11），具体版本仍待定，施工从阶段 1（migration/仓储）继续。
+目标是在不把外部文章自动混入用户 Vault、也不依赖 Agent/MCP 的前提下，建立可离线、可迁移、可搜索的本地订阅资料库。完整产品与架构边界见 [RSS 订阅资料库规范](./docs/rss-subscription-library.md)，逐项施工见 [实施计划](./docs/superpowers/plans/2026-08-11-rss-subscription-library.md)，全尺寸与真机验收见 [人工清单](./docs/testing/rss-subscription-library-manual-checklist.md)。本项不改变当前 Agent/RAG 可靠性优先级，也不抢占 v1.2.19/v1.2.20 的既定门禁；阶段 0 已冻结六项产品决策（2026-08-11），阶段 1 的 `063` 订阅资料库迁移与仓储层（source CRUD、收件箱派生、三状态轴、keyset cursor、FTS、批量 upsert 事务）已在内存 SQLite 全量测试通过；具体版本仍待定，施工从阶段 2（安全获取/转换/同步）继续。
 
 - 订阅源、规范化文章 Markdown、原始源载荷、同步游标与阅读状态保存在应用级 SQLite，跨 Vault 共享；收件箱是「未读且未归档」的动态查询，不复制内容或新增收件箱表。
 - 首轮原生支持 RSS、Atom、JSON Feed，完成安全发现、条件请求、增量同步、失败退避、去重更新、FTS 搜索与 OPML 往返。微信公众号只有在合法上游能提供稳定 Feed 时才能接入；本里程碑不承诺微信历史库搜索、登录绕过或网页全文抓取。
