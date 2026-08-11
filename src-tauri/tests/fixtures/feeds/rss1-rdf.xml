@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- RSS 1.0 / RDF fixture：channel + items 均使用 rdf:about 定位，条目带 dc:date。
+     内容为合成数据，仅使用 example.com。 -->
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns="http://purl.org/rss/1.0/"
+         xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel rdf:about="https://example.com/rdf">
+    <title>Example RDF Site Summary</title>
+    <link>https://example.com/rdf</link>
+    <description>RSS 1.0 RDF sample feed used only by automated tests.</description>
+    <items>
+      <rdf:Seq>
+        <rdf:li rdf:resource="https://example.com/rdf/one"/>
+        <rdf:li rdf:resource="https://example.com/rdf/two"/>
+      </rdf:Seq>
+    </items>
+  </channel>
+  <item rdf:about="https://example.com/rdf/one">
+    <title>RDF item one</title>
+    <link>https://example.com/rdf/one</link>
+    <description>First RDF item description.</description>
+    <dc:date>2026-08-01T08:00:00Z</dc:date>
+  </item>
+  <item rdf:about="https://example.com/rdf/two">
+    <title>RDF item two</title>
+    <link>https://example.com/rdf/two</link>
+    <description>Second RDF item description.</description>
+    <dc:date>2026-08-02T08:00:00Z</dc:date>
+  </item>
+</rdf:RDF>

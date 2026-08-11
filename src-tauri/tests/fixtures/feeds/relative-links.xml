@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 相对链接 fixture：正文包含绝对路径、相对路径与父级相对链接及图片，
+     需以文章规范 URL 为基准解析为安全 HTTPS 绝对链接。 -->
+<rss version="2.0">
+  <channel>
+    <title>Relative Links Fixture</title>
+    <link>https://example.com/rel</link>
+    <description>Feed with relative links in item bodies, used only by automated tests.</description>
+    <item>
+      <guid isPermaLink="false">relative-links-2026-08-01</guid>
+      <title>Path relative links</title>
+      <link>https://example.com/articles/one</link>
+      <description><![CDATA[
+        <p><a href="/articles/two">absolute-path link</a></p>
+        <p><a href="sibling">relative-path link</a></p>
+        <img src="../images/one.png" alt="parent-relative image">
+      ]]></description>
+    </item>
+    <item>
+      <guid isPermaLink="false">relative-links-2026-08-02</guid>
+      <title>Mixed absolute and non-http</title>
+      <link>https://example.com/articles/two</link>
+      <description><![CDATA[
+        <p><a href="https://example.com/absolute">absolute https link</a></p>
+        <p><a href="mailto:alice@example.com">mailto link</a></p>
+      ]]></description>
+    </item>
+  </channel>
+</rss>

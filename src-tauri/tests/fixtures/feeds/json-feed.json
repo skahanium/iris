@@ -1,0 +1,30 @@
+{
+  "version": "https://jsonfeed.org/version/1.1",
+  "title": "Example JSON Feed",
+  "home_page_url": "https://example.com/json",
+  "feed_url": "https://example.com/json/feed.json",
+  "items": [
+    {
+      "id": "https://example.com/json/one",
+      "url": "https://example.com/json/one",
+      "title": "JSON Feed item one",
+      "content_html": "<p>Body with <a href=\"https://example.com/json/target\">a link</a>.</p>",
+      "date_published": "2026-08-01T08:00:00Z",
+      "authors": [{ "name": "Fixture Author" }]
+    },
+    {
+      "id": "https://example.com/json/two",
+      "url": "https://example.com/json/two",
+      "title": "JSON Feed item two",
+      "content_text": "Plain text body for the second item.",
+      "date_published": "2026-08-02T09:00:00Z"
+    },
+    {
+      "id": "https://example.com/json/three",
+      "url": "https://example.com/json/three",
+      "title": "JSON Feed item three",
+      "content_html": "<p>Item with a remote <img src=\"https://cdn.example.com/json/photo.png\" alt=\"photo\"/>.</p>",
+      "date_published": "2026-08-03T10:00:00Z"
+    }
+  ]
+}

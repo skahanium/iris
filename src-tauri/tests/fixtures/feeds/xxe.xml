@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- XXE fixture：同时声明 DOCTYPE 与 ENTITY。规范要求解析前以稳定错误码
+     feed_xml_unsafe_declaration 拒绝（ASCII case-insensitive 匹配
+     `<!DOCTYPE` / `<!ENTITY`），不得进入任何 XML 解析器。 -->
+<!DOCTYPE rss [
+  <!ENTITY xxe "https://example.com/exfil">
+]>
+<rss version="2.0">
+  <channel>
+    <title>XXE Fixture</title>
+    <link>https://example.com/xxe</link>
+    <description>Feed declaring DOCTYPE and ENTITY; must be rejected before parsing.</description>
+    <item>
+      <guid>xxe-2026-08-01</guid>
+      <title>Entity reference item</title>
+      <link>https://example.com/xxe/one</link>
+      <description>&xxe;</description>
+    </item>
+  </channel>
+</rss>

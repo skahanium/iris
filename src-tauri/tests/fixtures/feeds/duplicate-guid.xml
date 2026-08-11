@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 重复 GUID fixture：前两个条目共享同一 GUID 但内容不同，第三个为唯一 GUID 对照。
+     用于验证去重与 upsert 行为。内容为合成数据，仅使用 example.com。 -->
+<rss version="2.0">
+  <channel>
+    <title>Duplicate GUID Fixture</title>
+    <link>https://example.com/dup</link>
+    <description>Feed with a duplicated GUID, used only by automated tests.</description>
+    <item>
+      <guid isPermaLink="false">duplicate-guid-2026-08-01</guid>
+      <title>Dup item first occurrence</title>
+      <link>https://example.com/dup/one</link>
+      <description>First occurrence of the shared GUID.</description>
+      <pubDate>Sat, 01 Aug 2026 08:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <guid isPermaLink="false">duplicate-guid-2026-08-01</guid>
+      <title>Dup item second occurrence</title>
+      <link>https://example.com/dup/two</link>
+      <description>Second occurrence of the same GUID with different content.</description>
+      <pubDate>Sat, 01 Aug 2026 09:00:00 GMT</pubDate>
+    </item>
+    <item>
+      <guid isPermaLink="false">duplicate-guid-2026-08-02</guid>
+      <title>Unique control item</title>
+      <link>https://example.com/dup/three</link>
+      <description>Control item with a unique GUID.</description>
+      <pubDate>Sun, 02 Aug 2026 08:00:00 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 损坏 XML fixture：故意缺少闭合标签，用于解析失败路径测试。 -->
+<rss version="2.0">
+  <channel>
+    <title>Malformed Fixture</title>
+    <link>https://example.com/malformed</link>
+    <description>This file intentionally leaves tags unclosed.</description>
+    <item>
+      <guid>malformed-2026-08-01</guid>
+      <title>Item without closing tag
+      <description>Unclosed description element.
+    </item>
+  </channel>

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 重复 URL OPML fixture：两个大纲共享同一 xmlUrl，用于验证导入幂等去重。 -->
+<opml version="2.0">
+  <head>
+    <title>Duplicate URLs fixture</title>
+  </head>
+  <body>
+    <outline text="First occurrence" title="First occurrence" type="rss" xmlUrl="https://example.com/feeds/dup.xml" htmlUrl="https://example.com/dup"/>
+    <outline text="Second occurrence" title="Second occurrence" type="rss" xmlUrl="https://example.com/feeds/dup.xml" htmlUrl="https://example.com/dup-2"/>
+    <outline text="Unique feed" title="Unique feed" type="rss" xmlUrl="https://example.com/feeds/unique.xml" htmlUrl="https://example.com/unique"/>
+  </body>
+</opml>

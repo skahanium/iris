@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 危险 HTML fixture：覆盖 script、style、iframe、表单、事件属性、javascript:
+     链接、相对链接与远程图片。转换后这些节点不得进入文章 Markdown。 -->
+<rss version="2.0">
+  <channel>
+    <title>Unsafe HTML Fixture</title>
+    <link>https://example.com/unsafe</link>
+    <description>Sanitization corpus for script, style, iframe, form, event attributes, javascript: links and remote images.</description>
+    <item>
+      <guid>unsafe-html-2026-08-01</guid>
+      <title>Dangerous markup item</title>
+      <link>https://example.com/unsafe/one</link>
+      <description><![CDATA[
+        <script>alert("xss")</script>
+        <style>.hidden { display: none; }</style>
+        <iframe src="https://example.com/frame"></iframe>
+        <form action="https://example.com/submit"><input name="q" value="probe"></form>
+        <p onclick="alert(1)">Paragraph with an event attribute</p>
+        <a href="javascript:alert(1)">javascript link</a>
+        <img src="https://cdn.example.com/unsafe/pixel.png" onerror="alert(1)" alt="pixel">
+      ]]></description>
+    </item>
+    <item>
+      <guid>unsafe-html-2026-08-02</guid>
+      <title>Remote media item</title>
+      <link>https://example.com/unsafe/two</link>
+      <description><![CDATA[
+        <p>Body with a <a href="/unsafe/relative">relative link</a>.</p>
+        <img src="https://cdn.example.com/unsafe/photo.png" alt="remote photo">
+      ]]></description>
+    </item>
+  </channel>
+</rss>

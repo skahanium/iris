@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 嵌套分组 OPML fixture：三级嵌套大纲（技术/Rust → 源），用于验证 folder_path
+     派生。内容为合成数据，仅使用 example.com。 -->
+<opml version="2.0">
+  <head>
+    <title>Nested folders fixture</title>
+  </head>
+  <body>
+    <outline text="技术" title="技术">
+      <outline text="Rust" title="Rust">
+        <outline text="Example Rust Feed" title="Example Rust Feed" type="rss" xmlUrl="https://example.com/feeds/rust.xml" htmlUrl="https://example.com/rust"/>
+      </outline>
+      <outline text="Example Systems Feed" title="Example Systems Feed" type="rss" xmlUrl="https://example.com/feeds/systems.xml" htmlUrl="https://example.com/systems"/>
+    </outline>
+    <outline text="未分组" title="未分组">
+      <outline text="Example Solo Feed" title="Example Solo Feed" type="rss" xmlUrl="https://example.com/feeds/solo.xml" htmlUrl="https://example.com/solo"/>
+    </outline>
+  </body>
+</opml>

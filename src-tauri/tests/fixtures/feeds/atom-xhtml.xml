@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Atom fixture：覆盖 XHTML content、HTML summary、纯文本 content 三种载荷形态。
+     内容为合成数据，仅使用 example.com。 -->
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Example Atom Feed</title>
+  <link href="https://example.com/atom" rel="self"/>
+  <link href="https://example.com/" rel="alternate"/>
+  <id>urn:uuid:8b5d3c2e-0000-4000-8000-000000000001</id>
+  <updated>2026-08-01T08:00:00Z</updated>
+  <author>
+    <name>Fixture Author</name>
+  </author>
+  <entry>
+    <title>XHTML content entry</title>
+    <id>https://example.com/atom/xhtml-entry</id>
+    <link href="https://example.com/atom/xhtml-entry"/>
+    <updated>2026-08-01T08:00:00Z</updated>
+    <published>2026-08-01T07:30:00Z</published>
+    <summary type="html">&lt;p&gt;Summary with &lt;em&gt;markup&lt;/em&gt;.&lt;/p&gt;</summary>
+    <content type="xhtml">
+      <div xmlns="http://www.w3.org/1999/xhtml">
+        <p>XHTML body paragraph with <strong>bold</strong> and a <a href="https://example.com/atom/target">link</a>.</p>
+        <pre><code>fn main() { println!("ok"); }</code></pre>
+      </div>
+    </content>
+  </entry>
+  <entry>
+    <title>Plain text content entry</title>
+    <id>https://example.com/atom/text-entry</id>
+    <link href="https://example.com/atom/text-entry"/>
+    <updated>2026-08-02T08:00:00Z</updated>
+    <content type="text">Plain text body only.</content>
+  </entry>
+</feed>

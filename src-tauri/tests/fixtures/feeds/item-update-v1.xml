@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 更新 fixture v1：stable-id 条目是更新目标（v2 只改变标题、正文与 updated，
+     保持 id/published 不变）；control 条目永不变更，作为对照。 -->
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Update Fixture v1</title>
+  <link href="https://example.com/updates" rel="self"/>
+  <id>urn:uuid:8b5d3c2e-0000-4000-8000-0000000000a1</id>
+  <updated>2026-08-01T08:00:00Z</updated>
+  <entry>
+    <title>Update target v1 title</title>
+    <id>https://example.com/updates/stable-id</id>
+    <link href="https://example.com/updates/stable-id"/>
+    <updated>2026-08-01T08:00:00Z</updated>
+    <published>2026-07-30T08:00:00Z</published>
+    <content type="html">&lt;p&gt;Update target v1 body.&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>Unchanged control entry</title>
+    <id>https://example.com/updates/control</id>
+    <link href="https://example.com/updates/control"/>
+    <updated>2026-08-01T08:00:00Z</updated>
+    <content type="html">&lt;p&gt;Control entry that never changes.&lt;/p&gt;</content>
+  </entry>
+</feed>

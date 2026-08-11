@@ -1,6 +1,6 @@
 # RSS 订阅资料库人工验收清单
 
-> 当前状态：规划模板，尚未执行。只有填入构建、平台、执行人、日期与证据后，勾选才代表事实。
+> 当前状态：未执行基线。产品契约已于 2026-08-11 冻结（见 [规范](../rss-subscription-library.md)），格式与安全 fixture 语料位于 `src-tauri/tests/fixtures/feeds/` 与 `src-tauri/tests/fixtures/opml/`。只有填入构建、平台、执行人、日期与证据后，勾选才代表事实。
 
 ## 验收记录
 
