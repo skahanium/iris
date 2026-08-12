@@ -28,6 +28,7 @@ import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
 import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
 import { useCjkPunctuationSettings } from "@/hooks/useCjkPunctuationSettings";
 import { useFeedWorkspaceMode } from "@/hooks/useFeedWorkspaceMode";
+import { useFeedSaveAsNote } from "@/hooks/useFeedSaveAsNote";
 import { useFollowSystemProxy } from "@/hooks/useFollowSystemProxy";
 import { useAppUpdateController } from "@/hooks/useAppUpdate";
 import { useEmbeddingScheduler } from "@/hooks/useEmbeddingScheduler";
@@ -157,8 +158,7 @@ function App() {
   const { status: connectivityStatus } = useConnectivityStatus();
   useEffect(() => scheduleAssistantPanelPreload(), []);
   useEffect(() => {
-    if (!vaultPath) return undefined;
-    return scheduleManagementCenterPreload();
+    return vaultPath ? scheduleManagementCenterPreload() : undefined;
   }, [vaultPath]);
   const bumpVaultIndex = useCallback(
     () => setVaultIndexEpoch((n) => n + 1),
@@ -266,6 +266,10 @@ function App() {
     },
     [openNote, rejectDepartureInteraction],
   );
+  const handleFeedSaveAsNote = useFeedSaveAsNote(
+    guardedOpenNote,
+    returnToDocuments,
+  );
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
@@ -296,9 +300,7 @@ function App() {
   });
   const classifiedUnlocked = classifiedVaultStatus === "unlocked";
   useEffect(() => {
-    if (classifiedOpen) {
-      void refreshClassifiedStatus();
-    }
+    if (classifiedOpen) void refreshClassifiedStatus();
   }, [classifiedOpen, refreshClassifiedStatus]);
   const {
     clearPendingOpenFromWorkspace,
@@ -350,9 +352,7 @@ function App() {
     !workspaceEmpty && Boolean(activePath) && !activeMediaTab;
 
   useEffect(() => {
-    if (workspaceEmpty || activeMediaTab || !activePath) {
-      return;
-    }
+    if (workspaceEmpty || activeMediaTab || !activePath) return;
     if (tabs.some((tab) => tab.path === activePath)) {
       setWorkspaceEmpty(false);
     }
@@ -674,8 +674,7 @@ function App() {
   });
 
   useEffect(() => {
-    if (!activePath) return;
-    void reportForegroundActivity();
+    if (activePath) void reportForegroundActivity();
   }, [activePath, reportForegroundActivity]);
 
   const {
@@ -891,7 +890,7 @@ function App() {
         zen={zen}
         workspaceMode={workspaceMode}
         onWorkspaceModeChange={handleWorkspaceModeChange}
-        feedWorkspace={<FeedWorkspace />}
+        feedWorkspace={<FeedWorkspace onSaveAsNote={handleFeedSaveAsNote} />}
         navigator={<WorkspaceNavigator {...navigatorBridge} />}
         tabBar={
           <TabBar

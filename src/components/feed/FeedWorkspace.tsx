@@ -22,6 +22,15 @@ import type { FeedItemDetail, FeedSourceSummary, FeedView } from "@/types/ipc";
 
 export type FeedBreakpoint = "wide" | "mid" | "narrow";
 
+export interface FeedWorkspaceProps {
+  /** 保存为笔记（App 层执行 fileCreate + 打开）；缺省时不显示入口。 */
+  onSaveAsNote?: (
+    markdown: string,
+    titleHint: string,
+    folderPath: string,
+  ) => Promise<string>;
+}
+
 function useFeedBreakpoints(): FeedBreakpoint {
   const [width, setWidth] = useState(() => window.innerWidth);
   useEffect(() => {
@@ -113,7 +122,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
   );
 }
 
-export function FeedWorkspace() {
+export function FeedWorkspace({ onSaveAsNote }: FeedWorkspaceProps) {
   const library = useFeedLibrary();
   const breakpoint = useFeedBreakpoints();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -292,6 +301,7 @@ export function FeedWorkspace() {
         }
       }}
       setItemState={library.setItemState}
+      onSaveAsNote={onSaveAsNote}
     />
   );
 

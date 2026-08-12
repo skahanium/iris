@@ -77,12 +77,14 @@ pub struct FeedItemSummary {
 }
 
 /// 文章详情：只包含规范化 Markdown 与安全元数据，无 `source_payload`。
+/// `site_url` 为订阅源站点地址（保存为笔记的「来源」链接用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedItemDetail {
     pub summary: FeedItemSummary,
     pub content_markdown: String,
     pub summary_markdown: String,
+    pub site_url: Option<String>,
 }
 
 /// 条目级源载荷种类（对应 `feed_items.source_payload_kind` CHECK 约束）。

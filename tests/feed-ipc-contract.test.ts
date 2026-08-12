@@ -203,6 +203,7 @@ describe("feed IPC contract", () => {
       },
       contentMarkdown: "# T",
       summaryMarkdown: "",
+      siteUrl: "https://example.com/site",
     } satisfies FeedItemDetail);
     const detail = await feedItemGet("item-1");
     expect(invoke).toHaveBeenCalledWith("feed_item_get", { itemId: "item-1" });

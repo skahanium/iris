@@ -459,11 +459,13 @@ export interface FeedItemSummary {
   conversionStatus: string;
 }
 
-/** 文章详情：只含规范化 Markdown 与安全元数据，原始源载荷永不进 IPC。 */
+/** 文章详情：只含规范化 Markdown 与安全元数据，原始源载荷永不进 IPC。
+ *  `siteUrl` 为订阅源站点地址（「保存为笔记」的来源链接）。 */
 export interface FeedItemDetail {
   summary: FeedItemSummary;
   contentMarkdown: string;
   summaryMarkdown: string;
+  siteUrl: string | null;
 }
 
 /** 阅读状态补丁；至少一个字段为 true/false。 */

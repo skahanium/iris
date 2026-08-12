@@ -2,7 +2,8 @@
 //!
 //! 正文应用 `--prose-measure`；打开后标题聚焦；延迟已读（正文可见 1 秒
 //! 或发生滚动/键盘阅读动作后标记，可经设置关闭）；远程图片默认占位，
-//! 用户按本篇显式加载；外链只经 openExternalHttpsUrl。
+//! 用户按本篇显式加载；外链只经 openExternalHttpsUrl；「保存为笔记」经
+//! App 层回调走现有 fileCreate 链路，目标目录/文件名必须在对话框确认。
 
 import { useEffect, useRef, useState } from "react";
 import {
@@ -11,11 +12,27 @@ import {
   ExternalLink,
   ImageOff,
   Loader2,
+  Save,
   TriangleAlert,
 } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { handleFeedLinkClick, renderFeedMarkdown } from "@/lib/feed-reader";
+import {
+  buildFeedNoteMarkdown,
+  isValidFeedNoteFolder,
+} from "@/lib/feed-note-export";
 import { openExternalHttpsUrl } from "@/lib/ipc";
+import { sanitizeNoteFileName } from "@/lib/note-names";
 import { toTrustedHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 import type {
@@ -32,6 +49,135 @@ export interface FeedReaderProps {
   errorCode: string | null;
   onRetry: () => void;
   setItemState: (itemId: string, patch: FeedItemStatePatch) => void;
+  /** 保存为笔记（App 层执行 fileCreate + 打开）；缺省时不显示入口。 */
+  onSaveAsNote?: (
+    markdown: string,
+    titleHint: string,
+    folderPath: string,
+  ) => Promise<string>;
+}
+
+/** 保存为笔记对话框：目标目录与文件名必须明确确认，失败可重试。 */
+function FeedSaveNoteDialog({
+  open,
+  detail,
+  onOpenChange,
+  onSaveAsNote,
+}: {
+  open: boolean;
+  detail: FeedItemDetail;
+  onOpenChange: (open: boolean) => void;
+  onSaveAsNote: FeedReaderProps["onSaveAsNote"];
+}) {
+  const [title, setTitle] = useState("");
+  const [folder, setFolder] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // 打开时用文章标题预填文件名。
+  useEffect(() => {
+    if (open) {
+      setTitle(sanitizeNoteFileName(detail.summary.title));
+      setFolder("");
+      setBusy(false);
+      setError(null);
+    }
+  }, [detail.summary.title, open]);
+
+  const submit = () => {
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      setError("请输入文件名。");
+      return;
+    }
+    if (!isValidFeedNoteFolder(folder)) {
+      setError("目录不能包含非法字符或“..”。");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    const markdown = buildFeedNoteMarkdown(detail, new Date().toISOString());
+    onSaveAsNote?.(markdown, trimmedTitle, folder.trim())
+      .then(() => onOpenChange(false))
+      .catch((caught: unknown) => {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : ((caught as { message?: string })?.message ??
+                "保存失败，请重试。"),
+        );
+        setBusy(false);
+      });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        data-testid="feed-save-note-dialog"
+        className="sm:max-w-md"
+      >
+        <DialogHeader>
+          <DialogTitle>保存为笔记</DialogTitle>
+          <DialogDescription>
+            将生成独立 Markdown 副本写入当前笔记库；后续订阅更新不影响此笔记。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <label className="block space-y-1">
+            <span className="text-caption text-muted-foreground">文件名</span>
+            <Input
+              data-testid="feed-save-note-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </label>
+          <label className="block space-y-1">
+            <span className="text-caption text-muted-foreground">
+              目标目录（留空为笔记库根目录）
+            </span>
+            <Input
+              data-testid="feed-save-note-folder"
+              value={folder}
+              placeholder="技术/Rust"
+              onChange={(event) => setFolder(event.target.value)}
+            />
+          </label>
+          {error ? (
+            <p
+              data-testid="feed-save-note-error"
+              className="text-caption text-warning"
+            >
+              {error}
+            </p>
+          ) : null}
+        </div>
+        <DialogFooter className="gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            data-testid="feed-save-note-cancel"
+            onClick={() => onOpenChange(false)}
+            disabled={busy}
+          >
+            取消
+          </Button>
+          <Button
+            type="button"
+            data-testid="feed-save-note-confirm"
+            onClick={submit}
+            disabled={busy}
+          >
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Save className="h-4 w-4" aria-hidden="true" />
+            )}
+            保存并打开
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export function FeedReader({
@@ -40,10 +186,12 @@ export function FeedReader({
   errorCode,
   onRetry,
   setItemState,
+  onSaveAsNote,
 }: FeedReaderProps) {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const [remoteImagesAllowed, setRemoteImagesAllowed] = useState(false);
+  const [saveNoteOpen, setSaveNoteOpen] = useState(false);
   const summary: FeedItemSummary | null = detail?.summary ?? null;
   const autoReadRef = useRef(isFeedAutoReadEnabled());
   autoReadRef.current = isFeedAutoReadEnabled();
@@ -175,6 +323,17 @@ export function FeedReader({
             <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
             {summary.isRead ? "标为未读" : "标为已读"}
           </button>
+          {onSaveAsNote ? (
+            <button
+              type="button"
+              data-testid="feed-save-as-note"
+              className="iris-focus-soft inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-1 text-caption transition-colors duration-fast hover:bg-muted/60"
+              onClick={() => setSaveNoteOpen(true)}
+            >
+              <Save className="h-3.5 w-3.5" aria-hidden="true" />
+              保存为笔记
+            </button>
+          ) : null}
         </div>
 
         {!remoteImagesAllowed && /feed-img-placeholder/.test(markdown) ? (
@@ -216,6 +375,14 @@ export function FeedReader({
           </a>
         ) : null}
       </div>
+      {detail && onSaveAsNote ? (
+        <FeedSaveNoteDialog
+          open={saveNoteOpen}
+          detail={detail}
+          onOpenChange={setSaveNoteOpen}
+          onSaveAsNote={onSaveAsNote}
+        />
+      ) : null}
     </article>
   );
 }

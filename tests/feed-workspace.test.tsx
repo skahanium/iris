@@ -94,6 +94,7 @@ function detailOf(summary: FeedItemSummary): FeedItemDetail {
     summary,
     contentMarkdown: `# ${summary.title}\n\n正文内容。`,
     summaryMarkdown: summary.excerpt,
+    siteUrl: "https://example.com/site",
   };
 }
 
@@ -439,5 +440,101 @@ describe("FeedWorkspace", () => {
     expect(
       screen.getByTestId("feed-reader-permalink").getAttribute("href"),
     ).toBe("https://example.com/article");
+  });
+});
+describe("FeedWorkspace 保存为笔记", () => {
+  const saveAsNote = vi.fn();
+
+  async function renderWorkspaceWithSave() {
+    saveAsNote.mockReset();
+    saveAsNote.mockResolvedValue("技术/文章标题.md");
+    const utils = render(<FeedWorkspace onSaveAsNote={saveAsNote} />);
+    await flush();
+    await waitFor(() => expect(feedSourceList).toHaveBeenCalled());
+    await flush();
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
+    await flush();
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-reader-title")).toBeTruthy(),
+    );
+    return utils;
+  }
+
+  it("未提供回调时不显示保存入口", async () => {
+    await renderWorkspace();
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
+    await flush();
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-reader-title")).toBeTruthy(),
+    );
+    expect(screen.queryByTestId("feed-save-as-note")).toBeNull();
+  });
+
+  it("确认保存后回调收到模板 Markdown、标题与目录", async () => {
+    await renderWorkspaceWithSave();
+    act(() => fireEvent.click(screen.getByTestId("feed-save-as-note")));
+    await flush();
+    expect(screen.getByTestId("feed-save-note-dialog")).toBeTruthy();
+    // 文件名预填文章标题（清理非法字符）。
+    expect(
+      (screen.getByTestId("feed-save-note-title") as HTMLInputElement).value,
+    ).toBe("Item i1");
+
+    fireEvent.change(screen.getByTestId("feed-save-note-folder"), {
+      target: { value: "技术/Rust" },
+    });
+    fireEvent.click(screen.getByTestId("feed-save-note-confirm"));
+    await waitFor(() => expect(saveAsNote).toHaveBeenCalledTimes(1));
+    const [markdown, titleHint, folder] = saveAsNote.mock.calls[0] as [
+      string,
+      string,
+      string,
+    ];
+    expect(markdown).toContain("# Item i1");
+    expect(markdown).toContain(
+      "> 来源：[Example Feed](https://example.com/site)  ",
+    );
+    expect(markdown).toContain("> 保存：");
+    expect(titleHint).toBe("Item i1");
+    expect(folder).toBe("技术/Rust");
+    // 成功后对话框关闭。
+    await waitFor(() =>
+      expect(screen.queryByTestId("feed-save-note-dialog")).toBeNull(),
+    );
+  });
+
+  it("保存失败停留在文章并显示可重试错误", async () => {
+    await renderWorkspaceWithSave();
+    saveAsNote.mockRejectedValue(new Error("笔记已锁定，无法保存"));
+    act(() => fireEvent.click(screen.getByTestId("feed-save-as-note")));
+    await flush();
+    fireEvent.click(screen.getByTestId("feed-save-note-confirm"));
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-save-note-error").textContent).toContain(
+        "笔记已锁定，无法保存",
+      ),
+    );
+    expect(screen.getByTestId("feed-save-note-dialog")).toBeTruthy();
+    // 可重试：再次确认成功。
+    saveAsNote.mockResolvedValueOnce("技术/文章标题.md");
+    fireEvent.click(screen.getByTestId("feed-save-note-confirm"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("feed-save-note-dialog")).toBeNull(),
+    );
+  });
+
+  it("非法目录或空文件名不发起保存", async () => {
+    await renderWorkspaceWithSave();
+    act(() => fireEvent.click(screen.getByTestId("feed-save-as-note")));
+    await flush();
+    fireEvent.change(screen.getByTestId("feed-save-note-folder"), {
+      target: { value: "技:术" },
+    });
+    fireEvent.click(screen.getByTestId("feed-save-note-confirm"));
+    await flush();
+    expect(saveAsNote).not.toHaveBeenCalled();
+    expect(screen.getByTestId("feed-save-note-error").textContent).toContain(
+      "目录",
+    );
   });
 });

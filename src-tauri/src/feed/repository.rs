@@ -528,7 +528,7 @@ impl FeedRepository {
                 "SELECT i.row_id, i.id, i.source_id, s.title, i.title, i.author_name,
                         i.canonical_url, i.published_at, i.received_at, i.content_text,
                         i.read_at, i.starred_at, i.archived_at, i.conversion_status,
-                        i.content_markdown, i.summary_markdown
+                        i.content_markdown, i.summary_markdown, s.site_url
                  FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
                  WHERE i.id = ?1",
                 [item_id],
@@ -537,6 +537,7 @@ impl FeedRepository {
                         summary: map_item_summary(row)?,
                         content_markdown: row.get(14)?,
                         summary_markdown: row.get(15)?,
+                        site_url: row.get(16)?,
                     })
                 },
             )
