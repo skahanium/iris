@@ -11,7 +11,10 @@ import { WorkspaceChromeActionsContext } from "@/hooks/useWorkspaceChromeActions
 import { useWorkspaceChromeLayout } from "@/hooks/useWorkspaceChromeLayout";
 import { WORKSPACE_TOGGLE_NAVIGATOR_EVENT } from "@/lib/workspace-chrome-events";
 import { cn } from "@/lib/utils";
-import type { WorkspacePrimarySurface } from "@/lib/workspace-chrome-layout";
+import type {
+  AppWorkspaceMode,
+  WorkspacePrimarySurface,
+} from "@/lib/workspace-chrome-layout";
 
 interface AppShellProps {
   tabBar: ReactNode;
@@ -33,6 +36,11 @@ interface AppShellProps {
   onPrimarySurfaceChange?: (surface: WorkspacePrimarySurface) => void;
   zen?: boolean;
   overlays?: ReactNode;
+  /** 应用工作区模式：documents（默认）或 feeds（订阅工作区）。 */
+  workspaceMode?: AppWorkspaceMode;
+  /** feeds 模式的主平面子树（与 editor 一样保持挂载，只切换可见性）。 */
+  feedWorkspace?: ReactNode;
+  onWorkspaceModeChange?: (mode: AppWorkspaceMode) => void;
 }
 
 type NavigatorTransitionState = "closed" | "visible" | "exiting";
@@ -58,7 +66,10 @@ export function AppShell({
   onPrimarySurfaceChange,
   zen = false,
   overlays,
+  workspaceMode = "documents",
+  feedWorkspace,
 }: AppShellProps) {
+  const feedsMode = workspaceMode === "feeds";
   const [isResizing, setIsResizing] = useState(false);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
@@ -118,7 +129,9 @@ export function AppShell({
   // resize 只改实测尺寸，不经过这些通道，因此不会改写用户意图。
   const prevAiPanelOpenRef = useRef(aiPanelOpen ?? true);
   useEffect(() => {
-    const next = aiPanelOpen ?? true;
+    // feeds 模式临时折叠 Agent 的有效 presentation，但不写回 aiPanelOpen；
+    // 返回 documents 时按原意图恢复。
+    const next = feedsMode ? false : (aiPanelOpen ?? true);
     const prev = prevAiPanelOpenRef.current;
     prevAiPanelOpenRef.current = next;
     if (next !== prev && !zen) {
@@ -142,6 +155,7 @@ export function AppShell({
     projection.primarySurface,
     setAiPanelOpen,
     zen,
+    feedsMode,
   ]);
   useEffect(() => {
     if (navigatorOpen !== undefined) setNavigatorOpen(navigatorOpen);
@@ -330,14 +344,26 @@ export function AppShell({
           {navigatorNode}
           <main
             data-testid="workspace-main"
-            aria-hidden={mainHidden || undefined}
+            aria-hidden={mainHidden || feedsMode || undefined}
             className={cn(
               "relative flex min-w-0 flex-1 flex-col bg-background",
-              mainHidden && "pointer-events-none invisible",
+              (mainHidden || feedsMode) && "pointer-events-none invisible",
             )}
           >
             {editor}
           </main>
+          {feedWorkspace !== undefined ? (
+            <main
+              data-testid="workspace-feed-main"
+              aria-hidden={!feedsMode || mainHidden || undefined}
+              className={cn(
+                "relative flex min-w-0 flex-1 flex-col bg-background",
+                (!feedsMode || mainHidden) && "pointer-events-none invisible",
+              )}
+            >
+              {feedWorkspace}
+            </main>
+          ) : null}
           <aside
             data-testid="unified-assistant-dock"
             data-presentation={projection.assistant}

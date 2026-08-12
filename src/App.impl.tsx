@@ -27,6 +27,7 @@ import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
 import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
 import { useCjkPunctuationSettings } from "@/hooks/useCjkPunctuationSettings";
+import { useFeedWorkspaceMode } from "@/hooks/useFeedWorkspaceMode";
 import { useFollowSystemProxy } from "@/hooks/useFollowSystemProxy";
 import { useAppUpdateController } from "@/hooks/useAppUpdate";
 import { useEmbeddingScheduler } from "@/hooks/useEmbeddingScheduler";
@@ -45,6 +46,7 @@ import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useOpenNote } from "@/hooks/useOpenNote";
 import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
 import { WorkspaceNavigator } from "@/components/file/WorkspaceNavigator";
+import { FeedWorkspace } from "@/components/feed/FeedWorkspace";
 import { useNoteLifecycleIntentActions } from "@/hooks/useNoteLifecycleIntentActions";
 import { useFileConflictResolution } from "@/hooks/useFileConflictResolution";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
@@ -131,6 +133,8 @@ function App() {
   const [workspaceEmpty, setWorkspaceEmpty] = useState(true);
   const [zen, setZen] = useState(false);
   useZenExitKeyboard({ zen, setZen });
+  const { workspaceMode, handleWorkspaceModeChange, returnToDocuments } =
+    useFeedWorkspaceMode(zen, setZen, setAiStatus);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
   const [findReplaceOpen, setFindReplaceOpen] = useState(false);
   const [findReplaceMode, setFindReplaceMode] =
@@ -885,12 +889,18 @@ function App() {
         onAiPanelOpenChange={setAiPanelOpen}
         onAssistantVisibilityChange={setAssistantVisible}
         zen={zen}
+        workspaceMode={workspaceMode}
+        onWorkspaceModeChange={handleWorkspaceModeChange}
+        feedWorkspace={<FeedWorkspace />}
         navigator={<WorkspaceNavigator {...navigatorBridge} />}
         tabBar={
           <TabBar
             tabs={workspaceTabs}
             activePath={activeWorkspacePath}
-            onSelect={handleActivateWorkspaceTab}
+            onSelect={(path) => {
+              if (workspaceMode === "feeds") returnToDocuments();
+              void handleActivateWorkspaceTab(path);
+            }}
             onClose={handleCloseWorkspaceTab}
             onNew={handleNewWorkspaceNote}
           />

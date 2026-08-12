@@ -103,7 +103,10 @@ describe("App shell refactor contract", () => {
     expect(shell).toContain("data-presentation={projection.assistant}");
     expect(shell).toContain('data-testid="workspace-navigator"');
     expect(shell).toContain('data-testid="workspace-main"');
-    expect(shell).toContain("aria-hidden={mainHidden || undefined}");
+    // 阶段 4 扩展：文档 main 在 feeds 模式下同样只切可见性（不卸载）。
+    expect(shell).toContain(
+      "aria-hidden={mainHidden || feedsMode || undefined}",
+    );
     expect(shell).toContain("z-workspace-focus");
     expect(shell).toContain("WorkspaceChromeActionsContext");
     expect(shell).not.toContain("panelWidth");

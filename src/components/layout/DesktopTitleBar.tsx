@@ -5,6 +5,7 @@ import {
   Lock,
   MoreHorizontal,
   Plus,
+  Rss,
   Sparkles,
   X,
 } from "lucide-react";
@@ -30,6 +31,7 @@ import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { computeVisibleTabCount } from "@/lib/tab-overflow";
 import { createWindowDragMouseDown } from "@/lib/window-drag";
 import { cn } from "@/lib/utils";
+import type { AppWorkspaceMode } from "@/lib/workspace-chrome-layout";
 
 import { WindowControls } from "./WindowControls";
 
@@ -54,6 +56,9 @@ interface DesktopTitleBarProps {
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
   onNew: () => void;
+  /** 应用工作区模式：feeds 时按钮呈按下态，点击切回 documents。 */
+  workspaceMode?: AppWorkspaceMode;
+  onWorkspaceModeChange?: (mode: AppWorkspaceMode) => void;
 }
 
 const TAB_MIN_PX = 72;
@@ -89,6 +94,39 @@ function TitlebarNavigatorEntry() {
   );
 }
 
+/**
+ * 订阅工作区入口（阶段 4）：笔记库入口旁、Tab rail 之前。
+ * aria-pressed 表达当前模式；中文 tooltip 与图标按钮样式同导航入口。
+ */
+function TitlebarFeedEntry({
+  workspaceMode,
+  onWorkspaceModeChange,
+}: {
+  workspaceMode?: AppWorkspaceMode;
+  onWorkspaceModeChange?: (mode: AppWorkspaceMode) => void;
+}) {
+  const feeds = workspaceMode === "feeds";
+  const label = feeds ? "返回笔记库" : "打开订阅";
+  return (
+    <button
+      type="button"
+      data-testid="titlebar-feed-entry"
+      data-tauri-drag-region-exclude
+      className="iris-titlebar-feed-entry iris-focus-soft inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
+      aria-label={label}
+      aria-pressed={feeds}
+      title={label}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onClick={() => onWorkspaceModeChange?.(feeds ? "documents" : "feeds")}
+    >
+      <Rss className="h-4 w-4" />
+    </button>
+  );
+}
+
 export const DesktopTitleBar = memo(function DesktopTitleBar({
   variant = "document",
   tabs,
@@ -96,6 +134,8 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   onSelect,
   onClose,
   onNew,
+  workspaceMode = "documents",
+  onWorkspaceModeChange,
 }: DesktopTitleBarProps) {
   const isDesktop = isTauriRuntime();
   const isMacDesktop = isMacOSDesktopChrome();
@@ -303,6 +343,10 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
       ) : showTabStrip ? (
         <>
           <TitlebarNavigatorEntry />
+          <TitlebarFeedEntry
+            workspaceMode={workspaceMode}
+            onWorkspaceModeChange={onWorkspaceModeChange}
+          />
           <div
             ref={railRef}
             className="iris-titlebar-tab-rail flex min-w-0 flex-1 items-center gap-1 overflow-x-hidden px-2"

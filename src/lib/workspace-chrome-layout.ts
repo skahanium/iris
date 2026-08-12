@@ -11,6 +11,9 @@
 /** 主平面：编辑器可见（默认）或 Agent 占据主工作区（编辑器保持挂载）。 */
 export type WorkspacePrimarySurface = "document" | "assistant_focus";
 
+/** 应用工作区模式：documents（默认）或 feeds（订阅工作区）。 */
+export type AppWorkspaceMode = "documents" | "feeds";
+
 /** 文件导航有效 presentation。 */
 export type NavigatorPresentation = "closed" | "peek" | "pinned";
 
