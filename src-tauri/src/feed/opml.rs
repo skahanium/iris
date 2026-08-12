@@ -21,6 +21,12 @@ use crate::network::safe_https::validate_https_url;
 
 /// OPML 输入上限（字节），与 Feed 载荷上限一致（规范 §11.1）。
 pub const OPML_MAX_BYTES: usize = 5 * 1024 * 1024;
+/// 单个 OPML 最多接受的订阅大纲数，避免一次导入制造无界数据库工作量。
+pub const OPML_MAX_OUTLINES: usize = 10_000;
+/// XML/outline 最大嵌套深度。
+pub const OPML_MAX_DEPTH: usize = 32;
+/// 分组路径最大 Unicode scalar 数。
+pub const OPML_MAX_FOLDER_SCALARS: usize = 1024;
 
 /// 单个订阅大纲（导出→导入的中间表示）。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,10 +56,23 @@ pub struct OpmlImportResult {
 
 /// 规范化 HTTPS URL；非法（非 HTTPS/私网等）返回 `None`。
 fn safe_https_url(url: &str) -> Option<String> {
+    canonicalize_https_url(url).ok()
+}
+
+/// 订阅 URL 的稳定数据库键：保留 path/query 语义，仅移除 fragment、默认端口
+/// 与主机大小写等无语义差异。
+pub(crate) fn canonicalize_https_url(url: &str) -> AppResult<String> {
     let trimmed = url.trim();
-    validate_https_url(trimmed)
-        .ok()
-        .map(|()| trimmed.to_string())
+    validate_https_url(trimmed)?;
+    let mut parsed =
+        reqwest::Url::parse(trimmed).map_err(|_| AppError::msg("feed_validation_url"))?;
+    parsed.set_fragment(None);
+    if parsed.port() == Some(443) {
+        parsed
+            .set_port(None)
+            .map_err(|_| AppError::msg("feed_validation_url"))?;
+    }
+    Ok(parsed.to_string())
 }
 
 /// 标题截断到 `TITLE_MAX_SCALARS`（Unicode scalar），天然不切坏 UTF-8。
@@ -80,6 +99,9 @@ pub fn parse_opml(bytes: &[u8]) -> AppResult<Vec<OpmlOutline>> {
         match reader.read_event_into(&mut buffer) {
             Ok(Event::Start(element)) => {
                 depth += 1;
+                if depth > OPML_MAX_DEPTH {
+                    return Err(AppError::msg("feed_opml_too_deep"));
+                }
                 if element.name().as_ref() == b"outline" {
                     handle_outline(&reader, &element, true, &mut folder_stack, &mut outlines)?;
                 }
@@ -146,6 +168,14 @@ fn handle_outline(
                 html_url: html_url.and_then(|url| safe_https_url(&url)),
                 folder_path: folder_stack.join("/"),
             });
+            if outlines.len() > OPML_MAX_OUTLINES {
+                return Err(AppError::msg("feed_opml_too_many_outlines"));
+            }
+            if outlines.last().is_some_and(|outline| {
+                outline.folder_path.chars().count() > OPML_MAX_FOLDER_SCALARS
+            }) {
+                return Err(AppError::msg("feed_opml_folder_too_long"));
+            }
             if is_start {
                 folder_stack.push(String::new()); // 占位：End 时弹出
             }

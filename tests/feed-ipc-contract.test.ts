@@ -16,12 +16,12 @@ import {
   feedItemSetState,
   feedOpmlExport,
   feedOpmlImport,
-  feedSearch,
   feedSourceAdd,
   feedSourceItemCount,
   feedSourceRemove,
   feedSourceUpdate,
   feedSyncAll,
+  feedSyncBatch,
   feedSyncSource,
 } from "@/lib/ipc";
 import { IPC_EVENTS } from "@/lib/ipc-events";
@@ -49,9 +49,9 @@ const FEED_COMMANDS = [
   "feed_item_get",
   "feed_item_set_state",
   "feed_items_mark_read",
-  "feed_search",
   "feed_sync_source",
   "feed_sync_all",
+  "feed_sync_batch",
   "feed_opml_import",
   "feed_opml_export",
 ] as const;
@@ -235,16 +235,6 @@ describe("feed IPC contract", () => {
     });
   });
 
-  it("feedSearch invokes with query/sourceId/limit", async () => {
-    invoke.mockResolvedValue([]);
-    await feedSearch("hello", "src-1", 25);
-    expect(invoke).toHaveBeenCalledWith("feed_search", {
-      query: "hello",
-      sourceId: "src-1",
-      limit: 25,
-    });
-  });
-
   it("feedSyncSource waits for completion and returns counts", async () => {
     invoke.mockResolvedValue({
       status: "succeeded",
@@ -263,9 +253,18 @@ describe("feed IPC contract", () => {
   });
 
   it("feedSyncAll invokes without args", async () => {
-    invoke.mockResolvedValue(undefined);
+    invoke.mockResolvedValue({ total: 0, succeeded: 0, failed: 0 });
     await feedSyncAll();
     expect(invoke).toHaveBeenCalledWith("feed_sync_all");
+  });
+
+  it("feedSyncBatch invokes with bounded source IDs", async () => {
+    invoke.mockResolvedValue({ total: 2, succeeded: 2, failed: 0 });
+    await feedSyncBatch(["src-1", "src-2"], false);
+    expect(invoke).toHaveBeenCalledWith("feed_sync_batch", {
+      sourceIds: ["src-1", "src-2"],
+      markHistoryRead: false,
+    });
   });
 
   it("feedOpmlImport invokes with bounded xml string and dryRun flag", async () => {

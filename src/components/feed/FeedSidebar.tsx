@@ -56,6 +56,56 @@ export function FeedSidebar({
   const failedSources = sources.filter(
     (source) => source.lastErrorCode != null,
   );
+  const sourceGroups = new Map<string, FeedSourceSummary[]>();
+  for (const source of sources) {
+    const folder = source.folderPath.trim();
+    const group = sourceGroups.get(folder) ?? [];
+    group.push(source);
+    sourceGroups.set(folder, group);
+  }
+
+  const renderSource = (source: FeedSourceSummary) => {
+    const active = sourceId === source.id;
+    const failed = source.lastErrorCode != null;
+    return (
+      <li key={source.id}>
+        <button
+          type="button"
+          data-testid={`feed-source-${source.id}`}
+          aria-pressed={active}
+          aria-label={`${source.title}${failed ? "，同步失败" : ""}，${source.unreadCount} 条未读`}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground",
+            active && "bg-muted/80 text-foreground",
+          )}
+          onClick={() => {
+            onViewChange("all");
+            onSourceSelect(source.id);
+          }}
+        >
+          {failed ? (
+            <AlertTriangle
+              className="h-4 w-4 shrink-0 text-warning"
+              aria-hidden="true"
+            />
+          ) : (
+            <Rss className="h-4 w-4 shrink-0" aria-hidden="true" />
+          )}
+          <span className="min-w-0 flex-1 truncate text-left">
+            {source.title}
+          </span>
+          {source.unreadCount > 0 ? (
+            <span
+              data-testid={`feed-source-unread-${source.id}`}
+              className="shrink-0 rounded-full bg-muted px-1.5 text-micro tabular-nums text-muted-foreground"
+            >
+              {source.unreadCount}
+            </span>
+          ) : null}
+        </button>
+      </li>
+    );
+  };
 
   return (
     <nav
@@ -107,50 +157,23 @@ export function FeedSidebar({
         <Radio className="h-3.5 w-3.5" aria-hidden="true" />
         订阅源
       </div>
-      <ul className="space-y-0.5">
-        {sources.map((source) => {
-          const active = sourceId === source.id;
-          const failed = source.lastErrorCode != null;
-          return (
-            <li key={source.id}>
-              <button
-                type="button"
-                data-testid={`feed-source-${source.id}`}
-                aria-pressed={active}
-                aria-label={`${source.title}${failed ? "，同步失败" : ""}，${source.unreadCount} 条未读`}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground",
-                  active && "bg-muted/80 text-foreground",
-                )}
-                onClick={() => {
-                  onViewChange("all");
-                  onSourceSelect(source.id);
-                }}
-              >
-                {failed ? (
-                  <AlertTriangle
-                    className="h-4 w-4 shrink-0 text-warning"
-                    aria-hidden="true"
-                  />
-                ) : (
-                  <Rss className="h-4 w-4 shrink-0" aria-hidden="true" />
-                )}
-                <span className="min-w-0 flex-1 truncate text-left">
-                  {source.title}
-                </span>
-                {source.unreadCount > 0 ? (
-                  <span
-                    data-testid={`feed-source-unread-${source.id}`}
-                    className="shrink-0 rounded-full bg-muted px-1.5 text-micro tabular-nums text-muted-foreground"
-                  >
-                    {source.unreadCount}
-                  </span>
-                ) : null}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      {[...sourceGroups.entries()].map(([folder, group]) => {
+        const groupId = folder ? folder.replaceAll("/", "-") : "ungrouped";
+        return (
+          <div
+            key={folder || "ungrouped"}
+            data-testid={`feed-source-group-${groupId}`}
+            className="mb-1"
+          >
+            {folder ? (
+              <div className="truncate px-2 py-1 text-micro text-muted-foreground/70">
+                {folder}
+              </div>
+            ) : null}
+            <ul className="space-y-0.5">{group.map(renderSource)}</ul>
+          </div>
+        );
+      })}
 
       {failedSources.length > 0 ? (
         <div className="mt-4">

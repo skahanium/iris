@@ -91,9 +91,9 @@ describe("feed-reader 安全渲染", () => {
   it("intercepts external link clicks through openExternalHttpsUrl", () => {
     const anchor = document.createElement("a");
     anchor.href = "https://example.com/article";
+    anchor.addEventListener("click", handleFeedLinkClick);
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
     anchor.dispatchEvent(event);
-    handleFeedLinkClick(event);
     expect(openExternalHttpsUrl).toHaveBeenCalledWith(
       "https://example.com/article",
     );
@@ -102,9 +102,9 @@ describe("feed-reader 安全渲染", () => {
   it("does not open non-https links", () => {
     const anchor = document.createElement("a");
     anchor.href = "javascript:alert(1)";
+    anchor.addEventListener("click", handleFeedLinkClick);
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
     anchor.dispatchEvent(event);
-    handleFeedLinkClick(event);
     expect(openExternalHttpsUrl).not.toHaveBeenCalled();
   });
 
@@ -114,5 +114,7 @@ describe("feed-reader 安全渲染", () => {
       '<img src="https://cdn.example.com/d.png" alt="d">',
     );
     expect(html).toContain('src="https://cdn.example.com/d.png"');
+    expect(html).toContain('loading="lazy"');
+    expect(html).toContain('referrerpolicy="no-referrer"');
   });
 });

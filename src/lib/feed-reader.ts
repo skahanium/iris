@@ -59,6 +59,8 @@ const FEED_ALLOWED_ATTR = [
   "target",
   "rel",
   "aria-label",
+  "loading",
+  "referrerpolicy",
 ];
 
 /** 链接只允许 HTTPS；其余 scheme（http/javascript:/data:/file:）被净化。 */
@@ -87,7 +89,7 @@ const FEED_FORBID_ATTR = [
 
 /** 订阅正文专用 DOMPurify allowlist。 */
 export function sanitizeFeedHtml(html: string): string {
-  return DOMPurify.sanitize(html, {
+  const sanitized = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: FEED_ALLOWED_TAGS,
     ALLOWED_ATTR: FEED_ALLOWED_ATTR,
     ALLOWED_URI_REGEXP: FEED_ALLOWED_URI_REGEXP,
@@ -96,6 +98,12 @@ export function sanitizeFeedHtml(html: string): string {
     ALLOW_DATA_ATTR: false,
     ALLOW_UNKNOWN_PROTOCOLS: false,
   });
+  const doc = new DOMParser().parseFromString(sanitized, "text/html");
+  for (const image of Array.from(doc.querySelectorAll("img"))) {
+    image.setAttribute("loading", "lazy");
+    image.setAttribute("referrerpolicy", "no-referrer");
+  }
+  return doc.body.innerHTML;
 }
 
 /** 远程图片默认阻止：把 `http(s)://` 图片替换为占位（保留 alt 与
@@ -130,6 +138,11 @@ export function renderFeedMarkdown(
 /** 自动已读设置：正文可见 1 秒或发生阅读动作后标记（默认开启）。 */
 export function isFeedAutoReadEnabled(): boolean {
   return localStorage.getItem("iris-feed-auto-read") !== "false";
+}
+
+/** 保存显式自动已读偏好；不包含文章或订阅数据。 */
+export function setFeedAutoReadEnabled(enabled: boolean): void {
+  localStorage.setItem("iris-feed-auto-read", enabled ? "true" : "false");
 }
 
 /** 外链拦截：只允许 HTTPS 经 `openExternalHttpsUrl` 打开；

@@ -10,7 +10,6 @@ import {
   feedItemList,
   feedItemsMarkRead,
   feedItemSetState,
-  feedSearch,
   feedSourceList,
   listenFeedChanged,
 } from "@/lib/ipc";
@@ -36,11 +35,12 @@ export interface FeedLibraryApi {
   errorCode: string | null;
   items: FeedItemSummary[];
   sources: FeedSourceSummary[];
+  hasMore: boolean;
   setView: (view: FeedView) => void;
   setSourceId: (sourceId: string | null) => void;
   setSearch: (search: string) => void;
   selectItem: (itemId: string | null) => void;
-  setItemState: (itemId: string, patch: FeedItemStatePatch) => void;
+  setItemState: (itemId: string, patch: FeedItemStatePatch) => Promise<boolean>;
   markAllRead: () => Promise<number>;
   loadMore: () => void;
   refresh: () => void;
@@ -60,6 +60,7 @@ export function useFeedLibrary(): FeedLibraryApi {
   const [errorCode, setErrorCode] = useState<string | null>(null);
   const [items, setItems] = useState<FeedItemSummary[]>([]);
   const [sources, setSources] = useState<FeedSourceSummary[]>([]);
+  const [hasMore, setHasMore] = useState(false);
   const requestSequenceRef = useRef(0);
   const filtersRef = useRef({ view, sourceId, search });
   filtersRef.current = { view, sourceId, search };
@@ -74,19 +75,19 @@ export function useFeedLibrary(): FeedLibraryApi {
       setStatus("loading");
       setErrorCode(null);
       const trimmed = nextSearch.trim();
-      const run = trimmed
-        ? feedSearch(trimmed, nextSourceId, FEED_PAGE_LIMIT)
-        : feedItemList({
-            view: nextView,
-            sourceId: nextSourceId,
-            receivedAfter: null,
-            cursor: null,
-            limit: FEED_PAGE_LIMIT,
-          });
+      const run = feedItemList({
+        view: nextView,
+        sourceId: nextSourceId,
+        search: trimmed || null,
+        receivedAfter: null,
+        cursor: null,
+        limit: FEED_PAGE_LIMIT,
+      });
       void run
         .then((rows) => {
           if (requestSequenceRef.current !== sequence) return;
           setItems(rows);
+          setHasMore(rows.length === FEED_PAGE_LIMIT);
           setPage(1);
           setStatus("ready");
         })
@@ -111,6 +112,9 @@ export function useFeedLibrary(): FeedLibraryApi {
       currentSource,
       currentSearch,
     );
+    void feedSourceList()
+      .then(setSources)
+      .catch(() => undefined);
   }, [fetchRows]);
 
   const loadSources = useCallback(async () => {
@@ -165,32 +169,81 @@ export function useFeedLibrary(): FeedLibraryApi {
 
   const setItemState = useCallback(
     (itemId: string, patch: FeedItemStatePatch) => {
-      const previous = items;
+      let previousItem: FeedItemSummary | undefined;
       setItems((rows) =>
-        rows.map((row) =>
-          row.id === itemId
-            ? {
-                ...row,
-                isRead: patch.isRead ?? row.isRead,
-                isStarred: patch.isStarred ?? row.isStarred,
-                isArchived: patch.isArchived ?? row.isArchived,
-              }
-            : row,
-        ),
+        rows.map((row) => {
+          if (row.id !== itemId) return row;
+          previousItem = row;
+          return {
+            ...row,
+            isRead: patch.isRead ?? row.isRead,
+            isStarred: patch.isStarred ?? row.isStarred,
+            isArchived: patch.isArchived ?? row.isArchived,
+          };
+        }),
       );
-      void feedItemSetState(itemId, patch).catch(() => {
-        // 状态失败回滚：恢复操作前的行快照。
-        setItems(previous);
-      });
+      return feedItemSetState(itemId, patch)
+        .then(() => {
+          const mutationView = filtersRef.current.view;
+          setItems((rows) =>
+            rows.filter((row) => {
+              if (row.id !== itemId) return true;
+              if (mutationView === "inbox") {
+                return !(patch.isRead === true || patch.isArchived === true);
+              }
+              if (mutationView === "starred" && patch.isStarred === false) {
+                return false;
+              }
+              if (mutationView === "archived" && patch.isArchived === false) {
+                return false;
+              }
+              return true;
+            }),
+          );
+          void loadSources();
+          return true;
+        })
+        .catch(() => {
+          // 只回滚本次变更涉及的轴，不能覆盖其他并发成功操作。
+          if (previousItem) {
+            setItems((rows) =>
+              rows.map((row) =>
+                row.id === itemId
+                  ? {
+                      ...row,
+                      isRead:
+                        patch.isRead === undefined
+                          ? row.isRead
+                          : previousItem!.isRead,
+                      isStarred:
+                        patch.isStarred === undefined
+                          ? row.isStarred
+                          : previousItem!.isStarred,
+                      isArchived:
+                        patch.isArchived === undefined
+                          ? row.isArchived
+                          : previousItem!.isArchived,
+                    }
+                  : row,
+              ),
+            );
+          }
+          return false;
+        });
     },
-    [items],
+    [loadSources],
   );
 
   const markAllRead = useCallback(async (): Promise<number> => {
-    const { view: currentView, sourceId: currentSource } = filtersRef.current;
+    const {
+      view: currentView,
+      sourceId: currentSource,
+      search: currentSearch,
+    } = filtersRef.current;
     const query: FeedItemQuery = {
       view: currentView,
       sourceId: currentSource,
+      search: currentSearch.trim() || null,
       receivedAfter: null,
       cursor: null,
       limit: FEED_PAGE_LIMIT,
@@ -201,7 +254,7 @@ export function useFeedLibrary(): FeedLibraryApi {
   }, [refresh]);
 
   const loadMore = useCallback(() => {
-    if (status !== "ready") return;
+    if (status !== "ready" || !hasMore) return;
     const last = items[items.length - 1];
     if (!last) return;
     const {
@@ -209,11 +262,11 @@ export function useFeedLibrary(): FeedLibraryApi {
       sourceId: currentSource,
       search: currentSearch,
     } = filtersRef.current;
-    if (currentSearch.trim()) return; // 搜索暂不分页
     const sequence = ++requestSequenceRef.current;
     void feedItemList({
       view: currentView,
       sourceId: currentSource,
+      search: currentSearch.trim() || null,
       receivedAfter: null,
       cursor: { sortAt: last.receivedAt, rowId: last.rowId },
       limit: FEED_PAGE_LIMIT,
@@ -221,12 +274,13 @@ export function useFeedLibrary(): FeedLibraryApi {
       .then((rows) => {
         if (requestSequenceRef.current !== sequence) return;
         setItems((previous) => [...previous, ...rows]);
+        setHasMore(rows.length === FEED_PAGE_LIMIT);
         setPage((previous) => previous + 1);
       })
       .catch(() => {
         // 分页失败静默：下次滚动重试。
       });
-  }, [items, status]);
+  }, [hasMore, items, status]);
 
   return {
     view,
@@ -238,6 +292,7 @@ export function useFeedLibrary(): FeedLibraryApi {
     errorCode,
     items,
     sources,
+    hasMore,
     setView,
     setSourceId,
     setSearch,

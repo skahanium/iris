@@ -26,7 +26,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { handleFeedLinkClick, renderFeedMarkdown } from "@/lib/feed-reader";
+import {
+  handleFeedLinkClick,
+  renderFeedMarkdown,
+  setFeedAutoReadEnabled,
+} from "@/lib/feed-reader";
 import {
   buildFeedNoteMarkdown,
   isValidFeedNoteFolder,
@@ -44,6 +48,8 @@ import type {
 import { isFeedAutoReadEnabled } from "@/lib/feed-reader";
 
 export interface FeedReaderProps {
+  /** 当前工作区可见时才允许焦点和自动已读副作用。 */
+  active?: boolean;
   detail: FeedItemDetail | null;
   status: "idle" | "loading" | "ready" | "error";
   errorCode: string | null;
@@ -181,6 +187,7 @@ function FeedSaveNoteDialog({
 }
 
 export function FeedReader({
+  active = true,
   detail,
   status,
   errorCode,
@@ -193,14 +200,13 @@ export function FeedReader({
   const [remoteImagesAllowed, setRemoteImagesAllowed] = useState(false);
   const [saveNoteOpen, setSaveNoteOpen] = useState(false);
   const summary: FeedItemSummary | null = detail?.summary ?? null;
-  const autoReadRef = useRef(isFeedAutoReadEnabled());
-  autoReadRef.current = isFeedAutoReadEnabled();
+  const [autoReadEnabled, setAutoReadEnabled] = useState(isFeedAutoReadEnabled);
 
   // 打开文章：焦点移到标题；正文可见 1 秒或发生阅读动作后延迟已读。
   useEffect(() => {
-    if (status !== "ready" || !summary) return;
+    if (!active || status !== "ready" || !summary) return;
     titleRef.current?.focus({ preventScroll: true });
-    if (summary.isRead || !autoReadRef.current) return;
+    if (summary.isRead || !autoReadEnabled) return;
 
     let marked = false;
     const markRead = () => {
@@ -209,19 +215,44 @@ export function FeedReader({
       setItemState(summary.id, { isRead: true });
     };
     const timer = window.setTimeout(markRead, 1000);
-    const onScrollOrKey = () => {
+    const onReadAction = () => {
       window.clearTimeout(timer);
       markRead();
     };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.matches("input, textarea, select, button") ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (
+        ![
+          "ArrowDown",
+          "ArrowUp",
+          "PageDown",
+          "PageUp",
+          " ",
+          "Home",
+          "End",
+        ].includes(event.key)
+      ) {
+        return;
+      }
+      onReadAction();
+    };
     const body = bodyRef.current;
-    body?.addEventListener("scroll", onScrollOrKey, { once: true });
-    window.addEventListener("keydown", onScrollOrKey, { once: true });
+    body?.addEventListener("scroll", onReadAction, { once: true });
+    body?.addEventListener("keydown", onKeyDown);
     return () => {
       window.clearTimeout(timer);
-      body?.removeEventListener("scroll", onScrollOrKey);
-      window.removeEventListener("keydown", onScrollOrKey);
+      body?.removeEventListener("scroll", onReadAction);
+      body?.removeEventListener("keydown", onKeyDown);
     };
-  }, [status, summary, setItemState]);
+  }, [active, autoReadEnabled, status, summary, setItemState]);
 
   // 切换文章时重置远程图片加载状态。
   useEffect(() => {
@@ -322,6 +353,19 @@ export function FeedReader({
           >
             <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />
             {summary.isRead ? "标为未读" : "标为已读"}
+          </button>
+          <button
+            type="button"
+            data-testid="feed-toggle-auto-read"
+            aria-pressed={autoReadEnabled}
+            className="iris-focus-soft inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-1 text-caption transition-colors duration-fast hover:bg-muted/60"
+            onClick={() => {
+              const next = !autoReadEnabled;
+              setAutoReadEnabled(next);
+              setFeedAutoReadEnabled(next);
+            }}
+          >
+            自动已读：{autoReadEnabled ? "开" : "关"}
           </button>
           {onSaveAsNote ? (
             <button

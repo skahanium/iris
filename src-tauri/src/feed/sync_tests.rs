@@ -150,6 +150,46 @@ async fn first_sync_marks_history_read_by_default() {
 }
 
 #[tokio::test]
+async fn successful_sync_updates_feed_metadata_without_overwriting_title_override() {
+    let db = create_db();
+    let server = TestServer::start().await;
+    server.queue(
+        TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+    );
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+    with_write_conn(&db, |conn| {
+        FeedRepository::update_source(
+            conn,
+            "src-1",
+            &FeedSourcePatch {
+                title_override: Some("My title".to_string()),
+                ..Default::default()
+            },
+            Utc::now(),
+        )
+    });
+
+    sync_ok(
+        &db,
+        &TestNetGate::default(),
+        "src-1",
+        SyncMode::Manual,
+        HistoryReadPolicy::MarkRead,
+    )
+    .await;
+
+    let source = source_state(&db, "src-1");
+    assert_eq!(source.title, "Example Tech Blog");
+    assert_eq!(source.title_override.as_deref(), Some("My title"));
+    assert_eq!(source.site_url.as_deref(), Some("https://example.com/blog"));
+    assert_eq!(source.language.as_deref(), Some("en-us"));
+    assert!(source
+        .description
+        .as_deref()
+        .is_some_and(|v| v.contains("synthetic")));
+}
+
+#[tokio::test]
 async fn first_sync_can_leave_history_unread() {
     let db = create_db();
     let server = TestServer::start().await;
@@ -642,7 +682,41 @@ async fn failure_releases_inflight_marker() {
 }
 
 #[tokio::test]
-async fn sync_all_fetches_at_most_two_due_sources_concurrently() {
+async fn cancelled_sync_releases_inflight_marker() {
+    let db = Arc::new(create_db());
+    let server = TestServer::start_with_delay(150).await;
+    server.queue(
+        TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+    );
+    server.queue(
+        TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+    );
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+    let service = FeedSyncService::new(db, Arc::new(TestNetGate::default()));
+
+    let timed_out = tokio::time::timeout(
+        Duration::from_millis(20),
+        service.sync_source("src-1", SyncMode::Manual),
+    )
+    .await;
+    assert!(
+        timed_out.is_err(),
+        "first future must be cancelled by timeout"
+    );
+    tokio::time::sleep(Duration::from_millis(180)).await;
+
+    let retry = service
+        .sync_source("src-1", SyncMode::Manual)
+        .await
+        .expect("retry");
+    assert!(
+        matches!(retry.status, SyncStatus::Succeeded { .. }),
+        "取消 future 后不能永久卡在 InFlight"
+    );
+}
+
+#[tokio::test]
+async fn sync_due_batch_fetches_at_most_two_due_sources_concurrently() {
     let db = Arc::new(create_db());
     let server = TestServer::start_with_delay(200).await;
     // 5 个到期源 → 每轮最多 2 个。
@@ -658,7 +732,7 @@ async fn sync_all_fetches_at_most_two_due_sources_concurrently() {
     }
     let service = FeedSyncService::new(db.clone(), Arc::new(TestNetGate::default()));
 
-    service.sync_all().await.expect("sync all");
+    service.sync_due_batch().await.expect("sync due batch");
 
     assert_eq!(server.requests_snapshot().len(), 2, "每轮最多取 2 个到期源");
     let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
@@ -674,7 +748,7 @@ async fn sync_all_fetches_at_most_two_due_sources_concurrently() {
 }
 
 #[tokio::test]
-async fn sync_all_skips_paused_sources() {
+async fn sync_due_batch_skips_paused_sources() {
     let db = Arc::new(create_db());
     let server = TestServer::start().await;
     insert_source(&db, "src-1", &server.url("/feed.xml"));
@@ -691,9 +765,37 @@ async fn sync_all_skips_paused_sources() {
     });
     // 暂停源不会出现在 due 查询中，也不会发起任何请求。
     let service = FeedSyncService::new(db.clone(), Arc::new(TestNetGate::default()));
-    service.sync_all().await.expect("sync all");
+    service.sync_due_batch().await.expect("sync due batch");
     assert!(
         server.requests_snapshot().is_empty(),
         "暂停源不得触发任何请求"
+    );
+}
+
+#[tokio::test]
+async fn manual_sync_all_fetches_every_enabled_source_with_concurrency_two() {
+    let db = Arc::new(create_db());
+    let server = TestServer::start_with_delay(80).await;
+    for index in 0..5 {
+        insert_source(
+            &db,
+            &format!("src-{index}"),
+            &server.url(&format!("/feed{index}.xml")),
+        );
+        server.queue(
+            TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+        );
+    }
+    let service = FeedSyncService::new(db, Arc::new(TestNetGate::default()));
+    let started = std::time::Instant::now();
+    let outcome = service.sync_all().await.expect("manual sync all");
+
+    assert_eq!(server.requests_snapshot().len(), 5);
+    assert_eq!(outcome.total, 5);
+    assert_eq!(outcome.succeeded, 5);
+    assert_eq!(outcome.failed, 0);
+    assert!(
+        started.elapsed() >= Duration::from_millis(200),
+        "5 个请求按宽度 2 分三批执行"
     );
 }

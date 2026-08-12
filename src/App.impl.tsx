@@ -261,7 +261,9 @@ function App() {
   );
   const guardedOpenNote = useCallback(
     async (...args: Parameters<typeof openNote>): Promise<void> => {
-      if (rejectDepartureInteraction()) return;
+      if (rejectDepartureInteraction()) {
+        throw new Error("document_departure_blocked");
+      }
       await openNote(...args);
     },
     [openNote, rejectDepartureInteraction],
@@ -889,13 +891,19 @@ function App() {
         onAssistantVisibilityChange={setAssistantVisible}
         zen={zen}
         workspaceMode={workspaceMode}
-        onWorkspaceModeChange={handleWorkspaceModeChange}
-        feedWorkspace={<FeedWorkspace onSaveAsNote={handleFeedSaveAsNote} />}
+        feedWorkspace={
+          <FeedWorkspace
+            active={workspaceMode === "feeds"}
+            onSaveAsNote={handleFeedSaveAsNote}
+          />
+        }
         navigator={<WorkspaceNavigator {...navigatorBridge} />}
         tabBar={
           <TabBar
             tabs={workspaceTabs}
             activePath={activeWorkspacePath}
+            workspaceMode={workspaceMode}
+            onWorkspaceModeChange={handleWorkspaceModeChange}
             onSelect={(path) => {
               if (workspaceMode === "feeds") returnToDocuments();
               void handleActivateWorkspaceTab(path);

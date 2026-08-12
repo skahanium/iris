@@ -60,7 +60,7 @@ impl Scheduler {
                 _ = shutdown_rx_feed.changed() => return,
             }
             loop {
-                if let Err(error) = feed_sync.sync_all().await {
+                if let Err(error) = feed_sync.sync_due_batch().await {
                     tracing::warn!(error_code = %error, "feed_sync_all failed");
                 }
                 tokio::select! {

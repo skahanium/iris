@@ -11,10 +11,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { feedOpmlImport, feedOpmlExport, feedSyncSource } = vi.hoisted(() => ({
+const { feedOpmlImport, feedOpmlExport, feedSyncBatch } = vi.hoisted(() => ({
   feedOpmlImport: vi.fn(),
   feedOpmlExport: vi.fn(),
-  feedSyncSource: vi.fn(),
+  feedSyncBatch: vi.fn(),
 }));
 
 const { dialogOpen, dialogSave, fsReadTextFile, fsWriteTextFile } = vi.hoisted(
@@ -29,7 +29,7 @@ const { dialogOpen, dialogSave, fsReadTextFile, fsWriteTextFile } = vi.hoisted(
 vi.mock("@/lib/ipc", () => ({
   feedOpmlImport,
   feedOpmlExport,
-  feedSyncSource,
+  feedSyncBatch,
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -70,10 +70,13 @@ beforeEach(() => {
     addedIds: ["src-1"],
   });
   feedOpmlExport.mockResolvedValue('<opml version="2.0"><body></body></opml>');
-  feedSyncSource.mockResolvedValue({
-    status: "succeeded",
+  feedSyncBatch.mockResolvedValue({
+    total: 1,
+    succeeded: 1,
+    notModified: 0,
+    failed: 0,
     newItems: 2,
-    errorCode: null,
+    outcomes: [],
   });
 });
 
@@ -107,7 +110,7 @@ describe("FeedOpmlDialog 导入流程", () => {
     fireEvent.click(screen.getByTestId("feed-opml-import-confirm"));
     await waitFor(() => expect(onSourcesChanged).toHaveBeenCalledTimes(1));
     expect(feedOpmlImport).toHaveBeenLastCalledWith(SAMPLE_XML, false);
-    expect(feedSyncSource).toHaveBeenCalledWith("src-1", true);
+    expect(feedSyncBatch).toHaveBeenCalledWith(["src-1"], true);
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -126,7 +129,7 @@ describe("FeedOpmlDialog 导入流程", () => {
     fireEvent.click(screen.getByTestId("feed-opml-history-unread"));
     fireEvent.click(screen.getByTestId("feed-opml-import-confirm"));
     await waitFor(() => expect(onSourcesChanged).toHaveBeenCalledTimes(1));
-    expect(feedSyncSource).toHaveBeenCalledWith("src-1", false);
+    expect(feedSyncBatch).toHaveBeenCalledWith(["src-1"], false);
   });
 
   it("取消同步选项时不发起首次同步", async () => {
@@ -144,7 +147,7 @@ describe("FeedOpmlDialog 导入流程", () => {
     fireEvent.click(screen.getByTestId("feed-opml-sync-new"));
     fireEvent.click(screen.getByTestId("feed-opml-import-confirm"));
     await waitFor(() => expect(onSourcesChanged).toHaveBeenCalledTimes(1));
-    expect(feedSyncSource).not.toHaveBeenCalled();
+    expect(feedSyncBatch).not.toHaveBeenCalled();
   });
 
   it("预览取消不执行导入", async () => {

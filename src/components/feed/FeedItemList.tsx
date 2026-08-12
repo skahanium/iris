@@ -14,8 +14,11 @@ export interface FeedItemListProps {
   items: FeedItemSummary[];
   status: "idle" | "loading" | "ready" | "error";
   errorCode: string | null;
+  hasMore: boolean;
   selectedItemId: string | null;
+  focusedItemId: string | null;
   onSelect: (itemId: string) => void;
+  onFocusItem: (itemId: string) => void;
   onMarkAllRead: () => void;
   onRetry: () => void;
   onLoadMore: () => void;
@@ -26,11 +29,15 @@ export interface FeedItemListProps {
 function ItemRow({
   item,
   selected,
+  focused,
   onSelect,
+  onFocusItem,
 }: {
   item: FeedItemSummary;
   selected: boolean;
+  focused: boolean;
   onSelect: (itemId: string) => void;
+  onFocusItem: (itemId: string) => void;
 }) {
   return (
     <button
@@ -39,11 +46,13 @@ function ItemRow({
       data-selected={selected || undefined}
       aria-label={`${item.isRead ? "已读" : "未读"}：${item.title}`}
       aria-current={selected ? "true" : undefined}
+      tabIndex={focused ? 0 : -1}
       className={cn(
         "block w-full border-b border-border-subtle/60 px-3 py-2 text-left transition-colors duration-fast hover:bg-muted/40 focus:outline-none",
         selected && "bg-muted/70",
       )}
       onClick={() => onSelect(item.id)}
+      onFocus={() => onFocusItem(item.id)}
     >
       <div className="flex items-start gap-2">
         <span
@@ -82,8 +91,11 @@ export function FeedItemList({
   items,
   status,
   errorCode,
+  hasMore,
   selectedItemId,
+  focusedItemId,
   onSelect,
+  onFocusItem,
   onMarkAllRead,
   onRetry,
   onLoadMore,
@@ -209,7 +221,9 @@ export function FeedItemList({
                   <ItemRow
                     item={item}
                     selected={selectedItemId === item.id}
+                    focused={focusedItemId === item.id}
                     onSelect={onSelect}
+                    onFocusItem={onFocusItem}
                   />
                 </div>
               );
@@ -223,12 +237,14 @@ export function FeedItemList({
                 key={item.id}
                 item={item}
                 selected={selectedItemId === item.id}
+                focused={focusedItemId === item.id}
                 onSelect={onSelect}
+                onFocusItem={onFocusItem}
               />
             ))}
           </div>
         )}
-        {items.length >= 50 ? (
+        {hasMore ? (
           <button
             type="button"
             data-testid="feed-load-more"

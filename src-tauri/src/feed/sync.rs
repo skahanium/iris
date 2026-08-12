@@ -18,8 +18,6 @@ use crate::storage::db::Database;
 /// 同步触发方式：自动（跳过暂停源）与手动（可刷新暂停源）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SyncMode {
-    // 阶段 3 `feed_sync_source` 手动刷新消费；届时移除标注。
-    #[allow(dead_code)]
     Manual,
     Automatic,
 }
@@ -28,8 +26,6 @@ pub(crate) enum SyncMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HistoryReadPolicy {
     MarkRead,
-    // 阶段 3 添加流程「历史也设为未读」消费；届时移除标注。
-    #[allow(dead_code)]
     LeaveUnread,
 }
 
@@ -52,6 +48,18 @@ pub(crate) enum SyncStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SyncOutcome {
     pub status: SyncStatus,
+}
+
+/// 用户触发的批量同步汇总，不暴露 URL 或正文。
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FeedSyncBatchOutcome {
+    pub total: u32,
+    pub succeeded: u32,
+    pub failed: u32,
+    pub skipped: u32,
+    pub in_flight: u32,
+    pub new_items: u32,
 }
 
 /// 同步事件投影（IPC）：只含 sourceId、变更类型、计数与稳定错误码，
@@ -173,6 +181,12 @@ pub(crate) async fn sync_source<G: FeedNetGate>(
                     });
                 }
             };
+            let metadata = (
+                normalized.title.clone(),
+                normalized.site_url.clone(),
+                normalized.description.clone(),
+                normalized.language.clone(),
+            );
             let items: Vec<FeedItemInput> = normalized
                 .items
                 .iter()
@@ -198,8 +212,9 @@ pub(crate) async fn sync_source<G: FeedNetGate>(
                 .collect();
             let state = success_state(&source, &result.etag, &result.last_modified, &now_str, now);
 
-            let summary =
-                db.with_conn(|conn| persist_success(conn, &source, &items, history, &state))?;
+            let summary = db.with_conn(|conn| {
+                persist_success(conn, &source, &items, history, &state, &metadata)
+            })?;
             Ok(SyncOutcome {
                 status: SyncStatus::Succeeded {
                     new_items: summary.inserted,
@@ -285,6 +300,7 @@ fn persist_success(
     items: &[FeedItemInput],
     history: HistoryReadPolicy,
     state: &FeedSourceSyncState,
+    metadata: &(String, Option<String>, Option<String>, Option<String>),
 ) -> AppResult<UpsertSummary> {
     let tx = conn.unchecked_transaction()?;
     // 首次同步在同一事务内判断：source 尚无 item。
@@ -298,6 +314,15 @@ fn persist_success(
         )?;
     }
     FeedRepository::update_source_sync_state(&tx, &source.id, state)?;
+    FeedRepository::update_source_metadata(
+        &tx,
+        &source.id,
+        &metadata.0,
+        metadata.1.as_deref(),
+        metadata.2.as_deref(),
+        metadata.3.as_deref(),
+        &state.last_checked_at,
+    )?;
     tx.commit()?;
     Ok(summary)
 }
@@ -306,8 +331,22 @@ fn persist_success(
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
+
+struct InFlightGuard {
+    in_flight: Arc<StdMutex<HashSet<String>>>,
+    source_id: String,
+}
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut in_flight) = self.in_flight.lock() {
+            in_flight.remove(&self.source_id);
+        }
+    }
+}
 
 /// 同步服务：`tokio::sync::Mutex<HashSet<String>>` 防止同源重复同步，
 /// 不创建 job 表或通用任务状态机。手动刷新与自动刷新调用同一入口。
@@ -315,8 +354,8 @@ use tokio::sync::Mutex;
 pub(crate) struct FeedSyncService<G: FeedNetGate> {
     db: Arc<Database>,
     gate: Arc<G>,
-    in_flight: Arc<Mutex<HashSet<String>>>,
-    event_sink: Arc<Mutex<Option<tauri::AppHandle>>>,
+    in_flight: Arc<StdMutex<HashSet<String>>>,
+    event_sink: Arc<AsyncMutex<Option<tauri::AppHandle>>>,
 }
 
 // 手写 Clone（Arc 克隆不需要 `G: Clone` 约束）。
@@ -336,8 +375,8 @@ impl<G: FeedNetGate> FeedSyncService<G> {
         Self {
             db,
             gate,
-            in_flight: Arc::new(Mutex::new(HashSet::new())),
-            event_sink: Arc::new(Mutex::new(None)),
+            in_flight: Arc::new(StdMutex::new(HashSet::new())),
+            event_sink: Arc::new(AsyncMutex::new(None)),
         }
     }
 
@@ -350,6 +389,7 @@ impl<G: FeedNetGate> FeedSyncService<G> {
 
     /// 单源同步（带互斥标记）：同源并发请求直接返回 `InFlight`。
     /// 手动刷新与自动刷新共用本入口；首次同步历史默认已读。
+    #[cfg(test)]
     pub(crate) async fn sync_source(
         &self,
         source_id: &str,
@@ -366,20 +406,26 @@ impl<G: FeedNetGate> FeedSyncService<G> {
         mode: SyncMode,
         history: HistoryReadPolicy,
     ) -> AppResult<SyncOutcome> {
-        let mut in_flight = self.in_flight.lock().await;
-        if !in_flight.insert(source_id.to_string()) {
+        let inserted = {
+            let mut in_flight = self
+                .in_flight
+                .lock()
+                .map_err(|_| AppError::msg("feed_sync_lock_failed"))?;
+            in_flight.insert(source_id.to_string())
+        };
+        if !inserted {
             return Ok(SyncOutcome {
                 status: SyncStatus::InFlight,
             });
         }
-        drop(in_flight);
+        let _guard = InFlightGuard {
+            in_flight: self.in_flight.clone(),
+            source_id: source_id.to_string(),
+        };
 
         let outcome =
             crate::feed::sync::sync_source(&self.db, self.gate.as_ref(), source_id, mode, history)
                 .await;
-
-        let mut in_flight = self.in_flight.lock().await;
-        in_flight.remove(source_id);
 
         if let Ok(outcome_ref) = &outcome {
             if let Some(event) = FeedChangedEvent::from_outcome(source_id, &outcome_ref.status) {
@@ -395,48 +441,100 @@ impl<G: FeedNetGate> FeedSyncService<G> {
     /// 自动同步一轮：取最多 2 个到期源并发同步；失败不阻断其他源。
     ///
     /// 使用 `join_all` 就地并发（AFIT future 非 Send，不能跨线程 spawn）。
-    pub(crate) async fn sync_all(&self) -> AppResult<()> {
+    pub(crate) async fn sync_due_batch(&self) -> AppResult<FeedSyncBatchOutcome> {
         let now = Utc::now();
         let due = self
             .db
             .with_read_conn(|conn| FeedRepository::list_due_sources(conn, &rfc3339(now), 2))?;
-        let futures: Vec<_> = due
-            .into_iter()
-            .map(|source| {
-                let service = self.clone();
-                async move {
-                    match service.sync_source(&source.id, SyncMode::Automatic).await {
-                        Ok(outcome) => {
-                            tracing::info!(
-                                log_id = source.id.as_str(),
-                                status = %outcome.status.status_label(),
-                                "feed_sync_all_item"
-                            );
-                        }
-                        Err(error) => {
-                            tracing::warn!(
-                                log_id = source.id.as_str(),
-                                error_code = %stable_error_code(&error),
-                                "feed_sync_all_item_failed"
-                            );
-                        }
-                    }
-                }
-            })
-            .collect();
-        futures_util::future::join_all(futures).await;
-        Ok(())
+        Ok(self
+            .sync_sources(due, SyncMode::Automatic, HistoryReadPolicy::MarkRead)
+            .await)
     }
-}
 
-impl SyncStatus {
-    fn status_label(&self) -> &'static str {
-        match self {
-            SyncStatus::Succeeded { .. } => "succeeded",
-            SyncStatus::NotModified => "not_modified",
-            SyncStatus::Skipped => "skipped",
-            SyncStatus::InFlight => "in_flight",
-            SyncStatus::Failed { .. } => "failed",
+    /// 用户手动刷新全部启用源；以固定宽度 2 分批执行。
+    pub(crate) async fn sync_all(&self) -> AppResult<FeedSyncBatchOutcome> {
+        let sources = self
+            .db
+            .with_read_conn(FeedRepository::list_enabled_sources)?;
+        Ok(self
+            .sync_sources(sources, SyncMode::Manual, HistoryReadPolicy::MarkRead)
+            .await)
+    }
+
+    /// 同步给定来源 ID；保持调用顺序、去重且并发最多 2。
+    pub(crate) async fn sync_batch(
+        &self,
+        source_ids: &[String],
+        history: HistoryReadPolicy,
+    ) -> FeedSyncBatchOutcome {
+        let mut seen = HashSet::new();
+        let ids: Vec<String> = source_ids
+            .iter()
+            .filter(|id| seen.insert((*id).clone()))
+            .cloned()
+            .collect();
+        self.sync_ids(ids, SyncMode::Manual, history).await
+    }
+
+    async fn sync_sources(
+        &self,
+        sources: Vec<FeedSource>,
+        mode: SyncMode,
+        history: HistoryReadPolicy,
+    ) -> FeedSyncBatchOutcome {
+        self.sync_ids(
+            sources.into_iter().map(|source| source.id).collect(),
+            mode,
+            history,
+        )
+        .await
+    }
+
+    async fn sync_ids(
+        &self,
+        ids: Vec<String>,
+        mode: SyncMode,
+        history: HistoryReadPolicy,
+    ) -> FeedSyncBatchOutcome {
+        let mut batch = FeedSyncBatchOutcome {
+            total: ids.len() as u32,
+            ..Default::default()
+        };
+        for chunk in ids.chunks(2) {
+            let outcomes = futures_util::future::join_all(chunk.iter().map(|source_id| {
+                let service = self.clone();
+                let source_id = source_id.clone();
+                async move {
+                    service
+                        .sync_source_with_history(&source_id, mode, history)
+                        .await
+                }
+            }))
+            .await;
+            for outcome in outcomes {
+                match outcome {
+                    Ok(SyncOutcome {
+                        status: SyncStatus::Succeeded { new_items },
+                    }) => {
+                        batch.succeeded += 1;
+                        batch.new_items += new_items as u32;
+                    }
+                    Ok(SyncOutcome {
+                        status: SyncStatus::NotModified,
+                    }) => batch.succeeded += 1,
+                    Ok(SyncOutcome {
+                        status: SyncStatus::Skipped,
+                    }) => batch.skipped += 1,
+                    Ok(SyncOutcome {
+                        status: SyncStatus::InFlight,
+                    }) => batch.in_flight += 1,
+                    Ok(SyncOutcome {
+                        status: SyncStatus::Failed { .. },
+                    })
+                    | Err(_) => batch.failed += 1,
+                }
+            }
         }
+        batch
     }
 }

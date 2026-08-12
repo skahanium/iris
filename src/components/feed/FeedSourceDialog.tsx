@@ -198,19 +198,34 @@ function ConfirmStep({
   const [historyUnread, setHistoryUnread] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [addedSourceId, setAddedSourceId] = useState<string | null>(null);
 
   const submit = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
-      const added = await feedSourceAdd({
-        url: candidate.url,
-        title: title.trim() || candidate.url,
-        folderPath: folderPath.trim() || null,
-        fetchIntervalMinutes: Number(interval),
-      });
+      const sourceId =
+        addedSourceId ??
+        (
+          await feedSourceAdd({
+            url: candidate.url,
+            title: title.trim() || candidate.url,
+            folderPath: folderPath.trim() || null,
+            fetchIntervalMinutes: Number(interval),
+          })
+        ).id;
+      if (!addedSourceId) setAddedSourceId(sourceId);
       // 首次同步：历史默认已读；勾选「历史也设为未读」时保留未读。
-      await feedSyncSource(added.id, !historyUnread);
+      try {
+        const outcome = await feedSyncSource(sourceId, !historyUnread);
+        if (outcome.status === "failed") {
+          setError("订阅已添加，但首次同步失败；可重试同步或稍后关闭。");
+          return;
+        }
+      } catch {
+        setError("订阅已添加，但首次同步失败；可重试同步或稍后关闭。");
+        return;
+      }
       onDone();
     } catch (caught) {
       setError(
@@ -219,7 +234,15 @@ function ConfirmStep({
     } finally {
       setBusy(false);
     }
-  }, [candidate.url, folderPath, historyUnread, interval, onDone, title]);
+  }, [
+    addedSourceId,
+    candidate.url,
+    folderPath,
+    historyUnread,
+    interval,
+    onDone,
+    title,
+  ]);
 
   return (
     <div className="space-y-3">
@@ -287,7 +310,7 @@ function ConfirmStep({
           ) : (
             <Plus className="h-4 w-4" aria-hidden="true" />
           )}
-          添加并同步
+          {addedSourceId ? "重试同步" : "添加并同步"}
         </Button>
       </DialogFooter>
     </div>

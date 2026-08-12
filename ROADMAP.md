@@ -16,16 +16,16 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 - sqlite-vec 目标为全平台默认的本地检索后端；引入或升级所需的 `unsafe` 注册必须满足仓库安全审查规则，且 FTS 是明确可见的降级路径，不得以空结果或 Rust 全表 cosine scan 伪装成功。
 - 修复完成前，发布质量必须同时证明 RAG 质量、范围/引用完整性、Agent 24 个闭环用例和依赖许可；没有真实证据不得把来源组表述为逐段语义核验。
 
-## 后续里程碑 — RSS 订阅资料库（阶段 5 施工完成；真机验收与发布待执行）
+## 后续里程碑 — RSS 订阅资料库（建设中：修复与验收中）
 
-目标是在不把外部文章自动混入用户 Vault、也不依赖 Agent/MCP 的前提下，建立可离线、可迁移、可搜索的本地订阅资料库。完整产品与架构边界见 [RSS 订阅资料库规范](./docs/rss-subscription-library.md)，逐项施工见 [实施计划](./docs/superpowers/plans/2026-08-11-rss-subscription-library.md)，全尺寸与真机验收见 [人工清单](./docs/testing/rss-subscription-library-manual-checklist.md)。本项不改变当前 Agent/RAG 可靠性优先级，也不抢占 v1.2.19/v1.2.20 的既定门禁；阶段 0 已冻结六项产品决策（2026-08-11）；阶段 1 的 `063` 迁移与仓储层、阶段 2 的安全获取/规范化/发现/同步事务与调度接入均已在内存 SQLite + 本地受控服务器全量测试通过（SSRF/XXE/重定向/超限/危险 HTML/304/更新保状态/自动到期同步）；阶段 3 已冻结 `feed_*` IPC 命令契约（Rust/TypeScript/事件/IPC 文档四方一致，raw payload 永不出 IPC）；阶段 4 已交付订阅工作区（不卸载编辑器的模式切换、响应式三区/抽屉/单平面布局、虚拟列表、延迟已读、远程图片默认零请求、添加/编辑/退订管理与本地搜索，800–1920 全尺寸与键盘/读屏验收基线就绪）；阶段 5 施工完成：OPML 导入导出（嵌套分组往返、DTD/ENTITY 拒绝、导入幂等去重、导出不含 ETag/阅读状态/本地 ID、预览→确认 UI）、显式保存为笔记（`fileCreate` 写盘回执链路、独立副本不级联、失败可重试）、容量与升级回归（100 源/10,000 篇、`EXPLAIN QUERY PLAN` 索引断言、无 063 旧库升级自动应用且既有状态不变）；11 项自动化门禁全部 exit 0（fmt/clippy/test、audit:rust、lint、format:check、typecheck、npm test、npm audit、docs:check、test:e2e）。剩余为人工验收（macOS/Windows 冷启动与全尺寸矩阵、断网/代理/DNS/证书/429/500/超时/磁盘满/重启故障回归、日志抽样）与发布候选构建，完成后按 [人工清单](./docs/testing/rss-subscription-library-manual-checklist.md) 记录证据并把路线图状态改为「已交付」；具体版本仍待定。
+目标是在不把外部文章自动混入用户 Vault、也不依赖 Agent/MCP 的前提下，建立可离线、可迁移、可搜索的本地订阅资料库。完整边界见 [RSS 订阅资料库规范](./docs/rss-subscription-library.md)，施工事实见 [实施计划](./docs/superpowers/plans/2026-08-11-rss-subscription-library.md)。迁移、Repository、安全抓取、同步、IPC、阅读工作区、OPML 和保存笔记已有实现及自动化覆盖；本轮正在修复工作区布局意图、共享 SSRF/DNS 边界、统一查询与手动全量同步、窄屏入口、状态一致性和保存部分成功等发布阻断。此前记录的“阶段 5 施工完成”“11 项门禁全绿”和“800–1920/故障验收完成”缺少可追溯的当前执行证据，现予撤回。只有重新执行完整自动化门禁，并在 macOS/Windows、全尺寸、主题、缩放、读屏和网络/磁盘故障清单中附上日期、构建、平台与执行人证据后，才可改为“已交付”；具体版本仍待定。
 
 - 订阅源、规范化文章 Markdown、原始源载荷、同步游标与阅读状态保存在应用级 SQLite，跨 Vault 共享；收件箱是「未读且未归档」的动态查询，不复制内容或新增收件箱表。
 - 首轮原生支持 RSS、Atom、JSON Feed，完成安全发现、条件请求、增量同步、失败退避、去重更新、FTS 搜索与 OPML 往返。微信公众号只有在合法上游能提供稳定 Feed 时才能接入；本里程碑不承诺微信历史库搜索、登录绕过或网页全文抓取。
 - Feed HTML 在 Rust 侧清理并转换为 Markdown，前端再以只读 Markdown 管道净化渲染；原始载荷永不通过 IPC。转换版本可重跑，但不得改变已读、收藏和归档状态。
 - 「订阅」是与文档并列的工作区模式，不是 Tab 或 Overlay。进入时编辑器与 Agent 会话保持挂载，默认不形成永久三栏；必须通过 `800×600` 到 `1920×1080`、亮暗主题、200% 缩放、键盘、读屏与 reduced-motion 验收。
 - 基础版不接入 Agent、RAG、Embedding、AI 摘要或通用 MCP。FreshRSS/Miniflux 仅作为原生单机闭环稳定后的可选远端 provider；RSS MCP 不承担离线保存、阅读状态或调度事实源。
-- 用户明确选择「保存为笔记」时，才通过现有文档持久化协调器写入当前 Vault；生成的 `.md` 是独立副本，后续订阅更新不自动改写。
+- 用户明确选择「保存为笔记」时，才通过现有 `fileCreate` 写盘回执与 `openNote` 路径写入当前 Vault；生成的 `.md` 是独立副本，后续订阅更新不自动改写。
 - 施工按单人项目收敛为六个阶段：契约与 fixture、Schema/Repository、获取/转换/同步、IPC、阅读工作区、OPML/保存笔记与发布。只复用现有 Scheduler、HTTP、Markdown、虚拟列表和持久化基础，不预建 provider、同步任务或书架抽象；migration up/down、SSRF/XXE、隐私日志、升级回滚以及 macOS/Windows 验收仍是硬门槛。
 
 ## 下一里程碑 — v1.2.19 自适应工作区导航与 Agent 主区阅读（规划中）

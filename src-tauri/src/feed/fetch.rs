@@ -7,14 +7,16 @@
 //! 测试注入允许本地服务器的宽松网门。
 
 use std::collections::HashSet;
-use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use reqwest::header::{IF_MODIFIED_SINCE, IF_NONE_MATCH, LOCATION};
-use reqwest::{Client, StatusCode};
+use reqwest::StatusCode;
 
 use crate::error::{AppError, AppResult};
+
+pub(crate) use crate::network::safe_https::ProdSafeHttpsGate as ProdNetGate;
+pub(crate) use crate::network::safe_https::SafeHttpsGate as FeedNetGate;
 
 /// Feed 响应体积上限（5 MiB）。
 pub(crate) const FEED_MAX_BYTES: usize = 5 * 1024 * 1024;
@@ -55,35 +57,6 @@ pub(crate) struct FeedFetchResult {
     pub bytes: Vec<u8>,
 }
 
-/// 网络校验门：生产实现走 `network::safe_https`，测试注入宽松实现。
-pub(crate) trait FeedNetGate: Send + Sync {
-    fn validate_url(&self, url: &str) -> AppResult<()>;
-    async fn resolve_public_addrs(&self, host: &str) -> AppResult<Vec<IpAddr>>;
-    fn build_client(&self, host: &str, port: u16, addrs: &[IpAddr]) -> AppResult<Client>;
-}
-
-/// 生产网门：完整 SSRF 校验 + DNS pinning + 20 秒超时。
-pub(crate) struct ProdNetGate;
-
-impl FeedNetGate for ProdNetGate {
-    fn validate_url(&self, url: &str) -> AppResult<()> {
-        crate::network::safe_https::validate_https_url(url)
-    }
-
-    async fn resolve_public_addrs(&self, host: &str) -> AppResult<Vec<IpAddr>> {
-        crate::network::safe_https::resolve_public_addrs(host).await
-    }
-
-    fn build_client(&self, host: &str, port: u16, addrs: &[IpAddr]) -> AppResult<Client> {
-        crate::network::safe_https::build_pinned_client_with_timeout(
-            host,
-            port,
-            addrs,
-            FETCH_TIMEOUT,
-        )
-    }
-}
-
 /// 无状态有界获取器。
 pub(crate) struct FeedHttpClient;
 
@@ -103,9 +76,27 @@ impl FeedHttpClient {
         last_modified: Option<&str>,
         log_id: Option<&str>,
     ) -> AppResult<FeedFetchResult> {
+        tokio::time::timeout(
+            gate.total_timeout(FETCH_TIMEOUT),
+            self.fetch_within_deadline(gate, url, purpose, etag, last_modified, log_id),
+        )
+        .await
+        .map_err(|_| AppError::msg("feed_fetch_timeout"))?
+    }
+
+    async fn fetch_within_deadline<G: FeedNetGate>(
+        &self,
+        gate: &G,
+        url: &str,
+        purpose: FetchPurpose,
+        etag: Option<&str>,
+        last_modified: Option<&str>,
+        log_id: Option<&str>,
+    ) -> AppResult<FeedFetchResult> {
         let max_bytes = purpose.max_bytes();
         let mut current = url.trim().to_string();
-        gate.validate_url(&current)?;
+        gate.validate_url(&current)
+            .map_err(|_| AppError::msg("feed_url_rejected"))?;
         let mut visited: HashSet<String> = HashSet::new();
         let started = Instant::now();
         let request_etag = etag.map(str::to_string);
@@ -116,8 +107,13 @@ impl FeedHttpClient {
                 return Err(AppError::msg("feed_redirect_loop"));
             }
             let (host, port) = host_port_of(&current)?;
-            let addrs = gate.resolve_public_addrs(&host).await?;
-            let client = gate.build_client(&host, port, &addrs)?;
+            let addrs = gate
+                .resolve_public_addrs(&host)
+                .await
+                .map_err(|_| AppError::msg("feed_dns_failed"))?;
+            let client = gate
+                .build_client(&host, port, &addrs, gate.total_timeout(FETCH_TIMEOUT))
+                .map_err(|_| AppError::msg("feed_client_build_failed"))?;
 
             let mut request = client
                 .get(&current)
@@ -132,7 +128,15 @@ impl FeedHttpClient {
                 .send()
                 .await
                 // 稳定码：reqwest 错误串内含 URL，禁止进入错误消息或日志。
-                .map_err(|_| AppError::msg("feed_fetch_failed"))?;
+                .map_err(|error| {
+                    if error.is_timeout() {
+                        AppError::msg("feed_fetch_timeout")
+                    } else {
+                        AppError::msg("feed_fetch_failed")
+                    }
+                })?;
+            crate::network::safe_https::validate_response_headers(response.headers())
+                .map_err(|_| AppError::msg("feed_response_headers_too_large"))?;
             let status = response.status();
             let content_type = response
                 .headers()
@@ -174,21 +178,10 @@ impl FeedHttpClient {
                     .map_err(|_| AppError::msg("feed_redirect_invalid_target"))?
                     .to_string();
                 // 每次重定向都重新校验目标（防跨到私网/降级协议）。
-                gate.validate_url(&next)?;
+                gate.validate_url(&next)
+                    .map_err(|_| AppError::msg("feed_url_rejected"))?;
                 current = next;
                 continue;
-            }
-
-            if status == StatusCode::NOT_MODIFIED {
-                Self::log_complete(log_id, status_class(status), 0, started);
-                return Ok(FeedFetchResult {
-                    status: status.as_u16(),
-                    final_url: current,
-                    content_type,
-                    etag: response_etag,
-                    last_modified: response_last_modified,
-                    bytes: Vec::new(),
-                });
             }
             if !status.is_success() {
                 tracing::warn!(

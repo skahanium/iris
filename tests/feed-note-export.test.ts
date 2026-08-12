@@ -146,6 +146,11 @@ describe("isValidFeedNoteFolder", () => {
     expect(isValidFeedNoteFolder("技术/../Rust")).toBe(false);
     expect(isValidFeedNoteFolder(".")).toBe(false);
   });
+
+  it("重复校验同一非法目录时结果保持稳定", () => {
+    expect(isValidFeedNoteFolder("技:术")).toBe(false);
+    expect(isValidFeedNoteFolder("技:术")).toBe(false);
+  });
 });
 
 describe("createFeedNote 写盘链路", () => {
@@ -194,7 +199,7 @@ describe("createFeedNote 写盘链路", () => {
 
   it("fileCreate 重名冲突时黑名单重试", async () => {
     fileCreate
-      .mockRejectedValueOnce(new Error("File already exists"))
+      .mockRejectedValueOnce({ code: "file_already_exists" })
       .mockResolvedValueOnce({
         entry: {
           id: 2,

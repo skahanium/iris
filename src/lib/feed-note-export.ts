@@ -7,11 +7,12 @@
 //! 互不级联：后续 Feed 更新不修改 `.md`，删除笔记不影响 Feed。
 
 import { fileCreate, fileList } from "@/lib/ipc";
+import { isCreateConflict } from "@/lib/note-create";
 import { allocateNewDocumentName } from "@/lib/note-names";
 import type { FeedItemDetail } from "@/types/ipc";
 
 /** 文件名非法字符（与 `sanitizeNoteFileName` 一致）。 */
-const INVALID_FILE_CHARS = /[\\/:*?"<>|]/g;
+const INVALID_FILE_CHARS = /[\\/:*?"<>|]/;
 
 /** 目标目录合法段：非空、不含非法字符、不包含 `..`。 */
 export function isValidFeedNoteFolder(folderPath: string): boolean {
@@ -83,11 +84,7 @@ export async function createFeedNote(
       const receipt = await fileCreate(path, markdown);
       return receipt.entry.path;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (
-        message.includes("already exists") ||
-        message.includes("File already exists")
-      ) {
+      if (isCreateConflict(error)) {
         extraTaken.add(title);
         continue;
       }

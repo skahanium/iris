@@ -27,7 +27,7 @@ describe("zen mode regression contracts", () => {
     expect(shell).toContain("zenMode: zen");
     expect(shell).toContain('data-testid="unified-assistant-dock"');
     expect(shell).toContain(
-      'aria-hidden={projection.assistant === "collapsed" || undefined}',
+      'effectiveProjection.assistant === "collapsed" || undefined',
     );
     expect(shell).not.toContain("width: aiPanelOpen ? panelWidth : 0");
   });

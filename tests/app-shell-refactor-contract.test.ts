@@ -11,8 +11,8 @@ function lineCount(path: string): number {
 
 describe("App shell refactor contract", () => {
   it("keeps App.impl.tsx below the current shell split checkpoint", () => {
-    // 1120: workspace foreground / status-bar chrome alignment + live selection bridge.
-    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(1120);
+    // 1130: RSS 模式接线保持在壳层边界，未把阅读器业务重新塞回 App。
+    expect(lineCount("src/App.impl.tsx")).toBeLessThanOrEqual(1130);
   });
 
   it("moves AI sidecar bridge state behind a dedicated hook", () => {
@@ -100,7 +100,10 @@ describe("App shell refactor contract", () => {
     const app = read("src/App.impl.tsx");
 
     expect(shell).toContain("useWorkspaceChromeLayout");
-    expect(shell).toContain("data-presentation={projection.assistant}");
+    expect(shell).toContain(
+      "data-presentation={effectiveProjection.assistant}",
+    );
+    expect(shell).toContain("feeds 只覆盖有效呈现");
     expect(shell).toContain('data-testid="workspace-navigator"');
     expect(shell).toContain('data-testid="workspace-main"');
     // 阶段 4 扩展：文档 main 在 feeds 模式下同样只切可见性（不卸载）。

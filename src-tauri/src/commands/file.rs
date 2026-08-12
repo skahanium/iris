@@ -1140,6 +1140,16 @@ pub async fn file_create(
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
+    .map_err(map_file_create_error)
+}
+
+fn map_file_create_error(error: AppError) -> AppError {
+    match error {
+        AppError::Io(ref io_error) if io_error.kind() == std::io::ErrorKind::AlreadyExists => {
+            AppError::msg("file_already_exists")
+        }
+        other => other,
+    }
 }
 
 fn create_file_inner(state: &Arc<AppState>, path: &str, body: &str) -> AppResult<FileWriteResult> {
@@ -1775,6 +1785,13 @@ Body",
             fs::read_to_string(vault.join("note.md")).unwrap(),
             "existing body"
         );
+    }
+
+    #[test]
+    fn file_create_command_maps_existing_note_to_stable_code() {
+        let error = AppError::Io(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
+        let mapped = map_file_create_error(error);
+        assert!(matches!(mapped, AppError::Message(ref code) if code == "file_already_exists"));
     }
 
     #[test]

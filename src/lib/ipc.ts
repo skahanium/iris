@@ -1266,6 +1266,7 @@ import type {
   FeedSourceSummary,
   FeedSourceUpdateInput,
   FeedSyncOutcome,
+  FeedSyncBatchOutcome,
   OpmlImportResult,
 } from "@/types/ipc";
 
@@ -1327,18 +1328,6 @@ export async function feedItemsMarkRead(query: FeedItemQuery): Promise<number> {
   return invoke<number>("feed_items_mark_read", { query });
 }
 
-export async function feedSearch(
-  query: string,
-  sourceId?: string | null,
-  limit?: number,
-): Promise<FeedItemSummary[]> {
-  return invoke<FeedItemSummary[]>("feed_search", {
-    query,
-    sourceId: sourceId ?? null,
-    limit: limit ?? 50,
-  });
-}
-
 /** 等待单源同步完成并返回计数；markHistoryRead 仅作用于首次同步。 */
 export async function feedSyncSource(
   sourceId: string,
@@ -1350,9 +1339,20 @@ export async function feedSyncSource(
   });
 }
 
-/** 自动同步一轮（最多 2 个到期源并发）；事件提示 UI 重新查询。 */
-export async function feedSyncAll(): Promise<void> {
-  return invoke("feed_sync_all");
+/** 手动刷新全部启用源；后端固定并发最多 2。 */
+export async function feedSyncAll(): Promise<FeedSyncBatchOutcome> {
+  return invoke<FeedSyncBatchOutcome>("feed_sync_all");
+}
+
+/** 手动刷新给定来源；用于 OPML 首次同步，后端固定并发最多 2。 */
+export async function feedSyncBatch(
+  sourceIds: string[],
+  markHistoryRead = true,
+): Promise<FeedSyncBatchOutcome> {
+  return invoke<FeedSyncBatchOutcome>("feed_sync_batch", {
+    sourceIds,
+    markHistoryRead,
+  });
 }
 
 /**

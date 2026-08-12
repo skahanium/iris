@@ -40,7 +40,6 @@ interface AppShellProps {
   workspaceMode?: AppWorkspaceMode;
   /** feeds 模式的主平面子树（与 editor 一样保持挂载，只切换可见性）。 */
   feedWorkspace?: ReactNode;
-  onWorkspaceModeChange?: (mode: AppWorkspaceMode) => void;
 }
 
 type NavigatorTransitionState = "closed" | "visible" | "exiting";
@@ -90,12 +89,27 @@ export function AppShell({
     setSidecarWidth,
     pinPreferred: layoutPinPreferred,
   } = layout;
+  // feeds 只覆盖有效呈现，绝不写回 Navigator / Agent / primarySurface 用户意图。
+  const effectiveProjection = useMemo(
+    () =>
+      feedsMode
+        ? {
+            ...projection,
+            navigator: "closed" as const,
+            assistant: "collapsed" as const,
+          }
+        : projection,
+    [feedsMode, projection],
+  );
   // 有效主平面：禅模式临时显示文档（§5.1），不覆盖 assistant_focus 意图。
-  const mainHidden = !zen && projection.primarySurface === "assistant_focus";
+  const mainHidden =
+    !feedsMode &&
+    !zen &&
+    effectiveProjection.primarySurface === "assistant_focus";
   const navigatorRequested =
     navigator !== null &&
     navigator !== undefined &&
-    projection.navigator !== "closed";
+    effectiveProjection.navigator !== "closed";
   const [navigatorTransition, setNavigatorTransition] =
     useState<NavigatorTransitionState>(() =>
       navigatorRequested ? "visible" : "closed",
@@ -129,9 +143,7 @@ export function AppShell({
   // resize 只改实测尺寸，不经过这些通道，因此不会改写用户意图。
   const prevAiPanelOpenRef = useRef(aiPanelOpen ?? true);
   useEffect(() => {
-    // feeds 模式临时折叠 Agent 的有效 presentation，但不写回 aiPanelOpen；
-    // 返回 documents 时按原意图恢复。
-    const next = feedsMode ? false : (aiPanelOpen ?? true);
+    const next = aiPanelOpen ?? true;
     const prev = prevAiPanelOpenRef.current;
     prevAiPanelOpenRef.current = next;
     if (next !== prev && !zen) {
@@ -155,14 +167,15 @@ export function AppShell({
     projection.primarySurface,
     setAiPanelOpen,
     zen,
-    feedsMode,
   ]);
   useEffect(() => {
     if (navigatorOpen !== undefined) setNavigatorOpen(navigatorOpen);
   }, [navigatorOpen, setNavigatorOpen]);
   useEffect(() => {
-    onAssistantVisibilityChange?.(!zen && projection.assistant !== "collapsed");
-  }, [onAssistantVisibilityChange, projection.assistant, zen]);
+    onAssistantVisibilityChange?.(
+      !zen && effectiveProjection.assistant !== "collapsed",
+    );
+  }, [effectiveProjection.assistant, onAssistantVisibilityChange, zen]);
   useEffect(() => {
     if (pinPreferred !== undefined) setPinPreferred(pinPreferred);
   }, [pinPreferred, setPinPreferred]);
@@ -234,7 +247,7 @@ export function AppShell({
       openAssistant,
       enterAssistantFocus: () => requestPrimarySurface("assistant_focus"),
       exitAssistantFocus: () => requestPrimarySurface("document"),
-      projection,
+      projection: effectiveProjection,
       navigatorOpen: layout.navigatorOpen,
       pinPreferred: layoutPinPreferred,
       setPinPreferred,
@@ -244,7 +257,7 @@ export function AppShell({
       layout.navigatorOpen,
       layoutPinPreferred,
       openAssistant,
-      projection,
+      effectiveProjection,
       requestPrimarySurface,
       setPinPreferred,
       toggleNavigator,
@@ -297,7 +310,7 @@ export function AppShell({
     navigator && navigatorTransition !== "closed" ? (
       <div
         data-testid="workspace-navigator"
-        data-presentation={projection.navigator}
+        data-presentation={effectiveProjection.navigator}
         data-transition={
           navigatorTransition === "exiting" ? "exiting" : "entering"
         }
@@ -306,7 +319,7 @@ export function AppShell({
         }
         className={cn(
           "h-full min-h-0 overflow-hidden border-r border-border-subtle",
-          projection.navigator === "pinned"
+          effectiveProjection.navigator === "pinned"
             ? "relative z-navigator shrink-0"
             : "absolute inset-y-0 left-0 z-navigator-overlay bg-panel shadow-overlay",
           navigatorTransition === "exiting"
@@ -316,7 +329,7 @@ export function AppShell({
         )}
         style={{
           width:
-            projection.navigator === "pinned"
+            effectiveProjection.navigator === "pinned"
               ? "18rem"
               : "min(18rem, calc(100% - 3rem))",
           // Keep the last keyframe until React unmounts after exit; without it,
@@ -342,50 +355,57 @@ export function AppShell({
           className="relative flex min-h-0 flex-1"
         >
           {navigatorNode}
-          <main
-            data-testid="workspace-main"
-            aria-hidden={mainHidden || feedsMode || undefined}
-            className={cn(
-              "relative flex min-w-0 flex-1 flex-col bg-background",
-              (mainHidden || feedsMode) && "pointer-events-none invisible",
-            )}
+          <div
+            data-testid="workspace-surface-slot"
+            className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)]"
           >
-            {editor}
-          </main>
-          {feedWorkspace !== undefined ? (
             <main
-              data-testid="workspace-feed-main"
-              aria-hidden={!feedsMode || mainHidden || undefined}
+              data-testid="workspace-main"
+              aria-hidden={mainHidden || feedsMode || undefined}
               className={cn(
-                "relative flex min-w-0 flex-1 flex-col bg-background",
-                (!feedsMode || mainHidden) && "pointer-events-none invisible",
+                "relative col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col bg-background",
+                (mainHidden || feedsMode) && "pointer-events-none invisible",
               )}
             >
-              {feedWorkspace}
+              {editor}
             </main>
-          ) : null}
+            {feedWorkspace !== undefined ? (
+              <main
+                data-testid="workspace-feed-main"
+                aria-hidden={!feedsMode || mainHidden || undefined}
+                className={cn(
+                  "relative col-start-1 row-start-1 flex min-h-0 min-w-0 flex-col bg-background",
+                  (!feedsMode || mainHidden) && "pointer-events-none invisible",
+                )}
+              >
+                {feedWorkspace}
+              </main>
+            ) : null}
+          </div>
           <aside
             data-testid="unified-assistant-dock"
-            data-presentation={projection.assistant}
-            aria-hidden={projection.assistant === "collapsed" || undefined}
+            data-presentation={effectiveProjection.assistant}
+            aria-hidden={
+              effectiveProjection.assistant === "collapsed" || undefined
+            }
             className={cn(
               "relative flex shrink-0 flex-col border-l border-border bg-panel",
               !isResizing && "transition-[width] duration-200 ease-out",
-              projection.assistant === "collapsed" &&
+              effectiveProjection.assistant === "collapsed" &&
                 "overflow-hidden border-transparent",
-              projection.assistant === "focus" &&
+              effectiveProjection.assistant === "focus" &&
                 "absolute inset-0 z-workspace-focus",
             )}
             style={{
               width:
-                projection.assistant === "sidecar"
-                  ? projection.sidecarWidthPx
-                  : projection.assistant === "focus"
+                effectiveProjection.assistant === "sidecar"
+                  ? effectiveProjection.sidecarWidthPx
+                  : effectiveProjection.assistant === "focus"
                     ? undefined
                     : 0,
             }}
           >
-            {projection.assistant === "sidecar" ? (
+            {effectiveProjection.assistant === "sidecar" ? (
               <div
                 role="separator"
                 aria-orientation="vertical"
@@ -397,13 +417,13 @@ export function AppShell({
             <div
               className={cn(
                 "flex h-full flex-col",
-                projection.assistant === "collapsed" &&
+                effectiveProjection.assistant === "collapsed" &&
                   "pointer-events-none opacity-0",
               )}
               style={{
                 width:
-                  projection.assistant === "sidecar"
-                    ? projection.sidecarWidthPx
+                  effectiveProjection.assistant === "sidecar"
+                    ? effectiveProjection.sidecarWidthPx
                     : undefined,
               }}
             >

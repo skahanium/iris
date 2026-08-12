@@ -11,7 +11,7 @@ Iris 应把 RSS 建成一个独立的「订阅资料库」，而不是把每篇�
 - 文章正文以 Markdown 作为 Iris 内部的规范化阅读表示，同时保留仅后端可访问的原始源载荷与转换版本，以便修复转换器后重新生成。
 - 「收件箱」是 `未读且未归档` 的动态视图，不复制文章，也不新增收件箱表。
 - RSS 阅读器首期不接入 Agent、RAG、联网搜索或通用 MCP；这些能力以后只能通过单独授权、单独索引和单独验收进入。
-- 用户明确执行「保存为笔记」时，才通过现有文档持久化协调器把一份可读 Markdown 副本写入当前 Vault。
+- 用户明确执行「保存为笔记」时，才通过现有 `fileCreate` 写盘回执与 `openNote` 路径把一份可读 Markdown 副本写入当前 Vault。
 
 ## 2. 产品定位与范围
 
@@ -358,11 +358,13 @@ src/components/feed/
 - `feed_discover`
 - `feed_source_add` / `feed_source_list` / `feed_source_update` / `feed_source_remove`
 - `feed_item_list` / `feed_item_get` / `feed_item_set_state` / `feed_items_mark_read`
-- `feed_search`
-- `feed_sync_source` / `feed_sync_all`
+- `feed_item_list`（`FeedItemQuery.search` 与视图、来源、keyset 游标共用）
+- `feed_sync_source` / `feed_sync_all` / `feed_sync_batch`
 - `feed_opml_import` / `feed_opml_export`
 
 同步事件只投影 `sourceId`、变更类型、计数和稳定错误码，用于通知前端重新查询；不建设 job 恢复协议。所有 IPC 同步更新 Rust command、`src/types/ipc.ts`、`src/lib/ipc.ts`、事件类型、测试与 `docs/ipc-api-reference.md`。
+
+Feed 与 AI 网页安全抓取使用直连的 DNS-pinned HTTPS client，不继承系统代理。原因是 HTTP(S) 代理可能在代理端重新解析 CONNECT 主机名，使本地“全部 DNS 地址为公网”的结论失效；代理环境中的抓取应可解释失败，不能降级绕过 SSRF 边界。
 
 ## 13. 可选外部设施与 MCP 决策
 

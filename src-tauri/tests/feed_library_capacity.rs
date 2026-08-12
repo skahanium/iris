@@ -145,6 +145,7 @@ fn hundred_sources_and_ten_thousand_items_stay_correct() {
                 &FeedItemQuery {
                     view: FeedView::Inbox,
                     source_id: None,
+                    search: None,
                     received_after: None,
                     cursor: None,
                     limit: 50,
@@ -195,6 +196,7 @@ fn hundred_sources_and_ten_thousand_items_stay_correct() {
                 &FeedItemQuery {
                     view: FeedView::Inbox,
                     source_id: Some("src-000".to_string()),
+                    search: None,
                     received_after: None,
                     cursor: None,
                     limit: 50,

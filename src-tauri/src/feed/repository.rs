@@ -67,7 +67,8 @@ fn map_item_summary(row: &Row) -> rusqlite::Result<FeedItemSummary> {
     })
 }
 
-const ITEM_SUMMARY_SELECT: &str = "SELECT i.row_id, i.id, i.source_id, s.title, i.title, \
+const ITEM_SUMMARY_SELECT: &str = "SELECT i.row_id, i.id, i.source_id, \
+     COALESCE(s.title_override, s.title), i.title, \
      i.author_name, i.canonical_url, i.published_at, i.received_at, i.content_text, \
      i.read_at, i.starred_at, i.archived_at, i.conversion_status \
      FROM feed_items i JOIN feed_sources s ON s.id = i.source_id";
@@ -129,6 +130,34 @@ fn build_filters(query: &FeedItemQuery, now: DateTime<Utc>, prefix: &str) -> (St
             vec![Value::Text(source_id.clone())],
         );
     }
+    if let Some(search) = query
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|q| !q.is_empty())
+    {
+        let escaped = escape_fts_query(search);
+        let like = format!("%{}%", escape_like_query(search));
+        let mut condition = format!(
+            "({prefix}row_id IN (SELECT rowid FROM feed_items_fts WHERE feed_items_fts MATCH ?) \
+             OR COALESCE(s.title_override, s.title) LIKE ? ESCAPE '\\'"
+        );
+        let mut params = vec![Value::Text(escaped), Value::Text(like.clone())];
+        if contains_cjk(search) {
+            condition.push_str(&format!(
+                " OR {prefix}title LIKE ? ESCAPE '\\' \
+                 OR COALESCE({prefix}author_name, '') LIKE ? ESCAPE '\\' \
+                 OR {prefix}content_text LIKE ? ESCAPE '\\'"
+            ));
+            params.extend([
+                Value::Text(like.clone()),
+                Value::Text(like.clone()),
+                Value::Text(like),
+            ]);
+        }
+        condition.push(')');
+        push_condition(&mut sql, &mut values, &condition, params);
+    }
     if let Some(after) = &query.received_after {
         push_condition(
             &mut sql,
@@ -152,6 +181,19 @@ fn build_filters(query: &FeedItemQuery, now: DateTime<Utc>, prefix: &str) -> (St
         );
     }
     (sql, values)
+}
+
+fn contains_cjk(value: &str) -> bool {
+    value
+        .chars()
+        .any(|ch| matches!(ch as u32, 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF))
+}
+
+fn escape_like_query(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 /// 订阅源完整行映射（21 列；`get_source`/`list_due_sources`/`get_source_by_feed_url`
@@ -262,7 +304,7 @@ impl FeedRepository {
                     s.last_checked_at, s.last_success_at, s.next_fetch_at,
                     s.consecutive_failures, s.last_error_code
              FROM feed_sources s
-             ORDER BY s.folder_path, s.title",
+             ORDER BY s.folder_path, COALESCE(s.title_override, s.title)",
         )?;
         let sources = statement
             .query_map([], |row| {
@@ -386,9 +428,32 @@ impl FeedRepository {
         Ok(changed > 0)
     }
 
+    /// 同步成功后更新 Feed 自身元数据；不触碰用户设置的 `title_override`。
+    pub fn update_source_metadata(
+        conn: &Connection,
+        id: &str,
+        title: &str,
+        site_url: Option<&str>,
+        description: Option<&str>,
+        language: Option<&str>,
+        now: &str,
+    ) -> AppResult<bool> {
+        let changed = conn.execute(
+            "UPDATE feed_sources
+             SET title = CASE WHEN TRIM(?1) = '' THEN title ELSE ?1 END,
+                 site_url = COALESCE(?2, site_url),
+                 description = COALESCE(?3, description),
+                 language = COALESCE(?4, language), updated_at = ?5
+             WHERE id = ?6",
+            params![title, site_url, description, language, now, id],
+        )?;
+        Ok(changed > 0)
+    }
+
     // ── 文章 upsert 与列表 ───────────────────────────────────
 
-    /// 批量 upsert：单个事务；仅当 `content_hash` 变化时替换内容字段，
+    /// 批量 upsert：单个事务；元数据始终按稳定键更新，仅当 `content_hash`
+    /// 变化时替换内容字段，
     /// 绝不覆盖 `read_at`/`starred_at`/`archived_at`/`received_at`。
     ///
     /// 调用方已处于事务中（如同步短事务）时直接复用，不嵌套 BEGIN。
@@ -458,11 +523,18 @@ impl FeedRepository {
                 updated += target.execute(
                     "UPDATE feed_items
                      SET canonical_url = ?1, title = ?2, author_name = ?3, published_at = ?4,
-                         source_updated_at = ?5, summary_markdown = ?6, content_markdown = ?7,
-                         content_text = ?8, source_payload = ?9, source_payload_kind = ?10,
+                         source_updated_at = ?5,
+                         summary_markdown = CASE WHEN content_hash != ?11 THEN ?6 ELSE summary_markdown END,
+                         content_markdown = CASE WHEN content_hash != ?11 THEN ?7 ELSE content_markdown END,
+                         content_text = CASE WHEN content_hash != ?11 THEN ?8 ELSE content_text END,
+                         source_payload = CASE WHEN content_hash != ?11 THEN ?9 ELSE source_payload END,
+                         source_payload_kind = CASE WHEN content_hash != ?11 THEN ?10 ELSE source_payload_kind END,
                          content_hash = ?11, conversion_version = ?12,
                          conversion_status = ?13, updated_at = ?14
-                     WHERE source_id = ?15 AND external_key = ?16 AND content_hash != ?17",
+                     WHERE source_id = ?15 AND external_key = ?16
+                       AND (content_hash != ?11 OR canonical_url IS NOT ?1 OR title != ?2
+                            OR author_name IS NOT ?3 OR published_at IS NOT ?4
+                            OR source_updated_at IS NOT ?5)",
                     params![
                         &item.canonical_url,
                         &item.title,
@@ -480,7 +552,6 @@ impl FeedRepository {
                         &now_str,
                         &item.source_id,
                         &item.external_key,
-                        &item.content_hash,
                     ],
                 )?;
             }
@@ -525,7 +596,8 @@ impl FeedRepository {
     pub fn get_item_detail(conn: &Connection, item_id: &str) -> AppResult<Option<FeedItemDetail>> {
         let detail = conn
             .query_row(
-                "SELECT i.row_id, i.id, i.source_id, s.title, i.title, i.author_name,
+                "SELECT i.row_id, i.id, i.source_id,
+                        COALESCE(s.title_override, s.title), i.title, i.author_name,
                         i.canonical_url, i.published_at, i.received_at, i.content_text,
                         i.read_at, i.starred_at, i.archived_at, i.conversion_status,
                         i.content_markdown, i.summary_markdown, s.site_url
@@ -588,10 +660,15 @@ impl FeedRepository {
         now: DateTime<Utc>,
     ) -> AppResult<i64> {
         let now_str = rfc3339(now);
-        let (filters, values) = build_filters(query, now, "");
-        let mut sql = String::from("UPDATE feed_items SET read_at = ?1, updated_at = ?2");
-        sql.push_str(" WHERE read_at IS NULL");
+        let (filters, values) = build_filters(query, now, "i.");
+        let mut sql = String::from(
+            "UPDATE feed_items SET read_at = ?1, updated_at = ?2
+             WHERE read_at IS NULL AND id IN (
+                 SELECT i.id FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
+                 WHERE 1=1",
+        );
         sql.push_str(&filters);
+        sql.push(')');
         let mut all_values: Vec<Value> = vec![Value::Text(now_str.clone()), Value::Text(now_str)];
         all_values.extend(values);
         let affected = conn.execute(&sql, params_from_iter(all_values.iter()))?;
@@ -606,38 +683,21 @@ impl FeedRepository {
         source_id: Option<&str>,
         limit: u32,
     ) -> AppResult<Vec<FeedItemSummary>> {
-        let trimmed = query.trim();
-        if trimmed.is_empty() {
+        if query.trim().is_empty() {
             return Err(AppError::msg("feed_search_query_empty"));
         }
-        let escaped = escape_fts_query(trimmed);
-        let limit = limit.clamp(ITEM_LIMIT_MIN, ITEM_LIMIT_MAX);
-
-        let mut sql = String::from(
-            "SELECT i.row_id, i.id, i.source_id, s.title, i.title, i.author_name,
-                    i.canonical_url, i.published_at, i.received_at, i.content_text,
-                    i.read_at, i.starred_at, i.archived_at, i.conversion_status
-             FROM feed_items_fts f
-             JOIN feed_items i ON i.row_id = f.rowid
-             JOIN feed_sources s ON s.id = i.source_id
-             WHERE feed_items_fts MATCH ?1",
-        );
-        let mut values: Vec<Value> = vec![Value::Text(escaped)];
-        if let Some(source) = source_id {
-            sql.push_str(" AND i.source_id = ?2");
-            values.push(Value::Text(source.to_string()));
-        }
-        sql.push_str(&format!(
-            " ORDER BY f.rank, i.received_at DESC LIMIT ?{}",
-            values.len() + 1
-        ));
-        values.push(Value::Integer(i64::from(limit)));
-
-        let mut statement = conn.prepare(&sql)?;
-        let items = statement
-            .query_map(params_from_iter(values.iter()), map_item_summary)?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(items)
+        Self::list_items(
+            conn,
+            &FeedItemQuery {
+                view: crate::feed::model::FeedView::All,
+                source_id: source_id.map(ToOwned::to_owned),
+                search: Some(query.to_string()),
+                received_after: None,
+                cursor: None,
+                limit,
+            },
+            Utc::now(),
+        )
     }
 }
 
@@ -679,6 +739,17 @@ impl FeedRepository {
         )?;
         let sources = statement
             .query_map(params![now, limit], map_source_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(sources)
+    }
+
+    /// 返回全部启用源，供用户明确触发的全量同步使用。
+    pub fn list_enabled_sources(conn: &Connection) -> AppResult<Vec<FeedSource>> {
+        let mut statement = conn.prepare(&format!(
+            "{SOURCE_SELECT} WHERE is_enabled = 1 ORDER BY created_at, id"
+        ))?;
+        let sources = statement
+            .query_map([], map_source_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(sources)
     }

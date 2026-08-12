@@ -1,48 +1,83 @@
 //! 公共 HTTPS 出站校验与 DNS pinning（SSRF 防御）。
 //!
 //! 统一承担三类能力，供网页抓取与订阅获取共用，禁止复制第二套地址判断：
-//! - `validate_https_url` / `validate_redirect_target`：URL 级完整校验；
+//! - `validate_https_url`：初始与每一跳重定向的 URL 级完整校验；
 //! - `resolve_public_addrs` / `validate_resolved_addrs`：DNS 解析后全部地址
 //!   必须为公网，任何一条解析地址被拒绝都拒绝该主机；
-//! - `build_pinned_client`：把本次连接固定到已校验地址（防 DNS rebinding）。
+//! - `build_pinned_client_with_timeout`：把本次连接固定到已校验地址（防 DNS rebinding）。
 
 use std::net::{IpAddr, SocketAddr};
 
 use reqwest::Client;
 
 use crate::error::{AppError, AppResult};
-use crate::network::cert_pinning::https_client_builder;
+
+/// 单个 HTTPS 响应允许的响应头总字节预算（名称 + 值）。
+pub(crate) const MAX_RESPONSE_HEADER_BYTES: usize = 32 * 1024;
+
+/// 安全 HTTPS 出站网门：生产与测试共用同一逐跳执行契约。
+pub(crate) trait SafeHttpsGate: Send + Sync {
+    fn validate_url(&self, url: &str) -> AppResult<()>;
+    async fn resolve_public_addrs(&self, host: &str) -> AppResult<Vec<IpAddr>>;
+    fn build_client(
+        &self,
+        host: &str,
+        port: u16,
+        addrs: &[IpAddr],
+        timeout: std::time::Duration,
+    ) -> AppResult<Client>;
+
+    fn total_timeout(&self, requested: std::time::Duration) -> std::time::Duration {
+        requested
+    }
+}
+
+/// 使用公共 URL 校验、DNS 全地址拒绝与连接 pinning 的生产网门。
+pub(crate) struct ProdSafeHttpsGate;
+
+impl SafeHttpsGate for ProdSafeHttpsGate {
+    fn validate_url(&self, url: &str) -> AppResult<()> {
+        validate_https_url(url)
+    }
+
+    async fn resolve_public_addrs(&self, host: &str) -> AppResult<Vec<IpAddr>> {
+        resolve_public_addrs(host).await
+    }
+
+    fn build_client(
+        &self,
+        host: &str,
+        port: u16,
+        addrs: &[IpAddr],
+        timeout: std::time::Duration,
+    ) -> AppResult<Client> {
+        build_pinned_client_with_timeout(host, port, addrs, timeout)
+    }
+}
 
 /// URL 级完整校验：仅 HTTPS、无 userinfo、拒绝 localhost / IPv4 / IPv6 私网 /
 /// link-local / metadata / 保留段与私网域名提示（DNS rebinding 提示）。
 pub fn validate_https_url(url: &str) -> AppResult<()> {
-    crate::security::ipc_policy::validate_https_url(url)?;
-    let host = host_of(url).ok_or_else(|| AppError::msg("无法解析 URL 主机名"))?;
+    crate::security::ipc_policy::validate_https_url(url)
+        .map_err(|_| AppError::msg("https_url_invalid"))?;
+    let host = host_of(url).ok_or_else(|| AppError::msg("https_url_invalid"))?;
     let host_lower = host.to_lowercase();
     if host_lower == "localhost" || host_lower.ends_with(".localhost") {
-        return Err(AppError::msg("不允许访问本地主机"));
+        return Err(AppError::msg("https_url_private"));
     }
     if host_lower == "0.0.0.0" {
-        return Err(AppError::msg("不允许访问该地址"));
+        return Err(AppError::msg("https_url_private"));
     }
     if let Ok(ip) = host_lower.parse::<IpAddr>() {
         if is_blocked_ip(ip) {
-            return Err(AppError::msg("不允许访问内网或保留地址"));
+            return Err(AppError::msg("https_url_private"));
         }
-        return Err(AppError::msg("仅允许域名 URL，不支持直接 IP 访问"));
+        return Err(AppError::msg("https_url_ip_literal"));
     }
     if is_private_host_hint(&host_lower) {
-        return Err(AppError::msg("不允许访问内网或保留地址"));
+        return Err(AppError::msg("https_url_private"));
     }
     Ok(())
-}
-
-/// 重定向目标校验：与初始 URL 相同标准（绝对 HTTPS + 完整地址校验）。
-/// 每次跳转后调用方必须重新解析并重新固定连接。
-// 阶段 2 Task 2.2 `feed::fetch` 将消费这些能力；届时移除本标注。
-#[allow(dead_code)]
-pub fn validate_redirect_target(url: &str) -> AppResult<()> {
-    validate_https_url(url)
 }
 
 /// 提取 URL 主机名（剥除 IPv6 括号）；userinfo 或不可解析返回 `None`。
@@ -61,14 +96,12 @@ pub fn host_of(url: &str) -> Option<String> {
 }
 
 /// 纯决策：全部地址必须为公网，任一被拒则整体拒绝；空解析报错。
-// 阶段 2 Task 2.2 `feed::fetch` 将消费这些能力；届时移除本标注。
-#[allow(dead_code)]
 pub fn validate_resolved_addrs(addrs: &[IpAddr]) -> AppResult<Vec<IpAddr>> {
     if addrs.is_empty() {
-        return Err(AppError::msg("DNS 解析结果为空"));
+        return Err(AppError::msg("https_dns_empty"));
     }
     if addrs.iter().any(|ip| is_blocked_ip(*ip)) {
-        return Err(AppError::msg("不允许访问内网或保留地址"));
+        return Err(AppError::msg("https_dns_private"));
     }
     Ok(addrs.to_vec())
 }
@@ -78,7 +111,7 @@ pub async fn resolve_public_addrs(host: &str) -> AppResult<Vec<IpAddr>> {
     let mut addrs: Vec<IpAddr> = Vec::new();
     for socket in tokio::net::lookup_host((host, 0))
         .await
-        .map_err(|e| AppError::msg(format!("DNS 解析失败: {e}")))?
+        .map_err(|_| AppError::msg("https_dns_failed"))?
     {
         let ip = socket.ip();
         if !addrs.contains(&ip) {
@@ -88,16 +121,6 @@ pub async fn resolve_public_addrs(host: &str) -> AppResult<Vec<IpAddr>> {
     validate_resolved_addrs(&addrs)
 }
 
-/// 构建固定到已校验地址的 HTTPS client；redirect policy 固定为 none，
-/// 由调用方逐跳处理。代理策略与 TLS 配置复用 `cert_pinning`。
-// 默认 300 秒总超时变体保留为公共 API；订阅获取走带 20 秒预算的内部变体。
-#[allow(dead_code)]
-pub fn build_pinned_client(host: &str, port: u16, addrs: &[IpAddr]) -> AppResult<Client> {
-    pinned_builder(https_client_builder(), host, port, addrs)
-        .build()
-        .map_err(|e| AppError::msg(format!("Failed to build pinned HTTP client: {e}")))
-}
-
 /// 带自定义总超时的 pinning 变体（订阅获取要求 20 秒总预算）。
 pub(crate) fn build_pinned_client_with_timeout(
     host: &str,
@@ -105,9 +128,19 @@ pub(crate) fn build_pinned_client_with_timeout(
     addrs: &[IpAddr],
     timeout: std::time::Duration,
 ) -> AppResult<Client> {
-    pinned_builder(https_client_builder().timeout(timeout), host, port, addrs)
+    // SSRF 防线要求连接目标就是本地已校验并固定的地址。HTTP(S) 代理会把
+    // CONNECT 目标交给代理端重新解析，从而绕过 `resolve`；安全抓取因此
+    // 明确禁用所有代理，只保留 rustls、HTTPS-only 与直连 pinning。
+    let builder = reqwest::Client::builder()
+        .use_rustls_tls()
+        .https_only(true)
+        .no_proxy()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(timeout)
+        .read_timeout(timeout);
+    pinned_builder(builder, host, port, addrs)
         .build()
-        .map_err(|e| AppError::msg(format!("Failed to build pinned HTTP client: {e}")))
+        .map_err(|_| AppError::msg("https_client_build_failed"))
 }
 
 fn pinned_builder(
@@ -121,6 +154,24 @@ fn pinned_builder(
         builder = builder.resolve(host, SocketAddr::new(*addr, port));
     }
     builder
+}
+
+/// 应用层响应头总字节预算。
+///
+/// reqwest 当前只暴露 HTTP/2 的 header-list builder 上限；HTTP/1 仍由
+/// hyper 的固定 header-count 上限兜底，因此在解析后统一执行同一字节预算。
+pub(crate) fn validate_response_headers(headers: &reqwest::header::HeaderMap) -> AppResult<()> {
+    let bytes = headers.iter().try_fold(0usize, |total, (name, value)| {
+        total
+            .checked_add(name.as_str().len())
+            .and_then(|size| size.checked_add(value.as_bytes().len()))
+            .and_then(|size| size.checked_add(4))
+            .ok_or_else(|| AppError::msg("https_response_headers_too_large"))
+    })?;
+    if bytes > MAX_RESPONSE_HEADER_BYTES {
+        return Err(AppError::msg("https_response_headers_too_large"));
+    }
+    Ok(())
 }
 
 fn is_blocked_ip(ip: IpAddr) -> bool {

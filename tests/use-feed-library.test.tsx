@@ -2,14 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   feedItemList,
-  feedSearch,
   feedSourceList,
   feedItemSetState,
   feedItemsMarkRead,
   listenFeedChanged,
 } = vi.hoisted(() => ({
   feedItemList: vi.fn(),
-  feedSearch: vi.fn(),
   feedSourceList: vi.fn(),
   feedItemSetState: vi.fn(),
   feedItemsMarkRead: vi.fn(),
@@ -18,7 +16,6 @@ const {
 
 vi.mock("@/lib/ipc", () => ({
   feedItemList,
-  feedSearch,
   feedSourceList,
   feedItemSetState,
   feedItemsMarkRead,
@@ -74,7 +71,6 @@ beforeEach(() => {
   vi.clearAllMocks();
   feedSourceList.mockResolvedValue([source("src-1")]);
   feedItemList.mockResolvedValue([item("i1")]);
-  feedSearch.mockResolvedValue([]);
   feedItemSetState.mockResolvedValue(undefined);
   listenFeedChanged.mockResolvedValue(() => undefined);
 });
@@ -91,6 +87,7 @@ describe("useFeedLibrary", () => {
     expect(feedItemList).toHaveBeenCalledWith({
       view: "inbox",
       sourceId: null,
+      search: null,
       receivedAfter: null,
       cursor: null,
       limit: 50,
@@ -175,6 +172,22 @@ describe("useFeedLibrary", () => {
     expect(feedSourceList.mock.calls.length).toBeGreaterThan(1);
   });
 
+  it("manual refresh reloads both sources and current rows", async () => {
+    const { result } = renderHook(() => useFeedLibrary());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    const sourceCalls = feedSourceList.mock.calls.length;
+    const itemCalls = feedItemList.mock.calls.length;
+
+    act(() => result.current.refresh());
+
+    await waitFor(() =>
+      expect(feedSourceList.mock.calls.length).toBeGreaterThan(sourceCalls),
+    );
+    await waitFor(() =>
+      expect(feedItemList.mock.calls.length).toBeGreaterThan(itemCalls),
+    );
+  });
+
   it("rolls back item state when the backend rejects", async () => {
     feedItemSetState.mockRejectedValueOnce(new Error("feed_item_not_found"));
     const { result } = renderHook(() => useFeedLibrary());
@@ -195,6 +208,39 @@ describe("useFeedLibrary", () => {
     );
   });
 
+  it("failed optimistic update only rolls back its target item", async () => {
+    let rejectFirst: (reason?: unknown) => void = () => undefined;
+    feedItemList.mockResolvedValue([item("i1"), item("i2")]);
+    feedItemSetState
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((_resolve, reject) => {
+            rejectFirst = reject;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const { result } = renderHook(() => useFeedLibrary());
+    await waitFor(() => expect(result.current.items).toHaveLength(2));
+
+    act(() => {
+      result.current.setItemState("i1", { isRead: true });
+      result.current.setItemState("i2", { isStarred: true });
+    });
+    await waitFor(() =>
+      expect(
+        result.current.items.find((row) => row.id === "i2")?.isStarred,
+      ).toBe(true),
+    );
+    await act(async () => rejectFirst(new Error("failed")));
+
+    expect(result.current.items.find((row) => row.id === "i1")?.isRead).toBe(
+      false,
+    );
+    expect(result.current.items.find((row) => row.id === "i2")?.isStarred).toBe(
+      true,
+    );
+  });
+
   it("today view keeps the server-side midnight boundary", async () => {
     const { result } = renderHook(() => useFeedLibrary());
     await waitFor(() => expect(result.current.status).toBe("ready"));
@@ -204,6 +250,7 @@ describe("useFeedLibrary", () => {
       expect(feedItemList).toHaveBeenLastCalledWith({
         view: "today",
         sourceId: null,
+        search: null,
         receivedAfter: null,
         cursor: null,
         limit: 50,
@@ -217,7 +264,9 @@ describe("useFeedLibrary", () => {
 
     act(() => result.current.setSearch("hello"));
     await waitFor(() =>
-      expect(feedSearch).toHaveBeenCalledWith("hello", null, 50),
+      expect(feedItemList).toHaveBeenLastCalledWith(
+        expect.objectContaining({ search: "hello", view: "inbox" }),
+      ),
     );
 
     act(() => result.current.setSearch(""));
@@ -229,24 +278,42 @@ describe("useFeedLibrary", () => {
   });
 
   it("tracks the loaded page and loads more with a keyset cursor", async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) =>
+      item(
+        `i${index + 1}`,
+        `2026-08-02T08:${String(59 - index).padStart(2, "0")}:00Z`,
+      ),
+    );
     feedItemList
-      .mockResolvedValueOnce([item("i1", "2026-08-02T08:00:00Z")])
-      .mockResolvedValue([item("i2", "2026-08-01T08:00:00Z")]);
+      .mockResolvedValueOnce(firstPage)
+      .mockResolvedValue([item("i51", "2026-08-01T08:00:00Z")]);
     const { result } = renderHook(() => useFeedLibrary());
     await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.hasMore).toBe(true);
 
     act(() => {
       void result.current.loadMore();
     });
     await waitFor(() => expect(result.current.page).toBe(2));
-    expect(result.current.items.map((row) => row.id)).toEqual(["i1", "i2"]);
+    expect(result.current.items).toHaveLength(51);
+    expect(result.current.items.at(-1)?.id).toBe("i51");
     expect(feedItemList).toHaveBeenLastCalledWith({
       view: "inbox",
       sourceId: null,
+      search: null,
       receivedAfter: null,
-      cursor: { sortAt: "2026-08-02T08:00:00Z", rowId: 1 },
+      cursor: { sortAt: "2026-08-02T08:10:00Z", rowId: 50 },
       limit: 50,
     });
+  });
+
+  it("only exposes load-more when a full page was returned", async () => {
+    feedItemList.mockResolvedValue(
+      Array.from({ length: 50 }, (_, index) => item(`i${index + 1}`)),
+    );
+    const { result } = renderHook(() => useFeedLibrary());
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.hasMore).toBe(true);
   });
 
   it("exposes batch mark-read and error surfaces", async () => {
@@ -264,6 +331,7 @@ describe("useFeedLibrary", () => {
     expect(feedItemsMarkRead).toHaveBeenCalledWith({
       view: "inbox",
       sourceId: null,
+      search: null,
       receivedAfter: null,
       cursor: null,
       limit: 50,

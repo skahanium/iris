@@ -15,7 +15,6 @@ function renderShell(props: {
   aiPanelOpen?: boolean;
   onAiPanelOpenChange?: (open: boolean) => void;
   workspaceMode?: AppWorkspaceMode;
-  onWorkspaceModeChange?: (mode: AppWorkspaceMode) => void;
   withFeedWorkspace?: boolean;
 }) {
   const feedWorkspace = props.withFeedWorkspace ? (
@@ -30,7 +29,6 @@ function renderShell(props: {
       aiPanelOpen={props.aiPanelOpen}
       onAiPanelOpenChange={props.onAiPanelOpenChange}
       workspaceMode={props.workspaceMode}
-      onWorkspaceModeChange={props.onWorkspaceModeChange}
       feedWorkspace={feedWorkspace}
     />,
   );
@@ -168,6 +166,78 @@ describe("订阅工作区模式：不卸载编辑器", () => {
     expect(feedMainInDocs.className).toContain("pointer-events-none");
   });
 
+  it("editor 与 feeds 复用同一个布局槽，隐藏平面不会额外占据 flex 宽度", () => {
+    const { container } = renderShell({
+      workspaceMode: "feeds",
+      withFeedWorkspace: true,
+    });
+    const slot = container.querySelector(
+      "[data-testid=workspace-surface-slot]",
+    )!;
+    const editorMain = container.querySelector("[data-testid=workspace-main]")!;
+    const feedMain = container.querySelector(
+      "[data-testid=workspace-feed-main]",
+    )!;
+
+    expect(slot).not.toBeNull();
+    expect(slot.className).toContain("grid");
+    expect(slot.className).toContain("flex-1");
+    expect(editorMain.parentElement).toBe(slot);
+    expect(feedMain.parentElement).toBe(slot);
+    expect(editorMain.className).not.toContain("flex-1");
+    expect(feedMain.className).not.toContain("flex-1");
+  });
+
+  it("feeds 仅覆盖 Navigator 与 Agent presentation，不改写 assistant focus 意图", () => {
+    const { container, rerender } = render(
+      <AppShell
+        tabBar={<div />}
+        editor={<div />}
+        aiPanel={<div />}
+        navigator={<div data-testid="navigator-content" />}
+        statusBar={<div />}
+        aiPanelOpen
+        navigatorOpen
+        primarySurface="assistant_focus"
+        workspaceMode="feeds"
+        feedWorkspace={<div />}
+      />,
+    );
+
+    expect(
+      container
+        .querySelector("[data-testid=unified-assistant-dock]")!
+        .getAttribute("data-presentation"),
+    ).toBe("collapsed");
+    expect(
+      container.querySelector("[data-testid=workspace-navigator]"),
+    ).toBeNull();
+
+    rerender(
+      <AppShell
+        tabBar={<div />}
+        editor={<div />}
+        aiPanel={<div />}
+        navigator={<div data-testid="navigator-content" />}
+        statusBar={<div />}
+        aiPanelOpen
+        navigatorOpen
+        primarySurface="assistant_focus"
+        workspaceMode="documents"
+        feedWorkspace={<div />}
+      />,
+    );
+
+    expect(
+      container
+        .querySelector("[data-testid=unified-assistant-dock]")!
+        .getAttribute("data-presentation"),
+    ).toBe("focus");
+    expect(
+      container.querySelector("[data-testid=workspace-navigator]"),
+    ).not.toBeNull();
+  });
+
   it("Rss 标题栏按钮以 aria-pressed 表达模式并可切换", () => {
     const onWorkspaceModeChange = vi.fn();
     const titleBar = (workspaceMode: AppWorkspaceMode) => (
@@ -211,7 +281,7 @@ describe("订阅工作区模式：不卸载编辑器", () => {
     const shell = read("src/components/layout/AppShell.tsx");
     expect(shell).toContain("workspaceMode");
     expect(shell).toContain("feedWorkspace");
-    expect(shell).toContain("onWorkspaceModeChange");
+    expect(shell).not.toContain("onWorkspaceModeChange");
     const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
     expect(titleBar).toContain("titlebar-feed-entry");
     const layout = read("src/lib/workspace-chrome-layout.ts");

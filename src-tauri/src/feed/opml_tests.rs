@@ -7,7 +7,9 @@
 use chrono::Utc;
 use rusqlite::Connection;
 
-use super::opml::{export_opml, import_opml, parse_opml, OPML_MAX_BYTES};
+use super::opml::{
+    export_opml, import_opml, parse_opml, OPML_MAX_BYTES, OPML_MAX_DEPTH, OPML_MAX_OUTLINES,
+};
 use super::repository::FeedRepository;
 use crate::storage::migrate::migrate_up;
 
@@ -245,6 +247,55 @@ fn import_requires_valid_utf8() {
 fn import_large_input_is_bounded_by_command_layer() {
     // 命令层（feed_commands）负责 5 MiB 检查；这里只验证常量与传输语义。
     assert_eq!(OPML_MAX_BYTES, 5 * 1024 * 1024);
+}
+
+#[test]
+fn parse_bounds_outline_count_depth_and_folder_length() {
+    let many = format!(
+        "<opml><body>{}</body></opml>",
+        (0..=OPML_MAX_OUTLINES)
+            .map(|i| format!(r#"<outline text="{i}" xmlUrl="https://example.com/{i}.xml"/>"#))
+            .collect::<String>()
+    );
+    assert!(parse_opml(many.as_bytes())
+        .expect_err("outline count bound")
+        .to_string()
+        .contains("feed_opml_too_many_outlines"));
+
+    let nested = format!(
+        "<opml><body>{}<outline xmlUrl=\"https://example.com/x.xml\"/>{}</body></opml>",
+        "<outline text=\"x\">".repeat(OPML_MAX_DEPTH + 1),
+        "</outline>".repeat(OPML_MAX_DEPTH + 1)
+    );
+    assert!(parse_opml(nested.as_bytes())
+        .expect_err("depth bound")
+        .to_string()
+        .contains("feed_opml_too_deep"));
+
+    let folder = "分".repeat(500);
+    let long_folder = format!(
+        r#"<opml><body><outline text="{folder}"><outline text="{folder}"><outline text="{folder}"><outline xmlUrl="https://example.com/x.xml"/></outline></outline></outline></body></opml>"#
+    );
+    assert!(parse_opml(long_folder.as_bytes())
+        .expect_err("folder bound")
+        .to_string()
+        .contains("feed_opml_folder_too_long"));
+}
+
+#[test]
+fn import_canonicalizes_urls_before_deduplication() {
+    let conn = test_conn();
+    let xml = r#"<opml><body>
+      <outline text="One" xmlUrl="https://EXAMPLE.com:443/feed.xml#fragment"/>
+      <outline text="Two" xmlUrl="https://example.com/feed.xml"/>
+    </body></opml>"#;
+    let result = import_opml(&conn, xml, false).expect("import");
+    assert_eq!(result.added, 1);
+    assert_eq!(result.skipped, 1);
+    let source = FeedRepository::list_sources(&conn)
+        .expect("sources")
+        .remove(0);
+    assert_eq!(source.feed_url, "https://example.com/feed.xml");
 }
 
 // ── 导出与往返 ──────────────────────────────────────────────

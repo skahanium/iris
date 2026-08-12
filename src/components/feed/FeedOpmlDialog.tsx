@@ -23,7 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { feedOpmlExport, feedOpmlImport, feedSyncSource } from "@/lib/ipc";
+import { feedOpmlExport, feedOpmlImport, feedSyncBatch } from "@/lib/ipc";
 import { normalizeOpenDialogPath } from "@/lib/dialog-path";
 import type { OpmlImportResult } from "@/types/ipc";
 
@@ -117,11 +117,9 @@ export function FeedOpmlDialog({
     setError(null);
     try {
       const result = await feedOpmlImport(rawXml, false);
-      // 用户选择同步时，对新增订阅逐个发起首次同步（历史默认已读）。
+      // 后端按固定并发上限批量同步，避免 OPML 大批量导入压垮网络与数据库。
       if (syncNewSources && result.addedIds.length > 0) {
-        await Promise.all(
-          result.addedIds.map((id) => feedSyncSource(id, !historyUnread)),
-        );
+        await feedSyncBatch(result.addedIds, !historyUnread);
       }
       onSourcesChanged();
       onOpenChange(false);

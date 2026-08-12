@@ -21,6 +21,14 @@ export function buildDefaultNoteContent(title: string): string {
   return "";
 }
 
+export function isCreateConflict(error: unknown): boolean {
+  const payload = error as { code?: unknown; message?: unknown };
+  return (
+    payload?.code === "file_already_exists" ||
+    payload?.message === "file_already_exists"
+  );
+}
+
 /** Create a note whose single user-visible title is its file basename. */
 export async function createDefaultNote(
   options: CreateDefaultNoteOptions = {},
@@ -42,11 +50,7 @@ export async function createDefaultNote(
       const receipt = await fileCreate(path, content);
       return { content, path: receipt.entry.path, title };
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (
-        msg.includes("already exists") ||
-        msg.includes("File already exists")
-      ) {
+      if (isCreateConflict(e)) {
         // Name conflict (stale DB or disk leftover) — blacklist and retry
         extraTaken.add(title);
         continue;

@@ -275,7 +275,13 @@ impl FeedNetGate for TestNetGate {
         Ok(vec![fallback])
     }
 
-    fn build_client(&self, host: &str, port: u16, addrs: &[IpAddr]) -> AppResult<reqwest::Client> {
+    fn build_client(
+        &self,
+        host: &str,
+        port: u16,
+        addrs: &[IpAddr],
+        _timeout: Duration,
+    ) -> AppResult<reqwest::Client> {
         let mut builder = reqwest::Client::builder()
             .https_only(false)
             .redirect(reqwest::redirect::Policy::none())
@@ -286,5 +292,9 @@ impl FeedNetGate for TestNetGate {
         builder
             .build()
             .map_err(|e| AppError::msg(format!("test gate client build failed: {e}")))
+    }
+
+    fn total_timeout(&self, _requested: Duration) -> Duration {
+        self.timeout
     }
 }

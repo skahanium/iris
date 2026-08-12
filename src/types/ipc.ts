@@ -419,6 +419,7 @@ export interface FeedPageCursor {
 export interface FeedItemQuery {
   view: FeedView;
   sourceId?: string | null;
+  search?: string | null;
   receivedAfter?: string | null;
   cursor?: FeedPageCursor | null;
   limit: number;
@@ -504,6 +505,16 @@ export interface FeedSyncOutcome {
   status: "succeeded" | "not_modified" | "skipped" | "in_flight" | "failed";
   newItems: number;
   errorCode: string | null;
+}
+
+/** 手动批量同步汇总。 */
+export interface FeedSyncBatchOutcome {
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  inFlight: number;
+  newItems: number;
 }
 
 /** OPML 导入结果计数（预览与执行共用；`dryRun` 不写库）。 */

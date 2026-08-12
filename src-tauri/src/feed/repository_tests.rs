@@ -217,6 +217,7 @@ fn list_sources_reports_unread_count_and_display_title() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: Some("src-1".to_string()),
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -382,6 +383,7 @@ fn inbox_derives_unread_and_unarchived() {
         &FeedItemQuery {
             view: FeedView::Inbox,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -407,6 +409,7 @@ fn inbox_derives_unread_and_unarchived() {
         &FeedItemQuery {
             view: FeedView::Starred,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -423,6 +426,7 @@ fn inbox_derives_unread_and_unarchived() {
         &FeedItemQuery {
             view: FeedView::Archived,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -568,6 +572,7 @@ fn keyset_cursor_pages_stably_without_overlap() {
             &FeedItemQuery {
                 view: FeedView::All,
                 source_id: None,
+                search: None,
                 received_after: None,
                 cursor,
                 limit: 10,
@@ -608,6 +613,7 @@ fn keyset_cursor_pages_stably_without_overlap() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 10,
@@ -640,6 +646,7 @@ fn keyset_cursor_tiebreak_uses_row_id_desc() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 10,
@@ -678,6 +685,7 @@ fn list_limit_clamps_to_1_200() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 0,
@@ -692,6 +700,7 @@ fn list_limit_clamps_to_1_200() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 500,
@@ -722,6 +731,7 @@ fn list_respects_received_after_and_source_filter() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: None,
+            search: None,
             received_after: Some("2026-08-02T00:00:00Z".to_string()),
             cursor: None,
             limit: 100,
@@ -736,6 +746,7 @@ fn list_respects_received_after_and_source_filter() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: Some("src-2".to_string()),
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -774,6 +785,7 @@ fn today_view_uses_local_midnight_boundary() {
         &FeedItemQuery {
             view: FeedView::Today,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -807,6 +819,7 @@ fn today_view_uses_local_midnight_boundary() {
         &FeedItemQuery {
             view: FeedView::Today,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -964,6 +977,51 @@ fn content_update_preserves_state_and_received_at() {
     assert!(detail.summary.is_read, "no-op must keep state untouched");
 }
 
+#[test]
+fn metadata_update_with_same_hash_preserves_content_and_state() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
+    let mut original = item_input(
+        "src-1",
+        "a",
+        "Old title",
+        "stable body",
+        "2026-08-01T08:00:00Z",
+    );
+    original.canonical_url = Some("https://example.com/old".to_string());
+    FeedRepository::upsert_items(&conn, &[original.clone()]).expect("initial upsert");
+    FeedRepository::set_item_state(
+        &conn,
+        "item-src-1-a",
+        &FeedItemStatePatch {
+            is_read: Some(true),
+            ..Default::default()
+        },
+        now(),
+    )
+    .expect("mark read");
+
+    let mut changed = original;
+    changed.title = "New title".to_string();
+    changed.author_name = Some("New author".to_string());
+    changed.canonical_url = Some("https://example.com/new".to_string());
+    changed.content_markdown = "must not replace stable body".to_string();
+    let summary = FeedRepository::upsert_items(&conn, &[changed]).expect("metadata upsert");
+    assert_eq!(summary.updated, 1);
+
+    let detail = FeedRepository::get_item_detail(&conn, "item-src-1-a")
+        .expect("detail")
+        .expect("exists");
+    assert_eq!(detail.summary.title, "New title");
+    assert_eq!(detail.summary.author_name.as_deref(), Some("New author"));
+    assert_eq!(
+        detail.summary.canonical_url.as_deref(),
+        Some("https://example.com/new")
+    );
+    assert!(detail.content_markdown.contains("stable body"));
+    assert!(detail.summary.is_read);
+}
+
 // ── 详情 DTO ───────────────────────────────────────────────
 
 #[test]
@@ -1045,6 +1103,7 @@ fn mark_items_read_respects_frozen_view_and_counts() {
         &FeedItemQuery {
             view: FeedView::Inbox,
             source_id: Some("src-1".to_string()),
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -1064,6 +1123,7 @@ fn mark_items_read_respects_frozen_view_and_counts() {
         &FeedItemQuery {
             view: FeedView::Inbox,
             source_id: Some("src-1".to_string()),
+            search: None,
             received_after: None,
             cursor: None,
             limit: 100,
@@ -1129,6 +1189,94 @@ fn search_finds_matches_and_tracks_fts_updates() {
     assert!(FeedRepository::search(&conn, "again", None, 50)
         .expect("search after delete")
         .is_empty());
+}
+
+#[test]
+fn unified_search_respects_view_source_cursor_and_bulk_read() {
+    let conn = test_conn();
+    insert_source(
+        &conn,
+        "src-1",
+        "Rust 中文周刊",
+        "https://example.com/one.xml",
+    );
+    insert_source(&conn, "src-2", "Other Feed", "https://example.com/two.xml");
+    FeedRepository::upsert_items(
+        &conn,
+        &[
+            item_input(
+                "src-1",
+                "a",
+                "A",
+                "这是中文短语测试",
+                "2026-08-01T08:00:00Z",
+            ),
+            item_input("src-1", "b", "B", "ordinary", "2026-08-01T09:00:00Z"),
+            item_input("src-2", "c", "C", "中文短语", "2026-08-01T10:00:00Z"),
+        ],
+    )
+    .expect("upsert items");
+
+    let query = FeedItemQuery {
+        view: FeedView::Inbox,
+        source_id: Some("src-1".to_string()),
+        search: Some("中文".to_string()),
+        received_after: None,
+        cursor: None,
+        limit: 50,
+    };
+    let hits = FeedRepository::list_items(&conn, &query, now()).expect("unified search");
+    assert_eq!(hits.len(), 2, "正文子串与来源标题都应匹配");
+    assert!(hits.iter().all(|item| item.source_id == "src-1"));
+
+    let affected = FeedRepository::mark_items_read(&conn, &query, now()).expect("bulk read");
+    assert_eq!(affected, 2, "批量操作必须复用完全相同的搜索过滤条件");
+    assert!(FeedRepository::list_items(&conn, &query, now())
+        .expect("inbox after bulk read")
+        .is_empty());
+}
+
+#[test]
+fn item_summaries_and_search_use_source_display_title() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Original", "https://example.com/one.xml");
+    FeedRepository::update_source(
+        &conn,
+        "src-1",
+        &FeedSourcePatch {
+            title_override: Some("Display title".to_string()),
+            ..Default::default()
+        },
+        now(),
+    )
+    .expect("override title");
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-1",
+            "a",
+            "Article",
+            "ordinary body",
+            "2026-08-01T08:00:00Z",
+        )],
+    )
+    .expect("upsert");
+
+    let query = FeedItemQuery {
+        view: FeedView::All,
+        source_id: None,
+        search: Some("Display".to_string()),
+        received_after: None,
+        cursor: None,
+        limit: 50,
+    };
+    let hits = FeedRepository::list_items(&conn, &query, now()).expect("search title");
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0].source_title, "Display title");
+    let detail = FeedRepository::get_item_detail(&conn, &hits[0].id)
+        .expect("detail")
+        .expect("exists");
+    assert_eq!(detail.summary.source_title, "Display title");
 }
 
 #[test]
@@ -1225,6 +1373,7 @@ fn excerpt_truncates_to_240_unicode_scalars_without_splitting_utf8() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 10,
@@ -1260,6 +1409,7 @@ fn excerpt_truncates_to_240_unicode_scalars_without_splitting_utf8() {
         &FeedItemQuery {
             view: FeedView::All,
             source_id: None,
+            search: None,
             received_after: None,
             cursor: None,
             limit: 10,
@@ -1297,6 +1447,7 @@ fn item_query_roundtrip_uses_camel_case() {
     let query = FeedItemQuery {
         view: FeedView::Inbox,
         source_id: Some("src-1".to_string()),
+        search: Some("rust".to_string()),
         received_after: None,
         cursor: Some(crate::feed::model::FeedPageCursor {
             sort_at: "2026-08-01T08:00:00Z".to_string(),
@@ -1308,6 +1459,7 @@ fn item_query_roundtrip_uses_camel_case() {
     let map = json.as_object().expect("object");
     assert!(map.contains_key("receivedAfter"));
     assert!(map.contains_key("sourceId"));
+    assert!(map.contains_key("search"));
     assert!(map.contains_key("cursor"));
     assert!(!map.contains_key("received_after"));
 

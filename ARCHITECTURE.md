@@ -25,7 +25,7 @@ The current editor ingress still uses its isolated Marked renderer internally to
 React 19 UI
   └─ src/lib/ipc.ts（类型安全 IPC 封装）
        └─ Tauri commands（DTO、鉴权和输入校验）
-            └─ AI Run Runtime / 文件、索引、搜索、版本与回收站
+            └─ AI Run Runtime / 文件、索引、搜索、版本、回收站 / Feed Repository、Sync、Scheduler
                  └─ SQLite / 本地加密凭据 / Vault 文件系统
 ```
 
@@ -34,6 +34,7 @@ React 19 UI
 - `src-tauri/src/ai_runtime/`：唯一的 Run 生命周期、策略决策、显式上下文、证据账本、模型网关和工具能力。
 - `src-tauri/src/indexer/`：Markdown/frontmatter、分块、链接、标签和索引更新。
 - `src-tauri/src/storage/`：SQLite、增量迁移、FTS 与可选 sqlite-vec 注册。
+- `src-tauri/src/feed/`：订阅发现与解析、安全有界抓取、SQLite Repository、增量同步和到期批处理；Scheduler 只调用内部 `sync_due_batch`，手动全量与 OPML 批量分别经 `feed_sync_all`、`feed_sync_batch` 进入同一并发上限。
 
 ## 自适应工作区
 
@@ -63,6 +64,8 @@ normal-domain Run 通过 `assistant_run_start`、`assistant_run_control` 和 `as
 
 模型请求只允许 HTTPS。联网开关是 `web.search` 的唯一授权源：关闭时 Native 与 MCP Web 调度均不可达，freshness、Skills、ChildRun 和提示词均不能增权。联网证据经 `WebEvidenceBroker`，仅接纳被显式映射为 `web.search`/`web.fetch` 且通过诊断的 provider。
 
+Feed 与 AI 网页抓取的 URL 读取使用同一逐跳安全网门：每跳重新校验 HTTPS、解析并拒绝任一私网地址，再把直连固定到已验证地址。该 pinned client 明确禁用系统代理，因为代理端 DNS 会破坏本地 pinning 的 SSRF 保证；这不改变 LLM/provider 与一般联网搜索的独立代理策略。
+
 通用 MCP 只开放另一条独立的 `external.read` 边界：`readOnlyHint=true` 只是服务端声明，不是 Iris 对第三方实现的证明；管理中心还会审查名称和递归输入 Schema，并要求用户对精确 provider/tool/schema 显式确认信任后才创建白名单 binding。Composer 必须为每个 normal-domain Run 显式选择 binding，Accept 事务会冻结用户信任位、binding hash、provider hash、transport/config、Schema、参数映射与输出策略。模型不能直接消费 discovery，也不能自行增权；classified、local-only、Skills 和隐式关键词均不能获得 `external.read`。运行中只执行冻结配置，并用 live provider hash/enablement 作撤销检查。输出仅接受最多 8,000 字符的文本或 JSON，证据摘录最多 2,000 字符；事件、审计和 checkpoint 不保存参数或原始输出。Iris 拒绝声明或 Schema 暴露写入、发送、删除、日历变更、进程和 secret 的工具，但无法独立验证已信任第三方服务端是否忠实实现其声明。Skills 是 prompt-only `SKILL.md`，不能安装外部包或执行代码。
 
 ## 凭据安全
@@ -80,6 +83,8 @@ API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解�
 当前共有 **63 组**增量迁移（`001` 至 `063`）。
 
 Schema 只允许通过带 up/down 的增量迁移变更。`051_agent_harness_cutover` 使用 copy-transform-swap 将旧会话、任务、trace 和审计外键迁移到统一 Run 模型；运行中或暂停的旧任务被安全归档为 `cancelled` 并带 `cancelled_legacy` 原因。迁移不要求用户删除数据库重建。
+
+RSS 的 `feed_sources`、`feed_items` 与 external-content FTS 属于应用状态，不是 Vault 笔记索引；文章 DTO 只暴露规范化 Markdown 与安全元数据。订阅搜索、视图筛选、来源筛选、keyset 分页和批量已读共用 `FeedItemQuery`，不会进入 Agent/RAG 或全局笔记搜索。
 
 ## IPC 契约
 

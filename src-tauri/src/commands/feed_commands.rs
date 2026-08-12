@@ -18,9 +18,10 @@ use crate::feed::model::{
     FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedSourcePatch,
     FeedSourceSummary, NewFeedSource,
 };
+use crate::feed::opml::canonicalize_https_url;
 use crate::feed::opml::{export_opml, import_opml, OpmlImportResult, OPML_MAX_BYTES};
 use crate::feed::repository::FeedRepository;
-use crate::feed::sync::{HistoryReadPolicy, SyncMode, SyncStatus};
+use crate::feed::sync::{FeedSyncBatchOutcome, HistoryReadPolicy, SyncMode, SyncStatus};
 use crate::network::safe_https::validate_https_url;
 
 // ── 长度边界（所有 ID/URL/string 有界）─────────────────────
@@ -46,6 +47,33 @@ fn check_url(url: &str) -> AppResult<()> {
 fn check_string(value: &str) -> AppResult<()> {
     if value.len() > MAX_STRING_LEN {
         return Err(AppError::msg("feed_validation_string"));
+    }
+    Ok(())
+}
+
+fn check_timestamp(value: &str) -> AppResult<()> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|_| ())
+        .map_err(|_| AppError::msg("feed_validation_timestamp"))
+}
+
+fn check_feed_query(query: &FeedItemQuery) -> AppResult<()> {
+    if let Some(source_id) = &query.source_id {
+        check_id(source_id)?;
+    }
+    if let Some(search) = &query.search {
+        if search.trim().is_empty() || search.len() > MAX_STRING_LEN {
+            return Err(AppError::msg("feed_validation_search"));
+        }
+    }
+    if let Some(received_after) = &query.received_after {
+        check_timestamp(received_after)?;
+    }
+    if let Some(cursor) = &query.cursor {
+        check_timestamp(&cursor.sort_at)?;
+        if cursor.row_id <= 0 {
+            return Err(AppError::msg("feed_validation_cursor"));
+        }
     }
     Ok(())
 }
@@ -170,6 +198,7 @@ pub fn feed_item_list(
     state: State<'_, Arc<AppState>>,
     query: FeedItemQuery,
 ) -> AppResult<Vec<FeedItemSummary>> {
+    check_feed_query(&query)?;
     state
         .db
         .with_read_conn(|conn| FeedRepository::list_items(conn, &query, Utc::now()))
@@ -201,25 +230,11 @@ pub fn feed_items_mark_read(
     state: State<'_, Arc<AppState>>,
     query: FeedItemQuery,
 ) -> AppResult<u32> {
+    check_feed_query(&query)?;
     let affected = state
         .db
         .with_conn(|conn| FeedRepository::mark_items_read(conn, &query, Utc::now()))?;
     Ok(affected as u32)
-}
-
-#[tauri::command]
-pub fn feed_search(
-    state: State<'_, Arc<AppState>>,
-    query: String,
-    source_id: Option<String>,
-    limit: Option<u32>,
-) -> AppResult<Vec<FeedItemSummary>> {
-    if let Some(id) = &source_id {
-        check_id(id)?;
-    }
-    state.db.with_read_conn(|conn| {
-        FeedRepository::search(conn, &query, source_id.as_deref(), limit.unwrap_or(50))
-    })
 }
 
 #[tauri::command]
@@ -232,8 +247,29 @@ pub async fn feed_sync_source(
 }
 
 #[tauri::command]
-pub async fn feed_sync_all(state: State<'_, Arc<AppState>>) -> AppResult<()> {
+pub async fn feed_sync_all(state: State<'_, Arc<AppState>>) -> AppResult<FeedSyncBatchOutcome> {
     state.feed_sync.sync_all().await
+}
+
+#[tauri::command]
+pub async fn feed_sync_batch(
+    state: State<'_, Arc<AppState>>,
+    source_ids: Vec<String>,
+    mark_history_read: Option<bool>,
+) -> AppResult<FeedSyncBatchOutcome> {
+    const MAX_BATCH_SOURCES: usize = 10_000;
+    if source_ids.len() > MAX_BATCH_SOURCES {
+        return Err(AppError::msg("feed_sync_batch_too_large"));
+    }
+    for source_id in &source_ids {
+        check_id(source_id)?;
+    }
+    let history = if mark_history_read.unwrap_or(true) {
+        HistoryReadPolicy::MarkRead
+    } else {
+        HistoryReadPolicy::LeaveUnread
+    };
+    Ok(state.feed_sync.sync_batch(&source_ids, history).await)
 }
 
 #[tauri::command]
@@ -263,6 +299,7 @@ fn feed_source_add_impl(
     input: &FeedSourceAddInput,
 ) -> AppResult<FeedSourceSummary> {
     check_url(&input.url)?;
+    let feed_url = canonicalize_https_url(&input.url)?;
     check_string(&input.title)?;
     if let Some(override_title) = &input.title_override {
         check_string(override_title)?;
@@ -277,7 +314,7 @@ fn feed_source_add_impl(
                 conn,
                 &NewFeedSource {
                     id: uuid::Uuid::new_v4().to_string(),
-                    feed_url: input.url.trim().to_string(),
+                    feed_url,
                     site_url: None,
                     title: input.title.trim().to_string(),
                     title_override: input.title_override.clone(),
@@ -554,6 +591,7 @@ mod tests {
                     &FeedItemQuery {
                         view: crate::feed::model::FeedView::All,
                         source_id: None,
+                        search: None,
                         received_after: None,
                         cursor: None,
                         limit: 50,
@@ -593,6 +631,7 @@ mod tests {
                     &FeedItemQuery {
                         view: crate::feed::model::FeedView::Inbox,
                         source_id: None,
+                        search: None,
                         received_after: None,
                         cursor: None,
                         limit: 50,
@@ -648,6 +687,54 @@ mod tests {
         )
         .expect_err("超长标题必须拒绝");
         assert!(error.to_string().contains("feed_validation_string"));
+
+        assert!(check_feed_query(&FeedItemQuery {
+            view: crate::feed::model::FeedView::All,
+            source_id: None,
+            search: Some("x".repeat(MAX_STRING_LEN + 1)),
+            received_after: None,
+            cursor: None,
+            limit: 50,
+        })
+        .is_err());
+        assert!(check_feed_query(&FeedItemQuery {
+            view: crate::feed::model::FeedView::All,
+            source_id: None,
+            search: None,
+            received_after: Some("not-a-time".to_string()),
+            cursor: None,
+            limit: 50,
+        })
+        .is_err());
+        assert!(check_feed_query(&FeedItemQuery {
+            view: crate::feed::model::FeedView::All,
+            source_id: None,
+            search: None,
+            received_after: None,
+            cursor: Some(crate::feed::model::FeedPageCursor {
+                sort_at: "2026-08-01T08:00:00Z".to_string(),
+                row_id: 0,
+            }),
+            limit: 50,
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn source_add_canonicalizes_semantically_equivalent_url() {
+        let state = test_state();
+        let source = feed_source_add_impl(
+            &state,
+            &FeedSourceAddInput {
+                url: "https://EXAMPLE.com:443/feed.xml#fragment".to_string(),
+                title: "Example".to_string(),
+                title_override: None,
+                folder_path: None,
+                fetch_interval_minutes: None,
+            },
+        )
+        .expect("add");
+        assert_eq!(source.feed_url, "https://example.com/feed.xml");
     }
 
     #[test]
@@ -705,7 +792,7 @@ mod tests {
         let error = feed_discover("http://example.com/feed.xml".to_string())
             .await
             .expect_err("http must be rejected");
-        assert!(error.to_string().contains("仅允许 HTTPS"));
+        assert!(error.to_string().contains("https_url_invalid"));
     }
 
     #[test]

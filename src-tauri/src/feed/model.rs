@@ -49,6 +49,9 @@ pub struct FeedPageCursor {
 pub struct FeedItemQuery {
     pub view: FeedView,
     pub source_id: Option<String>,
+    /// 有界全文检索词；列表、分页与批量操作共用同一冻结条件。
+    #[serde(default)]
+    pub search: Option<String>,
     pub received_after: Option<String>,
     pub cursor: Option<FeedPageCursor>,
     pub limit: u32,
@@ -153,8 +156,6 @@ pub struct FeedSource {
     pub site_url: Option<String>,
     pub title: String,
     pub title_override: Option<String>,
-    // 阶段 3 订阅源详情/编辑消费；届时移除标注。
-    #[allow(dead_code)]
     pub description: Option<String>,
     pub icon_url: Option<String>,
     pub language: Option<String>,

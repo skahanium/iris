@@ -15,7 +15,6 @@ const {
   feedSourceRemove,
   feedSourceItemCount,
   feedSyncSource,
-  feedSearch,
   feedItemList,
   feedSourceList,
   feedItemGet,
@@ -29,7 +28,6 @@ const {
   feedSourceRemove: vi.fn(),
   feedSourceItemCount: vi.fn(),
   feedSyncSource: vi.fn(),
-  feedSearch: vi.fn(),
   feedItemList: vi.fn(),
   feedSourceList: vi.fn(),
   feedItemGet: vi.fn(),
@@ -45,7 +43,6 @@ vi.mock("@/lib/ipc", () => ({
   feedSourceRemove,
   feedSourceItemCount,
   feedSyncSource,
-  feedSearch,
   feedItemList,
   feedSourceList,
   feedItemGet,
@@ -98,7 +95,6 @@ beforeEach(() => {
   feedSourceUpdate.mockResolvedValue(undefined);
   feedSourceRemove.mockResolvedValue(5);
   feedSourceItemCount.mockResolvedValue(5);
-  feedSearch.mockResolvedValue([]);
   feedItemList.mockResolvedValue([]);
   feedSourceList.mockResolvedValue([source()]);
   feedItemGet.mockResolvedValue(null);
@@ -204,6 +200,53 @@ describe("FeedSourceDialog 管理交互", () => {
     );
     expect(onSourcesChanged).toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("源已添加但首次同步失败时重试不会重复创建来源", async () => {
+    feedSyncSource
+      .mockResolvedValueOnce({
+        status: "failed",
+        newItems: 0,
+        errorCode: "feed_fetch_failed",
+      })
+      .mockResolvedValueOnce({
+        status: "succeeded",
+        newItems: 1,
+        errorCode: null,
+      });
+    const onOpenChange = vi.fn();
+    const onSourcesChanged = vi.fn();
+    render(
+      <FeedSourceDialog
+        open
+        mode="add"
+        source={null}
+        onOpenChange={onOpenChange}
+        onSourcesChanged={onSourcesChanged}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("feed-discover-url"), {
+      target: { value: "https://example.com" },
+    });
+    fireEvent.click(screen.getByTestId("feed-discover-run"));
+    await waitFor(() => screen.getByTestId("feed-candidate-list"));
+    fireEvent.click(
+      screen.getByTestId("feed-candidate-https://example.com/feed.xml"),
+    );
+    fireEvent.click(screen.getByTestId("feed-confirm-subscribe"));
+    await waitFor(() => screen.getByTestId("feed-add-submit"));
+    fireEvent.click(screen.getByTestId("feed-add-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-dialog-error")).toHaveTextContent(
+        "订阅已添加，但首次同步失败",
+      ),
+    );
+    fireEvent.click(screen.getByTestId("feed-add-submit"));
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(feedSourceAdd).toHaveBeenCalledTimes(1);
+    expect(feedSyncSource).toHaveBeenCalledTimes(2);
+    expect(onSourcesChanged).toHaveBeenCalledTimes(1);
   });
 
   it("edits title/folder/interval and pauses the source", async () => {
@@ -331,21 +374,27 @@ describe("订阅搜索交互", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(150);
     });
-    expect(feedSearch).not.toHaveBeenCalled();
+    expect(feedItemList).not.toHaveBeenCalledWith(
+      expect.objectContaining({ search: "hel" }),
+    );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
     await act(async () => {
       await Promise.resolve();
     });
-    expect(feedSearch).toHaveBeenCalledWith("hel", null, 50);
+    expect(feedItemList).toHaveBeenCalledWith(
+      expect.objectContaining({ search: "hel", sourceId: null, limit: 50 }),
+    );
 
     // Escape 清空并回到先前视图。
     fireEvent.keyDown(input, { key: "Escape" });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
     });
-    expect(feedSearch.mock.calls.length).toBe(1);
+    expect(feedItemList).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: null }),
+    );
     vi.useRealTimers();
   });
 
@@ -366,7 +415,9 @@ describe("订阅搜索交互", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(500);
     });
-    expect(feedSearch).not.toHaveBeenCalled();
+    expect(feedItemList).not.toHaveBeenCalledWith(
+      expect.objectContaining({ search: "中" }),
+    );
     fireEvent.compositionEnd(input);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(300);
@@ -374,15 +425,18 @@ describe("订阅搜索交互", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(feedSearch).toHaveBeenCalledWith("中", null, 50);
+    expect(feedItemList).toHaveBeenCalledWith(
+      expect.objectContaining({ search: "中", sourceId: null, limit: 50 }),
+    );
     vi.useRealTimers();
   });
 
   it("surfaces search errors with a retry", async () => {
-    feedSearch.mockRejectedValueOnce({
-      code: "database",
-      message: "Database error",
-    });
+    feedItemList.mockImplementation((query: { search?: string | null }) =>
+      query.search === "boom"
+        ? Promise.reject({ code: "database", message: "Database error" })
+        : Promise.resolve([]),
+    );
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
       writable: true,
@@ -402,7 +456,11 @@ describe("订阅搜索交互", () => {
     );
     fireEvent.click(screen.getByTestId("feed-list-retry"));
     await waitFor(() =>
-      expect(feedSearch.mock.calls.length).toBeGreaterThan(1),
+      expect(
+        feedItemList.mock.calls.filter(
+          ([query]) => (query as { search?: string }).search === "boom",
+        ).length,
+      ).toBeGreaterThan(1),
     );
   });
 });

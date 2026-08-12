@@ -1,20 +1,22 @@
 //! Controlled HTTPS page fetch for AI evidence (single-page, read-only).
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
+use futures_util::StreamExt;
 use scraper::{Html, Selector};
 use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult};
 use crate::llm::http_politeness::throttle_host;
-use crate::network::cert_pinning::https_client_builder;
-use crate::network::safe_https::{host_of, validate_https_url};
+use crate::network::safe_https::{host_of, validate_https_url, ProdSafeHttpsGate, SafeHttpsGate};
 use crate::storage::db::Database;
 
 pub const HARD_MAX_CHARS: usize = 64_000;
 const MAX_RESPONSE_BYTES: usize = 2_000_000;
 const FETCH_TIMEOUT_SECS: u64 = 15;
+const MAX_REDIRECTS: usize = 5;
 const CACHE_TTL_HOURS: i64 = 24;
 const MAX_WEB_PAGE_CACHE_ROWS: usize = 256;
 pub const PAGE_FETCH_CACHE_BROKER_VERSION: &str = "web-evidence-broker.v1";
@@ -38,6 +40,123 @@ fn random_user_agent() -> &'static str {
 pub struct PageFetchResult {
     pub title: String,
     pub text: String,
+}
+
+#[derive(Debug)]
+struct PageBytesResult {
+    final_url: String,
+    content_type: String,
+    bytes: Vec<u8>,
+}
+
+async fn fetch_page_bytes_with_gate<G: SafeHttpsGate>(
+    gate: &G,
+    url: &str,
+    user_agent: &str,
+    timeout: Duration,
+) -> AppResult<PageBytesResult> {
+    tokio::time::timeout(timeout, async {
+        let mut current = url.trim().to_string();
+        let mut visited = HashSet::new();
+
+        for _ in 0..=MAX_REDIRECTS {
+            gate.validate_url(&current)
+                .map_err(|_| AppError::msg("web_url_rejected"))?;
+            if !visited.insert(current.clone()) {
+                return Err(AppError::msg("web_redirect_loop"));
+            }
+
+            let (host, port) = host_port_of(&current)?;
+            let addrs = gate
+                .resolve_public_addrs(&host)
+                .await
+                .map_err(|_| AppError::msg("web_dns_failed"))?;
+            let client = gate
+                .build_client(&host, port, &addrs, timeout)
+                .map_err(|_| AppError::msg("web_client_build_failed"))?;
+            let response = client
+                .get(&current)
+                .header(reqwest::header::USER_AGENT, user_agent)
+                .send()
+                .await
+                .map_err(|error| {
+                    if error.is_timeout() {
+                        AppError::msg("web_fetch_timeout")
+                    } else {
+                        AppError::msg("web_fetch_failed")
+                    }
+                })?;
+            crate::network::safe_https::validate_response_headers(response.headers())
+                .map_err(|_| AppError::msg("web_response_headers_too_large"))?;
+
+            if response.status().is_redirection() {
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .ok_or_else(|| AppError::msg("web_redirect_missing_location"))?;
+                current = reqwest::Url::parse(&current)
+                    .map_err(|_| AppError::msg("web_url_invalid"))?
+                    .join(location)
+                    .map_err(|_| AppError::msg("web_redirect_invalid_target"))?
+                    .to_string();
+                continue;
+            }
+            if !response.status().is_success() {
+                return Err(AppError::msg(format!(
+                    "web_http_error_{}",
+                    response.status().as_u16()
+                )));
+            }
+
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("")
+                .to_lowercase();
+            if !content_type.is_empty()
+                && !content_type.contains("text/html")
+                && !content_type.contains("text/plain")
+                && !content_type.contains("application/xhtml")
+            {
+                return Err(AppError::msg("web_content_type_unsupported"));
+            }
+            if response
+                .content_length()
+                .is_some_and(|length| length as usize > MAX_RESPONSE_BYTES)
+            {
+                return Err(AppError::msg("web_response_too_large"));
+            }
+
+            let mut bytes = Vec::new();
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                let chunk = chunk.map_err(|_| AppError::msg("web_stream_failed"))?;
+                if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                    return Err(AppError::msg("web_response_too_large"));
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            return Ok(PageBytesResult {
+                final_url: current,
+                content_type,
+                bytes,
+            });
+        }
+        Err(AppError::msg("web_too_many_redirects"))
+    })
+    .await
+    .map_err(|_| AppError::msg("web_fetch_timeout"))?
+}
+
+fn host_port_of(url: &str) -> AppResult<(String, u16)> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| AppError::msg("web_url_invalid"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::msg("web_url_invalid"))?
+        .to_string();
+    Ok((host, parsed.port_or_known_default().unwrap_or(443)))
 }
 
 struct CachedRow {
@@ -106,7 +225,7 @@ fn content_hash(text: &str) -> String {
 pub fn validate_fetch_url(url: &str) -> AppResult<()> {
     validate_https_url(url)?;
     if url.trim().contains("..") {
-        return Err(AppError::msg("非法 URL"));
+        return Err(AppError::msg("web_url_invalid"));
     }
     Ok(())
 }
@@ -356,46 +475,15 @@ pub async fn fetch_web_page(
     let host = host_of(url).unwrap_or_default();
     throttle_host(&host).await?;
 
-    let client = https_client_builder()
-        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
-        .user_agent(random_user_agent())
-        .build()
-        .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;
-
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| AppError::msg(format!("网页请求失败: {e}")))?;
-
-    if !response.status().is_success() {
-        return Err(AppError::msg(format!(
-            "网页返回 HTTP {}",
-            response.status()
-        )));
-    }
-
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_lowercase();
-    if !content_type.is_empty()
-        && !content_type.contains("text/html")
-        && !content_type.contains("text/plain")
-        && !content_type.contains("application/xhtml")
-    {
-        return Err(AppError::msg("仅支持 HTML 或纯文本页面"));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| AppError::msg(format!("读取网页失败: {e}")))?;
-    if bytes.len() > MAX_RESPONSE_BYTES {
-        return Err(AppError::msg("网页体积超过限制"));
-    }
+    let fetched = fetch_page_bytes_with_gate(
+        &ProdSafeHttpsGate,
+        url,
+        random_user_agent(),
+        Duration::from_secs(FETCH_TIMEOUT_SECS),
+    )
+    .await?;
+    let content_type = fetched.content_type;
+    let bytes = fetched.bytes;
 
     let html = String::from_utf8_lossy(&bytes);
     let (mut text, title_opt) = if content_type.contains("text/plain") {
@@ -412,7 +500,7 @@ pub async fn fetch_web_page(
     store_cache(
         db,
         &hash,
-        url,
+        &fetched.final_url,
         title_opt.as_deref(),
         &text,
         &full_hash,
@@ -439,6 +527,94 @@ pub async fn fetch_web_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::net::{IpAddr, SocketAddr};
+    use std::sync::{Arc, Mutex};
+
+    use crate::feed::test_http::{TestResponse, TestServer};
+
+    #[derive(Default)]
+    struct RecordingWebGate {
+        validated: Arc<Mutex<Vec<String>>>,
+        resolved: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl SafeHttpsGate for RecordingWebGate {
+        fn validate_url(&self, url: &str) -> AppResult<()> {
+            self.validated
+                .lock()
+                .expect("validated lock")
+                .push(url.into());
+            Ok(())
+        }
+
+        async fn resolve_public_addrs(&self, host: &str) -> AppResult<Vec<IpAddr>> {
+            self.resolved
+                .lock()
+                .expect("resolved lock")
+                .push(host.into());
+            Ok(vec!["127.0.0.1".parse().expect("loopback")])
+        }
+
+        fn build_client(
+            &self,
+            host: &str,
+            port: u16,
+            addrs: &[IpAddr],
+            timeout: Duration,
+        ) -> AppResult<reqwest::Client> {
+            let mut builder = reqwest::Client::builder()
+                .https_only(false)
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(timeout);
+            for addr in addrs {
+                builder = builder.resolve(host, SocketAddr::new(*addr, port));
+            }
+            builder
+                .build()
+                .map_err(|_| AppError::msg("test_client_failed"))
+        }
+    }
+
+    #[tokio::test]
+    async fn web_transport_revalidates_and_repins_each_redirect() {
+        let server = TestServer::start().await;
+        server.queue(TestResponse::new(302, "").header("Location", "/final"));
+        server.queue(
+            TestResponse::new(200, "<main>safe body</main>").header("Content-Type", "text/html"),
+        );
+        let gate = RecordingWebGate::default();
+
+        let result = fetch_page_bytes_with_gate(
+            &gate,
+            &server.url("/start"),
+            "Iris/test",
+            Duration::from_secs(2),
+        )
+        .await
+        .expect("redirect fetch succeeds");
+
+        assert_eq!(result.final_url, server.url("/final"));
+        assert_eq!(gate.validated.lock().expect("validated").len(), 2);
+        assert_eq!(gate.resolved.lock().expect("resolved").len(), 2);
+        assert_eq!(server.requests_snapshot().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn web_transport_streams_with_a_hard_body_limit() {
+        let server = TestServer::start().await;
+        server.queue(TestResponse::new(200, vec![b'a'; MAX_RESPONSE_BYTES + 1]));
+
+        let error = fetch_page_bytes_with_gate(
+            &RecordingWebGate::default(),
+            &server.url("/large"),
+            "Iris/test",
+            Duration::from_secs(2),
+        )
+        .await
+        .expect_err("stream must abort when it crosses the web response limit");
+        assert_eq!(error.to_string(), "web_response_too_large");
+    }
 
     #[test]
     fn validate_rejects_localhost() {

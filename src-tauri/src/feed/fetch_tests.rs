@@ -301,10 +301,38 @@ async fn fetch_rejects_redirect_to_private_network() {
     )
     .await
     .expect_err("redirect to private network must fail");
-    assert!(
-        error.to_string().contains("private address rejected"),
-        "got: {error}"
-    );
+    assert_eq!(error.to_string(), "feed_url_rejected");
+}
+
+#[tokio::test]
+async fn fetch_enforces_one_deadline_across_redirect_hops() {
+    let server = TestServer::start_with_delay(180).await;
+    server.queue(TestResponse::new(302, "").header("Location", "/final"));
+    server.queue(TestResponse::new(200, "ok"));
+    let gate = TestNetGate {
+        timeout: std::time::Duration::from_millis(300),
+    };
+
+    let error = fetch_ok(&gate, &server, "/start", FetchPurpose::Feed)
+        .await
+        .expect_err("two individually-fast hops must still share one total deadline");
+    assert_eq!(error.to_string(), "feed_fetch_timeout");
+}
+
+#[tokio::test]
+async fn fetch_rejects_oversized_response_headers() {
+    let server = TestServer::start().await;
+    server.queue(TestResponse::new(200, "ok").header("X-Large", &"a".repeat(70 * 1024)));
+
+    let error = fetch_ok(
+        &TestNetGate::default(),
+        &server,
+        "/feed.xml",
+        FetchPurpose::Feed,
+    )
+    .await
+    .expect_err("oversized response headers must be rejected before reading the body");
+    assert_eq!(error.to_string(), "feed_response_headers_too_large");
 }
 
 #[tokio::test]
@@ -340,10 +368,7 @@ async fn fetch_times_out_when_server_stalls() {
     let error = fetch_ok(&gate, &server, "/slow", FetchPurpose::Feed)
         .await
         .expect_err("stalled server must time out");
-    assert!(
-        error.to_string().contains("feed_fetch_failed"),
-        "got: {error}"
-    );
+    assert_eq!(error.to_string(), "feed_fetch_timeout");
 }
 
 /// 捕获 tracing 事件，证明日志只含安全字段。

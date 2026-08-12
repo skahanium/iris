@@ -7,19 +7,29 @@
 use std::net::IpAddr;
 
 use super::safe_https::{
-    build_pinned_client, host_of, resolve_public_addrs, validate_https_url,
-    validate_redirect_target, validate_resolved_addrs,
+    build_pinned_client_with_timeout, host_of, resolve_public_addrs, validate_https_url,
+    validate_resolved_addrs, validate_response_headers, MAX_RESPONSE_HEADER_BYTES,
 };
 
 #[test]
 fn validate_rejects_localhost() {
-    assert!(validate_https_url("https://localhost/x").is_err());
+    assert_eq!(
+        validate_https_url("https://localhost/x")
+            .expect_err("localhost rejected")
+            .to_string(),
+        "https_url_private"
+    );
     assert!(validate_https_url("https://api.localhost/x").is_err());
 }
 
 #[test]
 fn validate_rejects_private_ip() {
-    assert!(validate_https_url("https://192.168.1.1/").is_err());
+    assert_eq!(
+        validate_https_url("https://192.168.1.1/")
+            .expect_err("private IP rejected")
+            .to_string(),
+        "https_url_private"
+    );
     assert!(validate_https_url("https://10.0.0.1/").is_err());
 }
 
@@ -134,7 +144,12 @@ fn validate_resolved_addrs_rejects_mixed_public_private() {
         "93.184.216.34".parse::<IpAddr>().unwrap(),
         "192.168.1.1".parse::<IpAddr>().unwrap(),
     ];
-    assert!(validate_resolved_addrs(&mixed).is_err());
+    assert_eq!(
+        validate_resolved_addrs(&mixed)
+            .expect_err("mixed result rejected")
+            .to_string(),
+        "https_dns_private"
+    );
 }
 
 #[test]
@@ -151,7 +166,12 @@ fn validate_resolved_addrs_accepts_all_public() {
 
 #[test]
 fn validate_resolved_addrs_rejects_empty() {
-    assert!(validate_resolved_addrs(&[]).is_err(), "空解析结果必须报错");
+    assert_eq!(
+        validate_resolved_addrs(&[])
+            .expect_err("空解析结果必须报错")
+            .to_string(),
+        "https_dns_empty"
+    );
 }
 
 #[test]
@@ -161,12 +181,12 @@ fn validate_resolved_addrs_rejects_single_private() {
 }
 
 #[test]
-fn validate_redirect_target_requires_https_absolute() {
+fn every_redirect_target_uses_the_full_https_validator() {
     // 重定向目标必须与初始请求一样通过完整校验。
-    assert!(validate_redirect_target("http://example.com/redirect").is_err());
-    assert!(validate_redirect_target("https://192.168.0.1/redirect").is_err());
-    assert!(validate_redirect_target("relative/path").is_err());
-    validate_redirect_target("https://www.example.com/redirect").unwrap();
+    assert!(validate_https_url("http://example.com/redirect").is_err());
+    assert!(validate_https_url("https://192.168.0.1/redirect").is_err());
+    assert!(validate_https_url("relative/path").is_err());
+    validate_https_url("https://www.example.com/redirect").unwrap();
 }
 
 #[tokio::test]
@@ -175,14 +195,38 @@ async fn resolve_public_addrs_rejects_localhost_without_network() {
     assert!(resolve_public_addrs("localhost").await.is_err());
 }
 
+#[tokio::test]
+async fn dns_failures_use_stable_non_sensitive_code() {
+    let error = resolve_public_addrs("rss-secret.invalid")
+        .await
+        .expect_err("reserved invalid TLD must not resolve");
+    assert_eq!(error.to_string(), "https_dns_failed");
+    assert!(!error.to_string().contains("rss-secret"));
+}
+
 #[test]
-fn build_pinned_client_pins_all_addrs_without_connecting() {
-    let addrs = [
-        "93.184.216.34".parse::<IpAddr>().unwrap(),
-        "2606:2800:220:1:248:1893:25c8:1946"
-            .parse::<IpAddr>()
-            .unwrap(),
-    ];
-    let client = build_pinned_client("example.com", 443, &addrs).expect("client builds");
-    let _ = client; // 仅验证构造成功；不发起连接
+fn response_header_budget_rejects_oversized_headers() {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        "x-large",
+        reqwest::header::HeaderValue::from_bytes(&vec![b'a'; MAX_RESPONSE_HEADER_BYTES])
+            .expect("valid header"),
+    );
+
+    let error = validate_response_headers(&headers)
+        .expect_err("header names and values together must stay within the budget");
+    assert_eq!(error.to_string(), "https_response_headers_too_large");
+}
+
+#[test]
+fn pinned_security_client_builds_without_proxy_delegation() {
+    let addrs = ["93.184.216.34".parse::<IpAddr>().unwrap()];
+    let client = build_pinned_client_with_timeout(
+        "example.com",
+        443,
+        &addrs,
+        std::time::Duration::from_secs(20),
+    )
+    .expect("direct pinned client builds");
+    let _ = client;
 }

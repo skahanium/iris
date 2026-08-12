@@ -58,7 +58,7 @@ scraper = "0.27"
 feed-rs = { version = "=2.4.0", features = ["sanitize"] }
 # OPML 大纲解析（MIT）：feed-rs 已传递引入 0.41，升级为直接依赖以读取
 # outline 属性；替代方案为手写属性扫描（易错）或新增第三方案 XML crate。
-quick-xml = "0.41"
+quick-xml = "=0.41.0"
 # HTML → Markdown（Apache-2.0）：避免自写 HTML 转换器。精确版本锁定，
 # 预 1.0 行为可能变化；不再引入第三个 sanitizer crate（复用 feed-rs 与前端 DOMPurify）。
 htmd = "=0.5.5"

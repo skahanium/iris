@@ -10,32 +10,32 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   feedItemList,
-  feedSearch,
   feedSourceList,
   feedItemGet,
   feedItemSetState,
   feedItemsMarkRead,
   feedSyncSource,
+  feedSyncAll,
   listenFeedChanged,
 } = vi.hoisted(() => ({
   feedItemList: vi.fn(),
-  feedSearch: vi.fn(),
   feedSourceList: vi.fn(),
   feedItemGet: vi.fn(),
   feedItemSetState: vi.fn(),
   feedItemsMarkRead: vi.fn(),
   feedSyncSource: vi.fn(),
+  feedSyncAll: vi.fn(),
   listenFeedChanged: vi.fn(),
 }));
 
 vi.mock("@/lib/ipc", () => ({
   feedItemList,
-  feedSearch,
   feedSourceList,
   feedItemGet,
   feedItemSetState,
   feedItemsMarkRead,
   feedSyncSource,
+  feedSyncAll,
   listenFeedChanged,
   openExternalHttpsUrl: vi.fn(),
 }));
@@ -106,6 +106,39 @@ function setWidth(width: number) {
   });
 }
 
+class FeedResizeObserver {
+  static instances: FeedResizeObserver[] = [];
+  private readonly callback: ResizeObserverCallback;
+  readonly targets = new Set<Element>();
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    FeedResizeObserver.instances.push(this);
+  }
+
+  observe(target: Element) {
+    this.targets.add(target);
+  }
+
+  unobserve(target: Element) {
+    this.targets.delete(target);
+  }
+
+  disconnect() {
+    this.targets.clear();
+  }
+
+  fire(width: number) {
+    this.callback(
+      [...this.targets].map((target) => ({
+        target,
+        contentRect: { width },
+      })) as ResizeObserverEntry[],
+      this as unknown as ResizeObserver,
+    );
+  }
+}
+
 /** 冲刷 promise 驱动的状态更新（真实 timers 下 act 包裹微任务）。 */
 async function flush() {
   await act(async () => {
@@ -119,7 +152,6 @@ beforeEach(() => {
   setWidth(1440); // wide
   feedSourceList.mockResolvedValue([source()]);
   feedItemList.mockResolvedValue([item("i1"), item("i2")]);
-  feedSearch.mockResolvedValue([]);
   feedItemGet.mockImplementation((id: string) =>
     Promise.resolve(detailOf(item(id))),
   );
@@ -130,12 +162,21 @@ beforeEach(() => {
     newItems: 0,
     errorCode: null,
   });
+  feedSyncAll.mockResolvedValue({
+    total: 2,
+    succeeded: 2,
+    failed: 0,
+    skipped: 0,
+    inFlight: 0,
+    newItems: 3,
+  });
   listenFeedChanged.mockResolvedValue(() => undefined);
 });
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
 });
 
 async function renderWorkspace() {
@@ -289,29 +330,119 @@ describe("FeedWorkspace", () => {
     localStorage.removeItem("iris-feed-auto-read");
   });
 
-  it("supports j/k/m/s/e/r shortcuts and ignores editable targets", async () => {
+  it("offers an explicit persisted auto-read toggle", async () => {
+    await renderWorkspace();
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
+    await waitFor(() => screen.getByTestId("feed-toggle-auto-read"));
+    const toggle = screen.getByTestId("feed-toggle-auto-read");
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    act(() => fireEvent.click(toggle));
+    expect(localStorage.getItem("iris-feed-auto-read")).toBe("false");
+    localStorage.removeItem("iris-feed-auto-read");
+  });
+
+  it("inactive 时不聚焦、不安装阅读监听且不会自动标记已读", async () => {
+    const view = render(<FeedWorkspace active={false} />);
+    await flush();
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-item-i1")).toBeTruthy(),
+    );
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("feed-item-i1"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const title = screen.getByTestId("feed-reader-title");
+    expect(document.activeElement).not.toBe(title);
+
+    act(() => fireEvent.keyDown(document, { key: "PageDown" }));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(feedItemSetState).not.toHaveBeenCalled();
+
+    view.rerender(<FeedWorkspace active />);
+    await act(async () => vi.advanceTimersByTimeAsync(1000));
+    expect(feedItemSetState).toHaveBeenCalledWith("i1", { isRead: true });
+  });
+
+  it("仅 Reader 内的有效阅读动作触发提前已读", async () => {
+    await renderWorkspace();
+    vi.useFakeTimers();
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("feed-item-i1"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const reader = screen.getByTestId("feed-reader");
+
+    act(() => fireEvent.keyDown(reader, { key: "Shift" }));
+    act(() => fireEvent.keyDown(reader, { key: "PageDown", ctrlKey: true }));
+    expect(feedItemSetState).not.toHaveBeenCalled();
+    act(() => fireEvent.keyDown(reader, { key: "PageDown" }));
+    expect(feedItemSetState).toHaveBeenCalledWith("i1", { isRead: true });
+  });
+
+  it("详情失败后点击重试会为同一文章发起新请求", async () => {
+    feedItemGet
+      .mockRejectedValueOnce({ code: "feed_item_not_found" })
+      .mockResolvedValueOnce(detailOf(item("i1")));
+    await renderWorkspace();
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-reader-retry")).toBeTruthy(),
+    );
+
+    act(() => fireEvent.click(screen.getByTestId("feed-reader-retry")));
+    await waitFor(() => expect(feedItemGet).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("feed-reader-title")).toBeTruthy();
+  });
+
+  it("状态写入失败时重新加载详情以回滚详情投影", async () => {
+    feedItemSetState.mockRejectedValueOnce(new Error("database"));
+    await renderWorkspace();
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
+    await waitFor(() => screen.getByTestId("feed-toggle-read"));
+    const detailCalls = feedItemGet.mock.calls.length;
+
+    act(() => fireEvent.click(screen.getByTestId("feed-toggle-read")));
+    await waitFor(() =>
+      expect(feedItemGet.mock.calls.length).toBeGreaterThan(detailCalls),
+    );
+    expect(screen.getByTestId("feed-toggle-read").textContent).toContain(
+      "标为已读",
+    );
+  });
+
+  it("j/k 只移动 roving 焦点，Enter 打开；r 执行网络同步", async () => {
     await renderWorkspace();
     await waitFor(() =>
       expect(screen.getByTestId("feed-item-i1")).toBeTruthy(),
     );
+    expect(screen.getByTestId("feed-item-i1").getAttribute("tabindex")).toBe(
+      "0",
+    );
 
     act(() =>
       fireEvent.keyDown(screen.getByTestId("feed-workspace"), { key: "j" }),
     );
     await flush();
-    await waitFor(() => expect(feedItemGet).toHaveBeenCalledWith("i1"));
-
-    act(() =>
-      fireEvent.keyDown(screen.getByTestId("feed-workspace"), { key: "j" }),
+    expect(feedItemGet).not.toHaveBeenCalled();
+    expect(screen.getByTestId("feed-item-i2").getAttribute("tabindex")).toBe(
+      "0",
     );
-    await flush();
-    await waitFor(() => expect(feedItemGet).toHaveBeenLastCalledWith("i2"));
 
     act(() =>
       fireEvent.keyDown(screen.getByTestId("feed-workspace"), { key: "k" }),
     );
     await flush();
-    await waitFor(() => expect(feedItemGet).toHaveBeenLastCalledWith("i1"));
+    expect(feedItemGet).not.toHaveBeenCalled();
+
+    act(() =>
+      fireEvent.keyDown(screen.getByTestId("feed-workspace"), {
+        key: "Enter",
+      }),
+    );
+    await waitFor(() => expect(feedItemGet).toHaveBeenCalledWith("i1"));
 
     act(() =>
       fireEvent.keyDown(screen.getByTestId("feed-workspace"), { key: "m" }),
@@ -328,14 +459,11 @@ describe("FeedWorkspace", () => {
     );
     expect(feedItemSetState).toHaveBeenCalledWith("i1", { isArchived: true });
 
-    const before = feedItemList.mock.calls.length;
     act(() =>
       fireEvent.keyDown(screen.getByTestId("feed-workspace"), { key: "r" }),
     );
-    await flush();
-    await waitFor(() =>
-      expect(feedItemList.mock.calls.length).toBeGreaterThan(before),
-    );
+    await waitFor(() => expect(feedSyncAll).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("status").textContent).toContain("同步完成");
 
     // 输入框聚焦时不触发。
     const input = document.createElement("input");
@@ -344,6 +472,16 @@ describe("FeedWorkspace", () => {
     act(() => fireEvent.keyDown(input, { key: "j" }));
     expect(feedItemGet.mock.calls.length).toBe(getCallsBefore);
     input.remove();
+  });
+
+  it("窄屏仍提供来源、搜索、添加、OPML 与同步入口", async () => {
+    setWidth(900);
+    await renderWorkspace();
+    expect(screen.getByTestId("feed-open-drawer")).toBeTruthy();
+    expect(screen.getByTestId("feed-search-input")).toBeTruthy();
+    expect(screen.getByTestId("feed-add-source")).toBeTruthy();
+    expect(screen.getByTestId("feed-open-opml")).toBeTruthy();
+    expect(screen.getByTestId("feed-sync-now")).toBeTruthy();
   });
 
   it("batch marks the frozen view read", async () => {
@@ -401,6 +539,29 @@ describe("FeedWorkspace", () => {
     act(() => fireEvent.click(screen.getByTestId("feed-back-to-list")));
     await waitFor(() =>
       expect(screen.getByTestId("feed-item-i1")).toBeTruthy(),
+    );
+  });
+
+  it("依据订阅容器实测宽度而不是 window 宽度选择断点", async () => {
+    setWidth(1600);
+    FeedResizeObserver.instances = [];
+    globalThis.ResizeObserver =
+      FeedResizeObserver as unknown as typeof ResizeObserver;
+    await renderWorkspace();
+
+    const workspaceObserver = FeedResizeObserver.instances.find((observer) =>
+      [...observer.targets].some(
+        (target) => target.getAttribute("data-testid") === "feed-workspace",
+      ),
+    );
+    expect(workspaceObserver).toBeTruthy();
+    act(() => workspaceObserver?.fire(900));
+    await waitFor(() => expect(screen.getByText("订阅")).toBeTruthy());
+    expect(screen.queryByTestId("feed-toggle-sidebar")).toBeNull();
+
+    act(() => workspaceObserver?.fire(1400));
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-toggle-sidebar")).toBeTruthy(),
     );
   });
 

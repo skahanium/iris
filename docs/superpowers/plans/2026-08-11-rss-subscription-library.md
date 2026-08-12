@@ -4,7 +4,7 @@
 
 **Goal:** 在不接入 Agent/RAG/MCP、也不自动改写用户 Vault 的前提下，为 Iris 交付可离线、可迁移、可搜索的 RSS 订阅资料库。
 
-**Architecture:** 订阅源、文章 Markdown、转换前载荷和阅读状态存入应用级 SQLite；Rust 负责安全获取、Feed 解析、HTML → Markdown、增量同步和 FTS，React 只接收净化后的 DTO。实现只增加两张事实表和一个 `feed` 模块；同步复用现有 Scheduler，不建设通用 provider 或任务系统。收件箱是查询，显式「保存为笔记」复用现有文档持久化协调器。
+**Architecture:** 订阅源、文章 Markdown、转换前载荷和阅读状态存入应用级 SQLite；Rust 负责安全获取、Feed 解析、HTML → Markdown、增量同步和 FTS，React 只接收净化后的 DTO。实现只增加两张事实表和一个 `feed` 模块；同步复用现有 Scheduler，不建设通用 provider 或任务系统。收件箱是查询，显式「保存为笔记」复用现有 `fileCreate` 写盘回执与 `openNote` 路径。
 
 **Tech Stack:** Tauri 2.x、Rust 1.85、tokio、rusqlite/SQLite FTS5、reqwest/rustls、feed-rs、htmd、React 19、TypeScript、TailwindCSS + shadcn/ui、marked、DOMPurify、Vitest、Cargo test。
 
@@ -522,7 +522,7 @@ export type AppWorkspaceMode = "documents" | "feeds";
 ```
 
 - [x] RED 测试证明：进入 feeds 时 editor DOM 仍挂载但 `aria-hidden`/不可交互；返回后同一 editor node、Agent 意图、document tab 不变。
-- [x] `AppShell` 新增 `workspaceMode`、`feedWorkspace`、`onWorkspaceModeChange`；document main 与 feed main 只切可见性，不互相卸载。
+- [x] `AppShell` 接收 `workspaceMode` 与 `feedWorkspace`；模式切换由标题栏/App 层负责，document main 与 feed main 只切可见性，不互相卸载。
 - [x] feeds 模式临时折叠 Agent 的有效 presentation，但不写回 `aiPanelOpen`；返回 documents 恢复原投影。
 - [x] 标题栏在笔记库入口旁增加 `Rss` 图标按钮，使用 `aria-pressed` 和中文 tooltip；点击文档 Tab 自动回 documents。
 - [x] 禅模式进入 feeds 前由 App 层退出并显示一次非阻断提示。
@@ -615,7 +615,7 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - [x] RED 测试覆盖缺作者/日期/URL、危险标题字符、重复文件名、UTF-8、正文不被二次 HTML 解码。
 - [x] `buildFeedNoteMarkdown(detail, savedAt)` 只消费安全 DTO，不访问 raw payload。
 - [x] 点击「保存为笔记」必须明确选择目标目录/文件名；默认文件名经现有路径校验，不静默覆盖。
-- [x] App 层复用 `fileCreate` + `DocumentPersistenceCoordinator`/现有写盘回执；不得从 Feed component 直接 `invoke` 或 `fs.write`。
+- [x] App 层复用 `fileCreate` 写盘回执 + `openNote`；创建成功但打开失败时保留已创建路径供幂等重试，不得从 Feed component 直接 `invoke` 或 `fs.write`。
 - [x] 写盘成功后打开生成笔记；失败停留在文章并显示可重试错误。
 - [x] 保存后的笔记是独立副本；后续 Feed 更新不修改 `.md`，删除笔记不影响 Feed。
 - [x] 运行 note export、持久化协调器和文件生命周期测试。
@@ -631,8 +631,8 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - [x] 用合成文本建立 100 个 source、10,000 个 item 的 integration test；断言 inbox 首屏、FTS 查询和详情读取正确，不保存机器相关的毫秒硬阈值。
 - [x] 用 `EXPLAIN QUERY PLAN` 断言 inbox 和 source 列表使用既有索引；只有查询确实全表扫描时才调整索引。
 - [x] 从加入 RSS 前的应用数据库副本启动，确认 `063` 自动应用且现有笔记、会话、设置不变。
-- [x] 手工验证断网、代理切换、DNS/证书失败、429/500、超时、超限和磁盘满；旧文章始终可读。
-- [x] 验证应用退出后无需恢复 job 状态；重启只按 `next_fetch_at` 或手动刷新继续。
+- [ ] 手工验证断网、代理切换、DNS/证书失败、429/500、超时、超限和磁盘满；旧文章始终可读。（尚无日期、构建、平台与执行人证据）
+- [ ] 验证应用退出后无需恢复 job 状态；重启只按 `next_fetch_at` 或手动刷新继续。（尚无人工证据）
 - [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml --test feed_library_capacity`，预期 GREEN。
 - [x] 提交：`test(rss): 添加订阅容量与升级回归`。
 
@@ -640,17 +640,17 @@ export type AppWorkspaceMode = "documents" | "feeds";
 
 按顺序执行并保存 exit code；任一失败不得声称完成：
 
-- [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
-- [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
-- [x] `cargo test --manifest-path src-tauri/Cargo.toml`
-- [x] `npm run audit:rust`
-- [x] `npm run lint`
-- [x] `npm run format:check`
-- [x] `npm run typecheck`
-- [x] `npm run test`
-- [x] `npm audit`
-- [x] `npm run docs:check`
-- [x] `npm run test:e2e`
+- [ ] `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
+- [ ] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
+- [ ] `cargo test --manifest-path src-tauri/Cargo.toml`
+- [ ] `npm run audit:rust`
+- [ ] `npm run lint`
+- [ ] `npm run format:check`
+- [ ] `npm run typecheck`
+- [ ] `npm run test`
+- [ ] `npm audit`
+- [ ] `npm run docs:check`
+- [ ] `npm run test:e2e`
 - [ ] 发布候选另跑 `npm run tauri build` 与仓库既有 macOS/Windows 发布门禁。
 
 预期：全部 exit 0；审计无未登记高危；E2E 不依赖公网源，使用本地受控 HTTPS fixture server 或 mock transport。
