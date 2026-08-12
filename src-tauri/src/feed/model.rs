@@ -198,7 +198,8 @@ pub struct FeedSourcePatch {
 }
 
 /// 文章阅读状态补丁；至少一个字段必须为 `Some`。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FeedItemStatePatch {
     pub is_read: Option<bool>,
     pub is_starred: Option<bool>,

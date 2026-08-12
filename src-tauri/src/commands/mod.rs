@@ -4,6 +4,7 @@ pub mod assistant_commands;
 pub mod classified;
 pub mod corpus_commands;
 pub mod document_recovery;
+pub mod feed_commands;
 pub mod file;
 pub mod graph;
 pub mod llm_config_commands;

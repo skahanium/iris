@@ -54,6 +54,47 @@ pub(crate) struct SyncOutcome {
     pub status: SyncStatus,
 }
 
+/// 同步事件投影（IPC）：只含 sourceId、变更类型、计数与稳定错误码，
+/// 不含 URL、正文或任何请求头；只提示前端重新查询，不建立 job 恢复协议。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FeedChangedEvent {
+    pub source_id: String,
+    pub kind: &'static str,
+    pub new_items: u32,
+    pub error_code: Option<String>,
+}
+
+impl FeedChangedEvent {
+    fn from_outcome(source_id: &str, status: &SyncStatus) -> Option<Self> {
+        match status {
+            SyncStatus::Succeeded { new_items } => Some(Self {
+                source_id: source_id.to_string(),
+                kind: if *new_items > 0 {
+                    "items_changed"
+                } else {
+                    "sync_succeeded"
+                },
+                new_items: *new_items as u32,
+                error_code: None,
+            }),
+            SyncStatus::NotModified => Some(Self {
+                source_id: source_id.to_string(),
+                kind: "sync_succeeded",
+                new_items: 0,
+                error_code: None,
+            }),
+            SyncStatus::Failed { code } => Some(Self {
+                source_id: source_id.to_string(),
+                kind: "sync_failed",
+                new_items: 0,
+                error_code: Some(code.clone()),
+            }),
+            SyncStatus::Skipped | SyncStatus::InFlight => None,
+        }
+    }
+}
+
 /// 固定退避：0→15m、1→1h、2→6h、3+→24h（以失败前计数为准）。
 fn backoff_minutes(consecutive_failures: i64) -> i64 {
     match consecutive_failures {
@@ -270,10 +311,12 @@ use tokio::sync::Mutex;
 
 /// 同步服务：`tokio::sync::Mutex<HashSet<String>>` 防止同源重复同步，
 /// 不创建 job 表或通用任务状态机。手动刷新与自动刷新调用同一入口。
+/// 可选挂载 `AppHandle` 用于投影同步事件（未挂载时静默跳过）。
 pub(crate) struct FeedSyncService<G: FeedNetGate> {
     db: Arc<Database>,
     gate: Arc<G>,
     in_flight: Arc<Mutex<HashSet<String>>>,
+    event_sink: Arc<Mutex<Option<tauri::AppHandle>>>,
 }
 
 // 手写 Clone（Arc 克隆不需要 `G: Clone` 约束）。
@@ -283,6 +326,7 @@ impl<G: FeedNetGate> Clone for FeedSyncService<G> {
             db: self.db.clone(),
             gate: self.gate.clone(),
             in_flight: self.in_flight.clone(),
+            event_sink: self.event_sink.clone(),
         }
     }
 }
@@ -293,6 +337,14 @@ impl<G: FeedNetGate> FeedSyncService<G> {
             db,
             gate,
             in_flight: Arc::new(Mutex::new(HashSet::new())),
+            event_sink: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// 挂载事件出口（同步完成/失败时投影 `feed:changed`）。
+    pub(crate) fn attach_event_sink(&self, app: tauri::AppHandle) {
+        if let Ok(mut sink) = self.event_sink.try_lock() {
+            *sink = Some(app);
         }
     }
 
@@ -303,6 +355,17 @@ impl<G: FeedNetGate> FeedSyncService<G> {
         source_id: &str,
         mode: SyncMode,
     ) -> AppResult<SyncOutcome> {
+        self.sync_source_with_history(source_id, mode, HistoryReadPolicy::MarkRead)
+            .await
+    }
+
+    /// 单源同步（显式历史策略；添加流程「历史也设为未读」使用）。
+    pub(crate) async fn sync_source_with_history(
+        &self,
+        source_id: &str,
+        mode: SyncMode,
+        history: HistoryReadPolicy,
+    ) -> AppResult<SyncOutcome> {
         let mut in_flight = self.in_flight.lock().await;
         if !in_flight.insert(source_id.to_string()) {
             return Ok(SyncOutcome {
@@ -311,17 +374,21 @@ impl<G: FeedNetGate> FeedSyncService<G> {
         }
         drop(in_flight);
 
-        let outcome = crate::feed::sync::sync_source(
-            &self.db,
-            self.gate.as_ref(),
-            source_id,
-            mode,
-            HistoryReadPolicy::MarkRead,
-        )
-        .await;
+        let outcome =
+            crate::feed::sync::sync_source(&self.db, self.gate.as_ref(), source_id, mode, history)
+                .await;
 
         let mut in_flight = self.in_flight.lock().await;
         in_flight.remove(source_id);
+
+        if let Ok(outcome_ref) = &outcome {
+            if let Some(event) = FeedChangedEvent::from_outcome(source_id, &outcome_ref.status) {
+                if let Some(app) = self.event_sink.lock().await.as_ref().cloned() {
+                    use tauri::Emitter;
+                    let _ = app.emit("feed:changed", &event);
+                }
+            }
+        }
         outcome
     }
 

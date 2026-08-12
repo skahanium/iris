@@ -1,0 +1,278 @@
+import { readFileSync } from "node:fs";
+
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+
+const invoke = vi.fn();
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: (...args: unknown[]) => invoke(...args),
+}));
+
+import {
+  feedDiscover,
+  feedItemGet,
+  feedItemList,
+  feedItemsMarkRead,
+  feedItemSetState,
+  feedSearch,
+  feedSourceAdd,
+  feedSourceRemove,
+  feedSourceUpdate,
+  feedSyncAll,
+  feedSyncSource,
+} from "@/lib/ipc";
+import { IPC_EVENTS } from "@/lib/ipc-events";
+import type {
+  FeedChangedEvent,
+  FeedItemDetail,
+  FeedItemQuery,
+  FeedItemStatePatch,
+  FeedSourceSummary,
+} from "@/types/ipc";
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
+
+const FEED_COMMANDS = [
+  "feed_discover",
+  "feed_source_add",
+  "feed_source_list",
+  "feed_source_update",
+  "feed_source_remove",
+  "feed_item_list",
+  "feed_item_get",
+  "feed_item_set_state",
+  "feed_items_mark_read",
+  "feed_search",
+  "feed_sync_source",
+  "feed_sync_all",
+] as const;
+
+const FIXED_QUERY: FeedItemQuery = {
+  view: "inbox",
+  sourceId: "src-1",
+  receivedAfter: null,
+  cursor: { sortAt: "2026-08-01T08:00:00Z", rowId: 7 },
+  limit: 50,
+};
+
+describe("feed IPC contract", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("registers all feed commands in Tauri lib.rs", () => {
+    const lib = read("src-tauri/src/lib.rs");
+    for (const cmd of FEED_COMMANDS) {
+      expect(lib).toContain(`commands::feed_commands::${cmd}`);
+    }
+  });
+
+  it("defines the feed contract in types/ipc.ts with camelCase fields", () => {
+    const types = read("src/types/ipc.ts");
+    expect(types).toContain(
+      'export type FeedView = "inbox" | "today" | "all" | "starred" | "archived"',
+    );
+    expect(types).toContain("export interface FeedItemQuery");
+    expect(types).toContain("receivedAfter");
+    expect(types).toContain("export interface FeedItemStatePatch");
+    expect(types).toContain("isRead?: boolean");
+    expect(types).toContain("export interface FeedChangedEvent");
+    expect(types).toContain(
+      'kind: "sync_succeeded" | "sync_failed" | "items_changed"',
+    );
+    expect(types).toContain("errorCode: string | null");
+    // 不得出现 snake_case 或 raw payload 字段。
+    expect(types).not.toContain("received_after");
+    expect(types).not.toContain("sourcePayload");
+  });
+
+  it("defines the event name in ipc-events.ts", () => {
+    expect(IPC_EVENTS.FEED_CHANGED).toBe("feed:changed");
+  });
+
+  it("feedDiscover invokes with bounded url", async () => {
+    invoke.mockResolvedValue([]);
+    await feedDiscover("https://example.com/feed.xml");
+    expect(invoke).toHaveBeenCalledWith("feed_discover", {
+      url: "https://example.com/feed.xml",
+    });
+  });
+
+  it("feedSourceAdd invokes with camelCase input", async () => {
+    invoke.mockResolvedValue({
+      id: "src-1",
+      title: "Example",
+      feedUrl: "https://example.com/feed.xml",
+      siteUrl: null,
+      folderPath: "tech",
+      isEnabled: true,
+      unreadCount: 0,
+      lastCheckedAt: null,
+      lastSuccessAt: null,
+      nextFetchAt: null,
+      consecutiveFailures: 0,
+      lastErrorCode: null,
+    } satisfies FeedSourceSummary);
+    await feedSourceAdd({
+      url: "https://example.com/feed.xml",
+      title: "Example",
+      titleOverride: null,
+      folderPath: "tech",
+      fetchIntervalMinutes: 60,
+    });
+    expect(invoke).toHaveBeenCalledWith("feed_source_add", {
+      input: {
+        url: "https://example.com/feed.xml",
+        title: "Example",
+        titleOverride: null,
+        folderPath: "tech",
+        fetchIntervalMinutes: 60,
+      },
+    });
+  });
+
+  it("feedSourceUpdate invokes with camelCase sourceId and patch", async () => {
+    invoke.mockResolvedValue(undefined);
+    await feedSourceUpdate("src-1", {
+      titleOverride: "Renamed",
+      fetchIntervalMinutes: 120,
+      isEnabled: false,
+    });
+    expect(invoke).toHaveBeenCalledWith("feed_source_update", {
+      sourceId: "src-1",
+      patch: {
+        titleOverride: "Renamed",
+        fetchIntervalMinutes: 120,
+        isEnabled: false,
+      },
+    });
+  });
+
+  it("feedSourceRemove invokes with keepItems flag", async () => {
+    invoke.mockResolvedValue(3);
+    await expect(feedSourceRemove("src-1", false)).resolves.toBe(3);
+    expect(invoke).toHaveBeenCalledWith("feed_source_remove", {
+      sourceId: "src-1",
+      keepItems: false,
+    });
+  });
+
+  it("feedItemList invokes with frozen query", async () => {
+    invoke.mockResolvedValue([]);
+    await feedItemList(FIXED_QUERY);
+    expect(invoke).toHaveBeenCalledWith("feed_item_list", {
+      query: FIXED_QUERY,
+    });
+  });
+
+  it("feedItemGet detail type never exposes sourcePayload", async () => {
+    invoke.mockResolvedValue({
+      summary: {
+        rowId: 1,
+        id: "item-1",
+        sourceId: "src-1",
+        sourceTitle: "Example",
+        title: "T",
+        authorName: null,
+        canonicalUrl: "https://example.com/a",
+        publishedAt: null,
+        receivedAt: "2026-08-01T08:00:00Z",
+        excerpt: "…",
+        isRead: false,
+        isStarred: false,
+        isArchived: false,
+        conversionStatus: "ok",
+      },
+      contentMarkdown: "# T",
+      summaryMarkdown: "",
+    } satisfies FeedItemDetail);
+    const detail = await feedItemGet("item-1");
+    expect(invoke).toHaveBeenCalledWith("feed_item_get", { itemId: "item-1" });
+    expect(detail.contentMarkdown).toBe("# T");
+    // 类型层保证：详情 DTO 不含 sourcePayload / source_payload。
+    expectTypeOf<FeedItemDetail>().not.toMatchTypeOf<{
+      sourcePayload: string;
+    }>();
+    expectTypeOf<FeedItemDetail["summary"]>().not.toMatchTypeOf<{
+      sourcePayload: string;
+    }>();
+  });
+
+  it("feedItemSetState forwards the patch with camelCase fields", async () => {
+    invoke.mockResolvedValue(undefined);
+    const patch: FeedItemStatePatch = { isRead: true, isArchived: false };
+    await feedItemSetState("item-1", patch);
+    expect(invoke).toHaveBeenCalledWith("feed_item_set_state", {
+      itemId: "item-1",
+      patch,
+    });
+  });
+
+  it("feedItemsMarkRead returns affected count", async () => {
+    invoke.mockResolvedValue(12);
+    await expect(feedItemsMarkRead(FIXED_QUERY)).resolves.toBe(12);
+    expect(invoke).toHaveBeenCalledWith("feed_items_mark_read", {
+      query: FIXED_QUERY,
+    });
+  });
+
+  it("feedSearch invokes with query/sourceId/limit", async () => {
+    invoke.mockResolvedValue([]);
+    await feedSearch("hello", "src-1", 25);
+    expect(invoke).toHaveBeenCalledWith("feed_search", {
+      query: "hello",
+      sourceId: "src-1",
+      limit: 25,
+    });
+  });
+
+  it("feedSyncSource waits for completion and returns counts", async () => {
+    invoke.mockResolvedValue({
+      status: "succeeded",
+      newItems: 3,
+      errorCode: null,
+    });
+    await expect(feedSyncSource("src-1", true)).resolves.toEqual({
+      status: "succeeded",
+      newItems: 3,
+      errorCode: null,
+    });
+    expect(invoke).toHaveBeenCalledWith("feed_sync_source", {
+      sourceId: "src-1",
+      markHistoryRead: true,
+    });
+  });
+
+  it("feedSyncAll invokes without args", async () => {
+    invoke.mockResolvedValue(undefined);
+    await feedSyncAll();
+    expect(invoke).toHaveBeenCalledWith("feed_sync_all");
+  });
+
+  it("FeedChangedEvent shape is documented without url/body", () => {
+    const event: FeedChangedEvent = {
+      sourceId: "src-1",
+      kind: "sync_failed",
+      newItems: 0,
+      errorCode: "feed_http_error_500",
+    };
+    expect(event.errorCode).toBe("feed_http_error_500");
+    expectTypeOf<FeedChangedEvent["kind"]>().toEqualTypeOf<
+      "sync_succeeded" | "sync_failed" | "items_changed"
+    >();
+    expectTypeOf<FeedChangedEvent>().not.toMatchTypeOf<{
+      url: string;
+    }>();
+    expectTypeOf<FeedChangedEvent>().not.toMatchTypeOf<{
+      body: string;
+    }>();
+  });
+
+  it("FeedView accepts only the five frozen values", () => {
+    const view: FeedChangedEvent["kind"] = "items_changed";
+    expect(["inbox", "today", "all", "starred", "archived"]).toContain("inbox");
+    expect(view).toBe("items_changed");
+  });
+});

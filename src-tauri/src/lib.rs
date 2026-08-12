@@ -100,6 +100,7 @@ pub fn run() {
             state
                 .embedding_scheduler()
                 .attach_app_handle(app.handle().clone());
+            state.feed_sync.attach_event_sink(app.handle().clone());
             app.manage(state.clone());
             app.manage(commands::app_update::PendingAppUpdate::new(
                 iris_paths.cache_dir.join("updates"),
@@ -263,6 +264,18 @@ pub fn run() {
             commands::profile_commands::inbox_update_status,
             commands::profile_commands::inbox_delete,
             commands::profile_commands::inbox_counts,
+            commands::feed_commands::feed_discover,
+            commands::feed_commands::feed_source_add,
+            commands::feed_commands::feed_source_list,
+            commands::feed_commands::feed_source_update,
+            commands::feed_commands::feed_source_remove,
+            commands::feed_commands::feed_item_list,
+            commands::feed_commands::feed_item_get,
+            commands::feed_commands::feed_item_set_state,
+            commands::feed_commands::feed_items_mark_read,
+            commands::feed_commands::feed_search,
+            commands::feed_commands::feed_sync_source,
+            commands::feed_commands::feed_sync_all,
             commands::window_chrome_cmd::app_exit,
             commands::window_chrome_cmd::get_desktop_chrome_metrics,
             commands::window_chrome_cmd::show_main_window_when_ready,

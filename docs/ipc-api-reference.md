@@ -28,6 +28,7 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 | Skills 与联网证据 | `skills_*`、`web_evidence_provider_*`、`prompt_profile_*`                                                                               | prompt-only Skills、联网证据 provider 与个性化                                              |
 | 涉密数据          | `classified_*`、`assistant_classified_run_take_result`                                                                                  | 加密分类空间、易失涉密 Run 与一次性结果读取；不共享 normal Run 回放                         |
 | 窗口              | `app_exit`、`get_desktop_chrome_metrics`、`show_main_window_when_ready`                                                                 | 桌面窗口生命周期与 Chrome 指标                                                              |
+| 订阅资料库        | `feed_*`                                                                                                                                | RSS/Atom/JSON Feed 发现、订阅、同步、阅读状态与本地 FTS 搜索                                |
 
 ## Agent Run 契约
 
@@ -66,3 +67,39 @@ Skills are prompt-only；`SKILL.md` scope is the fact source。`skills_*` 不安
 - `AssistantRunStartRequest.externalToolGrants`：只接受 `{ bindingId, bindingConfigHash }`；仅 normal-domain、非 local-only Run 可在 Accept 事务中冻结并获得 `external.read`。
 
 启用 MCP provider 或保存 binding 不会自动授权任何 Run。运行时不重新 discovery，并拒绝 provider disable/config hash 漂移、snapshot 或用户信任位篡改、Schema 不匹配和超限/不支持输出。Iris 会拒绝声明或 Schema 暴露副作用的工具，但不能独立证明用户已信任的第三方服务端忠实实现其只读声明。
+
+## 订阅资料库（feed\_\*）
+
+命令名、DTO 与 `src/types/ipc.ts` / `src/lib/ipc.ts` 一一对应（camelCase）；
+Rust 侧契约见 `feed::model`。仅登记以下命令，全部通过仓储/service 访问
+应用级 SQLite，不内嵌 SQL：
+
+| 命令                   | 参数（camelCase）                                     | 返回                                 |
+| ---------------------- | ----------------------------------------------------- | ------------------------------------ |
+| `feed_discover`        | `url`                                                 | `FeedCandidate[]`（≤10，不含 HTML）  |
+| `feed_source_add`      | `input: FeedSourceAddInput`                           | `FeedSourceSummary`                  |
+| `feed_source_list`     | —                                                     | `FeedSourceSummary[]`                |
+| `feed_source_update`   | `sourceId`、`patch: FeedSourceUpdateInput`            | —                                    |
+| `feed_source_remove`   | `sourceId`、`keepItems`                               | 删除的文章数（保留时为 0）           |
+| `feed_item_list`       | `query: FeedItemQuery`                                | `FeedItemSummary[]`（limit 1..=200） |
+| `feed_item_get`        | `itemId`                                              | `FeedItemDetail`                     |
+| `feed_item_set_state`  | `itemId`、`patch: FeedItemStatePatch`（至少一个字段） | —                                    |
+| `feed_items_mark_read` | `query: FeedItemQuery`（冻结筛选）                    | 影响行数                             |
+| `feed_search`          | `query`、`sourceId?`、`limit?`                        | `FeedItemSummary[]`                  |
+| `feed_sync_source`     | `sourceId`、`markHistoryRead?`（仅首次同步生效）      | `FeedSyncOutcome`（等待完成）        |
+| `feed_sync_all`        | —                                                     | —（每轮最多 2 个到期源并发）         |
+
+边界规则：
+
+- **原始源载荷永不出 IPC**：`FeedItemDetail` 只有规范化 Markdown 与安全
+  元数据；`source_payload`/`content_text` 原始 HTML 永不进入任何参数或
+  返回值，前端类型也不得声明该字段。
+- **同步事件** `feed:changed` 只投影 `sourceId`、变更类型、`newItems` 与
+  稳定 `errorCode`，不含 URL、正文或请求头；事件只提示 UI 重新查询，
+  不建立 job 恢复协议，应用重启后按 `next_fetch_at` 恢复。
+- **输入有界**：ID ≤ 200、URL ≤ 2048（且必须通过 SSRF 校验）、string
+  ≤ 4096；`feed_item_set_state` 空 patch 拒绝；`feed_search` 空查询拒绝。
+- **退订语义**：`keepItems=true` 保留文章并暂停（置 disabled）；`false`
+  删除订阅及其文章（cascade + FTS 清理）。
+- 发现的多候选必须由用户选择，不自动订阅全部；候选 URL 与请求同等
+  校验（跨协议/私网拒绝）。

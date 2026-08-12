@@ -1252,3 +1252,98 @@ export async function openExternalHttpsUrl(url: string): Promise<void> {
 export async function classifiedAiCacheClear(): Promise<void> {
   return invoke("classified_ai_cache_clear");
 }
+
+// ── RSS 订阅资料库（阶段 3 冻结契约）────────────────────────
+
+import type {
+  FeedCandidate,
+  FeedItemDetail,
+  FeedItemQuery,
+  FeedItemStatePatch,
+  FeedItemSummary,
+  FeedSourceAddInput,
+  FeedSourceSummary,
+  FeedSourceUpdateInput,
+  FeedSyncOutcome,
+} from "@/types/ipc";
+
+/** 发现订阅源候选（URL 有界、SSRF 校验；多候选由用户选择）。 */
+export async function feedDiscover(url: string): Promise<FeedCandidate[]> {
+  return invoke<FeedCandidate[]>("feed_discover", { url });
+}
+
+/** 添加订阅源（首次同步由 feedSyncSource 显式触发）。 */
+export async function feedSourceAdd(
+  input: FeedSourceAddInput,
+): Promise<FeedSourceSummary> {
+  return invoke<FeedSourceSummary>("feed_source_add", { input });
+}
+
+export async function feedSourceList(): Promise<FeedSourceSummary[]> {
+  return invoke<FeedSourceSummary[]>("feed_source_list");
+}
+
+export async function feedSourceUpdate(
+  sourceId: string,
+  patch: FeedSourceUpdateInput,
+): Promise<void> {
+  return invoke("feed_source_update", { sourceId, patch });
+}
+
+/** 退订：keepItems=true 保留文章并暂停；false 删除订阅及其文章。 */
+export async function feedSourceRemove(
+  sourceId: string,
+  keepItems: boolean,
+): Promise<number> {
+  return invoke<number>("feed_source_remove", { sourceId, keepItems });
+}
+
+export async function feedItemList(
+  query: FeedItemQuery,
+): Promise<FeedItemSummary[]> {
+  return invoke<FeedItemSummary[]>("feed_item_list", { query });
+}
+
+export async function feedItemGet(itemId: string): Promise<FeedItemDetail> {
+  return invoke<FeedItemDetail>("feed_item_get", { itemId });
+}
+
+export async function feedItemSetState(
+  itemId: string,
+  patch: FeedItemStatePatch,
+): Promise<void> {
+  return invoke("feed_item_set_state", { itemId, patch });
+}
+
+/** 基于冻结查询条件批量已读，返回影响行数。 */
+export async function feedItemsMarkRead(query: FeedItemQuery): Promise<number> {
+  return invoke<number>("feed_items_mark_read", { query });
+}
+
+export async function feedSearch(
+  query: string,
+  sourceId?: string | null,
+  limit?: number,
+): Promise<FeedItemSummary[]> {
+  return invoke<FeedItemSummary[]>("feed_search", {
+    query,
+    sourceId: sourceId ?? null,
+    limit: limit ?? 50,
+  });
+}
+
+/** 等待单源同步完成并返回计数；markHistoryRead 仅作用于首次同步。 */
+export async function feedSyncSource(
+  sourceId: string,
+  markHistoryRead?: boolean,
+): Promise<FeedSyncOutcome> {
+  return invoke<FeedSyncOutcome>("feed_sync_source", {
+    sourceId,
+    markHistoryRead: markHistoryRead ?? true,
+  });
+}
+
+/** 自动同步一轮（最多 2 个到期源并发）；事件提示 UI 重新查询。 */
+export async function feedSyncAll(): Promise<void> {
+  return invoke("feed_sync_all");
+}

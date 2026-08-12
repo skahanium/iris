@@ -10,7 +10,8 @@ use crate::error::{AppError, AppResult};
 use crate::feed::fetch::{FeedHttpClient, FeedNetGate, FetchPurpose};
 
 /// 发现的候选订阅源（DTO：不含 HTML）。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct FeedCandidate {
     pub url: String,
     pub title: Option<String>,

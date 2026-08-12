@@ -6,6 +6,7 @@ export const IPC_EVENTS = {
   EMBEDDING_INDEX_PROGRESS: "embedding-index-progress",
   APP_UPDATE_STATUS: "app-update:status",
   APP_UPDATE_PROGRESS: "app-update:progress",
+  FEED_CHANGED: "feed:changed",
 } as const;
 
 export type IpcEventName = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS];
