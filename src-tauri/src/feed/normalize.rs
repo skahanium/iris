@@ -5,8 +5,6 @@
 //! svg/math）→ 规范化链接/标题/图片 → content_text / SHA-256 →
 //! conversion_version。原始源载荷只进 SQLite，永不进 IPC。
 //!
-//! 阶段 2 Task 2.5 `feed::sync` 将消费本模块；届时移除标注。
-#![allow(dead_code)]
 
 use std::sync::LazyLock;
 
@@ -47,9 +45,14 @@ static UUID_FORMAT_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// 规范化后的订阅源。
 #[derive(Debug, Clone)]
 pub(crate) struct NormalizedFeed {
+    // 站点元数据字段由阶段 3 建源流程消费；届时移除标注。
+    #[allow(dead_code)]
     pub title: String,
+    #[allow(dead_code)]
     pub site_url: Option<String>,
+    #[allow(dead_code)]
     pub description: Option<String>,
+    #[allow(dead_code)]
     pub language: Option<String>,
     pub items: Vec<NormalizedItem>,
 }

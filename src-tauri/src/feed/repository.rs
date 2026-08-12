@@ -633,3 +633,55 @@ pub(crate) fn today_start_utc(now: DateTime<Utc>) -> String {
         .with_timezone(&Utc)
         .to_rfc3339_opts(SecondsFormat::Secs, true)
 }
+
+// ── 到期源查询（Task 2.6 调度器使用）────────────────────────
+
+impl FeedRepository {
+    /// 返回到期（`next_fetch_at` 为空或已到）且启用的订阅源，最多 `limit` 个；
+    /// 从未同步的源优先。走 `idx_feed_sources_due` 索引。
+    pub fn list_due_sources(
+        conn: &Connection,
+        now: &str,
+        limit: i64,
+    ) -> AppResult<Vec<FeedSource>> {
+        let mut statement = conn.prepare(
+            "SELECT id, feed_url, site_url, title, title_override, description, icon_url,
+                    language, folder_path, is_enabled, fetch_interval_minutes, etag,
+                    last_modified, last_checked_at, last_success_at, next_fetch_at,
+                    consecutive_failures, last_error_code, last_error_at, created_at,
+                    updated_at
+             FROM feed_sources
+             WHERE is_enabled = 1 AND (next_fetch_at IS NULL OR next_fetch_at <= ?1)
+             ORDER BY next_fetch_at IS NULL DESC, next_fetch_at ASC
+             LIMIT ?2",
+        )?;
+        let sources = statement
+            .query_map(params![now, limit], |row| {
+                Ok(FeedSource {
+                    id: row.get(0)?,
+                    feed_url: row.get(1)?,
+                    site_url: row.get(2)?,
+                    title: row.get(3)?,
+                    title_override: row.get(4)?,
+                    description: row.get(5)?,
+                    icon_url: row.get(6)?,
+                    language: row.get(7)?,
+                    folder_path: row.get(8)?,
+                    is_enabled: row.get::<_, i64>(9)? != 0,
+                    fetch_interval_minutes: row.get(10)?,
+                    etag: row.get(11)?,
+                    last_modified: row.get(12)?,
+                    last_checked_at: row.get(13)?,
+                    last_success_at: row.get(14)?,
+                    next_fetch_at: row.get(15)?,
+                    consecutive_failures: row.get(16)?,
+                    last_error_code: row.get(17)?,
+                    last_error_at: row.get(18)?,
+                    created_at: row.get(19)?,
+                    updated_at: row.get(20)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(sources)
+    }
+}

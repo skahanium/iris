@@ -12,6 +12,8 @@ use crate::cas::store::CasObjectStore;
 use crate::cas::write_guard::WriteGuard;
 use crate::embedding::scheduler::{recover_interrupted_generation, EmbeddingScheduler};
 use crate::error::{AppError, AppResult};
+use crate::feed::fetch::ProdNetGate;
+use crate::feed::sync::FeedSyncService;
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
@@ -304,6 +306,8 @@ pub struct AppState {
     pub storage: StorageState,
     pub ai: AiRuntimeState,
     pub document_open: DocumentOpenState,
+    /// 订阅同步服务：自动/手动刷新共用同一入口与互斥标记。
+    pub(crate) feed_sync: FeedSyncService<ProdNetGate>,
     vault: Mutex<Option<PathBuf>>,
     data_dir: PathBuf,
     pub watcher: Mutex<Option<FileWatcher>>,
@@ -343,11 +347,14 @@ impl AppState {
         let storage = StorageState::new(Arc::clone(&db), cas_key_override);
         let ai = AiRuntimeState::new(vector_ready);
 
+        let feed_sync =
+            FeedSyncService::new(Arc::clone(&db), Arc::new(crate::feed::fetch::ProdNetGate));
         let state = Arc::new(Self {
             db: Arc::clone(&storage.db),
             storage,
             ai,
             document_open: DocumentOpenState::new(),
+            feed_sync,
             vault: Mutex::new(None),
             data_dir,
             watcher: Mutex::new(None),

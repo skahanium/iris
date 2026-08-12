@@ -1,6 +1,4 @@
 //! 有界 Feed / 发现页获取。//!
-//! 阶段 2 Task 2.4/2.5（discovery/sync）将消费这些能力；届时移除本标注。
-#![allow(dead_code)]
 
 //!
 //! [`FeedHttpClient::fetch`] 逐跳完成：URL 校验 → DNS 解析并整体校验 →

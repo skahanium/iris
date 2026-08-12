@@ -4,8 +4,6 @@
 //! 旧 validators 与文章；退避固定 15m/1h/6h/24h，无随机抖动。同步失败是
 //! 预期事件（以稳定错误码返回），不是崩溃路径。
 //!
-//! 阶段 2 Task 2.6 `FeedSyncService` 将消费本模块；届时移除标注。
-#![allow(dead_code)]
 
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use rusqlite::Connection;
@@ -20,6 +18,8 @@ use crate::storage::db::Database;
 /// 同步触发方式：自动（跳过暂停源）与手动（可刷新暂停源）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SyncMode {
+    // 阶段 3 `feed_sync_source` 手动刷新消费；届时移除标注。
+    #[allow(dead_code)]
     Manual,
     Automatic,
 }
@@ -28,16 +28,24 @@ pub(crate) enum SyncMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HistoryReadPolicy {
     MarkRead,
+    // 阶段 3 添加流程「历史也设为未读」消费；届时移除标注。
+    #[allow(dead_code)]
     LeaveUnread,
 }
 
 /// 同步结果状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SyncStatus {
-    Succeeded { new_items: usize },
+    Succeeded {
+        new_items: usize,
+    },
     NotModified,
     Skipped,
-    Failed { code: String },
+    /// 同一 source 已在同步中（互斥标记拒绝重复）。
+    InFlight,
+    Failed {
+        code: String,
+    },
 }
 
 /// 同步结果（失败以稳定错误码表达，不抛错）。
@@ -251,4 +259,117 @@ fn persist_success(
     FeedRepository::update_source_sync_state(&tx, &source.id, state)?;
     tx.commit()?;
     Ok(summary)
+}
+
+// ── FeedSyncService（Task 2.6：调度器与手动刷新共用）─────────
+
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use tokio::sync::Mutex;
+
+/// 同步服务：`tokio::sync::Mutex<HashSet<String>>` 防止同源重复同步，
+/// 不创建 job 表或通用任务状态机。手动刷新与自动刷新调用同一入口。
+pub(crate) struct FeedSyncService<G: FeedNetGate> {
+    db: Arc<Database>,
+    gate: Arc<G>,
+    in_flight: Arc<Mutex<HashSet<String>>>,
+}
+
+// 手写 Clone（Arc 克隆不需要 `G: Clone` 约束）。
+impl<G: FeedNetGate> Clone for FeedSyncService<G> {
+    fn clone(&self) -> Self {
+        Self {
+            db: self.db.clone(),
+            gate: self.gate.clone(),
+            in_flight: self.in_flight.clone(),
+        }
+    }
+}
+
+impl<G: FeedNetGate> FeedSyncService<G> {
+    pub(crate) fn new(db: Arc<Database>, gate: Arc<G>) -> Self {
+        Self {
+            db,
+            gate,
+            in_flight: Arc::new(Mutex::new(HashSet::new())),
+        }
+    }
+
+    /// 单源同步（带互斥标记）：同源并发请求直接返回 `InFlight`。
+    /// 手动刷新与自动刷新共用本入口；首次同步历史默认已读。
+    pub(crate) async fn sync_source(
+        &self,
+        source_id: &str,
+        mode: SyncMode,
+    ) -> AppResult<SyncOutcome> {
+        let mut in_flight = self.in_flight.lock().await;
+        if !in_flight.insert(source_id.to_string()) {
+            return Ok(SyncOutcome {
+                status: SyncStatus::InFlight,
+            });
+        }
+        drop(in_flight);
+
+        let outcome = crate::feed::sync::sync_source(
+            &self.db,
+            self.gate.as_ref(),
+            source_id,
+            mode,
+            HistoryReadPolicy::MarkRead,
+        )
+        .await;
+
+        let mut in_flight = self.in_flight.lock().await;
+        in_flight.remove(source_id);
+        outcome
+    }
+
+    /// 自动同步一轮：取最多 2 个到期源并发同步；失败不阻断其他源。
+    ///
+    /// 使用 `join_all` 就地并发（AFIT future 非 Send，不能跨线程 spawn）。
+    pub(crate) async fn sync_all(&self) -> AppResult<()> {
+        let now = Utc::now();
+        let due = self
+            .db
+            .with_read_conn(|conn| FeedRepository::list_due_sources(conn, &rfc3339(now), 2))?;
+        let futures: Vec<_> = due
+            .into_iter()
+            .map(|source| {
+                let service = self.clone();
+                async move {
+                    match service.sync_source(&source.id, SyncMode::Automatic).await {
+                        Ok(outcome) => {
+                            tracing::info!(
+                                log_id = source.id.as_str(),
+                                status = %outcome.status.status_label(),
+                                "feed_sync_all_item"
+                            );
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                log_id = source.id.as_str(),
+                                error_code = %stable_error_code(&error),
+                                "feed_sync_all_item_failed"
+                            );
+                        }
+                    }
+                }
+            })
+            .collect();
+        futures_util::future::join_all(futures).await;
+        Ok(())
+    }
+}
+
+impl SyncStatus {
+    fn status_label(&self) -> &'static str {
+        match self {
+            SyncStatus::Succeeded { .. } => "succeeded",
+            SyncStatus::NotModified => "not_modified",
+            SyncStatus::Skipped => "skipped",
+            SyncStatus::InFlight => "in_flight",
+            SyncStatus::Failed { .. } => "failed",
+        }
+    }
 }

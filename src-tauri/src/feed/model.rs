@@ -150,6 +150,8 @@ pub struct FeedSource {
     pub site_url: Option<String>,
     pub title: String,
     pub title_override: Option<String>,
+    // 阶段 3 订阅源详情/编辑消费；届时移除标注。
+    #[allow(dead_code)]
     pub description: Option<String>,
     pub icon_url: Option<String>,
     pub language: Option<String>,

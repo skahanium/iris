@@ -569,3 +569,131 @@ async fn sync_waits_for_slow_response_within_timeout() {
         "got {status:?}"
     );
 }
+
+// ── FeedSyncService（Task 2.6）─────────────────────────────
+
+use std::sync::Arc;
+
+use super::sync::FeedSyncService;
+
+#[tokio::test]
+async fn same_source_cannot_sync_concurrently() {
+    let db = Arc::new(create_db());
+    let server = TestServer::start_with_delay(800).await;
+    server.queue(
+        TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+    );
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+
+    let service = Arc::new(FeedSyncService::new(
+        db.clone(),
+        Arc::new(TestNetGate::default()),
+    ));
+
+    let (a, b) = tokio::join!(
+        service.sync_source("src-1", SyncMode::Manual),
+        service.sync_source("src-1", SyncMode::Manual),
+    );
+    let outcomes = [a.expect("a"), b.expect("b")];
+    let succeeded = outcomes
+        .iter()
+        .filter(|o| matches!(o.status, SyncStatus::Succeeded { .. }))
+        .count();
+    let in_flight = outcomes
+        .iter()
+        .filter(|o| matches!(o.status, SyncStatus::InFlight))
+        .count();
+    assert_eq!(succeeded, 1, "恰好一次同步成功");
+    assert_eq!(in_flight, 1, "并发请求返回 InFlight");
+    assert_eq!(server.requests_snapshot().len(), 1, "服务器只收到一次请求");
+}
+
+#[tokio::test]
+async fn failure_releases_inflight_marker() {
+    let db = Arc::new(create_db());
+    let server = TestServer::start().await;
+    server.queue(TestResponse::new(500, "boom"));
+    server.queue(
+        TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+    );
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+
+    let service = FeedSyncService::new(db.clone(), Arc::new(TestNetGate::default()));
+
+    let first = service
+        .sync_source("src-1", SyncMode::Manual)
+        .await
+        .expect("first sync");
+    assert!(
+        matches!(first.status, SyncStatus::Failed { .. }),
+        "got {:?}",
+        first.status
+    );
+
+    let second = service
+        .sync_source("src-1", SyncMode::Manual)
+        .await
+        .expect("second sync");
+    assert!(
+        matches!(second.status, SyncStatus::Succeeded { .. }),
+        "失败后互斥标记必须释放；got {:?}",
+        second.status
+    );
+}
+
+#[tokio::test]
+async fn sync_all_fetches_at_most_two_due_sources_concurrently() {
+    let db = Arc::new(create_db());
+    let server = TestServer::start_with_delay(200).await;
+    // 5 个到期源 → 每轮最多 2 个。
+    for index in 0..5 {
+        insert_source(
+            &db,
+            &format!("src-{index}"),
+            &server.url(&format!("/feed{index}.xml")),
+        );
+        server.queue(
+            TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+        );
+    }
+    let service = FeedSyncService::new(db.clone(), Arc::new(TestNetGate::default()));
+
+    service.sync_all().await.expect("sync all");
+
+    assert_eq!(server.requests_snapshot().len(), 2, "每轮最多取 2 个到期源");
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let remaining: Vec<String> = db
+        .with_read_conn(|conn| {
+            Ok(FeedRepository::list_due_sources(conn, &now, 10)?
+                .iter()
+                .map(|source| source.id.clone())
+                .collect())
+        })
+        .expect("list due");
+    assert_eq!(remaining.len(), 3, "其余到期源留到下一轮");
+}
+
+#[tokio::test]
+async fn sync_all_skips_paused_sources() {
+    let db = Arc::new(create_db());
+    let server = TestServer::start().await;
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+    with_write_conn(&db, |conn| {
+        FeedRepository::update_source(
+            conn,
+            "src-1",
+            &FeedSourcePatch {
+                is_enabled: Some(false),
+                ..Default::default()
+            },
+            Utc::now(),
+        )
+    });
+    // 暂停源不会出现在 due 查询中，也不会发起任何请求。
+    let service = FeedSyncService::new(db.clone(), Arc::new(TestNetGate::default()));
+    service.sync_all().await.expect("sync all");
+    assert!(
+        server.requests_snapshot().is_empty(),
+        "暂停源不得触发任何请求"
+    );
+}

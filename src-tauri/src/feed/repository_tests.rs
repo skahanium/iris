@@ -1419,3 +1419,40 @@ fn update_source_sync_state_overwrites_sync_columns() {
     );
     assert!(negative.is_err(), "负失败计数必须被拒绝");
 }
+
+// ── 到期源查询 ─────────────────────────────────────────────
+
+#[test]
+fn list_due_sources_returns_only_enabled_due_sources_with_limit() {
+    let conn = test_conn();
+    // 5 个源：1 个禁用、2 个到期、1 个未到期、1 个从未同步。
+    for (id, enabled, next_fetch) in [
+        ("src-disabled", "0", "2026-08-01T00:00:00Z"),
+        ("src-due-1", "1", "2026-08-01T00:00:00Z"),
+        ("src-due-2", "1", "2026-08-01T00:00:00Z"),
+        ("src-future", "1", "2099-01-01T00:00:00Z"),
+        ("src-never", "1", ""), // next_fetch_at NULL
+    ] {
+        conn.execute(
+            "INSERT INTO feed_sources
+             (id, feed_url, title, is_enabled, next_fetch_at, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, NULLIF(?5, ''), '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
+            rusqlite::params![id, format!("https://example.com/{id}.xml"), id, enabled, next_fetch],
+        )
+        .expect("insert source");
+    }
+
+    let due = FeedRepository::list_due_sources(&conn, "2026-08-10T00:00:00Z", 2).expect("list due");
+    assert_eq!(due.len(), 2, "limit 2");
+    let ids: Vec<&str> = due.iter().map(|s| s.id.as_str()).collect();
+    assert!(!ids.contains(&"src-disabled"), "禁用源不返回");
+    assert!(!ids.contains(&"src-future"), "未到期源不返回");
+    assert!(
+        ids.contains(&"src-never"),
+        "从未同步的源（next_fetch_at NULL）优先返回"
+    );
+
+    let all =
+        FeedRepository::list_due_sources(&conn, "2026-08-10T00:00:00Z", 10).expect("list all due");
+    assert_eq!(all.len(), 3, "到期源共 3 个（含 never）");
+}

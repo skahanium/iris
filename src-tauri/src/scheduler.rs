@@ -50,6 +50,26 @@ impl Scheduler {
             }
         });
 
+        // 订阅自动同步：启动 30 秒后先跑一轮（按 next_fetch_at 恢复重启前
+        // 的到期源），之后每 15 分钟取最多 2 个到期源并发同步。
+        let feed_sync = state.feed_sync.clone();
+        let mut shutdown_rx_feed = shutdown_rx.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::select! {
+                _ = sleep(Duration::from_secs(30)) => {},
+                _ = shutdown_rx_feed.changed() => return,
+            }
+            loop {
+                if let Err(error) = feed_sync.sync_all().await {
+                    tracing::warn!(error_code = %error, "feed_sync_all failed");
+                }
+                tokio::select! {
+                    _ = sleep(Duration::from_secs(15 * 60)) => {},
+                    _ = shutdown_rx_feed.changed() => return,
+                }
+            }
+        });
+
         Self {
             state,
             shutdown_tx,
