@@ -74,8 +74,6 @@ pub fn validate_resolved_addrs(addrs: &[IpAddr]) -> AppResult<Vec<IpAddr>> {
 }
 
 /// 解析主机全部地址并整体校验（任何一条私网地址都拒绝该主机）。
-// 阶段 2 Task 2.2 `feed::fetch` 将消费这些能力；届时移除本标注。
-#[allow(dead_code)]
 pub async fn resolve_public_addrs(host: &str) -> AppResult<Vec<IpAddr>> {
     let mut addrs: Vec<IpAddr> = Vec::new();
     for socket in tokio::net::lookup_host((host, 0))
@@ -92,16 +90,37 @@ pub async fn resolve_public_addrs(host: &str) -> AppResult<Vec<IpAddr>> {
 
 /// 构建固定到已校验地址的 HTTPS client；redirect policy 固定为 none，
 /// 由调用方逐跳处理。代理策略与 TLS 配置复用 `cert_pinning`。
-// 阶段 2 Task 2.2 `feed::fetch` 将消费这些能力；届时移除本标注。
+// 默认 300 秒总超时变体保留为公共 API；订阅获取走带 20 秒预算的内部变体。
 #[allow(dead_code)]
 pub fn build_pinned_client(host: &str, port: u16, addrs: &[IpAddr]) -> AppResult<Client> {
-    let mut builder = https_client_builder().redirect(reqwest::redirect::Policy::none());
+    pinned_builder(https_client_builder(), host, port, addrs)
+        .build()
+        .map_err(|e| AppError::msg(format!("Failed to build pinned HTTP client: {e}")))
+}
+
+/// 带自定义总超时的 pinning 变体（订阅获取要求 20 秒总预算）。
+pub(crate) fn build_pinned_client_with_timeout(
+    host: &str,
+    port: u16,
+    addrs: &[IpAddr],
+    timeout: std::time::Duration,
+) -> AppResult<Client> {
+    pinned_builder(https_client_builder().timeout(timeout), host, port, addrs)
+        .build()
+        .map_err(|e| AppError::msg(format!("Failed to build pinned HTTP client: {e}")))
+}
+
+fn pinned_builder(
+    builder: reqwest::ClientBuilder,
+    host: &str,
+    port: u16,
+    addrs: &[IpAddr],
+) -> reqwest::ClientBuilder {
+    let mut builder = builder.redirect(reqwest::redirect::Policy::none());
     for addr in addrs {
         builder = builder.resolve(host, SocketAddr::new(*addr, port));
     }
     builder
-        .build()
-        .map_err(|e| AppError::msg(format!("Failed to build pinned HTTP client: {e}")))
 }
 
 fn is_blocked_ip(ip: IpAddr) -> bool {
