@@ -314,13 +314,13 @@ pub struct FeedItemDetail {
 - Modify: `src-tauri/src/llm/fetch_web_page.rs`
 - Create: `src-tauri/src/network/safe_https_tests.rs`
 
-- [ ] 先把现有 `fetch_web_page.rs` 对 localhost、IPv4/IPv6 私网、metadata、重绑定提示的测试复制为公共模块契约；加入 userinfo、重定向再校验、混合公共/私网 DNS 测试。
-- [ ] 运行公共模块测试，预期 RED。
-- [ ] 将纯校验和 DNS pinning 抽到 `network::safe_https`，保留网页抓取原行为；不得复制两套地址判断。
-- [ ] 公共 API 仅暴露有界能力：`validate_https_url`、`resolve_public_addrs`、`build_pinned_client`、`validate_redirect_target`。
-- [ ] reqwest redirect policy 固定为 none，由调用方逐跳处理；任何一条解析地址被拒绝都拒绝该主机。
-- [ ] 运行原 `fetch_web_page` 全部测试和新测试，预期 GREEN。
-- [ ] 提交：`refactor(network): 统一公开 HTTPS 地址校验`。
+- [x] 先把现有 `fetch_web_page.rs` 对 localhost、IPv4/IPv6 私网、metadata、重绑定提示的测试复制为公共模块契约；加入 userinfo、重定向再校验、混合公共/私网 DNS 测试。
+- [x] 运行公共模块测试，预期 RED。
+- [x] 将纯校验和 DNS pinning 抽到 `network::safe_https`，保留网页抓取原行为；不得复制两套地址判断。
+- [x] 公共 API 仅暴露有界能力：`validate_https_url`、`resolve_public_addrs`、`build_pinned_client`、`validate_redirect_target`。
+- [x] reqwest redirect policy 固定为 none，由调用方逐跳处理；任何一条解析地址被拒绝都拒绝该主机。
+- [x] 运行原 `fetch_web_page` 全部测试和新测试，预期 GREEN。
+- [x] 提交：`refactor(network): 统一公开 HTTPS 地址校验`。
 
 ### Task 2.2：实现有界 Feed/发现页获取
 
@@ -339,12 +339,12 @@ pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 pub(crate) const MAX_REDIRECTS: usize = 5;
 ```
 
-- [ ] RED 测试覆盖：200、有界 streaming、Content-Length 预拒绝、流中超限、304、ETag/Last-Modified、5 跳、循环重定向、重定向到私网、非 HTTPS、超时、系统代理策略。
-- [ ] 实现 `FeedHttpClient::fetch(url, validators, purpose)`；返回 status、最终安全 URL、content-type、etag、last-modified、有界 bytes。
-- [ ] User-Agent 只包含 `Iris/<version> RSS Reader`，不含 Vault、设备名或用户 ID。
-- [ ] 日志只记录 source ID/状态类别/字节数/耗时；测试用 tracing capture 证明不含 URL 和 body fixture。
-- [ ] 运行 `cargo test ... feed::fetch_tests`，预期 GREEN。
-- [ ] 提交：`feat(rss): 实现安全有界的订阅获取`。
+- [x] RED 测试覆盖：200、有界 streaming、Content-Length 预拒绝、流中超限、304、ETag/Last-Modified、5 跳、循环重定向、重定向到私网、非 HTTPS、超时、系统代理策略。
+- [x] 实现 `FeedHttpClient::fetch(url, validators, purpose)`；返回 status、最终安全 URL、content-type、etag、last-modified、有界 bytes。
+- [x] User-Agent 只包含 `Iris/<version> RSS Reader`，不含 Vault、设备名或用户 ID。
+- [x] 日志只记录 source ID/状态类别/字节数/耗时；测试用 tracing capture 证明不含 URL 和 body fixture。
+- [x] 运行 `cargo test ... feed::fetch_tests`，预期 GREEN。
+- [x] 提交：`feat(rss): 实现安全有界的订阅获取`。
 
 ### Task 2.3：解析与规范化
 
@@ -382,14 +382,14 @@ pub(crate) struct NormalizedItem {
 }
 ```
 
-- [ ] 用阶段 0 全部 fixture 写 RED table-driven tests，断言格式、稳定键、绝对链接、危险节点、远程图片标记、UTF-8、末尾换行和 degraded 回退。
-- [ ] parser 前对 ASCII case-insensitive 的 `<!DOCTYPE` / `<!ENTITY` 拒绝，错误码固定。
-- [ ] 使用 `feed-rs` sanitize feature 解析；HTML/XHTML 再经 `htmd`，skip `script/style/iframe/form/svg/math`。
-- [ ] 相对链接只以安全的文章 HTTPS URL 为 base；不安全 URL 转纯文本。
-- [ ] `content_text` 从最终 Markdown 确定性去标记生成，不使用浏览器 DOM。
-- [ ] 标题上限 500 Unicode scalar，正文 Markdown 上限 4 MiB；超限以稳定规则截断并标 degraded。
-- [ ] 运行 normalize tests，预期 GREEN；再运行 `cargo test --manifest-path src-tauri/Cargo.toml`。
-- [ ] 提交：`feat(rss): 将订阅内容规范化为安全 Markdown`。
+- [x] 用阶段 0 全部 fixture 写 RED table-driven tests，断言格式、稳定键、绝对链接、危险节点、远程图片标记、UTF-8、末尾换行和 degraded 回退。
+- [x] parser 前对 ASCII case-insensitive 的 `<!DOCTYPE` / `<!ENTITY` 拒绝，错误码固定。
+- [x] 使用 `feed-rs` sanitize feature 解析；HTML/XHTML 再经 `htmd`，skip `script/style/iframe/form/svg/math`。
+- [x] 相对链接只以安全的文章 HTTPS URL 为 base；不安全 URL 转纯文本。
+- [x] `content_text` 从最终 Markdown 确定性去标记生成，不使用浏览器 DOM。
+- [x] 标题上限 500 Unicode scalar，正文 Markdown 上限 4 MiB；超限以稳定规则截断并标 degraded。
+- [x] 运行 normalize tests，预期 GREEN；再运行 `cargo test --manifest-path src-tauri/Cargo.toml`。
+- [x] 提交：`feat(rss): 将订阅内容规范化为安全 Markdown`。
 
 ### Task 2.4：Feed 自动发现
 
@@ -398,12 +398,12 @@ pub(crate) struct NormalizedItem {
 - Create: `src-tauri/src/feed/discovery.rs`
 - Create: `src-tauri/src/feed/discovery_tests.rs`
 
-- [ ] RED 测试覆盖直接 Feed、HTML alternate、相对 href、重复候选、多候选排序、跨协议/私网拒绝、无候选。
-- [ ] `discover(url)` 先尝试 bounded Feed parse；若 content-type/parse 表明 HTML，再只解析 `link[rel~=alternate]` 且 type 为 RSS/Atom/JSON Feed。
-- [ ] 候选去重后最多返回 10 个；同源 host 优先，但多候选不自动订阅。
-- [ ] DTO 不返回 HTML；仅返回安全 URL、候选标题和格式。
-- [ ] 运行 discovery tests，预期 GREEN。
-- [ ] 提交：`feat(rss): 添加订阅源自动发现`。
+- [x] RED 测试覆盖直接 Feed、HTML alternate、相对 href、重复候选、多候选排序、跨协议/私网拒绝、无候选。
+- [x] `discover(url)` 先尝试 bounded Feed parse；若 content-type/parse 表明 HTML，再只解析 `link[rel~=alternate]` 且 type 为 RSS/Atom/JSON Feed。
+- [x] 候选去重后最多返回 10 个；同源 host 优先，但多候选不自动订阅。
+- [x] DTO 不返回 HTML；仅返回安全 URL、候选标题和格式。
+- [x] 运行 discovery tests，预期 GREEN。
+- [x] 提交：`feat(rss): 添加订阅源自动发现`。
 
 ### Task 2.5：实现单源同步事务
 
@@ -413,14 +413,14 @@ pub(crate) struct NormalizedItem {
 - Create: `src-tauri/src/feed/sync_tests.rs`
 - Modify: `src-tauri/src/feed/mod.rs`
 
-- [ ] RED 测试：首次历史默认已读/可选未读、后续新条目未读、304、内容更新保状态、重复 GUID、事务回滚、稳定错误码、退避时间。
-- [ ] `sync_source(source_id, mode)` 先读取配置，获取/解析在 SQLite 连接外执行，最后用短事务 upsert。
-- [ ] 首次同步在同一事务判断 source 尚无 item；默认给历史项目写 `read_at=received_at`。
-- [ ] 成功清零 failures，保存 validators 和 `next_fetch_at`；304 同样视为成功。
-- [ ] 失败只更新 `last_checked_at/last_error_code/last_error_at/consecutive_failures/next_fetch_at`，保留旧 validators 与文章。
-- [ ] 退避固定为 15m/1h/6h/24h，不加入随机抖动。
-- [ ] 运行 sync tests，预期 GREEN。
-- [ ] 提交：`feat(rss): 完成订阅源增量同步事务`。
+- [x] RED 测试：首次历史默认已读/可选未读、后续新条目未读、304、内容更新保状态、重复 GUID、事务回滚、稳定错误码、退避时间。
+- [x] `sync_source(source_id, mode)` 先读取配置，获取/解析在 SQLite 连接外执行，最后用短事务 upsert。
+- [x] 首次同步在同一事务判断 source 尚无 item；默认给历史项目写 `read_at=received_at`。
+- [x] 成功清零 failures，保存 validators 和 `next_fetch_at`；304 同样视为成功。
+- [x] 失败只更新 `last_checked_at/last_error_code/last_error_at/consecutive_failures/next_fetch_at`，保留旧 validators 与文章。
+- [x] 退避固定为 15m/1h/6h/24h，不加入随机抖动。
+- [x] 运行 sync tests，预期 GREEN。
+- [x] 提交：`feat(rss): 完成订阅源增量同步事务`。
 
 ### Task 2.6：复用现有 Scheduler 做自动同步
 
@@ -431,12 +431,12 @@ pub(crate) struct NormalizedItem {
 - Modify: `src-tauri/src/feed/sync.rs`
 - Modify: `src-tauri/src/feed/sync_tests.rs`
 
-- [ ] RED 测试：同一 source 不能重复同步、暂停源跳过、到期查询只返回 2 个批次、失败后互斥标记释放。
-- [ ] `AppState` 只增加一个 `FeedSyncService`；服务内部用 `tokio::sync::Mutex<HashSet<String>>` 防止同源重复，不创建 job 表或通用任务状态机。
-- [ ] 在现有 `Scheduler` 增加 15 分钟 tick，每轮从 repository 取最多 2 个到期源并并发同步；不新增第二套 scheduler 文件。
-- [ ] 手动刷新与自动刷新调用同一个 `sync_source`；应用重启依靠数据库中的 `next_fetch_at` 恢复。
-- [ ] 运行 feed sync tests 和现有 scheduler tests，预期 GREEN。
-- [ ] 提交：`feat(rss): 复用现有调度器同步订阅`。
+- [x] RED 测试：同一 source 不能重复同步、暂停源跳过、到期查询只返回 2 个批次、失败后互斥标记释放。
+- [x] `AppState` 只增加一个 `FeedSyncService`；服务内部用 `tokio::sync::Mutex<HashSet<String>>` 防止同源重复，不创建 job 表或通用任务状态机。
+- [x] 在现有 `Scheduler` 增加 15 分钟 tick，每轮从 repository 取最多 2 个到期源并并发同步；不新增第二套 scheduler 文件。
+- [x] 手动刷新与自动刷新调用同一个 `sync_source`；应用重启依靠数据库中的 `next_fetch_at` 恢复。
+- [x] 运行 feed sync tests 和现有 scheduler tests，预期 GREEN。
+- [x] 提交：`feat(rss): 复用现有调度器同步订阅`。
 
 **阶段 2 退出条件：** 全部格式 fixture 正确；SSRF、XXE、重定向、超限、危险 HTML、304、更新保状态和自动到期同步测试通过。
 
