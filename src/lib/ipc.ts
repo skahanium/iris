@@ -59,6 +59,7 @@ import type {
   DocumentOpenScopeResult,
   EmbeddingIndexStatus,
   EmbeddingSchedulerStartResult,
+  FeedChangedEvent,
   FileChangedEvent,
   FileEntry,
   FileWriteIndexStatus,
@@ -1346,4 +1347,13 @@ export async function feedSyncSource(
 /** 自动同步一轮（最多 2 个到期源并发）；事件提示 UI 重新查询。 */
 export async function feedSyncAll(): Promise<void> {
   return invoke("feed_sync_all");
+}
+
+/** 订阅同步事件：只投影 sourceId/类型/计数/稳定错误码，提示重新查询。 */
+export async function listenFeedChanged(
+  handler: (payload: FeedChangedEvent) => void,
+): Promise<() => void> {
+  return listen<FeedChangedEvent>(IPC_EVENTS.FEED_CHANGED, (event) =>
+    handler(event.payload),
+  );
 }
