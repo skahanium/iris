@@ -581,14 +581,14 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - Create: `src/components/feed/FeedOpmlDialog.tsx`
 - Create: `tests/feed-opml-dialog.test.tsx`
 
-- [ ] RED 测试覆盖嵌套分组、重复 URL、缺字段、XXE、5 MiB 上限、UTF-8、导入幂等、导出→导入往返。
-- [ ] OPML 输入通过 IPC 传有界 UTF-8 字符串，不让 Rust command 接收任意文件路径；文件选择/保存由前端现有 dialog 能力完成。
-- [ ] 解析拒绝 DTD/ENTITY；只读取 `outline[text/title/xmlUrl/htmlUrl]`，忽略未知字段。
-- [ ] 规范化 URL 后去重；已存在 source 默认更新 folder/title override 但不重置状态。
-- [ ] 导出按 `folder_path` 稳定排序，不包含 ETag、错误、阅读状态或本地 ID。
-- [ ] UI 在执行前预览新增/更新/跳过数量，并让用户选择历史是否未读。
-- [ ] 运行 Rust/React OPML 测试。
-- [ ] 提交：`feat(rss): 添加可往返的 OPML 导入导出`。
+- [x] RED 测试覆盖嵌套分组、重复 URL、缺字段、XXE、5 MiB 上限、UTF-8、导入幂等、导出→导入往返。
+- [x] OPML 输入通过 IPC 传有界 UTF-8 字符串，不让 Rust command 接收任意文件路径；文件选择/保存由前端现有 dialog 能力完成。
+- [x] 解析拒绝 DTD/ENTITY；只读取 `outline[text/title/xmlUrl/htmlUrl]`，忽略未知字段。
+- [x] 规范化 URL 后去重；已存在 source 默认更新 folder/title override 但不重置状态。
+- [x] 导出按 `folder_path` 稳定排序，不包含 ETag、错误、阅读状态或本地 ID。
+- [x] UI 在执行前预览新增/更新/跳过数量，并让用户选择历史是否未读。
+- [x] 运行 Rust/React OPML 测试。
+- [x] 提交：`feat(rss): 添加可往返的 OPML 导入导出`。
 
 ### Task 5.2：显式保存为 Vault 笔记
 
@@ -612,14 +612,14 @@ export type AppWorkspaceMode = "documents" | "feeds";
 规范化后的文章正文
 ```
 
-- [ ] RED 测试覆盖缺作者/日期/URL、危险标题字符、重复文件名、UTF-8、正文不被二次 HTML 解码。
-- [ ] `buildFeedNoteMarkdown(detail, savedAt)` 只消费安全 DTO，不访问 raw payload。
-- [ ] 点击「保存为笔记」必须明确选择目标目录/文件名；默认文件名经现有路径校验，不静默覆盖。
-- [ ] App 层复用 `fileCreate` + `DocumentPersistenceCoordinator`/现有写盘回执；不得从 Feed component 直接 `invoke` 或 `fs.write`。
-- [ ] 写盘成功后打开生成笔记；失败停留在文章并显示可重试错误。
-- [ ] 保存后的笔记是独立副本；后续 Feed 更新不修改 `.md`，删除笔记不影响 Feed。
-- [ ] 运行 note export、持久化协调器和文件生命周期测试。
-- [ ] 提交：`feat(rss): 支持显式保存订阅文章为笔记`。
+- [x] RED 测试覆盖缺作者/日期/URL、危险标题字符、重复文件名、UTF-8、正文不被二次 HTML 解码。
+- [x] `buildFeedNoteMarkdown(detail, savedAt)` 只消费安全 DTO，不访问 raw payload。
+- [x] 点击「保存为笔记」必须明确选择目标目录/文件名；默认文件名经现有路径校验，不静默覆盖。
+- [x] App 层复用 `fileCreate` + `DocumentPersistenceCoordinator`/现有写盘回执；不得从 Feed component 直接 `invoke` 或 `fs.write`。
+- [x] 写盘成功后打开生成笔记；失败停留在文章并显示可重试错误。
+- [x] 保存后的笔记是独立副本；后续 Feed 更新不修改 `.md`，删除笔记不影响 Feed。
+- [x] 运行 note export、持久化协调器和文件生命周期测试。
+- [x] 提交：`feat(rss): 支持显式保存订阅文章为笔记`。
 
 ### Task 5.3：容量、升级与故障回归
 
@@ -628,29 +628,29 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - Create: `src-tauri/tests/feed_library_capacity.rs`
 - Modify: `docs/testing/rss-subscription-library-manual-checklist.md`
 
-- [ ] 用合成文本建立 100 个 source、10,000 个 item 的 integration test；断言 inbox 首屏、FTS 查询和详情读取正确，不保存机器相关的毫秒硬阈值。
-- [ ] 用 `EXPLAIN QUERY PLAN` 断言 inbox 和 source 列表使用既有索引；只有查询确实全表扫描时才调整索引。
-- [ ] 从加入 RSS 前的应用数据库副本启动，确认 `063` 自动应用且现有笔记、会话、设置不变。
-- [ ] 手工验证断网、代理切换、DNS/证书失败、429/500、超时、超限和磁盘满；旧文章始终可读。
-- [ ] 验证应用退出后无需恢复 job 状态；重启只按 `next_fetch_at` 或手动刷新继续。
-- [ ] 运行 `cargo test --manifest-path src-tauri/Cargo.toml --test feed_library_capacity`，预期 GREEN。
-- [ ] 提交：`test(rss): 添加订阅容量与升级回归`。
+- [x] 用合成文本建立 100 个 source、10,000 个 item 的 integration test；断言 inbox 首屏、FTS 查询和详情读取正确，不保存机器相关的毫秒硬阈值。
+- [x] 用 `EXPLAIN QUERY PLAN` 断言 inbox 和 source 列表使用既有索引；只有查询确实全表扫描时才调整索引。
+- [x] 从加入 RSS 前的应用数据库副本启动，确认 `063` 自动应用且现有笔记、会话、设置不变。
+- [x] 手工验证断网、代理切换、DNS/证书失败、429/500、超时、超限和磁盘满；旧文章始终可读。
+- [x] 验证应用退出后无需恢复 job 状态；重启只按 `next_fetch_at` 或手动刷新继续。
+- [x] 运行 `cargo test --manifest-path src-tauri/Cargo.toml --test feed_library_capacity`，预期 GREEN。
+- [x] 提交：`test(rss): 添加订阅容量与升级回归`。
 
 ### Task 5.4：全量自动化质量门禁
 
 按顺序执行并保存 exit code；任一失败不得声称完成：
 
-- [ ] `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
-- [ ] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
-- [ ] `cargo test --manifest-path src-tauri/Cargo.toml`
-- [ ] `npm run audit:rust`
-- [ ] `npm run lint`
-- [ ] `npm run format:check`
-- [ ] `npm run typecheck`
-- [ ] `npm run test`
-- [ ] `npm audit`
-- [ ] `npm run docs:check`
-- [ ] `npm run test:e2e`
+- [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
+- [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml`
+- [x] `npm run audit:rust`
+- [x] `npm run lint`
+- [x] `npm run format:check`
+- [x] `npm run typecheck`
+- [x] `npm run test`
+- [x] `npm audit`
+- [x] `npm run docs:check`
+- [x] `npm run test:e2e`
 - [ ] 发布候选另跑 `npm run tauri build` 与仓库既有 macOS/Windows 发布门禁。
 
 预期：全部 exit 0；审计无未登记高危；E2E 不依赖公网源，使用本地受控 HTTPS fixture server 或 mock transport。
@@ -669,7 +669,7 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - [ ] 验证 800×600 无遮挡、1366 不强制三栏、1920 正文不无限拉宽。
 - [ ] 验证远程图片默认零请求，用户加载后只请求 HTTPS 且 no-referrer。
 - [ ] 验证日志抽样无 URL、标题、正文、OPML 或请求头。
-- [ ] 实际功能完成后才更新 ARCHITECTURE/CHANGELOG；ROADMAP 状态改为「已交付」必须引用全部门禁证据。
+- [x] 实际功能完成后才更新 ARCHITECTURE/CHANGELOG；ROADMAP 状态改为「已交付」必须引用全部门禁证据。（本项：ROADMAP 阶段事实已同步；ARCHITECTURE 无新增事实；CHANGELOG 与「已交付」状态留待人工验收与发布时执行）
 - [ ] 由项目所有者完成最终 diff 审查；修复后重跑 Task 5.4 的全量门禁。
 - [ ] 最终提交：`feat(rss): 交付本地优先的订阅资料库`。
 
