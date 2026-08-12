@@ -38,6 +38,7 @@ function source(id: string): FeedSourceSummary {
     siteUrl: null,
     folderPath: "",
     isEnabled: true,
+    fetchIntervalMinutes: 60,
     unreadCount: 1,
     lastCheckedAt: null,
     lastSuccessAt: null,

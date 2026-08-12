@@ -4,13 +4,14 @@
 //! 不能只用 brand 色。
 
 import {
+  AlertTriangle,
+  Archive,
   Inbox,
   Newspaper,
+  Plus,
+  Radio,
   Rss,
   Star,
-  Archive,
-  AlertTriangle,
-  Radio,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -31,6 +32,7 @@ export interface FeedSidebarProps {
   onViewChange: (view: FeedView) => void;
   onSourceSelect: (sourceId: string) => void;
   onClearSource: () => void;
+  onAddSource: () => void;
 }
 
 export function FeedSidebar({
@@ -40,6 +42,7 @@ export function FeedSidebar({
   onViewChange,
   onSourceSelect,
   onClearSource,
+  onAddSource,
 }: FeedSidebarProps) {
   const failedSources = sources.filter(
     (source) => source.lastErrorCode != null,
@@ -51,8 +54,19 @@ export function FeedSidebar({
       aria-label="订阅导航"
       className="flex h-full min-h-0 w-60 flex-col overflow-y-auto border-r border-border-subtle bg-panel p-2"
     >
-      <div className="mb-1 px-2 text-caption font-medium text-muted-foreground">
-        订阅
+      <div className="mb-1 flex items-center justify-between px-2">
+        <span className="text-caption font-medium text-muted-foreground">
+          订阅
+        </span>
+        <button
+          type="button"
+          data-testid="feed-add-source"
+          aria-label="添加订阅"
+          className="iris-focus-soft inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
+          onClick={onAddSource}
+        >
+          <Plus className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
       <ul className="space-y-0.5">
         {VIEWS.map(({ view: itemView, label, icon: Icon }) => {

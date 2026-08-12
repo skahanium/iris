@@ -5,15 +5,19 @@
 //! 输入框聚焦时不触发。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Menu, X } from "lucide-react";
+import { Menu, Plus, Search, X } from "lucide-react";
 
 import { FeedItemList } from "@/components/feed/FeedItemList";
 import { FeedReader } from "@/components/feed/FeedReader";
 import { FeedSidebar } from "@/components/feed/FeedSidebar";
+import {
+  FeedSourceDialog,
+  type FeedSourceDialogMode,
+} from "@/components/feed/FeedSourceDialog";
 import { useFeedLibrary } from "@/hooks/useFeedLibrary";
 import { feedItemGet } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import type { FeedItemDetail, FeedView } from "@/types/ipc";
+import type { FeedItemDetail, FeedSourceSummary, FeedView } from "@/types/ipc";
 
 export type FeedBreakpoint = "wide" | "mid" | "narrow";
 
@@ -27,6 +31,76 @@ function useFeedBreakpoints(): FeedBreakpoint {
   if (width >= 1366) return "wide";
   if (width >= 1024) return "mid";
   return "narrow";
+}
+
+/** 搜索框：200ms debounce、输入法 composition 中不发请求、Escape 清空。 */
+function FeedSearchBox({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  const composingRef = useRef(false);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  useEffect(
+    () => () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    },
+    [],
+  );
+
+  const schedule = (next: string) => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      if (!composingRef.current) onChange(next);
+    }, 200);
+  };
+
+  return (
+    <div className="relative px-2 py-1.5">
+      <Search
+        className="pointer-events-none absolute left-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+        aria-hidden="true"
+      />
+      <input
+        data-testid="feed-search-input"
+        type="search"
+        className="iris-focus-soft w-full rounded-md border border-border-subtle bg-background py-1 pl-7 pr-2 text-ui outline-none placeholder:text-muted-foreground"
+        placeholder="搜索订阅文章"
+        value={draft}
+        aria-label="搜索订阅文章"
+        onChange={(event) => {
+          const next = event.target.value;
+          setDraft(next); // 受控显示立即跟随输入
+          schedule(next); // 父级查询走 200ms debounce
+        }}
+        onCompositionStart={() => {
+          composingRef.current = true;
+        }}
+        onCompositionEnd={(event) => {
+          composingRef.current = false;
+          const next = (event.target as HTMLInputElement).value;
+          setDraft(next);
+          schedule(next);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            if (timerRef.current !== null)
+              window.clearTimeout(timerRef.current);
+            setDraft("");
+            onChange("");
+          }
+        }}
+      />
+    </div>
+  );
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -50,6 +124,11 @@ export function FeedWorkspace() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const listContainerRef = useRef<HTMLDivElement>(null);
   const detailSequenceRef = useRef(0);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<FeedSourceDialogMode>("add");
+  const [dialogSource, setDialogSource] = useState<FeedSourceSummary | null>(
+    null,
+  );
 
   // 选中文章 → 加载详情（迟到响应丢弃）。
   useEffect(() => {
@@ -158,6 +237,18 @@ export function FeedWorkspace() {
     [breakpoint, library, selectedIndex],
   );
 
+  const openAddDialog = useCallback(() => {
+    setDialogMode("add");
+    setDialogSource(null);
+    setDialogOpen(true);
+  }, []);
+
+  const openEditDialog = useCallback((source: FeedSourceSummary) => {
+    setDialogMode("edit");
+    setDialogSource(source);
+    setDialogOpen(true);
+  }, []);
+
   const sidebarNode = (
     <FeedSidebar
       sources={library.sources}
@@ -166,6 +257,7 @@ export function FeedWorkspace() {
       onViewChange={(view: FeedView) => library.setView(view)}
       onSourceSelect={library.setSourceId}
       onClearSource={() => library.setSourceId(null)}
+      onAddSource={openAddDialog}
     />
   );
 
@@ -251,7 +343,27 @@ export function FeedWorkspace() {
                 >
                   <Menu className="h-4 w-4" aria-hidden="true" />
                 </button>
+                {library.sourceId ? (
+                  <button
+                    type="button"
+                    data-testid="feed-edit-source"
+                    aria-label="编辑当前订阅源"
+                    className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
+                    onClick={() => {
+                      const selected = library.sources.find(
+                        (item) => item.id === library.sourceId,
+                      );
+                      if (selected) openEditDialog(selected);
+                    }}
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                ) : null}
               </div>
+              <FeedSearchBox
+                value={library.search}
+                onChange={library.setSearch}
+              />
               {listNode}
             </div>
             <div className="min-w-0 flex-1 border-l border-border-subtle">
@@ -263,6 +375,10 @@ export function FeedWorkspace() {
         <>
           <div className="flex min-w-0 flex-1">
             <div className="flex w-80 shrink-0 flex-col border-r border-border-subtle">
+              <FeedSearchBox
+                value={library.search}
+                onChange={library.setSearch}
+              />
               {listNode}
             </div>
             <div className="min-w-0 flex-1 border-l border-border-subtle">
@@ -300,6 +416,13 @@ export function FeedWorkspace() {
           </button>
         </>
       )}
+      <FeedSourceDialog
+        open={dialogOpen}
+        mode={dialogMode}
+        source={dialogSource}
+        onOpenChange={setDialogOpen}
+        onSourcesChanged={library.refresh}
+      />
     </div>
   );
 }

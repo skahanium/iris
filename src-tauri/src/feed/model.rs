@@ -15,6 +15,7 @@ pub struct FeedSourceSummary {
     pub site_url: Option<String>,
     pub folder_path: String,
     pub is_enabled: bool,
+    pub fetch_interval_minutes: i64,
     pub unread_count: i64,
     pub last_checked_at: Option<String>,
     pub last_success_at: Option<String>,

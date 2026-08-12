@@ -236,6 +236,7 @@ impl FeedRepository {
             "SELECT s.id,
                     COALESCE(s.title_override, s.title) AS title,
                     s.feed_url, s.site_url, s.folder_path, s.is_enabled,
+                    s.fetch_interval_minutes,
                     (SELECT COUNT(*) FROM feed_items i
                       WHERE i.source_id = s.id
                         AND i.read_at IS NULL AND i.archived_at IS NULL) AS unread_count,
@@ -253,12 +254,13 @@ impl FeedRepository {
                     site_url: row.get(3)?,
                     folder_path: row.get(4)?,
                     is_enabled: row.get::<_, i64>(5)? != 0,
-                    unread_count: row.get(6)?,
-                    last_checked_at: row.get(7)?,
-                    last_success_at: row.get(8)?,
-                    next_fetch_at: row.get(9)?,
-                    consecutive_failures: row.get(10)?,
-                    last_error_code: row.get(11)?,
+                    fetch_interval_minutes: row.get(6)?,
+                    unread_count: row.get(7)?,
+                    last_checked_at: row.get(8)?,
+                    last_success_at: row.get(9)?,
+                    next_fetch_at: row.get(10)?,
+                    consecutive_failures: row.get(11)?,
+                    last_error_code: row.get(12)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;

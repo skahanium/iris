@@ -269,6 +269,7 @@ pub fn run() {
             commands::feed_commands::feed_source_list,
             commands::feed_commands::feed_source_update,
             commands::feed_commands::feed_source_remove,
+            commands::feed_commands::feed_source_item_count,
             commands::feed_commands::feed_item_list,
             commands::feed_commands::feed_item_get,
             commands::feed_commands::feed_item_set_state,

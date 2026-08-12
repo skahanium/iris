@@ -153,6 +153,18 @@ pub fn feed_source_remove(
 }
 
 #[tauri::command]
+pub fn feed_source_item_count(
+    state: State<'_, Arc<AppState>>,
+    source_id: String,
+) -> AppResult<u32> {
+    check_id(&source_id)?;
+    let count = state
+        .db
+        .with_read_conn(|conn| FeedRepository::count_items(conn, &source_id))?;
+    Ok(count as u32)
+}
+
+#[tauri::command]
 pub fn feed_item_list(
     state: State<'_, Arc<AppState>>,
     query: FeedItemQuery,
@@ -576,6 +588,20 @@ mod tests {
             .with_read_conn(|conn| FeedRepository::search(conn, "fixture", None, 50))
             .expect("search");
         assert_eq!(hits.len(), 3);
+    }
+
+    #[test]
+    fn source_item_count_reports_article_count() {
+        let state = test_state();
+        let id = add_source(&state, "https://example.com/feed.xml");
+        seed_items(&state, &id, 3);
+        let count = state
+            .db
+            .with_read_conn(|conn| FeedRepository::count_items(conn, &id))
+            .expect("count");
+        assert_eq!(count, 3);
+        // 不存在的源：0（或由命令层校验拒绝）。
+        assert!(check_id("missing-id").is_ok());
     }
 
     #[test]

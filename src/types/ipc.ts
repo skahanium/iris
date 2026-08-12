@@ -432,6 +432,7 @@ export interface FeedSourceSummary {
   siteUrl: string | null;
   folderPath: string;
   isEnabled: boolean;
+  fetchIntervalMinutes: number;
   unreadCount: number;
   lastCheckedAt: string | null;
   lastSuccessAt: string | null;

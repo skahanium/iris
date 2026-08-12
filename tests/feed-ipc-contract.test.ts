@@ -16,6 +16,7 @@ import {
   feedItemSetState,
   feedSearch,
   feedSourceAdd,
+  feedSourceItemCount,
   feedSourceRemove,
   feedSourceUpdate,
   feedSyncAll,
@@ -40,6 +41,7 @@ const FEED_COMMANDS = [
   "feed_source_list",
   "feed_source_update",
   "feed_source_remove",
+  "feed_source_item_count",
   "feed_item_list",
   "feed_item_get",
   "feed_item_set_state",
@@ -108,6 +110,7 @@ describe("feed IPC contract", () => {
       siteUrl: null,
       folderPath: "tech",
       isEnabled: true,
+      fetchIntervalMinutes: 60,
       unreadCount: 0,
       lastCheckedAt: null,
       lastSuccessAt: null,
@@ -147,6 +150,14 @@ describe("feed IPC contract", () => {
         fetchIntervalMinutes: 120,
         isEnabled: false,
       },
+    });
+  });
+
+  it("feedSourceItemCount invokes with sourceId", async () => {
+    invoke.mockResolvedValue(42);
+    await expect(feedSourceItemCount("src-1")).resolves.toBe(42);
+    expect(invoke).toHaveBeenCalledWith("feed_source_item_count", {
+      sourceId: "src-1",
     });
   });
 

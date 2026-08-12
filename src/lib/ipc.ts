@@ -1299,6 +1299,11 @@ export async function feedSourceRemove(
   return invoke<number>("feed_source_remove", { sourceId, keepItems });
 }
 
+/** 订阅源文章数（退订二次确认的计数来源）。 */
+export async function feedSourceItemCount(sourceId: string): Promise<number> {
+  return invoke<number>("feed_source_item_count", { sourceId });
+}
+
 export async function feedItemList(
   query: FeedItemQuery,
 ): Promise<FeedItemSummary[]> {

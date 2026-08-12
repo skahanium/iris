@@ -55,6 +55,7 @@ function source(overrides: Partial<FeedSourceSummary> = {}): FeedSourceSummary {
     siteUrl: null,
     folderPath: "",
     isEnabled: true,
+    fetchIntervalMinutes: 60,
     unreadCount: 2,
     lastCheckedAt: null,
     lastSuccessAt: null,
