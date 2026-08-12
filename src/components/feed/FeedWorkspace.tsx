@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Menu, Plus, Search, X } from "lucide-react";
 
 import { FeedItemList } from "@/components/feed/FeedItemList";
+import { FeedOpmlDialog } from "@/components/feed/FeedOpmlDialog";
 import { FeedReader } from "@/components/feed/FeedReader";
 import { FeedSidebar } from "@/components/feed/FeedSidebar";
 import {
@@ -129,6 +130,7 @@ export function FeedWorkspace() {
   const [dialogSource, setDialogSource] = useState<FeedSourceSummary | null>(
     null,
   );
+  const [opmlOpen, setOpmlOpen] = useState(false);
 
   // 选中文章 → 加载详情（迟到响应丢弃）。
   useEffect(() => {
@@ -261,6 +263,7 @@ export function FeedWorkspace() {
       onRetrySource={(sourceId) => {
         void feedSyncSource(sourceId, true).then(() => library.refresh());
       }}
+      onOpenOpml={() => setOpmlOpen(true)}
     />
   );
 
@@ -424,6 +427,11 @@ export function FeedWorkspace() {
         mode={dialogMode}
         source={dialogSource}
         onOpenChange={setDialogOpen}
+        onSourcesChanged={library.refresh}
+      />
+      <FeedOpmlDialog
+        open={opmlOpen}
+        onOpenChange={setOpmlOpen}
         onSourcesChanged={library.refresh}
       />
     </div>

@@ -14,6 +14,8 @@ import {
   feedItemList,
   feedItemsMarkRead,
   feedItemSetState,
+  feedOpmlExport,
+  feedOpmlImport,
   feedSearch,
   feedSourceAdd,
   feedSourceItemCount,
@@ -29,6 +31,7 @@ import type {
   FeedItemQuery,
   FeedItemStatePatch,
   FeedSourceSummary,
+  OpmlImportResult,
 } from "@/types/ipc";
 
 function read(path: string): string {
@@ -49,6 +52,8 @@ const FEED_COMMANDS = [
   "feed_search",
   "feed_sync_source",
   "feed_sync_all",
+  "feed_opml_import",
+  "feed_opml_export",
 ] as const;
 
 const FIXED_QUERY: FeedItemQuery = {
@@ -260,6 +265,46 @@ describe("feed IPC contract", () => {
     invoke.mockResolvedValue(undefined);
     await feedSyncAll();
     expect(invoke).toHaveBeenCalledWith("feed_sync_all");
+  });
+
+  it("feedOpmlImport invokes with bounded xml string and dryRun flag", async () => {
+    invoke.mockResolvedValue({
+      added: 2,
+      updated: 1,
+      skipped: 0,
+      addedIds: ["src-1", "src-2"],
+    });
+    await expect(feedOpmlImport("<opml/>", true)).resolves.toEqual({
+      added: 2,
+      updated: 1,
+      skipped: 0,
+      addedIds: ["src-1", "src-2"],
+    });
+    expect(invoke).toHaveBeenCalledWith("feed_opml_import", {
+      xml: "<opml/>",
+      dryRun: true,
+    });
+  });
+
+  it("feedOpmlExport returns the opml document string", async () => {
+    invoke.mockResolvedValue('<?xml version="1.0"?><opml version="2.0"/>');
+    await expect(feedOpmlExport()).resolves.toContain("<opml");
+    expect(invoke).toHaveBeenCalledWith("feed_opml_export");
+  });
+
+  it("OpmlImportResult type is camelCase without internal fields", () => {
+    expectTypeOf<{
+      added: number;
+      updated: number;
+      skipped: number;
+      addedIds: string[];
+    }>().toEqualTypeOf<OpmlImportResult>();
+    expectTypeOf<OpmlImportResult>().not.toMatchTypeOf<{
+      etag?: string;
+    }>();
+    expectTypeOf<OpmlImportResult>().not.toMatchTypeOf<{
+      readAt?: string;
+    }>();
   });
 
   it("FeedChangedEvent shape is documented without url/body", () => {

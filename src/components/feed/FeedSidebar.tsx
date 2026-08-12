@@ -6,6 +6,7 @@
 import {
   AlertTriangle,
   Archive,
+  Download,
   Inbox,
   Newspaper,
   Plus,
@@ -13,6 +14,7 @@ import {
   RefreshCw,
   Rss,
   Star,
+  Upload,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -36,6 +38,8 @@ export interface FeedSidebarProps {
   onAddSource: () => void;
   /** 同步失败源的显式重试（稳定错误码文案由 aria-label 表达）。 */
   onRetrySource: (sourceId: string) => void;
+  /** 打开 OPML 导入导出对话框。 */
+  onOpenOpml: () => void;
 }
 
 export function FeedSidebar({
@@ -47,6 +51,7 @@ export function FeedSidebar({
   onClearSource,
   onAddSource,
   onRetrySource,
+  onOpenOpml,
 }: FeedSidebarProps) {
   const failedSources = sources.filter(
     (source) => source.lastErrorCode != null,
@@ -192,6 +197,29 @@ export function FeedSidebar({
           </ul>
         </div>
       ) : null}
+
+      <div className="mt-auto flex items-center gap-1 border-t border-border-subtle pt-2">
+        <button
+          type="button"
+          data-testid="feed-opml-import-entry"
+          aria-label="导入 OPML"
+          title="导入 OPML"
+          className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
+          onClick={onOpenOpml}
+        >
+          <Upload className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          data-testid="feed-opml-export-entry"
+          aria-label="导出 OPML"
+          title="导出 OPML"
+          className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
+          onClick={onOpenOpml}
+        >
+          <Download className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
     </nav>
   );
 }

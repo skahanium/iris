@@ -154,6 +154,39 @@ fn build_filters(query: &FeedItemQuery, now: DateTime<Utc>, prefix: &str) -> (St
     (sql, values)
 }
 
+/// 订阅源完整行映射（21 列；`get_source`/`list_due_sources`/`get_source_by_feed_url`
+/// 的 SELECT 列序必须与此一致）。
+fn map_source_row(row: &Row) -> rusqlite::Result<FeedSource> {
+    Ok(FeedSource {
+        id: row.get(0)?,
+        feed_url: row.get(1)?,
+        site_url: row.get(2)?,
+        title: row.get(3)?,
+        title_override: row.get(4)?,
+        description: row.get(5)?,
+        icon_url: row.get(6)?,
+        language: row.get(7)?,
+        folder_path: row.get(8)?,
+        is_enabled: row.get::<_, i64>(9)? != 0,
+        fetch_interval_minutes: row.get(10)?,
+        etag: row.get(11)?,
+        last_modified: row.get(12)?,
+        last_checked_at: row.get(13)?,
+        last_success_at: row.get(14)?,
+        next_fetch_at: row.get(15)?,
+        consecutive_failures: row.get(16)?,
+        last_error_code: row.get(17)?,
+        last_error_at: row.get(18)?,
+        created_at: row.get(19)?,
+        updated_at: row.get(20)?,
+    })
+}
+
+const SOURCE_SELECT: &str = "SELECT id, feed_url, site_url, title, title_override, description, \
+     icon_url, language, folder_path, is_enabled, fetch_interval_minutes, etag, last_modified, \
+     last_checked_at, last_success_at, next_fetch_at, consecutive_failures, last_error_code, \
+     last_error_at, created_at, updated_at FROM feed_sources";
+
 impl FeedRepository {
     // ── 订阅源 CRUD ─────────────────────────────────────────
 
@@ -194,38 +227,24 @@ impl FeedRepository {
     pub fn get_source(conn: &Connection, id: &str) -> AppResult<Option<FeedSource>> {
         let source = conn
             .query_row(
-                "SELECT id, feed_url, site_url, title, title_override, description, icon_url,
-                        language, folder_path, is_enabled, fetch_interval_minutes, etag,
-                        last_modified, last_checked_at, last_success_at, next_fetch_at,
-                        consecutive_failures, last_error_code, last_error_at, created_at,
-                        updated_at
-                 FROM feed_sources WHERE id = ?1",
+                &format!("{SOURCE_SELECT} WHERE id = ?1"),
                 [id],
-                |row| {
-                    Ok(FeedSource {
-                        id: row.get(0)?,
-                        feed_url: row.get(1)?,
-                        site_url: row.get(2)?,
-                        title: row.get(3)?,
-                        title_override: row.get(4)?,
-                        description: row.get(5)?,
-                        icon_url: row.get(6)?,
-                        language: row.get(7)?,
-                        folder_path: row.get(8)?,
-                        is_enabled: row.get::<_, i64>(9)? != 0,
-                        fetch_interval_minutes: row.get(10)?,
-                        etag: row.get(11)?,
-                        last_modified: row.get(12)?,
-                        last_checked_at: row.get(13)?,
-                        last_success_at: row.get(14)?,
-                        next_fetch_at: row.get(15)?,
-                        consecutive_failures: row.get(16)?,
-                        last_error_code: row.get(17)?,
-                        last_error_at: row.get(18)?,
-                        created_at: row.get(19)?,
-                        updated_at: row.get(20)?,
-                    })
-                },
+                map_source_row,
+            )
+            .optional()?;
+        Ok(source)
+    }
+
+    /// 按 `feed_url` 查询（列 UNIQUE）；OPML 导入合并复用。
+    pub fn get_source_by_feed_url(
+        conn: &Connection,
+        feed_url: &str,
+    ) -> AppResult<Option<FeedSource>> {
+        let source = conn
+            .query_row(
+                &format!("{SOURCE_SELECT} WHERE feed_url = ?1"),
+                [feed_url],
+                map_source_row,
             )
             .optional()?;
         Ok(source)
@@ -658,31 +677,7 @@ impl FeedRepository {
              LIMIT ?2",
         )?;
         let sources = statement
-            .query_map(params![now, limit], |row| {
-                Ok(FeedSource {
-                    id: row.get(0)?,
-                    feed_url: row.get(1)?,
-                    site_url: row.get(2)?,
-                    title: row.get(3)?,
-                    title_override: row.get(4)?,
-                    description: row.get(5)?,
-                    icon_url: row.get(6)?,
-                    language: row.get(7)?,
-                    folder_path: row.get(8)?,
-                    is_enabled: row.get::<_, i64>(9)? != 0,
-                    fetch_interval_minutes: row.get(10)?,
-                    etag: row.get(11)?,
-                    last_modified: row.get(12)?,
-                    last_checked_at: row.get(13)?,
-                    last_success_at: row.get(14)?,
-                    next_fetch_at: row.get(15)?,
-                    consecutive_failures: row.get(16)?,
-                    last_error_code: row.get(17)?,
-                    last_error_at: row.get(18)?,
-                    created_at: row.get(19)?,
-                    updated_at: row.get(20)?,
-                })
-            })?
+            .query_map(params![now, limit], map_source_row)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(sources)
     }

@@ -17,8 +17,8 @@ use crate::feed::model::{ConversionStatus, SourcePayloadKind};
 
 /// 当前转换版本（改转换规则时递增；历史条目按版本重转）。
 pub(crate) const FEED_CONVERSION_VERSION: i64 = 1;
-/// 标题上限（Unicode scalar）。
-const TITLE_MAX_SCALARS: usize = 500;
+/// 标题上限（Unicode scalar）；OPML 导入的订阅标题复用同一上限。
+pub(crate) const TITLE_MAX_SCALARS: usize = 500;
 /// 正文 Markdown 上限（字节）。
 const CONTENT_MAX_BYTES: usize = 4 * 1024 * 1024;
 /// 无标题条目的确定性占位。
@@ -100,7 +100,8 @@ pub(crate) fn normalize_feed(bytes: &[u8], source_id: &str) -> AppResult<Normali
 }
 
 /// parser 前拒绝 XML 声明（ASCII case-insensitive 匹配 `<!DOCTYPE` / `<!ENTITY`）。
-fn reject_xml_declarations(bytes: &[u8]) -> AppResult<()> {
+/// OPML 导入复用同一拒绝逻辑（规范化 §11.1）。
+pub(crate) fn reject_xml_declarations(bytes: &[u8]) -> AppResult<()> {
     const DOCTYPE: &[u8] = b"<!doctype";
     const ENTITY: &[u8] = b"<!entity";
     let doctype_hit = bytes

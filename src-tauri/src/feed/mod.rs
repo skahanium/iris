@@ -4,6 +4,7 @@
 //! SQLite，获取只访问经 SSRF 校验的 HTTPS 公开地址，不触碰用户 Vault。
 
 pub mod model;
+pub mod opml;
 pub mod repository;
 
 pub(crate) mod discovery;
@@ -17,6 +18,8 @@ mod discovery_tests;
 mod fetch_tests;
 #[cfg(test)]
 mod normalize_tests;
+#[cfg(test)]
+mod opml_tests;
 #[cfg(test)]
 mod repository_tests;
 #[cfg(test)]

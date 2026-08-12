@@ -43,6 +43,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_page_load(|webview, payload| {
             if payload.event() != PageLoadEvent::Finished || webview.label() != "main" {
@@ -277,6 +278,8 @@ pub fn run() {
             commands::feed_commands::feed_search,
             commands::feed_commands::feed_sync_source,
             commands::feed_commands::feed_sync_all,
+            commands::feed_commands::feed_opml_import,
+            commands::feed_commands::feed_opml_export,
             commands::window_chrome_cmd::app_exit,
             commands::window_chrome_cmd::get_desktop_chrome_metrics,
             commands::window_chrome_cmd::show_main_window_when_ready,

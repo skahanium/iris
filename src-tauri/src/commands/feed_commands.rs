@@ -18,6 +18,7 @@ use crate::feed::model::{
     FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedSourcePatch,
     FeedSourceSummary, NewFeedSource,
 };
+use crate::feed::opml::{export_opml, import_opml, OpmlImportResult, OPML_MAX_BYTES};
 use crate::feed::repository::FeedRepository;
 use crate::feed::sync::{HistoryReadPolicy, SyncMode, SyncStatus};
 use crate::network::safe_https::validate_https_url;
@@ -233,6 +234,26 @@ pub async fn feed_sync_source(
 #[tauri::command]
 pub async fn feed_sync_all(state: State<'_, Arc<AppState>>) -> AppResult<()> {
     state.feed_sync.sync_all().await
+}
+
+#[tauri::command]
+pub fn feed_opml_import(
+    state: State<'_, Arc<AppState>>,
+    xml: String,
+    dry_run: Option<bool>,
+) -> AppResult<OpmlImportResult> {
+    // 输入经 IPC 传有界 UTF-8 字符串；命令不接收任意文件路径。
+    if xml.len() > OPML_MAX_BYTES {
+        return Err(AppError::msg("feed_opml_too_large"));
+    }
+    state
+        .db
+        .with_conn(|conn| import_opml(conn, &xml, dry_run.unwrap_or(false)))
+}
+
+#[tauri::command]
+pub fn feed_opml_export(state: State<'_, Arc<AppState>>) -> AppResult<String> {
+    state.db.with_read_conn(export_opml)
 }
 
 // ── 可测试的实现（命令薄壳只做 State 解包）─────────────────
@@ -685,5 +706,70 @@ mod tests {
             .await
             .expect_err("http must be rejected");
         assert!(error.to_string().contains("仅允许 HTTPS"));
+    }
+
+    #[test]
+    fn opml_commands_import_export_roundtrip_via_state() {
+        let state = test_state();
+        let xml = include_str!("../../tests/fixtures/opml/nested.opml");
+
+        let preview = feed_opml_import_impl(&state, xml, true).expect("dry run preview");
+        assert_eq!(preview.added, 3);
+        assert!(
+            state
+                .db
+                .with_read_conn(FeedRepository::list_sources)
+                .expect("list")
+                .is_empty(),
+            "dry run 不写库"
+        );
+
+        let executed = feed_opml_import_impl(&state, xml, false).expect("import");
+        assert_eq!(executed.added, 3);
+        assert_eq!(executed.added_ids.len(), 3);
+        assert!(executed.added_ids.iter().all(|id| check_id(id).is_ok()));
+
+        let exported = feed_opml_export_impl(&state).expect("export");
+        assert!(exported.contains("xmlUrl=\"https://example.com/feeds/rust.xml\""));
+        assert!(exported.contains("text=\"技术\""));
+
+        // 重复导入幂等。
+        let again = feed_opml_import_impl(&state, xml, false).expect("again");
+        assert_eq!(again.added, 0);
+        assert_eq!(again.updated, 0);
+    }
+
+    #[test]
+    fn opml_import_rejects_oversized_and_malformed_input() {
+        let state = test_state();
+        let oversized = "x".repeat(OPML_MAX_BYTES + 1);
+        let error = feed_opml_import_impl(&state, &oversized, false).expect_err("超限必须拒绝");
+        assert!(error.to_string().contains("feed_opml_too_large"));
+
+        let xxe = r#"<!DOCTYPE opml [<!ENTITY xxe SYSTEM "file:///etc/hosts">]>
+<opml version="2.0"><body><outline text="x" xmlUrl="https://example.com/f.xml"/></body></opml>"#;
+        let error = feed_opml_import_impl(&state, xxe, false).expect_err("XXE 拒绝");
+        assert!(error.to_string().contains("feed_xml_unsafe_declaration"));
+
+        // 非法 XML 结构：稳定错误码，无正文泄漏。
+        let error =
+            feed_opml_import_impl(&state, "<opml><body>", false).expect_err("畸形 XML 拒绝");
+        assert!(error.to_string().contains("feed_opml_parse_failed"));
+    }
+
+    /// 命令层可测试入口（薄壳等价物）。
+    fn feed_opml_import_impl(
+        state: &AppState,
+        xml: &str,
+        dry_run: bool,
+    ) -> AppResult<OpmlImportResult> {
+        if xml.len() > OPML_MAX_BYTES {
+            return Err(AppError::msg("feed_opml_too_large"));
+        }
+        state.db.with_conn(|conn| import_opml(conn, xml, dry_run))
+    }
+
+    fn feed_opml_export_impl(state: &AppState) -> AppResult<String> {
+        state.db.with_read_conn(export_opml)
     }
 }

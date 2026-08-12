@@ -74,26 +74,32 @@ Skills are prompt-only；`SKILL.md` scope is the fact source。`skills_*` 不安
 Rust 侧契约见 `feed::model`。仅登记以下命令，全部通过仓储/service 访问
 应用级 SQLite，不内嵌 SQL：
 
-| 命令                   | 参数（camelCase）                                     | 返回                                 |
-| ---------------------- | ----------------------------------------------------- | ------------------------------------ |
-| `feed_discover`        | `url`                                                 | `FeedCandidate[]`（≤10，不含 HTML）  |
-| `feed_source_add`      | `input: FeedSourceAddInput`                           | `FeedSourceSummary`                  |
-| `feed_source_list`     | —                                                     | `FeedSourceSummary[]`                |
-| `feed_source_update`   | `sourceId`、`patch: FeedSourceUpdateInput`            | —                                    |
-| `feed_source_remove`   | `sourceId`、`keepItems`                               | 删除的文章数（保留时为 0）           |
-| `feed_item_list`       | `query: FeedItemQuery`                                | `FeedItemSummary[]`（limit 1..=200） |
-| `feed_item_get`        | `itemId`                                              | `FeedItemDetail`                     |
-| `feed_item_set_state`  | `itemId`、`patch: FeedItemStatePatch`（至少一个字段） | —                                    |
-| `feed_items_mark_read` | `query: FeedItemQuery`（冻结筛选）                    | 影响行数                             |
-| `feed_search`          | `query`、`sourceId?`、`limit?`                        | `FeedItemSummary[]`                  |
-| `feed_sync_source`     | `sourceId`、`markHistoryRead?`（仅首次同步生效）      | `FeedSyncOutcome`（等待完成）        |
-| `feed_sync_all`        | —                                                     | —（每轮最多 2 个到期源并发）         |
+| 命令                   | 参数（camelCase）                                     | 返回                                                 |
+| ---------------------- | ----------------------------------------------------- | ---------------------------------------------------- |
+| `feed_discover`        | `url`                                                 | `FeedCandidate[]`（≤10，不含 HTML）                  |
+| `feed_source_add`      | `input: FeedSourceAddInput`                           | `FeedSourceSummary`                                  |
+| `feed_source_list`     | —                                                     | `FeedSourceSummary[]`                                |
+| `feed_source_update`   | `sourceId`、`patch: FeedSourceUpdateInput`            | —                                                    |
+| `feed_source_remove`   | `sourceId`、`keepItems`                               | 删除的文章数（保留时为 0）                           |
+| `feed_item_list`       | `query: FeedItemQuery`                                | `FeedItemSummary[]`（limit 1..=200）                 |
+| `feed_item_get`        | `itemId`                                              | `FeedItemDetail`                                     |
+| `feed_item_set_state`  | `itemId`、`patch: FeedItemStatePatch`（至少一个字段） | —                                                    |
+| `feed_items_mark_read` | `query: FeedItemQuery`（冻结筛选）                    | 影响行数                                             |
+| `feed_search`          | `query`、`sourceId?`、`limit?`                        | `FeedItemSummary[]`                                  |
+| `feed_sync_source`     | `sourceId`、`markHistoryRead?`（仅首次同步生效）      | `FeedSyncOutcome`（等待完成）                        |
+| `feed_sync_all`        | —                                                     | —（每轮最多 2 个到期源并发）                         |
+| `feed_opml_import`     | `xml`（≤ 5 MiB 有界 UTF-8）、`dryRun?`                | `OpmlImportResult`（added/updated/skipped/addedIds） |
+| `feed_opml_export`     | —                                                     | OPML 2.0 文档字符串（不含内部状态）                  |
 
 边界规则：
 
 - **原始源载荷永不出 IPC**：`FeedItemDetail` 只有规范化 Markdown 与安全
   元数据；`source_payload`/`content_text` 原始 HTML 永不进入任何参数或
   返回值，前端类型也不得声明该字段。
+- **OPML 不接收文件路径**：`feed_opml_import` 只收有界 UTF-8 字符串；
+  文件选择/保存由前端 dialog + fs 完成。导入只更新 folder/override、
+  不重置同步与阅读状态；导出不含 ETag、错误、阅读状态或本地 ID，按
+  `folder_path` 稳定排序为嵌套大纲。
 - **同步事件** `feed:changed` 只投影 `sourceId`、变更类型、`newItems` 与
   稳定 `errorCode`，不含 URL、正文或请求头；事件只提示 UI 重新查询，
   不建立 job 恢复协议，应用重启后按 `next_fetch_at` 恢复。

@@ -1266,6 +1266,7 @@ import type {
   FeedSourceSummary,
   FeedSourceUpdateInput,
   FeedSyncOutcome,
+  OpmlImportResult,
 } from "@/types/ipc";
 
 /** 发现订阅源候选（URL 有界、SSRF 校验；多候选由用户选择）。 */
@@ -1352,6 +1353,23 @@ export async function feedSyncSource(
 /** 自动同步一轮（最多 2 个到期源并发）；事件提示 UI 重新查询。 */
 export async function feedSyncAll(): Promise<void> {
   return invoke("feed_sync_all");
+}
+
+/**
+ * OPML 导入：`dryRun=true` 只预览计数不写库；执行返回新增/更新/跳过计数
+ * 与新增订阅 ID（前端按需发起首次同步）。输入为有界 UTF-8 字符串，
+ * 文件选择/读取由前端 dialog + fs 完成，命令不接收任意文件路径。
+ */
+export async function feedOpmlImport(
+  xml: string,
+  dryRun: boolean,
+): Promise<OpmlImportResult> {
+  return invoke<OpmlImportResult>("feed_opml_import", { xml, dryRun });
+}
+
+/** OPML 导出：返回完整 OPML 2.0 文档字符串（不含内部状态），由前端保存。 */
+export async function feedOpmlExport(): Promise<string> {
+  return invoke<string>("feed_opml_export");
 }
 
 /** 订阅同步事件：只投影 sourceId/类型/计数/稳定错误码，提示重新查询。 */

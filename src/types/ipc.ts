@@ -504,6 +504,15 @@ export interface FeedSyncOutcome {
   errorCode: string | null;
 }
 
+/** OPML 导入结果计数（预览与执行共用；`dryRun` 不写库）。 */
+export interface OpmlImportResult {
+  added: number;
+  updated: number;
+  skipped: number;
+  /** 新增订阅的稳定 ID（前端按需发起首次同步）。 */
+  addedIds: string[];
+}
+
 /** 同步事件投影：只提示 UI 重新查询，不含 URL/正文。 */
 export interface FeedChangedEvent {
   sourceId: string;
