@@ -496,13 +496,13 @@ export interface FeedChangedEvent {
 - Create: `tests/use-feed-library.test.tsx`
 - Create: `tests/feed-reader.test.ts`
 
-- [ ] RED 测试：初始 inbox、source/view 切换、迟到响应丢弃、同步事件刷新、状态失败回滚、今日边界。
-- [ ] Hook 保存 `view/sourceId/search/selectedItemId/page/status`，不把文章正文写 localStorage。
-- [ ] 每次筛选变化递增 request epoch；迟到响应不得覆盖新视图。
-- [ ] `feed-reader.ts` 只负责 Markdown 渲染配置、DOMPurify allowlist、外链拦截和远程图片占位。
-- [ ] DOMPurify allowlist 禁止 style/iframe/form/video/audio/object/embed，链接只允许 HTTPS，所有外链点击调用 `openExternalHttpsUrl`。
-- [ ] 运行两个测试文件，预期 GREEN。
-- [ ] 提交：`feat(rss): 添加订阅前端状态与安全渲染层`。
+- [x] RED 测试：初始 inbox、source/view 切换、迟到响应丢弃、同步事件刷新、状态失败回滚、今日边界。
+- [x] Hook 保存 `view/sourceId/search/selectedItemId/page/status`，不把文章正文写 localStorage。
+- [x] 每次筛选变化递增 request epoch；迟到响应不得覆盖新视图。
+- [x] `feed-reader.ts` 只负责 Markdown 渲染配置、DOMPurify allowlist、外链拦截和远程图片占位。
+- [x] DOMPurify allowlist 禁止 style/iframe/form/video/audio/object/embed，链接只允许 HTTPS，所有外链点击调用 `openExternalHttpsUrl`。
+- [x] 运行两个测试文件，预期 GREEN。
+- [x] 提交：`feat(rss): 添加订阅前端状态与安全渲染层`。
 
 ### Task 4.2：增加应用工作区模式而不卸载编辑器
 
@@ -521,13 +521,13 @@ export interface FeedChangedEvent {
 export type AppWorkspaceMode = "documents" | "feeds";
 ```
 
-- [ ] RED 测试证明：进入 feeds 时 editor DOM 仍挂载但 `aria-hidden`/不可交互；返回后同一 editor node、Agent 意图、document tab 不变。
-- [ ] `AppShell` 新增 `workspaceMode`、`feedWorkspace`、`onWorkspaceModeChange`；document main 与 feed main 只切可见性，不互相卸载。
-- [ ] feeds 模式临时折叠 Agent 的有效 presentation，但不写回 `aiPanelOpen`；返回 documents 恢复原投影。
-- [ ] 标题栏在笔记库入口旁增加 `Rss` 图标按钮，使用 `aria-pressed` 和中文 tooltip；点击文档 Tab 自动回 documents。
-- [ ] 禅模式进入 feeds 前由 App 层退出并显示一次非阻断提示。
-- [ ] 运行 AppShell 新旧测试，确保 v1.2.19 宽度预算无回归。
-- [ ] 提交：`feat(ui): 增加不卸载编辑器的订阅工作区`。
+- [x] RED 测试证明：进入 feeds 时 editor DOM 仍挂载但 `aria-hidden`/不可交互；返回后同一 editor node、Agent 意图、document tab 不变。
+- [x] `AppShell` 新增 `workspaceMode`、`feedWorkspace`、`onWorkspaceModeChange`；document main 与 feed main 只切可见性，不互相卸载。
+- [x] feeds 模式临时折叠 Agent 的有效 presentation，但不写回 `aiPanelOpen`；返回 documents 恢复原投影。
+- [x] 标题栏在笔记库入口旁增加 `Rss` 图标按钮，使用 `aria-pressed` 和中文 tooltip；点击文档 Tab 自动回 documents。
+- [x] 禅模式进入 feeds 前由 App 层退出并显示一次非阻断提示。
+- [x] 运行 AppShell 新旧测试，确保 v1.2.19 宽度预算无回归。
+- [x] 提交：`feat(ui): 增加不卸载编辑器的订阅工作区`。
 
 ### Task 4.3：构建导航、列表和阅读器
 
@@ -541,14 +541,14 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - Modify: `src/styles/globals.css`
 - Modify: `docs/design-system.md`
 
-- [ ] 先写组件 RED 测试：五个文章视图与同步失败源视图、未读计数、空态、loading/error、打开延迟已读、快捷键、批量已读、同步状态、远程图片默认阻止。
-- [ ] `FeedItemList` 使用现有 `@tanstack/react-virtual`，稳定 key 为 item ID；不得复制虚拟化实现。
-- [ ] `FeedReader` 正文应用 `--prose-measure`，标题聚焦，显示来源/日期/转换降级提示和外部打开动作。
-- [ ] 宽屏来源导航可折叠；1024–1365 用抽屉；800–1023 使用列表/阅读单平面状态机。
-- [ ] 未读同时用字重、圆点和 `aria-label`；不能只用 brand 色。
-- [ ] 新增样式前先在 design-system 写 token/组件用法；优先复用现有 background/panel/border/brand token。
-- [ ] 运行 `npm run test -- feed-workspace`、`npm run lint`、`npm run typecheck`。
-- [ ] 提交：`feat(rss): 构建响应式订阅阅读工作区`。
+- [x] 先写组件 RED 测试：五个文章视图与同步失败源视图、未读计数、空态、loading/error、打开延迟已读、快捷键、批量已读、同步状态、远程图片默认阻止。
+- [x] `FeedItemList` 使用现有 `@tanstack/react-virtual`，稳定 key 为 item ID；不得复制虚拟化实现。
+- [x] `FeedReader` 正文应用 `--prose-measure`，标题聚焦，显示来源/日期/转换降级提示和外部打开动作。
+- [x] 宽屏来源导航可折叠；1024–1365 用抽屉；800–1023 使用列表/阅读单平面状态机。
+- [x] 未读同时用字重、圆点和 `aria-label`；不能只用 brand 色。
+- [x] 新增样式前先在 design-system 写 token/组件用法；优先复用现有 background/panel/border/brand token。
+- [x] 运行 `npm run test -- feed-workspace`、`npm run lint`、`npm run typecheck`。
+- [x] 提交：`feat(rss): 构建响应式订阅阅读工作区`。
 
 ### Task 4.4：添加订阅管理与搜索交互
 
@@ -557,14 +557,14 @@ export type AppWorkspaceMode = "documents" | "feeds";
 - Create: `src/components/feed/FeedSourceDialog.tsx`
 - Create: `tests/feed-source-management.test.tsx`
 
-- [ ] RED 测试：URL 发现、多候选选择、历史未读选项、编辑标题/分组/间隔、暂停、两种退订、搜索 debounce/清空/分页/错误。
-- [ ] 添加流程拆为「发现」和「确认订阅」；多候选不可自动全选。
-- [ ] 删除订阅及文章显示计数并二次确认；保留文章选择实际将 source 置 disabled，不删除。
-- [ ] 搜索 200ms debounce；输入法 composition 中不发请求；Escape 清空并回到先前视图。
-- [ ] 同步失败提供「重试」和安全原因文案，不展示 URL/HTTP body/stack。
-- [ ] 搜索框、source menu 和添加表单直接作为 `FeedWorkspace`/`FeedSourceDialog` 的局部组件；只有文件超过约 300 行且职责确实独立时再拆分。
-- [ ] 运行对应测试，预期 GREEN。
-- [ ] 提交：`feat(rss): 完成订阅管理与本地搜索体验`。
+- [x] RED 测试：URL 发现、多候选选择、历史未读选项、编辑标题/分组/间隔、暂停、两种退订、搜索 debounce/清空/分页/错误。
+- [x] 添加流程拆为「发现」和「确认订阅」；多候选不可自动全选。
+- [x] 删除订阅及文章显示计数并二次确认；保留文章选择实际将 source 置 disabled，不删除。
+- [x] 搜索 200ms debounce；输入法 composition 中不发请求；Escape 清空并回到先前视图。
+- [x] 同步失败提供「重试」和安全原因文案，不展示 URL/HTTP body/stack。
+- [x] 搜索框、source menu 和添加表单直接作为 `FeedWorkspace`/`FeedSourceDialog` 的局部组件；只有文件超过约 300 行且职责确实独立时再拆分。
+- [x] 运行对应测试，预期 GREEN。
+- [x] 提交：`feat(rss): 完成订阅管理与本地搜索体验`。
 
 **阶段 4 退出条件：** 800×600 到 1920×1080 全尺寸可用；编辑器状态无损；键盘/读屏/主题/缩放通过；不发生远程图片被动请求。
 

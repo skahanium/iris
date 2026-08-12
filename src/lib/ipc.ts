@@ -1273,7 +1273,7 @@ export async function feedDiscover(url: string): Promise<FeedCandidate[]> {
   return invoke<FeedCandidate[]>("feed_discover", { url });
 }
 
-/** 添加订阅源（首次同步由 feedSyncSource 显式触发）。 */
+/** 添加订阅源（首次同步由 feedSyncSource 显式发起）。 */
 export async function feedSourceAdd(
   input: FeedSourceAddInput,
 ): Promise<FeedSourceSummary> {

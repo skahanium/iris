@@ -10,6 +10,7 @@ import {
   Newspaper,
   Plus,
   Radio,
+  RefreshCw,
   Rss,
   Star,
 } from "lucide-react";
@@ -33,6 +34,8 @@ export interface FeedSidebarProps {
   onSourceSelect: (sourceId: string) => void;
   onClearSource: () => void;
   onAddSource: () => void;
+  /** 同步失败源的显式重试（稳定错误码文案由 aria-label 表达）。 */
+  onRetrySource: (sourceId: string) => void;
 }
 
 export function FeedSidebar({
@@ -43,6 +46,7 @@ export function FeedSidebar({
   onSourceSelect,
   onClearSource,
   onAddSource,
+  onRetrySource,
 }: FeedSidebarProps) {
   const failedSources = sources.filter(
     (source) => source.lastErrorCode != null,
@@ -150,25 +154,39 @@ export function FeedSidebar({
           </div>
           <ul className="space-y-0.5">
             {failedSources.map((source) => (
-              <li key={source.id}>
-                <button
-                  type="button"
-                  data-testid={`feed-failed-source-${source.id}`}
-                  aria-label={`${source.title}：${source.lastErrorCode ?? "未知错误"}，点击重试`}
-                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
-                  onClick={() => {
-                    onViewChange("all");
-                    onSourceSelect(source.id);
-                  }}
-                >
-                  <AlertTriangle
-                    className="h-4 w-4 shrink-0 text-warning"
-                    aria-hidden="true"
-                  />
-                  <span className="min-w-0 flex-1 truncate text-left">
-                    {source.title}
-                  </span>
-                </button>
+              <li
+                key={source.id}
+                data-testid={`feed-failed-source-${source.id}`}
+              >
+                <div className="flex items-center gap-1 rounded-md px-2 py-1.5">
+                  <button
+                    type="button"
+                    data-testid={`feed-failed-source-view-${source.id}`}
+                    aria-label={`${source.title}：${source.lastErrorCode ?? "未知错误"}，点击查看`}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-ui text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
+                    onClick={() => {
+                      onViewChange("all");
+                      onSourceSelect(source.id);
+                    }}
+                  >
+                    <AlertTriangle
+                      className="h-4 w-4 shrink-0 text-warning"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-left">
+                      {source.title}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`feed-retry-source-${source.id}`}
+                    aria-label={`重试同步 ${source.title}`}
+                    className="iris-focus-soft inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
+                    onClick={() => onRetrySource(source.id)}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

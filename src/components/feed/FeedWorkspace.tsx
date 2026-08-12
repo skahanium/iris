@@ -15,7 +15,7 @@ import {
   type FeedSourceDialogMode,
 } from "@/components/feed/FeedSourceDialog";
 import { useFeedLibrary } from "@/hooks/useFeedLibrary";
-import { feedItemGet } from "@/lib/ipc";
+import { feedItemGet, feedSyncSource } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { FeedItemDetail, FeedSourceSummary, FeedView } from "@/types/ipc";
 
@@ -258,6 +258,9 @@ export function FeedWorkspace() {
       onSourceSelect={library.setSourceId}
       onClearSource={() => library.setSourceId(null)}
       onAddSource={openAddDialog}
+      onRetrySource={(sourceId) => {
+        void feedSyncSource(sourceId, true).then(() => library.refresh());
+      }}
     />
   );
 

@@ -183,8 +183,17 @@ describe("FeedWorkspace", () => {
 
     const failed = screen.getByTestId("feed-failed-source-src-broken");
     expect(failed).toBeTruthy();
-    expect(failed.getAttribute("aria-label")).toContain("feed_http_error_500");
-    act(() => fireEvent.click(failed));
+    // 显式重试：点击重试按钮触发 feedSyncSource 并刷新。
+    act(() =>
+      fireEvent.click(screen.getByTestId("feed-retry-source-src-broken")),
+    );
+    await flush();
+    await waitFor(() =>
+      expect(feedSyncSource).toHaveBeenCalledWith("src-broken", true),
+    );
+    act(() =>
+      fireEvent.click(screen.getByTestId("feed-failed-source-view-src-broken")),
+    );
     await flush();
     await waitFor(() =>
       expect(feedItemList).toHaveBeenLastCalledWith(
