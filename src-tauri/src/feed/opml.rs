@@ -109,7 +109,6 @@ pub fn parse_opml(bytes: &[u8]) -> AppResult<Vec<OpmlOutline>> {
 }
 
 /// 处理单个 `<outline>` 元素；`is_start` 为 false 表示自闭合（无 End 事件）。
-#[allow(clippy::too_many_arguments)]
 fn handle_outline(
     reader: &Reader<&[u8]>,
     element: &quick_xml::events::BytesStart<'_>,
