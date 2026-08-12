@@ -116,10 +116,20 @@ export function blockRemoteImages(html: string): string {
   return doc.body.innerHTML;
 }
 
-/** 订阅正文完整渲染链路：Markdown → 净化 → 远程图片占位。 */
-export function renderFeedMarkdown(markdown: string): string {
+/** 订阅正文完整渲染链路：Markdown → 净化 → 远程图片占位。
+ * `allowRemoteImages` 为 true 时（用户显式按本篇加载）保留 https 图片。 */
+export function renderFeedMarkdown(
+  markdown: string,
+  allowRemoteImages = false,
+): string {
   const html = proseMarked.parse(markdown) as string;
-  return blockRemoteImages(sanitizeFeedHtml(html));
+  const sanitized = sanitizeFeedHtml(html);
+  return allowRemoteImages ? sanitized : blockRemoteImages(sanitized);
+}
+
+/** 自动已读设置：正文可见 1 秒或发生阅读动作后标记（默认开启）。 */
+export function isFeedAutoReadEnabled(): boolean {
+  return localStorage.getItem("iris-feed-auto-read") !== "false";
 }
 
 /** 外链拦截：只允许 HTTPS 经 `openExternalHttpsUrl` 打开；

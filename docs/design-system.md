@@ -218,3 +218,19 @@ v1.2.19 在现有 Rail 体系中增加 Workspace Navigator 与 Agent Focus Surfa
 过程事件应按 Run 与 assistant 消息一一绑定，不能以全局“最近过程”覆盖历史气泡。普通会话可从既有 Run 事件恢复安全阶段、工具状态和 provider summary；classified 会话维持易失处理，不创建历史过程记录。reasoning summary 仅限 provider 的显式可展示摘要，必须经过可见文本清理、敏感信息脱敏和长度限制；任何不支持该通道的模型仅显示阶段与工具进度。
 
 UI 改动至少验证亮/暗主题、键盘导航、窄窗口/Tab 溢出、`prefers-reduced-motion`、错误与加载态，并运行 lint、format、typecheck 与相关测试。涉及文档持久化或嵌入状态时，还必须验证上述保存/降级状态、关闭与更新阻断、暂停/继续和手动重试；涉及编辑器 schema 时，还必须运行 Markdown parse → node tree → serialize 往返测试。
+
+## 订阅工作区（阶段 4）
+
+订阅工作区复用既有 token，不新增调色板：
+
+- 表面：`bg-background`（列表/阅读主区）、`bg-panel`（来源侧栏与抽屉）、
+  `border-border-subtle`（分区线）、`shadow-overlay`（中屏抽屉浮层）；
+- 正文宽度：阅读器正文消费 `--prose-measure`（52rem），与编辑器一致；
+- 未读表达：`font-medium` 字重 + `bg-brand` 圆点 + `aria-label="未读"`，
+  不依赖单一颜色（读屏与高对比可见）；
+- 状态文字：`text-caption` / `text-micro` 字号阶梯，错误用 `text-warning`；
+- 远程图片占位：`.feed-img-placeholder`（虚线框 + 数据源 data-src），
+  无 `src` 属性，默认零请求；用户按本篇显式加载后才渲染 `<img>`；
+- 组件用法：`FeedWorkspace`（三区状态机）→ `FeedSidebar` / `FeedItemList`
+  （react-virtual，稳定 key 为 item ID）/ `FeedReader`（延迟已读、外链
+  只经 openExternalHttpsUrl）。
