@@ -91,9 +91,7 @@ pub fn parse_opml(bytes: &[u8]) -> AppResult<Vec<OpmlOutline>> {
                 }
             }
             Ok(Event::End(element)) => {
-                if depth > 0 {
-                    depth -= 1;
-                }
+                depth = depth.saturating_sub(1);
                 if element.name().as_ref() == b"outline" {
                     folder_stack.pop();
                 }

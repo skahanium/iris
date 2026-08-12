@@ -164,7 +164,11 @@ fn hundred_sources_and_ten_thousand_items_stay_correct() {
         .db
         .with_read_conn(|conn| FeedRepository::search(conn, "容量回归共用短语", None, 200))
         .expect("broad search");
-    assert_eq!(broad.len(), 200, "FTS 上限 200 且命中全部 10k 文章的共用短语");
+    assert_eq!(
+        broad.len(),
+        200,
+        "FTS 上限 200 且命中全部 10k 文章的共用短语"
+    );
     let exact = state
         .db
         .with_read_conn(|conn| FeedRepository::search(conn, "合成文章 00042", None, 50))
@@ -202,9 +206,7 @@ fn hundred_sources_and_ten_thousand_items_stay_correct() {
     assert_eq!(affected, 100);
     let after = state
         .db
-        .with_read_conn(|conn| {
-            FeedRepository::count_items(conn, "src-000")
-        })
+        .with_read_conn(|conn| FeedRepository::count_items(conn, "src-000"))
         .expect("count");
     assert_eq!(after, 100, "标记已读不删除文章");
 }
@@ -215,48 +217,50 @@ fn inbox_and_source_list_use_existing_indexes() {
     let source_ids = seed_sources(&state, 100);
     seed_items(&state, &source_ids, 50);
 
-    state.db.with_read_conn(|conn| {
-        // inbox 首屏查询必须走 idx_feed_items_inbox。
-        let inbox_plan = query_plan(
-            conn,
-            "SELECT i.row_id, i.id FROM feed_items i
+    state
+        .db
+        .with_read_conn(|conn| {
+            // inbox 首屏查询必须走 idx_feed_items_inbox。
+            let inbox_plan = query_plan(
+                conn,
+                "SELECT i.row_id, i.id FROM feed_items i
              WHERE i.read_at IS NULL AND i.archived_at IS NULL
              ORDER BY i.received_at DESC, i.row_id DESC LIMIT 50",
-        );
-        assert!(
-            inbox_plan.contains("idx_feed_items_inbox"),
-            "inbox 查询未走 idx_feed_items_inbox：\n{inbox_plan}"
-        );
+            );
+            assert!(
+                inbox_plan.contains("idx_feed_items_inbox"),
+                "inbox 查询未走 idx_feed_items_inbox：\n{inbox_plan}"
+            );
 
-        // source 列表（folder/title 排序）必须走 idx_feed_sources_folder。
-        let source_plan = query_plan(
-            conn,
-            "SELECT s.id FROM feed_sources s ORDER BY s.folder_path, s.title",
-        );
-        assert!(
-            source_plan.contains("idx_feed_sources_folder"),
-            "source 列表未走 idx_feed_sources_folder：\n{source_plan}"
-        );
+            // source 列表（folder/title 排序）必须走 idx_feed_sources_folder。
+            let source_plan = query_plan(
+                conn,
+                "SELECT s.id FROM feed_sources s ORDER BY s.folder_path, s.title",
+            );
+            assert!(
+                source_plan.contains("idx_feed_sources_folder"),
+                "source 列表未走 idx_feed_sources_folder：\n{source_plan}"
+            );
 
-        // 单源 inbox 筛选由优化器选择索引（inbox 或 source_time 均正确），
-        // 但不得出现 feed_items 全表扫描。
-        let scoped_plan = query_plan(
-            conn,
-            "SELECT i.row_id FROM feed_items i
+            // 单源 inbox 筛选由优化器选择索引（inbox 或 source_time 均正确），
+            // 但不得出现 feed_items 全表扫描。
+            let scoped_plan = query_plan(
+                conn,
+                "SELECT i.row_id FROM feed_items i
              WHERE i.read_at IS NULL AND i.archived_at IS NULL AND i.source_id = 'src-001'
              ORDER BY i.received_at DESC, i.row_id DESC LIMIT 50",
-        );
-        assert!(
-            !scoped_plan.contains("SCAN feed_items"),
-            "单源 inbox 全表扫描：\n{scoped_plan}"
-        );
-        assert!(
-            scoped_plan.contains("USING INDEX"),
-            "单源 inbox 未使用任何索引：\n{scoped_plan}"
-        );
-        Ok(())
-    })
-    .expect("read plan");
+            );
+            assert!(
+                !scoped_plan.contains("SCAN feed_items"),
+                "单源 inbox 全表扫描：\n{scoped_plan}"
+            );
+            assert!(
+                scoped_plan.contains("USING INDEX"),
+                "单源 inbox 未使用任何索引：\n{scoped_plan}"
+            );
+            Ok(())
+        })
+        .expect("read plan");
 }
 
 #[test]
@@ -322,9 +326,11 @@ fn upgrade_from_pre_rss_library_applies_063_without_touching_existing_state() {
         .expect("count sessions");
     assert_eq!(sessions, 1, "AI 会话不被 063 触碰");
     let theme: String = conn
-        .query_row("SELECT value FROM settings WHERE key = 'theme'", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'theme'",
+            [],
+            |row| row.get(0),
+        )
         .expect("theme setting");
     assert_eq!(theme, "dark", "设置不被 063 触碰");
 
