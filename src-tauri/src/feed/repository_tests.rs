@@ -1315,3 +1315,107 @@ fn item_query_roundtrip_uses_camel_case() {
     assert_eq!(parsed.view, FeedView::Inbox);
     assert_eq!(parsed.cursor.expect("cursor").row_id, 7);
 }
+
+// ── 同步状态与事务回滚 ─────────────────────────────────────
+
+#[test]
+fn upsert_rolls_back_entire_batch_on_invalid_item() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
+
+    let mut valid = item_input("src-1", "a", "A", "body", "2026-08-01T08:00:00Z");
+    let mut invalid = item_input("src-1", "b", "B", "body", "2026-08-01T09:00:00Z");
+    invalid.external_key = String::new();
+    valid.source_id = "src-1".to_string();
+
+    let error = FeedRepository::upsert_items(&conn, &[valid, invalid])
+        .expect_err("batch with invalid item must fail");
+    assert!(error.to_string().contains("feed_item_external_key_empty"));
+
+    assert_eq!(
+        FeedRepository::count_items(&conn, "src-1").expect("count"),
+        0,
+        "整个批次必须回滚，不得留下部分行"
+    );
+}
+
+#[test]
+fn update_source_sync_state_overwrites_sync_columns() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
+
+    let ok = FeedRepository::update_source_sync_state(
+        &conn,
+        "src-1",
+        &crate::feed::model::FeedSourceSyncState {
+            etag: Some("\"abc\"".to_string()),
+            last_modified: Some("Wed, 12 Aug 2026 08:00:00 GMT".to_string()),
+            last_checked_at: "2026-08-12T08:00:00Z".to_string(),
+            last_success_at: Some("2026-08-12T08:00:00Z".to_string()),
+            next_fetch_at: "2026-08-12T09:00:00Z".to_string(),
+            consecutive_failures: 0,
+            last_error_code: None,
+            last_error_at: None,
+        },
+    )
+    .expect("write sync state");
+    assert!(ok);
+
+    let source = FeedRepository::get_source(&conn, "src-1")
+        .expect("get source")
+        .expect("exists");
+    assert_eq!(source.etag.as_deref(), Some("\"abc\""));
+    assert_eq!(source.consecutive_failures, 0);
+    assert_eq!(
+        source.next_fetch_at.as_deref(),
+        Some("2026-08-12T09:00:00Z")
+    );
+
+    // 失败态覆盖：保留 validators，写入错误码与失败计数。
+    FeedRepository::update_source_sync_state(
+        &conn,
+        "src-1",
+        &crate::feed::model::FeedSourceSyncState {
+            etag: source.etag.clone(),
+            last_modified: source.last_modified.clone(),
+            last_checked_at: "2026-08-12T08:30:00Z".to_string(),
+            last_success_at: None,
+            next_fetch_at: "2026-08-12T08:45:00Z".to_string(),
+            consecutive_failures: 1,
+            last_error_code: Some("feed_http_error_500".to_string()),
+            last_error_at: Some("2026-08-12T08:30:00Z".to_string()),
+        },
+    )
+    .expect("write failure state");
+
+    let source = FeedRepository::get_source(&conn, "src-1")
+        .expect("get source")
+        .expect("exists");
+    assert_eq!(source.consecutive_failures, 1);
+    assert_eq!(
+        source.last_error_code.as_deref(),
+        Some("feed_http_error_500")
+    );
+    assert_eq!(
+        source.etag.as_deref(),
+        Some("\"abc\""),
+        "失败不得清除 validators"
+    );
+    assert_eq!(source.last_success_at, None);
+
+    let negative = FeedRepository::update_source_sync_state(
+        &conn,
+        "src-1",
+        &crate::feed::model::FeedSourceSyncState {
+            etag: None,
+            last_modified: None,
+            last_checked_at: "2026-08-12T08:30:00Z".to_string(),
+            last_success_at: None,
+            next_fetch_at: "2026-08-12T08:45:00Z".to_string(),
+            consecutive_failures: -1,
+            last_error_code: None,
+            last_error_at: None,
+        },
+    );
+    assert!(negative.is_err(), "负失败计数必须被拒绝");
+}

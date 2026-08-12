@@ -238,3 +238,16 @@ pub struct UpsertSummary {
     pub updated: usize,
     pub unchanged: usize,
 }
+
+/// 同步结果后的订阅源状态（全量覆盖同步状态列）。
+#[derive(Debug, Clone)]
+pub struct FeedSourceSyncState {
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    pub last_checked_at: String,
+    pub last_success_at: Option<String>,
+    pub next_fetch_at: String,
+    pub consecutive_failures: i64,
+    pub last_error_code: Option<String>,
+    pub last_error_at: Option<String>,
+}

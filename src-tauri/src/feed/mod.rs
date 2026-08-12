@@ -9,6 +9,7 @@ pub mod repository;
 pub(crate) mod discovery;
 pub(crate) mod fetch;
 pub(crate) mod normalize;
+pub(crate) mod sync;
 
 #[cfg(test)]
 mod discovery_tests;
@@ -18,5 +19,7 @@ mod fetch_tests;
 mod normalize_tests;
 #[cfg(test)]
 mod repository_tests;
+#[cfg(test)]
+mod sync_tests;
 #[cfg(test)]
 pub(crate) mod test_http;

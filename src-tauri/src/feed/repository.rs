@@ -11,7 +11,7 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 use crate::error::{AppError, AppResult};
 use crate::feed::model::{
     FeedItemDetail, FeedItemInput, FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedSource,
-    FeedSourcePatch, FeedSourceSummary, NewFeedSource, UpsertSummary,
+    FeedSourcePatch, FeedSourceSummary, FeedSourceSyncState, NewFeedSource, UpsertSummary,
 };
 
 /// 列表摘要从 `content_text` 截断的最大 Unicode scalar 数。
@@ -333,10 +333,44 @@ impl FeedRepository {
         )?)
     }
 
+    /// 全量覆盖同步状态列（同步成功/失败/304 的唯一写入点）。
+    pub fn update_source_sync_state(
+        conn: &Connection,
+        id: &str,
+        state: &FeedSourceSyncState,
+    ) -> AppResult<bool> {
+        if state.consecutive_failures < 0 {
+            return Err(AppError::msg("feed_sync_state_invalid"));
+        }
+        let changed = conn.execute(
+            "UPDATE feed_sources
+             SET etag = ?1, last_modified = ?2, last_checked_at = ?3,
+                 last_success_at = ?4, next_fetch_at = ?5,
+                 consecutive_failures = ?6, last_error_code = ?7,
+                 last_error_at = ?8, updated_at = ?9
+             WHERE id = ?10",
+            params![
+                state.etag,
+                state.last_modified,
+                state.last_checked_at,
+                state.last_success_at,
+                state.next_fetch_at,
+                state.consecutive_failures,
+                state.last_error_code,
+                state.last_error_at,
+                state.last_checked_at,
+                id,
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
     // ── 文章 upsert 与列表 ───────────────────────────────────
 
     /// 批量 upsert：单个事务；仅当 `content_hash` 变化时替换内容字段，
     /// 绝不覆盖 `read_at`/`starred_at`/`archived_at`/`received_at`。
+    ///
+    /// 调用方已处于事务中（如同步短事务）时直接复用，不嵌套 BEGIN。
     pub fn upsert_items(conn: &Connection, items: &[FeedItemInput]) -> AppResult<UpsertSummary> {
         if items.is_empty() {
             return Ok(UpsertSummary {
@@ -345,87 +379,106 @@ impl FeedRepository {
                 unchanged: 0,
             });
         }
-        let tx = conn.unchecked_transaction()?;
         let now_str = rfc3339(Utc::now());
 
-        let mut inserted = 0usize;
+        // 批量校验先行：任一非法条目整个批次拒绝（事务回滚，不留部分行）。
         for item in items {
-            let payload_kind = item.source_payload_kind.as_str();
-            let conversion_status = item.conversion_status.as_str();
-            let values: Vec<(&str, &dyn rusqlite::ToSql)> = vec![
-                (":id", &item.id),
-                (":source_id", &item.source_id),
-                (":external_key", &item.external_key),
-                (":canonical_url", &item.canonical_url),
-                (":title", &item.title),
-                (":author_name", &item.author_name),
-                (":published_at", &item.published_at),
-                (":source_updated_at", &item.source_updated_at),
-                (":received_at", &item.received_at),
-                (":summary_markdown", &item.summary_markdown),
-                (":content_markdown", &item.content_markdown),
-                (":content_text", &item.content_text),
-                (":source_payload", &item.source_payload),
-                (":source_payload_kind", &payload_kind),
-                (":content_hash", &item.content_hash),
-                (":conversion_version", &item.conversion_version),
-                (":conversion_status", &conversion_status),
-                (":created_at", &now_str),
-                (":updated_at", &now_str),
-            ];
-            inserted += conn.execute(
-                "INSERT OR IGNORE INTO feed_items
-                 (id, source_id, external_key, canonical_url, title, author_name,
-                  published_at, source_updated_at, received_at, summary_markdown,
-                  content_markdown, content_text, source_payload, source_payload_kind,
-                  content_hash, conversion_version, conversion_status, created_at, updated_at)
-                 VALUES (:id, :source_id, :external_key, :canonical_url, :title, :author_name,
-                         :published_at, :source_updated_at, :received_at, :summary_markdown,
-                         :content_markdown, :content_text, :source_payload,
-                         :source_payload_kind, :content_hash, :conversion_version,
-                         :conversion_status, :created_at, :updated_at)",
-                values.as_slice(),
-            )?;
+            if item.external_key.trim().is_empty() {
+                return Err(AppError::msg("feed_item_external_key_empty"));
+            }
+            if item.source_id.trim().is_empty() || item.id.trim().is_empty() {
+                return Err(AppError::msg("feed_item_identity_invalid"));
+            }
         }
 
-        let mut updated = 0usize;
-        for item in items {
-            updated += conn.execute(
-                "UPDATE feed_items
-                 SET canonical_url = ?1, title = ?2, author_name = ?3, published_at = ?4,
-                     source_updated_at = ?5, summary_markdown = ?6, content_markdown = ?7,
-                     content_text = ?8, source_payload = ?9, source_payload_kind = ?10,
-                     content_hash = ?11, conversion_version = ?12,
-                     conversion_status = ?13, updated_at = ?14
-                 WHERE source_id = ?15 AND external_key = ?16 AND content_hash != ?17",
-                params![
-                    &item.canonical_url,
-                    &item.title,
-                    &item.author_name,
-                    &item.published_at,
-                    &item.source_updated_at,
-                    &item.summary_markdown,
-                    &item.content_markdown,
-                    &item.content_text,
-                    &item.source_payload,
-                    &item.source_payload_kind.as_str(),
-                    &item.content_hash,
-                    item.conversion_version,
-                    &item.conversion_status.as_str(),
-                    &now_str,
-                    &item.source_id,
-                    &item.external_key,
-                    &item.content_hash,
-                ],
-            )?;
-        }
+        let execute = |target: &Connection| -> AppResult<UpsertSummary> {
+            let mut inserted = 0usize;
+            for item in items {
+                let payload_kind = item.source_payload_kind.as_str();
+                let conversion_status = item.conversion_status.as_str();
+                let values: Vec<(&str, &dyn rusqlite::ToSql)> = vec![
+                    (":id", &item.id),
+                    (":source_id", &item.source_id),
+                    (":external_key", &item.external_key),
+                    (":canonical_url", &item.canonical_url),
+                    (":title", &item.title),
+                    (":author_name", &item.author_name),
+                    (":published_at", &item.published_at),
+                    (":source_updated_at", &item.source_updated_at),
+                    (":received_at", &item.received_at),
+                    (":summary_markdown", &item.summary_markdown),
+                    (":content_markdown", &item.content_markdown),
+                    (":content_text", &item.content_text),
+                    (":source_payload", &item.source_payload),
+                    (":source_payload_kind", &payload_kind),
+                    (":content_hash", &item.content_hash),
+                    (":conversion_version", &item.conversion_version),
+                    (":conversion_status", &conversion_status),
+                    (":created_at", &now_str),
+                    (":updated_at", &now_str),
+                ];
+                inserted += target.execute(
+                    "INSERT OR IGNORE INTO feed_items
+                     (id, source_id, external_key, canonical_url, title, author_name,
+                      published_at, source_updated_at, received_at, summary_markdown,
+                      content_markdown, content_text, source_payload, source_payload_kind,
+                      content_hash, conversion_version, conversion_status, created_at, updated_at)
+                     VALUES (:id, :source_id, :external_key, :canonical_url, :title, :author_name,
+                             :published_at, :source_updated_at, :received_at, :summary_markdown,
+                             :content_markdown, :content_text, :source_payload,
+                             :source_payload_kind, :content_hash, :conversion_version,
+                             :conversion_status, :created_at, :updated_at)",
+                    values.as_slice(),
+                )?;
+            }
 
-        tx.commit()?;
-        Ok(UpsertSummary {
-            inserted,
-            updated,
-            unchanged: items.len() - inserted - updated,
-        })
+            let mut updated = 0usize;
+            for item in items {
+                updated += target.execute(
+                    "UPDATE feed_items
+                     SET canonical_url = ?1, title = ?2, author_name = ?3, published_at = ?4,
+                         source_updated_at = ?5, summary_markdown = ?6, content_markdown = ?7,
+                         content_text = ?8, source_payload = ?9, source_payload_kind = ?10,
+                         content_hash = ?11, conversion_version = ?12,
+                         conversion_status = ?13, updated_at = ?14
+                     WHERE source_id = ?15 AND external_key = ?16 AND content_hash != ?17",
+                    params![
+                        &item.canonical_url,
+                        &item.title,
+                        &item.author_name,
+                        &item.published_at,
+                        &item.source_updated_at,
+                        &item.summary_markdown,
+                        &item.content_markdown,
+                        &item.content_text,
+                        &item.source_payload,
+                        &item.source_payload_kind.as_str(),
+                        &item.content_hash,
+                        item.conversion_version,
+                        &item.conversion_status.as_str(),
+                        &now_str,
+                        &item.source_id,
+                        &item.external_key,
+                        &item.content_hash,
+                    ],
+                )?;
+            }
+            Ok(UpsertSummary {
+                inserted,
+                updated,
+                unchanged: items.len() - inserted - updated,
+            })
+        };
+
+        if conn.is_autocommit() {
+            let tx = conn.unchecked_transaction()?;
+            let summary = execute(&tx)?;
+            tx.commit()?;
+            Ok(summary)
+        } else {
+            // 调用方事务内：直接执行，由外层事务保证原子性。
+            execute(conn)
+        }
     }
 
     pub fn list_items(
