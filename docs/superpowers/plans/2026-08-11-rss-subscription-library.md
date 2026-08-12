@@ -474,14 +474,14 @@ export interface FeedChangedEvent {
 }
 ```
 
-- [ ] 先写 IPC contract RED 测试，mock `invoke` 并固定命令名和 camelCase 参数；特别断言详情类型无 `sourcePayload`。
-- [ ] 注册规范 §12 的全部命令；命令只做验证/授权边界和 service 调用，不内嵌 SQL。
-- [ ] `feed_item_set_state` 要求 patch 至少一个字段；所有 ID/URL/string 长度有界。
-- [ ] `feed_items_mark_read` 接收冻结 `FeedItemQuery`，返回影响行数。
-- [ ] `feed_sync_source` 等待单源完成并返回计数；`feed_sync_all` 复用同一 service、最多 2 个并发。事件只提示 UI 重新查询，不建立 job 恢复协议。
-- [ ] 更新 IPC 文档，明确 raw payload 永不出 IPC、同步事件不含 URL/正文。
-- [ ] 运行 `npm run test -- feed-ipc-contract`、`npm run typecheck` 和 Rust command tests。
-- [ ] 提交：`feat(ipc): 暴露类型安全的订阅资料库契约`。
+- [x] 先写 IPC contract RED 测试，mock `invoke` 并固定命令名和 camelCase 参数；特别断言详情类型无 `sourcePayload`。
+- [x] 注册规范 §12 的全部命令；命令只做验证/授权边界和 service 调用，不内嵌 SQL。
+- [x] `feed_item_set_state` 要求 patch 至少一个字段；所有 ID/URL/string 长度有界。
+- [x] `feed_items_mark_read` 接收冻结 `FeedItemQuery`，返回影响行数。
+- [x] `feed_sync_source` 等待单源完成并返回计数；`feed_sync_all` 复用同一 service、最多 2 个并发。事件只提示 UI 重新查询，不建立 job 恢复协议。
+- [x] 更新 IPC 文档，明确 raw payload 永不出 IPC、同步事件不含 URL/正文。
+- [x] 运行 `npm run test -- feed-ipc-contract`、`npm run typecheck` 和 Rust command tests。
+- [x] 提交：`feat(ipc): 暴露类型安全的订阅资料库契约`。
 
 **阶段 3 退出条件：** 可通过 IPC 完成发现→订阅→同步→列表→详情→状态→搜索；Rust、TypeScript、事件与 IPC 文档一致。
 
