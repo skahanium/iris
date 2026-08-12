@@ -6,9 +6,12 @@
 pub mod model;
 pub mod repository;
 
+pub(crate) mod discovery;
 pub(crate) mod fetch;
 pub(crate) mod normalize;
 
+#[cfg(test)]
+mod discovery_tests;
 #[cfg(test)]
 mod fetch_tests;
 #[cfg(test)]
