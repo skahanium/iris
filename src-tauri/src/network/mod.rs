@@ -1,6 +1,10 @@
 pub mod cert_pinning;
 pub mod proxy_policy;
 pub mod proxy_status;
+pub mod safe_https;
+
+#[cfg(test)]
+mod safe_https_tests;
 
 pub use proxy_policy::{
     apply_proxy_policy, follow_system_proxy, parse_follow_system_proxy_setting,

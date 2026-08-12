@@ -1,6 +1,5 @@
 //! Controlled HTTPS page fetch for AI evidence (single-page, read-only).
 
-use std::net::IpAddr;
 use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
@@ -10,7 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{AppError, AppResult};
 use crate::llm::http_politeness::throttle_host;
 use crate::network::cert_pinning::https_client_builder;
-use crate::security::ipc_policy::validate_https_url;
+use crate::network::safe_https::{host_of, validate_https_url};
 use crate::storage::db::Database;
 
 pub const HARD_MAX_CHARS: usize = 64_000;
@@ -100,110 +99,16 @@ fn content_hash(text: &str) -> String {
 }
 
 /// Validate URL for fetch: HTTPS only, no SSRF to private/local hosts.
+///
+/// 地址判断（localhost、私网段、DNS rebinding 提示等）统一由
+/// `network::safe_https::validate_https_url` 承担；此处仅保留网页抓取
+/// 专属的路径检查，避免复制第二套地址逻辑。
 pub fn validate_fetch_url(url: &str) -> AppResult<()> {
     validate_https_url(url)?;
-    let trimmed = url.trim();
-    if trimmed.contains("..") {
+    if url.trim().contains("..") {
         return Err(AppError::msg("非法 URL"));
     }
-    let host = extract_host(trimmed).ok_or_else(|| AppError::msg("无法解析 URL 主机名"))?;
-    if host.contains('@') {
-        return Err(AppError::msg("URL 不允许包含用户信息"));
-    }
-    let host_lower = host.to_lowercase();
-    if host_lower == "localhost" || host_lower.ends_with(".localhost") {
-        return Err(AppError::msg("不允许访问本地主机"));
-    }
-    if host_lower == "0.0.0.0" {
-        return Err(AppError::msg("不允许访问该地址"));
-    }
-    if let Ok(ip) = host_lower.parse::<IpAddr>() {
-        if is_blocked_ip(ip) {
-            return Err(AppError::msg("不允许访问内网或保留地址"));
-        }
-        return Err(AppError::msg("仅允许域名 URL，不支持直接 IP 访问"));
-    }
-    if is_private_host_hint(&host_lower) {
-        return Err(AppError::msg("不允许访问内网或保留地址"));
-    }
     Ok(())
-}
-
-fn extract_host(url: &str) -> Option<String> {
-    let parsed = reqwest::Url::parse(url).ok()?;
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Some("@".into());
-    }
-    let host = parsed.host_str()?;
-    Some(
-        host.strip_prefix('[')
-            .and_then(|value| value.strip_suffix(']'))
-            .unwrap_or(host)
-            .to_owned(),
-    )
-}
-
-fn is_blocked_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
-                // RFC 6598 Carrier-grade NAT
-                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
-                // RFC 2544 benchmarking
-                || (v4.octets()[0] == 198 && v4.octets()[1] >= 18 && v4.octets()[1] <= 19)
-        }
-        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || is_ipv6_private(v6),
-    }
-}
-
-fn is_ipv6_private(v6: std::net::Ipv6Addr) -> bool {
-    let s = v6.segments();
-    // fc00::/7 — Unique Local Address
-    (s[0] & 0xFE00) == 0xFC00
-    // fe80::/10 — Link-local
-    || (s[0] & 0xFFC0) == 0xFE80
-    // ::ffff:0:0/96 — IPv4-mapped IPv6
-    || (s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0xFFFF)
-    // 64:ff9b::/96 — IPv4/IPv6 translation
-    || (s[0] == 0x0064 && s[1] == 0xFF9B)
-    // ::1 — loopback (defense-in-depth)
-    || v6.is_loopback()
-}
-
-fn is_private_host_hint(host: &str) -> bool {
-    // Try parsing as IP address first
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return is_blocked_ip(ip);
-    }
-
-    // DNS rebinding detection: domain names containing private IP octets
-    let parts: Vec<&str> = host.split('.').collect();
-    if parts.len() >= 4 {
-        if let (Ok(a), Ok(b)) = (parts[0].parse::<u8>(), parts[1].parse::<u8>()) {
-            // 10.x.x.x, 127.x.x.x, 192.168.x.x
-            if a == 10
-                || a == 127
-                || (a == 192 && b == 168)
-                // 172.16-31.x.x
-                || (a == 172 && (16..=31).contains(&b))
-                // 169.254.x.x
-                || (a == 169 && b == 254)
-            {
-                return true;
-            }
-        }
-    }
-
-    // Common private/intranet domain suffixes
-    host.ends_with(".local")
-        || host.ends_with(".internal")
-        || host.ends_with(".localhost")
-        || host.ends_with(".lan")
-        || host == "localhost"
 }
 
 /// Extract readable plain text from HTML with semantic selectors and noise filtering.
@@ -448,7 +353,7 @@ pub async fn fetch_web_page(
         });
     }
 
-    let host = extract_host(url).unwrap_or_default();
+    let host = host_of(url).unwrap_or_default();
     throttle_host(&host).await?;
 
     let client = https_client_builder()
