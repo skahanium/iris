@@ -8,7 +8,7 @@ use rusqlite::Connection;
 
 use super::model::{
     ConversionStatus, FeedItemInput, FeedItemQuery, FeedItemStatePatch, FeedSourcePatch, FeedView,
-    NewFeedSource, SourcePayloadKind,
+    FulltextStatus, NewFeedSource, SourcePayloadKind,
 };
 use super::repository::{today_start_utc, FeedRepository};
 use crate::storage::migrate::migrate_up;
@@ -69,6 +69,8 @@ fn item_input(
         content_hash: format!("hash-{external_key}-{body}"),
         conversion_version: 1,
         conversion_status: ConversionStatus::Ok,
+        expires_at: "2026-08-17T10:00:00Z".to_string(),
+        fulltext_status: FulltextStatus::NotRequested,
     }
 }
 
@@ -196,6 +198,168 @@ fn source_update_validates_fetch_interval() {
 }
 
 #[test]
+fn disabling_fulltext_cancels_only_not_started_source_items() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Example", "https://example.com/feed.xml");
+    FeedRepository::upsert_items(
+        &conn,
+        &[FeedItemInput {
+            fulltext_status: FulltextStatus::Pending,
+            ..item_input(
+                "src-1",
+                "pending",
+                "Pending",
+                "summary",
+                "2026-08-01T00:00:00Z",
+            )
+        }],
+    )
+    .expect("seed pending article");
+
+    FeedRepository::update_source(
+        &conn,
+        "src-1",
+        &FeedSourcePatch {
+            fulltext_enabled: Some(false),
+            ..Default::default()
+        },
+        now(),
+    )
+    .expect("disable fulltext");
+
+    let status: String = conn
+        .query_row(
+            "SELECT fulltext_status FROM feed_items WHERE source_id = 'src-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("status");
+    assert_eq!(status, "not_requested");
+}
+
+#[test]
+fn explicit_recent_fulltext_queue_is_bounded_to_the_requested_source() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "One", "https://example.com/one.xml");
+    insert_source(&conn, "src-2", "Two", "https://example.com/two.xml");
+    let items = (0..30)
+        .map(|index| FeedItemInput {
+            fulltext_status: FulltextStatus::NotRequested,
+            canonical_url: Some(format!("https://example.com/{index}")),
+            content_markdown: "summary".to_string(),
+            summary_markdown: "summary".to_string(),
+            received_at: format!("2026-08-{:02}T00:00:00Z", index + 1),
+            ..item_input(
+                "src-1",
+                &format!("key-{index}"),
+                "Summary",
+                "summary",
+                "2026-08-01T00:00:00Z",
+            )
+        })
+        .collect::<Vec<_>>();
+    FeedRepository::upsert_items(&conn, &items).expect("seed");
+    FeedRepository::update_source(
+        &conn,
+        "src-1",
+        &FeedSourcePatch {
+            fulltext_enabled: Some(true),
+            ..Default::default()
+        },
+        now(),
+    )
+    .expect("enable");
+
+    let queued = FeedRepository::enqueue_recent_fulltext(&conn, "src-1", 20).expect("queue");
+    assert_eq!(queued, 20);
+    let pending: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM feed_items WHERE source_id = 'src-1' AND fulltext_status = 'pending'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("pending count");
+    assert_eq!(pending, 20);
+}
+
+#[test]
+fn explicit_recent_fulltext_queue_distinguishes_missing_and_disabled_sources() {
+    let conn = test_conn();
+    let missing = FeedRepository::enqueue_recent_fulltext(&conn, "missing", 20)
+        .expect_err("missing source must not become a database error");
+    assert!(
+        matches!(missing, crate::error::AppError::Message(code) if code == "feed_source_not_found")
+    );
+
+    insert_source(
+        &conn,
+        "src-disabled",
+        "Disabled",
+        "https://example.com/disabled.xml",
+    );
+    let disabled = FeedRepository::enqueue_recent_fulltext(&conn, "src-disabled", 20)
+        .expect_err("source-level opt-in is required");
+    assert!(
+        matches!(disabled, crate::error::AppError::Message(code) if code == "feed_fulltext_not_enabled")
+    );
+}
+
+#[test]
+fn changed_feed_content_invalidates_stale_web_fulltext_and_requeues_when_enabled() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "One", "https://example.com/one.xml");
+    FeedRepository::update_source(
+        &conn,
+        "src-1",
+        &FeedSourcePatch {
+            fulltext_enabled: Some(true),
+            ..Default::default()
+        },
+        now(),
+    )
+    .expect("enable fulltext");
+    let original = item_input(
+        "src-1",
+        "updated-entry",
+        "Original",
+        "old RSS summary",
+        "2026-08-01T00:00:00Z",
+    );
+    FeedRepository::upsert_items(&conn, &[original]).expect("insert article");
+    conn.execute(
+        "UPDATE feed_items
+         SET fulltext_markdown = 'old extracted page', content_text = 'old extracted page',
+             content_origin = 'web', fulltext_status = 'ready'
+         WHERE source_id = 'src-1' AND external_key = 'updated-entry'",
+        [],
+    )
+    .expect("seed prior web extraction");
+
+    let replacement = FeedItemInput {
+        title: "Updated".to_string(),
+        content_markdown: "new RSS summary".to_string(),
+        content_text: "new RSS summary".to_string(),
+        content_hash: "hash-updated-entry-new".to_string(),
+        fulltext_status: FulltextStatus::Pending,
+        ..item_input(
+            "src-1",
+            "updated-entry",
+            "Updated",
+            "new RSS summary",
+            "2026-08-01T00:00:00Z",
+        )
+    };
+    FeedRepository::upsert_items(&conn, &[replacement]).expect("update article");
+
+    let detail = FeedRepository::get_item_detail(&conn, "item-src-1-updated-entry")
+        .expect("get detail")
+        .expect("article exists");
+    assert_eq!(detail.content_origin, "feed");
+    assert_eq!(detail.fulltext_status, "pending");
+    assert_eq!(detail.content_markdown, "new RSS summary");
+}
+
+#[test]
 fn list_sources_reports_unread_count_and_display_title() {
     let conn = test_conn();
     insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
@@ -263,6 +427,42 @@ fn list_sources_reports_unread_count_and_display_title() {
 }
 
 #[test]
+fn item_summary_keeps_sort_time_separate_from_excerpt_content() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-1",
+            "summary-columns",
+            "Column order",
+            "this is the article excerpt, not a timestamp",
+            "2026-08-01T08:00:00Z",
+        )],
+    )
+    .expect("upsert item");
+
+    let item = FeedRepository::list_items(
+        &conn,
+        &FeedItemQuery {
+            view: FeedView::All,
+            source_id: None,
+            search: None,
+            received_after: None,
+            cursor: None,
+            limit: 50,
+        },
+        now(),
+    )
+    .expect("list items")
+    .pop()
+    .expect("item exists");
+
+    assert_eq!(item.sort_at, "2026-07-01T08:00:00Z");
+    assert_eq!(item.excerpt, "this is the article excerpt, not a timestamp");
+}
+
+#[test]
 fn source_delete_cascades_items_and_fts() {
     let conn = test_conn();
     insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
@@ -321,7 +521,7 @@ fn source_delete_cascades_items_and_fts() {
 // ── 收件箱派生与状态轴 ─────────────────────────────────────
 
 #[test]
-fn inbox_derives_unread_and_unarchived() {
+fn inbox_keeps_read_items_until_they_are_archived() {
     let conn = test_conn();
     insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
     FeedRepository::upsert_items(
@@ -400,7 +600,10 @@ fn inbox_derives_unread_and_unarchived() {
         ids.contains(&"item-src-1-star"),
         "starred-but-unread must remain in inbox"
     );
-    assert!(!ids.contains(&"item-src-1-read"));
+    assert!(
+        ids.contains(&"item-src-1-read"),
+        "read state must not remove from inbox"
+    );
     assert!(!ids.contains(&"item-src-1-arch"));
     assert!(!ids.contains(&"item-src-1-both"));
 
@@ -446,6 +649,104 @@ fn inbox_derives_unread_and_unarchived() {
         !archived_ids.contains(&"item-src-1-star"),
         "unarchived starred item must not appear"
     );
+}
+
+#[test]
+fn expired_items_soft_delete_but_starred_items_remain() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
+    FeedRepository::upsert_items(
+        &conn,
+        &[
+            item_input(
+                "src-1",
+                "expired",
+                "Expired",
+                "body",
+                "2026-08-01T08:00:00Z",
+            ),
+            item_input(
+                "src-1",
+                "starred",
+                "Starred",
+                "body",
+                "2026-08-01T09:00:00Z",
+            ),
+        ],
+    )
+    .expect("upsert items");
+    conn.execute(
+        "UPDATE feed_items SET expires_at = '2026-08-09T00:00:00Z'",
+        [],
+    )
+    .expect("make items expired");
+    FeedRepository::set_item_state(
+        &conn,
+        "item-src-1-starred",
+        &FeedItemStatePatch {
+            is_starred: Some(true),
+            ..Default::default()
+        },
+        now(),
+    )
+    .expect("star item");
+
+    assert_eq!(
+        FeedRepository::soft_delete_expired_items(&conn, now()).expect("soft delete"),
+        1
+    );
+    let all = FeedRepository::list_items(
+        &conn,
+        &FeedItemQuery {
+            view: FeedView::All,
+            source_id: Some("src-1".to_string()),
+            search: None,
+            received_after: None,
+            cursor: None,
+            limit: 50,
+        },
+        now(),
+    )
+    .expect("list live items");
+    assert_eq!(list_ids(&all), vec!["item-src-1-starred"]);
+}
+
+#[test]
+fn restoring_a_starred_trash_item_keeps_its_permanent_retention() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-1",
+            "restore-starred",
+            "Restore starred",
+            "body",
+            "2026-08-01T08:00:00Z",
+        )],
+    )
+    .expect("upsert item");
+    conn.execute(
+        "UPDATE feed_items
+         SET starred_at = '2026-08-10T00:00:00Z', deleted_at = '2026-08-10T00:00:00Z',
+             purge_after = '2026-09-09T00:00:00Z', expires_at = '2026-08-17T00:00:00Z'
+         WHERE id = 'item-src-1-restore-starred'",
+        [],
+    )
+    .expect("seed recycle bin");
+
+    assert!(
+        FeedRepository::restore_deleted_item(&conn, "item-src-1-restore-starred", now(),)
+            .expect("restore")
+    );
+    let expires_at: Option<String> = conn
+        .query_row(
+            "SELECT expires_at FROM feed_items WHERE id = 'item-src-1-restore-starred'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("expiry");
+    assert_eq!(expires_at, None, "收藏文章恢复后仍应永久保留");
 }
 
 #[test]
@@ -1231,9 +1532,10 @@ fn unified_search_respects_view_source_cursor_and_bulk_read() {
 
     let affected = FeedRepository::mark_items_read(&conn, &query, now()).expect("bulk read");
     assert_eq!(affected, 2, "批量操作必须复用完全相同的搜索过滤条件");
-    assert!(FeedRepository::list_items(&conn, &query, now())
-        .expect("inbox after bulk read")
-        .is_empty());
+    let after_read =
+        FeedRepository::list_items(&conn, &query, now()).expect("inbox after bulk read");
+    assert_eq!(after_read.len(), 2, "已读不应自动离开未归档收件箱");
+    assert!(after_read.iter().all(|item| item.is_read));
 }
 
 #[test]

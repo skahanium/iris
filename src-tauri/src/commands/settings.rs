@@ -5,7 +5,7 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::credentials;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::security::ipc_policy::{validate_credential_service, validate_settings_key};
 
 #[tauri::command]
@@ -27,6 +27,7 @@ pub fn settings_get(state: State<'_, Arc<AppState>>, key: String) -> AppResult<O
 #[tauri::command]
 pub fn settings_set(state: State<'_, Arc<AppState>>, key: String, value: Value) -> AppResult<()> {
     validate_settings_key(&key)?;
+    validate_setting_value(&key, &value)?;
     let json = serde_json::to_string(&value)?;
     state.db.with_conn(|conn| {
         conn.execute(
@@ -40,7 +41,29 @@ pub fn settings_set(state: State<'_, Arc<AppState>>, key: String, value: Value) 
         let follow = crate::network::parse_follow_system_proxy_setting(Some(&value));
         crate::network::set_follow_system_proxy(follow);
     }
+    if key == "feed_background_sync_enabled" && value.as_bool() == Some(true) {
+        state.feed_sync_wake.notify_one();
+    }
     Ok(())
+}
+
+fn validate_setting_value(key: &str, value: &Value) -> AppResult<()> {
+    match key {
+        "feed_auto_read_enabled" | "feed_background_sync_enabled" if !value.is_boolean() => {
+            Err(AppError::msg("settings_value_invalid"))
+        }
+        "feed_default_fetch_interval_minutes" => {
+            let valid = value
+                .as_i64()
+                .is_some_and(|minutes| (15..=10_080).contains(&minutes));
+            if valid {
+                Ok(())
+            } else {
+                Err(AppError::msg("settings_value_invalid"))
+            }
+        }
+        _ => Ok(()),
+    }
 }
 
 #[tauri::command]

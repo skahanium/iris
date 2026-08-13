@@ -409,7 +409,7 @@ export interface ImageAttachmentDto {
 
 export type FeedView = "inbox" | "today" | "all" | "starred" | "archived";
 
-/** 稳定 keyset 游标：按 `(receivedAt DESC, rowId DESC)` 排序。 */
+/** 稳定 keyset 游标：按 `(sortAt DESC, rowId DESC)` 排序。 */
 export interface FeedPageCursor {
   sortAt: string;
   rowId: number;
@@ -434,12 +434,24 @@ export interface FeedSourceSummary {
   folderPath: string;
   isEnabled: boolean;
   fetchIntervalMinutes: number;
+  /** 来源级网页正文补全，普通 RSS 默认关闭。 */
+  fulltextEnabled: boolean;
   unreadCount: number;
   lastCheckedAt: string | null;
   lastSuccessAt: string | null;
   nextFetchAt: string | null;
   consecutiveFailures: number;
   lastErrorCode: string | null;
+}
+
+/** 订阅资料库维护摘要，不包含源 URL、正文或错误详情。 */
+export interface FeedLibrarySummary {
+  sourceCount: number;
+  enabledSourceCount: number;
+  failedSourceCount: number;
+  itemCount: number;
+  unreadCount: number;
+  lastSuccessAt: string | null;
 }
 
 /** 文章列表摘要（rowId 用于构造 keyset 游标）。 */
@@ -453,6 +465,8 @@ export interface FeedItemSummary {
   canonicalUrl: string | null;
   publishedAt: string | null;
   receivedAt: string;
+  /** publishedAt 缺失时回退 receivedAt 的稳定展示/分页时间。 */
+  sortAt: string;
   excerpt: string;
   isRead: boolean;
   isStarred: boolean;
@@ -467,6 +481,21 @@ export interface FeedItemDetail {
   contentMarkdown: string;
   summaryMarkdown: string;
   siteUrl: string | null;
+  /** feed 表示 RSS 内容；web 表示受限后台抓取的网页正文。 */
+  contentOrigin: "feed" | "web";
+  fulltextStatus:
+    | "not_requested"
+    | "pending"
+    | "fetching"
+    | "ready"
+    | "failed";
+}
+
+/** RSS 专属回收站条目；与 Markdown 文件回收站不共用。 */
+export interface FeedTrashItem {
+  item: FeedItemSummary;
+  deletedAt: string;
+  purgeAfter: string;
 }
 
 /** 阅读状态补丁；至少一个字段为 true/false。 */
@@ -498,12 +527,14 @@ export interface FeedSourceUpdateInput {
   folderPath?: string | null;
   fetchIntervalMinutes?: number | null;
   isEnabled?: boolean | null;
+  fulltextEnabled?: boolean | null;
 }
 
 /** 同步结果（事件另发 `feed:changed`）。 */
 export interface FeedSyncOutcome {
   status: "succeeded" | "not_modified" | "skipped" | "in_flight" | "failed";
   newItems: number;
+  skippedHistory: number;
   errorCode: string | null;
 }
 
@@ -515,6 +546,7 @@ export interface FeedSyncBatchOutcome {
   skipped: number;
   inFlight: number;
   newItems: number;
+  skippedHistory: number;
 }
 
 /** OPML 导入结果计数（预览与执行共用；`dryRun` 不写库）。 */

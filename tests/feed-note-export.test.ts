@@ -34,6 +34,7 @@ function summary(overrides: Partial<FeedItemSummary> = {}): FeedItemSummary {
     canonicalUrl: "https://example.com/article",
     publishedAt: "2026-08-11T08:00:00Z",
     receivedAt: "2026-08-11T08:00:00Z",
+    sortAt: "2026-08-11T08:00:00Z",
     excerpt: "…",
     isRead: false,
     isStarred: false,
@@ -49,6 +50,8 @@ function detail(overrides: Partial<FeedItemDetail> = {}): FeedItemDetail {
     contentMarkdown: "# 小节\n\n正文 **加粗** 与 `代码`。\n\n- 列表项",
     summaryMarkdown: "",
     siteUrl: "https://example.com/site",
+    contentOrigin: "feed",
+    fulltextStatus: "not_requested",
     ...overrides,
   };
 }

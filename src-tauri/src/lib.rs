@@ -102,6 +102,8 @@ pub fn run() {
                 .embedding_scheduler()
                 .attach_app_handle(app.handle().clone());
             state.feed_sync.attach_event_sink(app.handle().clone());
+            state.feed_fulltext.attach_event_sink(app.handle().clone());
+            state.feed_fulltext.schedule();
             app.manage(state.clone());
             app.manage(commands::app_update::PendingAppUpdate::new(
                 iris_paths.cache_dir.join("updates"),
@@ -271,9 +273,15 @@ pub fn run() {
             commands::feed_commands::feed_source_update,
             commands::feed_commands::feed_source_remove,
             commands::feed_commands::feed_source_item_count,
+            commands::feed_commands::feed_library_summary,
+            commands::feed_commands::feed_trash_list,
+            commands::feed_commands::feed_trash_restore,
+            commands::feed_commands::feed_trash_clear,
+            commands::feed_commands::feed_library_optimize,
             commands::feed_commands::feed_item_list,
             commands::feed_commands::feed_item_get,
             commands::feed_commands::feed_item_set_state,
+            commands::feed_commands::feed_fulltext_enqueue_recent,
             commands::feed_commands::feed_items_mark_read,
             commands::feed_commands::feed_sync_source,
             commands::feed_commands::feed_sync_all,

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 use tokio::sync::watch;
 use tokio::time::{sleep, Duration};
 
@@ -53,6 +54,9 @@ impl Scheduler {
         // 订阅自动同步：启动 30 秒后先跑一轮（按 next_fetch_at 恢复重启前
         // 的到期源），之后每 15 分钟取最多 2 个到期源并发同步。
         let feed_sync = state.feed_sync.clone();
+        let feed_fulltext = state.feed_fulltext.clone();
+        let feed_db = state.db.clone();
+        let feed_wake = state.feed_sync_wake.clone();
         let mut shutdown_rx_feed = shutdown_rx.clone();
         tauri::async_runtime::spawn(async move {
             tokio::select! {
@@ -60,12 +64,69 @@ impl Scheduler {
                 _ = shutdown_rx_feed.changed() => return,
             }
             loop {
-                if let Err(error) = feed_sync.sync_due_batch().await {
-                    tracing::warn!(error_code = %error, "feed_sync_all failed");
+                let enabled = feed_db
+                    .with_read_conn(|conn| {
+                        let raw: Option<String> = conn
+                        .query_row(
+                            "SELECT value FROM settings WHERE key = 'feed_background_sync_enabled'",
+                            [],
+                            |row| row.get(0),
+                        )
+                        .optional()?;
+                        Ok(raw
+                            .and_then(|value| serde_json::from_str::<bool>(&value).ok())
+                            .unwrap_or(true))
+                    })
+                    .unwrap_or(true);
+                if enabled {
+                    if let Err(error) = feed_sync.sync_due_batch().await {
+                        tracing::warn!(error_code = %error, "feed_sync_all failed");
+                    }
+                    feed_fulltext.schedule();
                 }
                 tokio::select! {
                     _ = sleep(Duration::from_secs(15 * 60)) => {},
+                    _ = feed_wake.notified() => {},
                     _ = shutdown_rx_feed.changed() => return,
+                }
+            }
+        });
+
+        // RSS 保留维护与同步分离：过期条目先进入 RSS 专属回收站，30 天后
+        // 才物理清理；收藏不参与。绝不在后台 VACUUM，以免锁住正在阅读的库。
+        let feed_retention_db = state.db.clone();
+        let mut shutdown_rx_retention = shutdown_rx.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::select! {
+                _ = sleep(Duration::from_secs(45)) => {},
+                _ = shutdown_rx_retention.changed() => return,
+            }
+            loop {
+                let result = feed_retention_db.with_conn(|conn| {
+                    let soft_deleted =
+                        crate::feed::repository::FeedRepository::soft_delete_expired_items(
+                            conn,
+                            Utc::now(),
+                        )?;
+                    let purged = crate::feed::repository::FeedRepository::purge_deleted_items(
+                        conn,
+                        Utc::now(),
+                    )?;
+                    Ok((soft_deleted, purged))
+                });
+                if let Ok((soft_deleted, purged)) = result {
+                    if soft_deleted > 0 || purged > 0 {
+                        tracing::info!(soft_deleted, purged, "feed_retention_maintenance_complete");
+                    }
+                } else {
+                    tracing::warn!(
+                        result_code = "feed_retention_maintenance_failed",
+                        "feed_retention_maintenance_failed"
+                    );
+                }
+                tokio::select! {
+                    _ = sleep(Duration::from_secs(24 * 60 * 60)) => {},
+                    _ = shutdown_rx_retention.changed() => return,
                 }
             }
         });

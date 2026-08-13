@@ -2,6 +2,7 @@ pub mod cert_pinning;
 pub mod proxy_policy;
 pub mod proxy_status;
 pub mod safe_https;
+pub mod system_proxy;
 
 #[cfg(test)]
 mod safe_https_tests;

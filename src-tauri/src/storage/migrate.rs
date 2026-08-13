@@ -165,6 +165,11 @@ const MIGRATION_062_DOWN: &str =
     include_str!("../../migrations/062_remove_legacy_search_graph.down.sql");
 const MIGRATION_063_UP: &str = include_str!("../../migrations/063_feed_library.sql");
 const MIGRATION_063_DOWN: &str = include_str!("../../migrations/063_feed_library.down.sql");
+const MIGRATION_064_UP: &str = include_str!("../../migrations/064_feed_retention_fulltext.sql");
+const MIGRATION_064_DOWN: &str =
+    include_str!("../../migrations/064_feed_retention_fulltext.down.sql");
+const MIGRATION_065_UP: &str = include_str!("../../migrations/065_feed_fulltext_opt_in.sql");
+const MIGRATION_065_DOWN: &str = include_str!("../../migrations/065_feed_fulltext_opt_in.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -659,6 +664,8 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         false,
     )?;
     apply_migration(conn, "063_feed_library", MIGRATION_063_UP, false)?;
+    apply_migration(conn, "064_feed_retention_fulltext", MIGRATION_064_UP, false)?;
+    apply_migration(conn, "065_feed_fulltext_opt_in", MIGRATION_065_UP, false)?;
 
     Ok(())
 }
@@ -670,6 +677,8 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "065_feed_fulltext_opt_in", MIGRATION_065_DOWN);
+    rollback_migration(conn, "064_feed_retention_fulltext", MIGRATION_064_DOWN);
     rollback_migration(conn, "063_feed_library", MIGRATION_063_DOWN);
     rollback_migration(conn, "062_remove_legacy_search_graph", MIGRATION_062_DOWN);
     rollback_migration(conn, "061_sqlite_vec_v3", MIGRATION_061_DOWN);

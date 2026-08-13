@@ -73,6 +73,7 @@ pub(crate) struct NormalizedItem {
     pub source_payload_kind: SourcePayloadKind,
     pub content_hash: String,
     pub conversion_status: ConversionStatus,
+    pub is_summary_only: bool,
 }
 
 /// 解析并规范化订阅内容；`source_id` 仅用于稳定键回退（无 ID/链接时）。
@@ -163,6 +164,11 @@ fn normalize_item(entry: &feed_rs::model::Entry, source_id: &str) -> NormalizedI
         fallback_key(source_id, &title, entry.published)
     };
 
+    let is_summary_only = entry
+        .content
+        .as_ref()
+        .and_then(|content| content.body.as_deref())
+        .is_none_or(|body| body.trim().is_empty());
     let (payload, payload_kind) = select_payload(entry);
     let (summary_markdown, _) = to_markdown(
         entry
@@ -216,6 +222,7 @@ fn normalize_item(entry: &feed_rs::model::Entry, source_id: &str) -> NormalizedI
         } else {
             ConversionStatus::Ok
         },
+        is_summary_only,
     }
 }
 
@@ -289,9 +296,13 @@ fn to_markdown(payload: &str, kind: SourcePayloadKind) -> (String, bool) {
     }
 }
 
-fn html_to_markdown(html: &str) -> std::io::Result<String> {
+pub(crate) fn html_to_markdown(html: &str) -> std::io::Result<String> {
     htmd::HtmlToMarkdown::builder()
-        .skip_tags(vec!["script", "style", "iframe", "form", "svg", "math"])
+        // Feed 与网页正文共用这一层：语义外壳和交互节点不能混入可读正文。
+        .skip_tags(vec![
+            "script", "style", "iframe", "form", "svg", "math", "nav", "header", "footer", "aside",
+            "noscript", "template", "dialog",
+        ])
         .build()
         .convert(html)
 }
@@ -313,7 +324,7 @@ fn escape_plain_text(text: &str) -> String {
 
 /// 规范化 Markdown 链接与图片：相对链接只以文章 HTTPS URL 为基准；
 /// 不安全 URL（javascript:/data:/file:/asset:/mailto: 等）转纯文本。
-fn rewrite_links(markdown: &str, base: Option<&str>) -> String {
+pub(crate) fn rewrite_links(markdown: &str, base: Option<&str>) -> String {
     let link_re = regex::Regex::new(r"(?P<image>!?)\[(?P<text>[^\]]*)\]\((?P<url>[^)\s]*)\)")
         .expect("link regex");
     link_re
@@ -355,7 +366,7 @@ fn resolve_link_url(url: &str, base: Option<&str>) -> Option<String> {
 }
 
 /// content_text：从最终 Markdown 确定性去标记，不使用浏览器 DOM。
-fn markdown_to_text(markdown: &str) -> String {
+pub(crate) fn markdown_to_text(markdown: &str) -> String {
     let mut out = String::new();
     let mut in_code_fence = false;
     for raw_line in markdown.lines() {

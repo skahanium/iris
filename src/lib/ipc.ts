@@ -102,6 +102,12 @@ export interface SettingsMap {
   auto_version_idle_minutes: number;
   /** Follow OS system proxy / HTTP(S)_PROXY for HTTPS exits (updates, LLM, fetch). */
   follow_system_proxy: boolean;
+  /** 阅读文章后自动标记为已读。 */
+  feed_auto_read_enabled: boolean;
+  /** 是否运行 RSS 后台到期同步。 */
+  feed_background_sync_enabled: boolean;
+  /** 新增和 OPML 导入订阅源的默认同步间隔（分钟）。 */
+  feed_default_fetch_interval_minutes: number;
   /** Auto-convert ASCII punctuation to full-width CJK punctuation in CJK context. */
   cjk_punctuation_enabled: boolean;
 }
@@ -1262,6 +1268,8 @@ import type {
   FeedItemQuery,
   FeedItemStatePatch,
   FeedItemSummary,
+  FeedTrashItem,
+  FeedLibrarySummary,
   FeedSourceAddInput,
   FeedSourceSummary,
   FeedSourceUpdateInput,
@@ -1306,6 +1314,28 @@ export async function feedSourceItemCount(sourceId: string): Promise<number> {
   return invoke<number>("feed_source_item_count", { sourceId });
 }
 
+/** 订阅全局维护页的聚合统计。 */
+export async function feedLibrarySummary(): Promise<FeedLibrarySummary> {
+  return invoke<FeedLibrarySummary>("feed_library_summary");
+}
+
+export async function feedTrashList(): Promise<FeedTrashItem[]> {
+  return invoke<FeedTrashItem[]>("feed_trash_list");
+}
+
+export async function feedTrashRestore(itemId: string): Promise<void> {
+  return invoke("feed_trash_restore", { itemId });
+}
+
+export async function feedTrashClear(): Promise<number> {
+  return invoke<number>("feed_trash_clear");
+}
+
+/** 用户明确请求时收缩 RSS SQLite 空闲页；绝不由后台自动执行。 */
+export async function feedLibraryOptimize(): Promise<void> {
+  return invoke("feed_library_optimize");
+}
+
 export async function feedItemList(
   query: FeedItemQuery,
 ): Promise<FeedItemSummary[]> {
@@ -1321,6 +1351,14 @@ export async function feedItemSetState(
   patch: FeedItemStatePatch,
 ): Promise<void> {
   return invoke("feed_item_set_state", { itemId, patch });
+}
+
+/** 用户明确补全指定来源最近摘要；来源未启用正文补全时后端拒绝。 */
+export async function feedFulltextEnqueueRecent(
+  sourceId: string,
+  limit: number,
+): Promise<number> {
+  return invoke<number>("feed_fulltext_enqueue_recent", { sourceId, limit });
 }
 
 /** 基于冻结查询条件批量已读，返回影响行数。 */

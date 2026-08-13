@@ -261,18 +261,24 @@ impl FeedNetGate for TestNetGate {
         Self::validate_host(host)
     }
 
-    async fn resolve_public_addrs(&self, host: &str) -> AppResult<Vec<IpAddr>> {
-        if host == "127.0.0.1" {
-            return Ok(vec!["127.0.0.1".parse().expect("loopback")]);
+    fn resolve_public_addrs(
+        &self,
+        host: &str,
+    ) -> impl std::future::Future<Output = AppResult<Vec<IpAddr>>> + Send {
+        let host = host.to_string();
+        async move {
+            if host == "127.0.0.1" {
+                return Ok(vec!["127.0.0.1".parse().expect("loopback")]);
+            }
+            // 测试环境不解析真实 DNS；非 loopback 域名直接放行一个公网占位地址，
+            // 由 build_client 的 pinning 承担连接目标。
+            let fallback: IpAddr = if host.contains(':') {
+                "2606:2800:220:1:248:1893:25c8:1946".parse().expect("v6")
+            } else {
+                "93.184.216.34".parse().expect("v4")
+            };
+            Ok(vec![fallback])
         }
-        // 测试环境不解析真实 DNS；非 loopback 域名直接放行一个公网占位地址，
-        // 由 build_client 的 pinning 承担连接目标。
-        let fallback: IpAddr = if host.contains(':') {
-            "2606:2800:220:1:248:1893:25c8:1946".parse().expect("v6")
-        } else {
-            "93.184.216.34".parse().expect("v4")
-        };
-        Ok(vec![fallback])
     }
 
     fn build_client(

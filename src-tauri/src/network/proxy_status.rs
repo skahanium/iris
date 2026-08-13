@@ -39,6 +39,125 @@ pub fn detect_proxy_endpoint() -> Option<String> {
     detect_os_proxy_endpoint()
 }
 
+/// 供安全抓取读取的原始系统代理 URI；仅在系统设置可确定为 HTTP 时返回。
+/// UI 仍只使用 [`detect_proxy_endpoint`] 的脱敏展示值。
+pub(crate) fn detect_proxy_uri() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        detect_macos_proxy_uri()
+    }
+    #[cfg(windows)]
+    {
+        detect_windows_proxy_uri()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        None
+    }
+}
+
+/// 仅系统 PAC/自动发现存在、但没有可固定的显式代理端点时，安全抓取必须
+/// 失败而非悄悄直连。环境变量的显式代理优先级更高，由调用方先处理。
+pub(crate) fn system_proxy_requires_pac() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        return macos_pac_enabled();
+    }
+    #[cfg(windows)]
+    {
+        return windows_pac_enabled();
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        false
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_pac_enabled() -> bool {
+    use system_configuration::core_foundation::number::CFNumber;
+    use system_configuration::core_foundation::string::CFString;
+    use system_configuration::dynamic_store::SCDynamicStoreBuilder;
+
+    let Some(store) = SCDynamicStoreBuilder::new("iris-safe-proxy-pac").build() else {
+        return false;
+    };
+    let Some(proxies) = store.get_proxies() else {
+        return false;
+    };
+    let enabled = |key: &str| {
+        proxies
+            .find(CFString::new(key))
+            .and_then(|value| value.downcast::<CFNumber>())
+            .and_then(|value| value.to_i32())
+            .unwrap_or(0)
+            == 1
+    };
+    enabled("ProxyAutoConfigEnable") || enabled("ProxyAutoDiscoveryEnable")
+}
+
+#[cfg(windows)]
+fn windows_pac_enabled() -> bool {
+    let Ok(settings) = windows_registry::CURRENT_USER
+        .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+    else {
+        return false;
+    };
+    let auto_config = settings
+        .get_string("AutoConfigURL")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+    auto_config || settings.get_u32("AutoDetect").unwrap_or(0) != 0
+}
+
+#[cfg(target_os = "macos")]
+fn detect_macos_proxy_uri() -> Option<String> {
+    use system_configuration::core_foundation::base::CFType;
+    use system_configuration::core_foundation::dictionary::CFDictionary;
+    use system_configuration::core_foundation::string::CFString;
+    use system_configuration::dynamic_store::SCDynamicStoreBuilder;
+
+    let store = SCDynamicStoreBuilder::new("iris-safe-proxy").build()?;
+    let proxies: CFDictionary<CFString, CFType> = store.get_proxies()?;
+    for (scheme, enable_key, host_key, port_key) in [
+        ("http", "HTTPSEnable", "HTTPSProxy", "HTTPSPort"),
+        ("http", "HTTPEnable", "HTTPProxy", "HTTPPort"),
+        ("socks5", "SOCKSEnable", "SOCKSProxy", "SOCKSPort"),
+    ] {
+        if let Some(endpoint) = read_macos_proxy(&proxies, enable_key, host_key, port_key) {
+            return Some(format!("{scheme}://{endpoint}"));
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn detect_windows_proxy_uri() -> Option<String> {
+    let settings = windows_registry::CURRENT_USER
+        .open("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+        .ok()?;
+    if settings.get_u32("ProxyEnable").unwrap_or(0) == 0 {
+        return None;
+    }
+    let server = settings.get_string("ProxyServer").ok()?;
+    if !server.contains('=') {
+        return sanitize_proxy_display(&server).map(|endpoint| format!("http://{endpoint}"));
+    }
+    for wanted in ["https", "http", "socks"] {
+        for part in server.split(';') {
+            let Some((scheme, value)) = part.trim().split_once('=') else {
+                continue;
+            };
+            if scheme.eq_ignore_ascii_case(wanted) {
+                let uri_scheme = if wanted == "socks" { "socks5" } else { "http" };
+                return sanitize_proxy_display(value)
+                    .map(|endpoint| format!("{uri_scheme}://{endpoint}"));
+            }
+        }
+    }
+    None
+}
+
 /// Strip scheme / userinfo / path; keep `host:port` (never show credentials).
 pub(crate) fn sanitize_proxy_display(raw: &str) -> Option<String> {
     let trimmed = raw.trim();

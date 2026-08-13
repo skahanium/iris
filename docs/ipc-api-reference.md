@@ -82,9 +82,15 @@ Rust 侧契约见 `feed::model`。仅登记以下命令，全部通过仓储/ser
 | `feed_source_update`     | `sourceId`、`patch: FeedSourceUpdateInput`            | —                                                    |
 | `feed_source_remove`     | `sourceId`、`keepItems`                               | 删除的文章数（保留时为 0）                           |
 | `feed_source_item_count` | `sourceId`                                            | 来源下文章总数                                       |
+| `feed_library_summary`   | —                                                     | 订阅维护页的来源、文章、未读、失败及最近成功同步汇总 |
+| `feed_trash_list`        | —                                                     | RSS 专属回收站条目（最多 200）                       |
+| `feed_trash_restore`     | `itemId`                                              | —                                                    |
+| `feed_trash_clear`       | —                                                     | 物理删除的回收站条目数                               |
+| `feed_library_optimize`  | —                                                     | 显式 SQLite 空间优化                                 |
 | `feed_item_list`         | `query: FeedItemQuery`                                | `FeedItemSummary[]`（limit 1..=200）                 |
 | `feed_item_get`          | `itemId`                                              | `FeedItemDetail`                                     |
 | `feed_item_set_state`    | `itemId`、`patch: FeedItemStatePatch`（至少一个字段） | —                                                    |
+| `feed_fulltext_enqueue_recent` | `sourceId`、`limit`（1..=50）                  | 实际加入补全队列的条目数                             |
 | `feed_items_mark_read`   | `query: FeedItemQuery`（冻结筛选）                    | 影响行数                                             |
 | `feed_sync_source`       | `sourceId`、`markHistoryRead?`（仅首次同步生效）      | `FeedSyncOutcome`（等待完成）                        |
 | `feed_sync_all`          | —                                                     | `FeedSyncBatchOutcome`（全部启用源，并发最多 2）     |
@@ -108,5 +114,6 @@ Rust 侧契约见 `feed::model`。仅登记以下命令，全部通过仓储/ser
   ≤ 4096；`FeedItemQuery.search` 必须非空且有界；游标时间/行号与批量来源数量均校验；`feed_item_set_state` 空 patch 拒绝。`feed_sync_batch` 接受最多 10,000 个有界来源 ID，执行端仍固定并发最多 2。
 - **退订语义**：`keepItems=true` 保留文章并暂停（置 disabled）；`false`
   删除订阅及其文章（cascade + FTS 清理）。
+- **网页正文补全**：`feed_source_update.fulltextEnabled` 是来源级、默认关闭的开关；普通同步绝不自动抓取摘要网页。`feed_fulltext_enqueue_recent` 只在用户明确调用且来源已启用时处理本地最近保留项，不回溯 Feed 网络历史。
 - 发现的多候选必须由用户选择，不自动订阅全部；候选 URL 与请求同等
   校验（跨协议/私网拒绝）。

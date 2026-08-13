@@ -90,7 +90,6 @@ function ItemRow({
 export function FeedItemList({
   items,
   status,
-  errorCode,
   hasMore,
   selectedItemId,
   focusedItemId,
@@ -114,7 +113,7 @@ export function FeedItemList({
   const header = (
     <div className="flex h-10 shrink-0 items-center justify-between border-b border-border-subtle px-3">
       <span className="text-caption font-medium text-muted-foreground">
-        {status === "loading" ? "加载中…" : `${items.length} 条`}
+        {status === "loading" ? "加载中…" : `已显示 ${items.length} 篇`}
       </span>
       <button
         type="button"
@@ -158,7 +157,7 @@ export function FeedItemList({
           <TriangleAlert className="h-5 w-5 text-warning" aria-hidden="true" />
           <p className="text-ui text-muted-foreground">订阅内容加载失败</p>
           <p className="text-caption text-muted-foreground/70">
-            {errorCode ?? "未知错误"}（重试后仍失败请检查网络）
+            请检查网络或稍后重试。
           </p>
           <button
             type="button"
@@ -251,7 +250,7 @@ export function FeedItemList({
             className="block w-full px-3 py-2 text-center text-caption text-muted-foreground transition-colors duration-fast hover:bg-muted/40"
             onClick={onLoadMore}
           >
-            加载更多
+            继续显示已保存文章
           </button>
         ) : null}
       </div>

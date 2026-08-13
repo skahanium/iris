@@ -10,14 +10,14 @@ const removedDdg = ["duck", "duck", "go"].join("");
 const removedVendor = ["mini", "max"].join("");
 
 describe("management center contract", () => {
-  it("uses top tabs for four management sections without the old sidebar", () => {
+  it("uses top tabs for five management sections without the old sidebar", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
     const overlays = read("src/components/layout/AppOverlays.tsx");
     const app = read("src/App.impl.tsx");
 
     expect(center).toContain('data-testid="management-center"');
     expect(center).toContain('data-testid="management-center-tabs"');
-    expect(center).toContain("grid-cols-4");
+    expect(center).toContain("overflow-x-auto");
     expect(center).toContain("w-full");
     expect(center).not.toContain('data-testid="management-center-nav"');
     for (const id of [
@@ -25,6 +25,7 @@ describe("management center contract", () => {
       'id: "notes"',
       'id: "knowledge"',
       'id: "ai"',
+      'id: "feeds"',
     ]) {
       expect(center).toContain(id);
     }

@@ -8,11 +8,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpRight,
+  Archive,
+  ArchiveRestore,
   CheckCheck,
   ExternalLink,
   ImageOff,
   Loader2,
   Save,
+  Star,
   TriangleAlert,
 } from "lucide-react";
 
@@ -26,11 +29,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import {
-  handleFeedLinkClick,
-  renderFeedMarkdown,
-  setFeedAutoReadEnabled,
-} from "@/lib/feed-reader";
+import { handleFeedLinkClick, renderFeedMarkdown } from "@/lib/feed-reader";
 import {
   buildFeedNoteMarkdown,
   isValidFeedNoteFolder,
@@ -45,16 +44,19 @@ import type {
   FeedItemSummary,
 } from "@/types/ipc";
 
-import { isFeedAutoReadEnabled } from "@/lib/feed-reader";
-
 export interface FeedReaderProps {
   /** 当前工作区可见时才允许焦点和自动已读副作用。 */
   active?: boolean;
   detail: FeedItemDetail | null;
   status: "idle" | "loading" | "ready" | "error";
   errorCode: string | null;
+  autoReadEnabled: boolean;
+  onAutoReadEnabledChange: (enabled: boolean) => void;
   onRetry: () => void;
-  setItemState: (itemId: string, patch: FeedItemStatePatch) => void;
+  setItemState: (
+    itemId: string,
+    patch: FeedItemStatePatch,
+  ) => void | Promise<void>;
   /** 保存为笔记（App 层执行 fileCreate + 打开）；缺省时不显示入口。 */
   onSaveAsNote?: (
     markdown: string,
@@ -190,7 +192,8 @@ export function FeedReader({
   active = true,
   detail,
   status,
-  errorCode,
+  autoReadEnabled,
+  onAutoReadEnabledChange,
   onRetry,
   setItemState,
   onSaveAsNote,
@@ -200,7 +203,6 @@ export function FeedReader({
   const [remoteImagesAllowed, setRemoteImagesAllowed] = useState(false);
   const [saveNoteOpen, setSaveNoteOpen] = useState(false);
   const summary: FeedItemSummary | null = detail?.summary ?? null;
-  const [autoReadEnabled, setAutoReadEnabled] = useState(isFeedAutoReadEnabled);
 
   // 打开文章：焦点移到标题；正文可见 1 秒或发生阅读动作后延迟已读。
   useEffect(() => {
@@ -271,7 +273,18 @@ export function FeedReader({
     );
   }
 
-  if (status === "error" || !detail || !summary) {
+  if (status === "idle") {
+    return (
+      <div
+        data-testid="feed-reader"
+        className="flex h-full min-h-0 flex-1 items-center justify-center bg-background px-6 text-center text-caption text-muted-foreground"
+      >
+        选择一篇文章开始阅读
+      </div>
+    );
+  }
+
+  if (status === "error") {
     return (
       <div
         data-testid="feed-reader"
@@ -280,7 +293,7 @@ export function FeedReader({
         <TriangleAlert className="h-5 w-5 text-warning" aria-hidden="true" />
         <p className="text-ui text-muted-foreground">文章加载失败</p>
         <p className="text-caption text-muted-foreground/70">
-          {errorCode ?? "feed_item_not_found"}
+          无法读取这篇文章，请稍后重试。
         </p>
         <button
           type="button"
@@ -290,6 +303,18 @@ export function FeedReader({
         >
           重试
         </button>
+      </div>
+    );
+  }
+
+  // `ready` 必须同时持有详情；异常投影退回中性空态，绝不伪装成请求失败。
+  if (!detail || !summary) {
+    return (
+      <div
+        data-testid="feed-reader"
+        className="flex h-full min-h-0 flex-1 items-center justify-center bg-background px-6 text-center text-caption text-muted-foreground"
+      >
+        选择一篇文章开始阅读
       </div>
     );
   }
@@ -356,13 +381,40 @@ export function FeedReader({
           </button>
           <button
             type="button"
+            data-testid="feed-toggle-star"
+            aria-pressed={summary.isStarred}
+            className="iris-focus-soft inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-1 text-caption transition-colors duration-fast hover:bg-muted/60"
+            onClick={() =>
+              void setItemState(summary.id, { isStarred: !summary.isStarred })
+            }
+          >
+            <Star className="h-3.5 w-3.5" aria-hidden="true" />
+            {summary.isStarred ? "取消收藏" : "收藏"}
+          </button>
+          <button
+            type="button"
+            data-testid="feed-toggle-archive"
+            aria-pressed={summary.isArchived}
+            className="iris-focus-soft inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-1 text-caption transition-colors duration-fast hover:bg-muted/60"
+            onClick={() =>
+              void setItemState(summary.id, { isArchived: !summary.isArchived })
+            }
+          >
+            {summary.isArchived ? (
+              <ArchiveRestore className="h-3.5 w-3.5" aria-hidden="true" />
+            ) : (
+              <Archive className="h-3.5 w-3.5" aria-hidden="true" />
+            )}
+            {summary.isArchived ? "取消归档" : "归档"}
+          </button>
+          <button
+            type="button"
             data-testid="feed-toggle-auto-read"
             aria-pressed={autoReadEnabled}
             className="iris-focus-soft inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-1 text-caption transition-colors duration-fast hover:bg-muted/60"
             onClick={() => {
               const next = !autoReadEnabled;
-              setAutoReadEnabled(next);
-              setFeedAutoReadEnabled(next);
+              onAutoReadEnabledChange(next);
             }}
           >
             自动已读：{autoReadEnabled ? "开" : "关"}
@@ -379,6 +431,21 @@ export function FeedReader({
             </button>
           ) : null}
         </div>
+
+        {detail.fulltextStatus === "pending" ||
+        detail.fulltextStatus === "fetching" ? (
+          <p className="mt-3 text-caption text-muted-foreground">
+            正在获取网页正文；当前显示 Feed 摘要。
+          </p>
+        ) : null}
+        {detail.fulltextStatus === "failed" && detail.contentOrigin !== "web" ? (
+          <p className="mt-3 text-caption text-muted-foreground">
+            此订阅源仅提供摘要，可在浏览器中查看原文。
+          </p>
+        ) : null}
+        {detail.contentOrigin === "web" ? (
+          <p className="mt-3 text-caption text-muted-foreground">网页正文</p>
+        ) : null}
 
         {!remoteImagesAllowed && /feed-img-placeholder/.test(markdown) ? (
           <div className="mt-3 flex items-center gap-2 rounded-md border border-border-subtle bg-panel px-3 py-2 text-caption text-muted-foreground">

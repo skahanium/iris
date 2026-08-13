@@ -10,7 +10,9 @@ use rusqlite::Connection;
 
 use crate::error::{AppError, AppResult};
 use crate::feed::fetch::{FeedHttpClient, FeedNetGate, FetchPurpose};
-use crate::feed::model::{FeedItemInput, FeedSource, FeedSourceSyncState, UpsertSummary};
+use crate::feed::model::{
+    FeedItemInput, FeedSource, FeedSourceSyncState, FulltextStatus, UpsertSummary,
+};
 use crate::feed::normalize::{normalize_feed, FEED_CONVERSION_VERSION};
 use crate::feed::repository::FeedRepository;
 use crate::storage::db::Database;
@@ -29,11 +31,15 @@ pub(crate) enum HistoryReadPolicy {
     LeaveUnread,
 }
 
+/// 首次同步只保留最新历史，避免单个完整归档 Feed 无界占用本地空间。
+pub(crate) const INITIAL_HISTORY_LIMIT: usize = 50;
+
 /// 同步结果状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SyncStatus {
     Succeeded {
         new_items: usize,
+        skipped_history: usize,
     },
     NotModified,
     Skipped,
@@ -60,6 +66,7 @@ pub(crate) struct FeedSyncBatchOutcome {
     pub skipped: u32,
     pub in_flight: u32,
     pub new_items: u32,
+    pub skipped_history: u32,
 }
 
 /// 同步事件投影（IPC）：只含 sourceId、变更类型、计数与稳定错误码，
@@ -76,7 +83,7 @@ pub(crate) struct FeedChangedEvent {
 impl FeedChangedEvent {
     fn from_outcome(source_id: &str, status: &SyncStatus) -> Option<Self> {
         match status {
-            SyncStatus::Succeeded { new_items } => Some(Self {
+            SyncStatus::Succeeded { new_items, .. } => Some(Self {
                 source_id: source_id.to_string(),
                 kind: if *new_items > 0 {
                     "items_changed"
@@ -187,8 +194,14 @@ pub(crate) async fn sync_source<G: FeedNetGate>(
                 normalized.description.clone(),
                 normalized.language.clone(),
             );
-            let items: Vec<FeedItemInput> = normalized
-                .items
+            let all_items = normalized.items;
+            let is_first_sync =
+                db.with_read_conn(|conn| FeedRepository::count_items(conn, source_id))? == 0;
+            let skipped_history = is_first_sync
+                .then_some(all_items.len().saturating_sub(INITIAL_HISTORY_LIMIT))
+                .unwrap_or_default();
+            let retained = select_sync_items(&source, all_items, is_first_sync);
+            let items: Vec<FeedItemInput> = retained
                 .iter()
                 .map(|item| FeedItemInput {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -208,6 +221,15 @@ pub(crate) async fn sync_source<G: FeedNetGate>(
                     content_hash: item.content_hash.clone(),
                     conversion_version: FEED_CONVERSION_VERSION,
                     conversion_status: item.conversion_status,
+                    expires_at: rfc3339(now + ChronoDuration::days(7)),
+                    fulltext_status: if source.fulltext_enabled
+                        && item.is_summary_only
+                        && item.canonical_url.is_some()
+                    {
+                        FulltextStatus::Pending
+                    } else {
+                        FulltextStatus::NotRequested
+                    },
                 })
                 .collect();
             let state = success_state(&source, &result.etag, &result.last_modified, &now_str, now);
@@ -218,6 +240,7 @@ pub(crate) async fn sync_source<G: FeedNetGate>(
             Ok(SyncOutcome {
                 status: SyncStatus::Succeeded {
                     new_items: summary.inserted,
+                    skipped_history,
                 },
             })
         }
@@ -242,6 +265,48 @@ pub(crate) async fn sync_source<G: FeedNetGate>(
             })
         }
     }
+}
+
+/// 首次同步按发布时间降序只保留最近历史；后续同步完整处理当前 Feed，
+/// 因为唯一键会仅写入新增条目。无发布时间时保留 Feed 前序，符合 RSS 最新在前惯例。
+fn select_sync_items(
+    source: &FeedSource,
+    mut items: Vec<crate::feed::normalize::NormalizedItem>,
+    is_first_sync: bool,
+) -> Vec<crate::feed::normalize::NormalizedItem> {
+    if !is_first_sync {
+        if let Some(boundary) = source.history_boundary_published_at.as_deref() {
+            // 发布时间比 Feed 输出顺序更可靠：一些源会把新条目追加在末尾。
+            // 无时间的条目不能穿透已有历史边界，避免再次把未保留的归档回灌。
+            items.retain(|item| {
+                item.published_at
+                    .as_deref()
+                    .is_some_and(|published| published >= boundary)
+            });
+        } else if let Some(boundary_key) = source.history_boundary_external_key.as_deref() {
+            // 无发布时间时只能遵循 Feed 前序约定，在首次历史边界处截断。
+            if let Some(index) = items
+                .iter()
+                .position(|item| item.external_key == boundary_key)
+            {
+                items.truncate(index + 1);
+            }
+        }
+        return items;
+    }
+    if items.len() <= INITIAL_HISTORY_LIMIT {
+        return items;
+    }
+    items.sort_by(
+        |left, right| match (&left.published_at, &right.published_at) {
+            (Some(a), Some(b)) => b.cmp(a),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        },
+    );
+    items.truncate(INITIAL_HISTORY_LIMIT);
+    items
 }
 
 /// 成功/304 的同步状态：清零失败、记录成功时间、推进下次同步。
@@ -306,6 +371,17 @@ fn persist_success(
     // 首次同步在同一事务内判断：source 尚无 item。
     let first_sync = FeedRepository::count_items(&tx, &source.id)? == 0;
     let summary = FeedRepository::upsert_items(&tx, items)?;
+    if first_sync {
+        if let Some(boundary) = items.last() {
+            FeedRepository::set_history_boundary(
+                &tx,
+                &source.id,
+                &boundary.external_key,
+                boundary.published_at.as_deref(),
+                &state.last_checked_at,
+            )?;
+        }
+    }
     if first_sync && matches!(history, HistoryReadPolicy::MarkRead) {
         tx.execute(
             "UPDATE feed_items SET read_at = received_at
@@ -514,10 +590,15 @@ impl<G: FeedNetGate> FeedSyncService<G> {
             for outcome in outcomes {
                 match outcome {
                     Ok(SyncOutcome {
-                        status: SyncStatus::Succeeded { new_items },
+                        status:
+                            SyncStatus::Succeeded {
+                                new_items,
+                                skipped_history,
+                            },
                     }) => {
                         batch.succeeded += 1;
                         batch.new_items += new_items as u32;
+                        batch.skipped_history += skipped_history as u32;
                     }
                     Ok(SyncOutcome {
                         status: SyncStatus::NotModified,

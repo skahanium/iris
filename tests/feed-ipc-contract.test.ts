@@ -10,6 +10,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   feedDiscover,
+  feedFulltextEnqueueRecent,
   feedItemGet,
   feedItemList,
   feedItemsMarkRead,
@@ -20,6 +21,9 @@ import {
   feedSourceItemCount,
   feedSourceRemove,
   feedSourceUpdate,
+  feedTrashClear,
+  feedTrashList,
+  feedTrashRestore,
   feedSyncAll,
   feedSyncBatch,
   feedSyncSource,
@@ -45,9 +49,15 @@ const FEED_COMMANDS = [
   "feed_source_update",
   "feed_source_remove",
   "feed_source_item_count",
+  "feed_library_summary",
+  "feed_trash_list",
+  "feed_trash_restore",
+  "feed_trash_clear",
+  "feed_library_optimize",
   "feed_item_list",
   "feed_item_get",
   "feed_item_set_state",
+  "feed_fulltext_enqueue_recent",
   "feed_items_mark_read",
   "feed_sync_source",
   "feed_sync_all",
@@ -116,6 +126,7 @@ describe("feed IPC contract", () => {
       folderPath: "tech",
       isEnabled: true,
       fetchIntervalMinutes: 60,
+      fulltextEnabled: false,
       unreadCount: 0,
       lastCheckedAt: null,
       lastSuccessAt: null,
@@ -175,6 +186,23 @@ describe("feed IPC contract", () => {
     });
   });
 
+  it("keeps RSS recycle bin and bounded manual fulltext operations explicit", async () => {
+    invoke.mockResolvedValueOnce([]).mockResolvedValueOnce(undefined).mockResolvedValueOnce(3).mockResolvedValueOnce(20);
+
+    await expect(feedTrashList()).resolves.toEqual([]);
+    await expect(feedTrashRestore("item-1")).resolves.toBeUndefined();
+    await expect(feedTrashClear()).resolves.toBe(3);
+    await expect(feedFulltextEnqueueRecent("src-1", 20)).resolves.toBe(20);
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "feed_trash_list");
+    expect(invoke).toHaveBeenNthCalledWith(2, "feed_trash_restore", { itemId: "item-1" });
+    expect(invoke).toHaveBeenNthCalledWith(3, "feed_trash_clear");
+    expect(invoke).toHaveBeenNthCalledWith(4, "feed_fulltext_enqueue_recent", {
+      sourceId: "src-1",
+      limit: 20,
+    });
+  });
+
   it("feedItemList invokes with frozen query", async () => {
     invoke.mockResolvedValue([]);
     await feedItemList(FIXED_QUERY);
@@ -195,6 +223,7 @@ describe("feed IPC contract", () => {
         canonicalUrl: "https://example.com/a",
         publishedAt: null,
         receivedAt: "2026-08-01T08:00:00Z",
+        sortAt: "2026-08-01T08:00:00Z",
         excerpt: "…",
         isRead: false,
         isStarred: false,
@@ -204,6 +233,8 @@ describe("feed IPC contract", () => {
       contentMarkdown: "# T",
       summaryMarkdown: "",
       siteUrl: "https://example.com/site",
+      contentOrigin: "feed",
+      fulltextStatus: "not_requested",
     } satisfies FeedItemDetail);
     const detail = await feedItemGet("item-1");
     expect(invoke).toHaveBeenCalledWith("feed_item_get", { itemId: "item-1" });

@@ -9,6 +9,7 @@ pub mod repository;
 
 pub(crate) mod discovery;
 pub(crate) mod fetch;
+pub(crate) mod fulltext;
 pub(crate) mod normalize;
 pub(crate) mod sync;
 

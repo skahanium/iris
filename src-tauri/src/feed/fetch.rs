@@ -22,6 +22,9 @@ pub(crate) use crate::network::safe_https::SafeHttpsGate as FeedNetGate;
 pub(crate) const FEED_MAX_BYTES: usize = 5 * 1024 * 1024;
 /// 发现页响应体积上限（2 MiB）。
 pub(crate) const DISCOVERY_MAX_BYTES: usize = 2 * 1024 * 1024;
+/// 网页正文响应体积上限（1 MiB）。正文提取会建立 DOM，较 Feed 更严格以
+/// 控制峰值内存；超限时安全降级为 RSS 摘要。
+pub(crate) const ARTICLE_MAX_BYTES: usize = 1024 * 1024;
 /// 单跳请求总超时。
 pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 /// 重定向最大跳数。
@@ -35,6 +38,7 @@ const USER_AGENT: &str = concat!("Iris/", env!("CARGO_PKG_VERSION"), " RSS Reade
 pub(crate) enum FetchPurpose {
     Feed,
     Discovery,
+    Article,
 }
 
 impl FetchPurpose {
@@ -42,6 +46,7 @@ impl FetchPurpose {
         match self {
             Self::Feed => FEED_MAX_BYTES,
             Self::Discovery => DISCOVERY_MAX_BYTES,
+            Self::Article => ARTICLE_MAX_BYTES,
         }
     }
 }
@@ -98,6 +103,11 @@ impl FeedHttpClient {
         gate.validate_url(&current)
             .map_err(|_| AppError::msg("feed_url_rejected"))?;
         let mut visited: HashSet<String> = HashSet::new();
+        let initial_authority = reqwest::Url::parse(&current).ok().and_then(|parsed| {
+            parsed
+                .host_str()
+                .map(|host| (host.to_string(), parsed.port_or_known_default()))
+        });
         let started = Instant::now();
         let request_etag = etag.map(str::to_string);
         let request_last_modified = last_modified.map(str::to_string);
@@ -111,6 +121,84 @@ impl FeedHttpClient {
                 .resolve_public_addrs(&host)
                 .await
                 .map_err(|_| AppError::msg("feed_dns_failed"))?;
+            if gate.uses_fixed_proxy_transport() {
+                let mut conditional = Vec::new();
+                let same_authority = reqwest::Url::parse(&current).ok().and_then(|parsed| {
+                    parsed
+                        .host_str()
+                        .map(|host| (host.to_string(), parsed.port_or_known_default()))
+                }) == initial_authority;
+                if same_authority {
+                    if let Some(value) = &request_etag {
+                        conditional.push((IF_NONE_MATCH.as_str(), value.as_str()));
+                    }
+                    if let Some(value) = &request_last_modified {
+                        conditional.push((IF_MODIFIED_SINCE.as_str(), value.as_str()));
+                    }
+                }
+                let response = crate::network::safe_https::fixed_https_get(
+                    &current,
+                    &addrs,
+                    USER_AGENT,
+                    &conditional,
+                    max_bytes,
+                )
+                .await
+                .map_err(map_fixed_transport_error)?;
+                let status = response.status;
+                let content_type = response
+                    .headers
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string);
+                let response_etag = response
+                    .headers
+                    .get(reqwest::header::ETAG)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string);
+                let response_last_modified = response
+                    .headers
+                    .get(reqwest::header::LAST_MODIFIED)
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_string);
+                if status == 304 {
+                    return Ok(FeedFetchResult {
+                        status,
+                        final_url: current,
+                        content_type,
+                        etag: response_etag,
+                        last_modified: response_last_modified,
+                        bytes: Vec::new(),
+                    });
+                }
+                if (300..400).contains(&status) {
+                    let location = response
+                        .headers
+                        .get(LOCATION)
+                        .and_then(|v| v.to_str().ok())
+                        .ok_or_else(|| AppError::msg("feed_redirect_missing_location"))?;
+                    let next = reqwest::Url::parse(&current)
+                        .map_err(|_| AppError::msg("feed_url_invalid"))?
+                        .join(location)
+                        .map_err(|_| AppError::msg("feed_redirect_invalid_target"))?
+                        .to_string();
+                    gate.validate_url(&next)
+                        .map_err(|_| AppError::msg("feed_url_rejected"))?;
+                    current = next;
+                    continue;
+                }
+                if !(200..300).contains(&status) {
+                    return Err(AppError::msg(format!("feed_http_error_{status}")));
+                }
+                return Ok(FeedFetchResult {
+                    status,
+                    final_url: current,
+                    content_type,
+                    etag: response_etag,
+                    last_modified: response_last_modified,
+                    bytes: response.bytes,
+                });
+            }
             let client = gate
                 .build_client(&host, port, &addrs, gate.total_timeout(FETCH_TIMEOUT))
                 .map_err(|_| AppError::msg("feed_client_build_failed"))?;
@@ -239,6 +327,20 @@ impl FeedHttpClient {
             elapsed_ms = started.elapsed().as_millis() as u64,
             "feed_fetch_complete"
         );
+    }
+}
+
+fn map_fixed_transport_error(error: AppError) -> AppError {
+    match error.to_string().as_str() {
+        "https_proxy_unreachable" => AppError::msg("feed_proxy_unreachable"),
+        "https_proxy_unsupported" => AppError::msg("feed_proxy_unsupported"),
+        "https_proxy_auth_unsupported" => AppError::msg("feed_proxy_auth_unsupported"),
+        "https_proxy_connect_failed" => AppError::msg("feed_proxy_connect_failed"),
+        "https_response_headers_too_large" => AppError::msg("feed_response_headers_too_large"),
+        "https_response_too_large" => AppError::msg("feed_response_too_large"),
+        "https_stream_failed" => AppError::msg("feed_stream_error"),
+        "https_tls_failed" => AppError::msg("feed_fetch_failed"),
+        _ => AppError::msg("feed_fetch_failed"),
     }
 }
 

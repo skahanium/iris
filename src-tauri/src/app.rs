@@ -13,6 +13,8 @@ use crate::cas::write_guard::WriteGuard;
 use crate::embedding::scheduler::{recover_interrupted_generation, EmbeddingScheduler};
 use crate::error::{AppError, AppResult};
 use crate::feed::fetch::ProdNetGate;
+use crate::feed::fulltext::FeedFulltextService;
+use crate::feed::repository::FeedRepository;
 use crate::feed::sync::FeedSyncService;
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
@@ -308,6 +310,10 @@ pub struct AppState {
     pub document_open: DocumentOpenState,
     /// 订阅同步服务：自动/手动刷新共用同一入口与互斥标记。
     pub(crate) feed_sync: FeedSyncService<ProdNetGate>,
+    /// RSS 摘要正文的受限后台队列；复用同一 HTTPS/代理安全网门。
+    pub(crate) feed_fulltext: FeedFulltextService<ProdNetGate>,
+    /// 后台订阅同步设置变化时唤醒 Scheduler；正在执行的批次不被中断。
+    pub(crate) feed_sync_wake: Arc<tokio::sync::Notify>,
     vault: Mutex<Option<PathBuf>>,
     data_dir: PathBuf,
     pub watcher: Mutex<Option<FileWatcher>>,
@@ -347,14 +353,17 @@ impl AppState {
         let storage = StorageState::new(Arc::clone(&db), cas_key_override);
         let ai = AiRuntimeState::new(vector_ready);
 
-        let feed_sync =
-            FeedSyncService::new(Arc::clone(&db), Arc::new(crate::feed::fetch::ProdNetGate));
+        let feed_gate = Arc::new(crate::feed::fetch::ProdNetGate);
+        let feed_sync = FeedSyncService::new(Arc::clone(&db), feed_gate.clone());
+        let feed_fulltext = FeedFulltextService::new(Arc::clone(&db), feed_gate);
         let state = Arc::new(Self {
             db: Arc::clone(&storage.db),
             storage,
             ai,
             document_open: DocumentOpenState::new(),
             feed_sync,
+            feed_fulltext,
+            feed_sync_wake: Arc::new(tokio::sync::Notify::new()),
             vault: Mutex::new(None),
             data_dir,
             watcher: Mutex::new(None),
@@ -368,6 +377,9 @@ impl AppState {
                 "embedding recovery was unavailable"
             );
         }
+        let _ = state
+            .db
+            .with_conn(FeedRepository::recover_interrupted_fulltext);
 
         if let Err(e) = crate::llm::fetch_web_page::cleanup_expired_web_cache(&state.db) {
             tracing::warn!("failed to cleanup expired web cache: {e}");

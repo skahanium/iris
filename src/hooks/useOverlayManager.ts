@@ -11,7 +11,12 @@ export type OverlayId =
   | "recycleBin"
   | "documentRecovery";
 
-export type ManagementCenterSection = "overview" | "notes" | "knowledge" | "ai";
+export type ManagementCenterSection =
+  | "overview"
+  | "notes"
+  | "knowledge"
+  | "ai"
+  | "feeds";
 
 export type ManagementCenterDetail =
   | "quick-open"

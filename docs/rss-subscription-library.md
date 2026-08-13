@@ -9,7 +9,7 @@ Iris 应把 RSS 建成一个独立的「订阅资料库」，而不是把每篇�
 
 - 订阅源、文章、同步游标和阅读状态属于应用状态，保存在应用级 SQLite。
 - 文章正文以 Markdown 作为 Iris 内部的规范化阅读表示，同时保留仅后端可访问的原始源载荷与转换版本，以便修复转换器后重新生成。
-- 「收件箱」是 `未读且未归档` 的动态视图，不复制文章，也不新增收件箱表。
+- 「收件箱」是 `未归档` 的动态视图；已读只表示阅读状态，不自动移出收件箱。
 - RSS 阅读器首期不接入 Agent、RAG、联网搜索或通用 MCP；这些能力以后只能通过单独授权、单独索引和单独验收进入。
 - 用户明确执行「保存为笔记」时，才通过现有 `fileCreate` 写盘回执与 `openNote` 路径把一份可读 Markdown 副本写入当前 Vault。
 
@@ -40,21 +40,21 @@ Iris 应把 RSS 建成一个独立的「订阅资料库」，而不是把每篇�
 
 - Agent、RAG、Embedding、AI 摘要、AI 标签或自动写入笔记。
 - 微信客户端内搜索、公众号历史库抓取、绕过登录/反爬或版权限制。
-- 网页全文抓取、Readability、付费墙处理、浏览器扩展。
+- 付费墙处理、浏览器扩展、按站点维护的正文规则或任何绕过登录/反爬机制。
 - Podcast 播放、视频下载、附件离线缓存。
 - FreshRSS/Miniflux 双向同步、Google Reader/Fever API。
 - RSS MCP、任意第三方脚本或插件市场。
 - 多设备云同步、多人协作。
-- 自动清理旧文章；基础版不因保留期静默删除内容。
+- 自动绕过保留策略或把 RSS 回收站混入 Markdown 笔记回收站。
 
 微信公众号内容只有在上游能提供合法、稳定 Feed 时才能进入 Iris。RSS 基础设施提升的是订阅、沉淀与本地检索能力，不等价于获得微信全量搜索能力。
 
 ### 2.4 单人项目施工原则
 
-- 首轮只新增两个事实表、一个 Rust `feed` 模块和一组前端 Feed 组件。
+- 订阅业务事实仍只使用 `feed_sources`、`feed_items` 两张表；历史边界、保留期、回收站和正文状态均为其字段，不新增同步 job 或全文业务表。
 - 复用现有 Scheduler、HTTP/代理策略、SQLite、Markdown 渲染、虚拟列表和文档持久化链路。
-- 不建设 provider 框架、同步 job 表、遥测系统、插件接口或新的 UI 基础组件。
-- 只有解析和 HTML → Markdown 确实缺少现有 Rust 能力，因此最多新增 `feed-rs`、`htmd` 两个直接依赖。
+- 不建设 provider 框架、同步 job 表、遥测系统或插件接口；抽屉复用现有 Radix Dialog 依赖的共享 Sheet 原语。
+- RSS 解析与 HTML → Markdown 使用精确锁定的 `feed-rs`、`quick-xml`、`htmd`；安全固定目标传输复用锁文件中已有的 `hyper`、`tokio-rustls` 与平台证书验证链。OPML 文件选择与读写使用官方 Tauri dialog/fs 能力；这些依赖均须如实记录许可与用途，不能再表述为“只有两个新增依赖”。
 - 容量回归按个人资料库的 100 个订阅源、10,000 篇文章设计，不以企业级聚合服务为目标。
 
 ## 3. 信息架构
@@ -63,7 +63,7 @@ Iris 应把 RSS 建成一个独立的「订阅资料库」，而不是把每篇�
 
 ```text
 订阅
-├── 收件箱（未读且未归档）
+├── 收件箱（未归档；已读仍保留）
 ├── 今日（本地时区当天收到）
 ├── 全部
 ├── 收藏
@@ -114,6 +114,10 @@ CREATE TABLE feed_sources (
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     last_error_code TEXT,
     last_error_at TEXT,
+    history_boundary_external_key TEXT,
+    history_boundary_published_at TEXT,
+    fulltext_enabled INTEGER NOT NULL DEFAULT 0
+        CHECK (fulltext_enabled IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -148,13 +152,21 @@ CREATE TABLE feed_items (
     read_at TEXT,
     starred_at TEXT,
     archived_at TEXT,
+    expires_at TEXT,
+    deleted_at TEXT,
+    purge_after TEXT,
+    content_origin TEXT NOT NULL DEFAULT 'feed'
+        CHECK (content_origin IN ('feed', 'web')),
+    fulltext_status TEXT NOT NULL DEFAULT 'not_requested'
+        CHECK (fulltext_status IN ('not_requested', 'pending', 'fetching', 'ready', 'failed')),
+    fulltext_markdown TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (source_id, external_key)
 );
 ```
 
-`source_payload` 是经 Feed parser 清理、但尚未转换为 Markdown 的条目级载荷，不是完整 HTTP 响应的逐字节副本。它永不通过 IPC 返回前端，用于重转和问题诊断，不能进入日志、错误文本或遥测。SQLite 数据库继续沿用 Iris 应用数据目录的访问边界；首轮不另造专有文件容器。
+`source_payload` 是经 Feed parser 清理、但尚未转换为 Markdown 的条目级载荷，不是完整 HTTP 响应的逐字节副本。它永不通过 IPC 返回前端，用于重转和问题诊断，不能进入日志、错误文本或遥测。`fulltext_markdown` 仅在用户明确启用来源级正文补全后保存已提取的 Markdown；原始网页 HTML、Cookie、代理地址和底层网络错误不落盘。SQLite 数据库继续沿用 Iris 应用数据目录的访问边界；首轮不另造专有文件容器。
 
 ### 5.3 `feed_items_fts`
 
@@ -197,7 +209,13 @@ CREATE TABLE feed_items (
 Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评估：
 
 - [`feed-rs`](https://docs.rs/crate/feed-rs/latest) 支持 RSS、Atom 与 JSON Feed，MIT；启用其 `sanitize` feature。
+- [`quick-xml`](https://docs.rs/crate/quick-xml/latest) 精确锁定 `0.41.x`，用于有界 OPML 属性解析，MIT；避免手写 XML 扫描。
 - [`htmd`](https://docs.rs/crate/htmd/latest) 负责 HTML → Markdown，Apache-2.0。
+- [`hyper`](https://docs.rs/crate/hyper/latest)、`tokio-rustls` 与平台证书验证链只用于安全 HTTPS GET：在 HTTP/1 解析阶段限制响应头，并把经 DNS 校验的 IP 固定写入直连、HTTP CONNECT 或 SOCKS5 隧道；均为 MIT 或 Apache-2.0 兼容许可。Tauri 官方 `dialog`/`fs` 插件仅用于用户显式选择的 OPML 文本文件。
+
+网页正文补全与 Feed 同用 Iris 唯一的“使用系统代理”设置。安全传输仅支持无认证 HTTP CONNECT 与 SOCKS5，并把本地校验后的 IP 写入隧道目标；PAC/自动发现、HTTPS-to-proxy 与认证代理返回稳定失败码，绝不静默直连或把域名交给代理解析。
+
+网页正文补全不是针对任何站点的爬虫规则，也不是 RSS 的默认行为。只有用户在单个来源的设置中显式开启后，Iris 才会对**后续**仅含摘要且仍在保留期内的条目，使用同一条安全 HTTPS 管道请求文章链接；静态 HTML 按通用语义容器（`article`、`main` 等）抽取并转为 Markdown。默认不抓取历史，用户可另行限定为最近 20 篇；最多两个任务并发、同站点至少间隔 2 秒、文章响应上限 1 MiB、提取后的 Markdown 上限 768 KiB。不会执行 JavaScript、绕过登录/付费墙或保存原始 HTML；失败时始终保留 Feed 摘要和原文链接。
 
 前端不使用 TipTap 编辑订阅正文；复用只读 Markdown 渲染与现有 `marked`、DOMPurify 能力。这样正文可读、可复制、可搜索，同时不把外部文章伪装成用户笔记。
 
@@ -214,6 +232,12 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 ### 6.4 重转策略
 
 `conversion_version` 是代码常量。基础版只记录版本，不提前实现后台重转器。将来确实修改转换规则时再新增有界重转 migration/任务，并保持 `read_at`、`starred_at`、`archived_at`、`received_at` 和稳定 `id` 不变。
+
+### 6.5 可选网页正文补全
+
+普通订阅默认只保存 Feed 提供的正文或摘要。用户可在单个来源设置中显式启用“网页正文补全”；此时仅后续新增的摘要型条目才进入有界队列。历史内容不会自动批量抓取，用户可明确补全最近 20 篇（最多 50 篇）仍保留的摘要条目。
+
+补全器不含站点白名单或域名特例，使用通用语义容器与正文密度规则提取静态 HTML；动态页面、登录页、付费墙、非 HTML 或提取失败时保留 Feed 摘要和原文链接。每项复用安全 HTTPS、唯一系统代理、逐跳 DNS pinning 与固定 IP CONNECT/SOCKS5；响应体最多 1 MiB、转换 Markdown 最多 768 KiB、同一时间最多两项、同站请求至少相隔两秒。只保存有界 Markdown 与用于 FTS 的纯文本，绝不保存网页 HTML、Cookie 或代理信息。
 
 ## 7. 同步与去重
 
@@ -250,7 +274,7 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 - 上游删除条目不自动删除本地副本。
 - 退订时必须选择「保留已下载文章并暂停」或「删除订阅及其文章」。
 - 删除是破坏性动作，需要显示文章数量并二次确认。
-- 基础版不自动按天数清理；未来保留策略必须另建规范和迁移。
+- 未归档文章保留 7 天，归档文章保留 30 天，收藏文章永久保留；到期后先移入 RSS 专属回收站，30 天后物理清理。此规则不影响 Markdown 笔记回收站。
 
 ## 8. 阅读状态与收件箱
 
@@ -264,7 +288,7 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 
 ```sql
 -- 收件箱
-WHERE read_at IS NULL AND archived_at IS NULL
+WHERE archived_at IS NULL
 
 -- 收藏
 WHERE starred_at IS NOT NULL
@@ -306,6 +330,8 @@ WHERE archived_at IS NOT NULL
 | `800–1023px`  | 单平面列表/阅读切换；返回键和面包屑明确                              |
 
 最小支持窗口沿用 Tauri 的 `800 × 600`。正文宽度复用 `--prose-measure`，列表使用虚拟化；不因长标题撑破布局。
+
+来源抽屉从统一标题栏下方开始，不能覆盖 macOS traffic lights。`1024–1365px` 由抽屉外框提供唯一右边界；`800–1023px` 抽屉占满可用工作区且无右侧空白轨。抽屉内 `FeedSidebar` 必须占满容器、移除自身右边框，关闭按钮与“添加订阅”并列在既有“订阅”顶栏，禁止重复标题行。
 
 ### 10.3 组件边界
 
@@ -364,7 +390,9 @@ src/components/feed/
 
 同步事件只投影 `sourceId`、变更类型、计数和稳定错误码，用于通知前端重新查询；不建设 job 恢复协议。所有 IPC 同步更新 Rust command、`src/types/ipc.ts`、`src/lib/ipc.ts`、事件类型、测试与 `docs/ipc-api-reference.md`。
 
-Feed 与 AI 网页安全抓取使用直连的 DNS-pinned HTTPS client，不继承系统代理。原因是 HTTP(S) 代理可能在代理端重新解析 CONNECT 主机名，使本地“全部 DNS 地址为公网”的结论失效；代理环境中的抓取应可解释失败，不能降级绕过 SSRF 边界。
+Feed 与 AI 网页安全抓取复用唯一的「使用系统代理」设置。每跳先在本地解析并拒绝任一私网地址，再将 HTTP CONNECT authority 或 SOCKS5 地址类型固定为已验证 IP；TLS SNI、证书校验和 HTTP Host 保持原域名。关闭全局代理时安全直连；PAC、HTTPS-to-proxy、认证代理、不可达代理均稳定失败，绝不静默回退直连。
+
+管理中心的一级「订阅」页只承载全局策略（自动已读、后台同步、后续新源默认间隔）和资料库维护摘要/全量同步/OPML 入口；单源标题、分组、暂停与退订始终留在订阅工作区，避免两套来源管理。
 
 ## 13. 可选外部设施与 MCP 决策
 

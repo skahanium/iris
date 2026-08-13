@@ -11,11 +11,13 @@ import { FeedItemList } from "@/components/feed/FeedItemList";
 import { FeedOpmlDialog } from "@/components/feed/FeedOpmlDialog";
 import { FeedReader } from "@/components/feed/FeedReader";
 import { FeedSidebar } from "@/components/feed/FeedSidebar";
+import { Sheet, SheetClose, SheetContent } from "@/components/ui/sheet";
 import {
   FeedSourceDialog,
   type FeedSourceDialogMode,
 } from "@/components/feed/FeedSourceDialog";
 import { useFeedLibrary } from "@/hooks/useFeedLibrary";
+import { useFeedSettings } from "@/hooks/useFeedSettings";
 import { feedItemGet, feedSyncAll, feedSyncSource } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { FeedItemDetail, FeedSourceSummary, FeedView } from "@/types/ipc";
@@ -142,6 +144,7 @@ export function FeedWorkspace({
   onSaveAsNote,
 }: FeedWorkspaceProps) {
   const library = useFeedLibrary();
+  const feedSettings = useFeedSettings();
   const [workspaceElement, setWorkspaceElement] =
     useState<HTMLDivElement | null>(null);
   const breakpoint = useFeedBreakpoints(workspaceElement);
@@ -154,6 +157,7 @@ export function FeedWorkspace({
   const [detailError, setDetailError] = useState<string | null>(null);
   const listContainerRef = useRef<HTMLDivElement>(null);
   const detailSequenceRef = useRef(0);
+  const detailRef = useRef<FeedItemDetail | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogMode, setDialogMode] = useState<FeedSourceDialogMode>("add");
   const [dialogSource, setDialogSource] = useState<FeedSourceSummary | null>(
@@ -166,6 +170,10 @@ export function FeedWorkspace({
   const [syncAnnouncement, setSyncAnnouncement] = useState("");
 
   useEffect(() => {
+    detailRef.current = detail;
+  }, [detail]);
+
+  useEffect(() => {
     if (library.items.length === 0) {
       setFocusedItemId(null);
       return;
@@ -174,6 +182,16 @@ export function FeedWorkspace({
       setFocusedItemId(library.items[0]?.id ?? null);
     }
   }, [focusedItemId, library.items]);
+
+  useEffect(() => {
+    if (
+      library.selectedItemId &&
+      library.status === "ready" &&
+      !library.items.some((item) => item.id === library.selectedItemId)
+    ) {
+      library.selectItem(null);
+    }
+  }, [library]);
 
   // 选中文章 → 加载详情（迟到响应丢弃）。
   useEffect(() => {
@@ -201,6 +219,17 @@ export function FeedWorkspace({
         );
       });
   }, [detailRequestEpoch, library.selectedItemId]);
+
+  // 后台全文完成只会刷新当前资料库查询；选中的详情需无感重取一次，才能
+  // 将摘要替换为网页正文。列表变更不触碰未选中文章。
+  useEffect(() => {
+    const currentDetail = detailRef.current;
+    if (!library.selectedItemId || !currentDetail) return;
+    if (currentDetail.summary.id !== library.selectedItemId) return;
+    if (library.items.some((item) => item.id === library.selectedItemId)) {
+      setDetailRequestEpoch((epoch) => epoch + 1);
+    }
+  }, [library.items, library.selectedItemId]);
 
   const handleSelectItem = useCallback(
     (itemId: string) => {
@@ -237,12 +266,12 @@ export function FeedWorkspace({
         setSyncAnnouncement(
           outcome.status === "failed"
             ? `同步失败：${outcome.errorCode ?? "feed_sync_failed"}`
-            : `同步完成，新增 ${outcome.newItems} 篇文章。`,
+            : `同步完成，新增 ${outcome.newItems} 篇文章。${outcome.skippedHistory > 0 ? ` 已略过 ${outcome.skippedHistory} 篇较早历史。` : ""}`,
         );
       } else {
         const outcome = await feedSyncAll();
         setSyncAnnouncement(
-          `同步完成：成功 ${outcome.succeeded}，失败 ${outcome.failed}，新增 ${outcome.newItems} 篇。`,
+          `同步完成：成功 ${outcome.succeeded}，失败 ${outcome.failed}，新增 ${outcome.newItems} 篇。${outcome.skippedHistory > 0 ? ` 已略过 ${outcome.skippedHistory} 篇较早历史。` : ""}`,
         );
       }
       library.refresh();
@@ -354,6 +383,32 @@ export function FeedWorkspace({
     />
   );
 
+  const drawerSidebarNode = (
+    <FeedSidebar
+      className="w-full border-r-0"
+      headerActions={
+        <SheetClose
+          data-testid="feed-drawer-close"
+          aria-label="关闭来源抽屉"
+          className="iris-focus-soft inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </SheetClose>
+      }
+      sources={library.sources}
+      view={library.view}
+      sourceId={library.sourceId}
+      onViewChange={(view: FeedView) => library.setView(view)}
+      onSourceSelect={library.setSourceId}
+      onClearSource={() => library.setSourceId(null)}
+      onAddSource={openAddDialog}
+      onRetrySource={(sourceId) => {
+        void feedSyncSource(sourceId, true).then(() => library.refresh());
+      }}
+      onOpenOpml={() => setOpmlOpen(true)}
+    />
+  );
+
   const listNode = (
     <FeedItemList
       items={library.items}
@@ -397,8 +452,12 @@ export function FeedWorkspace({
       status={detailStatus}
       errorCode={detailError}
       active={active}
+      autoReadEnabled={feedSettings.autoReadEnabled}
+      onAutoReadEnabledChange={feedSettings.setAutoReadEnabled}
       onRetry={() => setDetailRequestEpoch((epoch) => epoch + 1)}
-      setItemState={(itemId, patch) => {
+      setItemState={async (itemId, patch) => {
+        const succeeded = await library.setItemState(itemId, patch);
+        if (!succeeded) return;
         setDetail((current) =>
           current?.summary.id === itemId
             ? {
@@ -412,15 +471,71 @@ export function FeedWorkspace({
               }
             : current,
         );
-        void library.setItemState(itemId, patch).then((succeeded) => {
-          if (!succeeded) {
-            setDetailRequestEpoch((epoch) => epoch + 1);
-          }
-        });
       }}
       onSaveAsNote={onSaveAsNote}
     />
   );
+
+  const isEmptyLibrary =
+    library.sourcesStatus === "ready" && library.sources.length === 0;
+
+  if (isEmptyLibrary) {
+    return (
+      <div
+        ref={setWorkspaceElement}
+        data-testid="feed-workspace"
+        className="flex h-full min-h-0 flex-1 items-center justify-center bg-background px-6"
+      >
+        <section
+          data-testid="feed-library-onboarding"
+          className="flex max-w-sm flex-col items-center text-center"
+          aria-labelledby="feed-library-onboarding-title"
+        >
+          <h1
+            id="feed-library-onboarding-title"
+            className="text-lg font-semibold text-foreground"
+          >
+            还没有订阅
+          </h1>
+          <p className="mt-2 text-ui text-muted-foreground">
+            添加一个订阅源，或从 OPML 文件迁移已有订阅。
+          </p>
+          <div className="mt-5 flex flex-wrap justify-center gap-2">
+            <button
+              type="button"
+              data-testid="feed-onboarding-add"
+              className="iris-focus-soft inline-flex h-8 items-center rounded-md bg-primary px-3 text-caption font-medium text-primary-foreground"
+              onClick={openAddDialog}
+            >
+              添加订阅
+            </button>
+            <button
+              type="button"
+              data-testid="feed-onboarding-opml"
+              className="iris-focus-soft inline-flex h-8 items-center rounded-md border border-border-subtle px-3 text-caption text-foreground hover:bg-muted/60"
+              onClick={() => setOpmlOpen(true)}
+            >
+              导入 OPML
+            </button>
+          </div>
+        </section>
+        <FeedSourceDialog
+          open={dialogOpen}
+          mode={dialogMode}
+          source={dialogSource}
+          onOpenChange={setDialogOpen}
+          onSourcesChanged={library.refresh}
+          defaultFetchIntervalMinutes={feedSettings.defaultFetchIntervalMinutes}
+        />
+        <FeedOpmlDialog
+          open={opmlOpen}
+          onOpenChange={setOpmlOpen}
+          onSourcesChanged={library.refresh}
+          hasSources={false}
+        />
+      </div>
+    );
+  }
 
   if (breakpoint === "narrow") {
     return (
@@ -497,23 +612,16 @@ export function FeedWorkspace({
         <div className="flex min-h-0 flex-1">
           {narrowPlane === "reader" ? readerNode : listNode}
         </div>
-        {sidebarOpen ? (
-          <div
+        <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+          <SheetContent
+            topInset="titlebar"
             data-testid="feed-drawer"
-            className="absolute inset-y-0 left-0 z-20 flex shadow-overlay"
+            aria-label="来源与视图"
+            className="w-full border-r-0"
           >
-            {sidebarNode}
-            <button
-              type="button"
-              data-testid="feed-drawer-close"
-              aria-label="关闭来源抽屉"
-              className="flex w-8 items-center justify-center border-r border-border-subtle bg-panel text-muted-foreground"
-              onClick={() => setSidebarOpen(false)}
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </div>
-        ) : null}
+            {drawerSidebarNode}
+          </SheetContent>
+        </Sheet>
         <div role="status" aria-live="polite" className="sr-only">
           {syncAnnouncement}
         </div>
@@ -523,11 +631,13 @@ export function FeedWorkspace({
           source={dialogSource}
           onOpenChange={setDialogOpen}
           onSourcesChanged={library.refresh}
+          defaultFetchIntervalMinutes={feedSettings.defaultFetchIntervalMinutes}
         />
         <FeedOpmlDialog
           open={opmlOpen}
           onOpenChange={setOpmlOpen}
           onSourcesChanged={library.refresh}
+          hasSources={library.sources.length > 0}
         />
       </div>
     );
@@ -591,6 +701,52 @@ export function FeedWorkspace({
         <>
           <div className="flex min-w-0 flex-1">
             <div className="flex w-80 shrink-0 flex-col border-r border-border-subtle">
+              <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border-subtle px-2">
+                <button
+                  type="button"
+                  data-testid="feed-open-drawer"
+                  aria-label="打开来源抽屉"
+                  className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
+                  onClick={() => setSidebarOpen(true)}
+                >
+                  <Menu className="h-4 w-4" aria-hidden="true" />
+                </button>
+                <span className="min-w-0 flex-1 truncate text-caption font-medium text-muted-foreground">
+                  {selectedSource?.title ?? "订阅"}
+                </span>
+                <div className="flex items-center gap-1">
+                  {syncButton}
+                  {selectedSource ? (
+                    <button
+                      type="button"
+                      data-testid="feed-edit-source"
+                      aria-label="编辑当前订阅源"
+                      className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
+                      onClick={() => openEditDialog(selectedSource)}
+                    >
+                      <Pencil className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    data-testid="feed-add-source"
+                    aria-label="添加订阅源"
+                    className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
+                    onClick={openAddDialog}
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="feed-open-opml"
+                    aria-label="导入或导出 OPML"
+                    className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
+                    onClick={() => setOpmlOpen(true)}
+                  >
+                    <Upload className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
               <FeedSearchBox
                 value={library.search}
                 onChange={library.setSearch}
@@ -601,46 +757,15 @@ export function FeedWorkspace({
               {readerNode}
             </div>
           </div>
-          {sidebarOpen ? (
-            <div
+          <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+            <SheetContent
+              topInset="titlebar"
               data-testid="feed-drawer"
-              className="absolute inset-y-0 left-0 z-20 flex shadow-overlay"
+              aria-label="来源与视图"
             >
-              {sidebarNode}
-              <button
-                type="button"
-                data-testid="feed-drawer-close"
-                aria-label="关闭来源抽屉"
-                className="flex w-8 items-center justify-center border-r border-border-subtle bg-panel text-muted-foreground hover:text-foreground"
-                onClick={() => setSidebarOpen(false)}
-              >
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-          ) : null}
-          <button
-            type="button"
-            data-testid="feed-open-drawer"
-            aria-label="打开来源抽屉"
-            className={cn(
-              "absolute left-2 top-12 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md bg-panel text-muted-foreground shadow-overlay hover:text-foreground",
-              sidebarOpen && "hidden",
-            )}
-            onClick={() => setSidebarOpen(true)}
-          >
-            <Menu className="h-4 w-4" aria-hidden="true" />
-          </button>
-          {selectedSource ? (
-            <button
-              type="button"
-              data-testid="feed-edit-source"
-              aria-label="编辑当前订阅源"
-              className="absolute left-11 top-12 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md bg-panel text-muted-foreground shadow-overlay hover:text-foreground"
-              onClick={() => openEditDialog(selectedSource)}
-            >
-              <Pencil className="h-4 w-4" aria-hidden="true" />
-            </button>
-          ) : null}
+              {drawerSidebarNode}
+            </SheetContent>
+          </Sheet>
         </>
       )}
       <FeedSourceDialog
@@ -649,11 +774,13 @@ export function FeedWorkspace({
         source={dialogSource}
         onOpenChange={setDialogOpen}
         onSourcesChanged={library.refresh}
+        defaultFetchIntervalMinutes={feedSettings.defaultFetchIntervalMinutes}
       />
       <FeedOpmlDialog
         open={opmlOpen}
         onOpenChange={setOpmlOpen}
         onSourcesChanged={library.refresh}
+        hasSources={library.sources.length > 0}
       />
       <div role="status" aria-live="polite" className="sr-only">
         {syncAnnouncement}

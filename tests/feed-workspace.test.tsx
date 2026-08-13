@@ -56,6 +56,7 @@ function source(overrides: Partial<FeedSourceSummary> = {}): FeedSourceSummary {
     folderPath: "",
     isEnabled: true,
     fetchIntervalMinutes: 60,
+    fulltextEnabled: false,
     unreadCount: 2,
     lastCheckedAt: null,
     lastSuccessAt: null,
@@ -80,6 +81,7 @@ function item(
     canonicalUrl: "https://example.com/article",
     publishedAt: "2026-08-01T08:00:00Z",
     receivedAt: "2026-08-01T08:00:00Z",
+    sortAt: "2026-08-01T08:00:00Z",
     excerpt: "excerpt",
     isRead: false,
     isStarred: false,
@@ -95,6 +97,8 @@ function detailOf(summary: FeedItemSummary): FeedItemDetail {
     contentMarkdown: `# ${summary.title}\n\n正文内容。`,
     summaryMarkdown: summary.excerpt,
     siteUrl: "https://example.com/site",
+    contentOrigin: "feed",
+    fulltextStatus: "not_requested",
   };
 }
 
@@ -196,6 +200,19 @@ async function openSidebar() {
 }
 
 describe("FeedWorkspace", () => {
+  it("零订阅时显示整区引导，不请求详情也不误报文章失败", async () => {
+    feedSourceList.mockResolvedValue([]);
+    feedItemList.mockResolvedValue([]);
+
+    await renderWorkspace();
+
+    expect(screen.getByTestId("feed-library-onboarding")).toBeTruthy();
+    expect(screen.getByText("还没有订阅")).toBeTruthy();
+    expect(screen.queryByTestId("feed-list")).toBeNull();
+    expect(screen.queryByText("文章加载失败")).toBeNull();
+    expect(feedItemGet).not.toHaveBeenCalled();
+  });
+
   it("renders the five article views and switches queries", async () => {
     await renderWorkspace();
     await openSidebar();
@@ -281,7 +298,7 @@ describe("FeedWorkspace", () => {
     await waitFor(() =>
       expect(screen.getByTestId("feed-list-error")).toBeTruthy(),
     );
-    expect(screen.getByTestId("feed-list-error").textContent).toContain(
+    expect(screen.getByTestId("feed-list-error").textContent).not.toContain(
       "database",
     );
     act(() => fireEvent.click(screen.getByTestId("feed-list-retry")));
@@ -330,14 +347,16 @@ describe("FeedWorkspace", () => {
     localStorage.removeItem("iris-feed-auto-read");
   });
 
-  it("offers an explicit persisted auto-read toggle", async () => {
+  it("offers an explicit settings-backed auto-read toggle", async () => {
     await renderWorkspace();
     act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
     await waitFor(() => screen.getByTestId("feed-toggle-auto-read"));
     const toggle = screen.getByTestId("feed-toggle-auto-read");
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
     act(() => fireEvent.click(toggle));
-    expect(localStorage.getItem("iris-feed-auto-read")).toBe("false");
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    // 浏览器测试环境没有 Tauri settings IPC；不得重新写入旧 localStorage 键。
+    expect(localStorage.getItem("iris-feed-auto-read")).toBeNull();
     localStorage.removeItem("iris-feed-auto-read");
   });
 
@@ -571,7 +590,19 @@ describe("FeedWorkspace", () => {
     expect(screen.getByTestId("feed-open-drawer")).toBeTruthy();
     act(() => fireEvent.click(screen.getByTestId("feed-open-drawer")));
     await flush();
-    expect(screen.getByTestId("feed-drawer")).toBeTruthy();
+    const drawer = screen.getByTestId("feed-drawer");
+    expect(drawer.className).toContain("top-[var(--titlebar-height)]");
+    expect(drawer.className).toContain("border-r");
+    expect(screen.getByTestId("feed-sidebar").className).toContain(
+      "border-r-0",
+    );
+    const drawerHeader = screen.getByTestId("feed-sidebar-header");
+    expect(drawerHeader).toContainElement(
+      screen.getByTestId("feed-drawer-close"),
+    );
+    expect(
+      drawerHeader.querySelector('[data-testid="feed-add-source"]'),
+    ).not.toBeNull();
     act(() => fireEvent.click(screen.getByTestId("feed-drawer-close")));
     await flush();
     expect(screen.queryByTestId("feed-drawer")).toBeNull();
@@ -583,6 +614,20 @@ describe("FeedWorkspace", () => {
     await flush();
     expect(screen.getByTestId("feed-toggle-sidebar")).toBeTruthy();
     expect(screen.queryByTestId("feed-drawer")).toBeNull();
+  });
+
+  it("uses a full-width borderless source drawer below 1024px", async () => {
+    setWidth(900);
+    await renderWorkspace();
+    act(() => fireEvent.click(screen.getByTestId("feed-open-drawer")));
+    await flush();
+
+    const drawer = screen.getByTestId("feed-drawer");
+    expect(drawer.className).toContain("w-full");
+    expect(drawer.className).toContain("border-r-0");
+    const sidebar = screen.getByTestId("feed-sidebar");
+    expect(sidebar.className).toContain("w-full");
+    expect(sidebar.className).toContain("border-r-0");
   });
 
   it("shows degraded conversion notice and external open action", async () => {

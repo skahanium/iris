@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 
 use super::sync::{sync_source, HistoryReadPolicy, SyncMode, SyncStatus};
 use super::test_http::{TestNetGate, TestResponse, TestServer};
@@ -128,7 +128,7 @@ async fn first_sync_marks_history_read_by_default() {
     )
     .await;
     match status {
-        SyncStatus::Succeeded { new_items } => assert_eq!(new_items, 3),
+        SyncStatus::Succeeded { new_items, .. } => assert_eq!(new_items, 3),
         other => panic!("expected success, got {other:?}"),
     }
 
@@ -147,6 +147,36 @@ async fn first_sync_marks_history_read_by_default() {
         Some(received.as_str()),
         "历史已读必须 read_at=received_at"
     );
+}
+
+#[tokio::test]
+async fn summary_only_feed_does_not_queue_web_fulltext_unless_source_opted_in() {
+    let db = create_db();
+    let server = TestServer::start().await;
+    server.queue(
+        TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+    );
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+
+    sync_ok(
+        &db,
+        &TestNetGate::default(),
+        "src-1",
+        SyncMode::Manual,
+        HistoryReadPolicy::MarkRead,
+    )
+    .await;
+    let statuses: Vec<String> = db
+        .with_read_conn(|conn| {
+            let mut statement =
+                conn.prepare("SELECT fulltext_status FROM feed_items WHERE source_id = 'src-1'")?;
+            let rows = statement
+                .query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            Ok(rows)
+        })
+        .expect("statuses");
+    assert!(statuses.iter().all(|status| status == "not_requested"));
 }
 
 #[tokio::test]
@@ -213,6 +243,102 @@ async fn first_sync_can_leave_history_unread() {
 }
 
 #[tokio::test]
+async fn first_sync_keeps_only_the_latest_fifty_feed_entries() {
+    let db = create_db();
+    let server = TestServer::start().await;
+    let entries = (1..=60)
+        .map(|day| {
+            format!(
+                "<item><guid>entry-{day}</guid><title>Entry {day}</title><link>https://example.com/{day}</link><description>summary</description><pubDate>Wed, {day:02} Aug 2026 10:00:00 GMT</pubDate></item>"
+            )
+        })
+        .collect::<String>();
+    let feed = format!("<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Large</title>{entries}</channel></rss>");
+    server.queue(TestResponse::new(200, feed).header("Content-Type", "application/rss+xml"));
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+
+    let status = sync_ok(
+        &db,
+        &TestNetGate::default(),
+        "src-1",
+        SyncMode::Manual,
+        HistoryReadPolicy::MarkRead,
+    )
+    .await;
+
+    assert!(matches!(
+        status,
+        SyncStatus::Succeeded {
+            new_items: 50,
+            skipped_history: 10
+        }
+    ));
+    assert_eq!(item_count(&db, "src-1"), 50);
+}
+
+#[tokio::test]
+async fn retained_history_boundary_prevents_old_feed_items_from_dripping_back_in() {
+    let db = create_db();
+    let server = TestServer::start().await;
+    let feed = |start: u32, end: u32| {
+        let entries = (start..=end)
+            .rev()
+            .map(|n| {
+                let published = Utc
+                    .with_ymd_and_hms(2026, 1, 1, 10, 0, 0)
+                    .single()
+                    .expect("date")
+                    + chrono::Duration::days(i64::from(n));
+                format!(
+                    "<item><guid>entry-{n}</guid><title>Entry {n}</title><link>https://example.com/{n}</link><description>summary</description><pubDate>{}</pubDate></item>",
+                    published.to_rfc2822()
+                )
+            })
+            .collect::<String>();
+        format!("<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Large</title>{entries}</channel></rss>")
+    };
+    server.queue(TestResponse::new(200, feed(1, 60)).header("Content-Type", "application/rss+xml"));
+    // 第二轮同时包含新条目 61–65 和所有旧历史；不能再渐进补入 1–10。
+    server.queue(TestResponse::new(200, feed(1, 65)).header("Content-Type", "application/rss+xml"));
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+
+    sync_ok(
+        &db,
+        &TestNetGate::default(),
+        "src-1",
+        SyncMode::Manual,
+        HistoryReadPolicy::MarkRead,
+    )
+    .await;
+    let boundary = source_state(&db, "src-1");
+    assert_eq!(
+        boundary.history_boundary_external_key.as_deref(),
+        Some("entry-11")
+    );
+
+    let status = sync_ok(
+        &db,
+        &TestNetGate::default(),
+        "src-1",
+        SyncMode::Manual,
+        HistoryReadPolicy::MarkRead,
+    )
+    .await;
+    assert!(matches!(status, SyncStatus::Succeeded { new_items: 5, .. }));
+    assert_eq!(item_count(&db, "src-1"), 55);
+    assert!(db
+        .with_read_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT COUNT(*) FROM feed_items WHERE source_id = 'src-1' AND external_key = 'entry-1'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })
+        .expect("count")
+        == 0);
+}
+
+#[tokio::test]
 async fn subsequent_sync_new_items_are_unread_and_old_state_preserved() {
     let db = create_db();
     let server = TestServer::start().await;
@@ -259,7 +385,7 @@ async fn subsequent_sync_new_items_are_unread_and_old_state_preserved() {
     )
     .await;
     match status {
-        SyncStatus::Succeeded { new_items } => assert_eq!(new_items, 1, "只有新条目计入"),
+        SyncStatus::Succeeded { new_items, .. } => assert_eq!(new_items, 1, "只有新条目计入"),
         other => panic!("expected success, got {other:?}"),
     }
 
@@ -357,7 +483,7 @@ async fn content_update_preserves_read_state_and_received_at() {
     )
     .await;
     assert!(
-        matches!(status, SyncStatus::Succeeded { new_items: 0 }),
+        matches!(status, SyncStatus::Succeeded { new_items: 0, .. }),
         "更新不产生新条目；got {status:?}"
     );
 
@@ -392,7 +518,7 @@ async fn duplicate_guid_dedupes_within_batch() {
     )
     .await;
     match status {
-        SyncStatus::Succeeded { new_items } => {
+        SyncStatus::Succeeded { new_items, .. } => {
             assert_eq!(new_items, 2, "重复 GUID 只入库一条")
         }
         other => panic!("expected success, got {other:?}"),

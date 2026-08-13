@@ -6,7 +6,6 @@
 import {
   AlertTriangle,
   Archive,
-  Download,
   Inbox,
   Newspaper,
   Plus,
@@ -14,8 +13,8 @@ import {
   RefreshCw,
   Rss,
   Star,
-  Upload,
 } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 import type { FeedSourceSummary, FeedView } from "@/types/ipc";
@@ -29,6 +28,10 @@ const VIEWS: { view: FeedView; label: string; icon: typeof Inbox }[] = [
 ];
 
 export interface FeedSidebarProps {
+  /** 固定导航或抽屉可覆盖宽度和边界，业务内容保持一致。 */
+  className?: string;
+  /** 抽屉关闭等局部顶栏动作，放在添加订阅按钮旁。 */
+  headerActions?: ReactNode;
   sources: FeedSourceSummary[];
   view: FeedView;
   sourceId: string | null;
@@ -43,6 +46,8 @@ export interface FeedSidebarProps {
 }
 
 export function FeedSidebar({
+  className,
+  headerActions,
   sources,
   view,
   sourceId,
@@ -111,21 +116,30 @@ export function FeedSidebar({
     <nav
       data-testid="feed-sidebar"
       aria-label="订阅导航"
-      className="flex h-full min-h-0 w-60 flex-col overflow-y-auto border-r border-border-subtle bg-panel p-2"
+      className={cn(
+        "flex h-full min-h-0 w-60 flex-col overflow-y-auto border-r border-border-subtle bg-panel p-2",
+        className,
+      )}
     >
-      <div className="mb-1 flex items-center justify-between px-2">
+      <div
+        data-testid="feed-sidebar-header"
+        className="mb-1 flex items-center justify-between px-2"
+      >
         <span className="text-caption font-medium text-muted-foreground">
           订阅
         </span>
-        <button
-          type="button"
-          data-testid="feed-add-source"
-          aria-label="添加订阅"
-          className="iris-focus-soft inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
-          onClick={onAddSource}
-        >
-          <Plus className="h-4 w-4" aria-hidden="true" />
-        </button>
+        <div className="flex items-center gap-1">
+          {headerActions}
+          <button
+            type="button"
+            data-testid="feed-add-source"
+            aria-label="添加订阅"
+            className="iris-focus-soft inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
+            onClick={onAddSource}
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <ul className="space-y-0.5">
         {VIEWS.map(({ view: itemView, label, icon: Icon }) => {
@@ -221,26 +235,14 @@ export function FeedSidebar({
         </div>
       ) : null}
 
-      <div className="mt-auto flex items-center gap-1 border-t border-border-subtle pt-2">
+      <div className="mt-auto border-t border-border-subtle pt-2">
         <button
           type="button"
-          data-testid="feed-opml-import-entry"
-          aria-label="导入 OPML"
-          title="导入 OPML"
-          className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
+          data-testid="feed-opml-entry"
+          className="iris-focus-soft inline-flex h-8 w-full items-center justify-center rounded-md text-caption text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
           onClick={onOpenOpml}
         >
-          <Upload className="h-4 w-4" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          data-testid="feed-opml-export-entry"
-          aria-label="导出 OPML"
-          title="导出 OPML"
-          className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground"
-          onClick={onOpenOpml}
-        >
-          <Download className="h-4 w-4" aria-hidden="true" />
+          导入/导出 OPML
         </button>
       </div>
     </nav>

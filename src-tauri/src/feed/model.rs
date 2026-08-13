@@ -16,12 +16,26 @@ pub struct FeedSourceSummary {
     pub folder_path: String,
     pub is_enabled: bool,
     pub fetch_interval_minutes: i64,
+    /// 是否对该来源后续摘要条目启用通用网页正文补全；默认关闭。
+    pub fulltext_enabled: bool,
     pub unread_count: i64,
     pub last_checked_at: Option<String>,
     pub last_success_at: Option<String>,
     pub next_fetch_at: Option<String>,
     pub consecutive_failures: i64,
     pub last_error_code: Option<String>,
+}
+
+/// 订阅资料库全局维护摘要；不包含 URL、正文或错误详情。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedLibrarySummary {
+    pub source_count: i64,
+    pub enabled_source_count: i64,
+    pub failed_source_count: i64,
+    pub item_count: i64,
+    pub unread_count: i64,
+    pub last_success_at: Option<String>,
 }
 
 /// 文章视图（snake_case 序列化，与前端 `FeedView` 字符串一致）。
@@ -35,7 +49,8 @@ pub enum FeedView {
     Archived,
 }
 
-/// 稳定 keyset 游标：按 `(received_at DESC, row_id DESC)` 排序。
+/// 稳定 keyset 游标：按 `(sort_at DESC, row_id DESC)` 排序，其中 `sort_at`
+/// 是 `published_at` 缺失时回退到 `received_at` 的展示排序时间。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedPageCursor {
@@ -72,6 +87,7 @@ pub struct FeedItemSummary {
     pub canonical_url: Option<String>,
     pub published_at: Option<String>,
     pub received_at: String,
+    pub sort_at: String,
     pub excerpt: String,
     pub is_read: bool,
     pub is_starred: bool,
@@ -88,6 +104,17 @@ pub struct FeedItemDetail {
     pub content_markdown: String,
     pub summary_markdown: String,
     pub site_url: Option<String>,
+    pub content_origin: String,
+    pub fulltext_status: String,
+}
+
+/// RSS 专属回收站条目；与 Markdown 文件回收站的生命周期互不关联。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedTrashItem {
+    pub item: FeedItemSummary,
+    pub deleted_at: String,
+    pub purge_after: String,
 }
 
 /// 条目级源载荷种类（对应 `feed_items.source_payload_kind` CHECK 约束）。
@@ -172,6 +199,9 @@ pub struct FeedSource {
     pub last_error_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub history_boundary_external_key: Option<String>,
+    pub history_boundary_published_at: Option<String>,
+    pub fulltext_enabled: bool,
 }
 
 /// 新建订阅源输入。
@@ -199,6 +229,8 @@ pub struct FeedSourcePatch {
     pub folder_path: Option<String>,
     pub fetch_interval_minutes: Option<i64>,
     pub is_enabled: Option<bool>,
+    /// 来源级网页正文补全开关；未提供时不改变原设置。
+    pub fulltext_enabled: Option<bool>,
 }
 
 /// 文章阅读状态补丁；至少一个字段必须为 `Some`。
@@ -236,6 +268,31 @@ pub struct FeedItemInput {
     pub content_hash: String,
     pub conversion_version: i64,
     pub conversion_status: ConversionStatus,
+    pub expires_at: String,
+    pub fulltext_status: FulltextStatus,
+}
+
+/// 网页正文缓存状态；`pending` 只由后台受限队列消费。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FulltextStatus {
+    NotRequested,
+    Pending,
+    Fetching,
+    Ready,
+    Failed,
+}
+
+impl FulltextStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotRequested => "not_requested",
+            Self::Pending => "pending",
+            Self::Fetching => "fetching",
+            Self::Ready => "ready",
+            Self::Failed => "failed",
+        }
+    }
 }
 
 /// 一次批量 upsert 的结果计数（用于同步事件投影）。

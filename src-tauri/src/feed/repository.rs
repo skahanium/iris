@@ -10,8 +10,9 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 
 use crate::error::{AppError, AppResult};
 use crate::feed::model::{
-    FeedItemDetail, FeedItemInput, FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedSource,
-    FeedSourcePatch, FeedSourceSummary, FeedSourceSyncState, NewFeedSource, UpsertSummary,
+    FeedItemDetail, FeedItemInput, FeedItemQuery, FeedItemStatePatch, FeedItemSummary,
+    FeedLibrarySummary, FeedSource, FeedSourcePatch, FeedSourceSummary, FeedSourceSyncState,
+    FeedTrashItem, NewFeedSource, UpsertSummary,
 };
 
 /// 列表摘要从 `content_text` 截断的最大 Unicode scalar 数。
@@ -48,7 +49,7 @@ fn escape_fts_query(query: &str) -> String {
 
 /// 列表/搜索共用的文章行映射（列序必须与查询 SQL 一致）。
 fn map_item_summary(row: &Row) -> rusqlite::Result<FeedItemSummary> {
-    let content_text: String = row.get(9)?;
+    let content_text: String = row.get(10)?;
     Ok(FeedItemSummary {
         row_id: row.get(0)?,
         id: row.get(1)?,
@@ -59,17 +60,19 @@ fn map_item_summary(row: &Row) -> rusqlite::Result<FeedItemSummary> {
         canonical_url: row.get(6)?,
         published_at: row.get(7)?,
         received_at: row.get(8)?,
+        sort_at: row.get(9)?,
         excerpt: excerpt(&content_text),
-        is_read: row.get::<_, Option<String>>(10)?.is_some(),
-        is_starred: row.get::<_, Option<String>>(11)?.is_some(),
-        is_archived: row.get::<_, Option<String>>(12)?.is_some(),
-        conversion_status: row.get(13)?,
+        is_read: row.get::<_, Option<String>>(11)?.is_some(),
+        is_starred: row.get::<_, Option<String>>(12)?.is_some(),
+        is_archived: row.get::<_, Option<String>>(13)?.is_some(),
+        conversion_status: row.get(14)?,
     })
 }
 
 const ITEM_SUMMARY_SELECT: &str = "SELECT i.row_id, i.id, i.source_id, \
      COALESCE(s.title_override, s.title), i.title, \
-     i.author_name, i.canonical_url, i.published_at, i.received_at, i.content_text, \
+     i.author_name, i.canonical_url, i.published_at, i.received_at, \
+     COALESCE(i.published_at, i.received_at), i.content_text, \
      i.read_at, i.starred_at, i.archived_at, i.conversion_status \
      FROM feed_items i JOIN feed_sources s ON s.id = i.source_id";
 
@@ -87,12 +90,18 @@ fn push_condition(sql: &mut String, values: &mut Vec<Value>, condition: &str, pa
 fn build_filters(query: &FeedItemQuery, now: DateTime<Utc>, prefix: &str) -> (String, Vec<Value>) {
     let mut sql = String::new();
     let mut values: Vec<Value> = Vec::new();
+    push_condition(
+        &mut sql,
+        &mut values,
+        &format!("{prefix}deleted_at IS NULL"),
+        vec![],
+    );
     match query.view {
         crate::feed::model::FeedView::Inbox => {
             push_condition(
                 &mut sql,
                 &mut values,
-                &format!("{prefix}read_at IS NULL AND {prefix}archived_at IS NULL"),
+                &format!("{prefix}archived_at IS NULL"),
                 vec![],
             );
         }
@@ -171,7 +180,9 @@ fn build_filters(query: &FeedItemQuery, now: DateTime<Utc>, prefix: &str) -> (St
             &mut sql,
             &mut values,
             &format!(
-                "({prefix}received_at < ? OR ({prefix}received_at = ? AND {prefix}row_id < ?))"
+                "(COALESCE({prefix}published_at, {prefix}received_at) < ? \
+                  OR (COALESCE({prefix}published_at, {prefix}received_at) = ? \
+                      AND {prefix}row_id < ?))"
             ),
             vec![
                 Value::Text(cursor.sort_at.clone()),
@@ -196,7 +207,7 @@ fn escape_like_query(value: &str) -> String {
         .replace('_', "\\_")
 }
 
-/// 订阅源完整行映射（21 列；`get_source`/`list_due_sources`/`get_source_by_feed_url`
+/// 订阅源完整行映射（23 列；`get_source`/`list_due_sources`/`get_source_by_feed_url`
 /// 的 SELECT 列序必须与此一致）。
 fn map_source_row(row: &Row) -> rusqlite::Result<FeedSource> {
     Ok(FeedSource {
@@ -221,13 +232,17 @@ fn map_source_row(row: &Row) -> rusqlite::Result<FeedSource> {
         last_error_at: row.get(18)?,
         created_at: row.get(19)?,
         updated_at: row.get(20)?,
+        history_boundary_external_key: row.get(21)?,
+        history_boundary_published_at: row.get(22)?,
+        fulltext_enabled: row.get::<_, i64>(23)? != 0,
     })
 }
 
 const SOURCE_SELECT: &str = "SELECT id, feed_url, site_url, title, title_override, description, \
      icon_url, language, folder_path, is_enabled, fetch_interval_minutes, etag, last_modified, \
      last_checked_at, last_success_at, next_fetch_at, consecutive_failures, last_error_code, \
-     last_error_at, created_at, updated_at FROM feed_sources";
+     last_error_at, created_at, updated_at, history_boundary_external_key, \
+     history_boundary_published_at, fulltext_enabled FROM feed_sources";
 
 impl FeedRepository {
     // ── 订阅源 CRUD ─────────────────────────────────────────
@@ -297,9 +312,10 @@ impl FeedRepository {
             "SELECT s.id,
                     COALESCE(s.title_override, s.title) AS title,
                     s.feed_url, s.site_url, s.folder_path, s.is_enabled,
-                    s.fetch_interval_minutes,
+                    s.fetch_interval_minutes, s.fulltext_enabled,
                     (SELECT COUNT(*) FROM feed_items i
                       WHERE i.source_id = s.id
+                        AND i.deleted_at IS NULL
                         AND i.read_at IS NULL AND i.archived_at IS NULL) AS unread_count,
                     s.last_checked_at, s.last_success_at, s.next_fetch_at,
                     s.consecutive_failures, s.last_error_code
@@ -316,12 +332,13 @@ impl FeedRepository {
                     folder_path: row.get(4)?,
                     is_enabled: row.get::<_, i64>(5)? != 0,
                     fetch_interval_minutes: row.get(6)?,
-                    unread_count: row.get(7)?,
-                    last_checked_at: row.get(8)?,
-                    last_success_at: row.get(9)?,
-                    next_fetch_at: row.get(10)?,
-                    consecutive_failures: row.get(11)?,
-                    last_error_code: row.get(12)?,
+                    fulltext_enabled: row.get::<_, i64>(7)? != 0,
+                    unread_count: row.get(8)?,
+                    last_checked_at: row.get(9)?,
+                    last_success_at: row.get(10)?,
+                    next_fetch_at: row.get(11)?,
+                    consecutive_failures: row.get(12)?,
+                    last_error_code: row.get(13)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -345,6 +362,7 @@ impl FeedRepository {
         // 先拷贝 Copy 型字段到外层作用域，避免 `if let` 块内借用提前结束。
         let interval = patch.fetch_interval_minutes;
         let enabled = patch.is_enabled;
+        let fulltext_enabled = patch.fulltext_enabled;
         if patch.clear_title_override {
             sets.push("title_override = NULL");
         } else if let Some(title) = &patch.title_override {
@@ -363,9 +381,22 @@ impl FeedRepository {
             sets.push("is_enabled = :is_enabled");
             values.push((":is_enabled", value));
         }
+        if let Some(value) = fulltext_enabled.as_ref() {
+            sets.push("fulltext_enabled = :fulltext_enabled");
+            values.push((":fulltext_enabled", value));
+        }
         values.push((":id", &id));
         let sql = format!("UPDATE feed_sources SET {} WHERE id = :id", sets.join(", "));
         let changed = conn.execute(&sql, values.as_slice())?;
+        if changed > 0 && fulltext_enabled == Some(false) {
+            // 关闭来源级补全后，不再启动尚未开始的网页请求；已在运行的请求
+            // 由其自身安全边界完成或失败，避免强行中断连接。
+            conn.execute(
+                "UPDATE feed_items SET fulltext_status = 'not_requested'
+                 WHERE source_id = ?1 AND fulltext_status = 'pending'",
+                [id],
+            )?;
+        }
         Ok(changed > 0)
     }
 
@@ -393,6 +424,31 @@ impl FeedRepository {
             "SELECT COUNT(*) FROM feed_items WHERE source_id = ?1",
             [source_id],
             |row| row.get(0),
+        )?)
+    }
+
+    /// 汇总资料库维护页所需的非敏感计数与最近成功同步时间。
+    pub fn library_summary(conn: &Connection) -> AppResult<FeedLibrarySummary> {
+        Ok(conn.query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM feed_sources),
+                (SELECT COUNT(*) FROM feed_sources WHERE is_enabled = 1),
+                (SELECT COUNT(*) FROM feed_sources WHERE last_error_code IS NOT NULL),
+                (SELECT COUNT(*) FROM feed_items WHERE deleted_at IS NULL),
+                (SELECT COUNT(*) FROM feed_items
+                 WHERE deleted_at IS NULL AND read_at IS NULL AND archived_at IS NULL),
+                (SELECT MAX(last_success_at) FROM feed_sources)",
+            [],
+            |row| {
+                Ok(FeedLibrarySummary {
+                    source_count: row.get(0)?,
+                    enabled_source_count: row.get(1)?,
+                    failed_source_count: row.get(2)?,
+                    item_count: row.get(3)?,
+                    unread_count: row.get(4)?,
+                    last_success_at: row.get(5)?,
+                })
+            },
         )?)
     }
 
@@ -450,6 +506,24 @@ impl FeedRepository {
         Ok(changed > 0)
     }
 
+    /// 记录首次同步保留集的最旧条目，后续全量 Feed 不会继续回灌更早历史。
+    pub fn set_history_boundary(
+        conn: &Connection,
+        source_id: &str,
+        external_key: &str,
+        published_at: Option<&str>,
+        now: &str,
+    ) -> AppResult<bool> {
+        let changed = conn.execute(
+            "UPDATE feed_sources
+             SET history_boundary_external_key = ?1, history_boundary_published_at = ?2,
+                 updated_at = ?3
+             WHERE id = ?4",
+            params![external_key, published_at, now, source_id],
+        )?;
+        Ok(changed > 0)
+    }
+
     // ── 文章 upsert 与列表 ───────────────────────────────────
 
     /// 批量 upsert：单个事务；元数据始终按稳定键更新，仅当 `content_hash`
@@ -482,6 +556,7 @@ impl FeedRepository {
             for item in items {
                 let payload_kind = item.source_payload_kind.as_str();
                 let conversion_status = item.conversion_status.as_str();
+                let fulltext_status = item.fulltext_status.as_str();
                 let values: Vec<(&str, &dyn rusqlite::ToSql)> = vec![
                     (":id", &item.id),
                     (":source_id", &item.source_id),
@@ -500,6 +575,8 @@ impl FeedRepository {
                     (":content_hash", &item.content_hash),
                     (":conversion_version", &item.conversion_version),
                     (":conversion_status", &conversion_status),
+                    (":expires_at", &item.expires_at),
+                    (":fulltext_status", &fulltext_status),
                     (":created_at", &now_str),
                     (":updated_at", &now_str),
                 ];
@@ -508,12 +585,13 @@ impl FeedRepository {
                      (id, source_id, external_key, canonical_url, title, author_name,
                       published_at, source_updated_at, received_at, summary_markdown,
                       content_markdown, content_text, source_payload, source_payload_kind,
-                      content_hash, conversion_version, conversion_status, created_at, updated_at)
+                      content_hash, conversion_version, conversion_status, expires_at, fulltext_status,
+                      created_at, updated_at)
                      VALUES (:id, :source_id, :external_key, :canonical_url, :title, :author_name,
                              :published_at, :source_updated_at, :received_at, :summary_markdown,
                              :content_markdown, :content_text, :source_payload,
                              :source_payload_kind, :content_hash, :conversion_version,
-                             :conversion_status, :created_at, :updated_at)",
+                             :conversion_status, :expires_at, :fulltext_status, :created_at, :updated_at)",
                     values.as_slice(),
                 )?;
             }
@@ -529,9 +607,12 @@ impl FeedRepository {
                          content_text = CASE WHEN content_hash != ?11 THEN ?8 ELSE content_text END,
                          source_payload = CASE WHEN content_hash != ?11 THEN ?9 ELSE source_payload END,
                          source_payload_kind = CASE WHEN content_hash != ?11 THEN ?10 ELSE source_payload_kind END,
+                         fulltext_markdown = CASE WHEN content_hash != ?11 THEN NULL ELSE fulltext_markdown END,
+                         content_origin = CASE WHEN content_hash != ?11 THEN 'feed' ELSE content_origin END,
+                         fulltext_status = CASE WHEN content_hash != ?11 THEN ?14 ELSE fulltext_status END,
                          content_hash = ?11, conversion_version = ?12,
-                         conversion_status = ?13, updated_at = ?14
-                     WHERE source_id = ?15 AND external_key = ?16
+                         conversion_status = ?13, updated_at = ?15
+                     WHERE source_id = ?16 AND external_key = ?17
                        AND (content_hash != ?11 OR canonical_url IS NOT ?1 OR title != ?2
                             OR author_name IS NOT ?3 OR published_at IS NOT ?4
                             OR source_updated_at IS NOT ?5)",
@@ -549,6 +630,7 @@ impl FeedRepository {
                         &item.content_hash,
                         item.conversion_version,
                         &item.conversion_status.as_str(),
+                        &item.fulltext_status.as_str(),
                         &now_str,
                         &item.source_id,
                         &item.external_key,
@@ -583,7 +665,9 @@ impl FeedRepository {
         let mut sql = String::from(ITEM_SUMMARY_SELECT);
         sql.push_str(" WHERE 1=1");
         sql.push_str(&filters);
-        sql.push_str(" ORDER BY i.received_at DESC, i.row_id DESC LIMIT ?");
+        sql.push_str(
+            " ORDER BY COALESCE(i.published_at, i.received_at) DESC, i.row_id DESC LIMIT ?",
+        );
         values.push(Value::Integer(i64::from(limit)));
 
         let mut statement = conn.prepare(&sql)?;
@@ -598,18 +682,22 @@ impl FeedRepository {
             .query_row(
                 "SELECT i.row_id, i.id, i.source_id,
                         COALESCE(s.title_override, s.title), i.title, i.author_name,
-                        i.canonical_url, i.published_at, i.received_at, i.content_text,
+                        i.canonical_url, i.published_at, i.received_at,
+                        COALESCE(i.published_at, i.received_at), i.content_text,
                         i.read_at, i.starred_at, i.archived_at, i.conversion_status,
-                        i.content_markdown, i.summary_markdown, s.site_url
+                        COALESCE(i.fulltext_markdown, i.content_markdown), i.summary_markdown, s.site_url,
+                        i.content_origin, i.fulltext_status
                  FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
-                 WHERE i.id = ?1",
+                 WHERE i.id = ?1 AND i.deleted_at IS NULL",
                 [item_id],
                 |row| {
                     Ok(FeedItemDetail {
                         summary: map_item_summary(row)?,
-                        content_markdown: row.get(14)?,
-                        summary_markdown: row.get(15)?,
-                        site_url: row.get(16)?,
+                        content_markdown: row.get(15)?,
+                        summary_markdown: row.get(16)?,
+                        site_url: row.get(17)?,
+                        content_origin: row.get(18)?,
+                        fulltext_status: row.get(19)?,
                     })
                 },
             )
@@ -646,10 +734,24 @@ impl FeedRepository {
         values.push(Value::Text(item_id.to_string()));
         let id_index = values.len();
         let sql = format!(
-            "UPDATE feed_items SET {} WHERE id = ?{id_index}",
+            "UPDATE feed_items SET {} WHERE id = ?{id_index} AND deleted_at IS NULL",
             sets.join(", ")
         );
         let changed = conn.execute(&sql, params_from_iter(values.iter()))?;
+        if changed > 0 && (patch.is_starred.is_some() || patch.is_archived.is_some()) {
+            conn.execute(
+                "UPDATE feed_items SET expires_at = CASE
+                    WHEN starred_at IS NOT NULL THEN NULL
+                    WHEN archived_at IS NOT NULL THEN ?1
+                    ELSE ?2 END
+                 WHERE id = ?3 AND deleted_at IS NULL",
+                params![
+                    rfc3339(now + chrono::Duration::days(30)),
+                    rfc3339(now + chrono::Duration::days(7)),
+                    item_id
+                ],
+            )?;
+        }
         Ok(changed > 0)
     }
 
@@ -673,6 +775,206 @@ impl FeedRepository {
         all_values.extend(values);
         let affected = conn.execute(&sql, params_from_iter(all_values.iter()))?;
         Ok(affected as i64)
+    }
+
+    /// 将到期且未收藏文章移入 RSS 回收站；收藏项永不自动清理。
+    pub fn soft_delete_expired_items(conn: &Connection, now: DateTime<Utc>) -> AppResult<u32> {
+        let now_str = rfc3339(now);
+        let purge_after = rfc3339(now + chrono::Duration::days(30));
+        let changed = conn.execute(
+            "UPDATE feed_items
+             SET deleted_at = ?1, purge_after = ?2, updated_at = ?1
+             WHERE deleted_at IS NULL AND starred_at IS NULL
+               AND expires_at IS NOT NULL AND expires_at <= ?1",
+            params![now_str, purge_after],
+        )?;
+        Ok(changed as u32)
+    }
+
+    /// 物理清理已过 RSS 回收站保留期的缓存文章；调用方可随后显式 optimize。
+    pub fn purge_deleted_items(conn: &Connection, now: DateTime<Utc>) -> AppResult<u32> {
+        let changed = conn.execute(
+            "DELETE FROM feed_items WHERE deleted_at IS NOT NULL AND purge_after <= ?1",
+            [rfc3339(now)],
+        )?;
+        Ok(changed as u32)
+    }
+
+    /// 将 RSS 回收站内容恢复，并按当前状态重新赋予 7/30 天保留期。
+    pub fn restore_deleted_item(
+        conn: &Connection,
+        item_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let now_str = rfc3339(now);
+        let changed = conn.execute(
+            "UPDATE feed_items
+             SET deleted_at = NULL, purge_after = NULL,
+                 expires_at = CASE
+                    WHEN starred_at IS NOT NULL THEN NULL
+                    WHEN archived_at IS NULL THEN ?2
+                    ELSE ?3
+                 END,
+                 updated_at = ?1
+             WHERE id = ?4 AND deleted_at IS NOT NULL",
+            params![
+                now_str,
+                rfc3339(now + chrono::Duration::days(7)),
+                rfc3339(now + chrono::Duration::days(30)),
+                item_id
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// 原子认领待抓取正文；状态先改为 `fetching`，并发 worker 不会重复处理。
+    /// 返回值仅含内部 ID、来源 ID 与已规范化 HTTPS 地址。
+    pub fn claim_pending_fulltext(
+        conn: &Connection,
+        limit: u32,
+        now: DateTime<Utc>,
+    ) -> AppResult<Vec<(String, String, String)>> {
+        let tx = conn.unchecked_transaction()?;
+        let mut statement = tx.prepare(
+            "SELECT i.id, i.source_id, i.canonical_url
+             FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
+             WHERE i.deleted_at IS NULL AND i.fulltext_status = 'pending'
+               AND s.fulltext_enabled = 1
+               AND i.canonical_url IS NOT NULL
+             ORDER BY i.received_at ASC, i.row_id ASC
+             LIMIT ?1",
+        )?;
+        let candidates = statement
+            .query_map([i64::from(limit.clamp(1, 2))], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<Result<Vec<(String, String, String)>, _>>()?;
+        drop(statement);
+        let now_str = rfc3339(now);
+        for (item_id, _, _) in &candidates {
+            tx.execute(
+                "UPDATE feed_items SET fulltext_status = 'fetching', updated_at = ?1
+                 WHERE id = ?2 AND deleted_at IS NULL AND fulltext_status = 'pending'",
+                params![now_str, item_id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(candidates)
+    }
+
+    /// 写入已提取的正文；原 RSS 内容和源载荷保持不变，以便安全降级与审计。
+    /// `content_text` 是 FTS 的单一文本投影，因此改为正文纯文本，不再复制一份。
+    pub fn store_fulltext(
+        conn: &Connection,
+        item_id: &str,
+        markdown: &str,
+        text: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let changed = conn.execute(
+            "UPDATE feed_items
+             SET fulltext_markdown = ?1, fulltext_text = NULL, content_text = ?2, content_origin = 'web',
+                 fulltext_status = 'ready', updated_at = ?3
+             WHERE id = ?4 AND deleted_at IS NULL AND fulltext_status = 'fetching'",
+            params![markdown, text, rfc3339(now), item_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// 正文抓取失败只记录稳定状态，不保存底层错误或 URL；阅读器继续展示摘要。
+    pub fn fail_fulltext(conn: &Connection, item_id: &str, now: DateTime<Utc>) -> AppResult<bool> {
+        let changed = conn.execute(
+            "UPDATE feed_items SET fulltext_status = 'failed', updated_at = ?1
+             WHERE id = ?2 AND deleted_at IS NULL AND fulltext_status = 'fetching'",
+            params![rfc3339(now), item_id],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// 管理中心的 RSS 回收站列表；与 Markdown 回收站完全隔离。
+    pub fn list_deleted_items(conn: &Connection, limit: u32) -> AppResult<Vec<FeedTrashItem>> {
+        let select = ITEM_SUMMARY_SELECT.replacen(
+            " FROM feed_items",
+            " , i.deleted_at, i.purge_after FROM feed_items",
+            1,
+        );
+        let mut statement = conn.prepare(&format!(
+            "{select} WHERE i.deleted_at IS NOT NULL
+             ORDER BY i.deleted_at DESC, i.row_id DESC LIMIT ?1"
+        ))?;
+        let rows = statement
+            .query_map([i64::from(limit.clamp(1, ITEM_LIMIT_MAX))], |row| {
+                Ok(FeedTrashItem {
+                    item: map_item_summary(row)?,
+                    deleted_at: row.get(15)?,
+                    purge_after: row.get(16)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 清空 RSS 回收站；仅由显式用户操作调用。
+    pub fn clear_deleted_items(conn: &Connection) -> AppResult<u32> {
+        let changed = conn.execute("DELETE FROM feed_items WHERE deleted_at IS NOT NULL", [])?;
+        Ok(changed as u32)
+    }
+
+    /// 进程中断时遗留的 `fetching` 工作重新入队，不保留半成品正文。
+    pub fn recover_interrupted_fulltext(conn: &Connection) -> AppResult<u32> {
+        let changed = conn.execute(
+            "UPDATE feed_items
+             SET fulltext_status = CASE
+                 WHEN EXISTS (
+                    SELECT 1 FROM feed_sources s
+                    WHERE s.id = feed_items.source_id AND s.fulltext_enabled = 1
+                 ) THEN 'pending'
+                 ELSE 'not_requested'
+             END
+             WHERE deleted_at IS NULL AND fulltext_status = 'fetching'",
+            [],
+        )?;
+        Ok(changed as u32)
+    }
+
+    /// 用户明确要求时，最多把该来源最近 `limit` 篇摘要条目加入正文补全队列。
+    /// 只处理当前保留集；不回溯网络 Feed，也不改变文章正文、收藏或阅读状态。
+    pub fn enqueue_recent_fulltext(
+        conn: &Connection,
+        source_id: &str,
+        limit: u32,
+    ) -> AppResult<u32> {
+        let enabled = conn
+            .query_row(
+                "SELECT fulltext_enabled = 1 FROM feed_sources WHERE id = ?1",
+                [source_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?
+            .ok_or_else(|| AppError::msg("feed_source_not_found"))?;
+        if !enabled {
+            return Err(AppError::msg("feed_fulltext_not_enabled"));
+        }
+        let changed = conn.execute(
+            "UPDATE feed_items SET fulltext_status = 'pending'
+             WHERE id IN (
+                SELECT id FROM feed_items
+                WHERE source_id = ?1 AND deleted_at IS NULL
+                  AND canonical_url IS NOT NULL
+                  AND content_markdown = summary_markdown
+                  AND fulltext_status IN ('not_requested', 'failed')
+                ORDER BY COALESCE(published_at, received_at) DESC, row_id DESC
+                LIMIT ?2
+             )",
+            params![source_id, i64::from(limit.clamp(1, 50))],
+        )?;
+        Ok(changed as u32)
+    }
+
+    /// 用户显式请求的资料库空间收缩；后台维护不会调用 VACUUM。
+    pub fn vacuum_feed_library(conn: &Connection) -> AppResult<()> {
+        conn.execute_batch("PRAGMA optimize; VACUUM;")?;
+        Ok(())
     }
 
     // ── 搜索 ────────────────────────────────────────────────
@@ -731,7 +1033,8 @@ impl FeedRepository {
                     language, folder_path, is_enabled, fetch_interval_minutes, etag,
                     last_modified, last_checked_at, last_success_at, next_fetch_at,
                     consecutive_failures, last_error_code, last_error_at, created_at,
-                    updated_at
+                    updated_at, history_boundary_external_key, history_boundary_published_at,
+                    fulltext_enabled
              FROM feed_sources
              WHERE is_enabled = 1 AND (next_fetch_at IS NULL OR next_fetch_at <= ?1)
              ORDER BY next_fetch_at IS NULL DESC, next_fetch_at ASC

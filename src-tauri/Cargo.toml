@@ -44,6 +44,14 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 rmcp = { version = "2.2.0", default-features = false, features = ["client", "reqwest", "transport-async-rw", "transport-child-process", "transport-streamable-http-client-reqwest"] }
 http = "1"
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+# 安全抓取直接使用 HTTP/1 + rustls 隧道，固定 CONNECT/SOCKS 的目标 IP；
+# 下列版本已存在于锁文件（MIT OR Apache-2.0），不引入代理库。
+bytes = "=1.12.1"
+http-body-util = "=0.1.3"
+hyper = { version = "=1.10.1", features = ["client", "http1"] }
+hyper-util = { version = "=0.1.20", features = ["tokio"] }
+tokio-rustls = "=0.26.4"
+rustls-platform-verifier = "=0.7.0"
 futures-util = "0.3"
 # Required by the bounded Streamable HTTP adapter below. This exact version is
 # already resolved transitively by rmcp; MIT OR Apache-2.0 is AGPL-compatible.

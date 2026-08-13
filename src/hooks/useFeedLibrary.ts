@@ -32,6 +32,9 @@ export interface FeedLibraryApi {
   selectedItemId: string | null;
   page: number;
   status: FeedLibraryStatus;
+  /** 来源列表独立加载状态，不能拿文章空列表推断“没有订阅”。 */
+  sourcesStatus: FeedLibraryStatus;
+  sourcesErrorCode: string | null;
   errorCode: string | null;
   items: FeedItemSummary[];
   sources: FeedSourceSummary[];
@@ -58,6 +61,9 @@ export function useFeedLibrary(): FeedLibraryApi {
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<FeedLibraryStatus>("idle");
   const [errorCode, setErrorCode] = useState<string | null>(null);
+  const [sourcesStatus, setSourcesStatus] =
+    useState<FeedLibraryStatus>("loading");
+  const [sourcesErrorCode, setSourcesErrorCode] = useState<string | null>(null);
   const [items, setItems] = useState<FeedItemSummary[]>([]);
   const [sources, setSources] = useState<FeedSourceSummary[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -81,13 +87,13 @@ export function useFeedLibrary(): FeedLibraryApi {
         search: trimmed || null,
         receivedAfter: null,
         cursor: null,
-        limit: FEED_PAGE_LIMIT,
+        limit: FEED_PAGE_LIMIT + 1,
       });
       void run
         .then((rows) => {
           if (requestSequenceRef.current !== sequence) return;
-          setItems(rows);
-          setHasMore(rows.length === FEED_PAGE_LIMIT);
+          setItems(rows.slice(0, FEED_PAGE_LIMIT));
+          setHasMore(rows.length > FEED_PAGE_LIMIT);
           setPage(1);
           setStatus("ready");
         })
@@ -112,17 +118,29 @@ export function useFeedLibrary(): FeedLibraryApi {
       currentSource,
       currentSearch,
     );
+    setSourcesStatus("loading");
     void feedSourceList()
-      .then(setSources)
-      .catch(() => undefined);
+      .then((rows) => {
+        setSources(rows);
+        setSourcesStatus("ready");
+        setSourcesErrorCode(null);
+      })
+      .catch((error: unknown) => {
+        setSourcesStatus("error");
+        setSourcesErrorCode(errorCodeOf(error));
+      });
   }, [fetchRows]);
 
   const loadSources = useCallback(async () => {
+    setSourcesStatus("loading");
     try {
       const rows = await feedSourceList();
       setSources(rows);
-    } catch {
-      // 源列表失败静默：下一次事件/刷新会重试。
+      setSourcesStatus("ready");
+      setSourcesErrorCode(null);
+    } catch (error: unknown) {
+      setSourcesStatus("error");
+      setSourcesErrorCode(errorCodeOf(error));
     }
   }, []);
 
@@ -189,7 +207,7 @@ export function useFeedLibrary(): FeedLibraryApi {
             rows.filter((row) => {
               if (row.id !== itemId) return true;
               if (mutationView === "inbox") {
-                return !(patch.isRead === true || patch.isArchived === true);
+                return patch.isArchived !== true;
               }
               if (mutationView === "starred" && patch.isStarred === false) {
                 return false;
@@ -268,13 +286,16 @@ export function useFeedLibrary(): FeedLibraryApi {
       sourceId: currentSource,
       search: currentSearch.trim() || null,
       receivedAfter: null,
-      cursor: { sortAt: last.receivedAt, rowId: last.rowId },
-      limit: FEED_PAGE_LIMIT,
+      cursor: { sortAt: last.sortAt ?? last.publishedAt ?? last.receivedAt, rowId: last.rowId },
+      limit: FEED_PAGE_LIMIT + 1,
     })
       .then((rows) => {
         if (requestSequenceRef.current !== sequence) return;
-        setItems((previous) => [...previous, ...rows]);
-        setHasMore(rows.length === FEED_PAGE_LIMIT);
+        setItems((previous) => [
+          ...previous,
+          ...rows.slice(0, FEED_PAGE_LIMIT),
+        ]);
+        setHasMore(rows.length > FEED_PAGE_LIMIT);
         setPage((previous) => previous + 1);
       })
       .catch(() => {
@@ -290,6 +311,8 @@ export function useFeedLibrary(): FeedLibraryApi {
     page,
     status,
     errorCode,
+    sourcesStatus,
+    sourcesErrorCode,
     items,
     sources,
     hasMore,

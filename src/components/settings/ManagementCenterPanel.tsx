@@ -52,6 +52,7 @@ import type { ConnectivityStatus } from "@/types/llm";
 import { LlmRoutingSection } from "./LlmRoutingSection";
 import type { ManagementProviderChrome } from "./managementProviderChrome";
 import { PersonaSettingsBody } from "./PersonaSettingsPanel";
+import { FeedManagementSection } from "./FeedManagementSection";
 
 interface ManagementCenterPanelProps {
   open: boolean;
@@ -117,6 +118,7 @@ const MANAGEMENT_SECTIONS: ManagementSectionMeta[] = [
   { id: "notes", label: "笔记", detail: "保存与版本" },
   { id: "knowledge", label: "知识库", detail: "索引维护" },
   { id: "ai", label: "AI", detail: "模型与工具" },
+  { id: "feeds", label: "订阅", detail: "资料库维护" },
 ];
 
 const WINDOWS_INSTALL_WARNING = "Windows 上安装会关闭 Iris。";
@@ -973,6 +975,14 @@ export function ManagementCenterPanel({
     if (activeSection === "notes") return renderNotes();
     if (activeSection === "knowledge") return renderKnowledge();
     if (activeSection === "ai") return renderAi();
+    if (activeSection === "feeds") {
+      return (
+        <FeedManagementSection
+          proxyStatusLabel={proxyStatusLabel}
+          onOpenOverview={() => setActiveSection("overview")}
+        />
+      );
+    }
     return renderOverview();
   };
 
@@ -990,7 +1000,7 @@ export function ManagementCenterPanel({
       >
         <div
           data-testid="management-center-tabs"
-          className="grid w-full shrink-0 grid-cols-4 gap-2 border-b border-border/60 bg-surface-inset/20 px-4 py-3"
+          className="flex w-full shrink-0 gap-2 overflow-x-auto border-b border-border/60 bg-surface-inset/20 px-4 py-3"
           role="tablist"
           aria-label="管理中心"
         >
@@ -1003,7 +1013,7 @@ export function ManagementCenterPanel({
                 role="tab"
                 aria-selected={active}
                 className={cn(
-                  "min-w-0 rounded-md px-5 py-4 text-left transition-colors",
+                  "min-w-36 shrink-0 rounded-md px-5 py-4 text-left transition-colors",
                   active
                     ? "bg-task-selected text-foreground"
                     : "text-muted-foreground hover:bg-surface-inset hover:text-foreground",

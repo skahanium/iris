@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use tauri::State;
 
@@ -15,11 +16,11 @@ use crate::error::{AppError, AppResult};
 use crate::feed::discovery::{discover, FeedCandidate};
 use crate::feed::fetch::ProdNetGate;
 use crate::feed::model::{
-    FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedSourcePatch,
-    FeedSourceSummary, NewFeedSource,
+    FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedLibrarySummary,
+    FeedSourcePatch, FeedSourceSummary, FeedTrashItem, NewFeedSource,
 };
 use crate::feed::opml::canonicalize_https_url;
-use crate::feed::opml::{export_opml, import_opml, OpmlImportResult, OPML_MAX_BYTES};
+use crate::feed::opml::{export_opml, import_opml_with_interval, OpmlImportResult, OPML_MAX_BYTES};
 use crate::feed::repository::FeedRepository;
 use crate::feed::sync::{FeedSyncBatchOutcome, HistoryReadPolicy, SyncMode, SyncStatus};
 use crate::network::safe_https::validate_https_url;
@@ -29,6 +30,7 @@ use crate::network::safe_https::validate_https_url;
 const MAX_ID_LEN: usize = 200;
 const MAX_URL_LEN: usize = 2048;
 const MAX_STRING_LEN: usize = 4096;
+const FULLTEXT_RECENT_LIMIT_MAX: u32 = 50;
 
 fn check_id(id: &str) -> AppResult<()> {
     if id.trim().is_empty() || id.len() > MAX_ID_LEN {
@@ -99,6 +101,7 @@ pub struct FeedSourceUpdateInput {
     pub folder_path: Option<String>,
     pub fetch_interval_minutes: Option<i64>,
     pub is_enabled: Option<bool>,
+    pub fulltext_enabled: Option<bool>,
 }
 
 /// 同步结果 DTO（status 为稳定字符串，事件另发 `feed:changed`）。
@@ -107,35 +110,44 @@ pub struct FeedSourceUpdateInput {
 pub struct FeedSyncOutcomeDto {
     pub status: String,
     pub new_items: u32,
+    pub skipped_history: u32,
     pub error_code: Option<String>,
 }
 
 impl FeedSyncOutcomeDto {
     fn from_status(status: &SyncStatus) -> Self {
         match status {
-            SyncStatus::Succeeded { new_items } => Self {
+            SyncStatus::Succeeded {
+                new_items,
+                skipped_history,
+            } => Self {
                 status: "succeeded".to_string(),
                 new_items: *new_items as u32,
+                skipped_history: *skipped_history as u32,
                 error_code: None,
             },
             SyncStatus::NotModified => Self {
                 status: "not_modified".to_string(),
                 new_items: 0,
+                skipped_history: 0,
                 error_code: None,
             },
             SyncStatus::Skipped => Self {
                 status: "skipped".to_string(),
                 new_items: 0,
+                skipped_history: 0,
                 error_code: None,
             },
             SyncStatus::InFlight => Self {
                 status: "in_flight".to_string(),
                 new_items: 0,
+                skipped_history: 0,
                 error_code: None,
             },
             SyncStatus::Failed { code } => Self {
                 status: "failed".to_string(),
                 new_items: 0,
+                skipped_history: 0,
                 error_code: Some(code.clone()),
             },
         }
@@ -193,6 +205,43 @@ pub fn feed_source_item_count(
     Ok(count as u32)
 }
 
+/// 订阅全局设置与维护页的资料库汇总；不暴露单源 URL 或文章内容。
+#[tauri::command]
+pub fn feed_library_summary(state: State<'_, Arc<AppState>>) -> AppResult<FeedLibrarySummary> {
+    state.db.with_read_conn(FeedRepository::library_summary)
+}
+
+/// RSS 回收站：仅返回已软删除的应用缓存条目，不涉及 Markdown 笔记回收站。
+#[tauri::command]
+pub fn feed_trash_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FeedTrashItem>> {
+    state
+        .db
+        .with_read_conn(|conn| FeedRepository::list_deleted_items(conn, 200))
+}
+
+#[tauri::command]
+pub fn feed_trash_restore(state: State<'_, Arc<AppState>>, item_id: String) -> AppResult<()> {
+    check_id(&item_id)?;
+    let restored = state
+        .db
+        .with_conn(|conn| FeedRepository::restore_deleted_item(conn, &item_id, Utc::now()))?;
+    if !restored {
+        return Err(AppError::msg("feed_trash_item_not_found"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn feed_trash_clear(state: State<'_, Arc<AppState>>) -> AppResult<u32> {
+    state.db.with_conn(FeedRepository::clear_deleted_items)
+}
+
+/// 仅在用户明确触发时执行 VACUUM，避免后台锁住正在使用的 SQLite。
+#[tauri::command]
+pub fn feed_library_optimize(state: State<'_, Arc<AppState>>) -> AppResult<()> {
+    state.db.with_conn(FeedRepository::vacuum_feed_library)
+}
+
 #[tauri::command]
 pub fn feed_item_list(
     state: State<'_, Arc<AppState>>,
@@ -225,6 +274,26 @@ pub fn feed_item_set_state(
     feed_item_set_state_impl(&state, &item_id, &patch)
 }
 
+/// 明确补全当前来源最近的摘要条目；默认同步不会调用此入口。
+#[tauri::command]
+pub fn feed_fulltext_enqueue_recent(
+    state: State<'_, Arc<AppState>>,
+    source_id: String,
+    limit: u32,
+) -> AppResult<u32> {
+    check_id(&source_id)?;
+    if !(1..=FULLTEXT_RECENT_LIMIT_MAX).contains(&limit) {
+        return Err(AppError::msg("feed_fulltext_limit_invalid"));
+    }
+    let queued = state
+        .db
+        .with_conn(|conn| FeedRepository::enqueue_recent_fulltext(conn, &source_id, limit))?;
+    if queued > 0 {
+        state.feed_fulltext.schedule();
+    }
+    Ok(queued)
+}
+
 #[tauri::command]
 pub fn feed_items_mark_read(
     state: State<'_, Arc<AppState>>,
@@ -248,7 +317,9 @@ pub async fn feed_sync_source(
 
 #[tauri::command]
 pub async fn feed_sync_all(state: State<'_, Arc<AppState>>) -> AppResult<FeedSyncBatchOutcome> {
-    state.feed_sync.sync_all().await
+    let outcome = state.feed_sync.sync_all().await?;
+    state.feed_fulltext.schedule();
+    Ok(outcome)
 }
 
 #[tauri::command]
@@ -269,7 +340,9 @@ pub async fn feed_sync_batch(
     } else {
         HistoryReadPolicy::LeaveUnread
     };
-    Ok(state.feed_sync.sync_batch(&source_ids, history).await)
+    let outcome = state.feed_sync.sync_batch(&source_ids, history).await;
+    state.feed_fulltext.schedule();
+    Ok(outcome)
 }
 
 #[tauri::command]
@@ -282,9 +355,10 @@ pub fn feed_opml_import(
     if xml.len() > OPML_MAX_BYTES {
         return Err(AppError::msg("feed_opml_too_large"));
     }
-    state
-        .db
-        .with_conn(|conn| import_opml(conn, &xml, dry_run.unwrap_or(false)))
+    state.db.with_conn(|conn| {
+        let interval = feed_default_interval(conn)?;
+        import_opml_with_interval(conn, &xml, dry_run.unwrap_or(false), interval)
+    })
 }
 
 #[tauri::command]
@@ -322,7 +396,9 @@ fn feed_source_add_impl(
                     icon_url: None,
                     language: None,
                     folder_path: input.folder_path.clone().unwrap_or_default(),
-                    fetch_interval_minutes: input.fetch_interval_minutes.unwrap_or(60),
+                    fetch_interval_minutes: input
+                        .fetch_interval_minutes
+                        .unwrap_or(feed_default_interval(conn)?),
                 },
                 Utc::now(),
             )
@@ -335,6 +411,20 @@ fn feed_source_add_impl(
         .find(|item| item.id == source)
         .ok_or_else(|| AppError::msg("feed_source_readback"))?;
     Ok(summary)
+}
+
+fn feed_default_interval(conn: &rusqlite::Connection) -> AppResult<i64> {
+    let value: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'feed_default_fetch_interval_minutes'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(value
+        .and_then(|raw| serde_json::from_str::<i64>(&raw).ok())
+        .filter(|minutes| (15..=10_080).contains(minutes))
+        .unwrap_or(60))
 }
 
 fn feed_source_update_impl(
@@ -355,6 +445,7 @@ fn feed_source_update_impl(
         folder_path: patch.folder_path.clone(),
         fetch_interval_minutes: patch.fetch_interval_minutes,
         is_enabled: patch.is_enabled,
+        fulltext_enabled: patch.fulltext_enabled,
     };
     let updated = state.db.with_conn(|conn| {
         FeedRepository::update_source(conn, source_id, &model_patch, Utc::now())
@@ -428,14 +519,16 @@ async fn feed_sync_source_impl(
         .feed_sync
         .sync_source_with_history(source_id, SyncMode::Manual, history)
         .await?;
+    state.feed_fulltext.schedule();
     Ok(FeedSyncOutcomeDto::from_status(&outcome.status))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feed::model::FeedItemInput;
+    use crate::feed::model::{FeedItemInput, FulltextStatus};
     use crate::feed::normalize::normalize_feed;
+    use crate::feed::opml::import_opml;
 
     fn test_state() -> Arc<AppState> {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -471,6 +564,8 @@ mod tests {
                 content_hash: item.content_hash.clone(),
                 conversion_version: 1,
                 conversion_status: item.conversion_status,
+                expires_at: "2026-08-08T08:00:00Z".to_string(),
+                fulltext_status: FulltextStatus::NotRequested,
             })
             .collect();
         state
@@ -515,6 +610,7 @@ mod tests {
                 folder_path: None,
                 fetch_interval_minutes: Some(120),
                 is_enabled: Some(false),
+                fulltext_enabled: None,
             },
         )
         .expect("update");
@@ -763,8 +859,24 @@ mod tests {
     #[test]
     fn sync_outcome_dto_maps_all_statuses() {
         let cases = [
-            (SyncStatus::Succeeded { new_items: 3 }, "succeeded", 3, None),
-            (SyncStatus::Succeeded { new_items: 0 }, "succeeded", 0, None),
+            (
+                SyncStatus::Succeeded {
+                    new_items: 3,
+                    skipped_history: 0,
+                },
+                "succeeded",
+                3,
+                None,
+            ),
+            (
+                SyncStatus::Succeeded {
+                    new_items: 0,
+                    skipped_history: 0,
+                },
+                "succeeded",
+                0,
+                None,
+            ),
             (SyncStatus::NotModified, "not_modified", 0, None),
             (SyncStatus::Skipped, "skipped", 0, None),
             (SyncStatus::InFlight, "in_flight", 0, None),

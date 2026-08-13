@@ -198,6 +198,16 @@ fn handle_outline(
 /// 完成。已存在源仅更新 `folder_path`/`title_override`（值变化才计入
 /// `updated`），不触碰 `is_enabled`/`etag`/同步与阅读状态。
 pub fn import_opml(conn: &Connection, xml: &str, dry_run: bool) -> AppResult<OpmlImportResult> {
+    import_opml_with_interval(conn, xml, dry_run, 60)
+}
+
+/// 与默认同步间隔一起导入；旧公开入口固定为 60 分钟以保持测试与兼容性。
+pub fn import_opml_with_interval(
+    conn: &Connection,
+    xml: &str,
+    dry_run: bool,
+    default_fetch_interval_minutes: i64,
+) -> AppResult<OpmlImportResult> {
     let outlines = parse_opml(xml.as_bytes())?;
     let mut result = OpmlImportResult::default();
     let mut seen: HashSet<String> = HashSet::new();
@@ -230,7 +240,7 @@ pub fn import_opml(conn: &Connection, xml: &str, dry_run: bool) -> AppResult<Opm
                                 icon_url: None,
                                 language: None,
                                 folder_path: outline.folder_path.clone(),
-                                fetch_interval_minutes: 60,
+                                fetch_interval_minutes: default_fetch_interval_minutes,
                             },
                             Utc::now(),
                         )?;

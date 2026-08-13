@@ -1,0 +1,10 @@
+DROP INDEX IF EXISTS idx_feed_items_fulltext_pending;
+DROP INDEX IF EXISTS idx_feed_items_retention;
+ALTER TABLE feed_items DROP COLUMN fulltext_markdown;
+ALTER TABLE feed_items DROP COLUMN fulltext_status;
+ALTER TABLE feed_items DROP COLUMN content_origin;
+ALTER TABLE feed_items DROP COLUMN purge_after;
+ALTER TABLE feed_items DROP COLUMN deleted_at;
+ALTER TABLE feed_items DROP COLUMN expires_at;
+ALTER TABLE feed_sources DROP COLUMN history_boundary_published_at;
+ALTER TABLE feed_sources DROP COLUMN history_boundary_external_key;

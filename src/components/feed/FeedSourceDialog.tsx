@@ -30,6 +30,7 @@ import {
   feedSourceItemCount,
   feedSourceRemove,
   feedSourceUpdate,
+  feedFulltextEnqueueRecent,
   feedSyncSource,
 } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
@@ -45,6 +46,7 @@ export interface FeedSourceDialogProps {
   onOpenChange: (open: boolean) => void;
   /** 添加/编辑/退订完成后刷新源列表。 */
   onSourcesChanged: () => void;
+  defaultFetchIntervalMinutes?: number;
 }
 
 const INTERVALS = [
@@ -90,7 +92,7 @@ function DiscoverStep({
       if (found.length === 0) {
         setError("未找到可订阅的 Feed，请检查网址或稍后重试。");
       }
-    } catch (caught) {
+    } catch {
       setError(
         (caught as { code?: string })?.code === "feed_validation_url"
           ? "仅支持 HTTPS 地址，且不允许内网地址。"
@@ -105,7 +107,7 @@ function DiscoverStep({
 
   return (
     <div className="space-y-3">
-      <div className="flex gap-2">
+      <div data-testid="feed-discover-controls" className="w-full space-y-2">
         <Input
           data-testid="feed-discover-url"
           placeholder="https://example.com/feed.xml 或站点地址"
@@ -115,20 +117,6 @@ function DiscoverStep({
             if (event.key === "Enter") void runDiscover();
           }}
         />
-        <Button
-          type="button"
-          data-testid="feed-discover-run"
-          variant="outline"
-          onClick={() => void runDiscover()}
-          disabled={discovering || url.trim().length === 0}
-        >
-          {discovering ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Search className="h-4 w-4" aria-hidden="true" />
-          )}
-          发现
-        </Button>
       </div>
       <FieldError message={error} />
       {candidates.length > 0 ? (
@@ -166,10 +154,26 @@ function DiscoverStep({
           ))}
         </fieldset>
       ) : null}
-      <DialogFooter>
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          type="button"
+          data-testid="feed-discover-run"
+          variant="outline"
+          className="w-full"
+          onClick={() => void runDiscover()}
+          disabled={discovering || url.trim().length === 0}
+        >
+          {discovering ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <Search className="h-4 w-4" aria-hidden="true" />
+          )}
+          发现
+        </Button>
         <Button
           type="button"
           data-testid="feed-confirm-subscribe"
+          className="w-full"
           disabled={!chosen}
           onClick={() => {
             if (chosen) onChosen(chosen);
@@ -177,7 +181,7 @@ function DiscoverStep({
         >
           下一步
         </Button>
-      </DialogFooter>
+      </div>
     </div>
   );
 }
@@ -187,14 +191,16 @@ function ConfirmStep({
   candidate,
   onBack,
   onDone,
+  defaultFetchIntervalMinutes,
 }: {
   candidate: FeedCandidate;
   onBack: () => void;
   onDone: () => void;
+  defaultFetchIntervalMinutes: number;
 }) {
   const [title, setTitle] = useState(candidate.title ?? candidate.url);
   const [folderPath, setFolderPath] = useState("");
-  const [interval, setInterval] = useState("60");
+  const [interval, setInterval] = useState(String(defaultFetchIntervalMinutes));
   const [historyUnread, setHistoryUnread] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -227,10 +233,8 @@ function ConfirmStep({
         return;
       }
       onDone();
-    } catch (caught) {
-      setError(
-        "添加失败：" + ((caught as { code?: string })?.code ?? "未知错误"),
-      );
+    } catch {
+      setError("添加订阅失败，请检查设置后重试。");
     } finally {
       setBusy(false);
     }
@@ -295,7 +299,7 @@ function ConfirmStep({
         历史文章也设为未读
       </label>
       <FieldError message={error} />
-      <DialogFooter className="gap-2">
+      <DialogFooter className="gap-2 px-0 pb-0">
         <Button type="button" variant="ghost" onClick={onBack} disabled={busy}>
           上一步
         </Button>
@@ -329,10 +333,15 @@ function EditStep({
   const [folderPath, setFolderPath] = useState(source.folderPath ?? "");
   const [interval, setInterval] = useState(String(source.fetchIntervalMinutes));
   const [isEnabled, setIsEnabled] = useState(source.isEnabled);
+  const [fulltextEnabled, setFulltextEnabled] = useState(
+    source.fulltextEnabled ?? false,
+  );
   const [itemCount, setItemCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [enqueueing, setEnqueueing] = useState(false);
+  const [fulltextMessage, setFulltextMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!source.id) return;
@@ -350,16 +359,23 @@ function EditStep({
         folderPath: folderPath.trim() || null,
         fetchIntervalMinutes: Number(interval),
         isEnabled,
+        fulltextEnabled,
       });
       onDone();
     } catch (caught) {
-      setError(
-        "保存失败：" + ((caught as { code?: string })?.code ?? "未知错误"),
-      );
+      setError("保存订阅设置失败，请稍后重试。");
     } finally {
       setBusy(false);
     }
-  }, [folderPath, interval, isEnabled, onDone, source.id, titleOverride]);
+  }, [
+    folderPath,
+    fulltextEnabled,
+    interval,
+    isEnabled,
+    onDone,
+    source.id,
+    titleOverride,
+  ]);
 
   const remove = useCallback(
     async (keepItems: boolean) => {
@@ -368,15 +384,33 @@ function EditStep({
       try {
         await feedSourceRemove(source.id, keepItems);
         onDone();
-      } catch (caught) {
-        setError(
-          "退订失败：" + ((caught as { code?: string })?.code ?? "未知错误"),
-        );
+      } catch {
+        setError("退订失败，请稍后重试。");
         setBusy(false);
       }
     },
     [onDone, source.id],
   );
+
+  const enqueueRecentFulltext = useCallback(async () => {
+    setEnqueueing(true);
+    setFulltextMessage(null);
+    try {
+      if (!source.fulltextEnabled) {
+        await feedSourceUpdate(source.id, { fulltextEnabled: true });
+      }
+      const queued = await feedFulltextEnqueueRecent(source.id, 20);
+      setFulltextMessage(
+        queued > 0
+          ? `已加入 ${queued} 篇最近摘要的正文补全队列。`
+          : "最近保留的文章没有需要补全的摘要。",
+      );
+    } catch {
+      setFulltextMessage("正文补全未能启动，请确认已启用此来源的补全开关。");
+    } finally {
+      setEnqueueing(false);
+    }
+  }, [source.id]);
 
   if (confirmingDelete) {
     return (
@@ -386,7 +420,7 @@ function EditStep({
           篇）。此操作不可撤销。
         </p>
         <FieldError message={error} />
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 px-0 pb-0">
           <Button
             type="button"
             variant="ghost"
@@ -456,8 +490,48 @@ function EditStep({
         />
         启用同步（关闭即暂停）
       </label>
+      <label className="flex items-start gap-2 text-ui">
+        <input
+          type="checkbox"
+          data-testid="feed-edit-fulltext"
+          checked={fulltextEnabled}
+          onChange={(event) => setFulltextEnabled(event.target.checked)}
+        />
+        <span>
+          <span className="block">为后续摘要文章补全网页正文</span>
+          <span className="block text-caption text-muted-foreground">
+            默认关闭。使用通用正文提取；失败时仍保留 Feed 摘要和原文链接。
+          </span>
+        </span>
+      </label>
+      {fulltextEnabled ? (
+        <div className="rounded-md border border-border-subtle bg-panel px-3 py-2">
+          <p className="text-caption text-muted-foreground">
+            历史文章不会自动抓取。你可以只补全最近 20 篇仍保留的摘要文章。
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="feed-fulltext-enqueue-recent"
+            className="mt-2"
+            disabled={enqueueing}
+            onClick={() => void enqueueRecentFulltext()}
+          >
+            {enqueueing ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : null}
+            补全最近 20 篇摘要
+          </Button>
+          {fulltextMessage ? (
+            <p role="status" className="mt-2 text-caption text-muted-foreground">
+              {fulltextMessage}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <FieldError message={error} />
-      <DialogFooter className="gap-2">
+      <DialogFooter className="gap-2 px-0 pb-0">
         <Button
           type="button"
           data-testid="feed-edit-save"
@@ -500,6 +574,7 @@ export function FeedSourceDialog({
   source,
   onOpenChange,
   onSourcesChanged,
+  defaultFetchIntervalMinutes = 60,
 }: FeedSourceDialogProps) {
   const [step, setStep] = useState<"discover" | "confirm">("discover");
   const [candidate, setCandidate] = useState<FeedCandidate | null>(null);
@@ -519,7 +594,7 @@ export function FeedSourceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="feed-source-dialog" className="sm:max-w-lg">
+      <DialogContent data-testid="feed-source-dialog" className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "添加订阅" : "编辑订阅"}</DialogTitle>
           <DialogDescription>
@@ -528,24 +603,27 @@ export function FeedSourceDialog({
               : "修改订阅设置或管理退订。"}
           </DialogDescription>
         </DialogHeader>
-        {mode === "add" ? (
-          step === "discover" ? (
-            <DiscoverStep
-              onChosen={(chosen) => {
-                setCandidate(chosen);
-                setStep("confirm");
-              }}
-            />
-          ) : candidate ? (
-            <ConfirmStep
-              candidate={candidate}
-              onBack={() => setStep("discover")}
-              onDone={handleDone}
-            />
-          ) : null
-        ) : source ? (
-          <EditStep source={source} onDone={handleDone} />
-        ) : null}
+        <div data-testid="feed-source-dialog-body" className="px-5 pb-5">
+          {mode === "add" ? (
+            step === "discover" ? (
+              <DiscoverStep
+                onChosen={(chosen) => {
+                  setCandidate(chosen);
+                  setStep("confirm");
+                }}
+              />
+            ) : candidate ? (
+              <ConfirmStep
+                candidate={candidate}
+                onBack={() => setStep("discover")}
+                onDone={handleDone}
+                defaultFetchIntervalMinutes={defaultFetchIntervalMinutes}
+              />
+            ) : null
+          ) : source ? (
+            <EditStep source={source} onDone={handleDone} />
+          ) : null}
+        </div>
       </DialogContent>
     </Dialog>
   );

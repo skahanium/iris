@@ -71,6 +71,62 @@ async fn fetch_page_bytes_with_gate<G: SafeHttpsGate>(
                 .resolve_public_addrs(&host)
                 .await
                 .map_err(|_| AppError::msg("web_dns_failed"))?;
+            if gate.uses_fixed_proxy_transport() {
+                let response = crate::network::safe_https::fixed_https_get(
+                    &current,
+                    &addrs,
+                    user_agent,
+                    &[],
+                    MAX_RESPONSE_BYTES,
+                )
+                .await
+                .map_err(|error| {
+                    AppError::msg(match error.to_string().as_str() {
+                        "https_proxy_unreachable" => "web_proxy_unreachable",
+                        "https_proxy_unsupported" => "web_proxy_unsupported",
+                        "https_proxy_auth_unsupported" => "web_proxy_auth_unsupported",
+                        "https_proxy_connect_failed" => "web_proxy_connect_failed",
+                        "https_response_headers_too_large" => "web_response_headers_too_large",
+                        "https_response_too_large" => "web_response_too_large",
+                        "https_stream_failed" => "web_stream_failed",
+                        _ => "web_fetch_failed",
+                    })
+                })?;
+                if (300..400).contains(&response.status) {
+                    let location = response
+                        .headers
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|value| value.to_str().ok())
+                        .ok_or_else(|| AppError::msg("web_redirect_missing_location"))?;
+                    current = reqwest::Url::parse(&current)
+                        .map_err(|_| AppError::msg("web_url_invalid"))?
+                        .join(location)
+                        .map_err(|_| AppError::msg("web_redirect_invalid_target"))?
+                        .to_string();
+                    continue;
+                }
+                if !(200..300).contains(&response.status) {
+                    return Err(AppError::msg(format!("web_http_error_{}", response.status)));
+                }
+                let content_type = response
+                    .headers
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if !content_type.is_empty()
+                    && !content_type.contains("text/html")
+                    && !content_type.contains("text/plain")
+                    && !content_type.contains("application/xhtml")
+                {
+                    return Err(AppError::msg("web_content_type_unsupported"));
+                }
+                return Ok(PageBytesResult {
+                    final_url: current,
+                    content_type,
+                    bytes: response.bytes,
+                });
+            }
             let client = gate
                 .build_client(&host, port, &addrs, timeout)
                 .map_err(|_| AppError::msg("web_client_build_failed"))?;
@@ -548,12 +604,16 @@ mod tests {
             Ok(())
         }
 
-        async fn resolve_public_addrs(&self, host: &str) -> AppResult<Vec<IpAddr>> {
-            self.resolved
-                .lock()
-                .expect("resolved lock")
-                .push(host.into());
-            Ok(vec!["127.0.0.1".parse().expect("loopback")])
+        fn resolve_public_addrs(
+            &self,
+            host: &str,
+        ) -> impl std::future::Future<Output = AppResult<Vec<IpAddr>>> + Send {
+            let resolved = self.resolved.clone();
+            let host = host.to_string();
+            async move {
+                resolved.lock().expect("resolved lock").push(host);
+                Ok(vec!["127.0.0.1".parse().expect("loopback")])
+            }
         }
 
         fn build_client(

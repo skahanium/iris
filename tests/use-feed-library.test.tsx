@@ -36,6 +36,7 @@ function source(id: string): FeedSourceSummary {
     folderPath: "",
     isEnabled: true,
     fetchIntervalMinutes: 60,
+    fulltextEnabled: false,
     unreadCount: 1,
     lastCheckedAt: null,
     lastSuccessAt: null,
@@ -59,6 +60,7 @@ function item(
     canonicalUrl: null,
     publishedAt: null,
     receivedAt,
+    sortAt: receivedAt,
     excerpt: "excerpt",
     isRead: false,
     isStarred: false,
@@ -90,7 +92,7 @@ describe("useFeedLibrary", () => {
       search: null,
       receivedAfter: null,
       cursor: null,
-      limit: 50,
+      limit: 51,
     });
     expect(result.current.view).toBe("inbox");
     expect(result.current.items).toHaveLength(1);
@@ -253,7 +255,7 @@ describe("useFeedLibrary", () => {
         search: null,
         receivedAfter: null,
         cursor: null,
-        limit: 50,
+        limit: 51,
       }),
     );
   });
@@ -278,7 +280,7 @@ describe("useFeedLibrary", () => {
   });
 
   it("tracks the loaded page and loads more with a keyset cursor", async () => {
-    const firstPage = Array.from({ length: 50 }, (_, index) =>
+    const firstPage = Array.from({ length: 51 }, (_, index) =>
       item(
         `i${index + 1}`,
         `2026-08-02T08:${String(59 - index).padStart(2, "0")}:00Z`,
@@ -286,7 +288,7 @@ describe("useFeedLibrary", () => {
     );
     feedItemList
       .mockResolvedValueOnce(firstPage)
-      .mockResolvedValue([item("i51", "2026-08-01T08:00:00Z")]);
+      .mockResolvedValue([item("i52", "2026-08-01T08:00:00Z")]);
     const { result } = renderHook(() => useFeedLibrary());
     await waitFor(() => expect(result.current.status).toBe("ready"));
     expect(result.current.hasMore).toBe(true);
@@ -296,20 +298,20 @@ describe("useFeedLibrary", () => {
     });
     await waitFor(() => expect(result.current.page).toBe(2));
     expect(result.current.items).toHaveLength(51);
-    expect(result.current.items.at(-1)?.id).toBe("i51");
+    expect(result.current.items.at(-1)?.id).toBe("i52");
     expect(feedItemList).toHaveBeenLastCalledWith({
       view: "inbox",
       sourceId: null,
       search: null,
       receivedAfter: null,
       cursor: { sortAt: "2026-08-02T08:10:00Z", rowId: 50 },
-      limit: 50,
+      limit: 51,
     });
   });
 
   it("only exposes load-more when a full page was returned", async () => {
     feedItemList.mockResolvedValue(
-      Array.from({ length: 50 }, (_, index) => item(`i${index + 1}`)),
+      Array.from({ length: 51 }, (_, index) => item(`i${index + 1}`)),
     );
     const { result } = renderHook(() => useFeedLibrary());
     await waitFor(() => expect(result.current.status).toBe("ready"));

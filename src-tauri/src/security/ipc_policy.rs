@@ -13,6 +13,9 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "llm_usage_last",
     "follow_system_proxy",
     "cjk_punctuation_enabled",
+    "feed_auto_read_enabled",
+    "feed_background_sync_enabled",
+    "feed_default_fetch_interval_minutes",
 ];
 
 /// Validate credential service id before local encrypted credential access.

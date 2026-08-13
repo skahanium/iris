@@ -12,6 +12,7 @@ const {
   feedDiscover,
   feedSourceAdd,
   feedSourceUpdate,
+  feedFulltextEnqueueRecent,
   feedSourceRemove,
   feedSourceItemCount,
   feedSyncSource,
@@ -25,6 +26,7 @@ const {
   feedDiscover: vi.fn(),
   feedSourceAdd: vi.fn(),
   feedSourceUpdate: vi.fn(),
+  feedFulltextEnqueueRecent: vi.fn(),
   feedSourceRemove: vi.fn(),
   feedSourceItemCount: vi.fn(),
   feedSyncSource: vi.fn(),
@@ -40,6 +42,7 @@ vi.mock("@/lib/ipc", () => ({
   feedDiscover,
   feedSourceAdd,
   feedSourceUpdate,
+  feedFulltextEnqueueRecent,
   feedSourceRemove,
   feedSourceItemCount,
   feedSyncSource,
@@ -65,6 +68,7 @@ function source(overrides: Partial<FeedSourceSummary> = {}): FeedSourceSummary {
     folderPath: "tech",
     isEnabled: true,
     fetchIntervalMinutes: 60,
+    fulltextEnabled: false,
     unreadCount: 3,
     lastCheckedAt: null,
     lastSuccessAt: null,
@@ -93,6 +97,7 @@ beforeEach(() => {
     errorCode: null,
   });
   feedSourceUpdate.mockResolvedValue(undefined);
+  feedFulltextEnqueueRecent.mockResolvedValue(0);
   feedSourceRemove.mockResolvedValue(5);
   feedSourceItemCount.mockResolvedValue(5);
   feedItemList.mockResolvedValue([]);
@@ -109,6 +114,77 @@ afterEach(() => {
 });
 
 describe("FeedSourceDialog 管理交互", () => {
+  it("keeps the discovery controls inside the dialog gutter", () => {
+    render(
+      <FeedSourceDialog
+        open
+        mode="add"
+        source={null}
+        onOpenChange={() => undefined}
+        onSourcesChanged={() => undefined}
+      />,
+    );
+
+    expect(screen.getByTestId("feed-source-dialog").className).toContain(
+      "sm:max-w-sm",
+    );
+    expect(screen.getByTestId("feed-source-dialog-body").className).toContain(
+      "px-5",
+    );
+    expect(screen.getByTestId("feed-discover-controls").className).toContain(
+      "space-y-2",
+    );
+    expect(
+      screen.getByTestId("feed-discover-url").parentElement?.className,
+    ).toContain("w-full");
+  });
+
+  it("places discovery and next-step actions in one equal-width action bar", () => {
+    render(
+      <FeedSourceDialog
+        open
+        mode="add"
+        source={null}
+        onOpenChange={() => undefined}
+        onSourcesChanged={() => undefined}
+      />,
+    );
+
+    const discover = screen.getByTestId("feed-discover-run");
+    const next = screen.getByTestId("feed-confirm-subscribe");
+    expect(discover.parentElement).toBe(next.parentElement);
+    expect(discover.parentElement?.className).toContain("grid-cols-2");
+  });
+
+  it("uses the configured default interval for a newly confirmed source", async () => {
+    render(
+      <FeedSourceDialog
+        open
+        mode="add"
+        source={null}
+        onOpenChange={() => undefined}
+        onSourcesChanged={() => undefined}
+        defaultFetchIntervalMinutes={180}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("feed-discover-url"), {
+      target: { value: "https://example.com" },
+    });
+    fireEvent.click(screen.getByTestId("feed-discover-run"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("feed-candidate-https://example.com/feed.xml"),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(
+      screen.getByTestId("feed-candidate-https://example.com/feed.xml"),
+    );
+    fireEvent.click(screen.getByTestId("feed-confirm-subscribe"));
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-add-interval")).toHaveTextContent("3 小时"),
+    );
+  });
+
   it("discovers candidates and requires a single explicit selection", async () => {
     const onOpenChange = vi.fn();
     const onSourcesChanged = vi.fn();
@@ -275,6 +351,7 @@ describe("FeedSourceDialog 管理交互", () => {
         folderPath: "新闻",
         fetchIntervalMinutes: 60,
         isEnabled: false,
+        fulltextEnabled: false,
       }),
     );
     expect(onSourcesChanged).toHaveBeenCalled();
@@ -351,6 +428,28 @@ describe("FeedSourceDialog 管理交互", () => {
       "<script>",
     );
   });
+
+  it("does not expose internal error codes when editing a source fails", async () => {
+    feedSourceUpdate.mockRejectedValueOnce({ code: "feed_source_validation_failed" });
+    render(
+      <FeedSourceDialog
+        open
+        mode="edit"
+        source={source()}
+        onOpenChange={() => undefined}
+        onSourcesChanged={() => undefined}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("feed-edit-save"));
+    await waitFor(() => expect(screen.getByTestId("feed-dialog-error")).toBeTruthy());
+    expect(screen.getByTestId("feed-dialog-error")).toHaveTextContent(
+      "保存订阅设置失败，请稍后重试。",
+    );
+    expect(screen.getByTestId("feed-dialog-error")).not.toHaveTextContent(
+      "feed_source_validation_failed",
+    );
+  });
 });
 
 describe("订阅搜索交互", () => {
@@ -384,7 +483,7 @@ describe("订阅搜索交互", () => {
       await Promise.resolve();
     });
     expect(feedItemList).toHaveBeenCalledWith(
-      expect.objectContaining({ search: "hel", sourceId: null, limit: 50 }),
+      expect.objectContaining({ search: "hel", sourceId: null, limit: 51 }),
     );
 
     // Escape 清空并回到先前视图。
@@ -426,7 +525,7 @@ describe("订阅搜索交互", () => {
       await Promise.resolve();
     });
     expect(feedItemList).toHaveBeenCalledWith(
-      expect.objectContaining({ search: "中", sourceId: null, limit: 50 }),
+      expect.objectContaining({ search: "中", sourceId: null, limit: 51 }),
     );
     vi.useRealTimers();
   });
@@ -451,7 +550,7 @@ describe("订阅搜索交互", () => {
     await waitFor(() =>
       expect(screen.getByTestId("feed-list-error")).toBeTruthy(),
     );
-    expect(screen.getByTestId("feed-list-error").textContent).toContain(
+    expect(screen.getByTestId("feed-list-error").textContent).not.toContain(
       "database",
     );
     fireEvent.click(screen.getByTestId("feed-list-retry"));

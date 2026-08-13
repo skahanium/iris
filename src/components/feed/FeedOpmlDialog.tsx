@@ -32,6 +32,8 @@ export interface FeedOpmlDialogProps {
   onOpenChange: (open: boolean) => void;
   /** 导入/导出完成后刷新源列表。 */
   onSourcesChanged: () => void;
+  /** 无订阅时导出没有语义，明确禁用而非生成空文件。 */
+  hasSources?: boolean;
 }
 
 interface ImportPreview {
@@ -58,6 +60,7 @@ export function FeedOpmlDialog({
   open,
   onOpenChange,
   onSourcesChanged,
+  hasSources = true,
 }: FeedOpmlDialogProps) {
   // 导入流程状态。
   const [preview, setPreview] = useState<ImportPreview | null>(null);
@@ -164,10 +167,10 @@ export function FeedOpmlDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="max-h-[min(58vh,28rem)] space-y-3 overflow-y-auto px-4 pb-2">
           {/* 导入区 */}
-          <div className="space-y-2">
-            <p className="text-caption font-medium text-muted-foreground">
+          <div className="rounded-md border border-border-subtle p-3">
+            <p className="mb-2 text-caption font-medium text-muted-foreground">
               导入
             </p>
             {!preview ? (
@@ -273,7 +276,7 @@ export function FeedOpmlDialog({
           </div>
 
           {/* 导出区 */}
-          <div className="space-y-2 border-t border-border-subtle pt-3">
+          <div className="rounded-md border border-border-subtle p-3">
             <p className="text-caption font-medium text-muted-foreground">
               导出
             </p>
@@ -282,7 +285,7 @@ export function FeedOpmlDialog({
               data-testid="feed-opml-export"
               variant="outline"
               onClick={() => void runExport()}
-              disabled={exporting}
+              disabled={exporting || !hasSources}
             >
               {exporting ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -291,6 +294,11 @@ export function FeedOpmlDialog({
               )}
               导出全部订阅
             </Button>
+            {!hasSources ? (
+              <p className="mt-2 text-caption text-muted-foreground">
+                还没有订阅源，暂不能导出。
+              </p>
+            ) : null}
             {exported ? (
               <p
                 data-testid="feed-opml-export-done"
