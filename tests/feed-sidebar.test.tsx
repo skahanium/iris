@@ -17,7 +17,7 @@ function source(
     folderPath,
     isEnabled: true,
     fetchIntervalMinutes: 60,
-    fulltextEnabled: false,
+    fulltextEnabled: true,
     unreadCount: 0,
     lastCheckedAt: null,
     lastSuccessAt: null,

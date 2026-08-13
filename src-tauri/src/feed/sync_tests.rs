@@ -150,7 +150,7 @@ async fn first_sync_marks_history_read_by_default() {
 }
 
 #[tokio::test]
-async fn summary_only_feed_does_not_queue_web_fulltext_unless_source_opted_in() {
+async fn new_source_queues_summary_only_feed_for_default_web_fulltext() {
     let db = create_db();
     let server = TestServer::start().await;
     server.queue(
@@ -176,7 +176,10 @@ async fn summary_only_feed_does_not_queue_web_fulltext_unless_source_opted_in() 
             Ok(rows)
         })
         .expect("statuses");
-    assert!(statuses.iter().all(|status| status == "not_requested"));
+    assert!(
+        statuses.iter().all(|status| status == "pending"),
+        "新来源的仅摘要文章应自动进入正文补全队列"
+    );
 }
 
 #[tokio::test]
@@ -336,6 +339,62 @@ async fn retained_history_boundary_prevents_old_feed_items_from_dripping_back_in
         })
         .expect("count")
         == 0);
+}
+
+#[tokio::test]
+async fn retained_history_boundary_keeps_new_undated_entries_before_the_boundary() {
+    let db = create_db();
+    let server = TestServer::start().await;
+    let feed = |newest_undated: Option<&str>| {
+        let entries = newest_undated
+            .into_iter()
+            .map(|id| {
+                format!(
+                    "<item><guid>{id}</guid><title>{id}</title><link>https://example.com/{id}</link><description>summary</description></item>"
+                )
+            })
+            .chain((1..=60).rev().map(|n| {
+                let published = Utc
+                    .with_ymd_and_hms(2026, 1, 1, 10, 0, 0)
+                    .single()
+                    .expect("date")
+                    + chrono::Duration::days(i64::from(n));
+                format!(
+                    "<item><guid>entry-{n}</guid><title>Entry {n}</title><link>https://example.com/{n}</link><description>summary</description><pubDate>{}</pubDate></item>",
+                    published.to_rfc2822()
+                )
+            }))
+            .collect::<String>();
+        format!("<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Large</title>{entries}</channel></rss>")
+    };
+    server.queue(TestResponse::new(200, feed(None)).header("Content-Type", "application/rss+xml"));
+    server.queue(
+        TestResponse::new(200, feed(Some("new-undated")))
+            .header("Content-Type", "application/rss+xml"),
+    );
+    insert_source(&db, "src-1", &server.url("/feed.xml"));
+
+    sync_ok(
+        &db,
+        &TestNetGate::default(),
+        "src-1",
+        SyncMode::Manual,
+        HistoryReadPolicy::MarkRead,
+    )
+    .await;
+    let status = sync_ok(
+        &db,
+        &TestNetGate::default(),
+        "src-1",
+        SyncMode::Manual,
+        HistoryReadPolicy::MarkRead,
+    )
+    .await;
+
+    assert!(matches!(status, SyncStatus::Succeeded { new_items: 1, .. }));
+    assert_eq!(item_count(&db, "src-1"), 51);
+    let id = item_id_by_key(&db, "src-1", "new-undated");
+    assert!(!item_detail(&db, &id).summary.is_read);
 }
 
 #[tokio::test]

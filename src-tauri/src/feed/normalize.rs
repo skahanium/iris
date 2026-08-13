@@ -45,14 +45,9 @@ static UUID_FORMAT_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// 规范化后的订阅源。
 #[derive(Debug, Clone)]
 pub(crate) struct NormalizedFeed {
-    // 站点元数据字段由阶段 3 建源流程消费；届时移除标注。
-    #[allow(dead_code)]
     pub title: String,
-    #[allow(dead_code)]
     pub site_url: Option<String>,
-    #[allow(dead_code)]
     pub description: Option<String>,
-    #[allow(dead_code)]
     pub language: Option<String>,
     pub items: Vec<NormalizedItem>,
 }

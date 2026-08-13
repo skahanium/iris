@@ -18,7 +18,12 @@ import {
 } from "@/components/feed/FeedSourceDialog";
 import { useFeedLibrary } from "@/hooks/useFeedLibrary";
 import { useFeedSettings } from "@/hooks/useFeedSettings";
-import { feedItemGet, feedSyncAll, feedSyncSource } from "@/lib/ipc";
+import {
+  feedFulltextEnqueueItem,
+  feedItemGet,
+  feedSyncAll,
+  feedSyncSource,
+} from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { FeedItemDetail, FeedSourceSummary, FeedView } from "@/types/ipc";
 
@@ -220,6 +225,38 @@ export function FeedWorkspace({
       });
   }, [detailRequestEpoch, library.selectedItemId]);
 
+  // 旧资料库的摘要只在用户实际打开时补全这一篇；新摘要会由同步直接置为
+  // pending，因此不会重复请求。失败必须由用户显式重试，避免网络循环。
+  const requestCurrentFulltext = useCallback(async () => {
+    const current = detailRef.current;
+    if (
+      !current ||
+      current.summary.id !== library.selectedItemId ||
+      current.contentOrigin === "web" ||
+      current.contentMarkdown !== current.summaryMarkdown
+    ) {
+      return;
+    }
+    const result = await feedFulltextEnqueueItem(current.summary.id);
+    if (result === "queued" || result === "already_queued") {
+      setDetail((previous) =>
+        previous?.summary.id === current.summary.id
+          ? { ...previous, fulltextStatus: "pending" }
+          : previous,
+      );
+    }
+  }, [library.selectedItemId]);
+
+  useEffect(() => {
+    if (
+      detailStatus !== "ready" ||
+      detail?.fulltextStatus !== "not_requested"
+    ) {
+      return;
+    }
+    void requestCurrentFulltext().catch(() => undefined);
+  }, [detail, detailStatus, requestCurrentFulltext]);
+
   // 后台全文完成只会刷新当前资料库查询；选中的详情需无感重取一次，才能
   // 将摘要替换为网页正文。列表变更不触碰未选中文章。
   useEffect(() => {
@@ -265,7 +302,7 @@ export function FeedWorkspace({
         const outcome = await feedSyncSource(library.sourceId, true);
         setSyncAnnouncement(
           outcome.status === "failed"
-            ? `同步失败：${outcome.errorCode ?? "feed_sync_failed"}`
+            ? "同步失败，请检查网络或稍后重试。"
             : `同步完成，新增 ${outcome.newItems} 篇文章。${outcome.skippedHistory > 0 ? ` 已略过 ${outcome.skippedHistory} 篇较早历史。` : ""}`,
         );
       } else {
@@ -455,6 +492,9 @@ export function FeedWorkspace({
       autoReadEnabled={feedSettings.autoReadEnabled}
       onAutoReadEnabledChange={feedSettings.setAutoReadEnabled}
       onRetry={() => setDetailRequestEpoch((epoch) => epoch + 1)}
+      onRetryFulltext={() =>
+        void requestCurrentFulltext().catch(() => undefined)
+      }
       setItemState={async (itemId, patch) => {
         const succeeded = await library.setItemState(itemId, patch);
         if (!succeeded) return;

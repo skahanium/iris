@@ -10,7 +10,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 import {
   feedDiscover,
-  feedFulltextEnqueueRecent,
+  feedFulltextEnqueueItem,
   feedItemGet,
   feedItemList,
   feedItemsMarkRead,
@@ -57,7 +57,7 @@ const FEED_COMMANDS = [
   "feed_item_list",
   "feed_item_get",
   "feed_item_set_state",
-  "feed_fulltext_enqueue_recent",
+  "feed_fulltext_enqueue_item",
   "feed_items_mark_read",
   "feed_sync_source",
   "feed_sync_all",
@@ -126,7 +126,7 @@ describe("feed IPC contract", () => {
       folderPath: "tech",
       isEnabled: true,
       fetchIntervalMinutes: 60,
-      fulltextEnabled: false,
+      fulltextEnabled: true,
       unreadCount: 0,
       lastCheckedAt: null,
       lastSuccessAt: null,
@@ -186,20 +186,25 @@ describe("feed IPC contract", () => {
     });
   });
 
-  it("keeps RSS recycle bin and bounded manual fulltext operations explicit", async () => {
-    invoke.mockResolvedValueOnce([]).mockResolvedValueOnce(undefined).mockResolvedValueOnce(3).mockResolvedValueOnce(20);
+  it("keeps RSS recycle bin and on-open fulltext operation explicit", async () => {
+    invoke
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce("queued");
 
     await expect(feedTrashList()).resolves.toEqual([]);
     await expect(feedTrashRestore("item-1")).resolves.toBeUndefined();
     await expect(feedTrashClear()).resolves.toBe(3);
-    await expect(feedFulltextEnqueueRecent("src-1", 20)).resolves.toBe(20);
+    await expect(feedFulltextEnqueueItem("item-1")).resolves.toBe("queued");
 
     expect(invoke).toHaveBeenNthCalledWith(1, "feed_trash_list");
-    expect(invoke).toHaveBeenNthCalledWith(2, "feed_trash_restore", { itemId: "item-1" });
+    expect(invoke).toHaveBeenNthCalledWith(2, "feed_trash_restore", {
+      itemId: "item-1",
+    });
     expect(invoke).toHaveBeenNthCalledWith(3, "feed_trash_clear");
-    expect(invoke).toHaveBeenNthCalledWith(4, "feed_fulltext_enqueue_recent", {
-      sourceId: "src-1",
-      limit: 20,
+    expect(invoke).toHaveBeenNthCalledWith(4, "feed_fulltext_enqueue_item", {
+      itemId: "item-1",
     });
   });
 

@@ -197,9 +197,11 @@ pub(crate) async fn sync_source<G: FeedNetGate>(
             let all_items = normalized.items;
             let is_first_sync =
                 db.with_read_conn(|conn| FeedRepository::count_items(conn, source_id))? == 0;
-            let skipped_history = is_first_sync
-                .then_some(all_items.len().saturating_sub(INITIAL_HISTORY_LIMIT))
-                .unwrap_or_default();
+            let skipped_history = if is_first_sync {
+                all_items.len().saturating_sub(INITIAL_HISTORY_LIMIT)
+            } else {
+                0
+            };
             let retained = select_sync_items(&source, all_items, is_first_sync);
             let items: Vec<FeedItemInput> = retained
                 .iter()
@@ -277,12 +279,31 @@ fn select_sync_items(
     if !is_first_sync {
         if let Some(boundary) = source.history_boundary_published_at.as_deref() {
             // 发布时间比 Feed 输出顺序更可靠：一些源会把新条目追加在末尾。
-            // 无时间的条目不能穿透已有历史边界，避免再次把未保留的归档回灌。
-            items.retain(|item| {
-                item.published_at
+            // 对无发布时间的新条目，使用同一 Feed 中的历史边界位置作为安全
+            // 回退：只保留边界之前（通常是最新端）的条目。这样不会丢掉新
+            // 的无日期文章，也不会把边界之后的旧无日期归档重新灌入资料库。
+            let boundary_position =
+                source
+                    .history_boundary_external_key
                     .as_deref()
-                    .is_some_and(|published| published >= boundary)
-            });
+                    .and_then(|boundary_key| {
+                        items
+                            .iter()
+                            .position(|item| item.external_key == boundary_key)
+                    });
+            items = items
+                .into_iter()
+                .enumerate()
+                .filter_map(|(position, item)| {
+                    let retain = item
+                        .published_at
+                        .as_deref()
+                        .is_some_and(|published| published >= boundary)
+                        || (item.published_at.is_none()
+                            && boundary_position.is_some_and(|edge| position <= edge));
+                    retain.then_some(item)
+                })
+                .collect();
         } else if let Some(boundary_key) = source.history_boundary_external_key.as_deref() {
             // 无发布时间时只能遵循 Feed 前序约定，在首次历史边界处截断。
             if let Some(index) = items

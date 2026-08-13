@@ -78,4 +78,19 @@ describe("useFeedSettings", () => {
       15,
     );
   });
+
+  it("keeps safe defaults when the settings read fails", async () => {
+    settingsGet.mockRejectedValueOnce(new Error("transport detail"));
+
+    const { result } = renderHook(() => useFeedSettings());
+
+    await waitFor(() => expect(settingsGet).toHaveBeenCalledTimes(3));
+    expect(result.current.autoReadEnabled).toBe(DEFAULT_FEED_AUTO_READ_ENABLED);
+    expect(result.current.backgroundSyncEnabled).toBe(
+      DEFAULT_FEED_BACKGROUND_SYNC_ENABLED,
+    );
+    expect(result.current.defaultFetchIntervalMinutes).toBe(
+      DEFAULT_FEED_FETCH_INTERVAL_MINUTES,
+    );
+  });
 });

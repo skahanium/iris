@@ -13,6 +13,7 @@ const {
   feedSourceList,
   feedItemGet,
   feedItemSetState,
+  feedFulltextEnqueueItem,
   feedItemsMarkRead,
   feedSyncSource,
   feedSyncAll,
@@ -22,6 +23,7 @@ const {
   feedSourceList: vi.fn(),
   feedItemGet: vi.fn(),
   feedItemSetState: vi.fn(),
+  feedFulltextEnqueueItem: vi.fn(),
   feedItemsMarkRead: vi.fn(),
   feedSyncSource: vi.fn(),
   feedSyncAll: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock("@/lib/ipc", () => ({
   feedSourceList,
   feedItemGet,
   feedItemSetState,
+  feedFulltextEnqueueItem,
   feedItemsMarkRead,
   feedSyncSource,
   feedSyncAll,
@@ -56,7 +59,7 @@ function source(overrides: Partial<FeedSourceSummary> = {}): FeedSourceSummary {
     folderPath: "",
     isEnabled: true,
     fetchIntervalMinutes: 60,
-    fulltextEnabled: false,
+    fulltextEnabled: true,
     unreadCount: 2,
     lastCheckedAt: null,
     lastSuccessAt: null,
@@ -160,6 +163,7 @@ beforeEach(() => {
     Promise.resolve(detailOf(item(id))),
   );
   feedItemSetState.mockResolvedValue(undefined);
+  feedFulltextEnqueueItem.mockResolvedValue("queued");
   feedItemsMarkRead.mockResolvedValue(2);
   feedSyncSource.mockResolvedValue({
     status: "succeeded",
@@ -328,6 +332,56 @@ describe("FeedWorkspace", () => {
     vi.useRealTimers();
   });
 
+  it("opening a saved summary requests only that article's web body", async () => {
+    feedItemGet.mockResolvedValueOnce({
+      ...detailOf(item("i1")),
+      contentMarkdown: "excerpt",
+      summaryMarkdown: "excerpt",
+    });
+    await renderWorkspace();
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
+
+    await waitFor(() =>
+      expect(feedFulltextEnqueueItem).toHaveBeenCalledWith("i1"),
+    );
+    expect(
+      await screen.findByText("正在获取网页正文；当前显示 Feed 摘要。"),
+    ).toBeTruthy();
+  });
+
+  it("does not request web content when the Feed already contains a body", async () => {
+    feedItemGet.mockResolvedValueOnce({
+      ...detailOf(item("i1")),
+      contentMarkdown: "# Full body\n\nLong body from Feed.",
+      summaryMarkdown: "short summary",
+    });
+    await renderWorkspace();
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
+    await screen.findByTestId("feed-reader-title");
+    expect(feedFulltextEnqueueItem).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Feed summary after a fulltext failure and lets the user retry", async () => {
+    feedItemGet.mockResolvedValueOnce({
+      ...detailOf(item("i1")),
+      contentMarkdown: "excerpt",
+      summaryMarkdown: "excerpt",
+      fulltextStatus: "failed",
+    });
+    await renderWorkspace();
+    act(() => fireEvent.click(screen.getByTestId("feed-item-i1")));
+
+    expect(
+      await screen.findByText("未能获取网页正文，当前显示 Feed 摘要。"),
+    ).toBeTruthy();
+    expect(screen.getByTestId("feed-reader-body")).toHaveTextContent("excerpt");
+    expect(screen.queryByText("feed_fulltext_failed")).toBeNull();
+    fireEvent.click(screen.getByTestId("feed-retry-fulltext"));
+    await waitFor(() =>
+      expect(feedFulltextEnqueueItem).toHaveBeenCalledWith("i1"),
+    );
+  });
+
   it("does not auto-mark read when the setting is disabled", async () => {
     localStorage.setItem("iris-feed-auto-read", "false");
     await renderWorkspace();
@@ -493,6 +547,32 @@ describe("FeedWorkspace", () => {
     input.remove();
   });
 
+  it("单源同步失败只显示可行动文案，不泄露内部错误码", async () => {
+    feedSourceList.mockResolvedValue([source({ id: "src-1" })]);
+    feedSyncSource.mockResolvedValueOnce({
+      status: "failed",
+      newItems: 0,
+      skippedHistory: 0,
+      errorCode: "feed_proxy_connect_failed",
+    });
+    await renderWorkspace();
+    await openSidebar();
+    fireEvent.click(screen.getByTestId("feed-source-src-1"));
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-sync-now")).toBeTruthy(),
+    );
+
+    fireEvent.click(screen.getByTestId("feed-sync-now"));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "同步失败，请检查网络或稍后重试。",
+      ),
+    );
+    expect(screen.getByRole("status")).not.toHaveTextContent(
+      "feed_proxy_connect_failed",
+    );
+  });
+
   it("窄屏仍提供来源、搜索、添加、OPML 与同步入口", async () => {
     setWidth(900);
     await renderWorkspace();
@@ -630,7 +710,7 @@ describe("FeedWorkspace", () => {
     expect(sidebar.className).toContain("border-r-0");
   });
 
-  it("shows degraded conversion notice and external open action", async () => {
+  it("shows one top-level external open action without a duplicate permalink", async () => {
     feedItemGet.mockResolvedValue({
       summary: item("i1", { conversionStatus: "degraded" }),
       contentMarkdown: "# T\n\nbody",
@@ -643,9 +723,8 @@ describe("FeedWorkspace", () => {
       expect(screen.getByTestId("feed-degraded-notice")).toBeTruthy(),
     );
     expect(screen.getByTestId("feed-open-external")).toBeTruthy();
-    expect(
-      screen.getByTestId("feed-reader-permalink").getAttribute("href"),
-    ).toBe("https://example.com/article");
+    expect(screen.queryByTestId("feed-reader-permalink")).toBeNull();
+    expect(screen.getAllByText("打开原文")).toHaveLength(1);
   });
 });
 describe("FeedWorkspace 保存为笔记", () => {

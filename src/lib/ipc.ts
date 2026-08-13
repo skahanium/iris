@@ -1264,6 +1264,7 @@ export async function classifiedAiCacheClear(): Promise<void> {
 
 import type {
   FeedCandidate,
+  FeedFulltextEnqueueOutcome,
   FeedItemDetail,
   FeedItemQuery,
   FeedItemStatePatch,
@@ -1353,12 +1354,11 @@ export async function feedItemSetState(
   return invoke("feed_item_set_state", { itemId, patch });
 }
 
-/** 用户明确补全指定来源最近摘要；来源未启用正文补全时后端拒绝。 */
-export async function feedFulltextEnqueueRecent(
-  sourceId: string,
-  limit: number,
-): Promise<number> {
-  return invoke<number>("feed_fulltext_enqueue_recent", { sourceId, limit });
+/** 打开本地摘要时按需补全这一篇网页正文，不回溯来源历史。 */
+export async function feedFulltextEnqueueItem(
+  itemId: string,
+): Promise<FeedFulltextEnqueueOutcome> {
+  return invoke("feed_fulltext_enqueue_item", { itemId });
 }
 
 /** 基于冻结查询条件批量已读，返回影响行数。 */

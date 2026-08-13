@@ -286,7 +286,10 @@ export function useFeedLibrary(): FeedLibraryApi {
       sourceId: currentSource,
       search: currentSearch.trim() || null,
       receivedAfter: null,
-      cursor: { sortAt: last.sortAt ?? last.publishedAt ?? last.receivedAt, rowId: last.rowId },
+      cursor: {
+        sortAt: last.sortAt ?? last.publishedAt ?? last.receivedAt,
+        rowId: last.rowId,
+      },
       limit: FEED_PAGE_LIMIT + 1,
     })
       .then((rows) => {

@@ -16,7 +16,7 @@ pub struct FeedSourceSummary {
     pub folder_path: String,
     pub is_enabled: bool,
     pub fetch_interval_minutes: i64,
-    /// 是否对该来源后续摘要条目启用通用网页正文补全；默认关闭。
+    /// 是否对该来源摘要条目自动启用通用网页正文补全；默认开启。
     pub fulltext_enabled: bool,
     pub unread_count: i64,
     pub last_checked_at: Option<String>,
@@ -106,6 +106,27 @@ pub struct FeedItemDetail {
     pub site_url: Option<String>,
     pub content_origin: String,
     pub fulltext_status: String,
+}
+
+/// 单篇网页正文补全请求的稳定结果；调用方无需根据底层数据库状态推断。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FeedFulltextEnqueueOutcome {
+    Queued,
+    AlreadyQueued,
+    AlreadyReady,
+    NotEligible,
+}
+
+impl FeedFulltextEnqueueOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::AlreadyQueued => "already_queued",
+            Self::AlreadyReady => "already_ready",
+            Self::NotEligible => "not_eligible",
+        }
+    }
 }
 
 /// RSS 专属回收站条目；与 Markdown 文件回收站的生命周期互不关联。

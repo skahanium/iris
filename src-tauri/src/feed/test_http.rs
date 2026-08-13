@@ -18,11 +18,6 @@ use crate::feed::fetch::FeedNetGate;
 /// 测试服务器的请求快照（供断言请求头等）。
 #[derive(Debug, Clone)]
 pub struct TestRequest {
-    // 阶段 2 Task 2.4 discovery 测试将消费 method/path；届时移除标注。
-    #[allow(dead_code)]
-    pub method: String,
-    #[allow(dead_code)]
-    pub path: String,
     pub headers: HashMap<String, String>,
 }
 
@@ -55,9 +50,6 @@ pub struct TestServer {
     pub addr: SocketAddr,
     pub requests: Arc<std::sync::Mutex<Vec<TestRequest>>>,
     responses: Arc<std::sync::Mutex<std::collections::VecDeque<TestResponse>>>,
-    /// 可选：对每个请求延迟响应（毫秒），用于超时测试。
-    #[allow(dead_code)]
-    delay_millis: u64,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -104,7 +96,7 @@ impl TestServer {
                             }
                             let head = String::from_utf8_lossy(&buf);
                             let mut lines = head.split("\r\n");
-                            let request_line = lines.next().unwrap_or("").to_string();
+                            let _ = lines.next();
                             let mut headers = HashMap::new();
                             for line in lines {
                                 if let Some((key, value)) = line.split_once(':') {
@@ -114,13 +106,8 @@ impl TestServer {
                                     );
                                 }
                             }
-                            let mut parts = request_line.split_whitespace();
-                            let method = parts.next().unwrap_or("GET").to_string();
-                            let path = parts.next().unwrap_or("/").to_string();
                             if let Ok(mut guard) = requests.lock() {
                                 guard.push(TestRequest {
-                                    method,
-                                    path,
                                     headers,
                                 });
                             }
@@ -176,7 +163,6 @@ impl TestServer {
             addr,
             requests,
             responses,
-            delay_millis,
             shutdown: Some(shutdown_tx),
         }
     }

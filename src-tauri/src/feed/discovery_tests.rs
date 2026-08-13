@@ -1,7 +1,7 @@
 //! `discover` 契约测试：直接 Feed、HTML alternate、相对 href、重复候选、
 //! 同源优先排序、跨协议/私网拒绝、无候选。全部在本地测试服务器上完成。
 
-use super::discovery::{discover, FeedCandidate};
+use super::discovery::discover;
 use super::test_http::{TestNetGate, TestResponse, TestServer};
 
 fn html_page(candidates: &[(&str, &str, &str)]) -> String {
@@ -267,14 +267,4 @@ async fn discover_returns_at_most_ten_candidates() {
         .await
         .expect("discover many");
     assert!(candidates.len() <= 10, "候选最多返回 10 个");
-}
-
-// 辅助：确保 FeedCandidate 可被外部消费（DTO 契约）。
-#[allow(dead_code)]
-fn candidate_contract(candidate: &FeedCandidate) -> (String, Option<String>, Option<String>) {
-    (
-        candidate.url.clone(),
-        candidate.title.clone(),
-        candidate.format.clone(),
-    )
 }

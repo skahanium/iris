@@ -12,7 +12,6 @@ const {
   feedDiscover,
   feedSourceAdd,
   feedSourceUpdate,
-  feedFulltextEnqueueRecent,
   feedSourceRemove,
   feedSourceItemCount,
   feedSyncSource,
@@ -26,7 +25,6 @@ const {
   feedDiscover: vi.fn(),
   feedSourceAdd: vi.fn(),
   feedSourceUpdate: vi.fn(),
-  feedFulltextEnqueueRecent: vi.fn(),
   feedSourceRemove: vi.fn(),
   feedSourceItemCount: vi.fn(),
   feedSyncSource: vi.fn(),
@@ -42,7 +40,6 @@ vi.mock("@/lib/ipc", () => ({
   feedDiscover,
   feedSourceAdd,
   feedSourceUpdate,
-  feedFulltextEnqueueRecent,
   feedSourceRemove,
   feedSourceItemCount,
   feedSyncSource,
@@ -68,7 +65,7 @@ function source(overrides: Partial<FeedSourceSummary> = {}): FeedSourceSummary {
     folderPath: "tech",
     isEnabled: true,
     fetchIntervalMinutes: 60,
-    fulltextEnabled: false,
+    fulltextEnabled: true,
     unreadCount: 3,
     lastCheckedAt: null,
     lastSuccessAt: null,
@@ -97,7 +94,6 @@ beforeEach(() => {
     errorCode: null,
   });
   feedSourceUpdate.mockResolvedValue(undefined);
-  feedFulltextEnqueueRecent.mockResolvedValue(0);
   feedSourceRemove.mockResolvedValue(5);
   feedSourceItemCount.mockResolvedValue(5);
   feedItemList.mockResolvedValue([]);
@@ -181,7 +177,9 @@ describe("FeedSourceDialog 管理交互", () => {
     );
     fireEvent.click(screen.getByTestId("feed-confirm-subscribe"));
     await waitFor(() =>
-      expect(screen.getByTestId("feed-add-interval")).toHaveTextContent("3 小时"),
+      expect(screen.getByTestId("feed-add-interval")).toHaveTextContent(
+        "3 小时",
+      ),
     );
   });
 
@@ -278,6 +276,51 @@ describe("FeedSourceDialog 管理交互", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("reports the bounded initial-history import without exposing implementation details", async () => {
+    feedSyncSource.mockResolvedValueOnce({
+      status: "succeeded",
+      newItems: 50,
+      skippedHistory: 1075,
+      errorCode: null,
+    });
+    const onOpenChange = vi.fn();
+    render(
+      <FeedSourceDialog
+        open
+        mode="add"
+        source={null}
+        onOpenChange={onOpenChange}
+        onSourcesChanged={() => undefined}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("feed-discover-url"), {
+      target: { value: "https://example.com" },
+    });
+    fireEvent.click(screen.getByTestId("feed-discover-run"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("feed-candidate-https://example.com/feed.xml"),
+      ).toBeTruthy(),
+    );
+    fireEvent.click(
+      screen.getByTestId("feed-candidate-https://example.com/feed.xml"),
+    );
+    fireEvent.click(screen.getByTestId("feed-confirm-subscribe"));
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-add-submit")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByTestId("feed-add-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-add-success")).toHaveTextContent(
+        "已导入最新 50 篇，略过 1075 篇较早历史",
+      ),
+    );
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    fireEvent.click(screen.getByTestId("feed-add-success-close"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
   it("源已添加但首次同步失败时重试不会重复创建来源", async () => {
     feedSyncSource
       .mockResolvedValueOnce({
@@ -351,7 +394,7 @@ describe("FeedSourceDialog 管理交互", () => {
         folderPath: "新闻",
         fetchIntervalMinutes: 60,
         isEnabled: false,
-        fulltextEnabled: false,
+        fulltextEnabled: true,
       }),
     );
     expect(onSourcesChanged).toHaveBeenCalled();
@@ -430,7 +473,9 @@ describe("FeedSourceDialog 管理交互", () => {
   });
 
   it("does not expose internal error codes when editing a source fails", async () => {
-    feedSourceUpdate.mockRejectedValueOnce({ code: "feed_source_validation_failed" });
+    feedSourceUpdate.mockRejectedValueOnce({
+      code: "feed_source_validation_failed",
+    });
     render(
       <FeedSourceDialog
         open
@@ -442,7 +487,9 @@ describe("FeedSourceDialog 管理交互", () => {
     );
 
     fireEvent.click(screen.getByTestId("feed-edit-save"));
-    await waitFor(() => expect(screen.getByTestId("feed-dialog-error")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-dialog-error")).toBeTruthy(),
+    );
     expect(screen.getByTestId("feed-dialog-error")).toHaveTextContent(
       "保存订阅设置失败，请稍后重试。",
     );

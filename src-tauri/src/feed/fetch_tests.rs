@@ -120,6 +120,43 @@ async fn fetch_sends_conditional_headers() {
 }
 
 #[tokio::test]
+async fn fetch_does_not_forward_conditional_headers_across_authorities() {
+    let origin = TestServer::start().await;
+    let redirected = TestServer::start().await;
+    origin.queue(TestResponse::new(302, "").header("Location", &redirected.url("/feed.xml")));
+    redirected.queue(TestResponse::new(200, "<rss/>"));
+
+    FeedHttpClient
+        .fetch(
+            &TestNetGate::default(),
+            &origin.url("/start"),
+            FetchPurpose::Feed,
+            Some("\"origin-etag\""),
+            Some("Wed, 12 Aug 2026 08:00:00 GMT"),
+            None,
+        )
+        .await
+        .expect("cross-authority redirect succeeds");
+
+    let origin_request = origin.requests_snapshot();
+    assert_eq!(
+        origin_request[0]
+            .headers
+            .get("if-none-match")
+            .map(String::as_str),
+        Some("\"origin-etag\"")
+    );
+    let redirected_request = redirected.requests_snapshot();
+    assert!(
+        !redirected_request[0].headers.contains_key("if-none-match")
+            && !redirected_request[0]
+                .headers
+                .contains_key("if-modified-since"),
+        "validators from the original authority must not reach redirect targets"
+    );
+}
+
+#[tokio::test]
 async fn fetch_handles_304_without_body() {
     let server = TestServer::start().await;
     server.queue(

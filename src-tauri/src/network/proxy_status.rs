@@ -61,11 +61,11 @@ pub(crate) fn detect_proxy_uri() -> Option<String> {
 pub(crate) fn system_proxy_requires_pac() -> bool {
     #[cfg(target_os = "macos")]
     {
-        return macos_pac_enabled();
+        macos_pac_enabled()
     }
     #[cfg(windows)]
     {
-        return windows_pac_enabled();
+        windows_pac_enabled()
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {

@@ -25,7 +25,7 @@ pub(crate) const DISCOVERY_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// 网页正文响应体积上限（1 MiB）。正文提取会建立 DOM，较 Feed 更严格以
 /// 控制峰值内存；超限时安全降级为 RSS 摘要。
 pub(crate) const ARTICLE_MAX_BYTES: usize = 1024 * 1024;
-/// 单跳请求总超时。
+/// 一条重定向链共享的总超时。
 pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 /// 重定向最大跳数。
 pub(crate) const MAX_REDIRECTS: usize = 5;
@@ -206,11 +206,20 @@ impl FeedHttpClient {
             let mut request = client
                 .get(&current)
                 .header(reqwest::header::USER_AGENT, USER_AGENT);
-            if let Some(value) = &request_etag {
-                request = request.header(IF_NONE_MATCH, value);
-            }
-            if let Some(value) = &request_last_modified {
-                request = request.header(IF_MODIFIED_SINCE, value);
+            let same_authority = reqwest::Url::parse(&current).ok().and_then(|parsed| {
+                parsed
+                    .host_str()
+                    .map(|host| (host.to_string(), parsed.port_or_known_default()))
+            }) == initial_authority;
+            // ETag/Last-Modified 属于原始订阅源的缓存验证器。跨 authority
+            // 重定向时绝不能把它们发送给新的站点。
+            if same_authority {
+                if let Some(value) = &request_etag {
+                    request = request.header(IF_NONE_MATCH, value);
+                }
+                if let Some(value) = &request_last_modified {
+                    request = request.header(IF_MODIFIED_SINCE, value);
+                }
             }
             let response = request
                 .send()

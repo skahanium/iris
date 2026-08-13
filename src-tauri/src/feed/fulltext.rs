@@ -27,50 +27,54 @@ pub(crate) fn extract_fulltext_markdown(
     html: String,
     base_url: &str,
 ) -> AppResult<(String, String)> {
-    let document = Html::parse_document(&html);
-    let selectors = [
-        "article",
-        "main",
-        "[role=main]",
-        "[role=article]",
-        ".post-content",
-        ".article-content",
-        ".entry-content",
-        ".main-content",
-        "#content",
-        "#main-content",
-    ];
-    // 先只保留 document 内的节点引用。相邻/嵌套的候选（例如 article 与 main）
-    // 不能各自克隆一份 HTML；选定最大正文后才生成唯一一份片段字符串。
-    let mut best = None;
-    for selector in selectors
-        .iter()
-        .filter_map(|selector| Selector::parse(selector).ok())
-    {
-        for element in document.select(&selector) {
-            // 不为每个候选拼接一份完整正文。网页响应已受 1 MiB 限制，但
-            // 嵌套的 article/main 候选仍可能很多；逐段计数可避免额外峰值。
-            let text_len: usize = element.text().map(|part| part.chars().count()).sum();
-            if text_len >= 160
-                && best
-                    .as_ref()
-                    .is_none_or(|(best_len, _)| text_len > *best_len)
-            {
-                best = Some((text_len, element));
+    let fragment = {
+        let document = Html::parse_document(&html);
+        let selectors = [
+            "article",
+            "main",
+            "[role=main]",
+            "[role=article]",
+            ".post-content",
+            ".article-content",
+            ".entry-content",
+            ".main-content",
+            "#content",
+            "#main-content",
+        ];
+        // 先只保留 document 内的节点引用。相邻/嵌套的候选（例如 article 与 main）
+        // 不能各自克隆一份 HTML；选定最大正文后才生成唯一一份片段字符串。
+        let mut best = None;
+        for selector in selectors
+            .iter()
+            .filter_map(|selector| Selector::parse(selector).ok())
+        {
+            for element in document.select(&selector) {
+                // 不为每个候选拼接一份完整正文。网页响应已受 1 MiB 限制，但
+                // 嵌套的 article/main 候选仍可能很多；逐段计数可避免额外峰值。
+                let text_len: usize = element.text().map(|part| part.chars().count()).sum();
+                if text_len >= 160
+                    && best
+                        .as_ref()
+                        .is_none_or(|(best_len, _)| text_len > *best_len)
+                {
+                    best = Some((text_len, element));
+                }
             }
         }
-    }
-    let fragment = best
-        .map(|(_, element)| element.html())
-        .or_else(|| {
-            Selector::parse("body").ok().and_then(|selector| {
-                document
-                    .select(&selector)
-                    .next()
-                    .map(|element| element.html())
+        best.map(|(_, element)| element.html())
+            .or_else(|| {
+                Selector::parse("body").ok().and_then(|selector| {
+                    document
+                        .select(&selector)
+                        .next()
+                        .map(|element| element.html())
+                })
             })
-        })
-        .ok_or_else(|| AppError::msg("feed_fulltext_extract_failed"))?;
+            .ok_or_else(|| AppError::msg("feed_fulltext_extract_failed"))?
+    };
+    // `scraper` 解析树和输入缓冲都在此点释放，再进入 HTML → Markdown；
+    // 这样单项峰值始终受 1 MiB 响应与 768 KiB 输出的双重上限约束。
+    drop(html);
 
     let markdown =
         html_to_markdown(&fragment).map_err(|_| AppError::msg("feed_fulltext_extract_failed"))?;
@@ -98,22 +102,14 @@ fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
     value
 }
 
-struct DrainGuard {
-    running: Arc<AtomicBool>,
-}
-
-impl Drop for DrainGuard {
-    fn drop(&mut self) {
-        self.running.store(false, Ordering::Release);
-    }
-}
-
 /// 受限的后台正文队列。没有 job 表：数据库状态列同时承担可恢复队列，进程
 /// 重启时 `fetching` 会在启动维护中重新置回 pending。
 pub(crate) struct FeedFulltextService<G: FeedNetGate> {
     db: Arc<Database>,
     gate: Arc<G>,
     running: Arc<AtomicBool>,
+    /// drain 已运行时收到的新任务唤醒标记，避免其恰好退出时遗漏单篇请求。
+    reschedule_requested: Arc<AtomicBool>,
     event_sink: Arc<AsyncMutex<Option<tauri::AppHandle>>>,
 }
 
@@ -123,6 +119,7 @@ impl<G: FeedNetGate> Clone for FeedFulltextService<G> {
             db: self.db.clone(),
             gate: self.gate.clone(),
             running: self.running.clone(),
+            reschedule_requested: self.reschedule_requested.clone(),
             event_sink: self.event_sink.clone(),
         }
     }
@@ -134,6 +131,7 @@ impl<G: FeedNetGate + 'static> FeedFulltextService<G> {
             db,
             gate,
             running: Arc::new(AtomicBool::new(false)),
+            reschedule_requested: Arc::new(AtomicBool::new(false)),
             event_sink: Arc::new(AsyncMutex::new(None)),
         }
     }
@@ -144,25 +142,42 @@ impl<G: FeedNetGate + 'static> FeedFulltextService<G> {
         }
     }
 
-    /// 尝试启动一个 drain；已有 drain 时直接复用，确保全文抓取最多两篇并发。
+    /// 尝试启动一个 drain；已有 drain 只记录一次重调度，确保正文请求不会
+    /// 在 worker 恰好退出的窗口丢失，同时仍最多两篇并发。
     pub(crate) fn schedule(&self) {
         if self
             .running
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
+            self.reschedule_requested.store(true, Ordering::Release);
             return;
         }
         let service = self.clone();
         tauri::async_runtime::spawn(async move {
-            let _guard = DrainGuard {
-                running: service.running.clone(),
-            };
-            if service.drain_pending().await.is_err() {
-                tracing::warn!(
-                    result_code = "feed_fulltext_drain_failed",
-                    "feed_fulltext_drain_failed"
-                );
+            loop {
+                service.reschedule_requested.store(false, Ordering::Release);
+                if service.drain_pending().await.is_err() {
+                    tracing::warn!(
+                        result_code = "feed_fulltext_drain_failed",
+                        "feed_fulltext_drain_failed"
+                    );
+                }
+                if service.reschedule_requested.swap(false, Ordering::AcqRel) {
+                    continue;
+                }
+                service.running.store(false, Ordering::Release);
+                // `schedule` 可能恰好发生在上一次空队列检查之后。尝试重新
+                // 认领 worker；若另一个调用已经启动新 worker，则安全退出。
+                if service.reschedule_requested.swap(false, Ordering::AcqRel)
+                    && service
+                        .running
+                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok()
+                {
+                    continue;
+                }
+                break;
             }
         });
     }

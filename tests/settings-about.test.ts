@@ -16,7 +16,9 @@ describe("ManagementCenterPanel system and legal notice", () => {
     const source = read("src/components/settings/ManagementCenterPanel.tsx");
 
     expect(source).toContain('data-testid="management-center"');
-    expect(source).toContain('className="flex w-full shrink-0 gap-2 overflow-x-auto');
+    expect(source).toContain(
+      'className="flex w-full shrink-0 gap-2 overflow-x-auto',
+    );
     expect(source).toContain("总览");
     expect(source).toContain("笔记");
     expect(source).toContain("知识库");

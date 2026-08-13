@@ -80,7 +80,7 @@ API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解�
 
 ## SQLite 与迁移
 
-当前共有 **63 组**增量迁移（`001` 至 `063`）。
+当前共有 **65 组**增量迁移（`001` 至 `065`）。
 
 Schema 只允许通过带 up/down 的增量迁移变更。`051_agent_harness_cutover` 使用 copy-transform-swap 将旧会话、任务、trace 和审计外键迁移到统一 Run 模型；运行中或暂停的旧任务被安全归档为 `cancelled` 并带 `cancelled_legacy` 原因。迁移不要求用户删除数据库重建。
 

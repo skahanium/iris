@@ -7,7 +7,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
-  ArrowUpRight,
   Archive,
   ArchiveRestore,
   CheckCheck,
@@ -53,6 +52,8 @@ export interface FeedReaderProps {
   autoReadEnabled: boolean;
   onAutoReadEnabledChange: (enabled: boolean) => void;
   onRetry: () => void;
+  /** 对已打开的旧摘要重新请求同一篇网页正文。 */
+  onRetryFulltext: () => void;
   setItemState: (
     itemId: string,
     patch: FeedItemStatePatch,
@@ -195,6 +196,7 @@ export function FeedReader({
   autoReadEnabled,
   onAutoReadEnabledChange,
   onRetry,
+  onRetryFulltext,
   setItemState,
   onSaveAsNote,
 }: FeedReaderProps) {
@@ -438,10 +440,19 @@ export function FeedReader({
             正在获取网页正文；当前显示 Feed 摘要。
           </p>
         ) : null}
-        {detail.fulltextStatus === "failed" && detail.contentOrigin !== "web" ? (
-          <p className="mt-3 text-caption text-muted-foreground">
-            此订阅源仅提供摘要，可在浏览器中查看原文。
-          </p>
+        {detail.fulltextStatus === "failed" &&
+        detail.contentOrigin !== "web" ? (
+          <div className="mt-3 flex items-center gap-2 text-caption text-muted-foreground">
+            <span>未能获取网页正文，当前显示 Feed 摘要。</span>
+            <button
+              type="button"
+              data-testid="feed-retry-fulltext"
+              className="iris-focus-soft rounded-md border border-border-subtle px-2 py-0.5 text-foreground transition-colors duration-fast hover:bg-muted/60"
+              onClick={onRetryFulltext}
+            >
+              重试获取正文
+            </button>
+          </div>
         ) : null}
         {detail.contentOrigin === "web" ? (
           <p className="mt-3 text-caption text-muted-foreground">网页正文</p>
@@ -470,21 +481,6 @@ export function FeedReader({
           style={{ maxWidth: "var(--prose-measure)" }}
           dangerouslySetInnerHTML={{ __html: toTrustedHtml(markdown) }}
         />
-
-        {summary.canonicalUrl ? (
-          <a
-            href={summary.canonicalUrl}
-            data-testid="feed-reader-permalink"
-            className="mt-6 inline-flex items-center gap-1 text-caption text-muted-foreground transition-colors duration-fast hover:text-foreground"
-            onClick={(event) => {
-              event.preventDefault();
-              void openExternalHttpsUrl(summary.canonicalUrl!);
-            }}
-          >
-            <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-            在浏览器中查看原文
-          </a>
-        ) : null}
       </div>
       {detail && onSaveAsNote ? (
         <FeedSaveNoteDialog

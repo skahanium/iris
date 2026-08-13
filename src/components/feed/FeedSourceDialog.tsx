@@ -30,7 +30,6 @@ import {
   feedSourceItemCount,
   feedSourceRemove,
   feedSourceUpdate,
-  feedFulltextEnqueueRecent,
   feedSyncSource,
 } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
@@ -92,7 +91,7 @@ function DiscoverStep({
       if (found.length === 0) {
         setError("未找到可订阅的 Feed，请检查网址或稍后重试。");
       }
-    } catch {
+    } catch (caught) {
       setError(
         (caught as { code?: string })?.code === "feed_validation_url"
           ? "仅支持 HTTPS 地址，且不允许内网地址。"
@@ -191,11 +190,13 @@ function ConfirmStep({
   candidate,
   onBack,
   onDone,
+  onSourcesChanged,
   defaultFetchIntervalMinutes,
 }: {
   candidate: FeedCandidate;
   onBack: () => void;
   onDone: () => void;
+  onSourcesChanged: () => void;
   defaultFetchIntervalMinutes: number;
 }) {
   const [title, setTitle] = useState(candidate.title ?? candidate.url);
@@ -204,11 +205,13 @@ function ConfirmStep({
   const [historyUnread, setHistoryUnread] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [addedSourceId, setAddedSourceId] = useState<string | null>(null);
 
   const submit = useCallback(async () => {
     setBusy(true);
     setError(null);
+    setSuccess(null);
     try {
       const sourceId =
         addedSourceId ??
@@ -228,6 +231,13 @@ function ConfirmStep({
           setError("订阅已添加，但首次同步失败；可重试同步或稍后关闭。");
           return;
         }
+        if (outcome.skippedHistory > 0) {
+          onSourcesChanged();
+          setSuccess(
+            `订阅已添加：已导入最新 ${outcome.newItems} 篇，略过 ${outcome.skippedHistory} 篇较早历史。`,
+          );
+          return;
+        }
       } catch {
         setError("订阅已添加，但首次同步失败；可重试同步或稍后关闭。");
         return;
@@ -245,6 +255,7 @@ function ConfirmStep({
     historyUnread,
     interval,
     onDone,
+    onSourcesChanged,
     title,
   ]);
 
@@ -299,6 +310,23 @@ function ConfirmStep({
         历史文章也设为未读
       </label>
       <FieldError message={error} />
+      {success ? (
+        <div
+          data-testid="feed-add-success"
+          className="rounded-md border border-border-subtle bg-panel px-3 py-2 text-caption text-muted-foreground"
+        >
+          <p>{success}</p>
+          <Button
+            type="button"
+            size="sm"
+            className="mt-2"
+            data-testid="feed-add-success-close"
+            onClick={onDone}
+          >
+            完成
+          </Button>
+        </div>
+      ) : null}
       <DialogFooter className="gap-2 px-0 pb-0">
         <Button type="button" variant="ghost" onClick={onBack} disabled={busy}>
           上一步
@@ -307,7 +335,7 @@ function ConfirmStep({
           type="button"
           data-testid="feed-add-submit"
           onClick={() => void submit()}
-          disabled={busy}
+          disabled={busy || success !== null}
         >
           {busy ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -334,14 +362,12 @@ function EditStep({
   const [interval, setInterval] = useState(String(source.fetchIntervalMinutes));
   const [isEnabled, setIsEnabled] = useState(source.isEnabled);
   const [fulltextEnabled, setFulltextEnabled] = useState(
-    source.fulltextEnabled ?? false,
+    source.fulltextEnabled ?? true,
   );
   const [itemCount, setItemCount] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const [enqueueing, setEnqueueing] = useState(false);
-  const [fulltextMessage, setFulltextMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!source.id) return;
@@ -362,7 +388,7 @@ function EditStep({
         fulltextEnabled,
       });
       onDone();
-    } catch (caught) {
+    } catch {
       setError("保存订阅设置失败，请稍后重试。");
     } finally {
       setBusy(false);
@@ -391,26 +417,6 @@ function EditStep({
     },
     [onDone, source.id],
   );
-
-  const enqueueRecentFulltext = useCallback(async () => {
-    setEnqueueing(true);
-    setFulltextMessage(null);
-    try {
-      if (!source.fulltextEnabled) {
-        await feedSourceUpdate(source.id, { fulltextEnabled: true });
-      }
-      const queued = await feedFulltextEnqueueRecent(source.id, 20);
-      setFulltextMessage(
-        queued > 0
-          ? `已加入 ${queued} 篇最近摘要的正文补全队列。`
-          : "最近保留的文章没有需要补全的摘要。",
-      );
-    } catch {
-      setFulltextMessage("正文补全未能启动，请确认已启用此来源的补全开关。");
-    } finally {
-      setEnqueueing(false);
-    }
-  }, [source.id]);
 
   if (confirmingDelete) {
     return (
@@ -498,38 +504,13 @@ function EditStep({
           onChange={(event) => setFulltextEnabled(event.target.checked)}
         />
         <span>
-          <span className="block">为后续摘要文章补全网页正文</span>
+          <span className="block">自动补全网页正文</span>
           <span className="block text-caption text-muted-foreground">
-            默认关闭。使用通用正文提取；失败时仍保留 Feed 摘要和原文链接。
+            默认开启。新摘要自动补全；已保存摘要在打开时按需补全。失败时仍保留
+            Feed 摘要和原文链接。
           </span>
         </span>
       </label>
-      {fulltextEnabled ? (
-        <div className="rounded-md border border-border-subtle bg-panel px-3 py-2">
-          <p className="text-caption text-muted-foreground">
-            历史文章不会自动抓取。你可以只补全最近 20 篇仍保留的摘要文章。
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            data-testid="feed-fulltext-enqueue-recent"
-            className="mt-2"
-            disabled={enqueueing}
-            onClick={() => void enqueueRecentFulltext()}
-          >
-            {enqueueing ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : null}
-            补全最近 20 篇摘要
-          </Button>
-          {fulltextMessage ? (
-            <p role="status" className="mt-2 text-caption text-muted-foreground">
-              {fulltextMessage}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
       <FieldError message={error} />
       <DialogFooter className="gap-2 px-0 pb-0">
         <Button
@@ -617,6 +598,7 @@ export function FeedSourceDialog({
                 candidate={candidate}
                 onBack={() => setStep("discover")}
                 onDone={handleDone}
+                onSourcesChanged={onSourcesChanged}
                 defaultFetchIntervalMinutes={defaultFetchIntervalMinutes}
               />
             ) : null

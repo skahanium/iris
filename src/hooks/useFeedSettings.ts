@@ -45,31 +45,33 @@ export function useFeedSettings() {
       settingsGet<boolean>("feed_auto_read_enabled"),
       settingsGet<boolean>("feed_background_sync_enabled"),
       settingsGet<number>("feed_default_fetch_interval_minutes"),
-    ]).then(async ([autoRead, background, interval]) => {
-      if (cancelled) return;
-      if (typeof autoRead === "boolean") {
-        setAutoReadEnabledState(autoRead);
-      } else {
-        const legacy = localStorage.getItem("iris-feed-auto-read");
-        if (legacy !== null) {
-          const migrated = legacy !== "false";
-          try {
-            await settingsSet("feed_auto_read_enabled", migrated);
-            if (!cancelled) {
-              setAutoReadEnabledState(migrated);
-              localStorage.removeItem("iris-feed-auto-read");
+    ])
+      .then(async ([autoRead, background, interval]) => {
+        if (cancelled) return;
+        if (typeof autoRead === "boolean") {
+          setAutoReadEnabledState(autoRead);
+        } else {
+          const legacy = localStorage.getItem("iris-feed-auto-read");
+          if (legacy !== null) {
+            const migrated = legacy !== "false";
+            try {
+              await settingsSet("feed_auto_read_enabled", migrated);
+              if (!cancelled) {
+                setAutoReadEnabledState(migrated);
+                localStorage.removeItem("iris-feed-auto-read");
+              }
+            } catch {
+              if (!cancelled) setAutoReadEnabledState(migrated);
             }
-          } catch {
-            if (!cancelled) setAutoReadEnabledState(migrated);
           }
         }
-      }
-      if (typeof background === "boolean")
-        setBackgroundSyncEnabledState(background);
-      if (typeof interval === "number") {
-        setDefaultFetchIntervalMinutesState(clampInterval(interval));
-      }
-    });
+        if (typeof background === "boolean")
+          setBackgroundSyncEnabledState(background);
+        if (typeof interval === "number") {
+          setDefaultFetchIntervalMinutesState(clampInterval(interval));
+        }
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -77,12 +79,17 @@ export function useFeedSettings() {
 
   useEffect(() => {
     const onChanged = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        key: FeedSettingKey;
-        value: boolean | number;
-      }>).detail;
+      const detail = (
+        event as CustomEvent<{
+          key: FeedSettingKey;
+          value: boolean | number;
+        }>
+      ).detail;
       if (!detail) return;
-      if (detail.key === "feed_auto_read_enabled" && typeof detail.value === "boolean") {
+      if (
+        detail.key === "feed_auto_read_enabled" &&
+        typeof detail.value === "boolean"
+      ) {
         setAutoReadEnabledState(detail.value);
       }
       if (
@@ -99,26 +106,36 @@ export function useFeedSettings() {
       }
     };
     window.addEventListener(FEED_SETTINGS_CHANGED_EVENT, onChanged);
-    return () => window.removeEventListener(FEED_SETTINGS_CHANGED_EVENT, onChanged);
+    return () =>
+      window.removeEventListener(FEED_SETTINGS_CHANGED_EVENT, onChanged);
   }, []);
 
   const setAutoReadEnabled = useCallback((enabled: boolean) => {
     setAutoReadEnabledState(enabled);
     publishFeedSetting("feed_auto_read_enabled", enabled);
-    if (isTauriRuntime()) void settingsSet("feed_auto_read_enabled", enabled);
+    if (isTauriRuntime()) {
+      void settingsSet("feed_auto_read_enabled", enabled).catch(
+        () => undefined,
+      );
+    }
   }, []);
   const setBackgroundSyncEnabled = useCallback((enabled: boolean) => {
     setBackgroundSyncEnabledState(enabled);
     publishFeedSetting("feed_background_sync_enabled", enabled);
-    if (isTauriRuntime())
-      void settingsSet("feed_background_sync_enabled", enabled);
+    if (isTauriRuntime()) {
+      void settingsSet("feed_background_sync_enabled", enabled).catch(
+        () => undefined,
+      );
+    }
   }, []);
   const setDefaultFetchIntervalMinutes = useCallback((minutes: number) => {
     const next = clampInterval(minutes);
     setDefaultFetchIntervalMinutesState(next);
     publishFeedSetting("feed_default_fetch_interval_minutes", next);
     if (isTauriRuntime()) {
-      void settingsSet("feed_default_fetch_interval_minutes", next);
+      void settingsSet("feed_default_fetch_interval_minutes", next).catch(
+        () => undefined,
+      );
     }
   }, []);
 

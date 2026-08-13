@@ -262,8 +262,8 @@ impl FeedRepository {
         conn.execute(
             "INSERT INTO feed_sources
              (id, feed_url, site_url, title, title_override, description, icon_url, language,
-              folder_path, is_enabled, fetch_interval_minutes, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?11)",
+              folder_path, is_enabled, fetch_interval_minutes, fulltext_enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, 1, ?11, ?11)",
             params![
                 &input.id,
                 &input.feed_url,
@@ -841,7 +841,7 @@ impl FeedRepository {
              WHERE i.deleted_at IS NULL AND i.fulltext_status = 'pending'
                AND s.fulltext_enabled = 1
                AND i.canonical_url IS NOT NULL
-             ORDER BY i.received_at ASC, i.row_id ASC
+             ORDER BY i.updated_at DESC, i.row_id ASC
              LIMIT ?1",
         )?;
         let candidates = statement
@@ -873,7 +873,7 @@ impl FeedRepository {
     ) -> AppResult<bool> {
         let changed = conn.execute(
             "UPDATE feed_items
-             SET fulltext_markdown = ?1, fulltext_text = NULL, content_text = ?2, content_origin = 'web',
+             SET fulltext_markdown = ?1, content_text = ?2, content_origin = 'web',
                  fulltext_status = 'ready', updated_at = ?3
              WHERE id = ?4 AND deleted_at IS NULL AND fulltext_status = 'fetching'",
             params![markdown, text, rfc3339(now), item_id],
@@ -937,38 +937,58 @@ impl FeedRepository {
         Ok(changed as u32)
     }
 
-    /// 用户明确要求时，最多把该来源最近 `limit` 篇摘要条目加入正文补全队列。
-    /// 只处理当前保留集；不回溯网络 Feed，也不改变文章正文、收藏或阅读状态。
-    pub fn enqueue_recent_fulltext(
+    /// 将用户刚打开的单篇摘要加入正文补全队列。不会扫描来源历史，且重复
+    /// 请求复用既有状态；返回稳定结果供阅读器展示，而不暴露数据库细节。
+    pub fn enqueue_item_fulltext(
         conn: &Connection,
-        source_id: &str,
-        limit: u32,
-    ) -> AppResult<u32> {
-        let enabled = conn
+        item_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<crate::feed::model::FeedFulltextEnqueueOutcome> {
+        use crate::feed::model::FeedFulltextEnqueueOutcome;
+
+        let row = conn
             .query_row(
-                "SELECT fulltext_enabled = 1 FROM feed_sources WHERE id = ?1",
-                [source_id],
-                |row| row.get::<_, bool>(0),
+                "SELECT i.fulltext_status, i.deleted_at IS NULL, s.fulltext_enabled = 1,
+                        i.canonical_url IS NOT NULL,
+                        i.content_markdown = i.summary_markdown
+                 FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
+                 WHERE i.id = ?1",
+                [item_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, bool>(1)?,
+                        row.get::<_, bool>(2)?,
+                        row.get::<_, bool>(3)?,
+                        row.get::<_, bool>(4)?,
+                    ))
+                },
             )
-            .optional()?
-            .ok_or_else(|| AppError::msg("feed_source_not_found"))?;
-        if !enabled {
-            return Err(AppError::msg("feed_fulltext_not_enabled"));
+            .optional()?;
+        let Some((status, retained, enabled, has_url, summary_only)) = row else {
+            return Err(AppError::msg("feed_item_not_found"));
+        };
+        if status == "ready" {
+            return Ok(FeedFulltextEnqueueOutcome::AlreadyReady);
+        }
+        if status == "pending" || status == "fetching" {
+            return Ok(FeedFulltextEnqueueOutcome::AlreadyQueued);
+        }
+        if !retained || !enabled || !has_url || !summary_only {
+            return Ok(FeedFulltextEnqueueOutcome::NotEligible);
         }
         let changed = conn.execute(
-            "UPDATE feed_items SET fulltext_status = 'pending'
-             WHERE id IN (
-                SELECT id FROM feed_items
-                WHERE source_id = ?1 AND deleted_at IS NULL
-                  AND canonical_url IS NOT NULL
-                  AND content_markdown = summary_markdown
-                  AND fulltext_status IN ('not_requested', 'failed')
-                ORDER BY COALESCE(published_at, received_at) DESC, row_id DESC
-                LIMIT ?2
-             )",
-            params![source_id, i64::from(limit.clamp(1, 50))],
+            "UPDATE feed_items
+             SET fulltext_status = 'pending', updated_at = ?1
+             WHERE id = ?2 AND deleted_at IS NULL
+               AND fulltext_status IN ('not_requested', 'failed')",
+            params![rfc3339(now), item_id],
         )?;
-        Ok(changed as u32)
+        Ok(if changed > 0 {
+            FeedFulltextEnqueueOutcome::Queued
+        } else {
+            FeedFulltextEnqueueOutcome::AlreadyQueued
+        })
     }
 
     /// 用户显式请求的资料库空间收缩；后台维护不会调用 VACUUM。

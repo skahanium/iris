@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -116,7 +122,9 @@ describe("FeedManagementSection", () => {
     fireEvent.click(screen.getByTestId("feed-management-trash"));
     await waitFor(() => expect(screen.getByText("已删除文章")).toBeTruthy());
     fireEvent.click(screen.getByText("恢复"));
-    await waitFor(() => expect(feedTrashRestore).toHaveBeenCalledWith("item-1"));
+    await waitFor(() =>
+      expect(feedTrashRestore).toHaveBeenCalledWith("item-1"),
+    );
     fireEvent.click(screen.getByText("立即清空已删除文章"));
     await waitFor(() => expect(feedTrashClear).toHaveBeenCalledTimes(1));
 
@@ -126,5 +134,26 @@ describe("FeedManagementSection", () => {
     );
     fireEvent.click(screen.getByText("前往总览"));
     expect(openOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the recycle view usable when a maintenance operation fails", async () => {
+    feedTrashRestore.mockRejectedValueOnce(new Error("sqlite detail"));
+    render(
+      <FeedManagementSection
+        proxyStatusLabel="无代理"
+        onOpenOverview={() => undefined}
+      />,
+    );
+    await waitFor(() => expect(feedLibrarySummary).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("feed-management-trash"));
+    await waitFor(() => expect(screen.getByText("已删除文章")).toBeTruthy());
+    fireEvent.click(screen.getByText("恢复"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "恢复未完成，请稍后重试。",
+      ),
+    );
+    expect(screen.getByText("已删除文章")).toBeTruthy();
   });
 });

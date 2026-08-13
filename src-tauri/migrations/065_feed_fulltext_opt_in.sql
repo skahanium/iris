@@ -1,5 +1,5 @@
--- 065_feed_fulltext_opt_in.sql — 网页正文补全改为来源级显式选择。
--- 普通 RSS 阅读默认只保存 Feed 给出的内容；不按域名或网站结构启用抓取。
+-- 065_feed_fulltext_opt_in.sql — 增加来源级网页正文补全开关。
+-- 066 会将既有来源迁移为默认开启；新来源由 Repository 显式写入 1。
 
 ALTER TABLE feed_sources ADD COLUMN fulltext_enabled INTEGER NOT NULL DEFAULT 0
     CHECK (fulltext_enabled IN (0, 1));

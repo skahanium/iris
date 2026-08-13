@@ -281,7 +281,7 @@ pub fn run() {
             commands::feed_commands::feed_item_list,
             commands::feed_commands::feed_item_get,
             commands::feed_commands::feed_item_set_state,
-            commands::feed_commands::feed_fulltext_enqueue_recent,
+            commands::feed_commands::feed_fulltext_enqueue_item,
             commands::feed_commands::feed_items_mark_read,
             commands::feed_commands::feed_sync_source,
             commands::feed_commands::feed_sync_all,

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Download, HardDrive, RefreshCw, Rss, Settings2, Trash2 } from "lucide-react";
+import {
+  Download,
+  HardDrive,
+  RefreshCw,
+  Rss,
+  Settings2,
+  Trash2,
+} from "lucide-react";
 
 import { FeedOpmlDialog } from "@/components/feed/FeedOpmlDialog";
 import { Button } from "@/components/ui/button";
@@ -53,7 +60,9 @@ export function FeedManagementSection({
   useEffect(refresh, [refresh]);
 
   const refreshTrash = useCallback(() => {
-    void feedTrashList().then(setTrash).catch(() => undefined);
+    void feedTrashList()
+      .then(setTrash)
+      .catch(() => undefined);
   }, []);
 
   const syncAll = () => {
@@ -211,7 +220,9 @@ export function FeedManagementSection({
           {trashOpen ? (
             <div data-testid="feed-trash-list" className="mt-3 space-y-2">
               {trash.length === 0 ? (
-                <p className="text-caption text-muted-foreground">RSS 回收站为空。</p>
+                <p className="text-caption text-muted-foreground">
+                  RSS 回收站为空。
+                </p>
               ) : (
                 <>
                   {trash.map((entry) => (
@@ -227,10 +238,14 @@ export function FeedManagementSection({
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          void feedTrashRestore(entry.item.id).then(() => {
-                            refreshTrash();
-                            refresh();
-                          });
+                          void feedTrashRestore(entry.item.id)
+                            .then(() => {
+                              refreshTrash();
+                              refresh();
+                            })
+                            .catch(() =>
+                              setMessage("恢复未完成，请稍后重试。"),
+                            );
                         }}
                       >
                         恢复
@@ -242,10 +257,12 @@ export function FeedManagementSection({
                     variant="destructive"
                     size="sm"
                     onClick={() => {
-                      void feedTrashClear().then(() => {
-                        refreshTrash();
-                        refresh();
-                      });
+                      void feedTrashClear()
+                        .then(() => {
+                          refreshTrash();
+                          refresh();
+                        })
+                        .catch(() => setMessage("清空未完成，请稍后重试。"));
                     }}
                   >
                     立即清空已删除文章

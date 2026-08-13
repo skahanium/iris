@@ -1,9 +1,6 @@
 //! 订阅源自动发现：直接 Feed 或 HTML `<link rel=alternate>` 候选。
 //!
 //! 只返回安全 URL、候选标题与格式，不返回 HTML 正文；候选不自动订阅。
-//! 阶段 2 Task 2.5 `feed::sync` 与阶段 3 IPC 将消费本模块；届时移除标注。
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use crate::error::{AppError, AppResult};

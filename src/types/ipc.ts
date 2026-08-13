@@ -434,7 +434,7 @@ export interface FeedSourceSummary {
   folderPath: string;
   isEnabled: boolean;
   fetchIntervalMinutes: number;
-  /** 来源级网页正文补全，普通 RSS 默认关闭。 */
+  /** 来源级网页正文自动补全；新建和升级后的来源默认开启。 */
   fulltextEnabled: boolean;
   unreadCount: number;
   lastCheckedAt: string | null;
@@ -483,13 +483,15 @@ export interface FeedItemDetail {
   siteUrl: string | null;
   /** feed 表示 RSS 内容；web 表示受限后台抓取的网页正文。 */
   contentOrigin: "feed" | "web";
-  fulltextStatus:
-    | "not_requested"
-    | "pending"
-    | "fetching"
-    | "ready"
-    | "failed";
+  fulltextStatus: "not_requested" | "pending" | "fetching" | "ready" | "failed";
 }
+
+/** 单篇网页正文补全请求的稳定结果；不包含网络或 URL 细节。 */
+export type FeedFulltextEnqueueOutcome =
+  | "queued"
+  | "already_queued"
+  | "already_ready"
+  | "not_eligible";
 
 /** RSS 专属回收站条目；与 Markdown 文件回收站不共用。 */
 export interface FeedTrashItem {

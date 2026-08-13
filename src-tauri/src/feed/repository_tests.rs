@@ -37,8 +37,8 @@ fn rfc3339(value: &str) -> String {
 /// 直接以 SQL 建立订阅源 fixture（被测试对象是仓储，不是 SQL 本身）。
 fn insert_source(conn: &Connection, id: &str, title: &str, feed_url: &str) {
     conn.execute(
-        "INSERT INTO feed_sources (id, feed_url, title, created_at, updated_at)
-         VALUES (?1, ?2, ?3, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
+        "INSERT INTO feed_sources (id, feed_url, title, fulltext_enabled, created_at, updated_at)
+         VALUES (?1, ?2, ?3, 1, '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')",
         rusqlite::params![id, feed_url, title],
     )
     .expect("insert source fixture");
@@ -104,6 +104,10 @@ fn source_crud_roundtrip() {
     .expect("create source");
     assert_eq!(created.id, "src-1");
     assert!(created.is_enabled);
+    assert!(
+        created.fulltext_enabled,
+        "new sources fetch web bodies by default"
+    );
     assert_eq!(created.fetch_interval_minutes, 60);
 
     let fetched = FeedRepository::get_source(&conn, "src-1")
@@ -156,6 +160,113 @@ fn source_crud_roundtrip() {
     assert!(FeedRepository::get_source(&conn, "missing")
         .expect("query")
         .is_none());
+}
+
+#[test]
+fn opening_a_saved_summary_queues_only_that_item_and_promotes_it() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Example", "https://example.com/feed.xml");
+    let items = [
+        FeedItemInput {
+            content_markdown: "summary".to_string(),
+            summary_markdown: "summary".to_string(),
+            ..item_input(
+                "src-1",
+                "opened",
+                "Opened",
+                "summary",
+                "2026-08-01T00:00:00Z",
+            )
+        },
+        FeedItemInput {
+            fulltext_status: FulltextStatus::Pending,
+            content_markdown: "summary".to_string(),
+            summary_markdown: "summary".to_string(),
+            ..item_input(
+                "src-1",
+                "background",
+                "Background",
+                "summary",
+                "2026-08-02T00:00:00Z",
+            )
+        },
+    ];
+    FeedRepository::upsert_items(&conn, &items).expect("seed summaries");
+    conn.execute(
+        "UPDATE feed_items SET updated_at = '2026-08-01T00:00:00Z' WHERE source_id = 'src-1'",
+        [],
+    )
+    .expect("normalize queue priority baseline");
+
+    let opened_at = DateTime::parse_from_rfc3339("2026-08-10T10:00:01Z")
+        .expect("fixed timestamp")
+        .with_timezone(&Utc);
+    let outcome = FeedRepository::enqueue_item_fulltext(&conn, "item-src-1-opened", opened_at)
+        .expect("opening summary queues it");
+    assert_eq!(outcome.as_str(), "queued");
+
+    let claimed = FeedRepository::claim_pending_fulltext(&conn, 1, now()).expect("claim");
+    assert_eq!(
+        claimed[0].0, "item-src-1-opened",
+        "opened item wins priority"
+    );
+
+    let repeated = FeedRepository::enqueue_item_fulltext(&conn, "item-src-1-opened", now())
+        .expect("reopening reuses in-flight work");
+    assert_eq!(repeated.as_str(), "already_queued");
+
+    let failed =
+        FeedRepository::fail_fulltext(&conn, "item-src-1-opened", now()).expect("mark failed");
+    assert!(failed);
+    let retried = FeedRepository::enqueue_item_fulltext(&conn, "item-src-1-opened", now())
+        .expect("retry queues only the opened article again");
+    assert_eq!(retried.as_str(), "queued");
+}
+
+#[test]
+fn opening_full_feed_content_or_disabled_source_is_a_safe_noop() {
+    let conn = test_conn();
+    insert_source(&conn, "src-1", "Example", "https://example.com/feed.xml");
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-1",
+            "full",
+            "Full Feed Article",
+            "full body",
+            "2026-08-01T00:00:00Z",
+        )],
+    )
+    .expect("seed full feed body");
+
+    let full_feed = FeedRepository::enqueue_item_fulltext(&conn, "item-src-1-full", now())
+        .expect("full feed article is not fetched again");
+    assert_eq!(full_feed.as_str(), "not_eligible");
+
+    FeedRepository::update_source(
+        &conn,
+        "src-1",
+        &FeedSourcePatch {
+            fulltext_enabled: Some(false),
+            ..Default::default()
+        },
+        now(),
+    )
+    .expect("disable");
+    let mut summary = item_input(
+        "src-1",
+        "summary-disabled",
+        "Summary",
+        "summary",
+        "2026-08-01T00:00:00Z",
+    );
+    summary.content_markdown = "summary".to_string();
+    summary.summary_markdown = "summary".to_string();
+    FeedRepository::upsert_items(&conn, &[summary]).expect("seed disabled summary");
+    let disabled =
+        FeedRepository::enqueue_item_fulltext(&conn, "item-src-1-summary-disabled", now())
+            .expect("disabled source remains a no-op");
+    assert_eq!(disabled.as_str(), "not_eligible");
 }
 
 #[test]
@@ -235,73 +346,6 @@ fn disabling_fulltext_cancels_only_not_started_source_items() {
         )
         .expect("status");
     assert_eq!(status, "not_requested");
-}
-
-#[test]
-fn explicit_recent_fulltext_queue_is_bounded_to_the_requested_source() {
-    let conn = test_conn();
-    insert_source(&conn, "src-1", "One", "https://example.com/one.xml");
-    insert_source(&conn, "src-2", "Two", "https://example.com/two.xml");
-    let items = (0..30)
-        .map(|index| FeedItemInput {
-            fulltext_status: FulltextStatus::NotRequested,
-            canonical_url: Some(format!("https://example.com/{index}")),
-            content_markdown: "summary".to_string(),
-            summary_markdown: "summary".to_string(),
-            received_at: format!("2026-08-{:02}T00:00:00Z", index + 1),
-            ..item_input(
-                "src-1",
-                &format!("key-{index}"),
-                "Summary",
-                "summary",
-                "2026-08-01T00:00:00Z",
-            )
-        })
-        .collect::<Vec<_>>();
-    FeedRepository::upsert_items(&conn, &items).expect("seed");
-    FeedRepository::update_source(
-        &conn,
-        "src-1",
-        &FeedSourcePatch {
-            fulltext_enabled: Some(true),
-            ..Default::default()
-        },
-        now(),
-    )
-    .expect("enable");
-
-    let queued = FeedRepository::enqueue_recent_fulltext(&conn, "src-1", 20).expect("queue");
-    assert_eq!(queued, 20);
-    let pending: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM feed_items WHERE source_id = 'src-1' AND fulltext_status = 'pending'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("pending count");
-    assert_eq!(pending, 20);
-}
-
-#[test]
-fn explicit_recent_fulltext_queue_distinguishes_missing_and_disabled_sources() {
-    let conn = test_conn();
-    let missing = FeedRepository::enqueue_recent_fulltext(&conn, "missing", 20)
-        .expect_err("missing source must not become a database error");
-    assert!(
-        matches!(missing, crate::error::AppError::Message(code) if code == "feed_source_not_found")
-    );
-
-    insert_source(
-        &conn,
-        "src-disabled",
-        "Disabled",
-        "https://example.com/disabled.xml",
-    );
-    let disabled = FeedRepository::enqueue_recent_fulltext(&conn, "src-disabled", 20)
-        .expect_err("source-level opt-in is required");
-    assert!(
-        matches!(disabled, crate::error::AppError::Message(code) if code == "feed_fulltext_not_enabled")
-    );
 }
 
 #[test]
@@ -849,7 +893,8 @@ fn keyset_cursor_pages_stably_without_overlap() {
     let conn = test_conn();
     insert_source(&conn, "src-1", "Feed One", "https://example.com/one.xml");
 
-    // 25 个条目：received_at 从 08-01 到 08-03 交错，含同秒并列（row_id 决胜）。
+    // 25 个条目：received_at 从 08-01 到 08-03 交错；fixture 的 published_at
+    // 相同，因此实际排序完全由 row_id 决胜，覆盖 keyset 的并列路径。
     let mut inputs = Vec::new();
     for index in 0..25 {
         let day = 1 + (index % 3);
@@ -888,7 +933,9 @@ fn keyset_cursor_pages_stably_without_overlap() {
         }
         let last = page.last().expect("last item");
         cursor = Some(crate::feed::model::FeedPageCursor {
-            sort_at: last.received_at.clone(),
+            // 游标必须沿用查询实际的 `published_at ?? received_at` 排序键；
+            // 使用 received_at 会在有发布时间的条目上重复同一页。
+            sort_at: last.sort_at.clone(),
             row_id: last.row_id,
         });
     }

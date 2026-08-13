@@ -94,7 +94,7 @@ htmd = "=0.5.5"
 - [x] 添加两个精确依赖，不再加入第三个 sanitizer crate；使用 `feed-rs` 自带 sanitize feature 和前端现有 DOMPurify。
 - [x] 运行 `cargo tree --manifest-path src-tauri/Cargo.toml -i feed-rs` 与 `cargo tree --manifest-path src-tauri/Cargo.toml -i htmd`，确认没有不兼容许可证。
 - [x] 运行 `cargo check --manifest-path src-tauri/Cargo.toml`，预期 Rust 1.85 构建成功。
-- [x] 运行 `npm run audit:rust`，预期无未登记高危漏洞。
+- [ ] 当前重跑 `npm run audit:rust`，预期无未登记高危漏洞。（2026-08-13：RustSec advisory 数据库在本机网络/缓存锁环境不可用，未取得可复核结果；不以旧记录替代当前审计。）
 - [x] 提交：`chore(rss): 引入受审查的 Feed 解析与转换依赖`。
 
 **阶段 0 退出条件：** 六项产品决策冻结；fixture 可读；两个 crate 的许可、Rust 1.85 构建和安全审计通过。否则不得创建 `063` migration。
@@ -640,18 +640,18 @@ export type AppWorkspaceMode = "documents" | "feeds";
 
 按顺序执行并保存 exit code；任一失败不得声称完成：
 
-- [ ] `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
-- [ ] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
-- [ ] `cargo test --manifest-path src-tauri/Cargo.toml`
+- [x] `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
+- [x] `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
+- [ ] `cargo test --manifest-path src-tauri/Cargo.toml`（2026-08-13：RSS 主库与相关 integration 均通过；整仓默认并行运行在既有 `embedding_scheduler_contract` 的共享状态竞争处失败，串行 10/10 通过，不能记为全绿。）
 - [ ] `npm run audit:rust`
-- [ ] `npm run lint`
-- [ ] `npm run format:check`
-- [ ] `npm run typecheck`
-- [ ] `npm run test`
-- [ ] `npm audit`
-- [ ] `npm run docs:check`
-- [ ] `npm run test:e2e`
-- [ ] 发布候选另跑 `npm run tauri build` 与仓库既有 macOS/Windows 发布门禁。
+- [x] `npm run lint`
+- [x] `npm run format:check`
+- [x] `npm run typecheck`
+- [x] `npm run test`（340 files / 2332 tests）
+- [x] `npm audit`（0 vulnerabilities）
+- [x] `npm run docs:check`
+- [x] `npm run test:e2e`（3 files / 7 tests）
+- [ ] 发布候选另跑 `npm run tauri build` 与仓库既有 macOS/Windows 发布门禁。（2026-08-13：release binary 与 `.app` 已构建；本机 `hdiutil/create-dmg` 阶段失败，未形成可验证 dmg；Windows 尚无实际执行证据。）
 
 预期：全部 exit 0；审计无未登记高危；E2E 不依赖公网源，使用本地受控 HTTPS fixture server 或 mock transport。
 
@@ -682,7 +682,9 @@ export type AppWorkspaceMode = "documents" | "feeds";
 以下工作必须另写规格和实施计划，不得顺手扩张首轮：
 
 1. FreshRSS 或 Miniflux 同步；只有真实需求出现后再选择其一设计。
-2. 合法网页全文抓取与 Readability。
+2. ~~合法网页全文抓取与 Readability。~~ 已由后续批准的 RSS 补充计划以
+   来源级显式启用的通用静态 HTML 正文补全实现：不设站点特例、不执行
+   JavaScript、不处理登录/付费墙，仍复用唯一系统代理与安全固定目标传输。
 3. 订阅内容进入全局搜索的分组结果。
 4. 用户逐 Run 授权 Agent 读取订阅资料库。
 5. 公众号搜索服务的合法数据源、许可、账号风险和可持续性评估。

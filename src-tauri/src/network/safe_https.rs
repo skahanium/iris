@@ -109,24 +109,27 @@ pub(crate) async fn fixed_https_get(
     let target = *addrs
         .first()
         .ok_or_else(|| AppError::msg("https_dns_empty"))?;
-    let stream = match crate::network::system_proxy::snapshot_for(&parsed) {
-        crate::network::system_proxy::SystemProxySnapshot::Direct => {
-            TcpStream::connect(SocketAddr::new(target, port))
-                .await
-                .map_err(|_| AppError::msg("https_connect_failed"))?
-        }
-        crate::network::system_proxy::SystemProxySnapshot::Unsupported(code) => {
-            return Err(AppError::msg(code))
-        }
-        crate::network::system_proxy::SystemProxySnapshot::Http(proxy) => {
-            let stream = connect_proxy(&proxy).await?;
-            http_connect(stream, target, port).await?
-        }
-        crate::network::system_proxy::SystemProxySnapshot::Socks5(proxy) => {
-            let stream = connect_proxy(&proxy).await?;
-            socks5_connect(stream, target, port).await?
-        }
-    };
+    // 连接只会固定到第一个已校验地址；IP/CIDR 型 NO_PROXY 必须针对这一
+    // 实际连接目标判断，不能因同一 DNS 响应中的其他地址误走直连。
+    let stream =
+        match crate::network::system_proxy::snapshot_for(&parsed, std::slice::from_ref(&target)) {
+            crate::network::system_proxy::SystemProxySnapshot::Direct => {
+                TcpStream::connect(SocketAddr::new(target, port))
+                    .await
+                    .map_err(|_| AppError::msg("https_connect_failed"))?
+            }
+            crate::network::system_proxy::SystemProxySnapshot::Unsupported(code) => {
+                return Err(AppError::msg(code))
+            }
+            crate::network::system_proxy::SystemProxySnapshot::Http(proxy) => {
+                let stream = connect_proxy(&proxy).await?;
+                http_connect(stream, target, port).await?
+            }
+            crate::network::system_proxy::SystemProxySnapshot::Socks5(proxy) => {
+                let stream = connect_proxy(&proxy).await?;
+                socks5_connect(stream, target, port).await?
+            }
+        };
     let config = Arc::new(
         rustls::ClientConfig::with_platform_verifier()
             .map_err(|_| AppError::msg("https_tls_config_failed"))?,
@@ -212,7 +215,12 @@ async fn connect_proxy(proxy: &reqwest::Url) -> AppResult<TcpStream> {
 }
 
 async fn http_connect(mut stream: TcpStream, target: IpAddr, port: u16) -> AppResult<TcpStream> {
-    let authority = format!("{target}:{port}");
+    // RFC 3986 authority 对 IPv6 literal 必须加方括号，否则 `::` 会被代理
+    // 误解为 host:port 分隔符。这里始终写入本地已校验 IP，而非原始域名。
+    let authority = match target {
+        IpAddr::V4(ip) => format!("{ip}:{port}"),
+        IpAddr::V6(ip) => format!("[{ip}]:{port}"),
+    };
     stream
         .write_all(format!("CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\n\r\n").as_bytes())
         .await
@@ -507,6 +515,28 @@ mod fixed_transport_tests {
         let request = server.await.unwrap();
         assert!(request.starts_with("CONNECT 203.0.113.8:443 HTTP/1.1"));
         assert!(!request.contains("example.com"));
+    }
+
+    #[tokio::test]
+    async fn http_connect_brackets_an_ipv6_literal_authority() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut received = vec![0; 256];
+            let n = socket.read(&mut received).await.unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&received[..n]).to_string()
+        });
+        let stream = TcpStream::connect(address).await.unwrap();
+        let _ = http_connect(stream, "2001:db8::8".parse().unwrap(), 443)
+            .await
+            .unwrap();
+        let request = server.await.unwrap();
+        assert!(request.starts_with("CONNECT [2001:db8::8]:443 HTTP/1.1"));
     }
 
     #[tokio::test]

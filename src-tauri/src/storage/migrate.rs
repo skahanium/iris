@@ -170,6 +170,9 @@ const MIGRATION_064_DOWN: &str =
     include_str!("../../migrations/064_feed_retention_fulltext.down.sql");
 const MIGRATION_065_UP: &str = include_str!("../../migrations/065_feed_fulltext_opt_in.sql");
 const MIGRATION_065_DOWN: &str = include_str!("../../migrations/065_feed_fulltext_opt_in.down.sql");
+const MIGRATION_066_UP: &str = include_str!("../../migrations/066_feed_fulltext_default_on.sql");
+const MIGRATION_066_DOWN: &str =
+    include_str!("../../migrations/066_feed_fulltext_default_on.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -666,6 +669,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "063_feed_library", MIGRATION_063_UP, false)?;
     apply_migration(conn, "064_feed_retention_fulltext", MIGRATION_064_UP, false)?;
     apply_migration(conn, "065_feed_fulltext_opt_in", MIGRATION_065_UP, false)?;
+    apply_migration(
+        conn,
+        "066_feed_fulltext_default_on",
+        MIGRATION_066_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -677,6 +686,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "066_feed_fulltext_default_on", MIGRATION_066_DOWN);
     rollback_migration(conn, "065_feed_fulltext_opt_in", MIGRATION_065_DOWN);
     rollback_migration(conn, "064_feed_retention_fulltext", MIGRATION_064_DOWN);
     rollback_migration(conn, "063_feed_library", MIGRATION_063_DOWN);
@@ -2699,16 +2709,28 @@ mod tests {
             );
         }
 
-        let object_count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-                 WHERE type IN ('index', 'trigger')
-                   AND name LIKE 'idx_feed_%' OR (type = 'trigger' AND name LIKE 'feed_items_fts_%')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(object_count, 9, "expected 6 indexes + 3 FTS triggers");
+        // 后续迁移可以合法增加 feed 索引；这里验证 063 本身承诺的六个
+        // 索引和三个 FTS trigger，不能把总数固定为 9。
+        for (name, kind) in [
+            ("idx_feed_sources_due", "index"),
+            ("idx_feed_sources_folder", "index"),
+            ("idx_feed_items_inbox", "index"),
+            ("idx_feed_items_source_time", "index"),
+            ("idx_feed_items_starred", "index"),
+            ("idx_feed_items_archived", "index"),
+            ("feed_items_fts_ai", "trigger"),
+            ("feed_items_fts_ad", "trigger"),
+            ("feed_items_fts_au", "trigger"),
+        ] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1 AND type = ?2)",
+                    [name, kind],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "063 must create {kind} {name}");
+        }
 
         // 插入一条源与文章，验证 FTS trigger 真实联动。
         conn.execute(
@@ -2812,5 +2834,143 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tables, 3);
+    }
+
+    #[test]
+    fn migrations_064_through_066_add_retention_and_default_fulltext() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let source_columns = conn
+            .prepare("PRAGMA table_info(feed_sources)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        for column in [
+            "history_boundary_external_key",
+            "history_boundary_published_at",
+            "fulltext_enabled",
+        ] {
+            assert!(
+                source_columns.contains(&column.to_string()),
+                "missing feed_sources.{column}"
+            );
+        }
+
+        let item_columns = conn
+            .prepare("PRAGMA table_info(feed_items)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        for column in [
+            "expires_at",
+            "deleted_at",
+            "purge_after",
+            "content_origin",
+            "fulltext_status",
+            "fulltext_markdown",
+        ] {
+            assert!(
+                item_columns.contains(&column.to_string()),
+                "missing feed_items.{column}"
+            );
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM _migrations
+                 WHERE name IN ('064_feed_retention_fulltext', '065_feed_fulltext_opt_in',
+                                '066_feed_fulltext_default_on')",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            3
+        );
+        let legacy_column_default: i64 = conn
+            .query_row(
+                "INSERT INTO feed_sources (id, feed_url, title, created_at, updated_at)
+                 VALUES ('src-064', 'https://example.com/feed.xml', 'Example',
+                         '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z')
+                 RETURNING fulltext_enabled",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            legacy_column_default, 0,
+            "列默认值保持兼容；Repository 必须显式为新来源开启正文补全"
+        );
+
+        conn.execute(
+            "UPDATE feed_sources SET fulltext_enabled = 0 WHERE id = 'src-064'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO feed_items
+             (id, source_id, external_key, title, received_at, content_markdown, content_text,
+              source_payload, source_payload_kind, content_hash, conversion_version,
+              conversion_status, created_at, updated_at, fulltext_status)
+             VALUES ('item-066', 'src-064', 'item-066', 'Legacy summary',
+                     '2026-08-01T00:00:00Z', 'summary', 'summary', 'summary', 'text',
+                     'hash', 1, 'ok', '2026-08-01T00:00:00Z', '2026-08-01T00:00:00Z',
+                     'not_requested')",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(MIGRATION_066_UP).unwrap();
+        let upgraded: i64 = conn
+            .query_row(
+                "SELECT fulltext_enabled FROM feed_sources WHERE id = 'src-064'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(upgraded, 1, "066 必须开启既有来源");
+        let legacy_status: String = conn
+            .query_row(
+                "SELECT fulltext_status FROM feed_items WHERE id = 'item-066'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_status, "not_requested", "066 不得静默排队旧文章");
+    }
+
+    #[test]
+    fn migrations_064_and_065_roundtrip_without_touching_feed_base_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        rollback_migration(&conn, "066_feed_fulltext_default_on", MIGRATION_066_DOWN);
+        rollback_migration(&conn, "065_feed_fulltext_opt_in", MIGRATION_065_DOWN);
+        rollback_migration(&conn, "064_feed_retention_fulltext", MIGRATION_064_DOWN);
+
+        assert!(table_exists(&conn, "feed_sources"));
+        assert!(table_exists(&conn, "feed_items"));
+        for (table, column) in [
+            ("feed_sources", "fulltext_enabled"),
+            ("feed_sources", "history_boundary_external_key"),
+            ("feed_items", "fulltext_status"),
+            ("feed_items", "deleted_at"),
+        ] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(
+                       SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2
+                     )",
+                    [table, column],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(
+                !exists,
+                "{table}.{column} must be removed by down migration"
+            );
+        }
     }
 }

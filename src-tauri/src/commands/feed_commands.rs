@@ -16,8 +16,8 @@ use crate::error::{AppError, AppResult};
 use crate::feed::discovery::{discover, FeedCandidate};
 use crate::feed::fetch::ProdNetGate;
 use crate::feed::model::{
-    FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedLibrarySummary,
-    FeedSourcePatch, FeedSourceSummary, FeedTrashItem, NewFeedSource,
+    FeedFulltextEnqueueOutcome, FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary,
+    FeedLibrarySummary, FeedSourcePatch, FeedSourceSummary, FeedTrashItem, NewFeedSource,
 };
 use crate::feed::opml::canonicalize_https_url;
 use crate::feed::opml::{export_opml, import_opml_with_interval, OpmlImportResult, OPML_MAX_BYTES};
@@ -30,8 +30,6 @@ use crate::network::safe_https::validate_https_url;
 const MAX_ID_LEN: usize = 200;
 const MAX_URL_LEN: usize = 2048;
 const MAX_STRING_LEN: usize = 4096;
-const FULLTEXT_RECENT_LIMIT_MAX: u32 = 50;
-
 fn check_id(id: &str) -> AppResult<()> {
     if id.trim().is_empty() || id.len() > MAX_ID_LEN {
         return Err(AppError::msg("feed_validation_id"));
@@ -60,6 +58,11 @@ fn check_timestamp(value: &str) -> AppResult<()> {
 }
 
 fn check_feed_query(query: &FeedItemQuery) -> AppResult<()> {
+    if !(crate::feed::repository::ITEM_LIMIT_MIN..=crate::feed::repository::ITEM_LIMIT_MAX)
+        .contains(&query.limit)
+    {
+        return Err(AppError::msg("feed_validation_limit"));
+    }
     if let Some(source_id) = &query.source_id {
         check_id(source_id)?;
     }
@@ -274,21 +277,17 @@ pub fn feed_item_set_state(
     feed_item_set_state_impl(&state, &item_id, &patch)
 }
 
-/// 明确补全当前来源最近的摘要条目；默认同步不会调用此入口。
+/// 将用户刚打开的一篇本地摘要加入正文补全队列；不会扫描来源历史。
 #[tauri::command]
-pub fn feed_fulltext_enqueue_recent(
+pub fn feed_fulltext_enqueue_item(
     state: State<'_, Arc<AppState>>,
-    source_id: String,
-    limit: u32,
-) -> AppResult<u32> {
-    check_id(&source_id)?;
-    if !(1..=FULLTEXT_RECENT_LIMIT_MAX).contains(&limit) {
-        return Err(AppError::msg("feed_fulltext_limit_invalid"));
-    }
+    item_id: String,
+) -> AppResult<FeedFulltextEnqueueOutcome> {
+    check_id(&item_id)?;
     let queued = state
         .db
-        .with_conn(|conn| FeedRepository::enqueue_recent_fulltext(conn, &source_id, limit))?;
-    if queued > 0 {
+        .with_conn(|conn| FeedRepository::enqueue_item_fulltext(conn, &item_id, Utc::now()))?;
+    if queued == FeedFulltextEnqueueOutcome::Queued {
         state.feed_fulltext.schedule();
     }
     Ok(queued)
@@ -812,6 +811,24 @@ mod tests {
                 row_id: 0,
             }),
             limit: 50,
+        })
+        .is_err());
+        assert!(check_feed_query(&FeedItemQuery {
+            view: crate::feed::model::FeedView::All,
+            source_id: None,
+            search: None,
+            received_after: None,
+            cursor: None,
+            limit: 0,
+        })
+        .is_err());
+        assert!(check_feed_query(&FeedItemQuery {
+            view: crate::feed::model::FeedView::All,
+            source_id: None,
+            search: None,
+            received_after: None,
+            cursor: None,
+            limit: 201,
         })
         .is_err());
     }

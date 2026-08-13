@@ -10,7 +10,8 @@
 use chrono::Utc;
 use iris_lib::app::AppState;
 use iris_lib::feed::model::{
-    ConversionStatus, FeedItemInput, FeedItemQuery, FeedView, NewFeedSource, SourcePayloadKind,
+    ConversionStatus, FeedItemInput, FeedItemQuery, FeedView, FulltextStatus, NewFeedSource,
+    SourcePayloadKind,
 };
 use iris_lib::feed::repository::FeedRepository;
 use iris_lib::storage::migrate::migrate_up;
@@ -78,6 +79,8 @@ fn seed_items(state: &AppState, source_ids: &[String], per_source: usize) {
                 content_hash: format!("hash-{n:05}"),
                 conversion_version: 1,
                 conversion_status: ConversionStatus::Ok,
+                expires_at: "2026-08-08T08:00:00Z".to_string(),
+                fulltext_status: FulltextStatus::NotRequested,
             });
         }
     }

@@ -135,16 +135,6 @@ export function renderFeedMarkdown(
   return allowRemoteImages ? sanitized : blockRemoteImages(sanitized);
 }
 
-/** 自动已读设置：正文可见 1 秒或发生阅读动作后标记（默认开启）。 */
-export function isFeedAutoReadEnabled(): boolean {
-  return localStorage.getItem("iris-feed-auto-read") !== "false";
-}
-
-/** 保存显式自动已读偏好；不包含文章或订阅数据。 */
-export function setFeedAutoReadEnabled(enabled: boolean): void {
-  localStorage.setItem("iris-feed-auto-read", enabled ? "true" : "false");
-}
-
 /** 外链拦截：只允许 HTTPS 经 `openExternalHttpsUrl` 打开；
  * 非 HTTPS 链接点击被吞掉（防御，normalize 已不产出此类链接）。 */
 export function handleFeedLinkClick(event: MouseEvent): void {
