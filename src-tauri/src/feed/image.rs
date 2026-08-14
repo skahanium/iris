@@ -23,10 +23,14 @@ use crate::network::safe_https::{
 };
 
 pub(crate) const IMAGE_MAX_BYTES: u64 = 10 * 1024 * 1024;
-const IMAGE_CACHE_MAX_BYTES: u64 = 256 * 1024 * 1024;
-const IMAGE_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const IMAGE_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+const IMAGE_CACHE_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+/// A partial is either actively written by this process or a recent remnant from an
+/// interrupted download. Never delete it just because another image finishes.
+const IMAGE_PARTIAL_MAX_AGE: Duration = Duration::from_secs(30 * 60);
 const IMAGE_LEASE_TTL: Duration = Duration::from_secs(10 * 60);
 const IMAGE_LEASE_MAX: usize = 256;
+const IMAGE_FAILURE_BACKOFF: Duration = Duration::from_secs(30);
 const MAX_IMAGES_PER_ITEM: usize = 24;
 const USER_AGENT: &str = concat!("Iris/", env!("CARGO_PKG_VERSION"), " RSS Image");
 
@@ -59,6 +63,8 @@ struct SharedTask {
 static LEASES: OnceLock<Mutex<HashMap<String, ImageLease>>> = OnceLock::new();
 static TASKS: OnceLock<Mutex<HashMap<String, Arc<SharedTask>>>> = OnceLock::new();
 static DOWNLOAD_GATE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+static ACTIVE_PARTIALS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+static FAILED_UNTIL: OnceLock<Mutex<HashMap<String, SystemTime>>> = OnceLock::new();
 
 fn leases() -> &'static Mutex<HashMap<String, ImageLease>> {
     LEASES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -66,6 +72,36 @@ fn leases() -> &'static Mutex<HashMap<String, ImageLease>> {
 
 fn tasks() -> &'static Mutex<HashMap<String, Arc<SharedTask>>> {
     TASKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn active_partials() -> &'static Mutex<HashSet<PathBuf>> {
+    ACTIVE_PARTIALS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn failed_until() -> &'static Mutex<HashMap<String, SystemTime>> {
+    FAILED_UNTIL.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct PartialDownloadGuard {
+    path: PathBuf,
+}
+
+impl PartialDownloadGuard {
+    fn register(path: PathBuf) -> AppResult<Self> {
+        active_partials()
+            .lock()
+            .map_err(|_| AppError::msg("feed_image_state_failed"))?
+            .insert(path.clone());
+        Ok(Self { path })
+    }
+}
+
+impl Drop for PartialDownloadGuard {
+    fn drop(&mut self) {
+        if let Ok(mut paths) = active_partials().lock() {
+            paths.remove(&self.path);
+        }
+    }
 }
 
 fn download_gate() -> Arc<Semaphore> {
@@ -203,10 +239,19 @@ fn protected_paths(now: SystemTime) -> AppResult<HashSet<PathBuf>> {
     current.retain(|_, lease| {
         now.duration_since(lease.created_at).unwrap_or_default() <= IMAGE_LEASE_TTL
     });
-    Ok(current.values().map(|lease| lease.path.clone()).collect())
+    let mut protected: HashSet<PathBuf> =
+        current.values().map(|lease| lease.path.clone()).collect();
+    protected.extend(
+        active_partials()
+            .lock()
+            .map_err(|_| AppError::msg("feed_image_state_failed"))?
+            .iter()
+            .cloned(),
+    );
+    Ok(protected)
 }
 
-fn maintain_cache(cache_dir: &Path) -> AppResult<()> {
+pub(crate) fn maintain_cache(cache_dir: &Path) -> AppResult<()> {
     std::fs::create_dir_all(cache_dir)?;
     let now = SystemTime::now();
     let protected = protected_paths(now)?;
@@ -219,10 +264,11 @@ fn maintain_cache(cache_dir: &Path) -> AppResult<()> {
             continue;
         }
         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        if !protected.contains(&path)
-            && (path.extension().is_some_and(|ext| ext == "part")
-                || now.duration_since(modified).unwrap_or_default() > IMAGE_CACHE_TTL)
-        {
+        let is_partial = path.extension().is_some_and(|ext| ext == "part");
+        let expired = now.duration_since(modified).unwrap_or_default() > IMAGE_CACHE_TTL;
+        let stale_partial =
+            is_partial && now.duration_since(modified).unwrap_or_default() > IMAGE_PARTIAL_MAX_AGE;
+        if !protected.contains(&path) && (stale_partial || (!is_partial && expired)) {
             let _ = std::fs::remove_file(path);
             continue;
         }
@@ -253,6 +299,7 @@ async fn download_image(
     }
     maintain_cache(cache_dir)?;
     let partial = cache_dir.join(format!("{key}-{}.part", Uuid::new_v4()));
+    let _partial_guard = PartialDownloadGuard::register(partial.clone())?;
     let cancelled = std::sync::atomic::AtomicBool::new(false);
     let progress = |_bytes: u64| {};
     let result = async {
@@ -335,9 +382,22 @@ async fn prepare_one(
     source_url: String,
     referer: Option<String>,
     cache_dir: PathBuf,
+    force_retry: bool,
 ) -> AppResult<FeedImageLease> {
     let canonical = canonical_image_url(&source_url)?;
     let key = cache_key(&canonical);
+    {
+        let mut failures = failed_until()
+            .lock()
+            .map_err(|_| AppError::msg("feed_image_state_failed"))?;
+        failures.retain(|_, retry_after| *retry_after > SystemTime::now());
+        if !force_retry && failures.contains_key(&key) {
+            return Err(AppError::msg("feed_image_retry_later"));
+        }
+        if force_retry {
+            failures.remove(&key);
+        }
+    }
     let (task, owner) = {
         let mut registry = tasks()
             .lock()
@@ -367,8 +427,18 @@ async fn prepare_one(
             Err(_) => Err(AppError::msg("feed_image_timeout")),
         };
         task_for_run.outcome.send_replace(Some(match result {
-            Ok(image) => SharedOutcome::Ready(image),
-            Err(error) => SharedOutcome::Failed(error.to_string()),
+            Ok(image) => {
+                if let Ok(mut failures) = failed_until().lock() {
+                    failures.remove(&key);
+                }
+                SharedOutcome::Ready(image)
+            }
+            Err(error) => {
+                if let Ok(mut failures) = failed_until().lock() {
+                    failures.insert(key.clone(), SystemTime::now() + IMAGE_FAILURE_BACKOFF);
+                }
+                SharedOutcome::Failed(error.to_string())
+            }
         }));
         tasks()
             .lock()
@@ -432,7 +502,12 @@ pub(crate) async fn prepare_images(
     let urls = extract_image_urls(markdown);
     let mut tasks = tokio::task::JoinSet::new();
     for url in urls {
-        tasks.spawn(prepare_one(url, referer.clone(), cache_dir.to_path_buf()));
+        tasks.spawn(prepare_one(
+            url,
+            referer.clone(),
+            cache_dir.to_path_buf(),
+            false,
+        ));
     }
     let mut images = Vec::new();
     let mut failed_count = 0_u32;
@@ -448,6 +523,22 @@ pub(crate) async fn prepare_images(
     }
 }
 
+/// 为一张已获文章级授权的图片创建本地 lease；单张失败不影响同篇其它图片。
+pub(crate) async fn prepare_image(
+    source_url: String,
+    article_url: Option<&str>,
+    cache_dir: &Path,
+    force_retry: bool,
+) -> AppResult<FeedImageLease> {
+    prepare_one(
+        source_url,
+        image_referer(article_url),
+        cache_dir.to_path_buf(),
+        force_retry,
+    )
+    .await
+}
+
 pub(crate) fn release_images(handles: &[String]) -> AppResult<()> {
     let mut current = leases()
         .lock()
@@ -456,6 +547,21 @@ pub(crate) fn release_images(handles: &[String]) -> AppResult<()> {
         current.remove(handle);
     }
     Ok(())
+}
+
+/// Clear only inactive cache files; active WebView leases and in-flight partials
+/// remain valid until their short lease expires.
+pub(crate) fn clear_cache(cache_dir: &Path) -> AppResult<u32> {
+    std::fs::create_dir_all(cache_dir)?;
+    let protected = protected_paths(SystemTime::now())?;
+    let mut removed = 0;
+    for entry in std::fs::read_dir(cache_dir)? {
+        let path = entry?.path();
+        if path.is_file() && !protected.contains(&path) && std::fs::remove_file(path).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
 }
 
 fn protocol_response(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
@@ -541,5 +647,16 @@ mod tests {
         assert_eq!(inspect_image(&path).unwrap().0, "image/png");
         std::fs::write(&path, b"<html>not an image</html>").unwrap();
         assert!(inspect_image(&path).is_err());
+    }
+
+    #[test]
+    fn maintenance_keeps_a_fresh_partial_download() {
+        let dir = tempfile::tempdir().unwrap();
+        let partial = dir.path().join("image-download.part");
+        std::fs::write(&partial, b"in-progress").unwrap();
+
+        maintain_cache(dir.path()).unwrap();
+
+        assert!(partial.exists(), "an active download must not be deleted");
     }
 }

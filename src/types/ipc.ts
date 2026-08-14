@@ -149,6 +149,50 @@ export interface AppUpdateProgressEvent {
 
 export type AppExitResult = void;
 
+export type CacheDomainId =
+  | "feed_media"
+  | "web_pages"
+  | "temporary_files"
+  | "runtime_artifacts"
+  | "update_packages";
+
+export interface CacheDomainSummary {
+  id: CacheDomainId;
+  label: string;
+  bytes: number;
+  entries: number;
+  reclaimableBytes: number;
+  activeBytes: number;
+  clearable: boolean;
+  policy: string;
+}
+
+export interface CacheSummary {
+  domains: CacheDomainSummary[];
+  totalBytes: number;
+  reclaimableBytes: number;
+  generatedAt: string;
+  lastMaintenanceAt: string | null;
+}
+
+export interface CacheClearResult {
+  domains: Array<{
+    id: CacheDomainId;
+    bytesFreed: number;
+    entriesRemoved: number;
+    skippedActive: number;
+    error: string | null;
+  }>;
+  completedAt: string;
+}
+
+export type RuntimeCacheDomain = "ort" | "huggingface" | "xdg";
+
+export interface RuntimeRepairResult {
+  restartRequired: boolean;
+  domains: RuntimeCacheDomain[];
+}
+
 export interface KeywordHit {
   path: string;
   title: string;
@@ -507,6 +551,10 @@ export interface FeedImageLease {
 export interface FeedImagesPrepareResult {
   images: FeedImageLease[];
   failedCount: number;
+}
+
+export interface FeedImageManifest {
+  images: Array<{ index: number; sourceUrl: string }>;
 }
 
 export interface FeedDocumentLease {

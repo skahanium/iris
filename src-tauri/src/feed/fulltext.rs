@@ -19,7 +19,7 @@ use crate::storage::db::Database;
 /// 转换后的正文 Markdown 上限（小于网络响应上限，限制常驻缓存与 FTS 负担）。
 pub(crate) const FULLTEXT_MARKDOWN_MAX_BYTES: usize = 768 * 1024;
 /// 网页正文提取规则版本；旧版本只在用户再次打开单篇文章时重取。
-pub(crate) const FULLTEXT_EXTRACTION_VERSION: i64 = 2;
+pub(crate) const FULLTEXT_EXTRACTION_VERSION: i64 = 3;
 const MAX_CANDIDATES: usize = 64;
 const MAX_CANDIDATE_NODES: usize = 50_000;
 const MAX_REMOVALS: usize = 256;
@@ -901,6 +901,30 @@ mod tests {
         assert!(!extracted.markdown.contains("unsafe.example"));
         assert!(extracted.markdown.contains("https://cdn.example/chart.png"));
         assert!(extracted.markdown.contains("Figure 1"));
+    }
+
+    #[test]
+    fn keeps_text_links_distinct_from_article_images() {
+        let html = format!(
+            "<html><body><article><p>{}</p><p>适合提前<a href='https://sspai.com/post/74169'>备餐</a>。</p><figure><img src='https://cdnfile.sspai.com/article/chart.png' alt='营养对比图'><figcaption>营养对比</figcaption></figure></article></body></html>",
+            "完整正文内容。".repeat(30)
+        );
+
+        let extracted = extract_fulltext(html, "https://sspai.com/prime/story/example").unwrap();
+
+        assert!(
+            extracted
+                .markdown
+                .contains("[备餐](https://sspai.com/post/74169)"),
+            "普通链接不得转换成图片语法；got: {}",
+            extracted.markdown
+        );
+        assert!(
+            !extracted.markdown.contains("![备餐]"),
+            "got: {}",
+            extracted.markdown
+        );
+        assert!(extracted.markdown.contains("![营养对比图]"));
     }
 
     #[tokio::test]

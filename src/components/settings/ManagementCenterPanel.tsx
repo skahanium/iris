@@ -38,6 +38,12 @@ import type { AppUpdateSnapshot } from "@/hooks/useAppUpdate";
 import { isWindowsDesktopChrome } from "@/lib/platform-chrome";
 import { cn } from "@/lib/utils";
 import {
+  cacheClear,
+  cacheSummary as loadCacheSummary,
+  runtimeCacheRepairPrepare,
+} from "@/lib/ipc";
+import { clearFrontendAccelerationCaches } from "@/lib/cache-runtime";
+import {
   webSearchStatusDetail,
   type WebSearchAvailability,
   type WebSearchProviderOption,
@@ -45,6 +51,7 @@ import {
 import type {
   EmbeddingIndexStatus,
   EmbeddingSchedulerStartResult,
+  CacheSummary,
   FileListItem,
 } from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
@@ -252,6 +259,47 @@ export function ManagementCenterPanel({
   const [embeddingActionMessage, setEmbeddingActionMessage] = useState<
     string | null
   >(null);
+  const [cacheState, setCacheState] = useState<CacheSummary | null>(null);
+  const [cacheBusy, setCacheBusy] = useState(false);
+  const [cacheActionMessage, setCacheActionMessage] = useState<string | null>(
+    null,
+  );
+
+  const refreshCacheSummary = useCallback(() => {
+    void loadCacheSummary()
+      .then(setCacheState)
+      .catch(() => setCacheActionMessage("无法读取缓存统计，请稍后重试。"));
+  }, []);
+
+  useEffect(() => {
+    if (open) refreshCacheSummary();
+  }, [open, refreshCacheSummary]);
+
+  const clearCacheDomains = (
+    domains: Parameters<typeof cacheClear>[0],
+    includeFrontendAcceleration = false,
+  ) => {
+    setCacheBusy(true);
+    setCacheActionMessage(null);
+    if (includeFrontendAcceleration) clearFrontendAccelerationCaches();
+    void cacheClear(domains)
+      .then((result) => {
+        const freed = result.domains.reduce(
+          (total, domain) => total + domain.bytesFreed,
+          0,
+        );
+        const failed = result.domains.find((domain) => domain.error);
+        setCacheActionMessage(
+          failed
+            ? `部分缓存域未清理：${failed.error}`
+            : `已释放 ${(freed / 1024 / 1024).toFixed(1)} MiB 可重建内容。`,
+        );
+        return loadCacheSummary();
+      })
+      .then(setCacheState)
+      .catch(() => setCacheActionMessage("缓存清理未完成，请稍后重试。"))
+      .finally(() => setCacheBusy(false));
+  };
 
   const handleEmbeddingStart = () => {
     setEmbeddingActionMessage(null);
@@ -541,6 +589,93 @@ export function ManagementCenterPanel({
             </StatusValue>
           ) : null}
         </SettingRow>
+      </PanelSection>
+      <PanelSection title="存储与缓存">
+        <SettingRow
+          icon={HardDrive}
+          title="可重建内容"
+          detail={
+            cacheState
+              ? `总计 ${(cacheState.totalBytes / 1024 / 1024).toFixed(1)} MiB；可安全回收 ${(cacheState.reclaimableBytes / 1024 / 1024).toFixed(1)} MiB。`
+              : "正在读取缓存统计…"
+          }
+        >
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={cacheBusy}
+            onClick={refreshCacheSummary}
+          >
+            <RefreshCw className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+            刷新
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={cacheBusy || !cacheState}
+            onClick={() =>
+              clearCacheDomains(
+                ["feed_media", "web_pages", "temporary_files"],
+                true,
+              )
+            }
+          >
+            安全清理
+          </Button>
+        </SettingRow>
+        {cacheState?.domains.map((domain) => (
+          <SettingRow
+            key={domain.id}
+            icon={Database}
+            title={domain.label}
+            detail={`${(domain.bytes / 1024 / 1024).toFixed(1)} MiB · ${domain.entries} 项。${domain.policy}`}
+          >
+            {domain.clearable ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={cacheBusy}
+                onClick={() => clearCacheDomains([domain.id])}
+              >
+                清理
+              </Button>
+            ) : domain.id === "runtime_artifacts" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={cacheBusy}
+                onClick={() => {
+                  if (
+                    !window.confirm("运行时资源将在下次重启前重建，是否继续？")
+                  )
+                    return;
+                  setCacheBusy(true);
+                  void runtimeCacheRepairPrepare(["ort", "huggingface", "xdg"])
+                    .then(() =>
+                      setCacheActionMessage(
+                        "已安排在下次重启时修复运行时资源。",
+                      ),
+                    )
+                    .catch(() =>
+                      setCacheActionMessage(
+                        "无法安排运行时资源修复，请稍后重试。",
+                      ),
+                    )
+                    .finally(() => setCacheBusy(false));
+                }}
+              >
+                修复
+              </Button>
+            ) : (
+              <StatusValue>受保护</StatusValue>
+            )}
+          </SettingRow>
+        ))}
+        {cacheActionMessage ? (
+          <p className="px-4 pb-3 text-xs text-muted-foreground">
+            {cacheActionMessage}
+          </p>
+        ) : null}
       </PanelSection>
     </SectionShell>
   );

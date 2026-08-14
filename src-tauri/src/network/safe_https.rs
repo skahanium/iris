@@ -215,6 +215,10 @@ pub(crate) async fn fixed_https_get(
 
 /// 与 [`fixed_https_get`] 共用固定目标和代理传输，但把成功响应流式写入临时文件。
 /// 单次只复制 64 KiB 到写入缓冲，不把远程文档累积到进程内存。
+///
+/// 参数分别对应经安全网门校验后的连接目标、写入控制与调用方取消状态；将它们
+/// 打包会模糊这些独立的安全边界，因此保留显式参数列表。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn fixed_https_download_to_path(
     url: &str,
     addrs: &[IpAddr],

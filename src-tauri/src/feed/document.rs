@@ -25,7 +25,7 @@ use crate::network::safe_https::{
 
 pub(crate) const DOCUMENT_MAX_BYTES: u64 = 100 * 1024 * 1024;
 const DOCUMENT_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
-const DOCUMENT_CACHE_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const DOCUMENT_CACHE_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 const DOCUMENT_LEASE_TTL: Duration = Duration::from_secs(10 * 60);
 const DOCUMENT_LEASE_MAX: usize = 256;
 const MAX_RANGE_LEN: u64 = 1024 * 1024;

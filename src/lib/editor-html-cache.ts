@@ -1,7 +1,14 @@
 /** Cached TipTap HTML per note path to skip re-ingest when switching tabs. */
 export type EditorHtmlCacheNamespace = "normal" | "classified";
 
-const htmlByPath = new Map<string, { html: string; digest: string }>();
+interface EditorHtmlCacheEntry {
+  html: string;
+  digest: string;
+  estimatedBytes: number;
+}
+
+const htmlByPath = new Map<string, EditorHtmlCacheEntry>();
+let cachedHtmlBytes = 0;
 
 function cacheKey(
   path: string,
@@ -12,6 +19,8 @@ function cacheKey(
 
 /** Maximum number of cached entries to prevent unbounded memory growth. */
 const MAX_CACHE_SIZE = 30;
+const MAX_CACHE_ENTRY_BYTES = 1024 * 1024;
+const MAX_CACHE_TOTAL_BYTES = 8 * 1024 * 1024;
 
 export const EDITOR_HTML_CACHE_FORMAT_VERSION =
   "editor-html-v8-unparsed-markdown-cache-guard";
@@ -106,16 +115,19 @@ export function getCachedEditorHtml(
   const entry = htmlByPath.get(key);
   if (!entry) return undefined;
   if (entry.digest !== expectedDigest) {
-    htmlByPath.delete(key);
+    removeEntry(key);
     return undefined;
   }
   if (
     cachedHtmlHasVisibleFailedBold(entry.html) ||
     cachedHtmlHasVisibleUnparsedMarkdownBlock(entry.html)
   ) {
-    htmlByPath.delete(key);
+    removeEntry(key);
     return undefined;
   }
+  // Map insertion order is our LRU order; a hit becomes most recently used.
+  htmlByPath.delete(key);
+  htmlByPath.set(key, entry);
   return entry.html;
 }
 
@@ -130,18 +142,31 @@ export function setCachedEditorHtml(
     cachedHtmlHasVisibleFailedBold(html) ||
     cachedHtmlHasVisibleUnparsedMarkdownBlock(html)
   ) {
-    htmlByPath.delete(key);
+    removeEntry(key);
     return;
   }
 
-  // Evict oldest entries if cache is full
-  if (htmlByPath.size >= MAX_CACHE_SIZE && !htmlByPath.has(key)) {
+  const estimatedBytes = (html.length + digest.length) * 2;
+  if (estimatedBytes > MAX_CACHE_ENTRY_BYTES) {
+    removeEntry(key);
+    return;
+  }
+
+  removeEntry(key);
+
+  while (
+    htmlByPath.size >= MAX_CACHE_SIZE ||
+    cachedHtmlBytes + estimatedBytes > MAX_CACHE_TOTAL_BYTES
+  ) {
     const oldestKey = htmlByPath.keys().next().value;
     if (oldestKey !== undefined) {
-      htmlByPath.delete(oldestKey);
+      removeEntry(oldestKey);
+    } else {
+      break;
     }
   }
-  htmlByPath.set(key, { html, digest });
+  htmlByPath.set(key, { html, digest, estimatedBytes });
+  cachedHtmlBytes += estimatedBytes;
 }
 
 export function clearCachedEditorHtml(
@@ -149,13 +174,28 @@ export function clearCachedEditorHtml(
   namespace?: EditorHtmlCacheNamespace,
 ): void {
   if (namespace) {
-    htmlByPath.delete(cacheKey(path, namespace));
+    removeEntry(cacheKey(path, namespace));
     return;
   }
-  htmlByPath.delete(cacheKey(path, "normal"));
-  htmlByPath.delete(cacheKey(path, "classified"));
+  removeEntry(cacheKey(path, "normal"));
+  removeEntry(cacheKey(path, "classified"));
 }
 
 export function clearAllEditorHtmlCache(): void {
   htmlByPath.clear();
+  cachedHtmlBytes = 0;
+}
+
+export function getEditorHtmlCacheStats(): {
+  entryCount: number;
+  estimatedBytes: number;
+} {
+  return { entryCount: htmlByPath.size, estimatedBytes: cachedHtmlBytes };
+}
+
+function removeEntry(key: string): void {
+  const entry = htmlByPath.get(key);
+  if (entry)
+    cachedHtmlBytes = Math.max(0, cachedHtmlBytes - entry.estimatedBytes);
+  htmlByPath.delete(key);
 }

@@ -16,6 +16,7 @@ use crate::feed::fetch::ProdNetGate;
 use crate::feed::fulltext::FeedFulltextService;
 use crate::feed::repository::FeedRepository;
 use crate::feed::sync::FeedSyncService;
+use crate::paths::IrisPaths;
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
@@ -315,7 +316,7 @@ pub struct AppState {
     /// 后台订阅同步设置变化时唤醒 Scheduler；正在执行的批次不被中断。
     pub(crate) feed_sync_wake: Arc<tokio::sync::Notify>,
     vault: Mutex<Option<PathBuf>>,
-    data_dir: PathBuf,
+    paths: IrisPaths,
     pub watcher: Mutex<Option<FileWatcher>>,
 
     pub db: Arc<Database>,
@@ -329,20 +330,48 @@ pub struct AppState {
 impl AppState {
     /// Create application state using the production CAS key source.
     pub fn new(data_dir: PathBuf) -> AppResult<Arc<Self>> {
-        Self::new_with_cas_key_override(data_dir, None)
+        let home_dir = data_dir
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_dir.clone());
+        Self::new_with_paths(IrisPaths {
+            cache_dir: data_dir.join("cache"),
+            temp_dir: data_dir.join("tmp"),
+            global_skills_dir: home_dir.join("skills"),
+            home_dir,
+            data_dir,
+        })
+    }
+
+    /// Create state from the canonical Iris paths resolved at application startup.
+    pub fn new_with_paths(paths: IrisPaths) -> AppResult<Arc<Self>> {
+        Self::new_with_cas_key_override(paths, None)
     }
 
     /// Create application state with a deterministic CAS key for integration tests.
     #[doc(hidden)]
     pub fn new_with_test_cas_key(data_dir: PathBuf, cas_key: [u8; 32]) -> AppResult<Arc<Self>> {
-        Self::new_with_cas_key_override(data_dir, Some(cas_key))
+        let home_dir = data_dir
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| data_dir.clone());
+        Self::new_with_cas_key_override(
+            IrisPaths {
+                cache_dir: data_dir.join("cache"),
+                temp_dir: data_dir.join("tmp"),
+                global_skills_dir: home_dir.join("skills"),
+                home_dir,
+                data_dir,
+            },
+            Some(cas_key),
+        )
     }
 
     fn new_with_cas_key_override(
-        data_dir: PathBuf,
+        paths: IrisPaths,
         cas_key_override: Option<[u8; 32]>,
     ) -> AppResult<Arc<Self>> {
-        let db_path = data_dir.join("iris.db");
+        let db_path = paths.data_dir.join("iris.db");
         let db = Arc::new(Database::open(&db_path)?);
         if let Err(error) = crate::ai_runtime::run_engine::RunEngine::recover_interrupted_runs(&db)
         {
@@ -365,7 +394,7 @@ impl AppState {
             feed_fulltext,
             feed_sync_wake: Arc::new(tokio::sync::Notify::new()),
             vault: Mutex::new(None),
-            data_dir,
+            paths,
             watcher: Mutex::new(None),
             brute_force: BruteForceProtection::new(),
             #[cfg(test)]
@@ -381,7 +410,10 @@ impl AppState {
             .db
             .with_conn(FeedRepository::recover_interrupted_fulltext);
         let _ = crate::feed::document::maintain_cache(
-            &state.data_dir.join("cache").join("feed-documents"),
+            &state.cache_dir().join("feed-media").join("documents"),
+        );
+        let _ = crate::feed::image::maintain_cache(
+            &state.cache_dir().join("feed-media").join("images"),
         );
 
         if let Err(e) = crate::llm::fetch_web_page::cleanup_expired_web_cache(&state.db) {
@@ -621,7 +653,22 @@ impl AppState {
     }
 
     pub fn data_dir(&self) -> &PathBuf {
-        &self.data_dir
+        &self.paths.data_dir
+    }
+
+    /// Canonical cache root for all reconstructible disk content.
+    pub fn cache_dir(&self) -> &PathBuf {
+        &self.paths.cache_dir
+    }
+
+    /// Canonical temporary root for transient process artifacts.
+    pub fn temp_dir(&self) -> &PathBuf {
+        &self.paths.temp_dir
+    }
+
+    /// Canonical application paths used by cache governance.
+    pub fn paths(&self) -> &IrisPaths {
+        &self.paths
     }
 
     pub fn restart_file_watcher(self: &Arc<Self>, app: AppHandle) -> AppResult<()> {

@@ -112,9 +112,9 @@ impl Scheduler {
                     })
                     .unwrap_or_default();
                 let cache_dir = feed_retention_state
-                    .data_dir()
-                    .join("cache")
-                    .join("feed-documents");
+                    .cache_dir()
+                    .join("feed-media")
+                    .join("documents");
                 for source_id in expired_source_ids {
                     let urls = feed_retention_db
                         .with_read_conn(|conn| {

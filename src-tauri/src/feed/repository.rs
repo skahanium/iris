@@ -833,6 +833,23 @@ impl FeedRepository {
         Ok(item)
     }
 
+    /// 读取已经明确授权的单篇图片上下文；不会因打开文章而扩大授权范围。
+    pub fn authorized_item_images(
+        conn: &Connection,
+        item_id: &str,
+    ) -> AppResult<Option<(String, Option<String>)>> {
+        conn.query_row(
+            "SELECT COALESCE(i.fulltext_markdown, i.content_markdown), i.canonical_url
+             FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
+             WHERE i.id = ?1 AND i.deleted_at IS NULL AND s.deleted_at IS NULL
+               AND i.images_authorized_at IS NOT NULL",
+            [item_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     pub fn source_primary_document_urls(
         conn: &Connection,
         source_id: &str,

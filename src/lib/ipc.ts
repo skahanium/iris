@@ -49,6 +49,9 @@ import type {
   AppUpdateProgressEvent,
   AppUpdateStateEvent,
   AppExitResult,
+  CacheClearResult,
+  CacheDomainId,
+  CacheSummary,
   BacklinkEntry,
   ClassifiedFileTakenEvent,
   ClassifiedFileEntry,
@@ -80,6 +83,8 @@ import type {
   VersionEntry,
   VersionSaveOutcome,
   WorkspaceItem,
+  RuntimeCacheDomain,
+  RuntimeRepairResult,
 } from "@/types/ipc";
 
 import type {
@@ -127,6 +132,27 @@ export async function settingsSet<K extends keyof SettingsMap>(
 export async function settingsSet(key: string, value: unknown): Promise<void>;
 export async function settingsSet(key: string, value: unknown): Promise<void> {
   return invoke("settings_set", { key, value });
+}
+
+/** 汇总 Iris 各个可见缓存域；不包含笔记、CAS 或派生索引。 */
+export async function cacheSummary(): Promise<CacheSummary> {
+  return invoke<CacheSummary>("cache_summary");
+}
+
+/** 清理明确选择的、可安全重建的缓存域。 */
+export async function cacheClear(
+  domains: CacheDomainId[],
+): Promise<CacheClearResult> {
+  return invoke<CacheClearResult>("cache_clear", { input: { domains } });
+}
+
+/** 安排运行时资源在下次应用重启前重建。 */
+export async function runtimeCacheRepairPrepare(
+  domains: RuntimeCacheDomain[],
+): Promise<RuntimeRepairResult> {
+  return invoke<RuntimeRepairResult>("runtime_cache_repair_prepare", {
+    input: { domains },
+  });
 }
 
 export async function settingsReset<K extends keyof SettingsMap>(
@@ -1415,6 +1441,27 @@ export async function feedImagesPrepare(
   itemId: string,
 ): Promise<FeedImagesPrepareResult> {
   return invoke<FeedImagesPrepareResult>("feed_images_prepare", { itemId });
+}
+
+/** 记录单篇授权并返回图片清单；图片本身由后续单图调用渐进加载。 */
+export async function feedImagesAuthorize(
+  itemId: string,
+): Promise<import("@/types/ipc").FeedImageManifest> {
+  return invoke("feed_images_authorize", { itemId });
+}
+
+/** 为文章中的一张图片签发本地 lease。 */
+export async function feedImagePrepare(
+  itemId: string,
+  index: number,
+  forceRetry = false,
+): Promise<import("@/types/ipc").FeedImageLease> {
+  return invoke("feed_image_prepare", { itemId, index, forceRetry });
+}
+
+/** 取消当前阅读器尚未开始的图片请求。 */
+export async function feedImagesCancel(itemId: string): Promise<void> {
+  return invoke("feed_images_cancel", { itemId });
 }
 
 /** 释放当前阅读器持有的图片 lease；缓存本身仍按安全 LRU 保留。 */

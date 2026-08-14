@@ -3,6 +3,7 @@ pub mod ai_types;
 pub mod app;
 #[rustfmt::skip]
 pub mod crypto;
+pub mod cache;
 pub mod cas;
 mod chrome_metrics;
 mod commands;
@@ -93,12 +94,13 @@ pub fn run() {
             let tauri_app_data_dir = app.path().app_data_dir().ok();
             let iris_paths = crate::paths::resolve_iris_paths_from_process(tauri_app_data_dir)?;
             crate::paths::prepare_iris_paths(&iris_paths)?;
+            crate::cache::migrate_legacy_feed_cache(&iris_paths)?;
             crate::embedding::engine::set_embedding_runtime_enabled(
                 crate::embedding::engine::embedding_runtime_enabled_from_environment(),
             );
-            let data_dir = iris_paths.data_dir.clone();
             // `AppState::new` returns `Arc<AppState>`; Tauri can inject it directly.
-            let state = AppState::new(data_dir)?;
+            let state = AppState::new_with_paths(iris_paths.clone())?;
+            crate::cache::apply_pending_runtime_repair(&iris_paths, &state.db)?;
             crate::crypto::vault_key::init_vault_key();
             state
                 .embedding_scheduler()
@@ -150,6 +152,9 @@ pub fn run() {
             commands::app_update::app_update_download_cmd,
             commands::app_update::app_update_preflight_cmd,
             commands::app_update::app_update_install_cmd,
+            commands::cache::cache_summary,
+            commands::cache::cache_clear,
+            commands::cache::runtime_cache_repair_prepare,
             commands::file::file_list,
             commands::file::file_signature,
             commands::file::document_open_begin,
@@ -294,6 +299,9 @@ pub fn run() {
             commands::feed_commands::feed_document_release,
             commands::feed_commands::feed_document_cache_clear,
             commands::feed_commands::feed_images_prepare,
+            commands::feed_commands::feed_images_authorize,
+            commands::feed_commands::feed_image_prepare,
+            commands::feed_commands::feed_images_cancel,
             commands::feed_commands::feed_images_release,
             commands::feed_commands::feed_items_mark_read,
             commands::feed_commands::feed_sync_source,

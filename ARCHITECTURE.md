@@ -35,6 +35,7 @@ React 19 UI
 - `src-tauri/src/indexer/`：Markdown/frontmatter、分块、链接、标签和索引更新。
 - `src-tauri/src/storage/`：SQLite、增量迁移、FTS 与可选 sqlite-vec 注册。
 - `src-tauri/src/feed/`：订阅发现与解析、安全有界抓取、SQLite Repository、增量同步和到期批处理；Scheduler 只调用内部 `sync_due_batch`，手动全量与 OPML 批量分别经 `feed_sync_all`、`feed_sync_batch` 进入同一并发上限。
+- `src-tauri/src/cache.rs`：缓存治理入口。联网内容、临时文件、运行时资源和更新包各自统计与维护；笔记、CAS 版本和派生索引不属于缓存清理范围。
 
 ## 自适应工作区
 
@@ -80,7 +81,7 @@ API Key 使用本地 AES-256-GCM 加密存储，主密钥和密文分离；解�
 
 ## SQLite 与迁移
 
-当前共有 **67 组**增量迁移（`001` 至 `067`）。
+当前共有 **69 组**增量迁移（`001` 至 `069`）。
 
 Schema 只允许通过带 up/down 的增量迁移变更。`051_agent_harness_cutover` 使用 copy-transform-swap 将旧会话、任务、trace 和审计外键迁移到统一 Run 模型；运行中或暂停的旧任务被安全归档为 `cancelled` 并带 `cancelled_legacy` 原因。迁移不要求用户删除数据库重建。
 

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  clearAllEditorHtmlCache,
   clearCachedEditorHtml,
   editorHtmlDigest,
   getCachedEditorHtml,
@@ -59,6 +60,14 @@ describe("editor-html-cache", () => {
 
     expect(getCachedEditorHtml("0.md", "digest-0")).toBeUndefined();
     expect(getCachedEditorHtml("30.md", "digest-30")).toBe("<p>30</p>");
+  });
+
+  it("skips a single entry that exceeds the memory budget", () => {
+    clearAllEditorHtmlCache();
+    const html = `<p>${"x".repeat(1_024 * 1_024 + 1)}</p>`;
+    setCachedEditorHtml("oversized.md", html, "oversized");
+
+    expect(getCachedEditorHtml("oversized.md", "oversized")).toBeUndefined();
   });
 
   it("rejects cached html with visible failed colon-bold markdown", () => {

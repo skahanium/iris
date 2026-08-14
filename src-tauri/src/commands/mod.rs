@@ -1,6 +1,7 @@
 pub mod ai_commands;
 pub mod app_update;
 pub mod assistant_commands;
+pub mod cache;
 pub mod classified;
 pub mod corpus_commands;
 pub mod document_recovery;

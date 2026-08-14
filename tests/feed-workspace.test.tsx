@@ -20,7 +20,9 @@ const {
   feedDocumentPrepare,
   feedDocumentCancel,
   feedDocumentRelease,
-  feedImagesPrepare,
+  feedImagesAuthorize,
+  feedImagePrepare,
+  feedImagesCancel,
   feedImagesRelease,
   feedSourceTrashPreview,
   feedSourceUpdate,
@@ -39,7 +41,9 @@ const {
   feedDocumentPrepare: vi.fn(),
   feedDocumentCancel: vi.fn(),
   feedDocumentRelease: vi.fn(),
-  feedImagesPrepare: vi.fn(),
+  feedImagesAuthorize: vi.fn(),
+  feedImagePrepare: vi.fn(),
+  feedImagesCancel: vi.fn(),
   feedImagesRelease: vi.fn(),
   feedSourceTrashPreview: vi.fn(),
   feedSourceUpdate: vi.fn(),
@@ -60,7 +64,9 @@ vi.mock("@/lib/ipc", () => ({
   feedDocumentPrepare,
   feedDocumentCancel,
   feedDocumentRelease,
-  feedImagesPrepare,
+  feedImagesAuthorize,
+  feedImagePrepare,
+  feedImagesCancel,
   feedImagesRelease,
   feedSourceTrashPreview,
   feedSourceTrashMatch: vi.fn().mockResolvedValue(null),
@@ -217,7 +223,9 @@ beforeEach(() => {
   });
   feedDocumentCancel.mockResolvedValue(undefined);
   feedDocumentRelease.mockResolvedValue(undefined);
-  feedImagesPrepare.mockResolvedValue({ images: [], failedCount: 0 });
+  feedImagesAuthorize.mockResolvedValue({ images: [] });
+  feedImagePrepare.mockResolvedValue(undefined);
+  feedImagesCancel.mockResolvedValue(undefined);
   feedImagesRelease.mockResolvedValue(undefined);
   feedSourceTrashPreview.mockResolvedValue({
     itemCount: 2,
@@ -664,17 +672,15 @@ describe("FeedWorkspace", () => {
   });
 
   it("blocks remote images by default and loads them on demand", async () => {
-    feedImagesPrepare.mockResolvedValue({
-      images: [
-        {
-          sourceUrl: "https://cdn.example.com/a.png",
-          handle: "image-lease-1",
-          url: "iris-feed-image://localhost/image-lease-1",
-          mimeType: "image/png",
-          sizeBytes: 64,
-        },
-      ],
-      failedCount: 0,
+    feedImagesAuthorize.mockResolvedValue({
+      images: [{ index: 0, sourceUrl: "https://cdn.example.com/a.png" }],
+    });
+    feedImagePrepare.mockResolvedValue({
+      sourceUrl: "https://cdn.example.com/a.png",
+      handle: "image-lease-1",
+      url: "iris-feed-image://localhost/image-lease-1",
+      mimeType: "image/png",
+      sizeBytes: 64,
     });
     feedItemGet.mockResolvedValue({
       summary: item("i1"),
@@ -699,7 +705,8 @@ describe("FeedWorkspace", () => {
         screen.getByTestId("feed-reader-body").querySelectorAll("img").length,
       ).toBe(1),
     );
-    expect(feedImagesPrepare).toHaveBeenCalledWith("i1");
+    expect(feedImagesAuthorize).toHaveBeenCalledWith("i1");
+    expect(feedImagePrepare).toHaveBeenCalledWith("i1", 0, false);
     expect(screen.getByTestId("feed-reader-body").innerHTML).toContain(
       "iris-feed-image://localhost/image-lease-1",
     );

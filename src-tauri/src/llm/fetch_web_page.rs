@@ -19,6 +19,7 @@ const FETCH_TIMEOUT_SECS: u64 = 15;
 const MAX_REDIRECTS: usize = 5;
 const CACHE_TTL_HOURS: i64 = 24;
 const MAX_WEB_PAGE_CACHE_ROWS: usize = 256;
+const MAX_WEB_PAGE_CACHE_BYTES: i64 = 16 * 1024 * 1024;
 pub const PAGE_FETCH_CACHE_BROKER_VERSION: &str = "web-evidence-broker.v1";
 
 const USER_AGENTS: &[&str] = &[
@@ -375,7 +376,7 @@ fn load_cache(
     hash: &str,
     scope: &PageFetchCacheScope,
 ) -> AppResult<Option<CachedRow>> {
-    db.with_read_conn(|conn| {
+    db.with_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT title, body_text FROM web_page_cache
              WHERE url_hash = ?1
@@ -395,10 +396,15 @@ fn load_cache(
             scope.broker_version.as_str(),
         ])?;
         if let Some(row) = rows.next()? {
-            Ok(Some(CachedRow {
+            let cached = CachedRow {
                 title: row.get(0)?,
                 body_text: row.get(1)?,
-            }))
+            };
+            conn.execute(
+                "UPDATE web_page_cache SET last_accessed_at = ?2 WHERE url_hash = ?1",
+                rusqlite::params![hash, Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()],
+            )?;
+            Ok(Some(cached))
         } else {
             Ok(None)
         }
@@ -428,13 +434,14 @@ fn store_cache(
                content_hash,
                fetched_at,
                expires_at,
+               last_accessed_at,
                vault_id,
                provider_id,
                provider_kind,
                provider_config_hash,
                broker_version
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
              ON CONFLICT(url_hash) DO UPDATE SET
                url = excluded.url,
                title = excluded.title,
@@ -442,6 +449,7 @@ fn store_cache(
                content_hash = excluded.content_hash,
                fetched_at = excluded.fetched_at,
                expires_at = excluded.expires_at,
+               last_accessed_at = excluded.last_accessed_at,
                vault_id = excluded.vault_id,
                provider_id = excluded.provider_id,
                provider_kind = excluded.provider_kind,
@@ -455,6 +463,7 @@ fn store_cache(
                 hash_body,
                 fetched_at,
                 expires_at,
+                fetched_at,
                 scope.vault_id.as_deref(),
                 scope.provider_id.as_str(),
                 scope.provider_kind.as_str(),
@@ -474,27 +483,38 @@ pub fn cleanup_expired_web_cache(db: &Database) -> AppResult<usize> {
         )?;
         Ok(deleted)
     })
-    .and_then(|expired| prune_page_cache_lru(db, MAX_WEB_PAGE_CACHE_ROWS).map(|lru| expired + lru))
+    .and_then(|expired| {
+        prune_page_cache_lru(db, MAX_WEB_PAGE_CACHE_ROWS, MAX_WEB_PAGE_CACHE_BYTES)
+            .map(|lru| expired + lru)
+    })
 }
 
-fn prune_page_cache_lru(db: &Database, max_rows: usize) -> AppResult<usize> {
+fn prune_page_cache_lru(db: &Database, max_rows: usize, max_bytes: i64) -> AppResult<usize> {
     db.with_conn(|conn| {
-        let row_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM web_page_cache", [], |row| row.get(0))?;
-        let overflow = row_count.saturating_sub(max_rows as i64);
-        if overflow == 0 {
-            return Ok(0);
+        let mut deleted = 0;
+        loop {
+            let (row_count, total_bytes): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(length(url) + COALESCE(length(title), 0) + length(body_text)), 0)
+                 FROM web_page_cache",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            if row_count <= max_rows as i64 && total_bytes <= max_bytes {
+                return Ok(deleted);
+            }
+            let removed = conn.execute(
+                "DELETE FROM web_page_cache WHERE url_hash = (
+                    SELECT url_hash FROM web_page_cache
+                    ORDER BY datetime(COALESCE(last_accessed_at, fetched_at)) ASC, url_hash ASC
+                    LIMIT 1
+                )",
+                [],
+            )?;
+            if removed == 0 {
+                return Ok(deleted);
+            }
+            deleted += removed;
         }
-        let deleted = conn.execute(
-            "DELETE FROM web_page_cache
-             WHERE url_hash IN (
-               SELECT url_hash FROM web_page_cache
-               ORDER BY datetime(fetched_at) ASC, url_hash ASC
-               LIMIT ?1
-             )",
-            [overflow],
-        )?;
-        Ok(deleted)
     })
 }
 
@@ -770,7 +790,7 @@ mod tests {
     }
 
     #[test]
-    fn page_cache_lru_prunes_oldest_rows_over_limit() {
+    fn page_cache_lru_prunes_least_recently_accessed_rows_over_limit() {
         let db = Database::open_in_memory().expect("mem db");
         let scope = PageFetchCacheScope::native(None, PAGE_FETCH_CACHE_BROKER_VERSION);
 
@@ -795,11 +815,31 @@ mod tests {
             .expect("set fetched_at");
         }
 
-        assert_eq!(prune_page_cache_lru(&db, 2).expect("prune lru"), 1);
-        assert!(load_cache(&db, "old", &scope).expect("read old").is_none());
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE web_page_cache SET last_accessed_at = ?2 WHERE url_hash = ?1",
+                rusqlite::params!["old", "2026-01-04T00:00:00Z"],
+            )?;
+            conn.execute(
+                "UPDATE web_page_cache SET last_accessed_at = ?2 WHERE url_hash = ?1",
+                rusqlite::params!["middle", "2026-01-01T00:00:00Z"],
+            )?;
+            conn.execute(
+                "UPDATE web_page_cache SET last_accessed_at = ?2 WHERE url_hash = ?1",
+                rusqlite::params!["new", "2026-01-03T00:00:00Z"],
+            )?;
+            Ok::<(), crate::error::AppError>(())
+        })
+        .expect("set access times");
+
+        assert_eq!(
+            prune_page_cache_lru(&db, 2, i64::MAX).expect("prune lru"),
+            1
+        );
+        assert!(load_cache(&db, "old", &scope).expect("read old").is_some());
         assert!(load_cache(&db, "middle", &scope)
             .expect("read middle")
-            .is_some());
+            .is_none());
         assert!(load_cache(&db, "new", &scope).expect("read new").is_some());
     }
 

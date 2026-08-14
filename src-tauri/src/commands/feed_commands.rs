@@ -16,9 +16,10 @@ use crate::error::{AppError, AppResult};
 use crate::feed::discovery::{discover, FeedCandidate};
 use crate::feed::fetch::ProdNetGate;
 use crate::feed::model::{
-    FeedFulltextEnqueueOutcome, FeedImagesPrepareResult, FeedItemDetail, FeedItemQuery,
-    FeedItemStatePatch, FeedItemSummary, FeedLibrarySummary, FeedSourcePatch, FeedSourceSummary,
-    FeedSourceTrashPreview, FeedTrashSnapshot, FeedTrashSource, NewFeedSource,
+    FeedFulltextEnqueueOutcome, FeedImageLease, FeedImageManifest, FeedImageSource,
+    FeedImagesPrepareResult, FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary,
+    FeedLibrarySummary, FeedSourcePatch, FeedSourceSummary, FeedSourceTrashPreview,
+    FeedTrashSnapshot, FeedTrashSource, NewFeedSource,
 };
 use crate::feed::opml::canonicalize_https_url;
 use crate::feed::opml::{export_opml, import_opml_with_interval, OpmlImportResult, OPML_MAX_BYTES};
@@ -321,7 +322,7 @@ pub async fn feed_document_prepare(
         "feed:document-progress",
         serde_json::json!({ "itemId": item_id, "status": "downloading", "bytes": 0 }),
     );
-    let cache_dir = state.data_dir().join("cache").join("feed-documents");
+    let cache_dir = state.cache_dir().join("feed-media").join("documents");
     let progress_app = app.clone();
     let progress_item_id = item_id.clone();
     let progress = Arc::new(move |bytes: u64| {
@@ -362,7 +363,7 @@ pub fn feed_document_release(handle: String) -> AppResult<()> {
 
 #[tauri::command]
 pub fn feed_document_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<u32> {
-    crate::feed::document::clear_cache(&state.data_dir().join("cache").join("feed-documents"))
+    crate::feed::document::clear_cache(&state.cache_dir().join("feed-media").join("documents"))
 }
 
 /// 对当前文章授予图片加载权限，并以 opaque 本地 lease 返回安全缓存结果。
@@ -379,9 +380,65 @@ pub async fn feed_images_prepare(
     Ok(crate::feed::image::prepare_images(
         &markdown,
         article_url.as_deref(),
-        &state.data_dir().join("cache").join("feed-images"),
+        &state.cache_dir().join("feed-media").join("images"),
     )
     .await)
+}
+
+/// 授权当前文章的远程图片并返回可渐进请求的清单；不在此命令中下载任何文件。
+#[tauri::command]
+pub fn feed_images_authorize(
+    state: State<'_, Arc<AppState>>,
+    item_id: String,
+) -> AppResult<FeedImageManifest> {
+    check_id(&item_id)?;
+    let (markdown, _) = state
+        .db
+        .with_conn(|conn| FeedRepository::authorize_item_images(conn, &item_id, Utc::now()))?
+        .ok_or_else(|| AppError::msg("feed_item_not_found"))?;
+    Ok(FeedImageManifest {
+        images: crate::feed::image::extract_image_urls(&markdown)
+            .into_iter()
+            .enumerate()
+            .map(|(index, source_url)| FeedImageSource {
+                index: index as u32,
+                source_url,
+            })
+            .collect(),
+    })
+}
+
+/// 下载或恢复授权文章中的一张图片。`force_retry` 留给前端的显式重试操作。
+#[tauri::command]
+pub async fn feed_image_prepare(
+    state: State<'_, Arc<AppState>>,
+    item_id: String,
+    index: u32,
+    force_retry: Option<bool>,
+) -> AppResult<FeedImageLease> {
+    check_id(&item_id)?;
+    let (markdown, article_url) = state
+        .db
+        .with_read_conn(|conn| FeedRepository::authorized_item_images(conn, &item_id))?
+        .ok_or_else(|| AppError::msg("feed_image_not_authorized"))?;
+    let urls = crate::feed::image::extract_image_urls(&markdown);
+    let source_url = urls
+        .get(index as usize)
+        .cloned()
+        .ok_or_else(|| AppError::msg("feed_image_not_found"))?;
+    crate::feed::image::prepare_image(
+        source_url,
+        article_url.as_deref(),
+        &state.cache_dir().join("feed-media").join("images"),
+        force_retry.unwrap_or(false),
+    )
+    .await
+}
+
+/// 当前实现的下载任务按缓存键去重，取消阅读器排队不会中断其它文章可能共用的下载。
+#[tauri::command]
+pub fn feed_images_cancel(item_id: String) -> AppResult<()> {
+    check_id(&item_id)
 }
 
 #[tauri::command]
@@ -671,7 +728,7 @@ fn cleanup_source_document_cache(state: &AppState, source_id: &str) -> AppResult
 }
 
 fn cleanup_document_urls(state: &AppState, urls: Vec<String>) -> AppResult<()> {
-    let cache_dir = state.data_dir().join("cache").join("feed-documents");
+    let cache_dir = state.cache_dir().join("feed-media").join("documents");
     for url in urls {
         let still_referenced = state.db.with_read_conn(|conn| {
             FeedRepository::active_primary_document_reference_count(conn, &url)

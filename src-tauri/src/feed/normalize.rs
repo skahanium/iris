@@ -16,7 +16,7 @@ use crate::error::{AppError, AppResult};
 use crate::feed::model::{ConversionStatus, SourcePayloadKind};
 
 /// 当前转换版本（改转换规则时递增；历史条目按版本重转）。
-pub(crate) const FEED_CONVERSION_VERSION: i64 = 1;
+pub(crate) const FEED_CONVERSION_VERSION: i64 = 2;
 /// 标题上限（Unicode scalar）；OPML 导入的订阅标题复用同一上限。
 pub(crate) const TITLE_MAX_SCALARS: usize = 500;
 /// 正文 Markdown 上限（字节）。
@@ -324,7 +324,9 @@ pub(crate) fn rewrite_links(markdown: &str, base: Option<&str>) -> String {
         .expect("link regex");
     link_re
         .replace_all(markdown, |captures: &regex::Captures<'_>| {
-            let is_image = captures.name("image").is_some();
+            let is_image = captures
+                .name("image")
+                .is_some_and(|marker| marker.as_str() == "!");
             let text = captures.name("text").map(|m| m.as_str()).unwrap_or("");
             let url = captures
                 .name("url")
@@ -390,7 +392,7 @@ pub(crate) fn markdown_to_text(markdown: &str) -> String {
             line = LINK_RE
                 .replace_all(&line, |captures: &regex::Captures<'_>| {
                     captures
-                        .get(1)
+                        .name("text")
                         .map(|m| m.as_str())
                         .unwrap_or("")
                         .to_string()

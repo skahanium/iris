@@ -227,17 +227,22 @@ fn cleanup_once_removes_only_expired_whitelisted_cache_and_temp_files() {
     let data_root = dir.path().join("app-data");
     fs::create_dir_all(&temp_root).unwrap();
     fs::create_dir_all(cache_root.join("downloads")).unwrap();
+    fs::create_dir_all(cache_root.join("feed-media")).unwrap();
     fs::create_dir_all(&data_root).unwrap();
 
     let old_temp = temp_root.join("old.tmp");
     let fresh_temp = temp_root.join("fresh.tmp");
     let old_cache = cache_root.join("downloads").join("old.part");
+    let old_cache_metadata = cache_root.join("downloads").join("old.json");
+    let managed_feed_partial = cache_root.join("feed-media").join("active.part");
     let database = data_root.join("iris.db");
     let note = dir.path().join("note.md");
 
     fs::write(&old_temp, "old temp").unwrap();
     fs::write(&fresh_temp, "fresh temp").unwrap();
     fs::write(&old_cache, "old cache").unwrap();
+    fs::write(&old_cache_metadata, "old cache metadata").unwrap();
+    fs::write(&managed_feed_partial, "managed download").unwrap();
     fs::write(&database, "database").unwrap();
     fs::write(&note, "# note").unwrap();
 
@@ -251,7 +256,11 @@ fn cleanup_once_removes_only_expired_whitelisted_cache_and_temp_files() {
         temp_max_age: Duration::from_secs(7 * 24 * 60 * 60),
         cache_max_age: Duration::from_secs(30 * 24 * 60 * 60),
         modified_time: Box::new(move |path: &std::path::Path| {
-            if path.ends_with("old.tmp") || path.ends_with("old.part") {
+            if path.ends_with("old.tmp")
+                || path.ends_with("old.part")
+                || path.ends_with("old.json")
+                || path.ends_with("active.part")
+            {
                 old
             } else {
                 now
@@ -260,9 +269,11 @@ fn cleanup_once_removes_only_expired_whitelisted_cache_and_temp_files() {
     })
     .unwrap();
 
-    assert_eq!(report.deleted_files, 2);
+    assert_eq!(report.deleted_files, 3);
     assert!(!old_temp.exists());
     assert!(!old_cache.exists());
+    assert!(!old_cache_metadata.exists());
+    assert!(managed_feed_partial.exists());
     assert!(fresh_temp.exists());
     assert!(database.exists());
     assert!(note.exists());

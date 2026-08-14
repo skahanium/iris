@@ -22,6 +22,8 @@ const MAX_RANGE_LEN: u64 = 1024 * 1024;
 const MAX_FULL_RESPONSE_LEN: u64 = 2 * 1024 * 1024;
 const MEDIA_LEASE_TTL: Duration = Duration::from_secs(10 * 60);
 const MAX_MEDIA_LEASES: usize = 256;
+const MAX_MEDIA_VALIDATION_CACHE_ENTRIES: usize = 512;
+const MEDIA_VALIDATION_CACHE_IDLE_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,6 +70,7 @@ struct ValidatedMediaPath {
     size_bytes: u64,
     modified: Option<SystemTime>,
     updated_at: Option<String>,
+    last_accessed: Instant,
 }
 
 static MEDIA_LEASES: OnceLock<Mutex<HashMap<String, MediaLease>>> = OnceLock::new();
@@ -305,13 +308,18 @@ fn validate_media_relative_path_cached(
     let metadata = std::fs::metadata(&resolved)?;
     let modified = metadata.modified().ok();
     let cache_key = media_validation_cache_key(vault, &resolved_relative);
-    if let Ok(cache) = media_validation_cache().lock() {
-        if let Some(cached) = cache.get(&cache_key) {
+    if let Ok(mut cache) = media_validation_cache().lock() {
+        let now = Instant::now();
+        cache.retain(|_, cached| {
+            now.duration_since(cached.last_accessed) <= MEDIA_VALIDATION_CACHE_IDLE_TTL
+        });
+        if let Some(cached) = cache.get_mut(&cache_key) {
             if cached.size_bytes == metadata.len()
                 && cached.modified == modified
                 && cached.mime_type == mime_type
                 && cached.path == resolved
             {
+                cached.last_accessed = now;
                 return Ok(cached.clone());
             }
         }
@@ -326,8 +334,19 @@ fn validate_media_relative_path_cached(
         size_bytes: metadata.len(),
         modified,
         updated_at: metadata.modified().ok().map(updated_at_from_system_time),
+        last_accessed: Instant::now(),
     };
     if let Ok(mut cache) = media_validation_cache().lock() {
+        while cache.len() >= MAX_MEDIA_VALIDATION_CACHE_ENTRIES && !cache.contains_key(&cache_key) {
+            let Some(oldest) = cache
+                .iter()
+                .min_by_key(|(_, cached)| cached.last_accessed)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            cache.remove(&oldest);
+        }
         cache.insert(cache_key, validated.clone());
     }
     Ok(validated)

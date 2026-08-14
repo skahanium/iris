@@ -116,6 +116,8 @@ export const NOTE_OPEN_WARM_PATH_BUDGET_MS =
 export const NOTE_OPEN_PERFORMANCE_ENTRY_PREFIX = "iris.note-open.";
 
 const MAX_PREPARED_NOTES_PER_NAMESPACE = 40;
+const MAX_PREPARED_NOTE_BYTES = 2 * 1024 * 1024;
+const MAX_PREPARED_BYTES_PER_NAMESPACE = 16 * 1024 * 1024;
 const MAX_NOTE_OPEN_PERFORMANCE_ENTRIES = 160;
 const documentOpenScheduler = new DocumentOpenScheduler({ maxConcurrent: 2 });
 let traceSink: NoteOpenTraceSink | null = null;
@@ -218,6 +220,14 @@ function remember(
 ): void {
   const entries = namespaceMap(namespace);
   if (
+    entry.value &&
+    estimatedPreparedNoteBytes(entry.value) > MAX_PREPARED_NOTE_BYTES
+  ) {
+    entries.delete(cacheKey);
+    return;
+  }
+  entries.delete(cacheKey);
+  if (
     entries.size >= MAX_PREPARED_NOTES_PER_NAMESPACE &&
     !entries.has(cacheKey)
   ) {
@@ -225,6 +235,51 @@ function remember(
     if (oldest !== undefined) entries.delete(oldest);
   }
   entries.set(cacheKey, entry);
+  while (preparedNamespaceBytes(namespace) > MAX_PREPARED_BYTES_PER_NAMESPACE) {
+    const oldest = entries.keys().next().value;
+    if (oldest === undefined) break;
+    entries.delete(oldest);
+  }
+}
+
+function estimatedPreparedNoteBytes(value: PreparedNoteOpen): number {
+  const fragments =
+    value.preserveFragments?.reduce(
+      (total, fragment) => total + fragment.raw.length,
+      0,
+    ) ?? 0;
+  return (
+    (value.bodyMarkdown.length +
+      value.content.length +
+      (value.preparedEditorHtml?.length ?? 0) +
+      (value.frontmatterYaml?.length ?? 0) +
+      fragments) *
+    2
+  );
+}
+
+function preparedNamespaceBytes(namespace: NoteOpenNamespace): number {
+  return Array.from(namespaceMap(namespace).values()).reduce(
+    (total, entry) =>
+      total + (entry.value ? estimatedPreparedNoteBytes(entry.value) : 0),
+    0,
+  );
+}
+
+export function getPreparedNoteCacheStats(): Record<
+  NoteOpenNamespace,
+  { entryCount: number; estimatedBytes: number }
+> {
+  return {
+    normal: {
+      entryCount: namespaceMap("normal").size,
+      estimatedBytes: preparedNamespaceBytes("normal"),
+    },
+    classified: {
+      entryCount: namespaceMap("classified").size,
+      estimatedBytes: preparedNamespaceBytes("classified"),
+    },
+  };
 }
 
 function performanceMeasureName(trace: NoteOpenTrace): string {

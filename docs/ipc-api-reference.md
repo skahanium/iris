@@ -101,6 +101,9 @@ Rust 侧契约见 `feed::model`。仅登记以下命令，全部通过仓储/ser
 | `feed_document_release`      | `handle`                                              | 释放 PDF lease                                                |
 | `feed_document_cache_clear`  | —                                                     | 清理 PDF 临时缓存文件数                                       |
 | `feed_images_prepare`        | `itemId`                                              | 授权当前文章并返回受控图片 lease；不暴露缓存路径              |
+| `feed_images_authorize`      | `itemId`                                              | 记录单篇授权并返回可渐进请求的图片清单；不下载图片            |
+| `feed_image_prepare`         | `itemId`、`index`、`forceRetry?`                      | 为清单中的单张图片签发本地 opaque lease                       |
+| `feed_images_cancel`         | `itemId`                                              | 取消当前阅读器未开始的图片请求                                |
 | `feed_images_release`        | `handles[]`（最多 256）                               | 释放当前阅读器持有的图片 lease                                |
 | `feed_items_mark_read`       | `query: FeedItemQuery`（冻结筛选）                    | 影响行数                                                      |
 | `feed_sync_source`           | `sourceId`、`markHistoryRead?`（仅首次同步生效）      | `FeedSyncOutcome`（等待完成）                                 |

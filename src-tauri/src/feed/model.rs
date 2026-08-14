@@ -131,6 +131,20 @@ pub struct FeedImagesPrepareResult {
     pub failed_count: u32,
 }
 
+/// 用户授权后可逐张请求的图片清单；只含 Markdown 中已有的源地址与稳定索引。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedImageManifest {
+    pub images: Vec<FeedImageSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedImageSource {
+    pub index: u32,
+    pub source_url: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct FeedPrimaryDocument {

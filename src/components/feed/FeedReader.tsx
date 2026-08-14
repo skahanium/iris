@@ -44,7 +44,9 @@ import {
   feedDocumentCancel,
   feedDocumentPrepare,
   feedDocumentRelease,
-  feedImagesPrepare,
+  feedImagePrepare,
+  feedImagesAuthorize,
+  feedImagesCancel,
   feedImagesRelease,
   listenFeedDocumentProgress,
   openExternalHttpsUrl,
@@ -226,6 +228,12 @@ export function FeedReader({
   );
   const imageLeaseHandlesRef = useRef<string[]>([]);
   const imageRequestRef = useRef(0);
+  const imageQueueRef = useRef<number[]>([]);
+  const activeImageLoadsRef = useRef(0);
+  const attemptedImageIndicesRef = useRef(new Set<number>());
+  const [imageManifest, setImageManifest] = useState<
+    Array<{ index: number; sourceUrl: string }>
+  >([]);
   const [saveNoteOpen, setSaveNoteOpen] = useState(false);
   const [documentLease, setDocumentLease] = useState<{
     handle: string;
@@ -295,6 +303,10 @@ export function FeedReader({
     imageRequestRef.current += 1;
     const imageHandles = imageLeaseHandlesRef.current;
     imageLeaseHandlesRef.current = [];
+    imageQueueRef.current = [];
+    activeImageLoadsRef.current = 0;
+    attemptedImageIndicesRef.current.clear();
+    setImageManifest([]);
     setImageLeases(new Map());
     setImageStatus("idle");
     if (imageHandles.length > 0) void feedImagesRelease(imageHandles);
@@ -306,30 +318,94 @@ export function FeedReader({
     setDocumentLease(null);
     if (lease) void feedDocumentRelease(lease.handle);
     return () => {
-      if (summary?.id) void feedDocumentCancel(summary.id);
+      if (summary?.id) {
+        void feedDocumentCancel(summary.id);
+        void feedImagesCancel(summary.id);
+      }
     };
   }, [summary?.id]);
 
-  const prepareImages = (itemId: string) => {
+  const drainImageQueue = (
+    itemId: string,
+    request: number,
+    forceRetry: boolean,
+  ) => {
+    while (
+      activeImageLoadsRef.current < 2 &&
+      imageQueueRef.current.length > 0
+    ) {
+      const index = imageQueueRef.current.shift();
+      if (index === undefined) break;
+      activeImageLoadsRef.current += 1;
+      void feedImagePrepare(itemId, index, forceRetry)
+        .then((image) => {
+          if (request !== imageRequestRef.current) {
+            void feedImagesRelease([image.handle]);
+            return;
+          }
+          imageLeaseHandlesRef.current = [
+            ...imageLeaseHandlesRef.current,
+            image.handle,
+          ];
+          setImageLeases((current) => {
+            const next = new Map(current);
+            next.set(image.sourceUrl, image.url);
+            return next;
+          });
+        })
+        .catch(() => {
+          if (request === imageRequestRef.current) setImageStatus("error");
+        })
+        .finally(() => {
+          activeImageLoadsRef.current -= 1;
+          if (request !== imageRequestRef.current) return;
+          drainImageQueue(itemId, request, forceRetry);
+          if (
+            activeImageLoadsRef.current === 0 &&
+            imageQueueRef.current.length === 0
+          ) {
+            setImageStatus((current) =>
+              current === "error" ? current : "idle",
+            );
+          }
+        });
+    }
+  };
+
+  const queueImages = (
+    itemId: string,
+    indexes: readonly number[],
+    request: number,
+    forceRetry: boolean,
+  ) => {
+    for (const index of indexes) {
+      if (!forceRetry && attemptedImageIndicesRef.current.has(index)) continue;
+      attemptedImageIndicesRef.current.add(index);
+      imageQueueRef.current.push(index);
+    }
+    drainImageQueue(itemId, request, forceRetry);
+  };
+
+  const prepareImages = (itemId: string, forceRetry = false) => {
     const request = ++imageRequestRef.current;
     setImageStatus("loading");
-    void feedImagesPrepare(itemId)
-      .then((result) => {
-        if (request !== imageRequestRef.current) {
-          void feedImagesRelease(result.images.map((image) => image.handle));
+    imageQueueRef.current = [];
+    if (forceRetry) attemptedImageIndicesRef.current.clear();
+    void feedImagesAuthorize(itemId)
+      .then((manifest) => {
+        if (request !== imageRequestRef.current) return;
+        setImageManifest(manifest.images);
+        if (manifest.images.length === 0) {
+          setImageStatus("idle");
           return;
         }
-        const previousHandles = imageLeaseHandlesRef.current;
-        imageLeaseHandlesRef.current = result.images.map(
-          (image) => image.handle,
+        // 首屏先启动两张；其余由下面的 IntersectionObserver 在靠近视口时加入队列。
+        queueImages(
+          itemId,
+          manifest.images.slice(0, 2).map((image) => image.index),
+          request,
+          forceRetry,
         );
-        if (previousHandles.length > 0) {
-          void feedImagesRelease(previousHandles);
-        }
-        setImageLeases(
-          new Map(result.images.map((image) => [image.sourceUrl, image.url])),
-        );
-        setImageStatus(result.failedCount > 0 ? "error" : "idle");
       })
       .catch(() => {
         if (request === imageRequestRef.current) setImageStatus("error");
@@ -339,7 +415,46 @@ export function FeedReader({
   // 已授权文章打开时只从本地缓存恢复；缓存缺失时由同一安全后端补齐。
   useEffect(() => {
     if (detail?.imagesAuthorized && summary?.id) prepareImages(summary.id);
+    // The trigger is deliberately article identity + persisted authorization;
+    // the queue helpers close over refs so adding them would restart downloads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detail?.imagesAuthorized, summary?.id]);
+
+  useEffect(() => {
+    if (!summary?.id || imageManifest.length === 0) return;
+    const sourceToIndex = new Map(
+      imageManifest.map((image) => [image.sourceUrl, image.index]),
+    );
+    const placeholders = Array.from(
+      bodyRef.current?.querySelectorAll<HTMLElement>(
+        ".feed-img-placeholder[data-src]",
+      ) ?? [],
+    );
+    const request = imageRequestRef.current;
+    const queueForElement = (element: HTMLElement) => {
+      const index = sourceToIndex.get(element.dataset.src ?? "");
+      if (index !== undefined) queueImages(summary.id, [index], request, false);
+    };
+    if (!("IntersectionObserver" in window)) {
+      placeholders.forEach(queueForElement);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            queueForElement(entry.target as HTMLElement);
+            observer.unobserve(entry.target);
+          }
+        }
+      },
+      { root: bodyRef.current, rootMargin: "600px 0px" },
+    );
+    placeholders.forEach((placeholder) => observer.observe(placeholder));
+    return () => observer.disconnect();
+    // The observer is recreated only when the manifest/article changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [imageManifest, summary?.id]);
 
   useEffect(
     () => () => {
@@ -703,7 +818,7 @@ export function FeedReader({
               data-testid="feed-load-remote-images"
               className="iris-focus-soft rounded-md px-2 py-0.5 text-caption text-foreground transition-colors duration-fast hover:bg-muted/60"
               disabled={imageStatus === "loading"}
-              onClick={() => prepareImages(summary.id)}
+              onClick={() => prepareImages(summary.id, imageStatus === "error")}
             >
               {imageStatus === "error" ? "重试加载图片" : "加载本篇图片"}
             </button>

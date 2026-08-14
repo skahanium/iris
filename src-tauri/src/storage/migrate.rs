@@ -180,6 +180,8 @@ const MIGRATION_067_DOWN: &str =
 const MIGRATION_068_UP: &str = include_str!("../../migrations/068_feed_image_authorization.sql");
 const MIGRATION_068_DOWN: &str =
     include_str!("../../migrations/068_feed_image_authorization.down.sql");
+const MIGRATION_069_UP: &str = include_str!("../../migrations/069_cache_governance.sql");
+const MIGRATION_069_DOWN: &str = include_str!("../../migrations/069_cache_governance.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -694,6 +696,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_068_UP,
         false,
     )?;
+    apply_migration(conn, "069_cache_governance", MIGRATION_069_UP, false)?;
 
     Ok(())
 }
@@ -705,6 +708,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "069_cache_governance", MIGRATION_069_DOWN);
     rollback_migration(conn, "068_feed_image_authorization", MIGRATION_068_DOWN);
     rollback_migration(
         conn,
@@ -3014,5 +3018,39 @@ mod tests {
                 "{table}.{column} must be removed by down migration"
             );
         }
+    }
+
+    #[test]
+    fn migration_069_adds_cache_governance_columns_and_media_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let web_columns = conn
+            .prepare("PRAGMA table_info(web_page_cache)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(web_columns.contains(&"last_accessed_at".to_string()));
+
+        let item_columns = conn
+            .prepare("PRAGMA table_info(feed_items)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(item_columns.contains(&"offline_media_at".to_string()));
+        assert!(table_exists(&conn, "feed_media"));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM _migrations WHERE name = '069_cache_governance'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
     }
 }

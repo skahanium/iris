@@ -113,6 +113,9 @@ fn clean_entry(
     modified_time: &dyn Fn(&Path) -> SystemTime,
     report: &mut CleanupReport,
 ) -> AppResult<()> {
+    if !secure_expired_files && is_managed_cache_path(path, root) {
+        return Ok(());
+    }
     let metadata = fs::symlink_metadata(path)?;
     if metadata.is_dir() {
         for entry in fs::read_dir(path)? {
@@ -131,7 +134,10 @@ fn clean_entry(
         return Ok(());
     }
 
-    if !metadata.is_file() || is_protected_path(path) {
+    // `cleanup_once` is called only with Iris-owned cache/temp roots. Durable
+    // notes, databases and configuration live outside those roots, so suffixes
+    // such as `.json` must not make stale cache metadata immortal.
+    if !metadata.is_file() {
         return Ok(());
     }
 
@@ -156,6 +162,21 @@ fn clean_entry(
     Ok(())
 }
 
+/// Domains with their own active leases/integrity rules must never be swept by
+/// the generic mtime walker. Their dedicated managers own eviction instead.
+fn is_managed_cache_path(path: &Path, root: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return true;
+    };
+    let Some(first) = relative.components().next() else {
+        return false;
+    };
+    matches!(
+        first.as_os_str().to_str(),
+        Some("feed-media" | "updates" | "ort" | "huggingface" | "xdg")
+    )
+}
+
 fn remove_empty_dir(path: &Path, root: &Path) -> AppResult<()> {
     if path == root {
         return Ok(());
@@ -164,23 +185,6 @@ fn remove_empty_dir(path: &Path, root: &Path) -> AppResult<()> {
         fs::remove_dir(path)?;
     }
     Ok(())
-}
-
-fn is_protected_path(path: &Path) -> bool {
-    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-        return true;
-    };
-    let lower = name.to_ascii_lowercase();
-    lower.ends_with(".md")
-        || lower.ends_with(".db")
-        || lower.ends_with(".sqlite")
-        || lower.ends_with(".sqlite3")
-        || lower.ends_with(".db-wal")
-        || lower.ends_with(".db-shm")
-        || lower.ends_with(".json")
-        || lower.ends_with(".toml")
-        || lower.ends_with(".key")
-        || lower.ends_with(".pem")
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {
