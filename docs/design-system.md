@@ -235,3 +235,5 @@ UI 改动至少验证亮/暗主题、键盘导航、窄窗口/Tab 溢出、`pref
 - 组件用法：`FeedWorkspace`（三区状态机）→ `FeedSidebar` / `FeedItemList`
   （react-virtual，稳定 key 为 item ID）/ `FeedReader`（延迟已读、外链
   只经 openExternalHttpsUrl）。
+- 来源行在固定侧栏和 Sheet 抽屉内都必须提供明确 tooltip 的“管理来源”动作；暂停和移入 RSS 回收站不得只藏在难以识别的铅笔图标后。
+- PDF 只在用户点击“预览 PDF”后准备。显示层复用无业务状态的 `PdfDisplayPanel`；下载中展示字节进度，失败时提供浏览器降级，关闭必须释放 opaque lease 并回到正文。

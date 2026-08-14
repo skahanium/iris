@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { mediaRelease, mediaResolve } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
+import { PdfDisplayPanel } from "@/components/layout/PdfDisplayPanel";
 import type { MediaTab } from "@/hooks/useMediaTabs";
 import type { MediaResolveResult } from "@/types/ipc";
 
@@ -110,12 +111,7 @@ export function MediaWorkspaceView({ tab }: MediaWorkspaceViewProps) {
               />
             ) : null}
             {tab.mediaKind === "pdf" ? (
-              <object
-                className="h-full w-full bg-background"
-                data={resolved.url}
-                type="application/pdf"
-                aria-label={tab.title}
-              />
+              <PdfDisplayPanel url={resolved.url} label={tab.title} />
             ) : null}
           </>
         ) : (

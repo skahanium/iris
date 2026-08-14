@@ -484,6 +484,42 @@ export interface FeedItemDetail {
   /** feed 表示 RSS 内容；web 表示受限后台抓取的网页正文。 */
   contentOrigin: "feed" | "web";
   fulltextStatus: "not_requested" | "pending" | "fetching" | "ready" | "failed";
+  primaryDocument: { kind: "pdf"; url: string } | null;
+  fulltextNeedsRefresh: boolean;
+  /** 只代表当前文章已明确允许从 Iris 本地图片缓存显示。 */
+  imagesAuthorized: boolean;
+}
+
+export interface FeedImageLease {
+  /** 与文章 Markdown 中的图片地址对应；前端只用作替换键。 */
+  sourceUrl: string;
+  handle: string;
+  url: string;
+  mimeType:
+    | "image/png"
+    | "image/jpeg"
+    | "image/gif"
+    | "image/webp"
+    | "image/avif";
+  sizeBytes: number;
+}
+
+export interface FeedImagesPrepareResult {
+  images: FeedImageLease[];
+  failedCount: number;
+}
+
+export interface FeedDocumentLease {
+  handle: string;
+  url: string;
+  mimeType: "application/pdf";
+  sizeBytes: number;
+}
+
+export interface FeedDocumentProgressEvent {
+  itemId: string;
+  status: "downloading" | "ready" | "failed" | "cancelled";
+  bytes: number;
 }
 
 /** 单篇网页正文补全请求的稳定结果；不包含网络或 URL 细节。 */
@@ -498,6 +534,26 @@ export interface FeedTrashItem {
   item: FeedItemSummary;
   deletedAt: string;
   purgeAfter: string;
+}
+
+export interface FeedTrashSource {
+  id: string;
+  title: string;
+  itemCount: number;
+  starredCount: number;
+  deletedAt: string;
+  purgeAfter: string;
+}
+
+export interface FeedSourceTrashPreview {
+  itemCount: number;
+  starredCount: number;
+  purgeAfter: string;
+}
+
+export interface FeedTrashSnapshot {
+  sources: FeedTrashSource[];
+  items: FeedTrashItem[];
 }
 
 /** 阅读状态补丁；至少一个字段为 true/false。 */
@@ -521,6 +577,7 @@ export interface FeedSourceAddInput {
   titleOverride?: string | null;
   folderPath?: string | null;
   fetchIntervalMinutes?: number | null;
+  restoreDeleted?: boolean;
 }
 
 /** 编辑订阅源：`titleOverride: null` 清除覆盖标题，缺省字段不改动。 */

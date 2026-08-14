@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import { FeedOpmlDialog } from "@/components/feed/FeedOpmlDialog";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { useFeedSettings } from "@/hooks/useFeedSettings";
 import {
@@ -18,8 +19,10 @@ import {
   feedTrashClear,
   feedTrashList,
   feedTrashRestore,
+  feedSourceTrashRestore,
+  feedSourceTrashPurge,
 } from "@/lib/ipc";
-import type { FeedLibrarySummary, FeedTrashItem } from "@/types/ipc";
+import type { FeedLibrarySummary, FeedTrashSnapshot } from "@/types/ipc";
 
 import {
   PanelSection,
@@ -49,8 +52,15 @@ export function FeedManagementSection({
   const [opmlOpen, setOpmlOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [trash, setTrash] = useState<FeedTrashItem[]>([]);
+  const [trash, setTrash] = useState<FeedTrashSnapshot>({
+    sources: [],
+    items: [],
+  });
   const [trashOpen, setTrashOpen] = useState(false);
+  const [purgeSource, setPurgeSource] = useState<
+    FeedTrashSnapshot["sources"][number] | null
+  >(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const refresh = useCallback(() => {
     void feedLibrarySummary()
@@ -219,13 +229,57 @@ export function FeedManagementSection({
           </div>
           {trashOpen ? (
             <div data-testid="feed-trash-list" className="mt-3 space-y-2">
-              {trash.length === 0 ? (
+              {trash.sources.length === 0 && trash.items.length === 0 ? (
                 <p className="text-caption text-muted-foreground">
                   RSS 回收站为空。
                 </p>
               ) : (
                 <>
-                  {trash.map((entry) => (
+                  {trash.sources.map((source) => (
+                    <div
+                      key={source.id}
+                      className="flex items-center gap-2 rounded-md border border-border-subtle px-3 py-2"
+                    >
+                      <span className="min-w-0 flex-1 text-caption text-foreground">
+                        <span className="block truncate font-medium">
+                          {source.title}
+                        </span>
+                        <span className="text-muted-foreground">
+                          {source.itemCount} 篇文章
+                          {source.starredCount > 0
+                            ? ` · ${source.starredCount} 篇收藏`
+                            : ""}
+                          {` · ${new Date(source.purgeAfter).toLocaleDateString("zh-CN")} 清除`}
+                        </span>
+                      </span>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          void feedSourceTrashRestore(source.id)
+                            .then(() => {
+                              refreshTrash();
+                              refresh();
+                            })
+                            .catch(() =>
+                              setMessage("恢复订阅未完成，请稍后重试。"),
+                            );
+                        }}
+                      >
+                        恢复（暂停）
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setPurgeSource(source)}
+                      >
+                        永久删除
+                      </Button>
+                    </div>
+                  ))}
+                  {trash.items.map((entry) => (
                     <div
                       key={entry.item.id}
                       className="flex items-center gap-2 rounded-md border border-border-subtle px-3 py-2"
@@ -252,21 +306,16 @@ export function FeedManagementSection({
                       </Button>
                     </div>
                   ))}
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    size="sm"
-                    onClick={() => {
-                      void feedTrashClear()
-                        .then(() => {
-                          refreshTrash();
-                          refresh();
-                        })
-                        .catch(() => setMessage("清空未完成，请稍后重试。"));
-                    }}
-                  >
-                    立即清空已删除文章
-                  </Button>
+                  {trash.items.length > 0 ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setConfirmClear(true)}
+                    >
+                      立即清空已删除文章
+                    </Button>
+                  ) : null}
                 </>
               )}
             </div>
@@ -291,6 +340,50 @@ export function FeedManagementSection({
         onOpenChange={setOpmlOpen}
         onSourcesChanged={refresh}
         hasSources={summary.sourceCount > 0}
+      />
+      <ConfirmDialog
+        open={purgeSource !== null}
+        title="永久删除订阅来源"
+        message={
+          purgeSource
+            ? `确定永久删除「${purgeSource.title}」及其 ${purgeSource.itemCount} 篇文章？`
+            : ""
+        }
+        description="此操作不可撤销；已另存为 Markdown 的笔记不受影响。"
+        confirmLabel="永久删除"
+        confirmTestId="feed-source-purge-confirm"
+        variant="destructive"
+        onCancel={() => setPurgeSource(null)}
+        onConfirm={() => {
+          if (!purgeSource) return;
+          const source = purgeSource;
+          setPurgeSource(null);
+          void feedSourceTrashPurge(source.id)
+            .then(() => {
+              refreshTrash();
+              refresh();
+            })
+            .catch(() => setMessage("永久删除未完成，请稍后重试。"));
+        }}
+      />
+      <ConfirmDialog
+        open={confirmClear}
+        title="清空已删除文章"
+        message={`确定永久删除回收站中的 ${trash.items.length} 篇文章？`}
+        description="此操作不可撤销；来源退订分组不会被这个操作删除。"
+        confirmLabel="立即清空"
+        confirmTestId="feed-trash-clear-confirm"
+        variant="destructive"
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={() => {
+          setConfirmClear(false);
+          void feedTrashClear()
+            .then(() => {
+              refreshTrash();
+              refresh();
+            })
+            .catch(() => setMessage("清空未完成，请稍后重试。"));
+        }}
       />
     </section>
   );

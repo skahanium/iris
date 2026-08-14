@@ -13,7 +13,9 @@ const {
   feedSourceAdd,
   feedSourceUpdate,
   feedSourceRemove,
-  feedSourceItemCount,
+  feedSourceTrash,
+  feedSourceTrashMatch,
+  feedSourceTrashPreview,
   feedSyncSource,
   feedItemList,
   feedSourceList,
@@ -26,7 +28,9 @@ const {
   feedSourceAdd: vi.fn(),
   feedSourceUpdate: vi.fn(),
   feedSourceRemove: vi.fn(),
-  feedSourceItemCount: vi.fn(),
+  feedSourceTrash: vi.fn(),
+  feedSourceTrashMatch: vi.fn(),
+  feedSourceTrashPreview: vi.fn(),
   feedSyncSource: vi.fn(),
   feedItemList: vi.fn(),
   feedSourceList: vi.fn(),
@@ -41,7 +45,9 @@ vi.mock("@/lib/ipc", () => ({
   feedSourceAdd,
   feedSourceUpdate,
   feedSourceRemove,
-  feedSourceItemCount,
+  feedSourceTrash,
+  feedSourceTrashMatch,
+  feedSourceTrashPreview,
   feedSyncSource,
   feedItemList,
   feedSourceList,
@@ -95,7 +101,12 @@ beforeEach(() => {
   });
   feedSourceUpdate.mockResolvedValue(undefined);
   feedSourceRemove.mockResolvedValue(5);
-  feedSourceItemCount.mockResolvedValue(5);
+  feedSourceTrashMatch.mockResolvedValue(null);
+  feedSourceTrashPreview.mockResolvedValue({
+    itemCount: 5,
+    starredCount: 2,
+    purgeAfter: "2026-09-12T00:00:00Z",
+  });
   feedItemList.mockResolvedValue([]);
   feedSourceList.mockResolvedValue([source()]);
   feedItemGet.mockResolvedValue(null);
@@ -412,12 +423,47 @@ describe("FeedSourceDialog 管理交互", () => {
     );
     fireEvent.click(screen.getByTestId("feed-unsubscribe-keep"));
     await waitFor(() =>
-      expect(feedSourceRemove).toHaveBeenCalledWith("src-1", true),
+      expect(feedSourceUpdate).toHaveBeenCalledWith("src-1", {
+        isEnabled: false,
+      }),
     );
-    expect(feedSourceItemCount).toHaveBeenCalledWith("src-1");
+    expect(feedSourceTrashPreview).toHaveBeenCalledWith("src-1");
   });
 
-  it("confirms deletion with the article count before removing", async () => {
+  it("labels source management and the recoverable unsubscribe action explicitly", async () => {
+    render(
+      <FeedSourceDialog
+        open
+        mode="edit"
+        source={source()}
+        onOpenChange={() => undefined}
+        onSourcesChanged={() => undefined}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feed-unsubscribe-delete")).toHaveTextContent(
+        "5 篇",
+      ),
+    );
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("管理订阅");
+    expect(screen.getByRole("dialog")).toHaveTextContent(
+      "修改订阅设置；如不再需要，可退订并移入 RSS 回收站。",
+    );
+    expect(screen.getByTestId("feed-unsubscribe-delete")).toHaveTextContent(
+      "退订并移入 RSS 回收站（5 篇）",
+    );
+
+    fireEvent.click(screen.getByTestId("feed-unsubscribe-delete"));
+    await waitFor(() =>
+      expect(
+        screen.getByTestId("feed-delete-confirm-submit"),
+      ).toHaveTextContent("退订并移入 RSS 回收站"),
+    );
+  });
+
+  it("confirms deletion with article, favorite, and purge details", async () => {
     const onOpenChange = vi.fn();
     render(
       <FeedSourceDialog
@@ -440,13 +486,53 @@ describe("FeedSourceDialog 管理交互", () => {
     expect(screen.getByTestId("feed-delete-confirm").textContent).toContain(
       "5",
     );
-    // 删除前不得调用 remove（二次确认后才执行）。
-    expect(feedSourceRemove).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByTestId("feed-delete-confirm-submit"));
-    await waitFor(() =>
-      expect(feedSourceRemove).toHaveBeenCalledWith("src-1", false),
+    expect(screen.getByTestId("feed-delete-confirm").textContent).toContain(
+      "2",
     );
+    // 删除前不得调用 remove（二次确认后才执行）。
+    expect(feedSourceTrash).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("feed-delete-confirm-submit"));
+    await waitFor(() => expect(feedSourceTrash).toHaveBeenCalledWith("src-1"));
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("requires confirmation before restoring an identical trashed URL", async () => {
+    feedSourceTrashMatch.mockResolvedValueOnce({
+      id: "src-old",
+      title: "Old feed",
+      itemCount: 8,
+      starredCount: 1,
+      deletedAt: "2026-08-13T00:00:00Z",
+      purgeAfter: "2026-09-12T00:00:00Z",
+    });
+    render(
+      <FeedSourceDialog
+        open
+        mode="add"
+        source={null}
+        onOpenChange={() => undefined}
+        onSourcesChanged={() => undefined}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("feed-discover-url"), {
+      target: { value: "https://example.com" },
+    });
+    fireEvent.click(screen.getByTestId("feed-discover-run"));
+    await waitFor(() => screen.getByTestId("feed-candidate-list"));
+    fireEvent.click(
+      screen.getByTestId("feed-candidate-https://example.com/feed.xml"),
+    );
+    fireEvent.click(screen.getByTestId("feed-confirm-subscribe"));
+    await waitFor(() => screen.getByTestId("feed-add-submit"));
+    fireEvent.click(screen.getByTestId("feed-add-submit"));
+    await waitFor(() => screen.getByTestId("feed-restore-match"));
+    expect(feedSourceAdd).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("feed-restore-subscribe"));
+    await waitFor(() =>
+      expect(feedSourceAdd).toHaveBeenCalledWith(
+        expect.objectContaining({ restoreDeleted: true }),
+      ),
+    );
   });
 
   it("shows stable error text without raw payload", async () => {

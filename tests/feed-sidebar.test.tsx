@@ -45,6 +45,7 @@ describe("FeedSidebar 来源分组", () => {
         onClearSource={vi.fn()}
         onAddSource={vi.fn()}
         onRetrySource={vi.fn()}
+        onManageSource={vi.fn()}
         onOpenOpml={vi.fn()}
       />,
     );

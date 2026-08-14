@@ -13,6 +13,8 @@ import {
   ExternalLink,
   ImageOff,
   Loader2,
+  FileText,
+  X,
   Save,
   Star,
   TriangleAlert,
@@ -28,12 +30,25 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { handleFeedLinkClick, renderFeedMarkdown } from "@/lib/feed-reader";
+import { PdfDisplayPanel } from "@/components/layout/PdfDisplayPanel";
+import {
+  handleFeedImageError,
+  handleFeedLinkClick,
+  renderFeedMarkdown,
+} from "@/lib/feed-reader";
 import {
   buildFeedNoteMarkdown,
   isValidFeedNoteFolder,
 } from "@/lib/feed-note-export";
-import { openExternalHttpsUrl } from "@/lib/ipc";
+import {
+  feedDocumentCancel,
+  feedDocumentPrepare,
+  feedDocumentRelease,
+  feedImagesPrepare,
+  feedImagesRelease,
+  listenFeedDocumentProgress,
+  openExternalHttpsUrl,
+} from "@/lib/ipc";
 import { sanitizeNoteFileName } from "@/lib/note-names";
 import { toTrustedHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
@@ -202,8 +217,25 @@ export function FeedReader({
 }: FeedReaderProps) {
   const titleRef = useRef<HTMLHeadingElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const [remoteImagesAllowed, setRemoteImagesAllowed] = useState(false);
+  const documentLeaseRef = useRef<{ handle: string; url: string } | null>(null);
+  const [imageLeases, setImageLeases] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+  const [imageStatus, setImageStatus] = useState<"idle" | "loading" | "error">(
+    "idle",
+  );
+  const imageLeaseHandlesRef = useRef<string[]>([]);
+  const imageRequestRef = useRef(0);
   const [saveNoteOpen, setSaveNoteOpen] = useState(false);
+  const [documentLease, setDocumentLease] = useState<{
+    handle: string;
+    url: string;
+  } | null>(null);
+  const [documentStatus, setDocumentStatus] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
+  const [documentBytes, setDocumentBytes] = useState(0);
+  const documentRequestRef = useRef(0);
   const summary: FeedItemSummary | null = detail?.summary ?? null;
 
   // 打开文章：焦点移到标题；正文可见 1 秒或发生阅读动作后延迟已读。
@@ -258,9 +290,88 @@ export function FeedReader({
     };
   }, [active, autoReadEnabled, status, summary, setItemState]);
 
-  // 切换文章时重置远程图片加载状态。
+  // 切换文章时释放短期 lease。授权和二进制缓存仍按文章持久保存，回来时自动恢复。
   useEffect(() => {
-    setRemoteImagesAllowed(false);
+    imageRequestRef.current += 1;
+    const imageHandles = imageLeaseHandlesRef.current;
+    imageLeaseHandlesRef.current = [];
+    setImageLeases(new Map());
+    setImageStatus("idle");
+    if (imageHandles.length > 0) void feedImagesRelease(imageHandles);
+    documentRequestRef.current += 1;
+    setDocumentStatus("idle");
+    setDocumentBytes(0);
+    const lease = documentLeaseRef.current;
+    documentLeaseRef.current = null;
+    setDocumentLease(null);
+    if (lease) void feedDocumentRelease(lease.handle);
+    return () => {
+      if (summary?.id) void feedDocumentCancel(summary.id);
+    };
+  }, [summary?.id]);
+
+  const prepareImages = (itemId: string) => {
+    const request = ++imageRequestRef.current;
+    setImageStatus("loading");
+    void feedImagesPrepare(itemId)
+      .then((result) => {
+        if (request !== imageRequestRef.current) {
+          void feedImagesRelease(result.images.map((image) => image.handle));
+          return;
+        }
+        const previousHandles = imageLeaseHandlesRef.current;
+        imageLeaseHandlesRef.current = result.images.map(
+          (image) => image.handle,
+        );
+        if (previousHandles.length > 0) {
+          void feedImagesRelease(previousHandles);
+        }
+        setImageLeases(
+          new Map(result.images.map((image) => [image.sourceUrl, image.url])),
+        );
+        setImageStatus(result.failedCount > 0 ? "error" : "idle");
+      })
+      .catch(() => {
+        if (request === imageRequestRef.current) setImageStatus("error");
+      });
+  };
+
+  // 已授权文章打开时只从本地缓存恢复；缓存缺失时由同一安全后端补齐。
+  useEffect(() => {
+    if (detail?.imagesAuthorized && summary?.id) prepareImages(summary.id);
+  }, [detail?.imagesAuthorized, summary?.id]);
+
+  useEffect(
+    () => () => {
+      documentRequestRef.current += 1;
+      const lease = documentLeaseRef.current;
+      documentLeaseRef.current = null;
+      if (lease) void feedDocumentRelease(lease.handle);
+      const imageHandles = imageLeaseHandlesRef.current;
+      imageLeaseHandlesRef.current = [];
+      if (imageHandles.length > 0) void feedImagesRelease(imageHandles);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!summary?.id) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenFeedDocumentProgress((event) => {
+      if (disposed) return;
+      if (event.itemId !== summary.id) return;
+      setDocumentBytes(event.bytes);
+      if (event.status === "failed") setDocumentStatus("error");
+      if (event.status === "cancelled") setDocumentStatus("idle");
+    }).then((cleanup) => {
+      if (disposed) cleanup();
+      else unlisten = cleanup;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, [summary?.id]);
 
   if (status === "loading") {
@@ -323,14 +434,47 @@ export function FeedReader({
 
   const markdown = renderFeedMarkdown(
     detail.contentMarkdown,
-    remoteImagesAllowed,
+    detail.imagesAuthorized || imageLeases.size > 0,
+    imageLeases,
   );
+
+  if (documentLease) {
+    return (
+      <section className="flex h-full min-h-0 flex-1 flex-col bg-background">
+        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-border-subtle px-4">
+          <FileText className="h-4 w-4" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate text-ui font-medium">
+            {summary.title}
+          </span>
+          <button
+            type="button"
+            data-testid="feed-document-close"
+            className="iris-focus-soft inline-flex h-8 items-center gap-1 rounded-md px-2 text-caption hover:bg-muted/60"
+            onClick={() => {
+              void feedDocumentRelease(documentLease.handle);
+              documentLeaseRef.current = null;
+              setDocumentLease(null);
+            }}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+            返回正文
+          </button>
+        </header>
+        <PdfDisplayPanel
+          testId="feed-document-viewer"
+          url={documentLease.url}
+          label={`${summary.title} PDF`}
+        />
+      </section>
+    );
+  }
 
   return (
     <article
       data-testid="feed-reader"
       className="h-full min-h-0 flex-1 overflow-y-auto bg-background"
       onClick={(event) => handleFeedLinkClick(event.nativeEvent)}
+      onError={(event) => handleFeedImageError(event.nativeEvent)}
       ref={bodyRef}
     >
       <div className="mx-auto flex max-w-[var(--prose-measure)] flex-col px-6 py-6">
@@ -369,6 +513,65 @@ export function FeedReader({
               <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
               打开原文
             </button>
+          ) : null}
+          {detail.primaryDocument?.kind === "pdf" ? (
+            <>
+              <button
+                type="button"
+                data-testid="feed-preview-pdf"
+                className="iris-focus-soft inline-flex items-center gap-1 rounded-md border border-border-subtle px-2 py-1 text-caption transition-colors duration-fast hover:bg-muted/60"
+                disabled={documentStatus === "loading"}
+                onClick={() => {
+                  const request = ++documentRequestRef.current;
+                  setDocumentStatus("loading");
+                  setDocumentBytes(0);
+                  void feedDocumentPrepare(summary.id)
+                    .then((lease) => {
+                      if (request !== documentRequestRef.current) {
+                        void feedDocumentRelease(lease.handle);
+                        return;
+                      }
+                      const nextLease = {
+                        handle: lease.handle,
+                        url: lease.url,
+                      };
+                      documentLeaseRef.current = nextLease;
+                      setDocumentLease(nextLease);
+                      setDocumentStatus("idle");
+                    })
+                    .catch(() => {
+                      if (request === documentRequestRef.current) {
+                        setDocumentStatus("error");
+                      }
+                    });
+                }}
+              >
+                {documentStatus === "loading" ? (
+                  <Loader2
+                    className="h-3.5 w-3.5 animate-spin"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+                )}
+                {documentStatus === "loading" ? "正在准备 PDF" : "预览 PDF"}
+              </button>
+              {documentStatus === "loading" ? (
+                <button
+                  type="button"
+                  data-testid="feed-document-cancel"
+                  className="iris-focus-soft inline-flex items-center rounded-md px-2 py-1 text-caption hover:bg-muted/60"
+                  onClick={() => {
+                    documentRequestRef.current += 1;
+                    void feedDocumentCancel(summary.id);
+                    setDocumentStatus("idle");
+                    setDocumentBytes(0);
+                  }}
+                >
+                  取消下载
+                </button>
+              ) : null}
+            </>
           ) : null}
           <button
             type="button"
@@ -440,6 +643,31 @@ export function FeedReader({
             正在获取网页正文；当前显示 Feed 摘要。
           </p>
         ) : null}
+        {documentStatus === "error" && detail.primaryDocument ? (
+          <div className="mt-3 flex items-center gap-2 text-caption text-muted-foreground">
+            <span>PDF 预览未能准备完成。</span>
+            <button
+              type="button"
+              data-testid="feed-open-pdf-external"
+              className="iris-focus-soft rounded-md border border-border-subtle px-2 py-0.5 text-foreground"
+              onClick={() =>
+                void openExternalHttpsUrl(detail.primaryDocument!.url)
+              }
+            >
+              在浏览器中打开 PDF
+            </button>
+          </div>
+        ) : null}
+        {documentStatus === "loading" && documentBytes > 0 ? (
+          <p className="mt-3 text-caption text-muted-foreground" role="status">
+            已下载 {(documentBytes / 1024 / 1024).toFixed(1)} MiB
+          </p>
+        ) : null}
+        {detail.fulltextNeedsRefresh ? (
+          <p className="mt-3 text-caption text-muted-foreground">
+            正在使用新版规则重新整理网页正文。
+          </p>
+        ) : null}
         {detail.fulltextStatus === "failed" &&
         detail.contentOrigin !== "web" ? (
           <div className="mt-3 flex items-center gap-2 text-caption text-muted-foreground">
@@ -458,17 +686,26 @@ export function FeedReader({
           <p className="mt-3 text-caption text-muted-foreground">网页正文</p>
         ) : null}
 
-        {!remoteImagesAllowed && /feed-img-placeholder/.test(markdown) ? (
+        {/feed-img-placeholder/.test(markdown) ? (
           <div className="mt-3 flex items-center gap-2 rounded-md border border-border-subtle bg-panel px-3 py-2 text-caption text-muted-foreground">
             <ImageOff className="h-4 w-4 shrink-0" aria-hidden="true" />
-            <span className="flex-1">远程图片默认不加载</span>
+            <span className="flex-1">
+              {imageStatus === "loading"
+                ? detail.imagesAuthorized
+                  ? "正在恢复本篇图片"
+                  : "正在安全加载本篇图片"
+                : imageStatus === "error"
+                  ? "部分图片无法加载"
+                  : "本篇图片尚未加载"}
+            </span>
             <button
               type="button"
               data-testid="feed-load-remote-images"
               className="iris-focus-soft rounded-md px-2 py-0.5 text-caption text-foreground transition-colors duration-fast hover:bg-muted/60"
-              onClick={() => setRemoteImagesAllowed(true)}
+              disabled={imageStatus === "loading"}
+              onClick={() => prepareImages(summary.id)}
             >
-              加载本篇图片
+              {imageStatus === "error" ? "重试加载图片" : "加载本篇图片"}
             </button>
           </div>
         ) : null}

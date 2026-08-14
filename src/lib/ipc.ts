@@ -1269,10 +1269,15 @@ import type {
   FeedItemQuery,
   FeedItemStatePatch,
   FeedItemSummary,
-  FeedTrashItem,
+  FeedTrashSnapshot,
+  FeedDocumentLease,
+  FeedDocumentProgressEvent,
+  FeedImagesPrepareResult,
   FeedLibrarySummary,
   FeedSourceAddInput,
   FeedSourceSummary,
+  FeedSourceTrashPreview,
+  FeedTrashSource,
   FeedSourceUpdateInput,
   FeedSyncOutcome,
   FeedSyncBatchOutcome,
@@ -1310,9 +1315,35 @@ export async function feedSourceRemove(
   return invoke<number>("feed_source_remove", { sourceId, keepItems });
 }
 
+export async function feedSourceTrash(sourceId: string): Promise<number> {
+  return invoke<number>("feed_source_trash", { sourceId });
+}
+
+export async function feedSourceTrashRestore(sourceId: string): Promise<void> {
+  return invoke("feed_source_trash_restore", { sourceId });
+}
+
+export async function feedSourceTrashPurge(sourceId: string): Promise<number> {
+  return invoke<number>("feed_source_trash_purge", { sourceId });
+}
+
 /** 订阅源文章数（退订二次确认的计数来源）。 */
 export async function feedSourceItemCount(sourceId: string): Promise<number> {
   return invoke<number>("feed_source_item_count", { sourceId });
+}
+
+export async function feedSourceTrashPreview(
+  sourceId: string,
+): Promise<FeedSourceTrashPreview> {
+  return invoke<FeedSourceTrashPreview>("feed_source_trash_preview", {
+    sourceId,
+  });
+}
+
+export async function feedSourceTrashMatch(
+  url: string,
+): Promise<FeedTrashSource | null> {
+  return invoke<FeedTrashSource | null>("feed_source_trash_match", { url });
 }
 
 /** 订阅全局维护页的聚合统计。 */
@@ -1320,8 +1351,8 @@ export async function feedLibrarySummary(): Promise<FeedLibrarySummary> {
   return invoke<FeedLibrarySummary>("feed_library_summary");
 }
 
-export async function feedTrashList(): Promise<FeedTrashItem[]> {
-  return invoke<FeedTrashItem[]>("feed_trash_list");
+export async function feedTrashList(): Promise<FeedTrashSnapshot> {
+  return invoke<FeedTrashSnapshot>("feed_trash_list");
 }
 
 export async function feedTrashRestore(itemId: string): Promise<void> {
@@ -1359,6 +1390,46 @@ export async function feedFulltextEnqueueItem(
   itemId: string,
 ): Promise<FeedFulltextEnqueueOutcome> {
   return invoke("feed_fulltext_enqueue_item", { itemId });
+}
+
+export async function feedDocumentPrepare(
+  itemId: string,
+): Promise<FeedDocumentLease> {
+  return invoke<FeedDocumentLease>("feed_document_prepare", { itemId });
+}
+
+export async function feedDocumentCancel(itemId: string): Promise<void> {
+  return invoke("feed_document_cancel", { itemId });
+}
+
+export async function feedDocumentRelease(handle: string): Promise<void> {
+  return invoke("feed_document_release", { handle });
+}
+
+export async function feedDocumentCacheClear(): Promise<number> {
+  return invoke<number>("feed_document_cache_clear");
+}
+
+/** 授权并准备当前文章的本地图片缓存；返回值不含真实缓存路径。 */
+export async function feedImagesPrepare(
+  itemId: string,
+): Promise<FeedImagesPrepareResult> {
+  return invoke<FeedImagesPrepareResult>("feed_images_prepare", { itemId });
+}
+
+/** 释放当前阅读器持有的图片 lease；缓存本身仍按安全 LRU 保留。 */
+export async function feedImagesRelease(handles: string[]): Promise<void> {
+  return invoke("feed_images_release", { handles });
+}
+
+/** PDF 临时下载进度；不包含原始 URL、代理端点或本地路径。 */
+export async function listenFeedDocumentProgress(
+  handler: (payload: FeedDocumentProgressEvent) => void,
+): Promise<() => void> {
+  return listen<FeedDocumentProgressEvent>(
+    IPC_EVENTS.FEED_DOCUMENT_PROGRESS,
+    (event) => handler(event.payload),
+  );
 }
 
 /** 基于冻结查询条件批量已读，返回影响行数。 */

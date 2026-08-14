@@ -17,6 +17,15 @@ const {
   feedItemsMarkRead,
   feedSyncSource,
   feedSyncAll,
+  feedDocumentPrepare,
+  feedDocumentCancel,
+  feedDocumentRelease,
+  feedImagesPrepare,
+  feedImagesRelease,
+  feedSourceTrashPreview,
+  feedSourceUpdate,
+  feedSourceTrash,
+  listenFeedDocumentProgress,
   listenFeedChanged,
 } = vi.hoisted(() => ({
   feedItemList: vi.fn(),
@@ -27,6 +36,15 @@ const {
   feedItemsMarkRead: vi.fn(),
   feedSyncSource: vi.fn(),
   feedSyncAll: vi.fn(),
+  feedDocumentPrepare: vi.fn(),
+  feedDocumentCancel: vi.fn(),
+  feedDocumentRelease: vi.fn(),
+  feedImagesPrepare: vi.fn(),
+  feedImagesRelease: vi.fn(),
+  feedSourceTrashPreview: vi.fn(),
+  feedSourceUpdate: vi.fn(),
+  feedSourceTrash: vi.fn(),
+  listenFeedDocumentProgress: vi.fn(),
   listenFeedChanged: vi.fn(),
 }));
 
@@ -39,6 +57,16 @@ vi.mock("@/lib/ipc", () => ({
   feedItemsMarkRead,
   feedSyncSource,
   feedSyncAll,
+  feedDocumentPrepare,
+  feedDocumentCancel,
+  feedDocumentRelease,
+  feedImagesPrepare,
+  feedImagesRelease,
+  feedSourceTrashPreview,
+  feedSourceTrashMatch: vi.fn().mockResolvedValue(null),
+  feedSourceUpdate,
+  feedSourceTrash,
+  listenFeedDocumentProgress,
   listenFeedChanged,
   openExternalHttpsUrl: vi.fn(),
 }));
@@ -102,6 +130,9 @@ function detailOf(summary: FeedItemSummary): FeedItemDetail {
     siteUrl: "https://example.com/site",
     contentOrigin: "feed",
     fulltextStatus: "not_requested",
+    primaryDocument: null,
+    fulltextNeedsRefresh: false,
+    imagesAuthorized: false,
   };
 }
 
@@ -178,6 +209,24 @@ beforeEach(() => {
     inFlight: 0,
     newItems: 3,
   });
+  feedDocumentPrepare.mockResolvedValue({
+    handle: "lease-1",
+    url: "iris-feed-document://localhost/lease-1",
+    mimeType: "application/pdf",
+    sizeBytes: 1024,
+  });
+  feedDocumentCancel.mockResolvedValue(undefined);
+  feedDocumentRelease.mockResolvedValue(undefined);
+  feedImagesPrepare.mockResolvedValue({ images: [], failedCount: 0 });
+  feedImagesRelease.mockResolvedValue(undefined);
+  feedSourceTrashPreview.mockResolvedValue({
+    itemCount: 2,
+    starredCount: 0,
+    purgeAfter: "2026-09-12T00:00:00Z",
+  });
+  feedSourceUpdate.mockResolvedValue(undefined);
+  feedSourceTrash.mockResolvedValue(2);
+  listenFeedDocumentProgress.mockResolvedValue(() => undefined);
   listenFeedChanged.mockResolvedValue(() => undefined);
 });
 
@@ -380,6 +429,23 @@ describe("FeedWorkspace", () => {
     await waitFor(() =>
       expect(feedFulltextEnqueueItem).toHaveBeenCalledWith("i1"),
     );
+  });
+
+  it("re-extracts one stale web article when it is opened", async () => {
+    feedItemGet.mockResolvedValueOnce({
+      ...detailOf(item("i1")),
+      contentMarkdown: "old page shell",
+      contentOrigin: "web",
+      fulltextStatus: "ready",
+      fulltextNeedsRefresh: true,
+    });
+    await renderWorkspace();
+    fireEvent.click(screen.getByTestId("feed-item-i1"));
+
+    await waitFor(() =>
+      expect(feedFulltextEnqueueItem).toHaveBeenCalledWith("i1"),
+    );
+    expect(screen.getByText("正在使用新版规则重新整理网页正文。")).toBeTruthy();
   });
 
   it("does not auto-mark read when the setting is disabled", async () => {
@@ -598,6 +664,18 @@ describe("FeedWorkspace", () => {
   });
 
   it("blocks remote images by default and loads them on demand", async () => {
+    feedImagesPrepare.mockResolvedValue({
+      images: [
+        {
+          sourceUrl: "https://cdn.example.com/a.png",
+          handle: "image-lease-1",
+          url: "iris-feed-image://localhost/image-lease-1",
+          mimeType: "image/png",
+          sizeBytes: 64,
+        },
+      ],
+      failedCount: 0,
+    });
     feedItemGet.mockResolvedValue({
       summary: item("i1"),
       contentMarkdown: "![photo](https://cdn.example.com/a.png)",
@@ -620,6 +698,10 @@ describe("FeedWorkspace", () => {
       expect(
         screen.getByTestId("feed-reader-body").querySelectorAll("img").length,
       ).toBe(1),
+    );
+    expect(feedImagesPrepare).toHaveBeenCalledWith("i1");
+    expect(screen.getByTestId("feed-reader-body").innerHTML).toContain(
+      "iris-feed-image://localhost/image-lease-1",
     );
   });
 
@@ -710,6 +792,17 @@ describe("FeedWorkspace", () => {
     expect(sidebar.className).toContain("border-r-0");
   });
 
+  it("offers a discoverable source management action inside the source drawer", async () => {
+    setWidth(900);
+    await renderWorkspace();
+    fireEvent.click(screen.getByTestId("feed-open-drawer"));
+    const manage = await screen.findByTestId("feed-manage-source-src-1");
+    expect(manage.getAttribute("title")).toBe("管理来源");
+    fireEvent.click(manage);
+    expect(await screen.findByText("管理订阅")).toBeTruthy();
+    expect(screen.getByTestId("feed-unsubscribe-delete")).toBeTruthy();
+  });
+
   it("shows one top-level external open action without a duplicate permalink", async () => {
     feedItemGet.mockResolvedValue({
       summary: item("i1", { conversionStatus: "degraded" }),
@@ -725,6 +818,50 @@ describe("FeedWorkspace", () => {
     expect(screen.getByTestId("feed-open-external")).toBeTruthy();
     expect(screen.queryByTestId("feed-reader-permalink")).toBeNull();
     expect(screen.getAllByText("打开原文")).toHaveLength(1);
+  });
+
+  it("downloads a detected PDF only after an explicit preview action", async () => {
+    feedItemGet.mockResolvedValueOnce({
+      ...detailOf(item("i1")),
+      primaryDocument: {
+        kind: "pdf",
+        url: "https://papers.example/article.pdf",
+      },
+    });
+    await renderWorkspace();
+    fireEvent.click(screen.getByTestId("feed-item-i1"));
+    await screen.findByTestId("feed-preview-pdf");
+    expect(feedDocumentPrepare).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("feed-preview-pdf"));
+    await waitFor(() => expect(feedDocumentPrepare).toHaveBeenCalledWith("i1"));
+    expect(await screen.findByTestId("feed-document-viewer")).toHaveAttribute(
+      "data",
+      "iris-feed-document://localhost/lease-1",
+    );
+
+    fireEvent.click(screen.getByTestId("feed-document-close"));
+    await waitFor(() =>
+      expect(feedDocumentRelease).toHaveBeenCalledWith("lease-1"),
+    );
+    expect(screen.queryByTestId("feed-document-viewer")).toBeNull();
+  });
+
+  it("offers cancellation while a PDF download is pending", async () => {
+    feedItemGet.mockResolvedValueOnce({
+      ...detailOf(item("i1")),
+      primaryDocument: {
+        kind: "pdf",
+        url: "https://papers.example/article.pdf",
+      },
+    });
+    feedDocumentPrepare.mockImplementationOnce(() => new Promise(() => {}));
+    await renderWorkspace();
+    fireEvent.click(screen.getByTestId("feed-item-i1"));
+    fireEvent.click(await screen.findByTestId("feed-preview-pdf"));
+    fireEvent.click(await screen.findByTestId("feed-document-cancel"));
+    expect(feedDocumentCancel).toHaveBeenCalledWith("i1");
+    expect(screen.queryByTestId("feed-document-cancel")).toBeNull();
   });
 });
 describe("FeedWorkspace 保存为笔记", () => {

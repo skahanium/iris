@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   blockRemoteImages,
+  handleFeedImageError,
   handleFeedLinkClick,
   renderFeedMarkdown,
   sanitizeFeedHtml,
@@ -116,5 +117,35 @@ describe("feed-reader 安全渲染", () => {
     expect(html).toContain('src="https://cdn.example.com/d.png"');
     expect(html).toContain('loading="lazy"');
     expect(html).toContain('referrerpolicy="no-referrer"');
+  });
+
+  it("replaces an authorized article image with an opaque local lease instead of hotlinking", () => {
+    const html = renderFeedMarkdown(
+      "![图表](https://cdn.example.com/chart.png)",
+      true,
+      new Map([
+        [
+          "https://cdn.example.com/chart.png",
+          "iris-feed-image://localhost/opaque-image-lease",
+        ],
+      ]),
+    );
+
+    expect(html).toContain("iris-feed-image://localhost/opaque-image-lease");
+    expect(html).not.toContain("https://cdn.example.com/chart.png");
+  });
+
+  it("replaces a failed remote image with a neutral explanation", () => {
+    const host = document.createElement("div");
+    const image = document.createElement("img");
+    image.alt = "研究图表";
+    image.dataset.feedImage = "remote";
+    host.appendChild(image);
+    image.addEventListener("error", handleFeedImageError);
+
+    image.dispatchEvent(new Event("error", { bubbles: true }));
+
+    expect(host.querySelector("img")).toBeNull();
+    expect(host.textContent).toContain("图片无法加载：研究图表");
   });
 });

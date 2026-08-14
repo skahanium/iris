@@ -106,6 +106,36 @@ pub struct FeedItemDetail {
     pub site_url: Option<String>,
     pub content_origin: String,
     pub fulltext_status: String,
+    pub primary_document: Option<FeedPrimaryDocument>,
+    pub fulltext_needs_refresh: bool,
+    /// 仅当前文章的显式图片加载授权；不代表来源级或全局授权。
+    pub images_authorized: bool,
+}
+
+/// 本地受控图片 lease；不暴露缓存路径。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedImageLease {
+    pub source_url: String,
+    pub handle: String,
+    pub url: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+}
+
+/// 单篇文章的图片准备结果；单张失败不会妨碍其它已缓存图片显示。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedImagesPrepareResult {
+    pub images: Vec<FeedImageLease>,
+    pub failed_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedPrimaryDocument {
+    pub kind: String,
+    pub url: String,
 }
 
 /// 单篇网页正文补全请求的稳定结果；调用方无需根据底层数据库状态推断。
@@ -136,6 +166,33 @@ pub struct FeedTrashItem {
     pub item: FeedItemSummary,
     pub deleted_at: String,
     pub purge_after: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedTrashSource {
+    pub id: String,
+    pub title: String,
+    pub item_count: i64,
+    pub starred_count: i64,
+    pub deleted_at: String,
+    pub purge_after: String,
+}
+
+/// 退订确认所需的有界统计；不包含 URL、正文或缓存路径。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedSourceTrashPreview {
+    pub item_count: i64,
+    pub starred_count: i64,
+    pub purge_after: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedTrashSnapshot {
+    pub sources: Vec<FeedTrashSource>,
+    pub items: Vec<FeedTrashItem>,
 }
 
 /// 条目级源载荷种类（对应 `feed_items.source_payload_kind` CHECK 约束）。

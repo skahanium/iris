@@ -40,6 +40,8 @@ pub fn run() {
 
     let builder = tauri::Builder::default();
     let builder = commands::media::register_media_protocol(builder);
+    let builder = feed::document::register_document_protocol(builder);
+    let builder = feed::image::register_image_protocol(builder);
 
     builder
         .plugin(tauri_plugin_dialog::init())
@@ -272,7 +274,12 @@ pub fn run() {
             commands::feed_commands::feed_source_list,
             commands::feed_commands::feed_source_update,
             commands::feed_commands::feed_source_remove,
+            commands::feed_commands::feed_source_trash,
+            commands::feed_commands::feed_source_trash_restore,
+            commands::feed_commands::feed_source_trash_purge,
             commands::feed_commands::feed_source_item_count,
+            commands::feed_commands::feed_source_trash_preview,
+            commands::feed_commands::feed_source_trash_match,
             commands::feed_commands::feed_library_summary,
             commands::feed_commands::feed_trash_list,
             commands::feed_commands::feed_trash_restore,
@@ -282,6 +289,12 @@ pub fn run() {
             commands::feed_commands::feed_item_get,
             commands::feed_commands::feed_item_set_state,
             commands::feed_commands::feed_fulltext_enqueue_item,
+            commands::feed_commands::feed_document_prepare,
+            commands::feed_commands::feed_document_cancel,
+            commands::feed_commands::feed_document_release,
+            commands::feed_commands::feed_document_cache_clear,
+            commands::feed_commands::feed_images_prepare,
+            commands::feed_commands::feed_images_release,
             commands::feed_commands::feed_items_mark_read,
             commands::feed_commands::feed_sync_source,
             commands::feed_commands::feed_sync_all,

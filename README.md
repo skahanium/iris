@@ -15,7 +15,7 @@ Iris 是基于 Tauri 2、Rust 和 React 的桌面 Markdown 笔记应用。用户
 
 ## 安全与数据边界
 
-API Key 不写入笔记、SQLite、日志或环境变量。Iris 采用本地 **AES-256-GCM** 加密凭据存储：主密钥和密文分置于平台配置目录与应用数据目录，解密值由 `Zeroizing` 承载并在释放时清零。项目刻意不使用操作系统凭据管理器，以避免系统密码弹窗打断正常使用。细节见 [SECURITY.md](./SECURITY.md)。
+API Key 不写入笔记、SQLite、日志或环境变量。Iris 采用本地 **AES-256-GCM** 加密凭据存储：主密钥和密文分置于平台配置目录与应用数据目录，解密值由 `Zeroizing` 承载并在释放时清零。项目刻意不调用系统凭据服务，以避免系统密码弹窗打断正常使用。细节见 [SECURITY.md](./SECURITY.md)。
 
 Iris 不提供通用插件 API、插件市场或任意代码执行能力。Skills 仅是由 Iris 创建、用户确认后启用的 prompt-only `SKILL.md` 行为包；不安装 URL/Git/本地包，不承载 MCP、脚本或依赖。
 

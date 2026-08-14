@@ -380,6 +380,9 @@ impl AppState {
         let _ = state
             .db
             .with_conn(FeedRepository::recover_interrupted_fulltext);
+        let _ = crate::feed::document::maintain_cache(
+            &state.data_dir.join("cache").join("feed-documents"),
+        );
 
         if let Err(e) = crate::llm::fetch_web_page::cleanup_expired_web_cache(&state.db) {
             tracing::warn!("failed to cleanup expired web cache: {e}");

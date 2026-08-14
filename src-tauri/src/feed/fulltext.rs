@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use scraper::{Html, Selector};
+use sha2::Digest;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::error::{AppError, AppResult};
@@ -17,77 +18,529 @@ use crate::storage::db::Database;
 
 /// 转换后的正文 Markdown 上限（小于网络响应上限，限制常驻缓存与 FTS 负担）。
 pub(crate) const FULLTEXT_MARKDOWN_MAX_BYTES: usize = 768 * 1024;
+/// 网页正文提取规则版本；旧版本只在用户再次打开单篇文章时重取。
+pub(crate) const FULLTEXT_EXTRACTION_VERSION: i64 = 2;
+const MAX_CANDIDATES: usize = 64;
+const MAX_CANDIDATE_NODES: usize = 50_000;
+const MAX_REMOVALS: usize = 256;
+const MAX_REMOVAL_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ExtractedPrimaryDocument {
+    pub kind: &'static str,
+    pub url: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ExtractedWebContent {
+    pub markdown: String,
+    pub text: String,
+    pub quality_score: i64,
+    pub extraction_version: i64,
+    pub primary_document: Option<ExtractedPrimaryDocument>,
+}
 
 /// 从已验证且有界的 HTML 选择正文区域并转换为 Markdown。
 ///
 /// 优先常见的语义/通用正文容器，并选择文字密度最高者；没有可靠容器时才
 /// 降级到 `body`。规则不依赖任何站点或域名。
 /// 解析失败或空正文返回稳定错误，阅读器继续显示 RSS 摘要。
+#[cfg(test)]
 pub(crate) fn extract_fulltext_markdown(
     html: String,
     base_url: &str,
 ) -> AppResult<(String, String)> {
-    let fragment = {
-        let document = Html::parse_document(&html);
-        let selectors = [
-            "article",
-            "main",
-            "[role=main]",
-            "[role=article]",
-            ".post-content",
-            ".article-content",
-            ".entry-content",
-            ".main-content",
-            "#content",
-            "#main-content",
-        ];
-        // 先只保留 document 内的节点引用。相邻/嵌套的候选（例如 article 与 main）
-        // 不能各自克隆一份 HTML；选定最大正文后才生成唯一一份片段字符串。
-        let mut best = None;
-        for selector in selectors
-            .iter()
-            .filter_map(|selector| Selector::parse(selector).ok())
-        {
-            for element in document.select(&selector) {
-                // 不为每个候选拼接一份完整正文。网页响应已受 1 MiB 限制，但
-                // 嵌套的 article/main 候选仍可能很多；逐段计数可避免额外峰值。
-                let text_len: usize = element.text().map(|part| part.chars().count()).sum();
-                if text_len >= 160
-                    && best
-                        .as_ref()
-                        .is_none_or(|(best_len, _)| text_len > *best_len)
-                {
-                    best = Some((text_len, element));
-                }
+    let extracted = extract_fulltext(html, base_url)?;
+    Ok((extracted.markdown, extracted.text))
+}
+
+#[cfg(test)]
+pub(crate) fn extract_fulltext(html: String, base_url: &str) -> AppResult<ExtractedWebContent> {
+    extract_fulltext_for_item(html, base_url, None)
+}
+
+fn extract_fulltext_for_item(
+    html: String,
+    base_url: &str,
+    expected_title: Option<&str>,
+) -> AppResult<ExtractedWebContent> {
+    let document = Html::parse_document(&html);
+    let primary_document = extract_primary_document(&document, base_url);
+    if let Some(scholarly) = extract_scholarly_metadata(&document) {
+        let markdown = truncate_utf8(scholarly, FULLTEXT_MARKDOWN_MAX_BYTES);
+        let text = markdown_to_text(&markdown);
+        if text.chars().count() >= 80 {
+            return Ok(ExtractedWebContent {
+                quality_score: 10_000 + text.chars().count() as i64,
+                markdown,
+                text,
+                extraction_version: FULLTEXT_EXTRACTION_VERSION,
+                primary_document,
+            });
+        }
+    }
+
+    let selectors = [
+        "article",
+        "[itemprop=articleBody]",
+        "[role=article]",
+        ".post-content",
+        ".article-content",
+        ".entry-content",
+        ".main-content",
+        "[class~=abstract]",
+        "main",
+        "[role=main]",
+        "#content",
+        "#main-content",
+    ];
+    let mut best: Option<(i64, usize, scraper::ElementRef<'_>)> = None;
+    let mut seen = 0_usize;
+    for selector in selectors
+        .iter()
+        .filter_map(|value| Selector::parse(value).ok())
+    {
+        for element in document.select(&selector) {
+            if seen >= MAX_CANDIDATES {
+                break;
+            }
+            seen += 1;
+            let Some(score) = score_candidate(element, false) else {
+                continue;
+            };
+            let depth = element.ancestors().take(64).count();
+            if best.as_ref().is_none_or(|(best_score, best_depth, _)| {
+                score > *best_score || (score == *best_score && depth > *best_depth)
+            }) {
+                best = Some((score, depth, element));
             }
         }
-        best.map(|(_, element)| element.html())
-            .or_else(|| {
-                Selector::parse("body").ok().and_then(|selector| {
-                    document
-                        .select(&selector)
-                        .next()
-                        .map(|element| element.html())
-                })
-            })
-            .ok_or_else(|| AppError::msg("feed_fulltext_extract_failed"))?
-    };
-    // `scraper` 解析树和输入缓冲都在此点释放，再进入 HTML → Markdown；
-    // 这样单项峰值始终受 1 MiB 响应与 768 KiB 输出的双重上限约束。
+    }
+    if best.is_none() {
+        let body = Selector::parse("body")
+            .ok()
+            .and_then(|selector| document.select(&selector).next());
+        if let Some(body) = body {
+            if let Some(score) = score_candidate(body, true) {
+                best = Some((score, 0, body));
+            }
+        }
+    }
+    let (quality_score, _, element) =
+        best.ok_or_else(|| AppError::msg("feed_fulltext_extract_failed"))?;
+    let fragment = sanitize_fragment(element.html(), base_url);
+    drop(document);
     drop(html);
 
     let markdown =
         html_to_markdown(&fragment).map_err(|_| AppError::msg("feed_fulltext_extract_failed"))?;
     let markdown = rewrite_links(&markdown, Some(base_url));
+    let markdown = remove_duplicate_title(markdown, expected_title);
     let markdown = truncate_utf8(markdown, FULLTEXT_MARKDOWN_MAX_BYTES);
-    if markdown.trim().is_empty() {
-        return Err(AppError::msg("feed_fulltext_extract_failed"));
-    }
     let text = markdown_to_text(&markdown);
     if text.trim().chars().count() < 80 {
         return Err(AppError::msg("feed_fulltext_extract_failed"));
     }
-    Ok((markdown, text))
+    Ok(ExtractedWebContent {
+        markdown,
+        text,
+        quality_score,
+        extraction_version: FULLTEXT_EXTRACTION_VERSION,
+        primary_document,
+    })
+}
+
+fn remove_duplicate_title(markdown: String, expected_title: Option<&str>) -> String {
+    let Some(expected_title) = expected_title else {
+        return markdown;
+    };
+    let Some(first_line) = markdown.lines().next() else {
+        return markdown;
+    };
+    let Some(heading) = first_line.strip_prefix("# ") else {
+        return markdown;
+    };
+    let normalize = |value: &str| {
+        value
+            .chars()
+            .filter(|character| character.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    if normalize(heading) != normalize(expected_title) {
+        return markdown;
+    }
+    markdown[first_line.len()..]
+        .trim_start_matches(['\r', '\n'])
+        .to_string()
+}
+
+fn meta_contents(document: &Html, name: &str) -> Vec<String> {
+    let Ok(selector) = Selector::parse("meta[name], meta[property]") else {
+        return Vec::new();
+    };
+    document
+        .select(&selector)
+        .filter(|element| {
+            element
+                .value()
+                .attr("name")
+                .or_else(|| element.value().attr("property"))
+                .is_some_and(|value| value.eq_ignore_ascii_case(name))
+        })
+        .filter_map(|element| element.value().attr("content"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .take(64)
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn json_ld_strings(document: &Html, keys: &[&str]) -> Vec<String> {
+    let Ok(selector) = Selector::parse("script[type='application/ld+json']") else {
+        return Vec::new();
+    };
+    let mut results = Vec::new();
+    for script in document.select(&selector).take(8) {
+        let raw = script.text().take(1).collect::<String>();
+        if raw.len() > 256 * 1024 {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        let mut stack = vec![&value];
+        let mut visited = 0_usize;
+        while let Some(value) = stack.pop() {
+            visited += 1;
+            if visited > 512 || results.len() >= 64 {
+                break;
+            }
+            match value {
+                serde_json::Value::Object(values) => {
+                    for (key, value) in values {
+                        if keys
+                            .iter()
+                            .any(|candidate| key.eq_ignore_ascii_case(candidate))
+                        {
+                            match value {
+                                serde_json::Value::String(value) => {
+                                    results.push(value.trim().to_string());
+                                }
+                                serde_json::Value::Object(author)
+                                    if key.eq_ignore_ascii_case("author") =>
+                                {
+                                    if let Some(name) =
+                                        author.get("name").and_then(|name| name.as_str())
+                                    {
+                                        results.push(name.trim().to_string());
+                                    }
+                                }
+                                serde_json::Value::Array(authors)
+                                    if key.eq_ignore_ascii_case("author") =>
+                                {
+                                    for author in authors.iter().take(32) {
+                                        if let Some(name) = author
+                                            .as_object()
+                                            .and_then(|author| author.get("name"))
+                                            .and_then(|name| name.as_str())
+                                        {
+                                            results.push(name.trim().to_string());
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        stack.push(value);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    stack.extend(values.iter().rev().take(64));
+                }
+                _ => {}
+            }
+        }
+    }
+    results.retain(|value| !value.is_empty());
+    results
+}
+
+fn json_ld_has_scholarly_type(document: &Html) -> bool {
+    json_ld_strings(document, &["@type"])
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case("ScholarlyArticle"))
+}
+
+fn extract_scholarly_metadata(document: &Html) -> Option<String> {
+    let citation_signal = !meta_contents(document, "citation_abstract").is_empty()
+        || !meta_contents(document, "citation_pdf_url").is_empty()
+        || !meta_contents(document, "citation_doi").is_empty()
+        || !meta_contents(document, "citation_author").is_empty();
+    if !citation_signal && !json_ld_has_scholarly_type(document) {
+        return None;
+    }
+    let abstract_text = meta_contents(document, "citation_abstract")
+        .into_iter()
+        .next()
+        .or_else(|| meta_contents(document, "dc.description").into_iter().next())
+        .or_else(|| meta_contents(document, "og:description").into_iter().next())
+        .or_else(|| {
+            json_ld_strings(document, &["abstract", "description"])
+                .into_iter()
+                .next()
+        })?;
+    if abstract_text.chars().count() < 80 {
+        return None;
+    }
+    let mut authors = meta_contents(document, "citation_author");
+    if authors.is_empty() {
+        authors = meta_contents(document, "dc.creator");
+    }
+    if authors.is_empty() {
+        authors = json_ld_strings(document, &["author"]);
+    }
+    let date = meta_contents(document, "citation_publication_date")
+        .into_iter()
+        .next()
+        .or_else(|| meta_contents(document, "dc.date").into_iter().next())
+        .or_else(|| {
+            meta_contents(document, "article:published_time")
+                .into_iter()
+                .next()
+        })
+        .or_else(|| {
+            json_ld_strings(document, &["datePublished"])
+                .into_iter()
+                .next()
+        });
+    let doi = meta_contents(document, "citation_doi")
+        .into_iter()
+        .next()
+        .or_else(|| meta_contents(document, "dc.identifier").into_iter().next());
+    let mut markdown = String::new();
+    if !authors.is_empty() {
+        markdown.push_str("**作者：** ");
+        markdown.push_str(
+            &authors
+                .iter()
+                .map(|author| escape_markdown_text(author))
+                .collect::<Vec<_>>()
+                .join("、"),
+        );
+        markdown.push_str("\n\n");
+    }
+    if let Some(date) = date {
+        markdown.push_str("**日期：** ");
+        markdown.push_str(&escape_markdown_text(&date));
+        markdown.push_str("\n\n");
+    }
+    markdown.push_str("## 摘要\n\n");
+    markdown.push_str(&escape_markdown_text(&abstract_text));
+    if let Some(doi) = doi {
+        markdown.push_str("\n\n**DOI：** ");
+        markdown.push_str(&escape_markdown_text(&doi));
+    }
+    Some(markdown)
+}
+
+fn escape_markdown_text(value: &str) -> String {
+    value
+        .chars()
+        .flat_map(|character| {
+            if matches!(
+                character,
+                '\\' | '`' | '*' | '_' | '[' | ']' | '#' | '>' | '|'
+            ) {
+                vec!['\\', character]
+            } else {
+                vec![character]
+            }
+        })
+        .collect()
+}
+
+fn resolve_https_url(value: &str, base_url: &str) -> Option<String> {
+    let base = reqwest::Url::parse(base_url).ok()?;
+    let resolved = base.join(value.trim()).ok()?;
+    crate::network::safe_https::validate_https_url(resolved.as_str()).ok()?;
+    Some(resolved.to_string())
+}
+
+fn extract_primary_document(document: &Html, base_url: &str) -> Option<ExtractedPrimaryDocument> {
+    let meta_url = meta_contents(document, "citation_pdf_url")
+        .into_iter()
+        .next();
+    let link_url = Selector::parse("link[type='application/pdf'], a[type='application/pdf']")
+        .ok()
+        .and_then(|selector| {
+            document.select(&selector).find_map(|element| {
+                element
+                    .value()
+                    .attr("href")
+                    .or_else(|| element.value().attr("content"))
+                    .map(ToOwned::to_owned)
+            })
+        });
+    let explicit_pdf_url = Selector::parse("a[href]").ok().and_then(|selector| {
+        document.select(&selector).take(128).find_map(|element| {
+            let href = element.value().attr("href")?;
+            let resolved = resolve_https_url(href, base_url)?;
+            let parsed = reqwest::Url::parse(&resolved).ok()?;
+            let link_text = element
+                .text()
+                .take(4096)
+                .collect::<String>()
+                .to_ascii_lowercase();
+            (parsed.path().to_ascii_lowercase().ends_with(".pdf")
+                || link_text.split_whitespace().any(|word| word == "pdf"))
+            .then_some(resolved)
+        })
+    });
+    meta_url
+        .or(link_url)
+        .and_then(|url| resolve_https_url(&url, base_url))
+        .or(explicit_pdf_url)
+        .map(|url| ExtractedPrimaryDocument { kind: "pdf", url })
+}
+
+fn score_candidate(element: scraper::ElementRef<'_>, body_fallback: bool) -> Option<i64> {
+    let mut nodes = element.descendants();
+    let text = nodes
+        .by_ref()
+        .take(MAX_CANDIDATE_NODES)
+        .filter_map(|node| node.value().as_text())
+        .map(|text| text.to_string())
+        .collect::<String>();
+    if nodes.next().is_some() {
+        return None;
+    }
+    let text_len = text.trim().chars().count();
+    let minimum_text = if body_fallback { 160 } else { 80 };
+    if text_len < minimum_text {
+        return None;
+    }
+    let paragraphs = Selector::parse("p")
+        .ok()
+        .map_or(0, |selector| element.select(&selector).count().min(500));
+    if body_fallback && paragraphs < 3 {
+        return None;
+    }
+    let link_text_len = Selector::parse("a")
+        .ok()
+        .map(|selector| {
+            element
+                .select(&selector)
+                .take(500)
+                .flat_map(|link| link.text())
+                .map(|part| part.chars().count())
+                .sum::<usize>()
+        })
+        .unwrap_or(0);
+    if link_text_len.saturating_mul(100) > text_len.saturating_mul(35) {
+        return None;
+    }
+    let controls = Selector::parse("button, input, select, textarea, form, dialog")
+        .ok()
+        .map_or(0, |selector| element.select(&selector).take(101).count());
+    if body_fallback && controls > paragraphs.saturating_mul(2).max(6) {
+        return None;
+    }
+    let punctuation = text
+        .chars()
+        .filter(|character| matches!(character, '.' | '!' | '?' | '。' | '！' | '？'))
+        .count();
+    Some(
+        text_len as i64 + paragraphs as i64 * 160 + punctuation as i64 * 12
+            - link_text_len as i64 * 2
+            - controls as i64 * 240,
+    )
+}
+
+fn sanitize_fragment(mut fragment: String, base_url: &str) -> String {
+    let parsed = Html::parse_fragment(&fragment);
+    let negative = [
+        "nav",
+        "header",
+        "footer",
+        "aside",
+        "form",
+        "dialog",
+        "[hidden]",
+        "[aria-hidden=true]",
+        "[class*='comment']",
+        "[class*='share']",
+        "[class*='recommend']",
+        "[class*='related']",
+        "[class*='citation']",
+        "[class*='reference']",
+        "[class*='bookmark']",
+        "[class*='toolbar']",
+        "[class*='sidebar']",
+        "[class*='advert']",
+        "[class*='modal']",
+        "[class*='pagination']",
+    ];
+    let mut removals = Vec::new();
+    let mut removal_bytes = 0_usize;
+    let mut removal_hashes = std::collections::HashSet::new();
+    let mut push_removal = |removal: String| {
+        if removals.len() >= MAX_REMOVALS
+            || removal_bytes.saturating_add(removal.len()) > MAX_REMOVAL_BYTES
+        {
+            return false;
+        }
+        let digest = sha2::Sha256::digest(removal.as_bytes());
+        if removal_hashes.insert(digest) {
+            removal_bytes = removal_bytes.saturating_add(removal.len());
+            removals.push(removal);
+        }
+        true
+    };
+    for selector in negative
+        .iter()
+        .filter_map(|value| Selector::parse(value).ok())
+    {
+        for element in parsed.select(&selector).take(128) {
+            if !push_removal(element.html()) {
+                break;
+            }
+        }
+    }
+    if let Ok(selector) = Selector::parse("img") {
+        for image in parsed.select(&selector).take(256) {
+            let alt = image.value().attr("alt").unwrap_or("").trim();
+            let valid_source = image
+                .value()
+                .attr("src")
+                .and_then(|source| resolve_https_url(source, base_url))
+                .is_some();
+            let class = image
+                .value()
+                .attr("class")
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let inside_figure = image
+                .ancestors()
+                .take(32)
+                .filter_map(scraper::ElementRef::wrap)
+                .any(|ancestor| ancestor.value().name() == "figure");
+            let meaningful = valid_source
+                && (inside_figure
+                    || (alt.chars().count() >= 4
+                        && !["icon", "logo", "avatar", "badge", "spinner"]
+                            .iter()
+                            .any(|token| class.contains(token))));
+            if !meaningful && !push_removal(image.html()) {
+                break;
+            }
+        }
+    }
+    drop(parsed);
+    for removal in removals {
+        fragment = fragment.replace(&removal, "");
+    }
+    fragment
 }
 
 fn truncate_utf8(mut value: String, max_bytes: usize) -> String {
@@ -208,8 +661,8 @@ impl<G: FeedNetGate + 'static> FeedFulltextService<G> {
         self.drain_pending().await
     }
 
-    async fn fetch_one(&self, item: (String, String, String)) -> AppResult<()> {
-        let (item_id, source_id, url) = item;
+    async fn fetch_one(&self, item: (String, String, String, String)) -> AppResult<()> {
+        let (item_id, source_id, url, expected_title) = item;
         let result = async {
             let host = reqwest::Url::parse(&url)
                 .ok()
@@ -238,9 +691,23 @@ impl<G: FeedNetGate + 'static> FeedFulltextService<G> {
             // `String::from_utf8` 直接接管网络 Vec，避免额外的整份 HTML 拷贝。
             let html = String::from_utf8(response.bytes)
                 .map_err(|_| AppError::msg("feed_fulltext_decode_failed"))?;
-            let (markdown, text) = extract_fulltext_markdown(html, &response.final_url)?;
+            let extracted =
+                extract_fulltext_for_item(html, &response.final_url, Some(&expected_title))?;
             let stored = self.db.with_conn(|conn| {
-                FeedRepository::store_fulltext(conn, &item_id, &markdown, &text, chrono::Utc::now())
+                tracing::debug!(
+                    quality_score = extracted.quality_score,
+                    extraction_version = extracted.extraction_version,
+                    "feed_fulltext_extracted"
+                );
+                FeedRepository::store_fulltext(
+                    conn,
+                    &item_id,
+                    &extracted.markdown,
+                    &extracted.text,
+                    extracted.extraction_version,
+                    extracted.primary_document.as_ref(),
+                    chrono::Utc::now(),
+                )
             })?;
             if stored {
                 self.emit_changed(&source_id).await;
@@ -319,6 +786,121 @@ mod tests {
         assert!(text.contains("通用正文"));
         assert!(!text.contains("站点标题"));
         assert!(!text.contains("页脚"));
+    }
+
+    #[test]
+    fn ordinary_open_graph_description_never_replaces_a_full_article() {
+        let article = "The complete article contains multiple detailed paragraphs. ".repeat(40);
+        let html = format!(
+            "<html><head><meta property='og:description' content='Short social teaser that is intentionally not the body.'></head><body><article><h1>Full story</h1><p>{article}</p><p>{article}</p><p>{article}</p></article></body></html>"
+        );
+
+        let extracted = extract_fulltext(html, "https://example.com/story").unwrap();
+        assert!(extracted.text.contains("complete article"));
+        assert!(!extracted.text.contains("Short social teaser"));
+    }
+
+    #[test]
+    fn deeply_nested_repeated_noise_is_cleaned_with_bounded_work() {
+        let mut noise = String::new();
+        for _ in 0..400 {
+            noise.push_str("<div class='related citation toolbar'>duplicate tool");
+        }
+        for _ in 0..400 {
+            noise.push_str("</div>");
+        }
+        let html = format!(
+            "<html><body><article><p>{}</p>{noise}<p>{}</p><p>{}</p></article></body></html>",
+            "Useful article text. ".repeat(20),
+            "More useful text. ".repeat(20),
+            "Final useful text. ".repeat(20),
+        );
+        let extracted = extract_fulltext(html, "https://example.com/story").unwrap();
+        assert!(extracted.text.contains("Useful article"));
+        assert!(!extracted.text.contains("duplicate tool"));
+    }
+
+    #[test]
+    fn extracts_scholarly_metadata_without_page_widgets() {
+        let html = format!(
+            r#"<html><head>
+                <meta name="citation_title" content="A General Paper" />
+                <meta name="citation_author" content="Ada Lovelace" />
+                <meta name="citation_author" content="Grace Hopper" />
+                <meta name="citation_abstract" content="{}" />
+                <meta name="citation_pdf_url" content="https://papers.example/paper.pdf" />
+              </head><body>
+                <main><h1>A General Paper</h1><p>{}</p>
+                  <section class="references-and-citations"><button>Export citation</button></section>
+                  <section class="related-tools">Connected papers and recommendations</section>
+                </main>
+              </body></html>"#,
+            "This abstract explains the complete research result. ".repeat(5),
+            "This abstract explains the complete research result. ".repeat(5),
+        );
+
+        let extracted = extract_fulltext(html, "https://papers.example/record")
+            .expect("scholarly metadata should be extracted");
+
+        assert!(!extracted.markdown.contains("# A General Paper"));
+        assert!(extracted.markdown.contains("Ada Lovelace"));
+        assert!(extracted.markdown.contains("This abstract explains"));
+        assert!(!extracted.markdown.contains("Export citation"));
+        assert!(!extracted.markdown.contains("Connected papers"));
+        assert_eq!(
+            extracted
+                .primary_document
+                .as_ref()
+                .map(|document| document.url.as_str()),
+            Some("https://papers.example/paper.pdf")
+        );
+    }
+
+    #[test]
+    fn rejects_navigation_heavy_body_fallback() {
+        let links = (0..30)
+            .map(|index| format!("<a href='/tool/{index}'>related tool {index}</a>"))
+            .collect::<String>();
+        let html = format!(
+            "<html><body><div><p>Short landing text.</p>{links}<button>Load more</button></div></body></html>"
+        );
+
+        let result = extract_fulltext(html, "https://example.com/landing");
+
+        assert!(result.is_err(), "link-heavy page shell must not become正文");
+    }
+
+    #[test]
+    fn extracts_generic_json_ld_scholarly_metadata_without_site_rules() {
+        let abstract_text =
+            "A bounded JSON-LD abstract describing a general research result. ".repeat(4);
+        let json_ld = serde_json::json!({
+            "@type": "ScholarlyArticle",
+            "headline": "Generic JSON-LD Paper",
+            "abstract": abstract_text,
+            "author": [{ "name": "General Author" }],
+            "datePublished": "2026-08-13"
+        });
+        let html = format!(
+            "<html><head><script type='application/ld+json'>{json_ld}</script></head><body><main><p>fallback shell</p></main></body></html>"
+        );
+
+        let extracted = extract_fulltext(html, "https://papers.example/record").unwrap();
+        assert!(extracted.markdown.contains("General Author"));
+        assert!(extracted.markdown.contains("2026-08-13"));
+        assert!(extracted.markdown.contains("JSON-LD abstract"));
+    }
+
+    #[test]
+    fn removes_decorative_or_unsafe_images_but_keeps_https_figures() {
+        let html = format!(
+            "<html><body><article><h1>Figures</h1><p>{}</p><img src='http://unsafe.example/icon.png' alt='toolbar icon'><figure><img src='https://cdn.example/chart.png' alt='Research result chart'><figcaption>Figure 1</figcaption></figure></article></body></html>",
+            "A complete article paragraph with punctuation. ".repeat(8)
+        );
+        let extracted = extract_fulltext(html, "https://papers.example/record").unwrap();
+        assert!(!extracted.markdown.contains("unsafe.example"));
+        assert!(extracted.markdown.contains("https://cdn.example/chart.png"));
+        assert!(extracted.markdown.contains("Figure 1"));
     }
 
     #[tokio::test]

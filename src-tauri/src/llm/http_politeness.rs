@@ -10,39 +10,51 @@ use crate::error::{AppError, AppResult};
 static HOST_LAST_REQUEST: LazyLock<Mutex<HashMap<String, Instant>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-const MIN_INTERVAL_SECS: u64 = 2;
+#[cfg(not(test))]
+const MIN_INTERVAL: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const MIN_INTERVAL: Duration = Duration::from_millis(25);
+const HOST_CACHE_LIMIT: usize = 1_024;
+const HOST_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 
-/// Async throttle: sleep until at least `MIN_INTERVAL_SECS` since the last request to this host.
-/// Lock is released before the async sleep to avoid blocking the runtime.
+/// Async throttle: atomically reserve a per-host request slot, then sleep until it.
+/// The reservation is made while holding the mutex, so concurrent callers cannot
+/// observe the same prior timestamp. The cache is bounded to prevent host churn
+/// from growing process memory without limit.
 pub async fn throttle_host(host: &str) -> AppResult<()> {
     let key = host.trim().to_lowercase();
     if key.is_empty() {
         return Ok(());
     }
-    let need_wait = {
-        let map = HOST_LAST_REQUEST
+    let wait = {
+        let mut map = HOST_LAST_REQUEST
             .lock()
-            .map_err(|_| AppError::msg("Lock error"))?;
-        if let Some(t) = map.get(&key) {
-            let elapsed = t.elapsed();
-            if elapsed < Duration::from_secs(MIN_INTERVAL_SECS) {
-                Some(Duration::from_secs(MIN_INTERVAL_SECS) - elapsed)
-            } else {
-                None
+            .map_err(|_| AppError::msg("http_politeness_state_unavailable"))?;
+        let now = Instant::now();
+        map.retain(|_, slot| {
+            now.checked_duration_since(*slot)
+                .is_none_or(|age| age <= HOST_CACHE_TTL)
+        });
+        if map.len() >= HOST_CACHE_LIMIT {
+            if let Some(oldest) = map
+                .iter()
+                .min_by_key(|(_, slot)| **slot)
+                .map(|(host, _)| host.clone())
+            {
+                map.remove(&oldest);
             }
-        } else {
-            None
         }
-    }; // lock dropped here
+        let reserved = map
+            .get(&key)
+            .and_then(|previous| previous.checked_add(MIN_INTERVAL))
+            .map_or(now, |next| next.max(now));
+        map.insert(key, reserved);
+        reserved.saturating_duration_since(now)
+    };
 
-    if let Some(wait) = need_wait {
-        tokio::time::sleep(tokio::time::Duration::from_millis(wait.as_millis() as u64)).await;
+    if !wait.is_zero() {
+        tokio::time::sleep(wait).await;
     }
-
-    HOST_LAST_REQUEST
-        .lock()
-        .map_err(|_| AppError::msg("Lock error"))?
-        .insert(key, Instant::now());
     Ok(())
 }
 
@@ -53,5 +65,16 @@ mod tests {
     #[tokio::test]
     async fn throttle_host_accepts_empty() {
         throttle_host("").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn concurrent_waiters_reserve_distinct_host_slots() {
+        let host = "politeness-race.invalid";
+        throttle_host(host).await.unwrap();
+        let started = Instant::now();
+        let (first, second) = tokio::join!(throttle_host(host), throttle_host(host));
+        first.unwrap();
+        second.unwrap();
+        assert!(started.elapsed() >= MIN_INTERVAL * 2);
     }
 }

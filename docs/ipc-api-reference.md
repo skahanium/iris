@@ -80,10 +80,15 @@ Rust 侧契约见 `feed::model`。仅登记以下命令，全部通过仓储/ser
 | `feed_source_add`            | `input: FeedSourceAddInput`                           | `FeedSourceSummary`                                           |
 | `feed_source_list`           | —                                                     | `FeedSourceSummary[]`                                         |
 | `feed_source_update`         | `sourceId`、`patch: FeedSourceUpdateInput`            | —                                                             |
-| `feed_source_remove`         | `sourceId`、`keepItems`                               | 删除的文章数（保留时为 0）                                    |
+| `feed_source_remove`         | `sourceId`、`keepItems`                               | 兼容旧调用；暂停或移入 RSS 回收站，不再硬删除                 |
+| `feed_source_trash`          | `sourceId`                                            | 移入 RSS 回收站的文章数                                       |
+| `feed_source_trash_restore`  | `sourceId`                                            | 恢复来源及本次退订文章；来源保持暂停                          |
+| `feed_source_trash_purge`    | `sourceId`                                            | 永久删除来源及文章数                                          |
 | `feed_source_item_count`     | `sourceId`                                            | 来源下文章总数                                                |
+| `feed_source_trash_preview`  | `sourceId`                                            | 退订确认所需文章数、收藏数和清理时间                          |
+| `feed_source_trash_match`    | `url`                                                 | 相同规范 URL 的可恢复来源，或 `null`                          |
 | `feed_library_summary`       | —                                                     | 订阅维护页的来源、文章、未读、失败及最近成功同步汇总          |
-| `feed_trash_list`            | —                                                     | RSS 专属回收站条目（最多 200）                                |
+| `feed_trash_list`            | —                                                     | `FeedTrashSnapshot`；来源退订按来源分组，普通到期文章单列     |
 | `feed_trash_restore`         | `itemId`                                              | —                                                             |
 | `feed_trash_clear`           | —                                                     | 物理删除的回收站条目数                                        |
 | `feed_library_optimize`      | —                                                     | 显式 SQLite 空间优化                                          |
@@ -91,6 +96,12 @@ Rust 侧契约见 `feed::model`。仅登记以下命令，全部通过仓储/ser
 | `feed_item_get`              | `itemId`                                              | `FeedItemDetail`                                              |
 | `feed_item_set_state`        | `itemId`、`patch: FeedItemStatePatch`（至少一个字段） | —                                                             |
 | `feed_fulltext_enqueue_item` | `itemId`                                              | `queued`、`already_queued`、`already_ready` 或 `not_eligible` |
+| `feed_document_prepare`      | `itemId`                                              | opaque PDF lease；仅用户点击时下载                            |
+| `feed_document_cancel`       | `itemId`                                              | 取消排队或下载中的 PDF                                        |
+| `feed_document_release`      | `handle`                                              | 释放 PDF lease                                                |
+| `feed_document_cache_clear`  | —                                                     | 清理 PDF 临时缓存文件数                                       |
+| `feed_images_prepare`        | `itemId`                                              | 授权当前文章并返回受控图片 lease；不暴露缓存路径              |
+| `feed_images_release`        | `handles[]`（最多 256）                               | 释放当前阅读器持有的图片 lease                                |
 | `feed_items_mark_read`       | `query: FeedItemQuery`（冻结筛选）                    | 影响行数                                                      |
 | `feed_sync_source`           | `sourceId`、`markHistoryRead?`（仅首次同步生效）      | `FeedSyncOutcome`（等待完成）                                 |
 | `feed_sync_all`              | —                                                     | `FeedSyncBatchOutcome`（全部启用源，并发最多 2）              |
@@ -112,8 +123,8 @@ Rust 侧契约见 `feed::model`。仅登记以下命令，全部通过仓储/ser
   不建立 job 恢复协议，应用重启后按 `next_fetch_at` 恢复。
 - **输入有界**：ID ≤ 200、URL ≤ 2048（且必须通过 SSRF 校验）、string
   ≤ 4096；`FeedItemQuery.search` 必须非空且有界；游标时间/行号与批量来源数量均校验；`feed_item_set_state` 空 patch 拒绝。`feed_sync_batch` 接受最多 10,000 个有界来源 ID，执行端仍固定并发最多 2。
-- **退订语义**：`keepItems=true` 保留文章并暂停（置 disabled）；`false`
-  删除订阅及其文章（cascade + FTS 清理）。
-- **网页正文补全**：`feed_source_update.fulltextEnabled` 是来源级开关；新建和升级后的来源默认开启。后续摘要型文章自动进入有界队列；升级前已保存的摘要仅在用户打开该文章时通过 `feed_fulltext_enqueue_item` 排队，绝不回溯来源历史。
+- **退订语义**：`keepItems=true` 只暂停同步；`false` 作为旧 IPC 兼容入口也只能移入 RSS 回收站。新界面统一调用 `feed_source_trash`；来源和本次退订文章保留 30 天，恢复后保持暂停，不能复活此前按保留期限删除的文章。
+- **网页正文补全**：`feed_source_update.fulltextEnabled` 是来源级开关；新建和升级后的来源默认开启。后续摘要型文章自动进入有界队列；升级前摘要或旧提取版本的网页正文仅在用户打开该文章时通过 `feed_fulltext_enqueue_item` 单篇重取。提取器读取通用 scholarly/OG/DC 元数据与语义容器并评分，不使用域名规则；失败时清除旧混乱正文并恢复 Feed 摘要。
+- **PDF 主文档**：只接受通用论文元数据或明确 `application/pdf` 链接识别出的 HTTPS PDF。下载沿用唯一系统代理与固定 IP 传输；不同 URL 单任务排队、同一规范 URL 共享进行中的下载，等待与下载合计最多 180 秒，取消可中断两种状态。单文件最多 100 MiB、64 KiB 写入块；前端只获得短期 opaque lease，持有期间缓存清理不会删除对应文件。`feed:document-progress` 仅含 `itemId/status/bytes`，不含 URL、代理或本地路径。
 - 发现的多候选必须由用户选择，不自动订阅全部；候选 URL 与请求同等
   校验（跨协议/私网拒绝）。

@@ -171,6 +171,27 @@ fn import_is_idempotent_and_dedupes() {
 }
 
 #[test]
+fn import_skips_a_feed_url_that_is_waiting_in_source_trash() {
+    let conn = test_conn();
+    let first = import_opml(&conn, duplicate_opml(), false).expect("first import");
+    let source_id = first.added_ids.first().expect("source id").clone();
+    FeedRepository::trash_source(&conn, &source_id, Utc::now())
+        .expect("trash source")
+        .expect("active source");
+
+    let second = import_opml(&conn, duplicate_opml(), false)
+        .expect("回收站内同 URL 应安全跳过而不是触发唯一键错误");
+    assert_eq!(second.added, 0);
+    assert_eq!(second.skipped, 3);
+    assert!(FeedRepository::get_deleted_source_by_feed_url(
+        &conn,
+        "https://example.com/feeds/dup.xml",
+    )
+    .expect("lookup")
+    .is_some());
+}
+
+#[test]
 fn import_updates_folder_and_override_without_resetting_state() {
     let conn = test_conn();
     // 预置「未分组」组里的 solo 源：旧分组、自定义标题、暂停中、带 etag。

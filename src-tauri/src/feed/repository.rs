@@ -11,8 +11,9 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Row};
 use crate::error::{AppError, AppResult};
 use crate::feed::model::{
     FeedItemDetail, FeedItemInput, FeedItemQuery, FeedItemStatePatch, FeedItemSummary,
-    FeedLibrarySummary, FeedSource, FeedSourcePatch, FeedSourceSummary, FeedSourceSyncState,
-    FeedTrashItem, NewFeedSource, UpsertSummary,
+    FeedLibrarySummary, FeedPrimaryDocument, FeedSource, FeedSourcePatch, FeedSourceSummary,
+    FeedSourceSyncState, FeedTrashItem, FeedTrashSnapshot, FeedTrashSource, NewFeedSource,
+    UpsertSummary,
 };
 
 /// 列表摘要从 `content_text` 截断的最大 Unicode scalar 数。
@@ -207,7 +208,7 @@ fn escape_like_query(value: &str) -> String {
         .replace('_', "\\_")
 }
 
-/// 订阅源完整行映射（23 列；`get_source`/`list_due_sources`/`get_source_by_feed_url`
+/// 订阅源完整行映射（24 列；`get_source`/`list_due_sources`/`get_source_by_feed_url`
 /// 的 SELECT 列序必须与此一致）。
 fn map_source_row(row: &Row) -> rusqlite::Result<FeedSource> {
     Ok(FeedSource {
@@ -284,7 +285,7 @@ impl FeedRepository {
     pub fn get_source(conn: &Connection, id: &str) -> AppResult<Option<FeedSource>> {
         let source = conn
             .query_row(
-                &format!("{SOURCE_SELECT} WHERE id = ?1"),
+                &format!("{SOURCE_SELECT} WHERE id = ?1 AND deleted_at IS NULL"),
                 [id],
                 map_source_row,
             )
@@ -299,12 +300,54 @@ impl FeedRepository {
     ) -> AppResult<Option<FeedSource>> {
         let source = conn
             .query_row(
-                &format!("{SOURCE_SELECT} WHERE feed_url = ?1"),
+                &format!("{SOURCE_SELECT} WHERE feed_url = ?1 AND deleted_at IS NULL"),
                 [feed_url],
                 map_source_row,
             )
             .optional()?;
         Ok(source)
+    }
+
+    pub fn get_deleted_source_by_feed_url(
+        conn: &Connection,
+        feed_url: &str,
+    ) -> AppResult<Option<String>> {
+        conn.query_row(
+            "SELECT id FROM feed_sources WHERE feed_url = ?1 AND deleted_at IS NOT NULL",
+            [feed_url],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    pub fn find_deleted_source_by_feed_url(
+        conn: &Connection,
+        feed_url: &str,
+    ) -> AppResult<Option<FeedTrashSource>> {
+        conn.query_row(
+            "SELECT s.id, COALESCE(s.title_override, s.title),
+                    COUNT(i.id), SUM(CASE WHEN i.starred_at IS NOT NULL THEN 1 ELSE 0 END),
+                    s.deleted_at, s.purge_after
+             FROM feed_sources s
+             LEFT JOIN feed_items i ON i.source_id = s.id
+                                      AND i.deletion_reason = 'source_removed'
+             WHERE s.feed_url = ?1 AND s.deleted_at IS NOT NULL
+             GROUP BY s.id",
+            [feed_url],
+            |row| {
+                Ok(FeedTrashSource {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    item_count: row.get(2)?,
+                    starred_count: row.get(3)?,
+                    deleted_at: row.get(4)?,
+                    purge_after: row.get(5)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
     }
 
     pub fn list_sources(conn: &Connection) -> AppResult<Vec<FeedSourceSummary>> {
@@ -320,6 +363,7 @@ impl FeedRepository {
                     s.last_checked_at, s.last_success_at, s.next_fetch_at,
                     s.consecutive_failures, s.last_error_code
              FROM feed_sources s
+             WHERE s.deleted_at IS NULL
              ORDER BY s.folder_path, COALESCE(s.title_override, s.title)",
         )?;
         let sources = statement
@@ -386,7 +430,10 @@ impl FeedRepository {
             values.push((":fulltext_enabled", value));
         }
         values.push((":id", &id));
-        let sql = format!("UPDATE feed_sources SET {} WHERE id = :id", sets.join(", "));
+        let sql = format!(
+            "UPDATE feed_sources SET {} WHERE id = :id AND deleted_at IS NULL",
+            sets.join(", ")
+        );
         let changed = conn.execute(&sql, values.as_slice())?;
         if changed > 0 && fulltext_enabled == Some(false) {
             // 关闭来源级补全后，不再启动尚未开始的网页请求；已在运行的请求
@@ -427,17 +474,42 @@ impl FeedRepository {
         )?)
     }
 
+    pub fn source_trash_preview(
+        conn: &Connection,
+        source_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<crate::feed::model::FeedSourceTrashPreview>> {
+        conn.query_row(
+            "SELECT COUNT(i.id),
+                    SUM(CASE WHEN i.starred_at IS NOT NULL THEN 1 ELSE 0 END)
+             FROM feed_sources s
+             LEFT JOIN feed_items i ON i.source_id = s.id AND i.deleted_at IS NULL
+             WHERE s.id = ?1 AND s.deleted_at IS NULL
+             GROUP BY s.id",
+            [source_id],
+            |row| {
+                Ok(crate::feed::model::FeedSourceTrashPreview {
+                    item_count: row.get(0)?,
+                    starred_count: row.get(1)?,
+                    purge_after: rfc3339(now + chrono::Duration::days(30)),
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     /// 汇总资料库维护页所需的非敏感计数与最近成功同步时间。
     pub fn library_summary(conn: &Connection) -> AppResult<FeedLibrarySummary> {
         Ok(conn.query_row(
             "SELECT
-                (SELECT COUNT(*) FROM feed_sources),
-                (SELECT COUNT(*) FROM feed_sources WHERE is_enabled = 1),
-                (SELECT COUNT(*) FROM feed_sources WHERE last_error_code IS NOT NULL),
+                (SELECT COUNT(*) FROM feed_sources WHERE deleted_at IS NULL),
+                (SELECT COUNT(*) FROM feed_sources WHERE deleted_at IS NULL AND is_enabled = 1),
+                (SELECT COUNT(*) FROM feed_sources WHERE deleted_at IS NULL AND last_error_code IS NOT NULL),
                 (SELECT COUNT(*) FROM feed_items WHERE deleted_at IS NULL),
                 (SELECT COUNT(*) FROM feed_items
                  WHERE deleted_at IS NULL AND read_at IS NULL AND archived_at IS NULL),
-                (SELECT MAX(last_success_at) FROM feed_sources)",
+                (SELECT MAX(last_success_at) FROM feed_sources WHERE deleted_at IS NULL)",
             [],
             |row| {
                 Ok(FeedLibrarySummary {
@@ -467,7 +539,7 @@ impl FeedRepository {
                  last_success_at = ?4, next_fetch_at = ?5,
                  consecutive_failures = ?6, last_error_code = ?7,
                  last_error_at = ?8, updated_at = ?9
-             WHERE id = ?10",
+             WHERE id = ?10 AND deleted_at IS NULL",
             params![
                 state.etag,
                 state.last_modified,
@@ -500,7 +572,7 @@ impl FeedRepository {
                  site_url = COALESCE(?2, site_url),
                  description = COALESCE(?3, description),
                  language = COALESCE(?4, language), updated_at = ?5
-             WHERE id = ?6",
+             WHERE id = ?6 AND deleted_at IS NULL",
             params![title, site_url, description, language, now, id],
         )?;
         Ok(changed > 0)
@@ -518,7 +590,7 @@ impl FeedRepository {
             "UPDATE feed_sources
              SET history_boundary_external_key = ?1, history_boundary_published_at = ?2,
                  updated_at = ?3
-             WHERE id = ?4",
+             WHERE id = ?4 AND deleted_at IS NULL",
             params![external_key, published_at, now, source_id],
         )?;
         Ok(changed > 0)
@@ -610,6 +682,14 @@ impl FeedRepository {
                          fulltext_markdown = CASE WHEN content_hash != ?11 THEN NULL ELSE fulltext_markdown END,
                          content_origin = CASE WHEN content_hash != ?11 THEN 'feed' ELSE content_origin END,
                          fulltext_status = CASE WHEN content_hash != ?11 THEN ?14 ELSE fulltext_status END,
+                         fulltext_extraction_version = CASE
+                             WHEN content_hash != ?11 THEN 0 ELSE fulltext_extraction_version END,
+                         primary_document_kind = CASE
+                             WHEN content_hash != ?11 THEN NULL ELSE primary_document_kind END,
+                         primary_document_url = CASE
+                             WHEN content_hash != ?11 THEN NULL ELSE primary_document_url END,
+                         images_authorized_at = CASE
+                             WHEN content_hash != ?11 THEN NULL ELSE images_authorized_at END,
                          content_hash = ?11, conversion_version = ?12,
                          conversion_status = ?13, updated_at = ?15
                      WHERE source_id = ?16 AND external_key = ?17
@@ -686,9 +766,11 @@ impl FeedRepository {
                         COALESCE(i.published_at, i.received_at), i.content_text,
                         i.read_at, i.starred_at, i.archived_at, i.conversion_status,
                         COALESCE(i.fulltext_markdown, i.content_markdown), i.summary_markdown, s.site_url,
-                        i.content_origin, i.fulltext_status
+                        i.content_origin, i.fulltext_status,
+                        i.primary_document_kind, i.primary_document_url,
+                        i.fulltext_extraction_version, i.images_authorized_at IS NOT NULL
                  FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
-                 WHERE i.id = ?1 AND i.deleted_at IS NULL",
+                 WHERE i.id = ?1 AND i.deleted_at IS NULL AND s.deleted_at IS NULL",
                 [item_id],
                 |row| {
                     Ok(FeedItemDetail {
@@ -698,11 +780,82 @@ impl FeedRepository {
                         site_url: row.get(17)?,
                         content_origin: row.get(18)?,
                         fulltext_status: row.get(19)?,
+                        primary_document: match (row.get::<_, Option<String>>(20)?, row.get::<_, Option<String>>(21)?) {
+                            (Some(kind), Some(url)) => Some(FeedPrimaryDocument { kind, url }),
+                            _ => None,
+                        },
+                        fulltext_needs_refresh: row.get::<_, String>(18)? == "web"
+                            && row.get::<_, i64>(22)?
+                                < crate::feed::fulltext::FULLTEXT_EXTRACTION_VERSION,
+                        images_authorized: row.get(23)?,
                     })
                 },
             )
             .optional()?;
         Ok(detail)
+    }
+
+    pub fn get_primary_document_url(conn: &Connection, item_id: &str) -> AppResult<Option<String>> {
+        conn.query_row(
+            "SELECT i.primary_document_url
+             FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
+             WHERE i.id = ?1 AND i.deleted_at IS NULL AND s.deleted_at IS NULL
+               AND i.primary_document_kind = 'pdf'",
+            [item_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// 在文章仍可阅读时记录一次明确的单篇图片授权，并返回当前正文和公开原文 URL。
+    pub fn authorize_item_images(
+        conn: &Connection,
+        item_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<(String, Option<String>)>> {
+        let item = conn
+            .query_row(
+                "SELECT COALESCE(i.fulltext_markdown, i.content_markdown), i.canonical_url
+                 FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
+                 WHERE i.id = ?1 AND i.deleted_at IS NULL AND s.deleted_at IS NULL",
+                [item_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if item.is_some() {
+            conn.execute(
+                "UPDATE feed_items SET images_authorized_at = ?1, updated_at = ?1
+                 WHERE id = ?2 AND deleted_at IS NULL",
+                params![rfc3339(now), item_id],
+            )?;
+        }
+        Ok(item)
+    }
+
+    pub fn source_primary_document_urls(
+        conn: &Connection,
+        source_id: &str,
+    ) -> AppResult<Vec<String>> {
+        let mut statement = conn.prepare(
+            "SELECT DISTINCT primary_document_url FROM feed_items
+             WHERE source_id = ?1 AND primary_document_kind = 'pdf'
+               AND primary_document_url IS NOT NULL",
+        )?;
+        let urls = statement
+            .query_map([source_id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(urls)
+    }
+
+    pub fn active_primary_document_reference_count(conn: &Connection, url: &str) -> AppResult<i64> {
+        Ok(conn.query_row(
+            "SELECT COUNT(*) FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
+             WHERE i.primary_document_url = ?1 AND i.deleted_at IS NULL
+               AND s.deleted_at IS NULL",
+            [url],
+            |row| row.get(0),
+        )?)
     }
 
     pub fn set_item_state(
@@ -767,7 +920,7 @@ impl FeedRepository {
             "UPDATE feed_items SET read_at = ?1, updated_at = ?2
              WHERE read_at IS NULL AND id IN (
                  SELECT i.id FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
-                 WHERE 1=1",
+                 WHERE s.deleted_at IS NULL",
         );
         sql.push_str(&filters);
         sql.push(')');
@@ -783,7 +936,8 @@ impl FeedRepository {
         let purge_after = rfc3339(now + chrono::Duration::days(30));
         let changed = conn.execute(
             "UPDATE feed_items
-             SET deleted_at = ?1, purge_after = ?2, updated_at = ?1
+             SET deleted_at = ?1, purge_after = ?2, deletion_reason = 'retention',
+                 images_authorized_at = NULL, updated_at = ?1
              WHERE deleted_at IS NULL AND starred_at IS NULL
                AND expires_at IS NOT NULL AND expires_at <= ?1",
             params![now_str, purge_after],
@@ -794,10 +948,37 @@ impl FeedRepository {
     /// 物理清理已过 RSS 回收站保留期的缓存文章；调用方可随后显式 optimize。
     pub fn purge_deleted_items(conn: &Connection, now: DateTime<Utc>) -> AppResult<u32> {
         let changed = conn.execute(
-            "DELETE FROM feed_items WHERE deleted_at IS NOT NULL AND purge_after <= ?1",
+            "DELETE FROM feed_items
+             WHERE deleted_at IS NOT NULL AND purge_after <= ?1
+               AND COALESCE(deletion_reason, 'retention') != 'source_removed'",
             [rfc3339(now)],
         )?;
         Ok(changed as u32)
+    }
+
+    /// 物理清理已超过 30 天恢复窗口的来源；外键级联只作用于该来源文章。
+    pub fn purge_expired_sources(conn: &Connection, now: DateTime<Utc>) -> AppResult<u32> {
+        let changed = conn.execute(
+            "DELETE FROM feed_sources
+             WHERE deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?1",
+            [rfc3339(now)],
+        )?;
+        Ok(changed as u32)
+    }
+
+    pub(crate) fn expired_source_ids(
+        conn: &Connection,
+        now: DateTime<Utc>,
+    ) -> AppResult<Vec<String>> {
+        let mut statement = conn.prepare(
+            "SELECT id FROM feed_sources
+             WHERE deleted_at IS NOT NULL AND purge_after IS NOT NULL AND purge_after <= ?1
+             ORDER BY purge_after, id",
+        )?;
+        let ids = statement
+            .query_map([rfc3339(now)], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids)
     }
 
     /// 将 RSS 回收站内容恢复，并按当前状态重新赋予 7/30 天保留期。
@@ -810,13 +991,16 @@ impl FeedRepository {
         let changed = conn.execute(
             "UPDATE feed_items
              SET deleted_at = NULL, purge_after = NULL,
+                 deletion_reason = NULL,
                  expires_at = CASE
                     WHEN starred_at IS NOT NULL THEN NULL
                     WHEN archived_at IS NULL THEN ?2
                     ELSE ?3
                  END,
                  updated_at = ?1
-             WHERE id = ?4 AND deleted_at IS NOT NULL",
+             WHERE id = ?4 AND deleted_at IS NOT NULL
+               AND purge_after IS NOT NULL AND purge_after > ?1
+               AND COALESCE(deletion_reason, 'retention') != 'source_removed'",
             params![
                 now_str,
                 rfc3339(now + chrono::Duration::days(7)),
@@ -833,25 +1017,25 @@ impl FeedRepository {
         conn: &Connection,
         limit: u32,
         now: DateTime<Utc>,
-    ) -> AppResult<Vec<(String, String, String)>> {
+    ) -> AppResult<Vec<(String, String, String, String)>> {
         let tx = conn.unchecked_transaction()?;
         let mut statement = tx.prepare(
-            "SELECT i.id, i.source_id, i.canonical_url
+            "SELECT i.id, i.source_id, i.canonical_url, i.title
              FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
              WHERE i.deleted_at IS NULL AND i.fulltext_status = 'pending'
-               AND s.fulltext_enabled = 1
+               AND s.fulltext_enabled = 1 AND s.deleted_at IS NULL
                AND i.canonical_url IS NOT NULL
              ORDER BY i.updated_at DESC, i.row_id ASC
              LIMIT ?1",
         )?;
         let candidates = statement
             .query_map([i64::from(limit.clamp(1, 2))], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
             })?
-            .collect::<Result<Vec<(String, String, String)>, _>>()?;
+            .collect::<Result<Vec<(String, String, String, String)>, _>>()?;
         drop(statement);
         let now_str = rfc3339(now);
-        for (item_id, _, _) in &candidates {
+        for (item_id, _, _, _) in &candidates {
             tx.execute(
                 "UPDATE feed_items SET fulltext_status = 'fetching', updated_at = ?1
                  WHERE id = ?2 AND deleted_at IS NULL AND fulltext_status = 'pending'",
@@ -864,19 +1048,31 @@ impl FeedRepository {
 
     /// 写入已提取的正文；原 RSS 内容和源载荷保持不变，以便安全降级与审计。
     /// `content_text` 是 FTS 的单一文本投影，因此改为正文纯文本，不再复制一份。
-    pub fn store_fulltext(
+    pub(crate) fn store_fulltext(
         conn: &Connection,
         item_id: &str,
         markdown: &str,
         text: &str,
+        extraction_version: i64,
+        primary_document: Option<&crate::feed::fulltext::ExtractedPrimaryDocument>,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
         let changed = conn.execute(
             "UPDATE feed_items
              SET fulltext_markdown = ?1, content_text = ?2, content_origin = 'web',
-                 fulltext_status = 'ready', updated_at = ?3
-             WHERE id = ?4 AND deleted_at IS NULL AND fulltext_status = 'fetching'",
-            params![markdown, text, rfc3339(now), item_id],
+                 fulltext_status = 'ready', fulltext_extraction_version = ?3,
+                 primary_document_kind = ?4, primary_document_url = ?5,
+                 images_authorized_at = NULL, updated_at = ?6
+             WHERE id = ?7 AND deleted_at IS NULL AND fulltext_status = 'fetching'",
+            params![
+                markdown,
+                text,
+                extraction_version,
+                primary_document.map(|document| document.kind),
+                primary_document.map(|document| document.url.as_str()),
+                rfc3339(now),
+                item_id
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -884,9 +1080,28 @@ impl FeedRepository {
     /// 正文抓取失败只记录稳定状态，不保存底层错误或 URL；阅读器继续展示摘要。
     pub fn fail_fulltext(conn: &Connection, item_id: &str, now: DateTime<Utc>) -> AppResult<bool> {
         let changed = conn.execute(
-            "UPDATE feed_items SET fulltext_status = 'failed', updated_at = ?1
-             WHERE id = ?2 AND deleted_at IS NULL AND fulltext_status = 'fetching'",
-            params![rfc3339(now), item_id],
+            "UPDATE feed_items
+             SET fulltext_status = 'failed',
+                 fulltext_markdown = CASE
+                     WHEN fulltext_extraction_version < ?1 THEN NULL ELSE fulltext_markdown END,
+                 content_markdown = CASE
+                     WHEN fulltext_extraction_version < ?1 THEN summary_markdown ELSE content_markdown END,
+                 content_origin = CASE
+                     WHEN fulltext_extraction_version < ?1 THEN 'feed' ELSE content_origin END,
+                 content_text = CASE
+                     WHEN fulltext_extraction_version < ?1 THEN summary_markdown ELSE content_text END,
+                 primary_document_kind = CASE
+                     WHEN fulltext_extraction_version < ?1 THEN NULL ELSE primary_document_kind END,
+                 primary_document_url = CASE
+                     WHEN fulltext_extraction_version < ?1 THEN NULL ELSE primary_document_url END,
+                 images_authorized_at = NULL,
+                 updated_at = ?2
+             WHERE id = ?3 AND deleted_at IS NULL AND fulltext_status = 'fetching'",
+            params![
+                crate::feed::fulltext::FULLTEXT_EXTRACTION_VERSION,
+                rfc3339(now),
+                item_id
+            ],
         )?;
         Ok(changed > 0)
     }
@@ -900,6 +1115,7 @@ impl FeedRepository {
         );
         let mut statement = conn.prepare(&format!(
             "{select} WHERE i.deleted_at IS NOT NULL
+               AND COALESCE(i.deletion_reason, 'retention') != 'source_removed'
              ORDER BY i.deleted_at DESC, i.row_id DESC LIMIT ?1"
         ))?;
         let rows = statement
@@ -914,9 +1130,131 @@ impl FeedRepository {
         Ok(rows)
     }
 
+    pub fn trash_snapshot(conn: &Connection, limit: u32) -> AppResult<FeedTrashSnapshot> {
+        let mut statement = conn.prepare(
+            "SELECT s.id, COALESCE(s.title_override, s.title),
+                    COUNT(i.id), SUM(CASE WHEN i.starred_at IS NOT NULL THEN 1 ELSE 0 END),
+                    s.deleted_at, s.purge_after
+             FROM feed_sources s
+             LEFT JOIN feed_items i ON i.source_id = s.id AND i.deletion_reason = 'source_removed'
+             WHERE s.deleted_at IS NOT NULL
+             GROUP BY s.id
+             ORDER BY s.deleted_at DESC LIMIT ?1",
+        )?;
+        let sources = statement
+            .query_map([i64::from(limit.clamp(1, 200))], |row| {
+                Ok(FeedTrashSource {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    item_count: row.get(2)?,
+                    starred_count: row.get(3)?,
+                    deleted_at: row.get(4)?,
+                    purge_after: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(FeedTrashSnapshot {
+            sources,
+            items: Self::list_deleted_items(conn, limit)?,
+        })
+    }
+
+    pub fn trash_source(
+        conn: &Connection,
+        source_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<Option<i64>> {
+        let tx = conn.unchecked_transaction()?;
+        let exists: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM feed_sources WHERE id = ?1 AND deleted_at IS NULL)",
+            [source_id],
+            |row| row.get(0),
+        )?;
+        if !exists {
+            return Ok(None);
+        }
+        let deleted_at = rfc3339(now);
+        let purge_after = rfc3339(now + chrono::Duration::days(30));
+        let item_count = tx.execute(
+            "UPDATE feed_items
+             SET deleted_at = ?1, purge_after = ?2, deletion_reason = 'source_removed',
+                 images_authorized_at = NULL,
+                 fulltext_status = CASE WHEN fulltext_status IN ('pending', 'fetching')
+                                        THEN 'not_requested' ELSE fulltext_status END,
+                 updated_at = ?1
+             WHERE source_id = ?3 AND deleted_at IS NULL",
+            params![deleted_at, purge_after, source_id],
+        )?;
+        tx.execute(
+            "UPDATE feed_sources
+             SET is_enabled = 0, deleted_at = ?1, purge_after = ?2, updated_at = ?1
+             WHERE id = ?3 AND deleted_at IS NULL",
+            params![deleted_at, purge_after, source_id],
+        )?;
+        tx.commit()?;
+        Ok(Some(item_count as i64))
+    }
+
+    pub fn restore_source(
+        conn: &Connection,
+        source_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let tx = conn.unchecked_transaction()?;
+        let restored = tx.execute(
+            "UPDATE feed_sources
+             SET deleted_at = NULL, purge_after = NULL, is_enabled = 0, updated_at = ?1
+             WHERE id = ?2 AND deleted_at IS NOT NULL
+               AND purge_after IS NOT NULL AND purge_after > ?1",
+            params![rfc3339(now), source_id],
+        )?;
+        if restored == 0 {
+            return Ok(false);
+        }
+        tx.execute(
+            "UPDATE feed_items
+             SET deleted_at = NULL, purge_after = NULL, deletion_reason = NULL,
+                 expires_at = CASE WHEN starred_at IS NOT NULL THEN NULL
+                                   WHEN archived_at IS NOT NULL THEN ?2 ELSE ?3 END,
+                 updated_at = ?1
+             WHERE source_id = ?4 AND deletion_reason = 'source_removed'",
+            params![
+                rfc3339(now),
+                rfc3339(now + chrono::Duration::days(30)),
+                rfc3339(now + chrono::Duration::days(7)),
+                source_id
+            ],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    pub fn purge_source(conn: &Connection, source_id: &str) -> AppResult<Option<i64>> {
+        let item_count = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM feed_items WHERE source_id = s.id)
+                 FROM feed_sources s WHERE s.id = ?1 AND s.deleted_at IS NOT NULL",
+                [source_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if item_count.is_some() {
+            conn.execute(
+                "DELETE FROM feed_sources WHERE id = ?1 AND deleted_at IS NOT NULL",
+                [source_id],
+            )?;
+        }
+        Ok(item_count)
+    }
+
     /// 清空 RSS 回收站；仅由显式用户操作调用。
     pub fn clear_deleted_items(conn: &Connection) -> AppResult<u32> {
-        let changed = conn.execute("DELETE FROM feed_items WHERE deleted_at IS NOT NULL", [])?;
+        let changed = conn.execute(
+            "DELETE FROM feed_items
+             WHERE deleted_at IS NOT NULL
+               AND COALESCE(deletion_reason, 'retention') != 'source_removed'",
+            [],
+        )?;
         Ok(changed as u32)
     }
 
@@ -928,6 +1266,7 @@ impl FeedRepository {
                  WHEN EXISTS (
                     SELECT 1 FROM feed_sources s
                     WHERE s.id = feed_items.source_id AND s.fulltext_enabled = 1
+                      AND s.deleted_at IS NULL
                  ) THEN 'pending'
                  ELSE 'not_requested'
              END
@@ -950,7 +1289,8 @@ impl FeedRepository {
             .query_row(
                 "SELECT i.fulltext_status, i.deleted_at IS NULL, s.fulltext_enabled = 1,
                         i.canonical_url IS NOT NULL,
-                        i.content_markdown = i.summary_markdown
+                        i.content_markdown = i.summary_markdown,
+                        s.deleted_at IS NULL
                  FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
                  WHERE i.id = ?1",
                 [item_id],
@@ -961,28 +1301,41 @@ impl FeedRepository {
                         row.get::<_, bool>(2)?,
                         row.get::<_, bool>(3)?,
                         row.get::<_, bool>(4)?,
+                        row.get::<_, bool>(5)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((status, retained, enabled, has_url, summary_only)) = row else {
+        let Some((status, retained, enabled, has_url, summary_only, source_active)) = row else {
             return Err(AppError::msg("feed_item_not_found"));
         };
-        if status == "ready" {
+        let needs_refresh: bool = conn.query_row(
+            "SELECT content_origin = 'web' AND fulltext_extraction_version < ?1
+             FROM feed_items WHERE id = ?2",
+            params![crate::feed::fulltext::FULLTEXT_EXTRACTION_VERSION, item_id],
+            |row| row.get(0),
+        )?;
+        if status == "ready" && !needs_refresh {
             return Ok(FeedFulltextEnqueueOutcome::AlreadyReady);
         }
         if status == "pending" || status == "fetching" {
             return Ok(FeedFulltextEnqueueOutcome::AlreadyQueued);
         }
-        if !retained || !enabled || !has_url || !summary_only {
+        if !retained || !enabled || !has_url || (!summary_only && !needs_refresh) || !source_active
+        {
             return Ok(FeedFulltextEnqueueOutcome::NotEligible);
         }
         let changed = conn.execute(
             "UPDATE feed_items
              SET fulltext_status = 'pending', updated_at = ?1
              WHERE id = ?2 AND deleted_at IS NULL
-               AND fulltext_status IN ('not_requested', 'failed')",
-            params![rfc3339(now), item_id],
+               AND (fulltext_status IN ('not_requested', 'failed')
+                    OR (fulltext_status = 'ready' AND fulltext_extraction_version < ?3))",
+            params![
+                rfc3339(now),
+                item_id,
+                crate::feed::fulltext::FULLTEXT_EXTRACTION_VERSION
+            ],
         )?;
         Ok(if changed > 0 {
             FeedFulltextEnqueueOutcome::Queued
@@ -1056,7 +1409,8 @@ impl FeedRepository {
                     updated_at, history_boundary_external_key, history_boundary_published_at,
                     fulltext_enabled
              FROM feed_sources
-             WHERE is_enabled = 1 AND (next_fetch_at IS NULL OR next_fetch_at <= ?1)
+             WHERE deleted_at IS NULL AND is_enabled = 1
+               AND (next_fetch_at IS NULL OR next_fetch_at <= ?1)
              ORDER BY next_fetch_at IS NULL DESC, next_fetch_at ASC
              LIMIT ?2",
         )?;
@@ -1069,7 +1423,7 @@ impl FeedRepository {
     /// 返回全部启用源，供用户明确触发的全量同步使用。
     pub fn list_enabled_sources(conn: &Connection) -> AppResult<Vec<FeedSource>> {
         let mut statement = conn.prepare(&format!(
-            "{SOURCE_SELECT} WHERE is_enabled = 1 ORDER BY created_at, id"
+            "{SOURCE_SELECT} WHERE deleted_at IS NULL AND is_enabled = 1 ORDER BY created_at, id"
         ))?;
         let sources = statement
             .query_map([], map_source_row)?

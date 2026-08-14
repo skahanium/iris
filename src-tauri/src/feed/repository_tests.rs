@@ -74,6 +74,50 @@ fn item_input(
     }
 }
 
+#[test]
+fn image_authorization_is_per_item_and_resets_when_content_changes() {
+    let conn = test_conn();
+    insert_source(
+        &conn,
+        "src-images",
+        "Images",
+        "https://example.com/images.xml",
+    );
+    let mut original = item_input(
+        "src-images",
+        "article",
+        "Article",
+        "![one](https://cdn.example/image.png)",
+        "2026-08-01T00:00:00Z",
+    );
+    FeedRepository::upsert_items(&conn, &[original.clone()]).unwrap();
+    let item_id = original.id.clone();
+
+    let (markdown, article_url) = FeedRepository::authorize_item_images(&conn, &item_id, now())
+        .unwrap()
+        .expect("active item can be authorized");
+    assert!(markdown.contains("image.png"));
+    assert_eq!(article_url.as_deref(), Some("https://example.com/article"));
+    assert!(
+        FeedRepository::get_item_detail(&conn, &item_id)
+            .unwrap()
+            .unwrap()
+            .images_authorized
+    );
+
+    original.content_hash = "changed-image-content".to_string();
+    original.content_markdown = "new text".to_string();
+    original.content_text = "new text".to_string();
+    FeedRepository::upsert_items(&conn, &[original]).unwrap();
+    assert!(
+        !FeedRepository::get_item_detail(&conn, &item_id)
+            .unwrap()
+            .unwrap()
+            .images_authorized,
+        "更新文章内容必须撤销旧图片授权"
+    );
+}
+
 fn list_ids(items: &[crate::feed::model::FeedItemSummary]) -> Vec<&str> {
     items.iter().map(|item| item.id.as_str()).collect()
 }
@@ -373,7 +417,10 @@ fn changed_feed_content_invalidates_stale_web_fulltext_and_requeues_when_enabled
     conn.execute(
         "UPDATE feed_items
          SET fulltext_markdown = 'old extracted page', content_text = 'old extracted page',
-             content_origin = 'web', fulltext_status = 'ready'
+             content_origin = 'web', fulltext_status = 'ready',
+             fulltext_extraction_version = 2,
+             primary_document_kind = 'pdf',
+             primary_document_url = 'https://example.com/old.pdf'
          WHERE source_id = 'src-1' AND external_key = 'updated-entry'",
         [],
     )
@@ -401,6 +448,8 @@ fn changed_feed_content_invalidates_stale_web_fulltext_and_requeues_when_enabled
     assert_eq!(detail.content_origin, "feed");
     assert_eq!(detail.fulltext_status, "pending");
     assert_eq!(detail.content_markdown, "new RSS summary");
+    assert!(detail.primary_document.is_none());
+    assert!(!detail.fulltext_needs_refresh);
 }
 
 #[test]
@@ -560,6 +609,289 @@ fn source_delete_cascades_items_and_fts() {
     assert!(FeedRepository::delete_source(&conn, "missing")
         .expect("delete missing")
         .is_none());
+}
+
+#[test]
+fn source_trash_hides_items_and_restore_keeps_source_paused() {
+    let conn = test_conn();
+    insert_source(
+        &conn,
+        "src-trash",
+        "Trashable",
+        "https://example.com/trash.xml",
+    );
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-trash",
+            "one",
+            "Article",
+            "retained body",
+            "2026-08-10T08:00:00Z",
+        )],
+    )
+    .expect("seed");
+
+    let count = FeedRepository::trash_source(&conn, "src-trash", now())
+        .expect("trash source")
+        .expect("source exists");
+    assert_eq!(count, 1);
+    assert!(FeedRepository::list_sources(&conn).unwrap().is_empty());
+    assert!(FeedRepository::get_item_detail(&conn, "item-src-trash-one")
+        .unwrap()
+        .is_none());
+    let snapshot = FeedRepository::trash_snapshot(&conn, 200).unwrap();
+    assert_eq!(snapshot.sources.len(), 1);
+    assert_eq!(snapshot.sources[0].item_count, 1);
+    assert!(
+        snapshot.items.is_empty(),
+        "source trash items are grouped once"
+    );
+
+    assert!(FeedRepository::restore_source(&conn, "src-trash", now()).unwrap());
+    let restored = FeedRepository::get_source(&conn, "src-trash")
+        .unwrap()
+        .expect("restored source");
+    assert!(
+        !restored.is_enabled,
+        "restore must not start network traffic"
+    );
+    assert!(FeedRepository::get_item_detail(&conn, "item-src-trash-one")
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn grouped_source_trash_cannot_be_cleared_or_restored_as_a_single_item() {
+    let conn = test_conn();
+    insert_source(
+        &conn,
+        "src-grouped-trash",
+        "Grouped trash",
+        "https://example.com/grouped-trash.xml",
+    );
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-grouped-trash",
+            "one",
+            "Article",
+            "body",
+            "2026-08-10T08:00:00Z",
+        )],
+    )
+    .unwrap();
+    FeedRepository::trash_source(&conn, "src-grouped-trash", now()).unwrap();
+
+    assert_eq!(FeedRepository::clear_deleted_items(&conn).unwrap(), 0);
+    assert!(
+        !FeedRepository::restore_deleted_item(&conn, "item-src-grouped-trash-one", now(),).unwrap()
+    );
+    assert_eq!(
+        FeedRepository::purge_deleted_items(&conn, now()).unwrap(),
+        0
+    );
+
+    let still_grouped: (bool, String) = conn
+        .query_row(
+            "SELECT deleted_at IS NOT NULL, deletion_reason
+             FROM feed_items WHERE id = 'item-src-grouped-trash-one'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(still_grouped, (true, "source_removed".to_string()));
+}
+
+#[test]
+fn restoring_source_does_not_revive_retention_deleted_items() {
+    let conn = test_conn();
+    insert_source(&conn, "src-mixed", "Mixed", "https://example.com/mixed.xml");
+    FeedRepository::upsert_items(
+        &conn,
+        &[
+            item_input(
+                "src-mixed",
+                "active",
+                "Active",
+                "active",
+                "2026-08-10T08:00:00Z",
+            ),
+            item_input(
+                "src-mixed",
+                "expired",
+                "Expired",
+                "expired",
+                "2026-08-10T08:00:00Z",
+            ),
+        ],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE feed_items SET deleted_at = '2026-08-09T00:00:00Z',
+         purge_after = '2026-09-08T00:00:00Z', deletion_reason = 'retention'
+         WHERE external_key = 'expired'",
+        [],
+    )
+    .unwrap();
+
+    FeedRepository::trash_source(&conn, "src-mixed", now()).unwrap();
+    FeedRepository::restore_source(&conn, "src-mixed", now()).unwrap();
+
+    let expired_deleted: bool = conn
+        .query_row(
+            "SELECT deleted_at IS NOT NULL FROM feed_items WHERE external_key = 'expired'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(expired_deleted);
+}
+
+#[test]
+fn expired_source_is_purged_with_its_grouped_articles() {
+    let conn = test_conn();
+    insert_source(
+        &conn,
+        "src-expired-trash",
+        "Expired trash",
+        "https://example.com/expired-trash.xml",
+    );
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-expired-trash",
+            "one",
+            "Article",
+            "body",
+            "2026-08-10T08:00:00Z",
+        )],
+    )
+    .unwrap();
+    FeedRepository::trash_source(&conn, "src-expired-trash", now()).unwrap();
+    conn.execute(
+        "UPDATE feed_sources SET purge_after = '2026-08-09T00:00:00Z'
+         WHERE id = 'src-expired-trash'",
+        [],
+    )
+    .unwrap();
+
+    assert_eq!(
+        FeedRepository::purge_expired_sources(&conn, now()).unwrap(),
+        1
+    );
+    let source_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM feed_sources WHERE id = 'src-expired-trash'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let item_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM feed_items WHERE source_id = 'src-expired-trash'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((source_count, item_count), (0, 0));
+}
+
+#[test]
+fn stale_web_fulltext_is_requeued_and_failure_falls_back_to_feed_content() {
+    let conn = test_conn();
+    insert_source(&conn, "src-stale", "Stale", "https://example.com/stale.xml");
+    let mut input = item_input(
+        "src-stale",
+        "stale",
+        "Stale article",
+        "Feed summary body",
+        "2026-08-10T08:00:00Z",
+    );
+    input.summary_markdown = input.content_markdown.clone();
+    FeedRepository::upsert_items(&conn, &[input]).unwrap();
+    conn.execute(
+        "UPDATE feed_items SET content_markdown = 'old page shell',
+         fulltext_markdown = 'old page shell',
+         content_text = 'old page shell', content_origin = 'web', fulltext_status = 'ready',
+         fulltext_extraction_version = 0 WHERE external_key = 'stale'",
+        [],
+    )
+    .unwrap();
+
+    let queued =
+        FeedRepository::enqueue_item_fulltext(&conn, "item-src-stale-stale", now()).unwrap();
+    assert_eq!(queued, super::model::FeedFulltextEnqueueOutcome::Queued);
+    conn.execute(
+        "UPDATE feed_items SET fulltext_status = 'fetching'
+         WHERE id = 'item-src-stale-stale'",
+        [],
+    )
+    .unwrap();
+    FeedRepository::fail_fulltext(&conn, "item-src-stale-stale", now()).unwrap();
+    let detail = FeedRepository::get_item_detail(&conn, "item-src-stale-stale")
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.content_origin, "feed");
+    assert!(!detail.content_markdown.contains("old page shell"));
+}
+
+#[test]
+fn expired_source_and_item_cannot_be_restored_during_cleanup_gap() {
+    let conn = test_conn();
+    insert_source(
+        &conn,
+        "src-expired-restore",
+        "Expired restore",
+        "https://example.com/expired-restore.xml",
+    );
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-expired-restore",
+            "expired-item",
+            "Expired item",
+            "body",
+            "2026-08-10T08:00:00Z",
+        )],
+    )
+    .unwrap();
+    FeedRepository::trash_source(&conn, "src-expired-restore", now()).unwrap();
+    conn.execute(
+        "UPDATE feed_sources SET purge_after = '2026-08-09T23:59:59Z'
+         WHERE id = 'src-expired-restore'",
+        [],
+    )
+    .unwrap();
+    assert!(!FeedRepository::restore_source(&conn, "src-expired-restore", now()).unwrap());
+
+    insert_source(
+        &conn,
+        "src-expired-item",
+        "Expired item source",
+        "https://example.com/expired-item.xml",
+    );
+    FeedRepository::upsert_items(
+        &conn,
+        &[item_input(
+            "src-expired-item",
+            "one",
+            "One",
+            "body",
+            "2026-08-10T08:00:00Z",
+        )],
+    )
+    .unwrap();
+    conn.execute(
+        "UPDATE feed_items SET deleted_at = '2026-07-01T00:00:00Z',
+         purge_after = '2026-08-09T23:59:59Z', deletion_reason = 'retention'
+         WHERE id = 'item-src-expired-item-one'",
+        [],
+    )
+    .unwrap();
+    assert!(
+        !FeedRepository::restore_deleted_item(&conn, "item-src-expired-item-one", now(),).unwrap()
+    );
 }
 
 // ── 收件箱派生与状态轴 ─────────────────────────────────────
@@ -783,14 +1115,16 @@ fn restoring_a_starred_trash_item_keeps_its_permanent_retention() {
         FeedRepository::restore_deleted_item(&conn, "item-src-1-restore-starred", now(),)
             .expect("restore")
     );
-    let expires_at: Option<String> = conn
+    let (expires_at, deletion_reason): (Option<String>, Option<String>) = conn
         .query_row(
-            "SELECT expires_at FROM feed_items WHERE id = 'item-src-1-restore-starred'",
+            "SELECT expires_at, deletion_reason
+             FROM feed_items WHERE id = 'item-src-1-restore-starred'",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("expiry");
     assert_eq!(expires_at, None, "收藏文章恢复后仍应永久保留");
+    assert_eq!(deletion_reason, None, "恢复后必须清除删除原因");
 }
 
 #[test]

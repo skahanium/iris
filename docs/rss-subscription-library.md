@@ -119,6 +119,8 @@ CREATE TABLE feed_sources (
     history_boundary_published_at TEXT,
     fulltext_enabled INTEGER NOT NULL DEFAULT 0
         CHECK (fulltext_enabled IN (0, 1)),
+    deleted_at TEXT,
+    purge_after TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -163,6 +165,10 @@ CREATE TABLE feed_items (
     fulltext_status TEXT NOT NULL DEFAULT 'not_requested'
         CHECK (fulltext_status IN ('not_requested', 'pending', 'fetching', 'ready', 'failed')),
     fulltext_markdown TEXT,
+    fulltext_extraction_version INTEGER NOT NULL DEFAULT 0,
+    primary_document_kind TEXT,
+    primary_document_url TEXT,
+    deletion_reason TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE (source_id, external_key)
@@ -229,7 +235,7 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 - 删除 `script`、`style`、`iframe`、表单、事件属性、内联样式和未知可执行节点。
 - 相对链接以文章规范 URL 为基准转成绝对 HTTPS URL；无法安全解析的链接降级为纯文本。
 - `javascript:`、`data:`、`file:`、`asset:` 等来源链接不得进入文章 Markdown。
-- 远程图片默认不请求，只显示占位与「加载本篇图片」动作；加载授权只存于当前阅读器实例，切换文章即清除。加载时只允许 HTTPS、lazy loading、`referrerPolicy=no-referrer`，不提供全局或会话级永久放行。
+- 远程图片默认不请求，只显示占位与「加载本篇图片」动作。授权仅作用于当前文章并持久到文章内容更新、回收或缓存清理；二进制由后端以 HTTPS/DNS 固定目标下载到受控本地缓存，前端只使用 opaque lease，绝不热链。为兼容要求来源页面的图片 CDN，只有用户明确授权当前文章时，后端可发送已保存文章的 HTTPS 规范 URL（移除 query/fragment）作为最小 `Referer`；除此以外不发送 Referer，永不携带 Cookie、前端请求头、浏览历史或代理地址。前端本地图片仍使用 `lazy loading` 与 `referrerPolicy=no-referrer`，不提供来源级、全局或会话级永久放行。
 - 转换失败不丢条目：以转义后的纯文本保存，标记 `conversion_status=degraded`。
 
 ### 6.4 重转策略
@@ -240,7 +246,9 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 
 普通订阅优先显示 Feed 提供的正文；仅有摘要时，来源默认会自动补全网页正文。历史内容不会在升级后自动批量抓取：打开旧摘要会只排队当前一篇；同一文章重复打开会复用队列。用户可在单个来源关闭“自动补全网页正文”。
 
-补全器不含站点白名单或域名特例，使用通用语义容器与正文密度规则提取静态 HTML；动态页面、登录页、付费墙、非 HTML 或提取失败时保留 Feed 摘要和原文链接。每项复用安全 HTTPS、唯一系统代理、逐跳 DNS pinning 与固定 IP CONNECT/SOCKS5；响应体最多 1 MiB、转换 Markdown 最多 768 KiB、同一时间最多两项、同站请求至少相隔两秒。只保存有界 Markdown 与用于 FTS 的纯文本，绝不保存网页 HTML、Cookie 或代理信息。
+补全器不含站点白名单或域名特例。它先读取通用 `citation_*`、Dublin Core、OpenGraph 等元数据，再对 `article/main/role` 等候选按正文、链接与控件密度评分；不可靠的 `body` 不会成为正文。动态页面、登录页、付费墙、非 HTML 或提取失败时保留 Feed 摘要和原文链接。提取规则带版本；旧版网页正文只在用户再次打开单篇时重取，失败即清除旧网页壳并回退摘要，不后台扫描历史。每项复用安全 HTTPS、唯一系统代理、逐跳 DNS pinning 与固定 IP CONNECT/SOCKS5；响应体最多 1 MiB、转换 Markdown 最多 768 KiB、同一时间最多两项、同站请求至少相隔两秒。只保存有界 Markdown 与用于 FTS 的纯文本，绝不保存网页 HTML、Cookie 或代理信息。
+
+通用学术元数据可声明一个 PDF 主文档。PDF 只在用户点击后下载：不同文档全局一次只下载一项，同一规范 URL 的重复请求共享该下载；等待、连接、重定向和流式写入合计受 180 秒限制，取消会同时唤醒排队与下载中的任务。单文件最多 100 MiB，缓存最多 512 MiB/7 天，固定 64 KiB 流式写入随机 `.part` 后原子重命名；响应必须同时通过 HTTPS、类型与 `%PDF-` 文件头校验。前端只持有短期 opaque lease，不接触真实路径；仍持有 lease 的文件不得被 LRU、显式清理或来源清理删除。缓存不进入 Vault、索引、Agent 或 RAG。
 
 ## 7. 同步与去重
 
@@ -275,8 +283,8 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 ### 7.4 删除与退订
 
 - 上游删除条目不自动删除本地副本。
-- 退订时必须选择「保留已下载文章并暂停」或「删除订阅及其文章」。
-- 删除是破坏性动作，需要显示文章数量并二次确认。
+- 退订分为「暂停同步」和「移入 RSS 回收站」。后者将来源及本次退订文章保留 30 天；恢复后默认暂停，且不得恢复此前因保留期限删除的文章。旧 `feed_source_remove` 仅为兼容入口，也不得执行即时硬删除。
+- 删除是破坏性动作，需要显示文章数、收藏数和计划清理日期并二次确认；30 天内重新添加相同规范 URL 时必须提示“恢复并重新订阅”，不得静默恢复或创建重复来源。
 - 未归档文章保留 7 天，归档文章保留 30 天，收藏文章永久保留；到期后先移入 RSS 专属回收站，30 天后物理清理。此规则不影响 Markdown 笔记回收站。
 
 ## 8. 阅读状态与收件箱
@@ -374,6 +382,11 @@ src/components/feed/
 - 前端 `marked` 输出必须再过专用 DOMPurify allowlist。
 - 外链只能通过现有 `open_external_https_url` 打开。
 - 远程图片默认阻止，避免打开文章即泄露 IP、User-Agent 或阅读时间。
+- 用户点击「加载本篇图片」后，Iris 仅从该文章保存的 Markdown 提取 HTTPS 图片，
+  经安全后端下载到独立缓存；为兼容防盗链，后端仅可携带该文章去除 query/fragment 的
+  HTTPS URL 作为最小 Referer，绝不带 Cookie、前端请求头或用户浏览信息；WebView 使用
+  `iris-feed-image` opaque lease 读取本地文件，继续保持 no-referrer。
+  授权按文章持久到内容/网页正文变更、移入回收站或缓存清理，切换文章和重启不会回退为热链。
 - 不执行源内脚本、样式、iframe、表单、媒体自动播放或自定义协议。
 
 ### 11.3 日志与诊断

@@ -901,6 +901,36 @@ async fn cancelled_sync_releases_inflight_marker() {
 }
 
 #[tokio::test]
+async fn in_flight_response_cannot_insert_items_after_source_is_trashed() {
+    let db = Arc::new(create_db());
+    let server = TestServer::start_with_delay(120).await;
+    server.queue(
+        TestResponse::new(200, rss2_fixture()).header("Content-Type", "application/rss+xml"),
+    );
+    insert_source(&db, "src-trash-race", &server.url("/feed.xml"));
+    let service = FeedSyncService::new(db.clone(), Arc::new(TestNetGate::default()));
+
+    let task = tokio::spawn(async move {
+        service
+            .sync_source("src-trash-race", SyncMode::Manual)
+            .await
+            .expect("sync")
+    });
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    with_write_conn(&db, |conn| {
+        FeedRepository::trash_source(conn, "src-trash-race", Utc::now()).map(|_| ())
+    });
+
+    let outcome = task.await.expect("join");
+    assert_eq!(outcome.status, SyncStatus::Skipped);
+    assert_eq!(item_count(&db, "src-trash-race"), 0);
+    with_write_conn(&db, |conn| {
+        FeedRepository::restore_source(conn, "src-trash-race", Utc::now()).map(|_| ())
+    });
+    assert_eq!(item_count(&db, "src-trash-race"), 0);
+}
+
+#[tokio::test]
 async fn sync_due_batch_fetches_at_most_two_due_sources_concurrently() {
     let db = Arc::new(create_db());
     let server = TestServer::start_with_delay(200).await;

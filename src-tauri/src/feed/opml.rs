@@ -224,6 +224,12 @@ pub fn import_opml_with_interval(
             }
             match FeedRepository::get_source_by_feed_url(target, url)? {
                 None => {
+                    if FeedRepository::get_deleted_source_by_feed_url(target, url)?.is_some() {
+                        // 导入不能替用户静默恢复已退订来源，也不能尝试 INSERT
+                        // 撞击 feed_url 唯一键；工作区的单条添加流程负责明确确认恢复。
+                        result.skipped += 1;
+                        continue;
+                    }
                     result.added += 1;
                     let id = uuid::Uuid::new_v4().to_string();
                     result.added_ids.push(id.clone());

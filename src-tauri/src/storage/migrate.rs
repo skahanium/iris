@@ -173,6 +173,13 @@ const MIGRATION_065_DOWN: &str = include_str!("../../migrations/065_feed_fulltex
 const MIGRATION_066_UP: &str = include_str!("../../migrations/066_feed_fulltext_default_on.sql");
 const MIGRATION_066_DOWN: &str =
     include_str!("../../migrations/066_feed_fulltext_default_on.down.sql");
+const MIGRATION_067_UP: &str =
+    include_str!("../../migrations/067_feed_web_content_and_source_trash.sql");
+const MIGRATION_067_DOWN: &str =
+    include_str!("../../migrations/067_feed_web_content_and_source_trash.down.sql");
+const MIGRATION_068_UP: &str = include_str!("../../migrations/068_feed_image_authorization.sql");
+const MIGRATION_068_DOWN: &str =
+    include_str!("../../migrations/068_feed_image_authorization.down.sql");
 const MIGRATION_051_UP: &str = include_str!("../../migrations/051_agent_harness_cutover.sql");
 const MIGRATION_051_DOWN: &str =
     include_str!("../../migrations/051_agent_harness_cutover.down.sql");
@@ -675,6 +682,18 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_066_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "067_feed_web_content_and_source_trash",
+        MIGRATION_067_UP,
+        false,
+    )?;
+    apply_migration(
+        conn,
+        "068_feed_image_authorization",
+        MIGRATION_068_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -686,6 +705,12 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "068_feed_image_authorization", MIGRATION_068_DOWN);
+    rollback_migration(
+        conn,
+        "067_feed_web_content_and_source_trash",
+        MIGRATION_067_DOWN,
+    );
     rollback_migration(conn, "066_feed_fulltext_default_on", MIGRATION_066_DOWN);
     rollback_migration(conn, "065_feed_fulltext_opt_in", MIGRATION_065_DOWN);
     rollback_migration(conn, "064_feed_retention_fulltext", MIGRATION_064_DOWN);
@@ -2837,7 +2862,7 @@ mod tests {
     }
 
     #[test]
-    fn migrations_064_through_066_add_retention_and_default_fulltext() {
+    fn migrations_064_through_067_add_retention_fulltext_documents_and_source_trash() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
@@ -2852,6 +2877,8 @@ mod tests {
             "history_boundary_external_key",
             "history_boundary_published_at",
             "fulltext_enabled",
+            "deleted_at",
+            "purge_after",
         ] {
             assert!(
                 source_columns.contains(&column.to_string()),
@@ -2873,6 +2900,11 @@ mod tests {
             "content_origin",
             "fulltext_status",
             "fulltext_markdown",
+            "fulltext_extraction_version",
+            "primary_document_kind",
+            "primary_document_url",
+            "deletion_reason",
+            "images_authorized_at",
         ] {
             assert!(
                 item_columns.contains(&column.to_string()),
@@ -2883,12 +2915,14 @@ mod tests {
             conn.query_row(
                 "SELECT COUNT(*) FROM _migrations
                  WHERE name IN ('064_feed_retention_fulltext', '065_feed_fulltext_opt_in',
-                                '066_feed_fulltext_default_on')",
+                                '066_feed_fulltext_default_on',
+                                '067_feed_web_content_and_source_trash',
+                                '068_feed_image_authorization')",
                 [],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
-            3
+            5
         );
         let legacy_column_default: i64 = conn
             .query_row(
@@ -2942,10 +2976,16 @@ mod tests {
     }
 
     #[test]
-    fn migrations_064_and_065_roundtrip_without_touching_feed_base_tables() {
+    fn migrations_064_through_068_roundtrip_without_touching_feed_base_tables() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
+        rollback_migration(&conn, "068_feed_image_authorization", MIGRATION_068_DOWN);
+        rollback_migration(
+            &conn,
+            "067_feed_web_content_and_source_trash",
+            MIGRATION_067_DOWN,
+        );
         rollback_migration(&conn, "066_feed_fulltext_default_on", MIGRATION_066_DOWN);
         rollback_migration(&conn, "065_feed_fulltext_opt_in", MIGRATION_065_DOWN);
         rollback_migration(&conn, "064_feed_retention_fulltext", MIGRATION_064_DOWN);
@@ -2957,6 +2997,8 @@ mod tests {
             ("feed_sources", "history_boundary_external_key"),
             ("feed_items", "fulltext_status"),
             ("feed_items", "deleted_at"),
+            ("feed_items", "primary_document_url"),
+            ("feed_sources", "deleted_at"),
         ] {
             let exists: bool = conn
                 .query_row(

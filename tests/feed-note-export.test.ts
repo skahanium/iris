@@ -52,6 +52,9 @@ function detail(overrides: Partial<FeedItemDetail> = {}): FeedItemDetail {
     siteUrl: "https://example.com/site",
     contentOrigin: "feed",
     fulltextStatus: "not_requested",
+    primaryDocument: null,
+    fulltextNeedsRefresh: false,
+    imagesAuthorized: false,
     ...overrides,
   };
 }

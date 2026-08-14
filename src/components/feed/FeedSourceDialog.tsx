@@ -27,13 +27,19 @@ import {
 import {
   feedDiscover,
   feedSourceAdd,
-  feedSourceItemCount,
-  feedSourceRemove,
+  feedSourceTrashMatch,
+  feedSourceTrashPreview,
+  feedSourceTrash,
   feedSourceUpdate,
   feedSyncSource,
 } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import type { FeedCandidate, FeedSourceSummary } from "@/types/ipc";
+import type {
+  FeedCandidate,
+  FeedSourceSummary,
+  FeedTrashSource,
+  FeedSourceTrashPreview,
+} from "@/types/ipc";
 
 export type FeedSourceDialogMode = "add" | "edit";
 
@@ -207,57 +213,71 @@ function ConfirmStep({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [addedSourceId, setAddedSourceId] = useState<string | null>(null);
+  const [restoreMatch, setRestoreMatch] = useState<FeedTrashSource | null>(
+    null,
+  );
 
-  const submit = useCallback(async () => {
-    setBusy(true);
-    setError(null);
-    setSuccess(null);
-    try {
-      const sourceId =
-        addedSourceId ??
-        (
-          await feedSourceAdd({
-            url: candidate.url,
-            title: title.trim() || candidate.url,
-            folderPath: folderPath.trim() || null,
-            fetchIntervalMinutes: Number(interval),
-          })
-        ).id;
-      if (!addedSourceId) setAddedSourceId(sourceId);
-      // 首次同步：历史默认已读；勾选「历史也设为未读」时保留未读。
+  const submit = useCallback(
+    async (restoreConfirmed = false) => {
+      setBusy(true);
+      setError(null);
+      setSuccess(null);
       try {
-        const outcome = await feedSyncSource(sourceId, !historyUnread);
-        if (outcome.status === "failed") {
+        if (!addedSourceId && !restoreConfirmed) {
+          const match = await feedSourceTrashMatch(candidate.url);
+          if (match) {
+            setRestoreMatch(match);
+            return;
+          }
+        }
+        const sourceId =
+          addedSourceId ??
+          (
+            await feedSourceAdd({
+              url: candidate.url,
+              title: title.trim() || candidate.url,
+              folderPath: folderPath.trim() || null,
+              fetchIntervalMinutes: Number(interval),
+              ...(restoreConfirmed ? { restoreDeleted: true } : {}),
+            })
+          ).id;
+        if (!addedSourceId) setAddedSourceId(sourceId);
+        // 首次同步：历史默认已读；勾选「历史也设为未读」时保留未读。
+        try {
+          const outcome = await feedSyncSource(sourceId, !historyUnread);
+          if (outcome.status === "failed") {
+            setError("订阅已添加，但首次同步失败；可重试同步或稍后关闭。");
+            return;
+          }
+          if (outcome.skippedHistory > 0) {
+            onSourcesChanged();
+            setSuccess(
+              `订阅已添加：已导入最新 ${outcome.newItems} 篇，略过 ${outcome.skippedHistory} 篇较早历史。`,
+            );
+            return;
+          }
+        } catch {
           setError("订阅已添加，但首次同步失败；可重试同步或稍后关闭。");
           return;
         }
-        if (outcome.skippedHistory > 0) {
-          onSourcesChanged();
-          setSuccess(
-            `订阅已添加：已导入最新 ${outcome.newItems} 篇，略过 ${outcome.skippedHistory} 篇较早历史。`,
-          );
-          return;
-        }
+        onDone();
       } catch {
-        setError("订阅已添加，但首次同步失败；可重试同步或稍后关闭。");
-        return;
+        setError("添加订阅失败，请检查设置后重试。");
+      } finally {
+        setBusy(false);
       }
-      onDone();
-    } catch {
-      setError("添加订阅失败，请检查设置后重试。");
-    } finally {
-      setBusy(false);
-    }
-  }, [
-    addedSourceId,
-    candidate.url,
-    folderPath,
-    historyUnread,
-    interval,
-    onDone,
-    onSourcesChanged,
-    title,
-  ]);
+    },
+    [
+      addedSourceId,
+      candidate.url,
+      folderPath,
+      historyUnread,
+      interval,
+      onDone,
+      onSourcesChanged,
+      title,
+    ],
+  );
 
   return (
     <div className="space-y-3">
@@ -310,6 +330,38 @@ function ConfirmStep({
         历史文章也设为未读
       </label>
       <FieldError message={error} />
+      {restoreMatch ? (
+        <div
+          data-testid="feed-restore-match"
+          className="rounded-md border border-border-subtle bg-panel px-3 py-2 text-caption text-muted-foreground"
+        >
+          <p>
+            此地址仍在 RSS 回收站中，包含 {restoreMatch.itemCount}{" "}
+            篇文章（其中收藏
+            {restoreMatch.starredCount}{" "}
+            篇）。恢复后将重新启用同步，不会创建重复来源。
+          </p>
+          <div className="mt-2 flex justify-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setRestoreMatch(null)}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              data-testid="feed-restore-subscribe"
+              onClick={() => void submit(true)}
+              disabled={busy}
+            >
+              恢复并重新订阅
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {success ? (
         <div
           data-testid="feed-add-success"
@@ -334,8 +386,8 @@ function ConfirmStep({
         <Button
           type="button"
           data-testid="feed-add-submit"
-          onClick={() => void submit()}
-          disabled={busy || success !== null}
+          onClick={() => void submit(false)}
+          disabled={busy || success !== null || restoreMatch !== null}
         >
           {busy ? (
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -349,7 +401,7 @@ function ConfirmStep({
   );
 }
 
-/** 编辑步骤：覆盖标题/分组/间隔/暂停 + 两种退订路径。 */
+/** 编辑步骤：覆盖标题/分组/间隔/暂停 + 可恢复退订。 */
 function EditStep({
   source,
   onDone,
@@ -364,15 +416,16 @@ function EditStep({
   const [fulltextEnabled, setFulltextEnabled] = useState(
     source.fulltextEnabled ?? true,
   );
-  const [itemCount, setItemCount] = useState<number | null>(null);
+  const [trashPreview, setTrashPreview] =
+    useState<FeedSourceTrashPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
     if (!source.id) return;
-    void feedSourceItemCount(source.id)
-      .then(setItemCount)
+    void feedSourceTrashPreview(source.id)
+      .then(setTrashPreview)
       .catch(() => undefined);
   }, [source.id]);
 
@@ -403,27 +456,42 @@ function EditStep({
     titleOverride,
   ]);
 
-  const remove = useCallback(
-    async (keepItems: boolean) => {
-      setBusy(true);
-      setError(null);
-      try {
-        await feedSourceRemove(source.id, keepItems);
-        onDone();
-      } catch {
-        setError("退订失败，请稍后重试。");
-        setBusy(false);
-      }
-    },
-    [onDone, source.id],
-  );
+  const remove = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await feedSourceTrash(source.id);
+      onDone();
+    } catch {
+      setError("退订失败，请稍后重试。");
+      setBusy(false);
+    }
+  }, [onDone, source.id]);
+
+  const pause = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await feedSourceUpdate(source.id, { isEnabled: false });
+      onDone();
+    } catch {
+      setError("暂停同步失败，请稍后重试。");
+      setBusy(false);
+    }
+  }, [onDone, source.id]);
 
   if (confirmingDelete) {
     return (
       <div className="space-y-3">
         <p data-testid="feed-delete-confirm" className="text-ui">
-          将删除订阅源「{source.title}」及其全部文章（共 {itemCount ?? "…"}{" "}
-          篇）。此操作不可撤销。
+          将订阅源「{source.title}」及其全部文章（共
+          {trashPreview?.itemCount ?? "…"} 篇，其中收藏
+          {trashPreview?.starredCount ?? "…"} 篇）移入 RSS 回收站。预计于
+          {trashPreview
+            ? new Date(trashPreview.purgeAfter).toLocaleDateString()
+            : "30 天后"}
+          清理；在此之前可以整体恢复。已保存为 Markdown 的笔记不受影响，PDF
+          临时缓存将释放。
         </p>
         <FieldError message={error} />
         <DialogFooter className="gap-2 px-0 pb-0">
@@ -439,13 +507,13 @@ function EditStep({
             type="button"
             data-testid="feed-delete-confirm-submit"
             variant="destructive"
-            onClick={() => void remove(false)}
+            onClick={() => void remove()}
             disabled={busy}
           >
             {busy ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : null}
-            删除订阅及文章
+            退订并移入 RSS 回收站
           </Button>
         </DialogFooter>
       </div>
@@ -523,16 +591,18 @@ function EditStep({
         </Button>
       </DialogFooter>
       <div className="border-t border-border-subtle pt-3">
-        <p className="mb-2 text-caption text-muted-foreground">退订</p>
+        <p className="mb-2 text-caption text-muted-foreground">
+          退订（可在 30 天内恢复）
+        </p>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             data-testid="feed-unsubscribe-keep"
             variant="outline"
-            onClick={() => void remove(true)}
+            onClick={() => void pause()}
             disabled={busy}
           >
-            保留文章并暂停
+            暂停同步
           </Button>
           <Button
             type="button"
@@ -541,7 +611,7 @@ function EditStep({
             onClick={() => setConfirmingDelete(true)}
             disabled={busy}
           >
-            删除订阅及文章（{itemCount ?? "…"} 篇）
+            退订并移入 RSS 回收站（{trashPreview?.itemCount ?? "…"} 篇）
           </Button>
         </div>
       </div>
@@ -577,11 +647,11 @@ export function FeedSourceDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="feed-source-dialog" className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>{mode === "add" ? "添加订阅" : "编辑订阅"}</DialogTitle>
+          <DialogTitle>{mode === "add" ? "添加订阅" : "管理订阅"}</DialogTitle>
           <DialogDescription>
             {mode === "add"
               ? "先发现 Feed 候选，再确认订阅设置。"
-              : "修改订阅设置或管理退订。"}
+              : "修改订阅设置；如不再需要，可退订并移入 RSS 回收站。"}
           </DialogDescription>
         </DialogHeader>
         <div data-testid="feed-source-dialog-body" className="px-5 pb-5">

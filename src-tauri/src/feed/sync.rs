@@ -239,6 +239,11 @@ pub(crate) async fn sync_source<G: FeedNetGate>(
             let summary = db.with_conn(|conn| {
                 persist_success(conn, &source, &items, history, &state, &metadata)
             })?;
+            let Some(summary) = summary else {
+                return Ok(SyncOutcome {
+                    status: SyncStatus::Skipped,
+                });
+            };
             Ok(SyncOutcome {
                 status: SyncStatus::Succeeded {
                     new_items: summary.inserted,
@@ -387,8 +392,16 @@ fn persist_success(
     history: HistoryReadPolicy,
     state: &FeedSourceSyncState,
     metadata: &(String, Option<String>, Option<String>, Option<String>),
-) -> AppResult<UpsertSummary> {
+) -> AppResult<Option<UpsertSummary>> {
     let tx = conn.unchecked_transaction()?;
+    let source_active: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM feed_sources WHERE id = ?1 AND deleted_at IS NULL)",
+        [&source.id],
+        |row| row.get(0),
+    )?;
+    if !source_active {
+        return Ok(None);
+    }
     // 首次同步在同一事务内判断：source 尚无 item。
     let first_sync = FeedRepository::count_items(&tx, &source.id)? == 0;
     let summary = FeedRepository::upsert_items(&tx, items)?;
@@ -421,7 +434,7 @@ fn persist_success(
         &state.last_checked_at,
     )?;
     tx.commit()?;
-    Ok(summary)
+    Ok(Some(summary))
 }
 
 // ── FeedSyncService（Task 2.6：调度器与手动刷新共用）─────────

@@ -3,13 +3,24 @@ import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 const invoke = vi.fn();
+const listen = vi.fn();
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invoke(...args),
 }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: (...args: unknown[]) => listen(...args),
+}));
 
 import {
   feedDiscover,
+  feedDocumentCacheClear,
+  feedDocumentCancel,
+  feedDocumentPrepare,
+  feedDocumentRelease,
+  feedImagesPrepare,
+  feedImagesRelease,
+  listenFeedDocumentProgress,
   feedFulltextEnqueueItem,
   feedItemGet,
   feedItemList,
@@ -19,7 +30,12 @@ import {
   feedOpmlImport,
   feedSourceAdd,
   feedSourceItemCount,
+  feedSourceTrashMatch,
+  feedSourceTrashPreview,
   feedSourceRemove,
+  feedSourceTrash,
+  feedSourceTrashPurge,
+  feedSourceTrashRestore,
   feedSourceUpdate,
   feedTrashClear,
   feedTrashList,
@@ -48,7 +64,12 @@ const FEED_COMMANDS = [
   "feed_source_list",
   "feed_source_update",
   "feed_source_remove",
+  "feed_source_trash",
+  "feed_source_trash_restore",
+  "feed_source_trash_purge",
   "feed_source_item_count",
+  "feed_source_trash_match",
+  "feed_source_trash_preview",
   "feed_library_summary",
   "feed_trash_list",
   "feed_trash_restore",
@@ -58,6 +79,12 @@ const FEED_COMMANDS = [
   "feed_item_get",
   "feed_item_set_state",
   "feed_fulltext_enqueue_item",
+  "feed_document_prepare",
+  "feed_document_cancel",
+  "feed_document_release",
+  "feed_document_cache_clear",
+  "feed_images_prepare",
+  "feed_images_release",
   "feed_items_mark_read",
   "feed_sync_source",
   "feed_sync_all",
@@ -86,6 +113,19 @@ describe("feed IPC contract", () => {
     }
   });
 
+  it("allows only opaque local media schemes in PDF object-src", () => {
+    const config = read("src-tauri/tauri.conf.json");
+    expect(config).toContain("object-src iris-media: iris-feed-document:");
+    expect(config).not.toContain("object-src https:");
+    expect(config).not.toContain("object-src file:");
+  });
+
+  it("allows the opaque RSS image protocol without permitting remote image hotlinks", () => {
+    const config = read("src-tauri/tauri.conf.json");
+    expect(config).toContain("img-src 'self' data: iris-feed-image:");
+    expect(config).not.toContain("img-src 'self' data: https:");
+  });
+
   it("defines the feed contract in types/ipc.ts with camelCase fields", () => {
     const types = read("src/types/ipc.ts");
     expect(types).toContain(
@@ -107,6 +147,19 @@ describe("feed IPC contract", () => {
 
   it("defines the event name in ipc-events.ts", () => {
     expect(IPC_EVENTS.FEED_CHANGED).toBe("feed:changed");
+    expect(IPC_EVENTS.FEED_DOCUMENT_PROGRESS).toBe("feed:document-progress");
+  });
+
+  it("subscribes to PDF progress without exposing a URL or local path", async () => {
+    const unlisten = vi.fn();
+    listen.mockResolvedValue(unlisten);
+    const handler = vi.fn();
+
+    await expect(listenFeedDocumentProgress(handler)).resolves.toBe(unlisten);
+    expect(listen).toHaveBeenCalledWith(
+      "feed:document-progress",
+      expect.any(Function),
+    );
   });
 
   it("feedDiscover invokes with bounded url", async () => {
@@ -177,6 +230,28 @@ describe("feed IPC contract", () => {
     });
   });
 
+  it("uses read-only source trash preflight commands", async () => {
+    invoke
+      .mockResolvedValueOnce({
+        itemCount: 5,
+        starredCount: 2,
+        purgeAfter: "2026-09-12T00:00:00Z",
+      })
+      .mockResolvedValueOnce(null);
+    await expect(feedSourceTrashPreview("src-1")).resolves.toMatchObject({
+      starredCount: 2,
+    });
+    await expect(
+      feedSourceTrashMatch("https://example.com/feed.xml"),
+    ).resolves.toBeNull();
+    expect(invoke).toHaveBeenNthCalledWith(1, "feed_source_trash_preview", {
+      sourceId: "src-1",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "feed_source_trash_match", {
+      url: "https://example.com/feed.xml",
+    });
+  });
+
   it("feedSourceRemove invokes with keepItems flag", async () => {
     invoke.mockResolvedValue(3);
     await expect(feedSourceRemove("src-1", false)).resolves.toBe(3);
@@ -188,12 +263,12 @@ describe("feed IPC contract", () => {
 
   it("keeps RSS recycle bin and on-open fulltext operation explicit", async () => {
     invoke
-      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce({ sources: [], items: [] })
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(3)
       .mockResolvedValueOnce("queued");
 
-    await expect(feedTrashList()).resolves.toEqual([]);
+    await expect(feedTrashList()).resolves.toEqual({ sources: [], items: [] });
     await expect(feedTrashRestore("item-1")).resolves.toBeUndefined();
     await expect(feedTrashClear()).resolves.toBe(3);
     await expect(feedFulltextEnqueueItem("item-1")).resolves.toBe("queued");
@@ -205,6 +280,52 @@ describe("feed IPC contract", () => {
     expect(invoke).toHaveBeenNthCalledWith(3, "feed_trash_clear");
     expect(invoke).toHaveBeenNthCalledWith(4, "feed_fulltext_enqueue_item", {
       itemId: "item-1",
+    });
+  });
+
+  it("exposes recoverable source removal and opaque PDF leases", async () => {
+    invoke
+      .mockResolvedValueOnce(12)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(12)
+      .mockResolvedValueOnce({
+        handle: "lease-1",
+        url: "iris-feed-document://localhost/lease-1",
+        mimeType: "application/pdf",
+        sizeBytes: 4096,
+      })
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(3)
+      .mockResolvedValueOnce({ images: [], failedCount: 0 })
+      .mockResolvedValueOnce(undefined);
+
+    await expect(feedSourceTrash("src-1")).resolves.toBe(12);
+    await expect(feedSourceTrashRestore("src-1")).resolves.toBeUndefined();
+    await expect(feedSourceTrashPurge("src-1")).resolves.toBe(12);
+    await expect(feedDocumentPrepare("item-1")).resolves.toMatchObject({
+      handle: "lease-1",
+    });
+    await expect(feedDocumentCancel("item-1")).resolves.toBeUndefined();
+    await expect(feedDocumentRelease("lease-1")).resolves.toBeUndefined();
+    await expect(feedDocumentCacheClear()).resolves.toBe(3);
+    await expect(feedImagesPrepare("item-1")).resolves.toEqual({
+      images: [],
+      failedCount: 0,
+    });
+    await expect(feedImagesRelease(["lease-image-1"])).resolves.toBeUndefined();
+
+    expect(invoke).toHaveBeenNthCalledWith(1, "feed_source_trash", {
+      sourceId: "src-1",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(4, "feed_document_prepare", {
+      itemId: "item-1",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(8, "feed_images_prepare", {
+      itemId: "item-1",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(9, "feed_images_release", {
+      handles: ["lease-image-1"],
     });
   });
 
@@ -240,6 +361,9 @@ describe("feed IPC contract", () => {
       siteUrl: "https://example.com/site",
       contentOrigin: "feed",
       fulltextStatus: "not_requested",
+      primaryDocument: null,
+      fulltextNeedsRefresh: false,
+      imagesAuthorized: false,
     } satisfies FeedItemDetail);
     const detail = await feedItemGet("item-1");
     expect(invoke).toHaveBeenCalledWith("feed_item_get", { itemId: "item-1" });

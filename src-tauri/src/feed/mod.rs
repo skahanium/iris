@@ -8,8 +8,10 @@ pub mod opml;
 pub mod repository;
 
 pub(crate) mod discovery;
+pub(crate) mod document;
 pub(crate) mod fetch;
 pub(crate) mod fulltext;
+pub(crate) mod image;
 pub(crate) mod normalize;
 pub(crate) mod sync;
 

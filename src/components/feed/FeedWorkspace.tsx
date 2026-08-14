@@ -232,8 +232,9 @@ export function FeedWorkspace({
     if (
       !current ||
       current.summary.id !== library.selectedItemId ||
-      current.contentOrigin === "web" ||
-      current.contentMarkdown !== current.summaryMarkdown
+      (!current.fulltextNeedsRefresh && current.contentOrigin === "web") ||
+      (!current.fulltextNeedsRefresh &&
+        current.contentMarkdown !== current.summaryMarkdown)
     ) {
       return;
     }
@@ -250,7 +251,8 @@ export function FeedWorkspace({
   useEffect(() => {
     if (
       detailStatus !== "ready" ||
-      detail?.fulltextStatus !== "not_requested"
+      (detail?.fulltextStatus !== "not_requested" &&
+        !detail?.fulltextNeedsRefresh)
     ) {
       return;
     }
@@ -416,6 +418,7 @@ export function FeedWorkspace({
       onRetrySource={(sourceId) => {
         void feedSyncSource(sourceId, true).then(() => library.refresh());
       }}
+      onManageSource={openEditDialog}
       onOpenOpml={() => setOpmlOpen(true)}
     />
   );
@@ -442,6 +445,7 @@ export function FeedWorkspace({
       onRetrySource={(sourceId) => {
         void feedSyncSource(sourceId, true).then(() => library.refresh());
       }}
+      onManageSource={openEditDialog}
       onOpenOpml={() => setOpmlOpen(true)}
     />
   );
@@ -618,11 +622,12 @@ export function FeedWorkspace({
                 <button
                   type="button"
                   data-testid="feed-edit-source"
-                  aria-label="编辑当前订阅源"
+                  aria-label="管理当前订阅源"
                   className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
                   onClick={() => openEditDialog(selectedSource)}
                 >
                   <Pencil className="h-4 w-4" aria-hidden="true" />
+                  <span className="sr-only">管理来源</span>
                 </button>
               ) : null}
               <button
@@ -713,7 +718,7 @@ export function FeedWorkspace({
                   <button
                     type="button"
                     data-testid="feed-edit-source"
-                    aria-label="编辑当前订阅源"
+                    aria-label="管理当前订阅源"
                     className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
                     onClick={() => {
                       const selected = library.sources.find(
@@ -723,6 +728,7 @@ export function FeedWorkspace({
                     }}
                   >
                     <Pencil className="h-4 w-4" aria-hidden="true" />
+                    <span className="sr-only">管理来源</span>
                   </button>
                 ) : null}
               </div>
@@ -760,11 +766,12 @@ export function FeedWorkspace({
                     <button
                       type="button"
                       data-testid="feed-edit-source"
-                      aria-label="编辑当前订阅源"
+                      aria-label="管理当前订阅源"
                       className="iris-focus-soft inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/60"
                       onClick={() => openEditDialog(selectedSource)}
                     >
                       <Pencil className="h-4 w-4" aria-hidden="true" />
+                      <span className="sr-only">管理来源</span>
                     </button>
                   ) : null}
                   <button

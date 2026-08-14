@@ -8,6 +8,8 @@
 
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -91,6 +93,13 @@ pub(crate) struct FixedHttpsResponse {
     pub status: u16,
     pub headers: reqwest::header::HeaderMap,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FixedHttpsFileResponse {
+    pub status: u16,
+    pub headers: reqwest::header::HeaderMap,
+    pub bytes_written: u64,
 }
 
 /// 经直连、HTTP CONNECT 或 SOCKS5 建立已固定目标的 HTTPS 请求。
@@ -201,6 +210,142 @@ pub(crate) async fn fixed_https_get(
         status,
         headers,
         bytes,
+    })
+}
+
+/// 与 [`fixed_https_get`] 共用固定目标和代理传输，但把成功响应流式写入临时文件。
+/// 单次只复制 64 KiB 到写入缓冲，不把远程文档累积到进程内存。
+pub(crate) async fn fixed_https_download_to_path(
+    url: &str,
+    addrs: &[IpAddr],
+    user_agent: &str,
+    referer: Option<&str>,
+    path: &Path,
+    max_bytes: u64,
+    cancelled: &AtomicBool,
+    progress: &(dyn Fn(u64) + Send + Sync),
+) -> AppResult<FixedHttpsFileResponse> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| AppError::msg("https_url_invalid"))?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| AppError::msg("https_url_invalid"))?;
+    let port = parsed.port_or_known_default().unwrap_or(443);
+    let target = *addrs
+        .first()
+        .ok_or_else(|| AppError::msg("https_dns_empty"))?;
+    let stream = match crate::network::system_proxy::snapshot_for(&parsed, &[target]) {
+        crate::network::system_proxy::SystemProxySnapshot::Direct => {
+            TcpStream::connect(SocketAddr::new(target, port))
+                .await
+                .map_err(|_| AppError::msg("https_connect_failed"))?
+        }
+        crate::network::system_proxy::SystemProxySnapshot::Unsupported(code) => {
+            return Err(AppError::msg(code));
+        }
+        crate::network::system_proxy::SystemProxySnapshot::Http(proxy) => {
+            http_connect(connect_proxy(&proxy).await?, target, port).await?
+        }
+        crate::network::system_proxy::SystemProxySnapshot::Socks5(proxy) => {
+            socks5_connect(connect_proxy(&proxy).await?, target, port).await?
+        }
+    };
+    let config = Arc::new(
+        rustls::ClientConfig::with_platform_verifier()
+            .map_err(|_| AppError::msg("https_tls_config_failed"))?,
+    );
+    let server_name =
+        ServerName::try_from(host.to_string()).map_err(|_| AppError::msg("https_url_invalid"))?;
+    let tls = TlsConnector::from(config)
+        .connect(server_name, stream)
+        .await
+        .map_err(|_| AppError::msg("https_tls_failed"))?;
+    let mut builder = http1::Builder::new();
+    builder
+        .max_headers(100)
+        .max_buf_size(MAX_RESPONSE_HEADER_BYTES);
+    let (mut sender, connection) = builder
+        .handshake(TokioIo::new(tls))
+        .await
+        .map_err(|_| AppError::msg("https_request_failed"))?;
+    tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let path_and_query = match parsed.query() {
+        Some(query) => format!("{}?{query}", parsed.path()),
+        None => parsed.path().to_string(),
+    };
+    let authority = match parsed.port() {
+        Some(value) => format!("{host}:{value}"),
+        None => host.to_string(),
+    };
+    let mut request = http::Request::builder()
+        .method("GET")
+        .uri(path_and_query)
+        .header(HOST, authority)
+        .header(USER_AGENT, user_agent);
+    if let Some(referer) = referer {
+        request = request.header(http::header::REFERER, referer);
+    }
+    let response = sender
+        .send_request(
+            request
+                .body(Empty::<Bytes>::new())
+                .map_err(|_| AppError::msg("https_request_failed"))?,
+        )
+        .await
+        .map_err(|_| AppError::msg("https_request_failed"))?;
+    let status = response.status().as_u16();
+    let headers = response.headers().clone();
+    validate_response_headers(&headers)?;
+    if headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .is_some_and(|value| value > max_bytes)
+    {
+        return Err(AppError::msg("https_response_too_large"));
+    }
+    if !(200..300).contains(&status) {
+        return Ok(FixedHttpsFileResponse {
+            status,
+            headers,
+            bytes_written: 0,
+        });
+    }
+    let mut output = tokio::fs::File::create(path)
+        .await
+        .map_err(|_| AppError::msg("feed_document_cache_write_failed"))?;
+    let mut written = 0_u64;
+    let mut body = response.into_body();
+    while let Some(frame) = body.frame().await {
+        if cancelled.load(Ordering::Acquire) {
+            return Err(AppError::msg("feed_document_cancelled"));
+        }
+        let frame = frame.map_err(|_| AppError::msg("https_stream_failed"))?;
+        if let Some(data) = frame.data_ref() {
+            for chunk in data.chunks(64 * 1024) {
+                written = written
+                    .checked_add(chunk.len() as u64)
+                    .ok_or_else(|| AppError::msg("https_response_too_large"))?;
+                if written > max_bytes {
+                    return Err(AppError::msg("https_response_too_large"));
+                }
+                output
+                    .write_all(chunk)
+                    .await
+                    .map_err(|_| AppError::msg("feed_document_cache_write_failed"))?;
+                progress(written);
+            }
+        }
+    }
+    output
+        .flush()
+        .await
+        .map_err(|_| AppError::msg("feed_document_cache_write_failed"))?;
+    Ok(FixedHttpsFileResponse {
+        status,
+        headers,
+        bytes_written: written,
     })
 }
 

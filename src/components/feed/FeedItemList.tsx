@@ -48,7 +48,7 @@ function ItemRow({
       aria-current={selected ? "true" : undefined}
       tabIndex={focused ? 0 : -1}
       className={cn(
-        "block w-full border-b border-border-subtle/60 px-3 py-2 text-left transition-colors duration-fast hover:bg-muted/40 focus:outline-none",
+        "block min-h-24 w-full overflow-hidden border-b border-border-subtle/60 px-3 py-2 text-left transition-colors duration-fast hover:bg-muted/40 focus:outline-none",
         selected && "bg-muted/70",
       )}
       onClick={() => onSelect(item.id)}
@@ -77,7 +77,7 @@ function ItemRow({
           </span>
           <span
             data-testid={`feed-item-excerpt-${item.id}`}
-            className="mt-1 line-clamp-2 block text-caption text-muted-foreground/80"
+            className="mt-1 line-clamp-2 text-caption text-muted-foreground/80"
           >
             {item.excerpt}
           </span>
@@ -105,7 +105,8 @@ export function FeedItemList({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 72,
+    // 一行标题 + 一行来源 + 两行摘要及内边距；实际高度仍由 measureElement 校正。
+    estimateSize: () => 96,
     overscan: 12,
   });
   const virtualRows = virtualizer.getVirtualItems();

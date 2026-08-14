@@ -12,6 +12,7 @@ import {
   Radio,
   RefreshCw,
   Rss,
+  Settings2,
   Star,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -41,6 +42,8 @@ export interface FeedSidebarProps {
   onAddSource: () => void;
   /** 同步失败源的显式重试（稳定错误码文案由 aria-label 表达）。 */
   onRetrySource: (sourceId: string) => void;
+  /** 打开单源管理；来源行在所有响应式尺寸都提供此入口。 */
+  onManageSource: (source: FeedSourceSummary) => void;
   /** 打开 OPML 导入导出对话框。 */
   onOpenOpml: () => void;
 }
@@ -56,6 +59,7 @@ export function FeedSidebar({
   onClearSource,
   onAddSource,
   onRetrySource,
+  onManageSource,
   onOpenOpml,
 }: FeedSidebarProps) {
   const failedSources = sources.filter(
@@ -74,40 +78,52 @@ export function FeedSidebar({
     const failed = source.lastErrorCode != null;
     return (
       <li key={source.id}>
-        <button
-          type="button"
-          data-testid={`feed-source-${source.id}`}
-          aria-pressed={active}
-          aria-label={`${source.title}${failed ? "，同步失败" : ""}，${source.unreadCount} 条未读`}
-          className={cn(
-            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground",
-            active && "bg-muted/80 text-foreground",
-          )}
-          onClick={() => {
-            onViewChange("all");
-            onSourceSelect(source.id);
-          }}
-        >
-          {failed ? (
-            <AlertTriangle
-              className="h-4 w-4 shrink-0 text-warning"
-              aria-hidden="true"
-            />
-          ) : (
-            <Rss className="h-4 w-4 shrink-0" aria-hidden="true" />
-          )}
-          <span className="min-w-0 flex-1 truncate text-left">
-            {source.title}
-          </span>
-          {source.unreadCount > 0 ? (
-            <span
-              data-testid={`feed-source-unread-${source.id}`}
-              className="shrink-0 rounded-full bg-muted px-1.5 text-micro tabular-nums text-muted-foreground"
-            >
-              {source.unreadCount}
+        <div className="group flex items-center gap-0.5 rounded-md">
+          <button
+            type="button"
+            data-testid={`feed-source-${source.id}`}
+            aria-pressed={active}
+            aria-label={`${source.title}${failed ? "，同步失败" : ""}，${source.unreadCount} 条未读`}
+            className={cn(
+              "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-ui text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground",
+              active && "bg-muted/80 text-foreground",
+            )}
+            onClick={() => {
+              onViewChange("all");
+              onSourceSelect(source.id);
+            }}
+          >
+            {failed ? (
+              <AlertTriangle
+                className="h-4 w-4 shrink-0 text-warning"
+                aria-hidden="true"
+              />
+            ) : (
+              <Rss className="h-4 w-4 shrink-0" aria-hidden="true" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-left">
+              {source.title}
             </span>
-          ) : null}
-        </button>
+            {source.unreadCount > 0 ? (
+              <span
+                data-testid={`feed-source-unread-${source.id}`}
+                className="shrink-0 rounded-full bg-muted px-1.5 text-micro tabular-nums text-muted-foreground"
+              >
+                {source.unreadCount}
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            data-testid={`feed-manage-source-${source.id}`}
+            aria-label={`管理来源 ${source.title}`}
+            title="管理来源"
+            className="iris-focus-soft inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-70 transition-colors hover:bg-muted/60 hover:text-foreground group-hover:opacity-100"
+            onClick={() => onManageSource(source)}
+          >
+            <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
       </li>
     );
   };

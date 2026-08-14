@@ -94,6 +94,7 @@ impl Scheduler {
 
         // RSS 保留维护与同步分离：过期条目先进入 RSS 专属回收站，30 天后
         // 才物理清理；收藏不参与。绝不在后台 VACUUM，以免锁住正在阅读的库。
+        let feed_retention_state = state.clone();
         let feed_retention_db = state.db.clone();
         let mut shutdown_rx_retention = shutdown_rx.clone();
         tauri::async_runtime::spawn(async move {
@@ -102,6 +103,40 @@ impl Scheduler {
                 _ = shutdown_rx_retention.changed() => return,
             }
             loop {
+                let expired_source_ids = feed_retention_db
+                    .with_read_conn(|conn| {
+                        crate::feed::repository::FeedRepository::expired_source_ids(
+                            conn,
+                            Utc::now(),
+                        )
+                    })
+                    .unwrap_or_default();
+                let cache_dir = feed_retention_state
+                    .data_dir()
+                    .join("cache")
+                    .join("feed-documents");
+                for source_id in expired_source_ids {
+                    let urls = feed_retention_db
+                        .with_read_conn(|conn| {
+                            crate::feed::repository::FeedRepository::source_primary_document_urls(
+                                conn, &source_id,
+                            )
+                        })
+                        .unwrap_or_default();
+                    for url in urls {
+                        let referenced = feed_retention_db
+                            .with_read_conn(|conn| {
+                                crate::feed::repository::FeedRepository::active_primary_document_reference_count(
+                                    conn,
+                                    &url,
+                                )
+                            })
+                            .unwrap_or(1);
+                        if referenced == 0 {
+                            let _ = crate::feed::document::remove_cached_url(&cache_dir, &url);
+                        }
+                    }
+                }
                 let result = feed_retention_db.with_conn(|conn| {
                     let soft_deleted =
                         crate::feed::repository::FeedRepository::soft_delete_expired_items(
@@ -112,11 +147,21 @@ impl Scheduler {
                         conn,
                         Utc::now(),
                     )?;
-                    Ok((soft_deleted, purged))
+                    let purged_sources =
+                        crate::feed::repository::FeedRepository::purge_expired_sources(
+                            conn,
+                            Utc::now(),
+                        )?;
+                    Ok((soft_deleted, purged, purged_sources))
                 });
-                if let Ok((soft_deleted, purged)) = result {
-                    if soft_deleted > 0 || purged > 0 {
-                        tracing::info!(soft_deleted, purged, "feed_retention_maintenance_complete");
+                if let Ok((soft_deleted, purged, purged_sources)) = result {
+                    if soft_deleted > 0 || purged > 0 || purged_sources > 0 {
+                        tracing::info!(
+                            soft_deleted,
+                            purged,
+                            purged_sources,
+                            "feed_retention_maintenance_complete"
+                        );
                     }
                 } else {
                     tracing::warn!(

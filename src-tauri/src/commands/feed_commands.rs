@@ -9,15 +9,16 @@ use std::sync::Arc;
 use chrono::Utc;
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::feed::discovery::{discover, FeedCandidate};
 use crate::feed::fetch::ProdNetGate;
 use crate::feed::model::{
-    FeedFulltextEnqueueOutcome, FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary,
-    FeedLibrarySummary, FeedSourcePatch, FeedSourceSummary, FeedTrashItem, NewFeedSource,
+    FeedFulltextEnqueueOutcome, FeedImagesPrepareResult, FeedItemDetail, FeedItemQuery,
+    FeedItemStatePatch, FeedItemSummary, FeedLibrarySummary, FeedSourcePatch, FeedSourceSummary,
+    FeedSourceTrashPreview, FeedTrashSnapshot, FeedTrashSource, NewFeedSource,
 };
 use crate::feed::opml::canonicalize_https_url;
 use crate::feed::opml::{export_opml, import_opml_with_interval, OpmlImportResult, OPML_MAX_BYTES};
@@ -94,6 +95,7 @@ pub struct FeedSourceAddInput {
     pub title_override: Option<String>,
     pub folder_path: Option<String>,
     pub fetch_interval_minutes: Option<i64>,
+    pub restore_deleted: Option<bool>,
 }
 
 /// 编辑订阅源：`titleOverride: null` 清除覆盖标题，缺省字段不改动。
@@ -197,6 +199,41 @@ pub fn feed_source_remove(
 }
 
 #[tauri::command]
+pub fn feed_source_trash(state: State<'_, Arc<AppState>>, source_id: String) -> AppResult<u32> {
+    feed_source_trash_impl(&state, &source_id)
+}
+
+#[tauri::command]
+pub fn feed_source_trash_restore(
+    state: State<'_, Arc<AppState>>,
+    source_id: String,
+) -> AppResult<()> {
+    check_id(&source_id)?;
+    let restored = state
+        .db
+        .with_conn(|conn| FeedRepository::restore_source(conn, &source_id, Utc::now()))?;
+    if !restored {
+        return Err(AppError::msg("feed_trash_source_not_found"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn feed_source_trash_purge(
+    state: State<'_, Arc<AppState>>,
+    source_id: String,
+) -> AppResult<u32> {
+    check_id(&source_id)?;
+    cleanup_source_document_cache(&state, &source_id)?;
+    let purged = state
+        .db
+        .with_conn(|conn| FeedRepository::purge_source(conn, &source_id))?
+        .map(|count| count as u32)
+        .ok_or_else(|| AppError::msg("feed_trash_source_not_found"))?;
+    Ok(purged)
+}
+
+#[tauri::command]
 pub fn feed_source_item_count(
     state: State<'_, Arc<AppState>>,
     source_id: String,
@@ -208,6 +245,30 @@ pub fn feed_source_item_count(
     Ok(count as u32)
 }
 
+#[tauri::command]
+pub fn feed_source_trash_preview(
+    state: State<'_, Arc<AppState>>,
+    source_id: String,
+) -> AppResult<FeedSourceTrashPreview> {
+    check_id(&source_id)?;
+    state
+        .db
+        .with_read_conn(|conn| FeedRepository::source_trash_preview(conn, &source_id, Utc::now()))?
+        .ok_or_else(|| AppError::msg("feed_source_not_found"))
+}
+
+#[tauri::command]
+pub fn feed_source_trash_match(
+    state: State<'_, Arc<AppState>>,
+    url: String,
+) -> AppResult<Option<FeedTrashSource>> {
+    check_url(&url)?;
+    let canonical = canonicalize_https_url(&url)?;
+    state
+        .db
+        .with_read_conn(|conn| FeedRepository::find_deleted_source_by_feed_url(conn, &canonical))
+}
+
 /// 订阅全局设置与维护页的资料库汇总；不暴露单源 URL 或文章内容。
 #[tauri::command]
 pub fn feed_library_summary(state: State<'_, Arc<AppState>>) -> AppResult<FeedLibrarySummary> {
@@ -216,10 +277,10 @@ pub fn feed_library_summary(state: State<'_, Arc<AppState>>) -> AppResult<FeedLi
 
 /// RSS 回收站：仅返回已软删除的应用缓存条目，不涉及 Markdown 笔记回收站。
 #[tauri::command]
-pub fn feed_trash_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FeedTrashItem>> {
+pub fn feed_trash_list(state: State<'_, Arc<AppState>>) -> AppResult<FeedTrashSnapshot> {
     state
         .db
-        .with_read_conn(|conn| FeedRepository::list_deleted_items(conn, 200))
+        .with_read_conn(|conn| FeedRepository::trash_snapshot(conn, 200))
 }
 
 #[tauri::command]
@@ -243,6 +304,95 @@ pub fn feed_trash_clear(state: State<'_, Arc<AppState>>) -> AppResult<u32> {
 #[tauri::command]
 pub fn feed_library_optimize(state: State<'_, Arc<AppState>>) -> AppResult<()> {
     state.db.with_conn(FeedRepository::vacuum_feed_library)
+}
+
+#[tauri::command]
+pub async fn feed_document_prepare(
+    app: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    item_id: String,
+) -> AppResult<crate::feed::document::FeedDocumentLease> {
+    check_id(&item_id)?;
+    let url = state
+        .db
+        .with_read_conn(|conn| FeedRepository::get_primary_document_url(conn, &item_id))?
+        .ok_or_else(|| AppError::msg("feed_document_not_found"))?;
+    let _ = app.emit(
+        "feed:document-progress",
+        serde_json::json!({ "itemId": item_id, "status": "downloading", "bytes": 0 }),
+    );
+    let cache_dir = state.data_dir().join("cache").join("feed-documents");
+    let progress_app = app.clone();
+    let progress_item_id = item_id.clone();
+    let progress = Arc::new(move |bytes: u64| {
+        let _ = progress_app.emit(
+            "feed:document-progress",
+            serde_json::json!({
+                "itemId": progress_item_id,
+                "status": "downloading",
+                "bytes": bytes
+            }),
+        );
+    });
+    let result =
+        crate::feed::document::prepare_document(&item_id, &url, &cache_dir, progress).await;
+    let (status, bytes) = match &result {
+        Ok(lease) => ("ready", lease.size_bytes),
+        Err(error) if error.to_string() == "feed_document_cancelled" => ("cancelled", 0),
+        Err(_) => ("failed", 0),
+    };
+    let _ = app.emit(
+        "feed:document-progress",
+        serde_json::json!({ "itemId": item_id, "status": status, "bytes": bytes }),
+    );
+    result
+}
+
+#[tauri::command]
+pub fn feed_document_cancel(item_id: String) -> AppResult<()> {
+    check_id(&item_id)?;
+    crate::feed::document::cancel_document(&item_id)
+}
+
+#[tauri::command]
+pub fn feed_document_release(handle: String) -> AppResult<()> {
+    check_id(&handle)?;
+    crate::feed::document::release_document(&handle)
+}
+
+#[tauri::command]
+pub fn feed_document_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<u32> {
+    crate::feed::document::clear_cache(&state.data_dir().join("cache").join("feed-documents"))
+}
+
+/// 对当前文章授予图片加载权限，并以 opaque 本地 lease 返回安全缓存结果。
+#[tauri::command]
+pub async fn feed_images_prepare(
+    state: State<'_, Arc<AppState>>,
+    item_id: String,
+) -> AppResult<FeedImagesPrepareResult> {
+    check_id(&item_id)?;
+    let (markdown, article_url) = state
+        .db
+        .with_conn(|conn| FeedRepository::authorize_item_images(conn, &item_id, Utc::now()))?
+        .ok_or_else(|| AppError::msg("feed_item_not_found"))?;
+    Ok(crate::feed::image::prepare_images(
+        &markdown,
+        article_url.as_deref(),
+        &state.data_dir().join("cache").join("feed-images"),
+    )
+    .await)
+}
+
+#[tauri::command]
+pub fn feed_images_release(handles: Vec<String>) -> AppResult<()> {
+    if handles.len() > 256 {
+        return Err(AppError::msg("feed_validation_limit"));
+    }
+    for handle in &handles {
+        check_id(handle)?;
+    }
+    crate::feed::image::release_images(&handles)
 }
 
 #[tauri::command]
@@ -383,6 +533,25 @@ fn feed_source_add_impl(
     let source = state
         .db
         .with_conn(|conn| {
+            if let Some(deleted_id) =
+                FeedRepository::get_deleted_source_by_feed_url(conn, &feed_url)?
+            {
+                if input.restore_deleted != Some(true) {
+                    return Err(AppError::msg("feed_source_restore_required"));
+                }
+                FeedRepository::restore_source(conn, &deleted_id, Utc::now())?;
+                FeedRepository::update_source(
+                    conn,
+                    &deleted_id,
+                    &FeedSourcePatch {
+                        is_enabled: Some(true),
+                        ..Default::default()
+                    },
+                    Utc::now(),
+                )?;
+                return FeedRepository::get_source(conn, &deleted_id)?
+                    .ok_or_else(|| AppError::msg("feed_source_restore_failed"));
+            }
             FeedRepository::create_source(
                 conn,
                 &NewFeedSource {
@@ -475,14 +644,43 @@ fn feed_source_remove_impl(state: &AppState, source_id: &str, keep_items: bool) 
         }
         Ok(0)
     } else {
-        // 删除订阅及其文章（cascade + FTS 清理）。
-        let removed = state
-            .db
-            .with_conn(|conn| FeedRepository::delete_source(conn, source_id))?;
-        removed
-            .map(|count| count as u32)
-            .ok_or_else(|| AppError::msg("feed_source_not_found"))
+        // 兼容旧 IPC，但删除语义已经收敛为可恢复的 RSS 回收站。
+        feed_source_trash_impl(state, source_id)
     }
+}
+
+fn feed_source_trash_impl(state: &AppState, source_id: &str) -> AppResult<u32> {
+    check_id(source_id)?;
+    let document_urls = state
+        .db
+        .with_read_conn(|conn| FeedRepository::source_primary_document_urls(conn, source_id))?;
+    let moved = state
+        .db
+        .with_conn(|conn| FeedRepository::trash_source(conn, source_id, Utc::now()))?
+        .map(|count| count as u32)
+        .ok_or_else(|| AppError::msg("feed_source_not_found"))?;
+    cleanup_document_urls(state, document_urls)?;
+    Ok(moved)
+}
+
+fn cleanup_source_document_cache(state: &AppState, source_id: &str) -> AppResult<()> {
+    let urls = state
+        .db
+        .with_read_conn(|conn| FeedRepository::source_primary_document_urls(conn, source_id))?;
+    cleanup_document_urls(state, urls)
+}
+
+fn cleanup_document_urls(state: &AppState, urls: Vec<String>) -> AppResult<()> {
+    let cache_dir = state.data_dir().join("cache").join("feed-documents");
+    for url in urls {
+        let still_referenced = state.db.with_read_conn(|conn| {
+            FeedRepository::active_primary_document_reference_count(conn, &url)
+        })?;
+        if still_referenced == 0 {
+            let _ = crate::feed::document::remove_cached_url(&cache_dir, &url);
+        }
+    }
+    Ok(())
 }
 
 fn feed_item_set_state_impl(
@@ -582,6 +780,7 @@ mod tests {
                 title_override: None,
                 folder_path: Some("tech".to_string()),
                 fetch_interval_minutes: Some(60),
+                restore_deleted: None,
             },
         )
         .expect("add source");
@@ -645,6 +844,17 @@ mod tests {
             .with_read_conn(|conn| FeedRepository::get_source(conn, &id))
             .expect("get")
             .is_none());
+        let trashed: bool = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT deleted_at IS NOT NULL FROM feed_sources WHERE id = ?1",
+                    [&id],
+                    |row| row.get(0),
+                )?)
+            })
+            .expect("trash state");
+        assert!(trashed, "旧删除命令也只能移入 RSS 回收站");
     }
 
     #[test]
@@ -667,9 +877,20 @@ mod tests {
             .expect("count");
         assert_eq!(count, 3, "文章保留");
 
-        // 删除路径返回文章数并级联清理。
+        // 旧删除路径返回移入回收站的文章数，不允许级联硬删除。
         let removed = feed_source_remove_impl(&state, &id, false).expect("delete");
         assert_eq!(removed, 3);
+        let retained: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM feed_items WHERE source_id = ?1",
+                    [&id],
+                    |row| row.get(0),
+                )?)
+            })
+            .expect("retained trash items");
+        assert_eq!(retained, 3);
     }
 
     #[test]
@@ -778,6 +999,7 @@ mod tests {
                 title_override: None,
                 folder_path: None,
                 fetch_interval_minutes: None,
+                restore_deleted: None,
             },
         )
         .expect_err("超长标题必须拒绝");
@@ -844,10 +1066,40 @@ mod tests {
                 title_override: None,
                 folder_path: None,
                 fetch_interval_minutes: None,
+                restore_deleted: None,
             },
         )
         .expect("add");
         assert_eq!(source.feed_url, "https://example.com/feed.xml");
+    }
+
+    #[test]
+    fn readding_a_trashed_url_requires_explicit_restore_confirmation() {
+        let state = test_state();
+        let id = add_source(&state, "https://example.com/restore.xml");
+        feed_source_trash_impl(&state, &id).expect("trash");
+
+        let input = FeedSourceAddInput {
+            url: "https://example.com/restore.xml".to_string(),
+            title: "Restored".to_string(),
+            title_override: None,
+            folder_path: None,
+            fetch_interval_minutes: None,
+            restore_deleted: None,
+        };
+        let error = feed_source_add_impl(&state, &input).expect_err("confirmation required");
+        assert!(error.to_string().contains("feed_source_restore_required"));
+
+        let restored = feed_source_add_impl(
+            &state,
+            &FeedSourceAddInput {
+                restore_deleted: Some(true),
+                ..input
+            },
+        )
+        .expect("explicit restore");
+        assert_eq!(restored.id, id);
+        assert!(restored.is_enabled, "explicit re-subscribe enables sync");
     }
 
     #[test]

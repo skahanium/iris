@@ -102,6 +102,48 @@ export function sanitizeFeedHtml(html: string): string {
   for (const image of Array.from(doc.querySelectorAll("img"))) {
     image.setAttribute("loading", "lazy");
     image.setAttribute("referrerpolicy", "no-referrer");
+    image.setAttribute("data-feed-image", "remote");
+  }
+  return doc.body.innerHTML;
+}
+
+/** 本地受控图片读取失败时改成中性文本，不保留破图框。 */
+export function handleFeedImageError(event: Event): void {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement)) return;
+  const imageKind = image.getAttribute("data-feed-image");
+  if (imageKind !== "cached" && imageKind !== "remote") return;
+  const fallback = document.createElement("span");
+  fallback.className = "feed-img-unavailable";
+  fallback.textContent = image.alt?.trim()
+    ? `图片无法加载：${image.alt.trim()}`
+    : "图片无法加载";
+  image.replaceWith(fallback);
+}
+
+/**
+ * 把已获本篇授权的图片替换为后端签发的本地 lease。
+ * 即使调用方请求加载，未知图片仍保持占位，绝不把远程 `src` 交给 WebView。
+ */
+function replaceAuthorizedImages(
+  html: string,
+  imageLeases: ReadonlyMap<string, string>,
+): string {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  for (const img of Array.from(doc.querySelectorAll("img"))) {
+    const sourceUrl = img.getAttribute("src") ?? "";
+    const leaseUrl = imageLeases.get(sourceUrl);
+    if (leaseUrl?.startsWith("iris-feed-image://localhost/")) {
+      img.setAttribute("src", leaseUrl);
+      img.setAttribute("data-feed-image", "cached");
+      continue;
+    }
+    const placeholder = doc.createElement("span");
+    placeholder.className = "feed-img-placeholder";
+    placeholder.setAttribute("aria-label", img.getAttribute("alt") ?? "图片");
+    placeholder.setAttribute("data-src", sourceUrl);
+    placeholder.textContent = "图片";
+    img.replaceWith(placeholder);
   }
   return doc.body.innerHTML;
 }
@@ -125,14 +167,17 @@ export function blockRemoteImages(html: string): string {
 }
 
 /** 订阅正文完整渲染链路：Markdown → 净化 → 远程图片占位。
- * `allowRemoteImages` 为 true 时（用户显式按本篇加载）保留 https 图片。 */
+ * `allowRemoteImages` 为 true 时只允许后端签发的本地图片 lease，绝不热链。 */
 export function renderFeedMarkdown(
   markdown: string,
   allowRemoteImages = false,
+  imageLeases: ReadonlyMap<string, string> = new Map(),
 ): string {
   const html = proseMarked.parse(markdown) as string;
   const sanitized = sanitizeFeedHtml(html);
-  return allowRemoteImages ? sanitized : blockRemoteImages(sanitized);
+  return allowRemoteImages
+    ? replaceAuthorizedImages(sanitized, imageLeases)
+    : blockRemoteImages(sanitized);
 }
 
 /** 外链拦截：只允许 HTTPS 经 `openExternalHttpsUrl` 打开；

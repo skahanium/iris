@@ -14,6 +14,8 @@ const {
   feedTrashClear,
   feedTrashList,
   feedTrashRestore,
+  feedSourceTrashRestore,
+  feedSourceTrashPurge,
   setAutoReadEnabled,
   setBackgroundSyncEnabled,
   setDefaultFetchIntervalMinutes,
@@ -24,6 +26,8 @@ const {
   feedTrashClear: vi.fn(),
   feedTrashList: vi.fn(),
   feedTrashRestore: vi.fn(),
+  feedSourceTrashRestore: vi.fn(),
+  feedSourceTrashPurge: vi.fn(),
   setAutoReadEnabled: vi.fn(),
   setBackgroundSyncEnabled: vi.fn(),
   setDefaultFetchIntervalMinutes: vi.fn(),
@@ -36,6 +40,8 @@ vi.mock("@/lib/ipc", () => ({
   feedTrashClear,
   feedTrashList,
   feedTrashRestore,
+  feedSourceTrashRestore,
+  feedSourceTrashPurge,
 }));
 vi.mock("@/hooks/useFeedSettings", () => ({
   useFeedSettings: () => ({
@@ -71,15 +77,28 @@ describe("FeedManagementSection", () => {
       newItems: 4,
       skippedHistory: 20,
     });
-    feedTrashList.mockResolvedValue([
-      {
-        item: { id: "item-1", title: "已删除文章" },
-        deletedAt: "2026-08-13T00:00:00Z",
-        purgeAfter: "2026-09-12T00:00:00Z",
-      },
-    ]);
+    feedTrashList.mockResolvedValue({
+      sources: [
+        {
+          id: "source-trashed",
+          title: "待删除来源",
+          itemCount: 4,
+          starredCount: 1,
+          deletedAt: "2026-08-13T00:00:00Z",
+          purgeAfter: "2026-09-12T00:00:00Z",
+        },
+      ],
+      items: [
+        {
+          item: { id: "item-1", title: "已删除文章" },
+          deletedAt: "2026-08-13T00:00:00Z",
+          purgeAfter: "2026-09-12T00:00:00Z",
+        },
+      ],
+    });
     feedTrashRestore.mockResolvedValue(undefined);
     feedTrashClear.mockResolvedValue(1);
+    feedSourceTrashPurge.mockResolvedValue(4);
     feedLibraryOptimize.mockResolvedValue(undefined);
   });
 
@@ -126,7 +145,17 @@ describe("FeedManagementSection", () => {
       expect(feedTrashRestore).toHaveBeenCalledWith("item-1"),
     );
     fireEvent.click(screen.getByText("立即清空已删除文章"));
+    expect(feedTrashClear).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("feed-trash-clear-confirm"));
     await waitFor(() => expect(feedTrashClear).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByText("永久删除"));
+    expect(feedSourceTrashPurge).not.toHaveBeenCalled();
+    expect(screen.getByText(/确定永久删除「待删除来源」/)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("feed-source-purge-confirm"));
+    await waitFor(() =>
+      expect(feedSourceTrashPurge).toHaveBeenCalledWith("source-trashed"),
+    );
 
     fireEvent.click(screen.getByTestId("feed-management-optimize"));
     await waitFor(() =>
