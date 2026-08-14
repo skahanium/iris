@@ -183,11 +183,49 @@ class FeedResizeObserver {
   }
 }
 
+class FeedIntersectionObserver {
+  static instances: FeedIntersectionObserver[] = [];
+  private readonly callback: IntersectionObserverCallback;
+  readonly targets = new Set<Element>();
+
+  constructor(callback: IntersectionObserverCallback) {
+    this.callback = callback;
+    FeedIntersectionObserver.instances.push(this);
+  }
+
+  observe(target: Element) {
+    this.targets.add(target);
+  }
+
+  unobserve(target: Element) {
+    this.targets.delete(target);
+  }
+
+  disconnect() {
+    this.targets.clear();
+  }
+
+  fire(target: Element) {
+    this.callback(
+      [{ target, isIntersecting: true } as IntersectionObserverEntry],
+      this as unknown as IntersectionObserver,
+    );
+  }
+}
+
 /** 冲刷 promise 驱动的状态更新（真实 timers 下 act 包裹微任务）。 */
 async function flush() {
   await act(async () => {
     await Promise.resolve();
   });
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
 }
 
 beforeEach(() => {
@@ -242,6 +280,8 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   delete (globalThis as { ResizeObserver?: unknown }).ResizeObserver;
+  delete (globalThis as { IntersectionObserver?: unknown })
+    .IntersectionObserver;
 });
 
 async function renderWorkspace() {
@@ -709,6 +749,110 @@ describe("FeedWorkspace", () => {
     expect(feedImagePrepare).toHaveBeenCalledWith("i1", 0, false);
     expect(screen.getByTestId("feed-reader-body").innerHTML).toContain(
       "iris-feed-image://localhost/image-lease-1",
+    );
+  });
+
+  it("re-observes current placeholders after a lease rebuilds the article DOM", async () => {
+    FeedIntersectionObserver.instances = [];
+    globalThis.IntersectionObserver =
+      FeedIntersectionObserver as unknown as typeof IntersectionObserver;
+    const first = deferred<{
+      sourceUrl: string;
+      handle: string;
+      url: string;
+      mimeType: string;
+      sizeBytes: number;
+    }>();
+    const second = deferred<{
+      sourceUrl: string;
+      handle: string;
+      url: string;
+      mimeType: string;
+      sizeBytes: number;
+    }>();
+    feedImagesAuthorize.mockResolvedValue({
+      images: [
+        { index: 0, sourceUrl: "https://cdn.example.com/a.png" },
+        { index: 1, sourceUrl: "https://cdn.example.com/b.png" },
+        { index: 2, sourceUrl: "https://cdn.example.com/c.png" },
+      ],
+    });
+    feedImagePrepare
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockResolvedValue({
+        sourceUrl: "https://cdn.example.com/c.png",
+        handle: "image-lease-3",
+        url: "iris-feed-image://localhost/image-lease-3",
+        mimeType: "image/png",
+        sizeBytes: 64,
+      });
+    feedItemGet.mockResolvedValue({
+      summary: item("i1"),
+      contentMarkdown:
+        "![a](https://cdn.example.com/a.png)\n\n![b](https://cdn.example.com/b.png)\n\n![c](https://cdn.example.com/c.png)",
+      summaryMarkdown: "",
+    });
+
+    await renderWorkspace();
+    fireEvent.click(screen.getByTestId("feed-item-i1"));
+    await screen.findByTestId("feed-load-remote-images");
+    fireEvent.click(screen.getByTestId("feed-load-remote-images"));
+    await waitFor(() => expect(feedImagePrepare).toHaveBeenCalledTimes(2));
+
+    first.resolve({
+      sourceUrl: "https://cdn.example.com/a.png",
+      handle: "image-lease-1",
+      url: "iris-feed-image://localhost/image-lease-1",
+      mimeType: "image/png",
+      sizeBytes: 64,
+    });
+    await waitFor(() =>
+      expect(FeedIntersectionObserver.instances.length).toBeGreaterThan(1),
+    );
+
+    const currentObserver = FeedIntersectionObserver.instances.at(-1);
+    const thirdPlaceholder = [...(currentObserver?.targets ?? [])].find(
+      (target) =>
+        target.getAttribute("data-src") === "https://cdn.example.com/c.png",
+    );
+    expect(thirdPlaceholder).toBeTruthy();
+    act(() => currentObserver?.fire(thirdPlaceholder!));
+
+    await waitFor(() =>
+      expect(feedImagePrepare).toHaveBeenCalledWith("i1", 2, false),
+    );
+  });
+
+  it("retries only the failed image from its local placeholder", async () => {
+    feedImagesAuthorize.mockResolvedValue({
+      images: [{ index: 0, sourceUrl: "https://cdn.example.com/a.png" }],
+    });
+    feedImagePrepare
+      .mockRejectedValueOnce(new Error("download failed"))
+      .mockResolvedValueOnce({
+        sourceUrl: "https://cdn.example.com/a.png",
+        handle: "image-lease-1",
+        url: "iris-feed-image://localhost/image-lease-1",
+        mimeType: "image/png",
+        sizeBytes: 64,
+      });
+    feedItemGet.mockResolvedValue({
+      summary: item("i1"),
+      contentMarkdown: "![a](https://cdn.example.com/a.png)",
+      summaryMarkdown: "",
+    });
+
+    await renderWorkspace();
+    fireEvent.click(screen.getByTestId("feed-item-i1"));
+    fireEvent.click(await screen.findByTestId("feed-load-remote-images"));
+    const retry = await screen.findByRole("button", {
+      name: "图片加载失败，点击重试",
+    });
+    fireEvent.click(retry);
+
+    await waitFor(() =>
+      expect(feedImagePrepare).toHaveBeenLastCalledWith("i1", 0, true),
     );
   });
 

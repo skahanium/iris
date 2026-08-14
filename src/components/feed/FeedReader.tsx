@@ -60,6 +60,13 @@ import type {
   FeedItemSummary,
 } from "@/types/ipc";
 
+type ImageLoadState = "queued" | "loading" | "ready" | "failed";
+
+interface QueuedImage {
+  index: number;
+  forceRetry: boolean;
+}
+
 export interface FeedReaderProps {
   /** 当前工作区可见时才允许焦点和自动已读副作用。 */
   active?: boolean;
@@ -223,13 +230,17 @@ export function FeedReader({
   const [imageLeases, setImageLeases] = useState<Map<string, string>>(
     () => new Map(),
   );
-  const [imageStatus, setImageStatus] = useState<"idle" | "loading" | "error">(
-    "idle",
+  const [imageAuthorizationState, setImageAuthorizationState] = useState<
+    "idle" | "loading" | "error"
+  >("idle");
+  const [imageStates, setImageStates] = useState<Map<number, ImageLoadState>>(
+    () => new Map(),
   );
   const imageLeaseHandlesRef = useRef<string[]>([]);
   const imageRequestRef = useRef(0);
-  const imageQueueRef = useRef<number[]>([]);
+  const imageQueueRef = useRef<QueuedImage[]>([]);
   const activeImageLoadsRef = useRef(0);
+  const inFlightImageIndicesRef = useRef(new Set<number>());
   const attemptedImageIndicesRef = useRef(new Set<number>());
   const [imageManifest, setImageManifest] = useState<
     Array<{ index: number; sourceUrl: string }>
@@ -305,10 +316,12 @@ export function FeedReader({
     imageLeaseHandlesRef.current = [];
     imageQueueRef.current = [];
     activeImageLoadsRef.current = 0;
+    inFlightImageIndicesRef.current.clear();
     attemptedImageIndicesRef.current.clear();
     setImageManifest([]);
     setImageLeases(new Map());
-    setImageStatus("idle");
+    setImageStates(new Map());
+    setImageAuthorizationState("idle");
     if (imageHandles.length > 0) void feedImagesRelease(imageHandles);
     documentRequestRef.current += 1;
     setDocumentStatus("idle");
@@ -325,19 +338,25 @@ export function FeedReader({
     };
   }, [summary?.id]);
 
-  const drainImageQueue = (
-    itemId: string,
-    request: number,
-    forceRetry: boolean,
-  ) => {
+  const setImageState = (index: number, state: ImageLoadState) => {
+    setImageStates((current) => {
+      const next = new Map(current);
+      next.set(index, state);
+      return next;
+    });
+  };
+
+  const drainImageQueue = (itemId: string, request: number) => {
     while (
       activeImageLoadsRef.current < 2 &&
       imageQueueRef.current.length > 0
     ) {
-      const index = imageQueueRef.current.shift();
-      if (index === undefined) break;
+      const queued = imageQueueRef.current.shift();
+      if (!queued) break;
       activeImageLoadsRef.current += 1;
-      void feedImagePrepare(itemId, index, forceRetry)
+      inFlightImageIndicesRef.current.add(queued.index);
+      setImageState(queued.index, "loading");
+      void feedImagePrepare(itemId, queued.index, queued.forceRetry)
         .then((image) => {
           if (request !== imageRequestRef.current) {
             void feedImagesRelease([image.handle]);
@@ -352,22 +371,18 @@ export function FeedReader({
             next.set(image.sourceUrl, image.url);
             return next;
           });
+          setImageState(queued.index, "ready");
         })
         .catch(() => {
-          if (request === imageRequestRef.current) setImageStatus("error");
+          if (request === imageRequestRef.current) {
+            setImageState(queued.index, "failed");
+          }
         })
         .finally(() => {
-          activeImageLoadsRef.current -= 1;
           if (request !== imageRequestRef.current) return;
-          drainImageQueue(itemId, request, forceRetry);
-          if (
-            activeImageLoadsRef.current === 0 &&
-            imageQueueRef.current.length === 0
-          ) {
-            setImageStatus((current) =>
-              current === "error" ? current : "idle",
-            );
-          }
+          activeImageLoadsRef.current -= 1;
+          inFlightImageIndicesRef.current.delete(queued.index);
+          drainImageQueue(itemId, request);
         });
     }
   };
@@ -380,23 +395,30 @@ export function FeedReader({
   ) => {
     for (const index of indexes) {
       if (!forceRetry && attemptedImageIndicesRef.current.has(index)) continue;
+      if (
+        inFlightImageIndicesRef.current.has(index) ||
+        imageQueueRef.current.some((queued) => queued.index === index)
+      ) {
+        continue;
+      }
       attemptedImageIndicesRef.current.add(index);
-      imageQueueRef.current.push(index);
+      imageQueueRef.current.push({ index, forceRetry });
+      setImageState(index, "queued");
     }
-    drainImageQueue(itemId, request, forceRetry);
+    drainImageQueue(itemId, request);
   };
 
-  const prepareImages = (itemId: string, forceRetry = false) => {
+  const prepareImages = (itemId: string) => {
     const request = ++imageRequestRef.current;
-    setImageStatus("loading");
+    setImageAuthorizationState("loading");
     imageQueueRef.current = [];
-    if (forceRetry) attemptedImageIndicesRef.current.clear();
     void feedImagesAuthorize(itemId)
       .then((manifest) => {
         if (request !== imageRequestRef.current) return;
         setImageManifest(manifest.images);
+        setImageStates(new Map());
+        setImageAuthorizationState("idle");
         if (manifest.images.length === 0) {
-          setImageStatus("idle");
           return;
         }
         // 首屏先启动两张；其余由下面的 IntersectionObserver 在靠近视口时加入队列。
@@ -404,12 +426,18 @@ export function FeedReader({
           itemId,
           manifest.images.slice(0, 2).map((image) => image.index),
           request,
-          forceRetry,
+          false,
         );
       })
       .catch(() => {
-        if (request === imageRequestRef.current) setImageStatus("error");
+        if (request === imageRequestRef.current) {
+          setImageAuthorizationState("error");
+        }
       });
+  };
+
+  const retryImages = (itemId: string, indexes: readonly number[]) => {
+    queueImages(itemId, indexes, imageRequestRef.current, true);
   };
 
   // 已授权文章打开时只从本地缓存恢复；缓存缺失时由同一安全后端补齐。
@@ -452,9 +480,10 @@ export function FeedReader({
     );
     placeholders.forEach((placeholder) => observer.observe(placeholder));
     return () => observer.disconnect();
-    // The observer is recreated only when the manifest/article changes.
+    // 每个 lease 或单图状态都会重建受控正文 HTML；此时必须转而观察
+    // 新占位节点，否则观察器仍指向已脱离 DOM 的旧元素，后续图片不会入队。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageManifest, summary?.id]);
+  }, [imageLeases, imageManifest, imageStates, summary?.id]);
 
   useEffect(
     () => () => {
@@ -547,11 +576,53 @@ export function FeedReader({
     );
   }
 
+  const failedImageSources = new Set(
+    imageManifest
+      .filter((image) => imageStates.get(image.index) === "failed")
+      .map((image) => image.sourceUrl),
+  );
+  const failedImageIndexes = imageManifest
+    .filter((image) => imageStates.get(image.index) === "failed")
+    .map((image) => image.index);
+  const readyImageCount = imageManifest.filter(
+    (image) => imageStates.get(image.index) === "ready",
+  ).length;
+  const activeImageCount = imageManifest.filter((image) => {
+    const state = imageStates.get(image.index);
+    return state === "queued" || state === "loading";
+  }).length;
+  const deferredImageCount = Math.max(
+    0,
+    imageManifest.length -
+      readyImageCount -
+      failedImageIndexes.length -
+      activeImageCount,
+  );
+
   const markdown = renderFeedMarkdown(
     detail.contentMarkdown,
-    detail.imagesAuthorized || imageLeases.size > 0,
+    detail.imagesAuthorized || imageManifest.length > 0,
     imageLeases,
+    failedImageSources,
   );
+
+  const handleReaderClick = (event: React.MouseEvent<HTMLElement>) => {
+    const target = event.target as HTMLElement;
+    const retry = target.closest<HTMLElement>(
+      "[data-feed-image-retry][data-src]",
+    );
+    if (retry) {
+      const index = imageManifest.find(
+        (image) => image.sourceUrl === retry.dataset.src,
+      )?.index;
+      if (index !== undefined) {
+        event.preventDefault();
+        retryImages(summary.id, [index]);
+      }
+      return;
+    }
+    handleFeedLinkClick(event.nativeEvent);
+  };
 
   if (documentLease) {
     return (
@@ -588,11 +659,11 @@ export function FeedReader({
     <article
       data-testid="feed-reader"
       className="h-full min-h-0 flex-1 overflow-y-auto bg-background"
-      onClick={(event) => handleFeedLinkClick(event.nativeEvent)}
+      onClick={handleReaderClick}
       onError={(event) => handleFeedImageError(event.nativeEvent)}
       ref={bodyRef}
     >
-      <div className="mx-auto flex max-w-[var(--prose-measure)] flex-col px-6 py-6">
+      <div className="mx-auto flex max-w-[var(--prose-measure)] flex-col px-4 py-6 sm:px-6 sm:py-8">
         <h1
           ref={titleRef}
           tabIndex={-1}
@@ -805,31 +876,47 @@ export function FeedReader({
           <div className="mt-3 flex items-center gap-2 rounded-md border border-border-subtle bg-panel px-3 py-2 text-caption text-muted-foreground">
             <ImageOff className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span className="flex-1">
-              {imageStatus === "loading"
+              {imageAuthorizationState === "loading"
                 ? detail.imagesAuthorized
                   ? "正在恢复本篇图片"
                   : "正在安全加载本篇图片"
-                : imageStatus === "error"
-                  ? "部分图片无法加载"
-                  : "本篇图片尚未加载"}
+                : imageAuthorizationState === "error"
+                  ? "暂时无法准备本篇图片"
+                  : failedImageIndexes.length > 0
+                    ? `${failedImageIndexes.length} 张图片加载失败`
+                    : imageManifest.length > 0
+                      ? deferredImageCount > 0
+                        ? `已加载 ${readyImageCount}/${imageManifest.length}，继续滚动以加载其余图片`
+                        : `正在加载 ${readyImageCount}/${imageManifest.length} 张图片`
+                      : "本篇图片尚未加载"}
             </span>
-            <button
-              type="button"
-              data-testid="feed-load-remote-images"
-              className="iris-focus-soft rounded-md px-2 py-0.5 text-caption text-foreground transition-colors duration-fast hover:bg-muted/60"
-              disabled={imageStatus === "loading"}
-              onClick={() => prepareImages(summary.id, imageStatus === "error")}
-            >
-              {imageStatus === "error" ? "重试加载图片" : "加载本篇图片"}
-            </button>
+            {failedImageIndexes.length > 0 ? (
+              <button
+                type="button"
+                data-testid="feed-retry-failed-images"
+                className="iris-focus-soft rounded-md px-2 py-0.5 text-caption text-foreground transition-colors duration-fast hover:bg-muted/60"
+                onClick={() => retryImages(summary.id, failedImageIndexes)}
+              >
+                重试失败图片
+              </button>
+            ) : imageManifest.length === 0 ? (
+              <button
+                type="button"
+                data-testid="feed-load-remote-images"
+                className="iris-focus-soft rounded-md px-2 py-0.5 text-caption text-foreground transition-colors duration-fast hover:bg-muted/60"
+                disabled={imageAuthorizationState === "loading"}
+                onClick={() => prepareImages(summary.id)}
+              >
+                加载本篇图片
+              </button>
+            ) : null}
           </div>
         ) : null}
 
         <div
           data-testid="feed-reader-body"
-          className={cn(
-            "prose mt-5 text-body leading-relaxed text-foreground/90",
-          )}
+          className={cn("iris-markdown-content mt-5 text-foreground/90")}
+          data-prose-surface="feed"
           style={{ maxWidth: "var(--prose-measure)" }}
           dangerouslySetInnerHTML={{ __html: toTrustedHtml(markdown) }}
         />

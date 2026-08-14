@@ -1,6 +1,6 @@
 /**
- * Shared Markdown prose — editor + AI conversation surfaces.
- * Surfaces: [data-prose-surface="editor" | "conversation"]
+ * Shared Markdown prose — editor, AI conversation + feed reader surfaces.
+ * Surfaces: [data-prose-surface="editor" | "conversation" | "feed"]
  */
 @layer components {
   :root {
@@ -339,6 +339,110 @@
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > pre {
     font-size: calc(0.875rem * var(--editor-zoom));
+  }
+
+  /* ── Feed reader surface ── */
+
+  [data-prose-surface="feed"].iris-markdown-content {
+    font-size: var(--prose-size-editor);
+    line-height: var(--prose-line-height);
+    letter-spacing: var(--prose-letter-spacing);
+    min-width: 0;
+    overflow-wrap: break-word;
+    @apply text-foreground;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content
+    :where(p, li, blockquote, td, th) {
+    min-width: 0;
+    overflow-wrap: break-word;
+    word-break: normal;
+    line-break: loose;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content
+    > :is(h1, h2, h3, h4, h5, h6) {
+    @apply text-foreground;
+    line-height: var(--prose-heading-line-height);
+    text-align: left;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content
+    > :is(h1, h2, h3, h4, h5, h6) {
+    margin-top: var(--prose-heading-gap-before);
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > :is(h3, h4, h5, h6) {
+    margin-top: var(--prose-heading-gap-before-h3);
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content
+    > :is(h1, h2, h3, h4, h5, h6):first-child {
+    margin-top: 0;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content
+    > :is(h1, h2, h3, h4, h5, h6)
+    + * {
+    margin-top: var(--prose-heading-gap-after);
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > h1 {
+    font-size: var(--prose-h1);
+    font-weight: 700;
+    letter-spacing: 0;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > h2 {
+    font-size: var(--prose-h2);
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > h3 {
+    font-size: var(--prose-h3);
+    font-weight: 600;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > h4 {
+    font-size: var(--prose-h4);
+    font-weight: 600;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > :is(h5, h6) {
+    font-size: var(--prose-h5);
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > :is(ul, ol) {
+    padding-left: 1.5rem;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > ul {
+    list-style: disc;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content > ol {
+    list-style: decimal;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content li + li {
+    margin-top: 0.3em;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content .feed-image-block {
+    display: flex;
+    justify-content: center;
+    margin-block: 1.5rem;
+  }
+
+  [data-prose-surface="feed"].iris-markdown-content .feed-image-block > img {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto;
   }
 
   /* ── Conversation surface ── */

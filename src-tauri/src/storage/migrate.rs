@@ -2820,7 +2820,14 @@ mod tests {
         let leftover: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master
-                 WHERE (type = 'index' AND name LIKE 'idx_feed_%')
+                 WHERE (type = 'index' AND name IN (
+                        'idx_feed_sources_due',
+                        'idx_feed_sources_folder',
+                        'idx_feed_items_inbox',
+                        'idx_feed_items_source_time',
+                        'idx_feed_items_starred',
+                        'idx_feed_items_archived'
+                    ))
                     OR (type = 'trigger' AND name LIKE 'feed_items_fts_%')",
                 [],
                 |row| row.get(0),

@@ -27,6 +27,10 @@ Skills 是用户确认后启用的 prompt-only `SKILL.md` 行为包，不是安�
 - 基础版不接入 Agent、RAG、Embedding、AI 摘要或通用 MCP。FreshRSS/Miniflux 仅作为原生单机闭环稳定后的可选远端 provider；RSS MCP 不承担离线保存、阅读状态或调度事实源。
 - 用户明确选择「保存为笔记」时，才通过现有 `fileCreate` 写盘回执与 `openNote` 路径写入当前 Vault；生成的 `.md` 是独立副本，后续订阅更新不自动改写。
 - 缓存治理采用分域策略：RSS 媒体、网页正文、临时文件、更新包和模型运行时分别维护；管理中心只清理可安全重建内容，运行时资源必须经独立修复动作并在下次启动重建。
+- RSS 阅读器图片恢复保持按视口渐进、单图可重试与本地 lease 安全边界；每次正文
+  DOM 更新必须重新观察尚未加载的占位节点。阅读排版复用统一 prose token，并将独立
+  图片、加载骨架和失败态作为块级内容呈现。网页正文提取优先内层语义正文，排除页面头部
+  的重复标题、作者头像及装饰图片；旧正文在打开单篇时按转换版本重新提取。
 - 施工按单人项目收敛为六个阶段：契约与 fixture、Schema/Repository、获取/转换/同步、IPC、阅读工作区、OPML/保存笔记与发布。只复用现有 Scheduler、HTTP、Markdown、虚拟列表和持久化基础，不预建 provider、同步任务或书架抽象；migration up/down、SSRF/XXE、隐私日志、升级回滚以及 macOS/Windows 验收仍是硬门槛。
 
 ## 下一里程碑 — v1.2.19 自适应工作区导航与 Agent 主区阅读（规划中）

@@ -19,7 +19,7 @@ use crate::storage::db::Database;
 /// 转换后的正文 Markdown 上限（小于网络响应上限，限制常驻缓存与 FTS 负担）。
 pub(crate) const FULLTEXT_MARKDOWN_MAX_BYTES: usize = 768 * 1024;
 /// 网页正文提取规则版本；旧版本只在用户再次打开单篇文章时重取。
-pub(crate) const FULLTEXT_EXTRACTION_VERSION: i64 = 3;
+pub(crate) const FULLTEXT_EXTRACTION_VERSION: i64 = 4;
 const MAX_CANDIDATES: usize = 64;
 const MAX_CANDIDATE_NODES: usize = 50_000;
 const MAX_REMOVALS: usize = 256;
@@ -88,13 +88,19 @@ fn extract_fulltext_for_item(
         ".article-content",
         ".entry-content",
         ".main-content",
+        "[class*='article'][class*='content']",
+        "[class*='article'][class*='body']",
+        "[class*='post'][class*='content']",
+        "[class*='post'][class*='body']",
+        "[class*='entry'][class*='content']",
+        "[class*='entry'][class*='body']",
         "[class~=abstract]",
         "main",
         "[role=main]",
         "#content",
         "#main-content",
     ];
-    let mut best: Option<(i64, usize, scraper::ElementRef<'_>)> = None;
+    let mut best: Option<(i64, bool, usize, scraper::ElementRef<'_>)> = None;
     let mut seen = 0_usize;
     for selector in selectors
         .iter()
@@ -109,10 +115,20 @@ fn extract_fulltext_for_item(
                 continue;
             };
             let depth = element.ancestors().take(64).count();
-            if best.as_ref().is_none_or(|(best_score, best_depth, _)| {
-                score > *best_score || (score == *best_score && depth > *best_depth)
-            }) {
-                best = Some((score, depth, element));
+            let is_content = is_content_container(element);
+            if best
+                .as_ref()
+                .is_none_or(|(best_score, best_is_content, best_depth, _)| {
+                    if is_content != *best_is_content {
+                        return is_content
+                            && score.saturating_mul(100) >= best_score.saturating_mul(90);
+                    }
+                    score > *best_score
+                        || (depth > *best_depth
+                            && score.saturating_mul(100) >= best_score.saturating_mul(90))
+                })
+            {
+                best = Some((score, is_content, depth, element));
             }
         }
     }
@@ -122,11 +138,11 @@ fn extract_fulltext_for_item(
             .and_then(|selector| document.select(&selector).next());
         if let Some(body) = body {
             if let Some(score) = score_candidate(body, true) {
-                best = Some((score, 0, body));
+                best = Some((score, false, 0, body));
             }
         }
     }
-    let (quality_score, _, element) =
+    let (quality_score, _, _, element) =
         best.ok_or_else(|| AppError::msg("feed_fulltext_extract_failed"))?;
     let fragment = sanitize_fragment(element.html(), base_url);
     drop(document);
@@ -154,7 +170,8 @@ fn remove_duplicate_title(markdown: String, expected_title: Option<&str>) -> Str
     let Some(expected_title) = expected_title else {
         return markdown;
     };
-    let Some(first_line) = markdown.lines().next() else {
+    let content = markdown.trim_start_matches(['\r', '\n']);
+    let Some(first_line) = content.lines().next() else {
         return markdown;
     };
     let Some(heading) = first_line.strip_prefix("# ") else {
@@ -170,7 +187,7 @@ fn remove_duplicate_title(markdown: String, expected_title: Option<&str>) -> Str
     if normalize(heading) != normalize(expected_title) {
         return markdown;
     }
-    markdown[first_line.len()..]
+    content[first_line.len()..]
         .trim_start_matches(['\r', '\n'])
         .to_string()
 }
@@ -457,6 +474,20 @@ fn score_candidate(element: scraper::ElementRef<'_>, body_fallback: bool) -> Opt
     )
 }
 
+fn is_content_container(element: scraper::ElementRef<'_>) -> bool {
+    if element.value().name() == "main" || element.value().attr("itemprop") == Some("articleBody") {
+        return true;
+    }
+    ["class", "id"].iter().any(|attribute| {
+        element.value().attr(attribute).is_some_and(|value| {
+            let value = value.to_ascii_lowercase();
+            value.contains("content")
+                || value.contains("article-body")
+                || value.contains("post-body")
+        })
+    })
+}
+
 fn sanitize_fragment(mut fragment: String, base_url: &str) -> String {
     let parsed = Html::parse_fragment(&fragment);
     let negative = [
@@ -520,6 +551,17 @@ fn sanitize_fragment(mut fragment: String, base_url: &str) -> String {
                 .attr("class")
                 .unwrap_or("")
                 .to_ascii_lowercase();
+            let inside_decorative_container = image
+                .ancestors()
+                .take(32)
+                .filter_map(scraper::ElementRef::wrap)
+                .filter_map(|ancestor| ancestor.value().attr("class"))
+                .map(str::to_ascii_lowercase)
+                .any(|class| {
+                    ["avatar", "author", "profile", "byline", "badge"]
+                        .iter()
+                        .any(|token| class.contains(token))
+                });
             let inside_figure = image
                 .ancestors()
                 .take(32)
@@ -530,7 +572,8 @@ fn sanitize_fragment(mut fragment: String, base_url: &str) -> String {
                     || (alt.chars().count() >= 4
                         && !["icon", "logo", "avatar", "badge", "spinner"]
                             .iter()
-                            .any(|token| class.contains(token))));
+                            .any(|token| class.contains(token))))
+                && !inside_decorative_container;
             if !meaningful && !push_removal(image.html()) {
                 break;
             }
@@ -901,6 +944,35 @@ mod tests {
         assert!(!extracted.markdown.contains("unsafe.example"));
         assert!(extracted.markdown.contains("https://cdn.example/chart.png"));
         assert!(extracted.markdown.contains("Figure 1"));
+    }
+
+    #[test]
+    fn prefers_a_deep_article_content_container_over_page_chrome() {
+        let article = "The retained article body has enough complete prose. ".repeat(24);
+        let html = format!(
+            "<html><body><article><div class='article-header'><h1>页面标题</h1><div class='author'><img src='https://cdn.example/avatar.png' alt='Long Author Name'></div></div><div class='article-main-content'><p>{article}</p><p>{article}</p></div></article></body></html>"
+        );
+
+        let extracted = extract_fulltext(html, "https://example.com/post").unwrap();
+
+        assert!(extracted.markdown.contains("retained article body"));
+        assert!(!extracted.markdown.contains("页面标题"));
+        assert!(!extracted.markdown.contains("avatar.png"));
+    }
+
+    #[test]
+    fn removes_a_duplicate_title_after_leading_blank_lines() {
+        let markdown = remove_duplicate_title(
+            "\n\n# Same Article Title\n\n正文内容。".to_string(),
+            Some("Same Article Title"),
+        );
+
+        assert_eq!(markdown, "正文内容。");
+    }
+
+    #[test]
+    fn records_the_current_fulltext_extraction_version() {
+        assert_eq!(FULLTEXT_EXTRACTION_VERSION, 4);
     }
 
     #[test]

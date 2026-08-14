@@ -68,12 +68,12 @@ Iris 采用扁平、安静、面向长文写作的桌面界面：编辑区优先
 
 实现：`src/styles/markdown-prose.css` + 本地字体 `src/assets/fonts/`。
 
-| 角色        | Token / 字体                                  | 说明                      |
-| ----------- | --------------------------------------------- | ------------------------- |
-| Chrome / UI | `--font-sans` · Inter                         | 标题栏、按钮、设置        |
-| 正文        | `--font-prose` · **Noto Sans SC**（本地打包） | 编辑器与 AI 对话 Markdown |
-| 文档标题    | `--font-title` · Inter（lining nums）         | 与 chrome 同族，数字稳定  |
-| 等宽        | `--font-mono` · JetBrains Mono                | 代码                      |
+| 角色        | Token / 字体                                  | 说明                               |
+| ----------- | --------------------------------------------- | ---------------------------------- |
+| Chrome / UI | `--font-sans` · Inter                         | 标题栏、按钮、设置                 |
+| 正文        | `--font-prose` · **Noto Sans SC**（本地打包） | 编辑器、AI 对话与订阅阅读 Markdown |
+| 文档标题    | `--font-title` · Inter（lining nums）         | 与 chrome 同族，数字稳定           |
+| 等宽        | `--font-mono` · JetBrains Mono                | 代码                               |
 
 正文规则：
 
@@ -237,6 +237,11 @@ UI 改动至少验证亮/暗主题、键盘导航、窄窗口/Tab 溢出、`pref
   只经 openExternalHttpsUrl）。
 - 来源行在固定侧栏和 Sheet 抽屉内都必须提供明确 tooltip 的“管理来源”动作；暂停和移入 RSS 回收站不得只藏在难以识别的铅笔图标后。
 - PDF 只在用户点击“预览 PDF”后准备。显示层复用无业务状态的 `PdfDisplayPanel`；下载中展示字节进度，失败时提供浏览器降级，关闭必须释放 opaque lease 并回到正文。
+- 阅读器正文使用 `iris-markdown-content[data-prose-surface="feed"]`，复用 52rem
+  行宽和正文 token；章节标题必须有明确层级，图片、骨架与失败重试必须独占段落，
+  不能以行内虚线胶囊打断正文。
+- 已授权图片按视口前后 600px、最多 2 张并发恢复；每张图片独立显示
+  queued/loading/ready/failed 状态。失败重试只针对该图片，正文不得回退为远程热链。
 
 ## 存储与缓存管理
 

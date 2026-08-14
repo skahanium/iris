@@ -89,6 +89,17 @@ describe("feed-reader 安全渲染", () => {
     expect(placeholders[0]?.getAttribute("src")).toBeNull();
   });
 
+  it("renders standalone remote images as block placeholders", () => {
+    const html = renderFeedMarkdown(
+      "正文。\n\n![图表](https://cdn.example.com/chart.png)\n\n后文。",
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const block = doc.querySelector("p.feed-image-block");
+
+    expect(block).not.toBeNull();
+    expect(block?.querySelector(".feed-img-placeholder")).not.toBeNull();
+  });
+
   it("intercepts external link clicks through openExternalHttpsUrl", () => {
     const anchor = document.createElement("a");
     anchor.href = "https://example.com/article";
@@ -133,6 +144,24 @@ describe("feed-reader 安全渲染", () => {
 
     expect(html).toContain("iris-feed-image://localhost/opaque-image-lease");
     expect(html).not.toContain("https://cdn.example.com/chart.png");
+  });
+
+  it("renders a failed authorized image as a retryable local placeholder", () => {
+    const sourceUrl = "https://cdn.example.com/chart.png";
+    const html = renderFeedMarkdown(
+      `![图表](${sourceUrl})`,
+      true,
+      new Map(),
+      new Set([sourceUrl]),
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const retry = doc.querySelector<HTMLButtonElement>(
+      "button.feed-img-placeholder--failed[data-feed-image-retry]",
+    );
+
+    expect(retry?.dataset.src).toBe(sourceUrl);
+    expect(retry?.textContent).toContain("重试");
+    expect(doc.querySelector("img")).toBeNull();
   });
 
   it("replaces a failed remote image with a neutral explanation", () => {

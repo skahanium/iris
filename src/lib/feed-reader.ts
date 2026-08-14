@@ -121,6 +121,43 @@ export function handleFeedImageError(event: Event): void {
   image.replaceWith(fallback);
 }
 
+/** 为只有一张正文图片的段落标记块级布局，避免图片或占位混入行文。 */
+function markStandaloneImageBlocks(doc: Document): void {
+  for (const paragraph of Array.from(doc.querySelectorAll("p"))) {
+    const children = Array.from(paragraph.children);
+    if (
+      children.length === 1 &&
+      (children[0]?.tagName === "IMG" ||
+        children[0]?.classList.contains("feed-img-placeholder"))
+    ) {
+      paragraph.classList.add("feed-image-block");
+    }
+  }
+}
+
+function createImagePlaceholder(
+  doc: Document,
+  image: HTMLImageElement,
+  failed: boolean,
+): HTMLElement {
+  const placeholder = doc.createElement(failed ? "button" : "span");
+  placeholder.className = failed
+    ? "feed-img-placeholder feed-img-placeholder--failed"
+    : "feed-img-placeholder";
+  const alt = image.getAttribute("alt")?.trim() || "图片";
+  placeholder.setAttribute("aria-label", alt);
+  placeholder.setAttribute("data-src", image.getAttribute("src") ?? "");
+  if (failed) {
+    placeholder.setAttribute("type", "button");
+    placeholder.setAttribute("data-feed-image-retry", "");
+    placeholder.textContent = "图片加载失败，点击重试";
+    placeholder.setAttribute("aria-label", "图片加载失败，点击重试");
+  } else {
+    placeholder.textContent = "图片";
+  }
+  return placeholder;
+}
+
 /**
  * 把已获本篇授权的图片替换为后端签发的本地 lease。
  * 即使调用方请求加载，未知图片仍保持占位，绝不把远程 `src` 交给 WebView。
@@ -128,6 +165,7 @@ export function handleFeedImageError(event: Event): void {
 function replaceAuthorizedImages(
   html: string,
   imageLeases: ReadonlyMap<string, string>,
+  failedImages: ReadonlySet<string>,
 ): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
   for (const img of Array.from(doc.querySelectorAll("img"))) {
@@ -138,13 +176,11 @@ function replaceAuthorizedImages(
       img.setAttribute("data-feed-image", "cached");
       continue;
     }
-    const placeholder = doc.createElement("span");
-    placeholder.className = "feed-img-placeholder";
-    placeholder.setAttribute("aria-label", img.getAttribute("alt") ?? "图片");
-    placeholder.setAttribute("data-src", sourceUrl);
-    placeholder.textContent = "图片";
-    img.replaceWith(placeholder);
+    img.replaceWith(
+      createImagePlaceholder(doc, img, failedImages.has(sourceUrl)),
+    );
   }
+  markStandaloneImageBlocks(doc);
   return doc.body.innerHTML;
 }
 
@@ -156,13 +192,9 @@ export function blockRemoteImages(html: string): string {
   for (const img of images) {
     const src = img.getAttribute("src") ?? "";
     if (!/^https?:\/\//i.test(src)) continue;
-    const placeholder = doc.createElement("span");
-    placeholder.className = "feed-img-placeholder";
-    placeholder.setAttribute("aria-label", img.getAttribute("alt") ?? "图片");
-    placeholder.setAttribute("data-src", src);
-    placeholder.textContent = "图片";
-    img.replaceWith(placeholder);
+    img.replaceWith(createImagePlaceholder(doc, img, false));
   }
+  markStandaloneImageBlocks(doc);
   return doc.body.innerHTML;
 }
 
@@ -172,11 +204,12 @@ export function renderFeedMarkdown(
   markdown: string,
   allowRemoteImages = false,
   imageLeases: ReadonlyMap<string, string> = new Map(),
+  failedImages: ReadonlySet<string> = new Set(),
 ): string {
   const html = proseMarked.parse(markdown) as string;
   const sanitized = sanitizeFeedHtml(html);
   return allowRemoteImages
-    ? replaceAuthorizedImages(sanitized, imageLeases)
+    ? replaceAuthorizedImages(sanitized, imageLeases, failedImages)
     : blockRemoteImages(sanitized);
 }
 
