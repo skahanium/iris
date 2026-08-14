@@ -283,7 +283,7 @@ Rust 候选依赖锁定前必须完成许可、MSRV、审计与产物体积评�
 ### 7.4 删除与退订
 
 - 上游删除条目不自动删除本地副本。
-- 退订分为「暂停同步」和「移入 RSS 回收站」。后者将来源及本次退订文章保留 30 天；恢复后默认暂停，且不得恢复此前因保留期限删除的文章。旧 `feed_source_remove` 仅为兼容入口，也不得执行即时硬删除。
+- 退订分为「暂停同步」和「移入 RSS 回收站」。前者经 `feed_source_update` 设置 `isEnabled=false`；后者将来源及本次退订文章保留 30 天。恢复后默认暂停，且不得恢复此前因保留期限删除的文章。
 - 删除是破坏性动作，需要显示文章数、收藏数和计划清理日期并二次确认；30 天内重新添加相同规范 URL 时必须提示“恢复并重新订阅”，不得静默恢复或创建重复来源。
 - 未归档文章保留 7 天，归档文章保留 30 天，收藏文章永久保留；到期后先移入 RSS 专属回收站，30 天后物理清理。此规则不影响 Markdown 笔记回收站。
 
@@ -398,9 +398,8 @@ src/components/feed/
 计划新增一组独立 `feed_*` 命令：
 
 - `feed_discover`
-- `feed_source_add` / `feed_source_list` / `feed_source_update` / `feed_source_remove`
+- `feed_source_add` / `feed_source_list` / `feed_source_update` / `feed_source_trash`
 - `feed_item_list` / `feed_item_get` / `feed_item_set_state` / `feed_items_mark_read`
-- `feed_item_list`（`FeedItemQuery.search` 与视图、来源、keyset 游标共用）
 - `feed_sync_source` / `feed_sync_all` / `feed_sync_batch`
 - `feed_opml_import` / `feed_opml_export`
 

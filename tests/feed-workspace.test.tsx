@@ -22,7 +22,6 @@ const {
   feedDocumentRelease,
   feedImagesAuthorize,
   feedImagePrepare,
-  feedImagesCancel,
   feedImagesRelease,
   feedSourceTrashPreview,
   feedSourceUpdate,
@@ -43,7 +42,6 @@ const {
   feedDocumentRelease: vi.fn(),
   feedImagesAuthorize: vi.fn(),
   feedImagePrepare: vi.fn(),
-  feedImagesCancel: vi.fn(),
   feedImagesRelease: vi.fn(),
   feedSourceTrashPreview: vi.fn(),
   feedSourceUpdate: vi.fn(),
@@ -66,7 +64,6 @@ vi.mock("@/lib/ipc", () => ({
   feedDocumentRelease,
   feedImagesAuthorize,
   feedImagePrepare,
-  feedImagesCancel,
   feedImagesRelease,
   feedSourceTrashPreview,
   feedSourceTrashMatch: vi.fn().mockResolvedValue(null),
@@ -263,7 +260,6 @@ beforeEach(() => {
   feedDocumentRelease.mockResolvedValue(undefined);
   feedImagesAuthorize.mockResolvedValue({ images: [] });
   feedImagePrepare.mockResolvedValue(undefined);
-  feedImagesCancel.mockResolvedValue(undefined);
   feedImagesRelease.mockResolvedValue(undefined);
   feedSourceTrashPreview.mockResolvedValue({
     itemCount: 2,

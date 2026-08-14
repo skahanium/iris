@@ -1298,7 +1298,6 @@ import type {
   FeedTrashSnapshot,
   FeedDocumentLease,
   FeedDocumentProgressEvent,
-  FeedImagesPrepareResult,
   FeedLibrarySummary,
   FeedSourceAddInput,
   FeedSourceSummary,
@@ -1333,14 +1332,7 @@ export async function feedSourceUpdate(
   return invoke("feed_source_update", { sourceId, patch });
 }
 
-/** 退订：keepItems=true 保留文章并暂停；false 删除订阅及其文章。 */
-export async function feedSourceRemove(
-  sourceId: string,
-  keepItems: boolean,
-): Promise<number> {
-  return invoke<number>("feed_source_remove", { sourceId, keepItems });
-}
-
+/** 将来源及其文章移入 RSS 专属回收站。 */
 export async function feedSourceTrash(sourceId: string): Promise<number> {
   return invoke<number>("feed_source_trash", { sourceId });
 }
@@ -1432,17 +1424,6 @@ export async function feedDocumentRelease(handle: string): Promise<void> {
   return invoke("feed_document_release", { handle });
 }
 
-export async function feedDocumentCacheClear(): Promise<number> {
-  return invoke<number>("feed_document_cache_clear");
-}
-
-/** 授权并准备当前文章的本地图片缓存；返回值不含真实缓存路径。 */
-export async function feedImagesPrepare(
-  itemId: string,
-): Promise<FeedImagesPrepareResult> {
-  return invoke<FeedImagesPrepareResult>("feed_images_prepare", { itemId });
-}
-
 /** 记录单篇授权并返回图片清单；图片本身由后续单图调用渐进加载。 */
 export async function feedImagesAuthorize(
   itemId: string,
@@ -1457,11 +1438,6 @@ export async function feedImagePrepare(
   forceRetry = false,
 ): Promise<import("@/types/ipc").FeedImageLease> {
   return invoke("feed_image_prepare", { itemId, index, forceRetry });
-}
-
-/** 取消当前阅读器尚未开始的图片请求。 */
-export async function feedImagesCancel(itemId: string): Promise<void> {
-  return invoke("feed_images_cancel", { itemId });
 }
 
 /** 释放当前阅读器持有的图片 lease；缓存本身仍按安全 LRU 保留。 */

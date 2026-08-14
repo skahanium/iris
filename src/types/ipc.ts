@@ -548,11 +548,6 @@ export interface FeedImageLease {
   sizeBytes: number;
 }
 
-export interface FeedImagesPrepareResult {
-  images: FeedImageLease[];
-  failedCount: number;
-}
-
 export interface FeedImageManifest {
   images: Array<{ index: number; sourceUrl: string }>;
 }

@@ -16,10 +16,9 @@ use crate::error::{AppError, AppResult};
 use crate::feed::discovery::{discover, FeedCandidate};
 use crate::feed::fetch::ProdNetGate;
 use crate::feed::model::{
-    FeedFulltextEnqueueOutcome, FeedImageLease, FeedImageManifest, FeedImageSource,
-    FeedImagesPrepareResult, FeedItemDetail, FeedItemQuery, FeedItemStatePatch, FeedItemSummary,
-    FeedLibrarySummary, FeedSourcePatch, FeedSourceSummary, FeedSourceTrashPreview,
-    FeedTrashSnapshot, FeedTrashSource, NewFeedSource,
+    FeedFulltextEnqueueOutcome, FeedImageLease, FeedImageManifest, FeedImageSource, FeedItemDetail,
+    FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedLibrarySummary, FeedSourcePatch,
+    FeedSourceSummary, FeedSourceTrashPreview, FeedTrashSnapshot, FeedTrashSource, NewFeedSource,
 };
 use crate::feed::opml::canonicalize_https_url;
 use crate::feed::opml::{export_opml, import_opml_with_interval, OpmlImportResult, OPML_MAX_BYTES};
@@ -191,15 +190,6 @@ pub fn feed_source_update(
 }
 
 #[tauri::command]
-pub fn feed_source_remove(
-    state: State<'_, Arc<AppState>>,
-    source_id: String,
-    keep_items: bool,
-) -> AppResult<u32> {
-    feed_source_remove_impl(&state, &source_id, keep_items)
-}
-
-#[tauri::command]
 pub fn feed_source_trash(state: State<'_, Arc<AppState>>, source_id: String) -> AppResult<u32> {
     feed_source_trash_impl(&state, &source_id)
 }
@@ -361,30 +351,6 @@ pub fn feed_document_release(handle: String) -> AppResult<()> {
     crate::feed::document::release_document(&handle)
 }
 
-#[tauri::command]
-pub fn feed_document_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<u32> {
-    crate::feed::document::clear_cache(&state.cache_dir().join("feed-media").join("documents"))
-}
-
-/// 对当前文章授予图片加载权限，并以 opaque 本地 lease 返回安全缓存结果。
-#[tauri::command]
-pub async fn feed_images_prepare(
-    state: State<'_, Arc<AppState>>,
-    item_id: String,
-) -> AppResult<FeedImagesPrepareResult> {
-    check_id(&item_id)?;
-    let (markdown, article_url) = state
-        .db
-        .with_conn(|conn| FeedRepository::authorize_item_images(conn, &item_id, Utc::now()))?
-        .ok_or_else(|| AppError::msg("feed_item_not_found"))?;
-    Ok(crate::feed::image::prepare_images(
-        &markdown,
-        article_url.as_deref(),
-        &state.cache_dir().join("feed-media").join("images"),
-    )
-    .await)
-}
-
 /// 授权当前文章的远程图片并返回可渐进请求的清单；不在此命令中下载任何文件。
 #[tauri::command]
 pub fn feed_images_authorize(
@@ -433,12 +399,6 @@ pub async fn feed_image_prepare(
         force_retry.unwrap_or(false),
     )
     .await
-}
-
-/// 当前实现的下载任务按缓存键去重，取消阅读器排队不会中断其它文章可能共用的下载。
-#[tauri::command]
-pub fn feed_images_cancel(item_id: String) -> AppResult<()> {
-    check_id(&item_id)
 }
 
 #[tauri::command]
@@ -681,31 +641,6 @@ fn feed_source_update_impl(
     Ok(())
 }
 
-fn feed_source_remove_impl(state: &AppState, source_id: &str, keep_items: bool) -> AppResult<u32> {
-    check_id(source_id)?;
-    if keep_items {
-        // 保留已下载文章并暂停：仅置 disabled，不删除任何数据。
-        let updated = state.db.with_conn(|conn| {
-            FeedRepository::update_source(
-                conn,
-                source_id,
-                &FeedSourcePatch {
-                    is_enabled: Some(false),
-                    ..Default::default()
-                },
-                Utc::now(),
-            )
-        })?;
-        if !updated {
-            return Err(AppError::msg("feed_source_not_found"));
-        }
-        Ok(0)
-    } else {
-        // 兼容旧 IPC，但删除语义已经收敛为可恢复的 RSS 回收站。
-        feed_source_trash_impl(state, source_id)
-    }
-}
-
 fn feed_source_trash_impl(state: &AppState, source_id: &str) -> AppResult<u32> {
     check_id(source_id)?;
     let document_urls = state
@@ -893,50 +828,37 @@ mod tests {
             .expect("get")
             .expect("exists");
         assert_eq!(cleared.title_override, None);
-
-        let removed = feed_source_remove_impl(&state, &id, false).expect("remove");
-        assert_eq!(removed, 0);
-        assert!(state
-            .db
-            .with_read_conn(|conn| FeedRepository::get_source(conn, &id))
-            .expect("get")
-            .is_none());
-        let trashed: bool = state
-            .db
-            .with_read_conn(|conn| {
-                Ok(conn.query_row(
-                    "SELECT deleted_at IS NOT NULL FROM feed_sources WHERE id = ?1",
-                    [&id],
-                    |row| row.get(0),
-                )?)
-            })
-            .expect("trash state");
-        assert!(trashed, "旧删除命令也只能移入 RSS 回收站");
     }
 
     #[test]
-    fn remove_keep_items_only_disables_source() {
+    fn source_update_pauses_and_source_trash_retains_items() {
         let state = test_state();
         let id = add_source(&state, "https://example.com/feed.xml");
         seed_items(&state, &id, 3);
 
-        let removed = feed_source_remove_impl(&state, &id, true).expect("keep items");
-        assert_eq!(removed, 0, "保留文章不删除");
+        feed_source_update_impl(
+            &state,
+            &id,
+            &FeedSourceUpdateInput {
+                is_enabled: Some(false),
+                ..Default::default()
+            },
+        )
+        .expect("pause source");
         let source = state
             .db
             .with_read_conn(|conn| FeedRepository::get_source(conn, &id))
             .expect("get")
             .expect("exists");
-        assert!(!source.is_enabled, "保留文章 = 置 disabled");
+        assert!(!source.is_enabled, "暂停不得删除来源");
         let count = state
             .db
             .with_read_conn(|conn| FeedRepository::count_items(conn, &id))
             .expect("count");
         assert_eq!(count, 3, "文章保留");
 
-        // 旧删除路径返回移入回收站的文章数，不允许级联硬删除。
-        let removed = feed_source_remove_impl(&state, &id, false).expect("delete");
-        assert_eq!(removed, 3);
+        let moved = feed_source_trash_impl(&state, &id).expect("trash source");
+        assert_eq!(moved, 3);
         let retained: i64 = state
             .db
             .with_read_conn(|conn| {

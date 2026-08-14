@@ -12,7 +12,6 @@ const {
   feedDiscover,
   feedSourceAdd,
   feedSourceUpdate,
-  feedSourceRemove,
   feedSourceTrash,
   feedSourceTrashMatch,
   feedSourceTrashPreview,
@@ -27,7 +26,6 @@ const {
   feedDiscover: vi.fn(),
   feedSourceAdd: vi.fn(),
   feedSourceUpdate: vi.fn(),
-  feedSourceRemove: vi.fn(),
   feedSourceTrash: vi.fn(),
   feedSourceTrashMatch: vi.fn(),
   feedSourceTrashPreview: vi.fn(),
@@ -44,7 +42,6 @@ vi.mock("@/lib/ipc", () => ({
   feedDiscover,
   feedSourceAdd,
   feedSourceUpdate,
-  feedSourceRemove,
   feedSourceTrash,
   feedSourceTrashMatch,
   feedSourceTrashPreview,
@@ -100,7 +97,6 @@ beforeEach(() => {
     errorCode: null,
   });
   feedSourceUpdate.mockResolvedValue(undefined);
-  feedSourceRemove.mockResolvedValue(5);
   feedSourceTrashMatch.mockResolvedValue(null);
   feedSourceTrashPreview.mockResolvedValue({
     itemCount: 5,

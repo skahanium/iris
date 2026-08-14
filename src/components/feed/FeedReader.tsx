@@ -46,7 +46,6 @@ import {
   feedDocumentRelease,
   feedImagePrepare,
   feedImagesAuthorize,
-  feedImagesCancel,
   feedImagesRelease,
   listenFeedDocumentProgress,
   openExternalHttpsUrl,
@@ -333,7 +332,6 @@ export function FeedReader({
     return () => {
       if (summary?.id) {
         void feedDocumentCancel(summary.id);
-        void feedImagesCancel(summary.id);
       }
     };
   }, [summary?.id]);

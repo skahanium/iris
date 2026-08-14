@@ -14,11 +14,11 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 import {
   feedDiscover,
-  feedDocumentCacheClear,
   feedDocumentCancel,
   feedDocumentPrepare,
   feedDocumentRelease,
-  feedImagesPrepare,
+  feedImagePrepare,
+  feedImagesAuthorize,
   feedImagesRelease,
   listenFeedDocumentProgress,
   feedFulltextEnqueueItem,
@@ -32,7 +32,6 @@ import {
   feedSourceItemCount,
   feedSourceTrashMatch,
   feedSourceTrashPreview,
-  feedSourceRemove,
   feedSourceTrash,
   feedSourceTrashPurge,
   feedSourceTrashRestore,
@@ -63,7 +62,6 @@ const FEED_COMMANDS = [
   "feed_source_add",
   "feed_source_list",
   "feed_source_update",
-  "feed_source_remove",
   "feed_source_trash",
   "feed_source_trash_restore",
   "feed_source_trash_purge",
@@ -82,8 +80,8 @@ const FEED_COMMANDS = [
   "feed_document_prepare",
   "feed_document_cancel",
   "feed_document_release",
-  "feed_document_cache_clear",
-  "feed_images_prepare",
+  "feed_images_authorize",
+  "feed_image_prepare",
   "feed_images_release",
   "feed_items_mark_read",
   "feed_sync_source",
@@ -110,6 +108,25 @@ describe("feed IPC contract", () => {
     const lib = read("src-tauri/src/lib.rs");
     for (const cmd of FEED_COMMANDS) {
       expect(lib).toContain(`commands::feed_commands::${cmd}`);
+    }
+  });
+
+  it("removes superseded whole-article image and per-document cache commands", () => {
+    const lib = read("src-tauri/src/lib.rs");
+    const commands = read("src-tauri/src/commands/feed_commands.rs");
+    const ipc = read("src/lib/ipc.ts");
+    const types = read("src/types/ipc.ts");
+
+    for (const obsolete of [
+      "feed_images_prepare",
+      "feed_document_cache_clear",
+      "feed_images_cancel",
+      "feed_source_remove",
+    ]) {
+      expect(lib).not.toContain(obsolete);
+      expect(commands).not.toContain(obsolete);
+      expect(ipc).not.toContain(obsolete);
+      expect(types).not.toContain(obsolete);
     }
   });
 
@@ -252,15 +269,6 @@ describe("feed IPC contract", () => {
     });
   });
 
-  it("feedSourceRemove invokes with keepItems flag", async () => {
-    invoke.mockResolvedValue(3);
-    await expect(feedSourceRemove("src-1", false)).resolves.toBe(3);
-    expect(invoke).toHaveBeenCalledWith("feed_source_remove", {
-      sourceId: "src-1",
-      keepItems: false,
-    });
-  });
-
   it("keeps RSS recycle bin and on-open fulltext operation explicit", async () => {
     invoke
       .mockResolvedValueOnce({ sources: [], items: [] })
@@ -283,7 +291,7 @@ describe("feed IPC contract", () => {
     });
   });
 
-  it("exposes recoverable source removal and opaque PDF leases", async () => {
+  it("exposes recoverable source removal and opaque media leases", async () => {
     invoke
       .mockResolvedValueOnce(12)
       .mockResolvedValueOnce(undefined)
@@ -296,8 +304,6 @@ describe("feed IPC contract", () => {
       })
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce(3)
-      .mockResolvedValueOnce({ images: [], failedCount: 0 })
       .mockResolvedValueOnce(undefined);
 
     await expect(feedSourceTrash("src-1")).resolves.toBe(12);
@@ -308,11 +314,10 @@ describe("feed IPC contract", () => {
     });
     await expect(feedDocumentCancel("item-1")).resolves.toBeUndefined();
     await expect(feedDocumentRelease("lease-1")).resolves.toBeUndefined();
-    await expect(feedDocumentCacheClear()).resolves.toBe(3);
-    await expect(feedImagesPrepare("item-1")).resolves.toEqual({
-      images: [],
-      failedCount: 0,
-    });
+    await expect(feedImagesAuthorize("item-1")).resolves.toEqual(undefined);
+    await expect(feedImagePrepare("item-1", 2, true)).resolves.toEqual(
+      undefined,
+    );
     await expect(feedImagesRelease(["lease-image-1"])).resolves.toBeUndefined();
 
     expect(invoke).toHaveBeenNthCalledWith(1, "feed_source_trash", {
@@ -321,8 +326,13 @@ describe("feed IPC contract", () => {
     expect(invoke).toHaveBeenNthCalledWith(4, "feed_document_prepare", {
       itemId: "item-1",
     });
-    expect(invoke).toHaveBeenNthCalledWith(8, "feed_images_prepare", {
+    expect(invoke).toHaveBeenNthCalledWith(7, "feed_images_authorize", {
       itemId: "item-1",
+    });
+    expect(invoke).toHaveBeenNthCalledWith(8, "feed_image_prepare", {
+      itemId: "item-1",
+      index: 2,
+      forceRetry: true,
     });
     expect(invoke).toHaveBeenNthCalledWith(9, "feed_images_release", {
       handles: ["lease-image-1"],

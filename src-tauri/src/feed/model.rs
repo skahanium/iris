@@ -123,14 +123,6 @@ pub struct FeedImageLease {
     pub size_bytes: u64,
 }
 
-/// 单篇文章的图片准备结果；单张失败不会妨碍其它已缓存图片显示。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct FeedImagesPrepareResult {
-    pub images: Vec<FeedImageLease>,
-    pub failed_count: u32,
-}
-
 /// 用户授权后可逐张请求的图片清单；只含 Markdown 中已有的源地址与稳定索引。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

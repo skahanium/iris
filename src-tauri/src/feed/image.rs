@@ -17,7 +17,7 @@ use tokio::sync::{watch, Semaphore};
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
-use crate::feed::model::{FeedImageLease, FeedImagesPrepareResult};
+use crate::feed::model::FeedImageLease;
 use crate::network::safe_https::{
     fixed_https_download_to_path, resolve_public_addrs, validate_https_url,
 };
@@ -490,37 +490,6 @@ async fn prepare_one(
         mime_type: image.mime_type.to_string(),
         size_bytes: image.size_bytes,
     })
-}
-
-/// 为当前文章的全部图片建立本地 lease；单图失败不影响同篇其它图片。
-pub(crate) async fn prepare_images(
-    markdown: &str,
-    article_url: Option<&str>,
-    cache_dir: &Path,
-) -> FeedImagesPrepareResult {
-    let referer = image_referer(article_url);
-    let urls = extract_image_urls(markdown);
-    let mut tasks = tokio::task::JoinSet::new();
-    for url in urls {
-        tasks.spawn(prepare_one(
-            url,
-            referer.clone(),
-            cache_dir.to_path_buf(),
-            false,
-        ));
-    }
-    let mut images = Vec::new();
-    let mut failed_count = 0_u32;
-    while let Some(result) = tasks.join_next().await {
-        match result {
-            Ok(Ok(lease)) => images.push(lease),
-            _ => failed_count = failed_count.saturating_add(1),
-        }
-    }
-    FeedImagesPrepareResult {
-        images,
-        failed_count,
-    }
 }
 
 /// 为一张已获文章级授权的图片创建本地 lease；单张失败不影响同篇其它图片。
