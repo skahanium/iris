@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::SystemTime;
 
 use chrono::{SecondsFormat, Utc};
 use rusqlite::OptionalExtension;
@@ -259,13 +260,27 @@ impl<'a> CacheCoordinator<'a> {
     }
 
     fn clear_temporary_files(&self) -> AppResult<CacheClearDomainResult> {
-        let before = directory_usage(&self.paths.temp_dir);
-        remove_children(&self.paths.temp_dir)?;
+        crate::temp_files::ensure_owned(&self.paths.temp_dir)?;
+        let sweep = crate::temp_files::sweep(
+            &self.paths.temp_dir,
+            &crate::temp_files::TempSweepConfig {
+                now: SystemTime::now(),
+                max_age: crate::temp_files::DEFAULT_TEMP_MAX_AGE,
+                max_bytes: crate::temp_files::DEFAULT_TEMP_MAX_BYTES,
+                cap_min_age: crate::temp_files::TEMP_CAP_MIN_AGE,
+                secure_delete: true,
+                modified_time: &|path| {
+                    std::fs::metadata(path)
+                        .and_then(|metadata| metadata.modified())
+                        .unwrap_or_else(|_| SystemTime::now())
+                },
+            },
+        )?;
         Ok(CacheClearDomainResult {
             id: CacheDomainId::TemporaryFiles,
-            bytes_freed: before.bytes,
-            entries_removed: before.entries,
-            skipped_active: 0,
+            bytes_freed: sweep.freed_bytes,
+            entries_removed: sweep.deleted_files as u64,
+            skipped_active: sweep.skipped_active as u64,
             error: None,
         })
     }
@@ -460,6 +475,7 @@ mod tests {
             cache_dir: root.join("cache"),
             temp_dir: root.join("tmp"),
             global_skills_dir: root.join("skills"),
+            temp_dir_explicit: false,
         }
     }
 

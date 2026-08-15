@@ -22,6 +22,7 @@ pub mod recycle;
 mod scheduler;
 mod security;
 pub mod storage;
+mod temp_files;
 pub mod version;
 mod watcher;
 mod window_chrome;

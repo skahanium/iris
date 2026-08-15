@@ -338,6 +338,7 @@ impl AppState {
             cache_dir: data_dir.join("cache"),
             temp_dir: data_dir.join("tmp"),
             global_skills_dir: home_dir.join("skills"),
+            temp_dir_explicit: false,
             home_dir,
             data_dir,
         })
@@ -360,6 +361,7 @@ impl AppState {
                 cache_dir: data_dir.join("cache"),
                 temp_dir: data_dir.join("tmp"),
                 global_skills_dir: home_dir.join("skills"),
+                temp_dir_explicit: false,
                 home_dir,
                 data_dir,
             },

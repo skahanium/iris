@@ -10,6 +10,8 @@ pub struct IrisPaths {
     pub cache_dir: PathBuf,
     pub temp_dir: PathBuf,
     pub global_skills_dir: PathBuf,
+    /// Whether `IRIS_TEMP_DIR` was explicitly configured by the environment.
+    pub temp_dir_explicit: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -48,12 +50,14 @@ pub fn resolve_iris_paths(input: IrisPathEnv) -> AppResult<IrisPaths> {
             })?,
     };
 
+    let temp_dir_explicit = input.iris_temp_dir.is_some();
     let paths = IrisPaths {
         data_dir: clean_path(input.iris_data_dir).unwrap_or_else(|| home_dir.join("app-data")),
         cache_dir: clean_path(input.iris_cache_dir).unwrap_or_else(|| home_dir.join("cache")),
         temp_dir: clean_path(input.iris_temp_dir).unwrap_or_else(|| home_dir.join("tmp")),
         global_skills_dir: clean_path(input.iris_global_skills_dir)
             .unwrap_or_else(|| home_dir.join("skills")),
+        temp_dir_explicit,
         home_dir,
     };
 
@@ -93,6 +97,8 @@ pub fn prepare_iris_paths(paths: &IrisPaths) -> AppResult<()> {
         std::fs::create_dir_all(dir)?;
         assert_writable(dir)?;
     }
+
+    crate::temp_files::prepare_owned_dir(&paths.temp_dir, paths.temp_dir_explicit)?;
 
     set_env_path("IRIS_HOME", &paths.home_dir);
     set_env_path("IRIS_DATA_DIR", &paths.data_dir);

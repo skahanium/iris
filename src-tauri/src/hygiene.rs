@@ -31,8 +31,11 @@ pub fn cleanup_from_environment() -> AppResult<CleanupReport> {
         return Ok(CleanupReport::default());
     }
 
-    let temp_dirs = env_path("IRIS_TEMP_DIR").into_iter().collect();
+    let temp_dirs: Vec<PathBuf> = env_path("IRIS_TEMP_DIR").into_iter().collect();
     let cache_dirs = env_path("IRIS_CACHE_DIR").into_iter().collect();
+    for dir in &temp_dirs {
+        crate::temp_files::ensure_owned_if_populated(dir)?;
+    }
 
     cleanup_once(CleanupConfig {
         temp_dirs,
@@ -52,14 +55,20 @@ pub fn cleanup_once(config: CleanupConfig) -> AppResult<CleanupReport> {
     let mut report = CleanupReport::default();
 
     for dir in config.temp_dirs {
-        clean_root(
+        let sweep = crate::temp_files::sweep(
             &dir,
-            config.now,
-            config.temp_max_age,
-            true,
-            &config.modified_time,
-            &mut report,
+            &crate::temp_files::TempSweepConfig {
+                now: config.now,
+                max_age: config.temp_max_age,
+                max_bytes: crate::temp_files::DEFAULT_TEMP_MAX_BYTES,
+                cap_min_age: crate::temp_files::TEMP_CAP_MIN_AGE,
+                secure_delete: true,
+                modified_time: config.modified_time.as_ref(),
+            },
         )?;
+        report.scanned_files += sweep.scanned_files;
+        report.deleted_files += sweep.deleted_files;
+        report.deleted_bytes += sweep.freed_bytes;
     }
 
     for dir in config.cache_dirs {
