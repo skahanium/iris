@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, State};
@@ -15,6 +15,7 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::feed::discovery::{discover, FeedCandidate};
 use crate::feed::fetch::ProdNetGate;
+use crate::feed::media_repository::{FeedMediaKind, FeedMediaRepository};
 use crate::feed::model::{
     FeedFulltextEnqueueOutcome, FeedImageLease, FeedImageManifest, FeedImageSource, FeedItemDetail,
     FeedItemQuery, FeedItemStatePatch, FeedItemSummary, FeedLibrarySummary, FeedSourcePatch,
@@ -216,11 +217,15 @@ pub fn feed_source_trash_purge(
 ) -> AppResult<u32> {
     check_id(&source_id)?;
     cleanup_source_document_cache(&state, &source_id)?;
+    let media_keys = state
+        .db
+        .with_read_conn(|conn| FeedMediaRepository::keys_for_source(conn, &source_id))?;
     let purged = state
         .db
         .with_conn(|conn| FeedRepository::purge_source(conn, &source_id))?
         .map(|count| count as u32)
         .ok_or_else(|| AppError::msg("feed_trash_source_not_found"))?;
+    crate::cache::remove_unreferenced_media_files(state.paths(), &state.db, &media_keys)?;
     Ok(purged)
 }
 
@@ -288,7 +293,12 @@ pub fn feed_trash_restore(state: State<'_, Arc<AppState>>, item_id: String) -> A
 
 #[tauri::command]
 pub fn feed_trash_clear(state: State<'_, Arc<AppState>>) -> AppResult<u32> {
-    state.db.with_conn(FeedRepository::clear_deleted_items)
+    let media_keys = state
+        .db
+        .with_read_conn(FeedMediaRepository::keys_for_deleted_items_all)?;
+    let cleared = state.db.with_conn(FeedRepository::clear_deleted_items)?;
+    crate::cache::remove_unreferenced_media_files(state.paths(), &state.db, &media_keys)?;
+    Ok(cleared)
 }
 
 /// 仅在用户明确触发时执行 VACUUM，避免后台锁住正在使用的 SQLite。
@@ -325,8 +335,35 @@ pub async fn feed_document_prepare(
             }),
         );
     });
+    let cache_key = crate::feed::document::media_cache_key(&url)?;
     let result =
         crate::feed::document::prepare_document(&item_id, &url, &cache_dir, progress).await;
+    let now = Utc::now();
+    let media_state = match &result {
+        Ok(lease) => state.db.with_conn(|conn| {
+            FeedMediaRepository::record_ready(
+                conn,
+                &item_id,
+                FeedMediaKind::Document,
+                &cache_key,
+                lease.size_bytes,
+                now,
+            )
+        }),
+        Err(_) => state.db.with_conn(|conn| {
+            FeedMediaRepository::record_failed(
+                conn,
+                &item_id,
+                FeedMediaKind::Document,
+                &cache_key,
+                None,
+                now,
+            )
+        }),
+    };
+    if let Err(error) = media_state {
+        tracing::warn!(error_code = %error, "feed_media_state_write_failed");
+    }
     let (status, bytes) = match &result {
         Ok(lease) => ("ready", lease.size_bytes),
         Err(error) if error.to_string() == "feed_document_cancelled" => ("cancelled", 0),
@@ -392,13 +429,50 @@ pub async fn feed_image_prepare(
         .get(index as usize)
         .cloned()
         .ok_or_else(|| AppError::msg("feed_image_not_found"))?;
-    crate::feed::image::prepare_image(
+    let cache_key = crate::feed::image::media_cache_key(&source_url)?;
+    let force_retry = force_retry.unwrap_or(false);
+    if !force_retry {
+        let blocked = state.db.with_read_conn(|conn| {
+            FeedMediaRepository::is_retry_blocked(conn, &item_id, &cache_key, Utc::now())
+        })?;
+        if blocked {
+            return Err(AppError::msg("feed_image_retry_later"));
+        }
+    }
+    let result = crate::feed::image::prepare_image(
         source_url,
         article_url.as_deref(),
         &state.cache_dir().join("feed-media").join("images"),
-        force_retry.unwrap_or(false),
+        force_retry,
     )
-    .await
+    .await;
+    let now = Utc::now();
+    let media_state = match &result {
+        Ok(lease) => state.db.with_conn(|conn| {
+            FeedMediaRepository::record_ready(
+                conn,
+                &item_id,
+                FeedMediaKind::Image,
+                &cache_key,
+                lease.size_bytes,
+                now,
+            )
+        }),
+        Err(_) => state.db.with_conn(|conn| {
+            FeedMediaRepository::record_failed(
+                conn,
+                &item_id,
+                FeedMediaKind::Image,
+                &cache_key,
+                Some(now + Duration::seconds(30)),
+                now,
+            )
+        }),
+    };
+    if let Err(error) = media_state {
+        tracing::warn!(error_code = %error, "feed_media_state_write_failed");
+    }
+    result
 }
 
 #[tauri::command]
@@ -410,6 +484,21 @@ pub fn feed_images_release(handles: Vec<String>) -> AppResult<()> {
         check_id(handle)?;
     }
     crate::feed::image::release_images(&handles)
+}
+
+#[tauri::command]
+pub fn feed_images_revoke(state: State<'_, Arc<AppState>>, item_id: String) -> AppResult<()> {
+    check_id(&item_id)?;
+    state.db.with_conn(|conn| {
+        let tx = conn.unchecked_transaction()?;
+        let revoked = FeedRepository::revoke_item_images(&tx, &item_id, Utc::now())?;
+        if !revoked {
+            return Err(AppError::msg("feed_image_not_authorized"));
+        }
+        FeedMediaRepository::delete_for_item(&tx, &item_id)?;
+        tx.commit()?;
+        Ok(())
+    })
 }
 
 #[tauri::command]

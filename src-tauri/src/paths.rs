@@ -98,7 +98,13 @@ pub fn prepare_iris_paths(paths: &IrisPaths) -> AppResult<()> {
         assert_writable(dir)?;
     }
 
-    crate::temp_files::prepare_owned_dir(&paths.temp_dir, paths.temp_dir_explicit)?;
+    let allow_existing_home_child =
+        paths.temp_dir.starts_with(&paths.home_dir) && paths.temp_dir != paths.home_dir;
+    crate::temp_files::prepare_owned_dir(
+        &paths.temp_dir,
+        paths.temp_dir_explicit,
+        allow_existing_home_child,
+    )?;
 
     set_env_path("IRIS_HOME", &paths.home_dir);
     set_env_path("IRIS_DATA_DIR", &paths.data_dir);

@@ -95,7 +95,16 @@ pub fn run() {
             let tauri_app_data_dir = app.path().app_data_dir().ok();
             let iris_paths = crate::paths::resolve_iris_paths_from_process(tauri_app_data_dir)?;
             crate::paths::prepare_iris_paths(&iris_paths)?;
-            crate::cache::migrate_legacy_feed_cache(&iris_paths)?;
+            let legacy_feed_cache = crate::cache::migrate_legacy_feed_cache(&iris_paths);
+            if legacy_feed_cache.failed > 0 || legacy_feed_cache.skipped > 0 {
+                tracing::warn!(
+                    moved = legacy_feed_cache.moved,
+                    duplicates_resolved = legacy_feed_cache.duplicates_resolved,
+                    skipped = legacy_feed_cache.skipped,
+                    failed = legacy_feed_cache.failed,
+                    "legacy_feed_cache_migration_partial"
+                );
+            }
             crate::embedding::engine::set_embedding_runtime_enabled(
                 crate::embedding::engine::embedding_runtime_enabled_from_environment(),
             );
@@ -300,6 +309,7 @@ pub fn run() {
             commands::feed_commands::feed_images_authorize,
             commands::feed_commands::feed_image_prepare,
             commands::feed_commands::feed_images_release,
+            commands::feed_commands::feed_images_revoke,
             commands::feed_commands::feed_items_mark_read,
             commands::feed_commands::feed_sync_source,
             commands::feed_commands::feed_sync_all,

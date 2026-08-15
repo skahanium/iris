@@ -22,7 +22,7 @@ import {
   createMarkedInstance,
 } from "@/lib/markdown";
 import { sanitizeHtml } from "@/lib/sanitize";
-import { assistantContentHash as markdownContentHash } from "@/lib/assistant-stream-buffer";
+import { contentHash64 as markdownContentHash } from "@/lib/content-hash";
 
 import type {
   ClassifyOptions,
@@ -65,6 +65,7 @@ const contractMarked = createMarkedInstance({ gfm: true, breaks: true });
 // grow, so caching would return stale snapshots. Only finalized (streaming=
 // false or omitted) renders are cached.
 
+const RENDER_CACHE_FORMAT_VERSION = "render-cache-v2";
 const RENDER_CACHE_MAX = 64;
 const RENDER_CACHE_ENTRY_BYTES_MAX = 240_000;
 const RENDER_CACHE_TOTAL_BYTES_MAX = 1_500_000;
@@ -86,6 +87,7 @@ function renderCacheKey(
 ): string {
   const contextHash = context ? markdownContentHash(context) : "no-context";
   return [
+    RENDER_CACHE_FORMAT_VERSION,
     profile,
     streaming ? "1" : "0",
     contextHash,

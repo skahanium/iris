@@ -47,6 +47,7 @@ import {
   feedImagePrepare,
   feedImagesAuthorize,
   feedImagesRelease,
+  feedImagesRevoke,
   listenFeedDocumentProgress,
   openExternalHttpsUrl,
 } from "@/lib/ipc";
@@ -438,6 +439,24 @@ export function FeedReader({
     queueImages(itemId, indexes, imageRequestRef.current, true);
   };
 
+  const revokeImages = (itemId: string) => {
+    imageRequestRef.current += 1;
+    imageQueueRef.current = [];
+    activeImageLoadsRef.current = 0;
+    inFlightImageIndicesRef.current.clear();
+    attemptedImageIndicesRef.current.clear();
+    const handles = imageLeaseHandlesRef.current;
+    imageLeaseHandlesRef.current = [];
+    if (handles.length > 0) void feedImagesRelease(handles);
+    setImageManifest([]);
+    setImageLeases(new Map());
+    setImageStates(new Map());
+    setImageAuthorizationState("idle");
+    void feedImagesRevoke(itemId)
+      .then(() => onRetry())
+      .catch(() => setImageAuthorizationState("error"));
+  };
+
   // 已授权文章打开时只从本地缓存恢复；缓存缺失时由同一安全后端补齐。
   useEffect(() => {
     if (detail?.imagesAuthorized && summary?.id) prepareImages(summary.id);
@@ -486,6 +505,11 @@ export function FeedReader({
   useEffect(
     () => () => {
       documentRequestRef.current += 1;
+      imageRequestRef.current += 1;
+      imageQueueRef.current = [];
+      activeImageLoadsRef.current = 0;
+      inFlightImageIndicesRef.current.clear();
+      attemptedImageIndicesRef.current.clear();
       const lease = documentLeaseRef.current;
       documentLeaseRef.current = null;
       if (lease) void feedDocumentRelease(lease.handle);
@@ -906,6 +930,16 @@ export function FeedReader({
                 onClick={() => prepareImages(summary.id)}
               >
                 加载本篇图片
+              </button>
+            ) : null}
+            {detail.imagesAuthorized ? (
+              <button
+                type="button"
+                data-testid="feed-revoke-remote-images"
+                className="iris-focus-soft rounded-md px-2 py-0.5 text-caption text-muted-foreground transition-colors duration-fast hover:bg-muted/60"
+                onClick={() => revokeImages(summary.id)}
+              >
+                撤销本篇图片授权
               </button>
             ) : null}
           </div>

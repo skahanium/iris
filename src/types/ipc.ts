@@ -162,13 +162,13 @@ export interface CacheDomainSummary {
   bytes: number;
   entries: number;
   reclaimableBytes: number;
-  activeBytes: number;
   clearable: boolean;
   policy: string;
 }
 
 export interface CacheSummary {
   domains: CacheDomainSummary[];
+  /** Disk bytes for file domains; logical SQLite payload bytes for web pages. */
   totalBytes: number;
   reclaimableBytes: number;
   generatedAt: string;

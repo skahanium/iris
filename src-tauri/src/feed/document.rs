@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs::{File, FileTimes};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -19,6 +19,9 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
+use crate::feed::cache_files::{
+    is_partial, is_stale_partial, ActivePathSet, CacheFileOutcome, PARTIAL_MAX_AGE,
+};
 use crate::network::safe_https::{
     fixed_https_download_to_path, resolve_public_addrs, validate_https_url,
 };
@@ -49,6 +52,7 @@ struct DocumentLease {
 }
 
 static DOCUMENT_LEASES: OnceLock<Mutex<HashMap<String, DocumentLease>>> = OnceLock::new();
+static DOCUMENT_ACTIVE_PARTIALS: OnceLock<ActivePathSet> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 enum SharedDownloadOutcome {
@@ -79,6 +83,10 @@ fn downloads() -> &'static Mutex<DownloadRegistry> {
     DOCUMENT_DOWNLOADS.get_or_init(|| Mutex::new(DownloadRegistry::default()))
 }
 
+fn active_partials() -> &'static ActivePathSet {
+    ActivePathSet::get_or_init(&DOCUMENT_ACTIVE_PARTIALS)
+}
+
 fn download_gate() -> Arc<tokio::sync::Semaphore> {
     DOCUMENT_DOWNLOAD_GATE
         .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(1)))
@@ -97,6 +105,10 @@ fn canonical_document_url(url: &str) -> AppResult<String> {
     Ok(parsed.to_string())
 }
 
+pub(crate) fn media_cache_key(url: &str) -> AppResult<String> {
+    Ok(cache_key(&canonical_document_url(url)?))
+}
+
 pub(crate) fn validate_cached_pdf(path: &Path) -> AppResult<u64> {
     let metadata =
         std::fs::metadata(path).map_err(|_| AppError::msg("feed_document_cache_missing"))?;
@@ -110,14 +122,23 @@ pub(crate) fn validate_cached_pdf(path: &Path) -> AppResult<u64> {
     if &header != b"%PDF-" {
         return Err(AppError::msg("feed_document_invalid_pdf"));
     }
+    let tail_start = metadata.len().saturating_sub(1024);
+    let mut tail = vec![0_u8; (metadata.len() - tail_start) as usize];
+    file.seek(SeekFrom::Start(tail_start))
+        .and_then(|_| file.read_exact(&mut tail))
+        .map_err(|_| AppError::msg("feed_document_invalid_pdf"))?;
+    if !tail.windows(5).any(|window| window == b"%%EOF") {
+        return Err(AppError::msg("feed_document_invalid_pdf"));
+    }
     Ok(metadata.len())
 }
 
-pub(crate) fn maintain_cache(cache_dir: &Path) -> AppResult<()> {
+pub(crate) fn maintain_cache(cache_dir: &Path) -> AppResult<u32> {
     std::fs::create_dir_all(cache_dir)?;
     let now = SystemTime::now();
-    let protected = protected_lease_paths(now)?;
+    let protected = protected_paths(now)?;
     let mut entries = Vec::new();
+    let mut removed = 0_u32;
     for entry in std::fs::read_dir(cache_dir)? {
         let entry = entry?;
         let path = entry.path();
@@ -127,13 +148,19 @@ pub(crate) fn maintain_cache(cache_dir: &Path) -> AppResult<()> {
         }
         let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         let expired = now.duration_since(modified).unwrap_or_default() > DOCUMENT_CACHE_TTL;
-        if !protected.contains(&path)
-            && (path
-                .extension()
-                .is_some_and(|extension| extension == "part")
-                || expired)
-        {
-            let _ = std::fs::remove_file(&path);
+        let stale_partial = is_stale_partial(&path, modified, now, PARTIAL_MAX_AGE);
+        let partial = is_partial(&path);
+        if partial {
+            if !protected.contains(&path) && stale_partial && std::fs::remove_file(&path).is_ok() {
+                removed = removed.saturating_add(1);
+            }
+            // Fresh or protected partials never participate in LRU eviction.
+            continue;
+        }
+        if !protected.contains(&path) && expired {
+            if std::fs::remove_file(&path).is_ok() {
+                removed = removed.saturating_add(1);
+            }
             continue;
         }
         entries.push((modified, metadata.len(), path));
@@ -145,25 +172,29 @@ pub(crate) fn maintain_cache(cache_dir: &Path) -> AppResult<()> {
             break;
         }
         if !protected.contains(&path) && std::fs::remove_file(path).is_ok() {
+            removed = removed.saturating_add(1);
             total = total.saturating_sub(size);
         }
     }
-    Ok(())
+    Ok(removed)
 }
 
-fn protected_lease_paths(now: SystemTime) -> AppResult<HashSet<PathBuf>> {
+fn protected_paths(now: SystemTime) -> AppResult<HashSet<PathBuf>> {
     let mut active = leases()
         .lock()
         .map_err(|_| AppError::msg("feed_document_state_failed"))?;
     active.retain(|_, lease| {
         now.duration_since(lease.created_at).unwrap_or_default() <= DOCUMENT_LEASE_TTL
     });
-    Ok(active.values().map(|lease| lease.path.clone()).collect())
+    let mut protected: HashSet<PathBuf> = active.values().map(|lease| lease.path.clone()).collect();
+    protected.extend(active_partials().snapshot()?);
+    Ok(protected)
 }
 
 async fn download_document(
     url: &str,
     cache_dir: &Path,
+    partial: &Path,
     cancelled: &AtomicBool,
     progress: &Arc<dyn Fn(u64) + Send + Sync>,
 ) -> AppResult<PathBuf> {
@@ -177,7 +208,7 @@ async fn download_document(
         return Ok(ready);
     }
     maintain_cache(cache_dir)?;
-    let partial = cache_dir.join(format!("{key}-{}.part", Uuid::new_v4()));
+    let _guard = active_partials().protect(partial.to_path_buf(), "feed_document_state_failed")?;
     let result = async {
         let mut current = canonical.clone();
         for _ in 0..=5 {
@@ -195,7 +226,7 @@ async fn download_document(
                 &addrs,
                 USER_AGENT,
                 None,
-                &partial,
+                partial,
                 DOCUMENT_MAX_BYTES,
                 cancelled,
                 progress.as_ref(),
@@ -229,8 +260,8 @@ async fn download_document(
             if response.bytes_written == 0 {
                 return Err(AppError::msg("feed_document_invalid_pdf"));
             }
-            validate_cached_pdf(&partial)?;
-            tokio::fs::rename(&partial, &ready)
+            validate_cached_pdf(partial)?;
+            tokio::fs::rename(partial, &ready)
                 .await
                 .map_err(|_| AppError::msg("feed_document_cache_write_failed"))?;
             maintain_cache(cache_dir)?;
@@ -240,7 +271,7 @@ async fn download_document(
     }
     .await;
     if result.is_err() {
-        let _ = tokio::fs::remove_file(&partial).await;
+        let _ = tokio::fs::remove_file(partial).await;
     }
     result
 }
@@ -253,6 +284,7 @@ pub(crate) async fn prepare_document(
 ) -> AppResult<FeedDocumentLease> {
     let canonical = canonical_document_url(url)?;
     let key = cache_key(&canonical);
+    let partial = cache_dir.join(format!("{key}-{}.part", Uuid::new_v4()));
     let (task, owner) = {
         let mut registry = downloads()
             .lock()
@@ -297,6 +329,7 @@ pub(crate) async fn prepare_document(
                 result = download_document(
                     &canonical,
                     cache_dir,
+                    &partial,
                     &task_for_run.cancelled,
                     &progress,
                 ) => result,
@@ -308,9 +341,10 @@ pub(crate) async fn prepare_document(
         let shared = match result {
             Ok(path) => SharedDownloadOutcome::Ready(path),
             Err(error) => {
-                // 连接或读取中取消会丢弃 I/O future；单任务 gate 保证这里
-                // 清理 `.part` 时不会误删另一项正在写入的临时文件。
+                // 连接或读取中取消会丢弃 I/O future；先精确删除本次 partial，
+                // 再执行常规维护回收其他陈旧 partial。
                 let _ = maintain_cache(cache_dir);
+                let _ = tokio::fs::remove_file(&partial).await;
                 SharedDownloadOutcome::Failed(error.to_string())
             }
         };
@@ -402,27 +436,47 @@ pub(crate) fn release_document(handle: &str) -> AppResult<()> {
     Ok(())
 }
 
-pub(crate) fn clear_cache(cache_dir: &Path) -> AppResult<u32> {
+pub(crate) fn clear_cache(cache_dir: &Path) -> AppResult<CacheFileOutcome> {
     std::fs::create_dir_all(cache_dir)?;
-    let protected = protected_lease_paths(SystemTime::now())?;
-    let mut removed = 0_u32;
+    let now = SystemTime::now();
+    let protected = protected_paths(now)?;
+    let mut outcome = CacheFileOutcome::default();
     for entry in std::fs::read_dir(cache_dir)? {
         let path = entry?.path();
-        if path.is_file() && !protected.contains(&path) && std::fs::remove_file(path).is_ok() {
-            removed = removed.saturating_add(1);
+        if !path.is_file() {
+            continue;
+        }
+        let metadata = std::fs::metadata(&path)?;
+        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        if protected.contains(&path)
+            || (is_partial(&path) && !is_stale_partial(&path, modified, now, PARTIAL_MAX_AGE))
+        {
+            outcome.skipped_active = outcome.skipped_active.saturating_add(1);
+            continue;
+        }
+        if std::fs::remove_file(path).is_ok() {
+            outcome.removed = outcome.removed.saturating_add(1);
         }
     }
-    Ok(removed)
+    Ok(outcome)
 }
 
 pub(crate) fn remove_cached_url(cache_dir: &Path, url: &str) -> AppResult<u32> {
     let canonical = canonical_document_url(url)?;
     let key = cache_key(&canonical);
     cancel_document_url(url)?;
-    let protected = protected_lease_paths(SystemTime::now())?;
+    remove_cached_key(cache_dir, &key)
+}
+
+pub(crate) fn remove_cached_key(cache_dir: &Path, key: &str) -> AppResult<u32> {
+    if !cache_dir.is_dir() {
+        return Ok(0);
+    }
+    let now = SystemTime::now();
+    let protected = protected_paths(now)?;
     let mut removed = 0_u32;
     let ready = cache_dir.join(format!("{key}.pdf"));
-    if !protected.contains(&ready) && std::fs::remove_file(ready).is_ok() {
+    if !protected.contains(&ready) && std::fs::remove_file(&ready).is_ok() {
         removed = removed.saturating_add(1);
     }
     if let Ok(entries) = std::fs::read_dir(cache_dir) {
@@ -434,7 +488,14 @@ pub(crate) fn remove_cached_url(cache_dir: &Path, url: &str) -> AppResult<u32> {
                     .is_some_and(|name| {
                         name.starts_with(&format!("{key}-")) && name.ends_with(".part")
                     });
-            if matches_partial && std::fs::remove_file(path).is_ok() {
+            if !matches_partial || protected.contains(&path) {
+                continue;
+            }
+            let stale = std::fs::metadata(&path)
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .is_some_and(|modified| is_stale_partial(&path, modified, now, PARTIAL_MAX_AGE));
+            if stale && std::fs::remove_file(&path).is_ok() {
                 removed = removed.saturating_add(1);
             }
         }
@@ -537,9 +598,13 @@ fn protocol_response(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
             start + (end - start).min(MAX_RANGE_LEN - 1),
             StatusCode::PARTIAL_CONTENT,
         ),
+        None if len <= MAX_RANGE_LEN => (0, len - 1, StatusCode::OK),
         None => (
             0,
-            len.min(MAX_RANGE_LEN).saturating_sub(1),
+            MAX_RANGE_LEN - 1,
+            // A non-range request for a large PDF cannot be fully materialized
+            // in memory. Degrade to the first bounded segment instead of
+            // returning a malformed 200 response with a truncated body.
             StatusCode::PARTIAL_CONTENT,
         ),
     };
@@ -551,14 +616,15 @@ fn protocol_response(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
             .body(Vec::new())
             .unwrap();
     }
-    Response::builder()
+    let mut response = Response::builder()
         .status(status)
         .header(CONTENT_TYPE, "application/pdf")
         .header(ACCEPT_RANGES, "bytes")
-        .header(CONTENT_RANGE, format!("bytes {start}-{end}/{len}"))
-        .header(CONTENT_LENGTH, body.len())
-        .body(body)
-        .unwrap()
+        .header(CONTENT_LENGTH, body.len());
+    if status == StatusCode::PARTIAL_CONTENT {
+        response = response.header(CONTENT_RANGE, format!("bytes {start}-{end}/{len}"));
+    }
+    response.body(body).unwrap()
 }
 
 pub(crate) fn register_document_protocol(
@@ -574,11 +640,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validates_pdf_header_and_size_without_loading_whole_file() {
+    fn validates_pdf_header_size_and_eof_marker() {
         let dir = tempfile::tempdir().unwrap();
         let valid = dir.path().join("valid.pdf");
-        std::fs::write(&valid, b"%PDF-1.7\nfixture").unwrap();
-        assert_eq!(validate_cached_pdf(&valid).unwrap(), 16);
+        let valid_pdf = b"%PDF-1.7\nfixture\n%%EOF";
+        std::fs::write(&valid, valid_pdf).unwrap();
+        assert_eq!(validate_cached_pdf(&valid).unwrap(), valid_pdf.len() as u64);
         let invalid = dir.path().join("invalid.pdf");
         std::fs::write(&invalid, b"<html>not pdf</html>").unwrap();
         assert!(validate_cached_pdf(&invalid).is_err());
@@ -608,6 +675,20 @@ mod tests {
     }
 
     #[test]
+    fn fresh_partial_survives_clear_and_maintenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = cache_key("https://papers.example/downloading.pdf");
+        let partial = dir.path().join(format!("{key}-{}.part", Uuid::new_v4()));
+        std::fs::write(&partial, b"%PDF-partial").unwrap();
+
+        let outcome = clear_cache(dir.path()).unwrap();
+        assert_eq!(outcome.removed, 0);
+        assert_eq!(outcome.skipped_active, 1);
+        assert_eq!(maintain_cache(dir.path()).unwrap(), 0);
+        assert!(partial.exists());
+    }
+
+    #[test]
     fn cache_cleanup_preserves_files_held_by_a_live_lease() {
         let dir = tempfile::tempdir().unwrap();
         let url = "https://papers.example/leased.pdf";
@@ -615,7 +696,9 @@ mod tests {
         std::fs::write(&path, b"%PDF-leased").unwrap();
         let lease = create_lease(path.clone()).unwrap();
 
-        assert_eq!(clear_cache(dir.path()).unwrap(), 0);
+        let outcome = clear_cache(dir.path()).unwrap();
+        assert_eq!(outcome.removed, 0);
+        assert_eq!(outcome.skipped_active, 1);
         assert!(path.exists());
         assert_eq!(remove_cached_url(dir.path(), url).unwrap(), 0);
         assert!(path.exists());

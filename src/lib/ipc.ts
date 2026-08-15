@@ -1445,6 +1445,11 @@ export async function feedImagesRelease(handles: string[]): Promise<void> {
   return invoke("feed_images_release", { handles });
 }
 
+/** 撤销当前文章的图片加载授权；缓存文件继续按 TTL 回收。 */
+export async function feedImagesRevoke(itemId: string): Promise<void> {
+  return invoke("feed_images_revoke", { itemId });
+}
+
 /** PDF 临时下载进度；不包含原始 URL、代理端点或本地路径。 */
 export async function listenFeedDocumentProgress(
   handler: (payload: FeedDocumentProgressEvent) => void,

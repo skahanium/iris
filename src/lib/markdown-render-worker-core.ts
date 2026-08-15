@@ -1,3 +1,4 @@
+import { contentHash64 } from "@/lib/content-hash";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 
 export interface MarkdownRenderRequest {
@@ -37,12 +38,7 @@ export type MarkdownRenderWorkerResponse =
     };
 
 export function markdownContentHash(content: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < content.length; i += 1) {
-    hash ^= content.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+  return contentHash64(content);
 }
 
 export function renderMarkdownForWorker(

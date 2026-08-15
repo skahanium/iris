@@ -40,13 +40,6 @@ impl ActivePathSet {
         Ok(ActivePathGuard { path, active: self })
     }
 
-    pub(crate) fn contains(&self, path: &Path) -> AppResult<bool> {
-        self.paths
-            .lock()
-            .map(|paths| paths.contains(path))
-            .map_err(|_| AppError::msg("feed_cache_state_failed"))
-    }
-
     pub(crate) fn snapshot(&self) -> AppResult<HashSet<PathBuf>> {
         self.paths
             .lock()
@@ -78,6 +71,11 @@ pub(crate) fn is_partial(path: &Path) -> bool {
         .is_some_and(|extension| extension == "part")
 }
 
-pub(crate) fn is_stale_partial(path: &Path, modified: SystemTime, now: SystemTime) -> bool {
-    is_partial(path) && now.duration_since(modified).unwrap_or_default() > PARTIAL_MAX_AGE
+pub(crate) fn is_stale_partial(
+    path: &Path,
+    modified: SystemTime,
+    now: SystemTime,
+    max_age: Duration,
+) -> bool {
+    is_partial(path) && now.duration_since(modified).unwrap_or_default() > max_age
 }

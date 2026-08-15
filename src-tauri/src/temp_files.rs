@@ -43,13 +43,17 @@ fn owner_marker(root: &Path) -> PathBuf {
 
 /// Adopt `root` as an Iris-owned temporary directory.
 ///
-/// Explicitly configured directories must be empty or already carry the
-/// ownership marker. This prevents a shared directory such as `/tmp` from ever
-/// becoming eligible for whole-root cleanup. Default directories are adopted
-/// without this check because the path was derived from the Iris home.
-pub(crate) fn prepare_owned_dir(root: &Path, explicit: bool) -> AppResult<()> {
+/// Explicitly configured directories must be empty, already carry the
+/// ownership marker, or be a proper child of the Iris home. The home-child
+/// exception keeps development and portable installs working while still
+/// refusing shared directories such as `/tmp`.
+pub(crate) fn prepare_owned_dir(
+    root: &Path,
+    explicit: bool,
+    allow_existing_home_child: bool,
+) -> AppResult<()> {
     fs::create_dir_all(root)?;
-    if explicit && !owner_marker(root).exists() {
+    if explicit && !allow_existing_home_child && !owner_marker(root).exists() {
         let mut entries = fs::read_dir(root)?;
         if entries.next().is_some() {
             return Err(AppError::msg(
@@ -146,7 +150,8 @@ fn collect_regular_files(
         if metadata.is_dir() {
             collect_regular_files(&path, modified_time, out)?;
         } else if metadata.is_file() {
-            out.push((path, modified_time(&path), metadata.len()));
+            let modified = modified_time(&path);
+            out.push((path, modified, metadata.len()));
         }
     }
     Ok(())
@@ -170,7 +175,7 @@ fn remove_empty_dirs(path: &Path, root: &Path) -> AppResult<()> {
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let child = entry.path();
-        if child.is_dir() {
+        if fs::symlink_metadata(&child)?.file_type().is_dir() {
             remove_empty_dirs(&child, root)?;
         }
     }
@@ -188,7 +193,7 @@ mod tests {
     fn prepare_owned_dir_rejects_explicit_shared_root() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("foreign.tmp"), b"other app").unwrap();
-        let error = prepare_owned_dir(dir.path(), true).unwrap_err();
+        let error = prepare_owned_dir(dir.path(), true, false).unwrap_err();
         assert!(error.to_string().contains("empty or an existing Iris"));
     }
 
@@ -196,8 +201,22 @@ mod tests {
     fn prepare_owned_dir_adopts_default_non_empty_root() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("legacy.tmp"), b"legacy").unwrap();
-        prepare_owned_dir(dir.path(), false).unwrap();
+        prepare_owned_dir(dir.path(), false, false).unwrap();
         assert!(owner_marker(dir.path()).is_file());
+    }
+
+    #[test]
+    fn prepare_owned_dir_adopts_existing_home_child_for_development() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let temp = home.join("tmp");
+        fs::create_dir_all(&temp).unwrap();
+        fs::write(temp.join("legacy.tmp"), b"legacy").unwrap();
+
+        prepare_owned_dir(&temp, true, true).unwrap();
+
+        assert!(owner_marker(&temp).is_file());
+        assert!(temp.join("legacy.tmp").exists());
     }
 
     #[test]
@@ -217,7 +236,11 @@ mod tests {
                 cap_min_age: Duration::from_secs(60 * 60),
                 secure_delete: false,
                 modified_time: &move |path: &Path| {
-                    if path.ends_with("old.tmp") { old } else { now }
+                    if path.ends_with("old.tmp") {
+                        old
+                    } else {
+                        now
+                    }
                 },
             },
         )
@@ -246,15 +269,21 @@ mod tests {
                 cap_min_age: Duration::from_secs(60 * 60),
                 secure_delete: false,
                 modified_time: &move |path: &Path| {
-                    if path.ends_with("evict.tmp") { old } else { now }
+                    if path.ends_with("evict.tmp") {
+                        old
+                    } else {
+                        now
+                    }
                 },
             },
         )
         .unwrap();
 
-        assert!(report.remaining_bytes <= 96 + 48);
+        assert!(report.remaining_bytes <= 96);
         assert!(dir.path().join("active.tmp").exists());
-        assert_eq!(report.skipped_active, 1);
+        assert_eq!(report.skipped_active, 2);
+        assert_eq!(report.deleted_files, 1);
+        assert!(!dir.path().join("evict.tmp").exists());
     }
 
     #[test]
@@ -262,7 +291,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("foreign.tmp"), b"x").unwrap();
         assert!(ensure_owned(dir.path()).is_err());
-        prepare_owned_dir(dir.path(), false).unwrap();
+        prepare_owned_dir(dir.path(), false, false).unwrap();
         assert!(ensure_owned(dir.path()).is_ok());
     }
 }

@@ -29,7 +29,7 @@ pub(crate) const FETCH_INTERVAL_MAX: i64 = 10080;
 /// 无状态仓储：方法全部以连接为参数。
 pub struct FeedRepository;
 
-fn rfc3339(now: DateTime<Utc>) -> String {
+pub(crate) fn rfc3339(now: DateTime<Utc>) -> String {
     now.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
@@ -809,28 +809,38 @@ impl FeedRepository {
     }
 
     /// 在文章仍可阅读时记录一次明确的单篇图片授权，并返回当前正文和公开原文 URL。
+    ///
+    /// 授权必须绑定到用户实际看到的正文版本：SELECT 与 UPDATE 在同一个事务
+    /// 内执行，并额外以 `content_hash` 作为 UPDATE 守卫，避免后台全文提取
+    /// 恰好落在两句之间时把旧正文授权落到新正文上。
     pub fn authorize_item_images(
         conn: &Connection,
         item_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<Option<(String, Option<String>)>> {
-        let item = conn
+        let tx = conn.unchecked_transaction()?;
+        let item: Option<(String, Option<String>, String)> = tx
             .query_row(
-                "SELECT COALESCE(i.fulltext_markdown, i.content_markdown), i.canonical_url
+                "SELECT COALESCE(i.fulltext_markdown, i.content_markdown), i.canonical_url,
+                        i.content_hash
                  FROM feed_items i JOIN feed_sources s ON s.id = i.source_id
                  WHERE i.id = ?1 AND i.deleted_at IS NULL AND s.deleted_at IS NULL",
                 [item_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        if item.is_some() {
-            conn.execute(
+        if let Some((_, _, content_hash)) = &item {
+            let changed = tx.execute(
                 "UPDATE feed_items SET images_authorized_at = ?1, updated_at = ?1
-                 WHERE id = ?2 AND deleted_at IS NULL",
-                params![rfc3339(now), item_id],
+                 WHERE id = ?2 AND deleted_at IS NULL AND content_hash = ?3",
+                params![rfc3339(now), item_id, content_hash],
             )?;
+            if changed == 0 {
+                return Err(AppError::msg("feed_item_content_changed"));
+            }
         }
-        Ok(item)
+        tx.commit()?;
+        Ok(item.map(|(markdown, article_url, _)| (markdown, article_url)))
     }
 
     /// 读取已经明确授权的单篇图片上下文；不会因打开文章而扩大授权范围。
@@ -873,6 +883,24 @@ impl FeedRepository {
             [url],
             |row| row.get(0),
         )?)
+    }
+
+    /// Revoke the article-level image authorization. Cache files are retained
+    /// for the normal TTL; only persisted authorization and per-item media
+    /// state are cleared by the caller.
+    pub fn revoke_item_images(
+        conn: &Connection,
+        item_id: &str,
+        now: DateTime<Utc>,
+    ) -> AppResult<bool> {
+        let changed = conn.execute(
+            "UPDATE feed_items
+             SET images_authorized_at = NULL, updated_at = ?1
+             WHERE id = ?2 AND deleted_at IS NULL
+               AND images_authorized_at IS NOT NULL",
+            params![rfc3339(now), item_id],
+        )?;
+        Ok(changed > 0)
     }
 
     pub fn set_item_state(

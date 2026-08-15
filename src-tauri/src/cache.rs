@@ -2,7 +2,9 @@
 //!
 //! 此模块不把不同业务缓存混为一体；它只集中管理用户可见的生命周期边界。
 
-use std::fs;
+use std::collections::HashSet;
+use std::fs::{self, File};
+use std::io::Read;
 use std::path::Path;
 use std::time::SystemTime;
 
@@ -11,14 +13,15 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
+use crate::feed::media_repository::{FeedMediaKey, FeedMediaRepository};
 use crate::paths::IrisPaths;
 use crate::storage::db::Database;
 
 const RUNTIME_REPAIR_SETTING: &str = "cache_runtime_repair_pending";
 const LAST_MAINTENANCE_SETTING: &str = "cache_maintenance_at";
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheDomainId {
     FeedMedia,
@@ -36,7 +39,6 @@ pub struct CacheDomainSummary {
     pub bytes: u64,
     pub entries: u64,
     pub reclaimable_bytes: u64,
-    pub active_bytes: u64,
     pub clearable: bool,
     pub policy: String,
 }
@@ -45,10 +47,21 @@ pub struct CacheDomainSummary {
 #[serde(rename_all = "camelCase")]
 pub struct CacheSummary {
     pub domains: Vec<CacheDomainSummary>,
+    /// Disk-scanned bytes for file domains and SQLite logical payload bytes
+    /// for WebPages. This is a display estimate, not a filesystem reclaim
+    /// promise.
     pub total_bytes: u64,
     pub reclaimable_bytes: u64,
     pub generated_at: String,
     pub last_maintenance_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CacheMaintenanceReport {
+    pub web_pages_removed: u64,
+    pub feed_media_removed: u64,
+    pub temp_deleted_files: u64,
+    pub temp_freed_bytes: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -61,6 +74,8 @@ pub struct CacheClearRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CacheClearDomainResult {
     pub id: CacheDomainId,
+    /// WebPages reports logical payload bytes; other domains report actual
+    /// disk bytes. SQLite file size may not shrink until an explicit optimize.
     pub bytes_freed: u64,
     pub entries_removed: u64,
     pub skipped_active: u64,
@@ -105,6 +120,71 @@ impl<'a> CacheCoordinator<'a> {
         Self { paths, db }
     }
 
+    /// Run non-destructive cache maintenance for startup and the daily
+    /// scheduler. Never deletes active leases, in-flight partials, or young
+    /// temporary files.
+    ///
+    /// Each domain is best-effort so one failing domain does not skip disk
+    /// maintenance for the others; the first error is returned after all
+    /// domains have been attempted.
+    pub(crate) fn maintain(&self) -> AppResult<CacheMaintenanceReport> {
+        let mut first_error = None;
+        let mut web_pages_removed = 0;
+        match crate::llm::fetch_web_page::cleanup_expired_web_cache(self.db) {
+            Ok(removed) => web_pages_removed = removed as u64,
+            Err(error) => first_error = Some(error),
+        }
+        let images = crate::feed::image::maintain_cache(
+            &self.paths.cache_dir.join("feed-media").join("images"),
+        )
+        .unwrap_or_else(|error| {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+            0
+        });
+        let documents = crate::feed::document::maintain_cache(
+            &self.paths.cache_dir.join("feed-media").join("documents"),
+        )
+        .unwrap_or_else(|error| {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+            0
+        });
+        let temp = crate::temp_files::sweep(
+            &self.paths.temp_dir,
+            &crate::temp_files::TempSweepConfig {
+                now: SystemTime::now(),
+                max_age: crate::temp_files::DEFAULT_TEMP_MAX_AGE,
+                max_bytes: crate::temp_files::DEFAULT_TEMP_MAX_BYTES,
+                cap_min_age: crate::temp_files::TEMP_CAP_MIN_AGE,
+                secure_delete: true,
+                modified_time: &|path| {
+                    std::fs::metadata(path)
+                        .and_then(|metadata| metadata.modified())
+                        .unwrap_or_else(|_| SystemTime::now())
+                },
+            },
+        )
+        .unwrap_or_else(|error| {
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+            crate::temp_files::TempSweepReport::default()
+        });
+        let report = CacheMaintenanceReport {
+            web_pages_removed,
+            feed_media_removed: u64::from(images + documents),
+            temp_deleted_files: temp.deleted_files as u64,
+            temp_freed_bytes: temp.freed_bytes,
+        };
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(report),
+        }
+    }
+
     pub fn summary(&self) -> AppResult<CacheSummary> {
         let feed = directory_usage(&self.paths.cache_dir.join("feed-media"));
         let temp = directory_usage(&self.paths.temp_dir);
@@ -112,7 +192,9 @@ impl<'a> CacheCoordinator<'a> {
         let updates = directory_usage(&self.paths.cache_dir.join("updates"));
         let (web_entries, web_bytes): (i64, i64) = self.db.with_read_conn(|conn| {
             conn.query_row(
-                "SELECT COUNT(*), COALESCE(SUM(length(url) + COALESCE(length(title), 0) + length(body_text)), 0)
+                "SELECT COUNT(*),
+                        COALESCE(SUM(COALESCE(octet_length(title), 0)
+                                     + octet_length(body_text)), 0)
                  FROM web_page_cache",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -133,7 +215,6 @@ impl<'a> CacheCoordinator<'a> {
                 bytes: web_bytes.max(0) as u64,
                 entries: web_entries.max(0) as u64,
                 reclaimable_bytes: web_bytes.max(0) as u64,
-                active_bytes: 0,
                 clearable: true,
                 policy: "24 小时；最多 256 条和 16 MiB，按最近访问淘汰。".into(),
             },
@@ -142,7 +223,7 @@ impl<'a> CacheCoordinator<'a> {
                 "临时文件",
                 temp,
                 true,
-                "非活动文件保留 7 天；最多 512 MiB。",
+                "非活动文件保留 7 天；超限时从最旧的非活跃文件回收。",
             ),
             disk_summary(
                 CacheDomainId::RuntimeArtifacts,
@@ -171,8 +252,18 @@ impl<'a> CacheCoordinator<'a> {
     }
 
     pub fn clear(&self, request: CacheClearRequest) -> AppResult<CacheClearResult> {
+        if request.domains.is_empty() || request.domains.len() > 8 {
+            return Err(AppError::msg("cache_clear_request_invalid"));
+        }
+        let domains: Vec<CacheDomainId> = request
+            .domains
+            .into_iter()
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
         let mut results = Vec::new();
-        for domain in request.domains {
+        let mut cleared_any = false;
+        for domain in domains {
             let cleared = match domain {
                 CacheDomainId::FeedMedia => self.clear_feed_media(),
                 CacheDomainId::WebPages => self.clear_web_pages(),
@@ -187,7 +278,7 @@ impl<'a> CacheCoordinator<'a> {
                     })
                 }
             };
-            results.push(match cleared {
+            let result = match cleared {
                 Ok(result) => result,
                 Err(error) => CacheClearDomainResult {
                     id: domain,
@@ -196,9 +287,15 @@ impl<'a> CacheCoordinator<'a> {
                     skipped_active: 0,
                     error: Some(error.to_string()),
                 },
-            });
+            };
+            if result.error.is_none() && (result.bytes_freed > 0 || result.entries_removed > 0) {
+                cleared_any = true;
+            }
+            results.push(result);
         }
-        self.record_maintenance()?;
+        if cleared_any {
+            self.record_maintenance()?;
+        }
         Ok(CacheClearResult {
             domains: results,
             completed_at: now(),
@@ -229,25 +326,29 @@ impl<'a> CacheCoordinator<'a> {
         let before = directory_usage(&root);
         let images = crate::feed::image::clear_cache(&root.join("images"))?;
         let documents = crate::feed::document::clear_cache(&root.join("documents"))?;
+        self.db.with_conn(FeedMediaRepository::reset_all)?;
         let after = directory_usage(&root);
         Ok(CacheClearDomainResult {
             id: CacheDomainId::FeedMedia,
             bytes_freed: before.bytes.saturating_sub(after.bytes),
-            entries_removed: u64::from(images + documents),
-            skipped_active: 0,
+            entries_removed: u64::from(images.removed + documents.removed),
+            skipped_active: u64::from(images.skipped_active + documents.skipped_active),
             error: None,
         })
     }
 
     fn clear_web_pages(&self) -> AppResult<CacheClearDomainResult> {
         let (bytes, entries): (i64, i64) = self.db.with_conn(|conn| {
-            let summary = conn.query_row(
-                "SELECT COALESCE(SUM(length(url) + COALESCE(length(title), 0) + length(body_text)), 0), COUNT(*)
+            let tx = conn.unchecked_transaction()?;
+            let summary = tx.query_row(
+                "SELECT COALESCE(SUM(COALESCE(octet_length(title), 0)
+                                      + octet_length(body_text)), 0), COUNT(*)
                  FROM web_page_cache",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?;
-            conn.execute("DELETE FROM web_page_cache", [])?;
+            tx.execute("DELETE FROM web_page_cache", [])?;
+            tx.commit()?;
             Ok(summary)
         })?;
         Ok(CacheClearDomainResult {
@@ -345,9 +446,22 @@ pub fn apply_pending_runtime_repair(paths: &IrisPaths, db: &Database) -> AppResu
 }
 
 /// Move legacy RSS cache files out of the application-state directory once.
-/// Incomplete downloads are intentionally discarded: they have no verified
-/// content and cannot be resumed safely across the path change.
-pub fn migrate_legacy_feed_cache(paths: &IrisPaths) -> AppResult<()> {
+///
+/// This is deliberately best-effort: one damaged file or a cross-filesystem
+/// rename must never prevent the application from starting. Incomplete
+/// downloads are discarded because they have no verified content and cannot be
+/// resumed safely across the path change.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LegacyFeedMigrationReport {
+    pub moved: u64,
+    pub partials_removed: u64,
+    pub duplicates_resolved: u64,
+    pub skipped: u64,
+    pub failed: u64,
+}
+
+pub fn migrate_legacy_feed_cache(paths: &IrisPaths) -> LegacyFeedMigrationReport {
+    let mut report = LegacyFeedMigrationReport::default();
     for (legacy, destination) in [
         (
             paths.data_dir.join("cache").join("feed-images"),
@@ -361,9 +475,15 @@ pub fn migrate_legacy_feed_cache(paths: &IrisPaths) -> AppResult<()> {
         if !legacy.is_dir() {
             continue;
         }
-        fs::create_dir_all(&destination)?;
-        for entry in fs::read_dir(&legacy)? {
-            let entry = entry?;
+        if fs::create_dir_all(&destination).is_err() {
+            report.failed += 1;
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(&legacy) else {
+            report.failed += 1;
+            continue;
+        };
+        for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_file() {
                 continue;
@@ -372,16 +492,30 @@ pub fn migrate_legacy_feed_cache(paths: &IrisPaths) -> AppResult<()> {
                 .extension()
                 .is_some_and(|extension| extension == "part")
             {
-                let _ = fs::remove_file(path);
+                if fs::remove_file(&path).is_ok() {
+                    report.partials_removed += 1;
+                }
                 continue;
             }
             let target = destination.join(entry.file_name());
             if target.exists() {
+                if same_file_contents(&path, &target) {
+                    if fs::remove_file(&path).is_ok() {
+                        report.duplicates_resolved += 1;
+                    } else {
+                        report.failed += 1;
+                    }
+                } else {
+                    report.skipped += 1;
+                }
                 continue;
             }
-            fs::rename(path, target)?;
+            match move_file_to_cache(&path, &target) {
+                Ok(()) => report.moved += 1,
+                Err(_) => report.failed += 1,
+            }
         }
-        if fs::read_dir(&legacy)?.next().is_none() {
+        if fs::read_dir(&legacy).is_ok_and(|mut entries| entries.next().is_none()) {
             let _ = fs::remove_dir_all(&legacy);
             if let Some(parent) = legacy.parent().filter(|parent| parent != &paths.data_dir) {
                 if fs::read_dir(parent).is_ok_and(|mut entries| entries.next().is_none()) {
@@ -389,6 +523,47 @@ pub fn migrate_legacy_feed_cache(paths: &IrisPaths) -> AppResult<()> {
                 }
             }
         }
+    }
+    report
+}
+
+fn same_file_contents(left: &Path, right: &Path) -> bool {
+    let (Ok(left_meta), Ok(right_meta)) = (fs::metadata(left), fs::metadata(right)) else {
+        return false;
+    };
+    if left_meta.len() != right_meta.len() {
+        return false;
+    }
+    let (Ok(mut left_file), Ok(mut right_file)) = (File::open(left), File::open(right)) else {
+        return false;
+    };
+    let mut left_buf = [0_u8; 64 * 1024];
+    let mut right_buf = [0_u8; 64 * 1024];
+    loop {
+        let left_len = match left_file.read(&mut left_buf) {
+            Ok(0) => return true,
+            Ok(len) => len,
+            Err(_) => return false,
+        };
+        let right_len = match right_file.read(&mut right_buf) {
+            Ok(len) => len,
+            Err(_) => return false,
+        };
+        if left_len != right_len || left_buf[..left_len] != right_buf[..right_len] {
+            return false;
+        }
+    }
+}
+
+fn move_file_to_cache(source: &Path, target: &Path) -> AppResult<()> {
+    if fs::rename(source, target).is_ok() {
+        return Ok(());
+    }
+    // Cross-filesystem rename (EXDEV) fallback: copy then remove the source.
+    fs::copy(source, target)?;
+    if fs::remove_file(source).is_err() {
+        let _ = fs::remove_file(target);
+        return Err(AppError::msg("legacy_feed_cache_remove_failed"));
     }
     Ok(())
 }
@@ -439,7 +614,6 @@ fn disk_summary(
         bytes: usage.bytes,
         entries: usage.entries,
         reclaimable_bytes: if clearable { usage.bytes } else { 0 },
-        active_bytes: 0,
         clearable,
         policy: policy.into(),
     }
@@ -458,6 +632,40 @@ fn remove_children(root: &Path) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+/// Remove cache files whose database state has been physically purged and no
+/// other feed item still references the same cache key.
+pub(crate) fn remove_unreferenced_media_files(
+    paths: &IrisPaths,
+    db: &Database,
+    keys: &[FeedMediaKey],
+) -> AppResult<u32> {
+    let mut removed = 0_u32;
+    for key in keys.iter().collect::<HashSet<_>>() {
+        let referenced = db.with_read_conn(|conn| {
+            FeedMediaRepository::is_cache_key_referenced(conn, &key.cache_key)
+        })?;
+        if referenced {
+            continue;
+        }
+        let root = paths.cache_dir.join("feed-media");
+        match key.kind {
+            crate::feed::media_repository::FeedMediaKind::Image => {
+                removed = removed.saturating_add(crate::feed::image::remove_cached_key(
+                    &root.join("images"),
+                    &key.cache_key,
+                )?);
+            }
+            crate::feed::media_repository::FeedMediaKind::Document => {
+                removed = removed.saturating_add(crate::feed::document::remove_cached_key(
+                    &root.join("documents"),
+                    &key.cache_key,
+                )?);
+            }
+        }
+    }
+    Ok(removed)
 }
 
 fn now() -> String {
@@ -510,7 +718,9 @@ mod tests {
         fs::write(legacy.join("ready.png"), b"ready").unwrap();
         fs::write(legacy.join("interrupted.part"), b"partial").unwrap();
 
-        migrate_legacy_feed_cache(&paths).unwrap();
+        let report = migrate_legacy_feed_cache(&paths);
+        assert_eq!(report.moved, 1);
+        assert_eq!(report.partials_removed, 1);
 
         assert!(paths.cache_dir.join("feed-media/images/ready.png").exists());
         assert!(!legacy.join("interrupted.part").exists());

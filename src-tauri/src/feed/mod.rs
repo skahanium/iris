@@ -7,11 +7,13 @@ pub mod model;
 pub mod opml;
 pub mod repository;
 
+pub(crate) mod cache_files;
 pub(crate) mod discovery;
 pub(crate) mod document;
 pub(crate) mod fetch;
 pub(crate) mod fulltext;
 pub(crate) mod image;
+pub(crate) mod media_repository;
 pub(crate) mod normalize;
 pub(crate) mod sync;
 

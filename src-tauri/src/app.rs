@@ -411,15 +411,9 @@ impl AppState {
         let _ = state
             .db
             .with_conn(FeedRepository::recover_interrupted_fulltext);
-        let _ = crate::feed::document::maintain_cache(
-            &state.cache_dir().join("feed-media").join("documents"),
-        );
-        let _ = crate::feed::image::maintain_cache(
-            &state.cache_dir().join("feed-media").join("images"),
-        );
-
-        if let Err(e) = crate::llm::fetch_web_page::cleanup_expired_web_cache(&state.db) {
-            tracing::warn!("failed to cleanup expired web cache: {e}");
+        if let Err(error) = crate::cache::CacheCoordinator::new(&state.paths, &state.db).maintain()
+        {
+            tracing::warn!(error_code = %error, "startup cache maintenance failed");
         }
 
         if let Some(v) = state.load_vault_setting()? {

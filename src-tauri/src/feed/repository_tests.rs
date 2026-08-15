@@ -6,6 +6,7 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::Connection;
 
+use super::media_repository::{FeedMediaKind, FeedMediaRepository};
 use super::model::{
     ConversionStatus, FeedItemInput, FeedItemQuery, FeedItemStatePatch, FeedSourcePatch, FeedView,
     FulltextStatus, NewFeedSource, SourcePayloadKind,
@@ -72,6 +73,60 @@ fn item_input(
         expires_at: "2026-08-17T10:00:00Z".to_string(),
         fulltext_status: FulltextStatus::NotRequested,
     }
+}
+
+#[test]
+fn feed_media_state_persists_ready_failure_and_retry_backoff() {
+    let conn = test_conn();
+    insert_source(&conn, "src-media", "Media", "https://example.com/media.xml");
+    let item = item_input(
+        "src-media",
+        "article",
+        "Article",
+        "body",
+        "2026-08-01T00:00:00Z",
+    );
+    FeedRepository::upsert_items(&conn, std::slice::from_ref(&item)).unwrap();
+
+    FeedMediaRepository::record_ready(
+        &conn,
+        &item.id,
+        FeedMediaKind::Image,
+        "cache-key",
+        123,
+        now(),
+    )
+    .unwrap();
+    assert!(!FeedMediaRepository::is_retry_blocked(&conn, &item.id, "cache-key", now()).unwrap());
+
+    FeedMediaRepository::record_failed(
+        &conn,
+        &item.id,
+        FeedMediaKind::Image,
+        "cache-key",
+        Some(now() + chrono::Duration::seconds(30)),
+        now(),
+    )
+    .unwrap();
+    assert!(FeedMediaRepository::is_retry_blocked(&conn, &item.id, "cache-key", now()).unwrap());
+    assert!(!FeedMediaRepository::is_retry_blocked(
+        &conn,
+        &item.id,
+        "cache-key",
+        now() + chrono::Duration::seconds(60)
+    )
+    .unwrap());
+
+    FeedMediaRepository::record_ready(
+        &conn,
+        &item.id,
+        FeedMediaKind::Image,
+        "cache-key",
+        456,
+        now(),
+    )
+    .unwrap();
+    assert!(!FeedMediaRepository::is_retry_blocked(&conn, &item.id, "cache-key", now()).unwrap());
 }
 
 #[test]

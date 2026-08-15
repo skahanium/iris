@@ -8,6 +8,7 @@ import {
 } from "@/lib/markdown-render-worker-core";
 
 let lastRenderedHash: string | null = null;
+let lastRenderedLength = 0;
 let lastRenderedResponse: Extract<
   MarkdownRenderWorkerResponse,
   { type: "rendered" }
@@ -38,7 +39,7 @@ self.onmessage = (event: MessageEvent<MarkdownRenderWorkerRequest>) => {
   }
 
   const contentHash = markdownContentHash(request.content);
-  if (contentHash === lastRenderedHash) {
+  if (contentHash === lastRenderedHash && request.content.length === lastRenderedLength) {
     if (lastRenderedResponse) {
       post({ ...lastRenderedResponse, id: request.id });
       return;
@@ -55,6 +56,7 @@ self.onmessage = (event: MessageEvent<MarkdownRenderWorkerRequest>) => {
 
   if (response.type === "rendered") {
     lastRenderedHash = response.contentHash;
+    lastRenderedLength = request.content.length;
     lastRenderedResponse = response;
   }
   post(response);

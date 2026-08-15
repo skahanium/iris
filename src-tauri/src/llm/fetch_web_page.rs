@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
 use futures_util::StreamExt;
+use rusqlite::Connection;
 use scraper::{Html, Selector};
 use sha2::{Digest, Sha256};
 
@@ -45,7 +46,6 @@ pub struct PageFetchResult {
 
 #[derive(Debug)]
 struct PageBytesResult {
-    final_url: String,
     content_type: String,
     bytes: Vec<u8>,
 }
@@ -123,7 +123,6 @@ async fn fetch_page_bytes_with_gate<G: SafeHttpsGate>(
                     return Err(AppError::msg("web_content_type_unsupported"));
                 }
                 return Ok(PageBytesResult {
-                    final_url: current,
                     content_type,
                     bytes: response.bytes,
                 });
@@ -196,7 +195,6 @@ async fn fetch_page_bytes_with_gate<G: SafeHttpsGate>(
                 bytes.extend_from_slice(&chunk);
             }
             return Ok(PageBytesResult {
-                final_url: current,
                 content_type,
                 bytes,
             });
@@ -268,10 +266,6 @@ fn url_hash(url: &str, scope: &PageFetchCacheScope) -> String {
     hasher.update(b"\0");
     hasher.update(url.trim().as_bytes());
     hex::encode(hasher.finalize())
-}
-
-fn content_hash(text: &str) -> String {
-    crate::cas::hash::content_hash_str(text)
 }
 
 /// Validate URL for fetch: HTTPS only, no SSRF to private/local hosts.
@@ -385,7 +379,7 @@ fn load_cache(
                AND provider_kind = ?4
                AND provider_config_hash = ?5
                AND broker_version = ?6
-               AND expires_at > datetime('now')",
+               AND datetime(expires_at) > datetime('now')",
         )?;
         let mut rows = stmt.query(rusqlite::params![
             hash,
@@ -414,10 +408,8 @@ fn load_cache(
 fn store_cache(
     db: &Database,
     hash: &str,
-    url: &str,
     title: Option<&str>,
     body: &str,
-    hash_body: &str,
     scope: &PageFetchCacheScope,
 ) -> AppResult<()> {
     let fetched_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -425,13 +417,12 @@ fn store_cache(
         .format("%Y-%m-%dT%H:%M:%SZ")
         .to_string();
     db.with_conn(|conn| {
-        conn.execute(
+        let tx = conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO web_page_cache (
                url_hash,
-               url,
                title,
                body_text,
-               content_hash,
                fetched_at,
                expires_at,
                last_accessed_at,
@@ -441,12 +432,10 @@ fn store_cache(
                provider_config_hash,
                broker_version
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(url_hash) DO UPDATE SET
-               url = excluded.url,
                title = excluded.title,
                body_text = excluded.body_text,
-               content_hash = excluded.content_hash,
                fetched_at = excluded.fetched_at,
                expires_at = excluded.expires_at,
                last_accessed_at = excluded.last_accessed_at,
@@ -457,10 +446,8 @@ fn store_cache(
                broker_version = excluded.broker_version",
             rusqlite::params![
                 hash,
-                url,
                 title,
                 body,
-                hash_body,
                 fetched_at,
                 expires_at,
                 fetched_at,
@@ -471,51 +458,62 @@ fn store_cache(
                 scope.broker_version.as_str(),
             ],
         )?;
+        prune_page_cache_lru_conn(&tx, MAX_WEB_PAGE_CACHE_ROWS, MAX_WEB_PAGE_CACHE_BYTES)?;
+        tx.commit()?;
         Ok(())
     })
 }
 
 pub fn cleanup_expired_web_cache(db: &Database) -> AppResult<usize> {
     db.with_conn(|conn| {
-        let deleted = conn.execute(
-            "DELETE FROM web_page_cache WHERE expires_at < datetime('now')",
+        let tx = conn.unchecked_transaction()?;
+        let expired = tx.execute(
+            "DELETE FROM web_page_cache WHERE datetime(expires_at) <= datetime('now')",
             [],
         )?;
-        Ok(deleted)
-    })
-    .and_then(|expired| {
-        prune_page_cache_lru(db, MAX_WEB_PAGE_CACHE_ROWS, MAX_WEB_PAGE_CACHE_BYTES)
-            .map(|lru| expired + lru)
+        let lru =
+            prune_page_cache_lru_conn(&tx, MAX_WEB_PAGE_CACHE_ROWS, MAX_WEB_PAGE_CACHE_BYTES)?;
+        tx.commit()?;
+        Ok(expired + lru)
     })
 }
 
+#[cfg(test)]
 fn prune_page_cache_lru(db: &Database, max_rows: usize, max_bytes: i64) -> AppResult<usize> {
-    db.with_conn(|conn| {
-        let mut deleted = 0;
-        loop {
-            let (row_count, total_bytes): (i64, i64) = conn.query_row(
-                "SELECT COUNT(*), COALESCE(SUM(length(url) + COALESCE(length(title), 0) + length(body_text)), 0)
-                 FROM web_page_cache",
-                [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
-            if row_count <= max_rows as i64 && total_bytes <= max_bytes {
-                return Ok(deleted);
-            }
-            let removed = conn.execute(
-                "DELETE FROM web_page_cache WHERE url_hash = (
-                    SELECT url_hash FROM web_page_cache
-                    ORDER BY datetime(COALESCE(last_accessed_at, fetched_at)) ASC, url_hash ASC
-                    LIMIT 1
-                )",
-                [],
-            )?;
-            if removed == 0 {
-                return Ok(deleted);
-            }
-            deleted += removed;
+    db.with_conn(|conn| prune_page_cache_lru_conn(conn, max_rows, max_bytes))
+}
+
+fn prune_page_cache_lru_conn(
+    conn: &Connection,
+    max_rows: usize,
+    max_bytes: i64,
+) -> AppResult<usize> {
+    let mut deleted = 0;
+    loop {
+        let (row_count, total_bytes): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(COALESCE(octet_length(title), 0)
+                                 + octet_length(body_text)), 0)
+             FROM web_page_cache",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if row_count <= max_rows as i64 && total_bytes <= max_bytes {
+            return Ok(deleted);
         }
-    })
+        let removed = conn.execute(
+            "DELETE FROM web_page_cache WHERE url_hash = (
+                SELECT url_hash FROM web_page_cache
+                ORDER BY datetime(COALESCE(last_accessed_at, fetched_at)) ASC, url_hash ASC
+                LIMIT 1
+            )",
+            [],
+        )?;
+        if removed == 0 {
+            return Ok(deleted);
+        }
+        deleted += removed;
+    }
 }
 
 /// Fetch a page (with SQLite cache and per-host throttle).
@@ -572,16 +570,7 @@ pub async fn fetch_web_page(
         return Err(AppError::msg("未能从页面提取正文"));
     }
 
-    let full_hash = content_hash(&text);
-    store_cache(
-        db,
-        &hash,
-        &fetched.final_url,
-        title_opt.as_deref(),
-        &text,
-        &full_hash,
-        &scope,
-    )?;
+    store_cache(db, &hash, title_opt.as_deref(), &text, &scope)?;
 
     if text.chars().count() > max_chars {
         text = text.chars().take(max_chars).collect();
@@ -674,7 +663,7 @@ mod tests {
         .await
         .expect("redirect fetch succeeds");
 
-        assert_eq!(result.final_url, server.url("/final"));
+        assert!(String::from_utf8_lossy(&result.bytes).contains("safe body"));
         assert_eq!(gate.validated.lock().expect("validated").len(), 2);
         assert_eq!(gate.resolved.lock().expect("resolved").len(), 2);
         assert_eq!(server.requests_snapshot().len(), 2);
@@ -770,16 +759,7 @@ mod tests {
         };
         let key = url_hash("https://example.com/private", &base);
 
-        store_cache(
-            &db,
-            &key,
-            "https://example.com/private",
-            Some("title"),
-            "body",
-            "content-hash",
-            &base,
-        )
-        .expect("store scoped page cache");
+        store_cache(&db, &key, Some("title"), "body", &base).expect("store scoped page cache");
 
         assert!(load_cache(&db, &key, &base)
             .expect("read matching cache")
@@ -794,7 +774,7 @@ mod tests {
         let db = Database::open_in_memory().expect("mem db");
         let scope = PageFetchCacheScope::native(None, PAGE_FETCH_CACHE_BROKER_VERSION);
 
-        for (hash, url, fetched_at) in [
+        for (hash, _url, fetched_at) in [
             ("old", "https://example.com/old", "2026-01-01T00:00:00Z"),
             (
                 "middle",
@@ -803,8 +783,7 @@ mod tests {
             ),
             ("new", "https://example.com/new", "2026-01-03T00:00:00Z"),
         ] {
-            store_cache(&db, hash, url, Some(hash), hash, hash, &scope)
-                .expect("store page cache row");
+            store_cache(&db, hash, Some(hash), hash, &scope).expect("store page cache row");
             db.with_conn(|conn| {
                 conn.execute(
                     "UPDATE web_page_cache SET fetched_at = ?2 WHERE url_hash = ?1",
@@ -841,6 +820,38 @@ mod tests {
             .expect("read middle")
             .is_none());
         assert!(load_cache(&db, "new", &scope).expect("read new").is_some());
+    }
+
+    #[test]
+    fn same_day_expired_web_cache_rows_are_cleaned() {
+        let db = Database::open_in_memory().unwrap();
+        let scope = PageFetchCacheScope::native(None, PAGE_FETCH_CACHE_BROKER_VERSION);
+        let key = url_hash("https://example.com/expired", &scope);
+        store_cache(&db, &key, Some("title"), "body", &scope).unwrap();
+        let expired_today = Utc::now().format("%Y-%m-%dT00:00:00Z").to_string();
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE web_page_cache SET expires_at = ?2 WHERE url_hash = ?1",
+                rusqlite::params![key, expired_today],
+            )?;
+            Ok::<(), crate::error::AppError>(())
+        })
+        .unwrap();
+
+        assert_eq!(cleanup_expired_web_cache(&db).unwrap(), 1);
+        assert!(load_cache(&db, &key, &scope).unwrap().is_none());
+    }
+
+    #[test]
+    fn web_cache_byte_budget_uses_utf8_octets_not_characters() {
+        let db = Database::open_in_memory().unwrap();
+        let scope = PageFetchCacheScope::native(None, PAGE_FETCH_CACHE_BROKER_VERSION);
+        let key = url_hash("https://example.com/cjk", &scope);
+        let body = "--------".repeat(1000);
+        store_cache(&db, &key, Some("title"), &body, &scope).unwrap();
+
+        assert_eq!(prune_page_cache_lru(&db, 256, 1500).expect("byte prune"), 1);
+        assert!(load_cache(&db, &key, &scope).unwrap().is_none());
     }
 
     #[test]

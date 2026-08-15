@@ -83,6 +83,7 @@ const FEED_COMMANDS = [
   "feed_images_authorize",
   "feed_image_prepare",
   "feed_images_release",
+  "feed_images_revoke",
   "feed_items_mark_read",
   "feed_sync_source",
   "feed_sync_all",

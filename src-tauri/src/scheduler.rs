@@ -138,23 +138,37 @@ impl Scheduler {
                     }
                 }
                 let result = feed_retention_db.with_conn(|conn| {
+                    let now = Utc::now();
+                    let mut media_keys =
+                        crate::feed::media_repository::FeedMediaRepository::keys_for_deleted_items_due(
+                            conn, now,
+                        )?;
+                    media_keys.extend(
+                        crate::feed::media_repository::FeedMediaRepository::keys_for_expired_sources(
+                            conn, now,
+                        )?,
+                    );
                     let soft_deleted =
                         crate::feed::repository::FeedRepository::soft_delete_expired_items(
-                            conn,
-                            Utc::now(),
+                            conn, now,
                         )?;
                     let purged = crate::feed::repository::FeedRepository::purge_deleted_items(
-                        conn,
-                        Utc::now(),
+                        conn, now,
                     )?;
                     let purged_sources =
                         crate::feed::repository::FeedRepository::purge_expired_sources(
-                            conn,
-                            Utc::now(),
+                            conn, now,
                         )?;
-                    Ok((soft_deleted, purged, purged_sources))
+                    Ok((soft_deleted, purged, purged_sources, media_keys))
                 });
-                if let Ok((soft_deleted, purged, purged_sources)) = result {
+                if let Ok((soft_deleted, purged, purged_sources, media_keys)) = result {
+                    if let Err(error) = crate::cache::remove_unreferenced_media_files(
+                        feed_retention_state.paths(),
+                        &feed_retention_db,
+                        &media_keys,
+                    ) {
+                        tracing::warn!(error_code = %error, "feed_media_reclaim_failed");
+                    }
                     if soft_deleted > 0 || purged > 0 || purged_sources > 0 {
                         tracing::info!(
                             soft_deleted,
@@ -225,6 +239,7 @@ impl Scheduler {
                 }
 
                 Self::run_hygiene_cleanup("scheduled");
+                Self::run_cache_maintenance(&state);
                 if let Err(e) = Self::run_garbage_collection(&state).await {
                     tracing::error!("Garbage collection failed: {e}");
                 }
@@ -246,6 +261,31 @@ impl Scheduler {
             Ok(_) => {}
             Err(e) => tracing::warn!("Iris hygiene cleanup ({label}) failed: {e}"),
         }
+    }
+
+    fn run_cache_maintenance(state: &Arc<AppState>) {
+        let state = state.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            match crate::cache::CacheCoordinator::new(state.paths(), &state.db).maintain() {
+                Ok(report)
+                    if report.web_pages_removed > 0
+                        || report.feed_media_removed > 0
+                        || report.temp_deleted_files > 0 =>
+                {
+                    tracing::info!(
+                        web_pages_removed = report.web_pages_removed,
+                        feed_media_removed = report.feed_media_removed,
+                        temp_deleted_files = report.temp_deleted_files,
+                        temp_freed_bytes = report.temp_freed_bytes,
+                        "cache_maintenance_complete"
+                    );
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(error_code = %error, "cache_maintenance_failed");
+                }
+            }
+        });
     }
 
     async fn run_garbage_collection(state: &Arc<AppState>) -> AppResult<()> {
