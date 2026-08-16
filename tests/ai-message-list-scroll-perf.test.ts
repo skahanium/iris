@@ -40,12 +40,15 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
 
     it("batches virtualizer row measurements on animation frames", () => {
       const s = read("src/components/ai/AiMessageList.tsx");
-      const measureCallback = s.split("const measureRowElement")[1] ?? "";
+      const scheduleCallback = s.split("const scheduleMeasureFrame")[1] ?? "";
+      const rowCallback = s.split("const measureRowElement")[1] ?? "";
 
-      expect(measureCallback).toContain("requestAnimationFrame");
-      expect(measureCallback).toContain("cancelAnimationFrame");
-      expect(measureCallback).toContain("pendingMeasureNodesRef");
-      expect(measureCallback).not.toContain(
+      expect(scheduleCallback).toContain("requestAnimationFrame");
+      expect(scheduleCallback).toContain("cancelAnimationFrame");
+      expect(scheduleCallback).toContain("pendingMeasureNodesRef");
+      expect(rowCallback).toContain("ResizeObserver");
+      expect(rowCallback).toContain("scheduleMeasureFrame");
+      expect(scheduleCallback).not.toContain(
         "rowVirtualizerRef.current.measureElement(node)",
       );
     });

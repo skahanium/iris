@@ -1,5 +1,13 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { Check, Copy, RotateCcw } from "lucide-react";
 
@@ -259,11 +267,10 @@ export const AiMessageList = memo(function AiMessageList({
   rowVirtualizerRef.current = rowVirtualizer;
   const pendingMeasureNodesRef = useRef<Set<HTMLDivElement>>(new Set());
   const measureFrameRef = useRef<number | null>(null);
-  const measureRowElement = useCallback((node: HTMLDivElement | null) => {
-    if (!node) return;
-    pendingMeasureNodesRef.current.add(node);
-    if (measureFrameRef.current !== null) return;
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
+  const scheduleMeasureFrame = useCallback(() => {
+    if (measureFrameRef.current !== null) return;
     measureFrameRef.current = window.requestAnimationFrame(() => {
       measureFrameRef.current = null;
       const nodes = Array.from(pendingMeasureNodesRef.current);
@@ -275,6 +282,31 @@ export const AiMessageList = memo(function AiMessageList({
       }
     });
   }, []);
+
+  const measureRowElement = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      pendingMeasureNodesRef.current.add(node);
+      scheduleMeasureFrame();
+
+      if (typeof ResizeObserver === "undefined") return;
+      if (!resizeObserverRef.current) {
+        resizeObserverRef.current = new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const target = entry.target;
+            if (!(target instanceof HTMLDivElement) || !target.isConnected) {
+              continue;
+            }
+            pendingMeasureNodesRef.current.add(target);
+            scheduleMeasureFrame();
+          }
+        });
+      }
+      resizeObserverRef.current.observe(node);
+    },
+    [scheduleMeasureFrame],
+  );
+
   const virtualTotalSize = rowVirtualizer.getTotalSize();
   const virtualItems = rowVirtualizer.getVirtualItems();
 
@@ -305,37 +337,21 @@ export const AiMessageList = memo(function AiMessageList({
     };
   }, [handleScroll, isNearBottom]);
 
-  /** Ref for deferred scroll-to-bottom to avoid forced synchronous layout. */
-  const pendingScrollRef = useRef<number | null>(null);
-
-  useEffect(() => {
+  // Keep the viewport anchored before paint. The previous rAF write happened
+  // after the browser had already painted the newly-grown row with the old
+  // scrollTop, producing a one-frame jump on every streaming flush.
+  useLayoutEffect(() => {
     if (scrollFollow !== "following") return;
-    // Defer the scrollTop write to the next rAF so the browser can
-    // complete layout before we read scrollHeight.
-    if (pendingScrollRef.current !== null) {
-      window.cancelAnimationFrame(pendingScrollRef.current);
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const nextScrollTop = Math.max(
+      0,
+      viewport.scrollHeight - viewport.clientHeight,
+    );
+    if (Math.abs(viewport.scrollTop - nextScrollTop) <= SCROLL_WRITE_EPSILON_PX) {
+      return;
     }
-    pendingScrollRef.current = window.requestAnimationFrame(() => {
-      pendingScrollRef.current = null;
-      const viewport = viewportRef.current;
-      if (!viewport) return;
-      const nextScrollTop = Math.max(
-        0,
-        viewport.scrollHeight - viewport.clientHeight,
-      );
-      if (
-        Math.abs(viewport.scrollTop - nextScrollTop) <= SCROLL_WRITE_EPSILON_PX
-      ) {
-        return;
-      }
-      viewport.scrollTop = nextScrollTop;
-    });
-    return () => {
-      if (pendingScrollRef.current !== null) {
-        window.cancelAnimationFrame(pendingScrollRef.current);
-        pendingScrollRef.current = null;
-      }
-    };
+    viewport.scrollTop = nextScrollTop;
   }, [messages.length, rows.length, virtualTotalSize, scrollFollow, streaming]);
 
   useEffect(() => {
@@ -347,6 +363,8 @@ export const AiMessageList = memo(function AiMessageList({
         measureFrameRef.current = null;
       }
       pendingMeasureNodes.clear();
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
     };
   }, []);
 
@@ -459,6 +477,7 @@ export const AiMessageList = memo(function AiMessageList({
               streaming={assistantStreaming}
               processItems={m.processItems}
               selected={isSelected}
+              isLastMessage={isLast}
               createdAt={m.created_at}
               onCitationClick={onCitationClick}
               webCitations={m.webCitations}

@@ -2036,10 +2036,10 @@
 
   .ai-message-bubble-streaming[data-streaming] {
     @apply border-border/40;
-    contain: layout paint style;
+    contain: layout style;
   }
 
-  .ai-message-bubble-assistant:not([data-streaming]) {
+  .ai-message-bubble-assistant:not([data-streaming]):not([data-last-message]) {
     content-visibility: auto;
     contain-intrinsic-size: auto 320px;
   }

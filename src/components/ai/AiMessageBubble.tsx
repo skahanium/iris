@@ -71,6 +71,8 @@ interface AiMessageBubbleProps {
   webCitations?: WebCitationEntry[];
   citationBinding?: CitationBinding;
   sourceSummary?: SourceSummaryEntry[];
+  /** True for the bottom-most row; excludes final content-visibility work. */
+  isLastMessage?: boolean;
 }
 
 const proseConversation = "iris-markdown-content select-text";
@@ -652,6 +654,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   webCitations = [],
   citationBinding,
   sourceSummary,
+  isLastMessage = false,
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
 
@@ -754,6 +757,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
       data-role={role}
       data-streaming={streaming ? "" : undefined}
       data-selected={selected ? "" : undefined}
+      data-last-message={isLastMessage ? "" : undefined}
     >
       {hasProcessEvents ? (
         <AssistantProcessTimeline

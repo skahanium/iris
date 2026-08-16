@@ -30,7 +30,8 @@ describe("assistant stream rendering performance contract", () => {
       css.split(".ai-message-bubble-streaming[data-streaming]")[1] ?? "";
     const streamingRule = after.split("}")[0] ?? "";
 
-    expect(streamingRule).toContain("contain: layout paint style");
+    expect(streamingRule).toContain("contain: layout style");
+    expect(streamingRule).not.toContain("contain: paint");
     expect(streamingRule).not.toContain("content-visibility: auto");
   });
 
