@@ -7,6 +7,17 @@ function read(path: string): string {
 }
 
 describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
+  describe("Fix 1: message identity instead of virtual index keys", () => {
+    it("uses stable assistant message identity for virtualizer rows", () => {
+      const s = read("src/components/ai/AiMessageList.tsx");
+
+      expect(s).toContain("getItemKey");
+      expect(s).toContain("assistantMessageIdentity");
+      expect(s).not.toContain("key={virtualRow.key}");
+    });
+  });
+
+
   describe("Fix 2: content-aware estimateSize", () => {
     it("estimateSize is a function of row content, not a fixed 112 constant", () => {
       const s = read("src/components/ai/AiMessageList.tsx");

@@ -25,6 +25,8 @@ import {
   assistantChromeSnapshotsEqual,
   buildAssistantChromeSnapshot,
 } from "@/lib/assistant-chrome";
+import { assistantSessionIdentity } from "@/lib/ai-message-identity";
+
 import {
   EMPTY_ASSISTANT_CHROME,
   type AssistantChromeSnapshot,
@@ -37,7 +39,7 @@ import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
 import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
 import { useAssistantConversation } from "./hooks/useAssistantConversation";
 import { useAssistantRunTranscript } from "./hooks/useAssistantRunTranscript";
-import { useAssistantPresentationPlayback } from "./hooks/useAssistantPresentationPlayback";
+// Presentation playback is now folded into useAssistantRunTranscript.
 import { useUnifiedAssistantSend } from "./hooks/useUnifiedAssistantSend";
 import type { UnifiedAssistantPanelProps } from "./types";
 import type { McpCapabilityBindingSummary } from "@/lib/ipc";
@@ -266,11 +268,15 @@ export function UnifiedAssistantPanel({
     classifiedContextRef,
     takeClassifiedResult: assistantClassifiedRunTakeResult,
   });
+    /*
+
   useAssistantPresentationPlayback({
     presentation: assistantRun.presentationState,
     run: assistantRun.eventState,
     setMessages,
   });
+    */
+
 
   const { isStarting, send } = useUnifiedAssistantSend({
     aiDomain,
@@ -524,6 +530,8 @@ export function UnifiedAssistantPanel({
       ) : null}
       <ErrorBoundary scope="AI 对话区">
         <ConversationSurface
+            key={assistantSessionIdentity(runSession)}
+
           messages={messages}
           streaming={streaming}
           assistantFocus={assistantFocus}

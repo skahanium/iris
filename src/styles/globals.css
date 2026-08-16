@@ -2048,6 +2048,14 @@
     @apply px-3 py-2.5;
   }
 
+  .ai-streaming-tail {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-height: 1em;
+  }
+
+
   .ai-thinking-row {
     @apply flex min-h-0 items-center gap-2 px-3 py-2 text-sm text-muted-foreground;
   }

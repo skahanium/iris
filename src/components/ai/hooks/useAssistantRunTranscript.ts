@@ -1,8 +1,16 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 import type { ChatLine } from "../AiMessageList";
-import { projectAssistantProcessEvents } from "@/lib/assistant-process";
+import { projectAssistantProcessEvents, type AssistantProcessItem } from "@/lib/assistant-process";
 import { ensureTerminalAnswerComplete } from "@/lib/ensure-answer-complete-process";
+import {
+  collapseRepeatedWebSearchProcessItems,
+  isInternalRuntimeTool,
+} from "@/lib/assistant-process";
+import type { AssistantPresentationItem } from "@/lib/assistant-presentation";
+import { sanitizeAssistantVisibleText } from "@/lib/assistant-visible-text";
+import { toolDisplayName } from "@/lib/tool-display-names";
+
 import type { AssistantPresentationState } from "@/lib/assistant-presentation";
 import { deriveRunOutputting } from "@/lib/assistant-run-activity";
 import type { AssistantRunEventState } from "@/lib/assistant-run-events";
@@ -107,7 +115,9 @@ export function useAssistantRunTranscript({
   }, [presentation, run, setActivityHint, setStreaming]);
 
   useEffect(() => {
-    if (!run || run.lastSeq === 0) return;
+      if (!run) return;
+
+    const hasLivePresentation = presentation?.runId === run?.runId && (presentation?.lastSeq ?? 0) > 0; if (run.lastSeq === 0 && !hasLivePresentation) return;
     if (
       !messages.some(
         (message) =>
@@ -116,8 +126,8 @@ export function useAssistantRunTranscript({
     ) {
       return;
     }
-    const event = run.events.at(-1);
-    if (!event) return;
+    const event = run.events.at(-1) ?? null;
+    if (!event && run.state !== "running") return;
     const presentationSeq =
       presentation?.runId === run.runId ? presentation.lastSeq : 0;
     const key = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}`;
@@ -142,11 +152,11 @@ export function useAssistantRunTranscript({
       const presentationOwnsProcess = presentationReady && !terminal;
       const durableContent = run.content;
       const rawItems = presentationOwnsProcess
-        ? current?.processItems
+        ? collapseRepeatedWebSearchProcessItems(presentation?.processItems.filter((item) => item.kind !== "tool" || !isInternalRuntimeTool(item.label)).map(toProcessItem))
         : projectAssistantProcessEvents(run.events, run.reasoningSummaries);
       const processItems = ensureTerminalAnswerComplete(rawItems, run.state);
       const content = presentationOwnsContent
-        ? (presentation?.answer ?? current?.content ?? "")
+        ? (sanitizeAssistantVisibleText(presentation?.answer ?? "") || current?.content || "")
         : durableContent.trim()
           ? durableContent
           : // Live gap / empty durable must not wipe already-visible partial text.
@@ -218,7 +228,7 @@ export function useAssistantRunTranscript({
               ),
           ),
         );
-        setError(userVisibleRunFailure(run, event));
+        if (event) setError(userVisibleRunFailure(run, event));
         return;
       case "cancelled":
         setStreaming(false);
@@ -292,6 +302,23 @@ function userVisibleRunFailure(
     ? event.payload.message
     : "本次运行未能完成。";
 }
+
+function toProcessItem(item: AssistantPresentationItem): AssistantProcessItem {
+  return {
+    id: item.id,
+    kind: item.kind,
+    label:
+      item.kind === "tool"
+        ? toolDisplayName(item.label.replaceAll(".", "_"))
+        : item.label,
+    status: item.status,
+    createdAt: item.elapsedMs,
+    ...(typeof item.durationMs === "number"
+      ? { durationMs: item.durationMs }
+      : {}),
+  };
+}
+
 
 function sameProcessItems(
   left: ChatLine["processItems"],

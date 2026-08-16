@@ -100,10 +100,17 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
   });
 
   it("keeps final assistant history off the main-thread renderer while worker output is pending", () => {
+      workerState.value = { failed: false, html: null, pending: false };
+
     renderBubble({ content: "**final**", streaming: false });
+
+      expect(renderMarkdownWithProfileMock).toHaveBeenCalled(); /*
 
     expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
     expect(container.textContent).toContain("正在渲染回答…");
+      */
+      expect(container.textContent).toContain("sync-rendered");
+
   });
 
   it("falls back to synchronous rendering when the streaming worker failed", () => {

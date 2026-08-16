@@ -26,6 +26,9 @@ import { cn } from "@/lib/utils";
 
 import { useStreamingContent } from "@/hooks/useStreamingContent";
 import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
+
+import { FinalizedMessageBody } from "@/components/ai/FinalizedMessageBody";
+// StreamingMessageBody is introduced in the next renderer stage.
 import type { AssistantProcessItem } from "@/lib/assistant-process";
 import type {
   CitationBinding,
@@ -44,6 +47,10 @@ interface AiMessageBubbleProps {
   role: "user" | "assistant";
 
   content?: string;
+  /** Stable message identity; separates streaming growth from message swap. */
+  messageIdentity?: string;
+
+
 
   streaming?: boolean;
 
@@ -408,6 +415,7 @@ const AssistantBody = memo(function AssistantBody({
 
   streaming = false,
 
+  contentIdentity,
   onCitationClick,
   webCitations = [],
   citationBinding,
@@ -417,27 +425,32 @@ const AssistantBody = memo(function AssistantBody({
 
   streaming?: boolean;
 
+  contentIdentity?: string;
   onCitationClick?: (ref: string) => void;
   webCitations?: WebCitationEntry[];
   citationBinding?: CitationBinding;
   sourceSummary?: SourceSummaryEntry[];
 }) {
-  const renderable = useMemo(
-    () => createRenderableAssistantContent(content, { streaming }),
-    [content, streaming],
+  const streamingRenderable = useMemo(
+    () => createRenderableAssistantContent(content, { streaming: true }),
+    [content],
   );
-  const renderContent = useStreamingContent(renderable.content, streaming);
+  const renderContent = useStreamingContent(streamingRenderable.content, streaming); const finalizedRenderable = useMemo(() => createRenderableAssistantContent(content, { streaming: false }), [content]);
 
-  const markdownContent = streaming ? renderContent : content;
+  const markdownContent = streaming ? renderContent : finalizedRenderable.content;
   const boundedMarkdownContent = streaming
     ? markdownContent
-    : renderable.content;
+    : finalizedRenderable.content;
 
-  const workerRender = useMarkdownRenderWorker({
-    content: boundedMarkdownContent,
-    enabled: true,
+  const workerRender = useMarkdownRenderWorker({ content: boundedMarkdownContent, enabled: streaming, streaming });
+    // content: boundedMarkdownContent,
+    // enabled: true,
+      /*
+
     streaming,
   });
+      */
+
 
   /** Last successfully rendered HTML — reused while worker is pending. */
   const lastHtmlRef = useRef<string>("");
@@ -454,11 +467,15 @@ const AssistantBody = memo(function AssistantBody({
         if (lastHtmlRef.current) {
           return lastHtmlRef.current;
         }
-        if (content.length > STREAMING_SYNC_FALLBACK_CHAR_LIMIT) {
-          return '<p class="text-muted-foreground whitespace-pre-wrap">Rendering...</p>';
+          if (content.length > STREAMING_SYNC_FALLBACK_CHAR_LIMIT) {
+
+        {
+          return `<p class="text-muted-foreground whitespace-pre-wrap" data-render-limit="${STREAMING_SYNC_FALLBACK_CHAR_LIMIT}">Rendering...</p>`;
         }
       }
     }
+      }
+
 
     if (!streaming && !workerRender.failed && workerRender.pending) {
       return '<p class="text-muted-foreground whitespace-pre-wrap">正在渲染回答…</p>';
@@ -601,12 +618,28 @@ const AssistantBody = memo(function AssistantBody({
 
   return (
     <>
-      <StableMarkdownHtml
+        {streaming ? (
+          <StableMarkdownHtml
+            className={cn("ai-message-body", proseConversation)}
+            html={html}
+            contentIdentity={contentIdentity}
+            dataProseSurface="conversation"
+            onClick={handleClick}
+          />
+        ) : (
+
+      <FinalizedMessageBody
+          content={finalizedRenderable.content}
+
         className={cn("ai-message-body", proseConversation)}
         dataProseSurface="conversation"
+          contentIdentity={contentIdentity}
+
         html={html}
         onClick={handleClick}
       />
+        )}
+
       {!streaming && (webCitations.length > 0 || sourceSummary.length > 0) ? (
         <AssistantCitationFooter
           content={content}
@@ -632,6 +665,9 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   role,
 
   content,
+  messageIdentity,
+
+
 
   streaming = false,
 
@@ -773,6 +809,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
         <MarkdownErrorBoundary>
           <AssistantBody
             content={content}
+              contentIdentity={messageIdentity}
+
             streaming={streaming}
             onCitationClick={onCitationClick}
             webCitations={webCitations}

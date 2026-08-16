@@ -14,6 +14,8 @@ import { Check, Copy, RotateCcw } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
+import { assistantMessageIdentity } from "@/lib/ai-message-identity";
+
 import { useToast } from "@/components/ui/use-toast";
 import {
   restoreChatLineContent,
@@ -234,6 +236,21 @@ export const AiMessageList = memo(function AiMessageList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length, showStandaloneThinking, streaming]);
 
+
+  const messagesForIdentityRef = useRef(messages);
+  messagesForIdentityRef.current = messages;
+  const getItemKey = useCallback(
+    (index: number): string => {
+      const row = rows[index];
+      if (!row || row.type !== "message") return row?.type ?? `row:${index}`;
+      const message = messagesForIdentityRef.current[row.messageIndex];
+      return message
+        ? assistantMessageIdentity(message, row.messageIndex)
+        : `row:${index}`;
+    },
+    [rows],
+  );
+
   // Content-aware row height estimate. The old fixed `() => 112` was wrong
   // by up to 10× for tall assistant messages, causing the virtualizer to
   // compute incorrect total height / offsets on first scroll-through (blank
@@ -260,6 +277,8 @@ export const AiMessageList = memo(function AiMessageList({
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewportRef.current,
+    getItemKey,
+
     estimateSize: estimateSizeByContent,
     overscan: 8,
   });
@@ -472,8 +491,12 @@ export const AiMessageList = memo(function AiMessageList({
           </div>
           <div className="min-w-0 max-w-full flex-1">
             <AiMessageBubble
+                key={assistantMessageIdentity(m, i)}
+
               role="assistant"
               content={msgContent || undefined}
+                messageIdentity={assistantMessageIdentity(m, i)}
+
               streaming={assistantStreaming}
               processItems={m.processItems}
               selected={isSelected}
@@ -536,7 +559,7 @@ export const AiMessageList = memo(function AiMessageList({
             if (!row) return null;
             return (
               <div
-                key={virtualRow.key}
+                key={getItemKey(virtualRow.index)}
                 ref={measureRowElement}
                 data-index={virtualRow.index}
                 className="absolute left-0 top-0 w-full px-3"

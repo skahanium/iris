@@ -16,21 +16,29 @@ import { toTrustedHtml } from "@/lib/sanitize";
 
 export function StableMarkdownHtml({
   html,
+  contentIdentity,
   className,
   dataProseSurface,
   onClick,
 }: {
   html: string;
+  /** Changes when a different message owns this container. */
+  contentIdentity?: string;
   className?: string;
   dataProseSurface?: string;
   onClick?: (event: ReactMouseEvent<HTMLDivElement>) => void;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const lastHtmlRef = useRef<string | null>(null);
+  const lastIdentityRef = useRef<string | null | undefined>(null);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    if (lastIdentityRef.current !== contentIdentity) {
+      lastIdentityRef.current = contentIdentity;
+      lastHtmlRef.current = null;
+    }
     if (lastHtmlRef.current === html) return;
 
     if (lastHtmlRef.current === null) {
@@ -45,7 +53,7 @@ export function StableMarkdownHtml({
       childrenOnly: true,
     });
     lastHtmlRef.current = html;
-  }, [html]);
+  }, [contentIdentity, html]);
 
   return (
     <div
