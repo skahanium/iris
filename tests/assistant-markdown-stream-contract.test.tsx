@@ -38,10 +38,10 @@ describe("assistant Run transcript rendering", () => {
     host.remove();
   });
 
-  it("uses the unified Run transcript projection instead of a research card or task hook", () => {
+  it("uses the single conversation projection instead of competing transcript hooks", () => {
     const list = read("src/components/ai/AiMessageList.tsx");
-    const transcript = read(
-      "src/components/ai/hooks/useAssistantRunTranscript.ts",
+    const projection = read(
+      "src/components/ai/hooks/useAssistantConversationProjection.ts",
     );
 
     expect(existsSync("src/components/ai/ResearchResultMessage.tsx")).toBe(
@@ -51,8 +51,14 @@ describe("assistant Run transcript rendering", () => {
       false,
     );
     expect(list).not.toContain("ResearchResultMessage");
-    expect(transcript).toContain("run.content");
-    expect(transcript).toContain('case "completed"');
+    expect(projection).toContain("run.content");
+    expect(projection).toContain('run.state === "completed"');
+    expect(
+      existsSync("src/components/ai/hooks/useAssistantRunTranscript.ts"),
+    ).toBe(false);
+    expect(
+      existsSync("src/components/ai/hooks/useAssistantPresentationPlayback.ts"),
+    ).toBe(false);
   });
 
   it("renders the current assistant bubble while a Run is streaming", async () => {

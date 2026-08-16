@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { useAssistantRunTranscript } from "@/components/ai/hooks/useAssistantRunTranscript";
+import { useAssistantConversationProjection } from "@/components/ai/hooks/useAssistantConversationProjection";
 import type { ChatLine } from "@/components/ai/AiMessageList";
 import {
   ANSWER_COMPLETE_PROCESS_LABEL,
@@ -23,7 +23,7 @@ function Probe({
   run: ReturnType<typeof replayAssistantRunEvents>;
   presentation?: AssistantPresentationState;
 }) {
-  useAssistantRunTranscript({
+  useAssistantConversationProjection({
     run,
     presentation,
     messages,
@@ -48,7 +48,7 @@ afterEach(() => {
   streaming = false;
 });
 
-describe("useAssistantRunTranscript", () => {
+describe("useAssistantConversationProjection", () => {
   it("连续 presentation delta 必须累积显示，而不是停留在首段", () => {
     messages = [
       { role: "user", content: "你好", runId: "run-1", turnId: "turn-1" },

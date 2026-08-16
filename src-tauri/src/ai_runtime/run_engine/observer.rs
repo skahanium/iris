@@ -181,8 +181,6 @@ fn presentation_payload_for_durable_event(
     }
 }
 
-/// Separates live UI stream snapshots from the one validated durable Run delta.
-const STREAM_PRESENTATION_FLUSH_INTERVAL: Duration = Duration::from_millis(33);
 pub(crate) struct AgentRunStreamObserver<'a> {
     db: &'a Database,
     run_id: &'a str,
@@ -190,7 +188,6 @@ pub(crate) struct AgentRunStreamObserver<'a> {
     sink: &'a dyn RunEventSink,
     pending_delta: String,
     transient_content: String,
-    last_presentation_emit_at: Instant,
     presentation_content: String,
     defer_visible_deltas: bool,
     source_group_citation_filter: bool,
@@ -228,7 +225,6 @@ impl<'a> AgentRunStreamObserver<'a> {
             sink,
             pending_delta: String::new(),
             transient_content: String::new(),
-            last_presentation_emit_at: Instant::now(),
             presentation_content: String::new(),
             defer_visible_deltas,
             source_group_citation_filter: false,
@@ -396,7 +392,6 @@ impl AgentRunStreamObserver<'_> {
             },
         );
         self.presentation_content.push_str(&delta);
-        self.last_presentation_emit_at = Instant::now();
         Ok(())
     }
 
@@ -647,13 +642,7 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
                     }
                 }
                 self.transient_content.push_str(token);
-                if !self.defer_visible_deltas
-                    && (self.presentation_content.is_empty()
-                        || self.last_presentation_emit_at.elapsed()
-                            >= STREAM_PRESENTATION_FLUSH_INTERVAL
-                        || token.contains('\n')
-                        || *replace_visible)
-                {
+                if !self.defer_visible_deltas {
                     self.flush_transient()?;
                 }
             }

@@ -384,8 +384,16 @@ export function compactChatLinesForState(
   messages: ChatLine[],
   previous: readonly ChatLine[] = [],
 ): ChatLineWithPayloadRef[] {
+  if (
+    messages.length === previous.length &&
+    messages.every((message, index) => message === previous[index])
+  ) {
+    return previous as ChatLineWithPayloadRef[];
+  }
   const compacted = messages.map((message, index) =>
-    previous[index] === message ? (previous[index] as ChatLineWithPayloadRef) : compactChatLineForState(store, message),
+    previous[index] === message
+      ? (previous[index] as ChatLineWithPayloadRef)
+      : compactChatLineForState(store, message),
   );
   reconcileChatLinePayloadRefs(store, previous, compacted);
   return compacted;

@@ -9,7 +9,7 @@ import { useMemo, type MouseEvent as ReactMouseEvent } from "react";
 
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 
-import { StableMarkdownHtml } from "./StableMarkdownHtml";
+import { toTrustedHtml } from "@/lib/sanitize";
 
 export function FinalizedMessageBody({
   content,
@@ -35,11 +35,11 @@ export function FinalizedMessageBody({
   }, [content, providedHtml]);
 
   return (
-    <StableMarkdownHtml
-      html={html}
-      contentIdentity={contentIdentity}
+    <div
+      dangerouslySetInnerHTML={{ __html: toTrustedHtml(html) }}
+      data-content-identity={contentIdentity}
       className={className}
-      dataProseSurface={dataProseSurface}
+      data-prose-surface={dataProseSurface}
       onClick={onClick}
     />
   );

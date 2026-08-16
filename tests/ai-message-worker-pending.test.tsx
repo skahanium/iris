@@ -24,7 +24,7 @@ vi.mock("@/lib/markdown-contract", () => ({
 
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 
-describe("AiMessageBubble markdown worker pending behavior", () => {
+describe("AiMessageBubble Markdown rendering", () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -57,7 +57,7 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
     };
   });
 
-  it("renders first streaming frame synchronously while worker output is pending", () => {
+  it("renders the first streaming frame in the isolated tail without waiting for a worker", () => {
     workerState.value = {
       failed: false,
       html: null,
@@ -66,15 +66,30 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
 
     renderBubble({ content: "**streaming**", streaming: true });
 
-    expect(renderMarkdownWithProfileMock).toHaveBeenCalledWith(
+    expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-streaming-tail]")?.textContent).toBe(
       "**streaming**",
-      "chat_assistant",
-      { streaming: true },
     );
-    expect(container.innerHTML).toContain("sync-rendered");
   });
 
-  it("keeps previous worker html while a later streaming render is pending", () => {
+  it("shows the next streaming delta without an additional content throttle", () => {
+    const now = vi.spyOn(performance, "now");
+    now.mockReturnValueOnce(100).mockReturnValueOnce(101);
+    renderBubble({ content: "第", streaming: true });
+
+    act(() => {
+      root.render(
+        <AiMessageBubble role="assistant" content="第一" streaming />,
+      );
+    });
+
+    expect(container.querySelector("[data-streaming-tail]")?.textContent).toBe(
+      "第一",
+    );
+    now.mockRestore();
+  });
+
+  it("does not reuse stale worker HTML for a different streaming frame", () => {
     workerState.value = {
       failed: false,
       html: "<p>previous-worker-render</p>",
@@ -84,10 +99,13 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
     renderBubble({ content: "**streaming**", streaming: true });
 
     expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
-    expect(container.innerHTML).toContain("previous-worker-render");
+    expect(container.innerHTML).not.toContain("previous-worker-render");
+    expect(container.querySelector("[data-streaming-tail]")?.textContent).toBe(
+      "**streaming**",
+    );
   });
 
-  it("does not synchronously render a long streaming first frame while worker output is pending", () => {
+  it("keeps a long streaming first frame in one tail node", () => {
     workerState.value = {
       failed: false,
       html: null,
@@ -97,23 +115,19 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
     renderBubble({ content: "L".repeat(90_000), streaming: true });
 
     expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
+    expect(container.querySelectorAll("[data-streaming-tail]")).toHaveLength(1);
   });
 
-  it("keeps final assistant history off the main-thread renderer while worker output is pending", () => {
-      workerState.value = { failed: false, html: null, pending: false };
+  it("renders finalized assistant history synchronously without a placeholder", () => {
+    workerState.value = { failed: false, html: null, pending: false };
 
     renderBubble({ content: "**final**", streaming: false });
 
-      expect(renderMarkdownWithProfileMock).toHaveBeenCalled(); /*
-
-    expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("正在渲染回答…");
-      */
-      expect(container.textContent).toContain("sync-rendered");
-
+    expect(renderMarkdownWithProfileMock).toHaveBeenCalled();
+    expect(container.textContent).toContain("sync-rendered");
   });
 
-  it("falls back to synchronous rendering when the streaming worker failed", () => {
+  it("does not depend on worker failure state while streaming", () => {
     workerState.value = {
       failed: true,
       html: null,
@@ -122,11 +136,9 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
 
     renderBubble({ content: "**fallback**", streaming: true });
 
-    expect(renderMarkdownWithProfileMock).toHaveBeenCalledWith(
+    expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
+    expect(container.querySelector("[data-streaming-tail]")?.textContent).toBe(
       "**fallback**",
-      "chat_assistant",
-      { streaming: true },
     );
-    expect(container.innerHTML).toContain("sync-rendered");
   });
 });

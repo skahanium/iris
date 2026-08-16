@@ -15,7 +15,10 @@ import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 
 import { AiThinkingIndicator } from "@/components/ui/ai-message-stream-pulse";
 
-import { createRenderableAssistantContent } from "@/lib/assistant-render-budget";
+import {
+  createRenderableAssistantContent,
+  createStreamingRenderableContent,
+} from "@/lib/assistant-render-budget";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import {
   displayMentionTooltip,
@@ -24,21 +27,14 @@ import {
 
 import { cn } from "@/lib/utils";
 
-import { useStreamingContent } from "@/hooks/useStreamingContent";
-import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
-
 import { FinalizedMessageBody } from "@/components/ai/FinalizedMessageBody";
-// StreamingMessageBody is introduced in the next renderer stage.
+import { StreamingMessageBody } from "@/components/ai/StreamingMessageBody";
 import type { AssistantProcessItem } from "@/lib/assistant-process";
 import type {
-  CitationBinding,
   DisplayMention,
   SelectionReferenceDisplay,
-  SourceSummaryEntry,
   WebCitationEntry,
 } from "@/types/ai";
-import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
-import { StableMarkdownHtml } from "@/components/ai/StableMarkdownHtml";
 import { resolveWebCitationUrl } from "@/lib/ai/citation-display";
 import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
 import { sanitizeHtml, toTrustedHtml } from "@/lib/sanitize";
@@ -49,8 +45,6 @@ interface AiMessageBubbleProps {
   content?: string;
   /** Stable message identity; separates streaming growth from message swap. */
   messageIdentity?: string;
-
-
 
   streaming?: boolean;
 
@@ -76,33 +70,15 @@ interface AiMessageBubbleProps {
 
   /** Safe persisted web citations for footer + inline resolve. */
   webCitations?: WebCitationEntry[];
-  citationBinding?: CitationBinding;
-  sourceSummary?: SourceSummaryEntry[];
   /** True for the bottom-most row; excludes final content-visibility work. */
   isLastMessage?: boolean;
 }
 
 const proseConversation = "iris-markdown-content select-text";
 
-const STREAMING_SYNC_FALLBACK_CHAR_LIMIT = 40_000;
-
 const codeCopyDefaultLabel = "\u590d\u5236";
 const codeCopyDoneLabel = "\u5df2\u590d\u5236";
 const codeCopyFailedLabel = "\u590d\u5236\u5931\u8d25";
-
-function summarizeLogContent(value: string) {
-  let hash = 0x811c9dc5;
-
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-
-  return {
-    length: value.length,
-    hash: (hash >>> 0).toString(16).padStart(8, "0"),
-  };
-}
 
 function escapeHtml(value: string): string {
   return value
@@ -418,8 +394,6 @@ const AssistantBody = memo(function AssistantBody({
   contentIdentity,
   onCitationClick,
   webCitations = [],
-  citationBinding,
-  sourceSummary = [],
 }: {
   content: string;
 
@@ -428,104 +402,19 @@ const AssistantBody = memo(function AssistantBody({
   contentIdentity?: string;
   onCitationClick?: (ref: string) => void;
   webCitations?: WebCitationEntry[];
-  citationBinding?: CitationBinding;
-  sourceSummary?: SourceSummaryEntry[];
 }) {
-  const streamingRenderable = useMemo(
-    () => createRenderableAssistantContent(content, { streaming: true }),
+  const streamingContent = useMemo(
+    () => createStreamingRenderableContent(content),
     [content],
   );
-  const renderContent = useStreamingContent(streamingRenderable.content, streaming); const finalizedRenderable = useMemo(() => createRenderableAssistantContent(content, { streaming: false }), [content]);
-
-  const markdownContent = streaming ? renderContent : finalizedRenderable.content;
-  const boundedMarkdownContent = streaming
-    ? markdownContent
-    : finalizedRenderable.content;
-
-  const workerRender = useMarkdownRenderWorker({ content: boundedMarkdownContent, enabled: streaming, streaming });
-    // content: boundedMarkdownContent,
-    // enabled: true,
-      /*
-
-    streaming,
-  });
-      */
-
-
-  /** Last successfully rendered HTML — reused while worker is pending. */
-  const lastHtmlRef = useRef<string>("");
-
-  const html = useMemo(() => {
-    if (streaming && !workerRender.failed) {
-      if (workerRender.html !== null) {
-        lastHtmlRef.current = workerRender.html;
-        return workerRender.html;
-      }
-      // Worker is still computing. Reuse a previous frame when one exists;
-      // otherwise render short first frames synchronously so streaming is visible.
-      if (workerRender.pending) {
-        if (lastHtmlRef.current) {
-          return lastHtmlRef.current;
-        }
-          if (content.length > STREAMING_SYNC_FALLBACK_CHAR_LIMIT) {
-
-        {
-          return `<p class="text-muted-foreground whitespace-pre-wrap" data-render-limit="${STREAMING_SYNC_FALLBACK_CHAR_LIMIT}">Rendering...</p>`;
-        }
-      }
-    }
-      }
-
-
-    if (!streaming && !workerRender.failed && workerRender.pending) {
-      return '<p class="text-muted-foreground whitespace-pre-wrap">正在渲染回答…</p>';
-    }
-
-    // Non-streaming or worker failed: render synchronously.
-    try {
-      const result = renderMarkdownWithProfile(
-        boundedMarkdownContent || "",
-
-        "chat_assistant",
-
-        {
-          streaming,
-        },
-      );
-
-      const out = result.output;
-      if (streaming) lastHtmlRef.current = out;
-      return out;
-    } catch (err) {
-      console.warn("[ai-message] Markdown render failed", {
-        contentSummary: summarizeLogContent(boundedMarkdownContent || ""),
-
-        error:
-          err instanceof Error
-            ? { name: err.name, messageLength: err.message.length }
-            : { name: typeof err, messageLength: String(err).length },
-      });
-
-      const escaped = (boundedMarkdownContent || "")
-
-        .replace(/&/g, "&amp;")
-
-        .replace(/</g, "&lt;")
-
-        .replace(/>/g, "&gt;")
-
-        .replace(/\n/g, "<br>");
-
-      return `<p class="text-muted-foreground whitespace-pre-wrap">${escaped}</p>`;
-    }
-  }, [
-    boundedMarkdownContent,
-    content.length,
-    streaming,
-    workerRender.failed,
-    workerRender.html,
-    workerRender.pending,
-  ]);
+  const finalizedContent = useMemo(
+    () =>
+      streaming
+        ? ""
+        : createRenderableAssistantContent(content, { streaming: false })
+            .content,
+    [content, streaming],
+  );
 
   const handleCodeCopy = useCallback(async (button: HTMLButtonElement) => {
     const code = button.closest(".ai-code-block")?.querySelector("pre code");
@@ -618,43 +507,23 @@ const AssistantBody = memo(function AssistantBody({
 
   return (
     <>
-        {streaming ? (
-          <StableMarkdownHtml
-            className={cn("ai-message-body", proseConversation)}
-            html={html}
-            contentIdentity={contentIdentity}
-            dataProseSurface="conversation"
-            onClick={handleClick}
-          />
-        ) : (
-
-      <FinalizedMessageBody
-          content={finalizedRenderable.content}
-
-        className={cn("ai-message-body", proseConversation)}
-        dataProseSurface="conversation"
+      {streaming ? (
+        <StreamingMessageBody
+          className={cn("ai-message-body", proseConversation)}
+          content={streamingContent}
           contentIdentity={contentIdentity}
-
-        html={html}
-        onClick={handleClick}
-      />
-        )}
-
-      {!streaming && (webCitations.length > 0 || sourceSummary.length > 0) ? (
-        <AssistantCitationFooter
-          content={content}
-          entries={webCitations}
-          binding={citationBinding}
-          sourceSummary={sourceSummary}
-          onOpenUrl={
-            onCitationClick
-              ? (url) => {
-                  onCitationClick(url);
-                }
-              : undefined
-          }
+          dataProseSurface="conversation"
+          onClick={handleClick}
         />
-      ) : null}
+      ) : (
+        <FinalizedMessageBody
+          content={finalizedContent}
+          className={cn("ai-message-body", proseConversation)}
+          dataProseSurface="conversation"
+          contentIdentity={contentIdentity}
+          onClick={handleClick}
+        />
+      )}
     </>
   );
 });
@@ -666,8 +535,6 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
   content,
   messageIdentity,
-
-
 
   streaming = false,
 
@@ -688,8 +555,6 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
   processItems = [],
   webCitations = [],
-  citationBinding,
-  sourceSummary,
   isLastMessage = false,
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
@@ -809,13 +674,10 @@ export const AiMessageBubble = memo(function AiMessageBubble({
         <MarkdownErrorBoundary>
           <AssistantBody
             content={content}
-              contentIdentity={messageIdentity}
-
+            contentIdentity={messageIdentity}
             streaming={streaming}
             onCitationClick={onCitationClick}
             webCitations={webCitations}
-            citationBinding={citationBinding}
-            sourceSummary={sourceSummary}
           />
         </MarkdownErrorBoundary>
       ) : null}

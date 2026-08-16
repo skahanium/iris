@@ -1,19 +1,13 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 
 import { Check, Copy, RotateCcw } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
+import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
+import { useConversationReadingAnchor } from "@/components/ai/hooks/useConversationReadingAnchor";
 import { assistantMessageIdentity } from "@/lib/ai-message-identity";
 
 import { useToast } from "@/components/ui/use-toast";
@@ -86,9 +80,9 @@ interface AiMessageListProps {
 type MessageRow =
   | { type: "empty" }
   | { type: "thinking" }
-  | { type: "message"; messageIndex: number };
+  | { type: "message"; messageIndex: number }
+  | { type: "citations"; messageIndex: number };
 
-const SCROLL_WRITE_EPSILON_PX = 1;
 // Keep copy feedback ASCII-only in source: a legacy WebView code-page decode must not turn the
 // user-facing UTF-8 literals into mojibake before React receives them.
 const COPY_SUCCESS_TOAST = "\u5df2\u590d\u5236\u56de\u7b54";
@@ -103,6 +97,24 @@ function isRenderableMessageRow(
   if (message.role !== "assistant") return true;
   if (message.content.trim()) return true;
   return streaming && messageIndex === messages.length - 1;
+}
+
+function isAssistantStreaming(
+  message: ChatLine,
+  messageIndex: number,
+  messages: readonly ChatLine[],
+  streaming: boolean,
+): boolean {
+  return (
+    message.presentationStreaming ??
+    (streaming &&
+      message.role === "assistant" &&
+      messageIndex === messages.length - 1)
+  );
+}
+
+function hasCitationFooter(message: ChatLine): boolean {
+  return Boolean(message.webCitations?.length || message.sourceSummary?.length);
 }
 
 function MessageSelectControl({
@@ -211,67 +223,70 @@ export const AiMessageList = memo(function AiMessageList({
       (last?.role === "system" &&
         !messages.some((m) => m.role === "assistant")));
   const viewportRef = useRef<HTMLDivElement | null>(null);
-  const [scrollFollow, setScrollFollow] = useState<"following" | "detached">(
-    "following",
-  );
   const toast = useToast();
   const rows = useMemo<MessageRow[]>(() => {
     if (messages.length === 0) return [{ type: "empty" }];
     return [
       ...(showStandaloneThinking ? [{ type: "thinking" } as const] : []),
-      ...messages.flatMap((message, messageIndex) =>
-        isRenderableMessageRow(message, messageIndex, messages, streaming)
-          ? [
-              {
-                type: "message" as const,
-                messageIndex,
-              },
-            ]
-          : [],
-      ),
+      ...messages.flatMap((message, messageIndex) => {
+        if (
+          !isRenderableMessageRow(message, messageIndex, messages, streaming)
+        ) {
+          return [];
+        }
+        const messageRow: MessageRow = { type: "message", messageIndex };
+        const citationRow: MessageRow | null =
+          message.role === "assistant" &&
+          !isAssistantStreaming(message, messageIndex, messages, streaming) &&
+          hasCitationFooter(message)
+            ? { type: "citations", messageIndex }
+            : null;
+        return citationRow ? [messageRow, citationRow] : [messageRow];
+      }),
     ];
-    // Use messages.length instead of messages to avoid full recomputation
-    // on every streaming token flush; streaming content is handled by
-    // the individual message bubble's internal useStreamingContent throttle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, showStandaloneThinking, streaming]);
-
+  }, [messages, showStandaloneThinking, streaming]);
 
   const messagesForIdentityRef = useRef(messages);
   messagesForIdentityRef.current = messages;
   const getItemKey = useCallback(
     (index: number): string => {
       const row = rows[index];
-      if (!row || row.type !== "message") return row?.type ?? `row:${index}`;
+      if (!row || row.type === "empty" || row.type === "thinking") {
+        return row?.type ?? `row:${index}`;
+      }
       const message = messagesForIdentityRef.current[row.messageIndex];
-      return message
+      const messageIdentity = message
         ? assistantMessageIdentity(message, row.messageIndex)
         : `row:${index}`;
+      return row.type === "citations"
+        ? `${messageIdentity}:citations`
+        : messageIdentity;
     },
     [rows],
   );
 
-  // Content-aware row height estimate. The old fixed `() => 112` was wrong
-  // by up to 10× for tall assistant messages, causing the virtualizer to
-  // compute incorrect total height / offsets on first scroll-through (blank
-  // gaps + scroll position jumps until measureElement lands real values).
-  // This heuristic uses content length to get within ~2× of the true height,
-  // so measureElement only nudges instead of recalculating drastically.
-  const estimateSizeByContent = useCallback(
+  // Actual row height comes exclusively from the batched ResizeObserver. These
+  // conservative first-render estimates deliberately do not change per token,
+  // so streaming text cannot churn virtual total size before measurement.
+  const estimateRowSize = useCallback(
     (index: number): number => {
       const row = rows[index];
-      if (!row || row.type !== "message") return 80;
-      const content = messages[row.messageIndex]?.content || "";
-      // Base 56px (bubble chrome) + ~0.55px per char (wrapping at ~42 chars/
-      // line at 11px font in a ~480px-wide panel → ~13px line height). Code
-      // blocks (``` fences) add extra height — count them roughly.
-      const fenceCount = (content.match(/```/g) ?? []).length;
-      const codeBlockExtra = Math.floor(fenceCount / 2) * 80;
-      const textHeight = Math.max(56, content.length * 0.55);
-      // Cap at 2000 to avoid absurd estimates for very long messages.
-      return Math.min(2000, textHeight + codeBlockExtra + 24);
+      if (!row || row.type === "empty" || row.type === "thinking") return 80;
+      if (row.type === "citations") return 72;
+      const message = messages[row.messageIndex];
+      if (!message) return 112;
+      return isAssistantStreaming(
+        message,
+        row.messageIndex,
+        messages,
+        streaming,
+      )
+        ? 320
+        : message.role === "assistant"
+          ? 168
+          : 96;
     },
-    [messages, rows],
+    [messages, rows, streaming],
   );
 
   const rowVirtualizer = useVirtualizer({
@@ -279,7 +294,7 @@ export const AiMessageList = memo(function AiMessageList({
     getScrollElement: () => viewportRef.current,
     getItemKey,
 
-    estimateSize: estimateSizeByContent,
+    estimateSize: estimateRowSize,
     overscan: 8,
   });
   const rowVirtualizerRef = useRef(rowVirtualizer);
@@ -328,50 +343,23 @@ export const AiMessageList = memo(function AiMessageList({
 
   const virtualTotalSize = rowVirtualizer.getTotalSize();
   const virtualItems = rowVirtualizer.getVirtualItems();
-
-  const isNearBottom = useCallback((viewport: HTMLDivElement) => {
-    const threshold = 48;
-    const distanceFromBottom =
-      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
-    return distanceFromBottom <= threshold;
-  }, []);
-
-  const handleScroll = useCallback(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const next = isNearBottom(viewport) ? "following" : "detached";
-    setScrollFollow((prev) => (prev === next ? prev : next));
-  }, [isNearBottom]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-
-    viewport.addEventListener("scroll", handleScroll, { passive: true });
-    const next = isNearBottom(viewport) ? "following" : "detached";
-    setScrollFollow((prev) => (prev === next ? prev : next));
-
-    return () => {
-      viewport.removeEventListener("scroll", handleScroll);
-    };
-  }, [handleScroll, isNearBottom]);
-
-  // Keep the viewport anchored before paint. The previous rAF write happened
-  // after the browser had already painted the newly-grown row with the old
-  // scrollTop, producing a one-frame jump on every streaming flush.
-  useLayoutEffect(() => {
-    if (scrollFollow !== "following") return;
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const nextScrollTop = Math.max(
-      0,
-      viewport.scrollHeight - viewport.clientHeight,
-    );
-    if (Math.abs(viewport.scrollTop - nextScrollTop) <= SCROLL_WRITE_EPSILON_PX) {
-      return;
-    }
-    viewport.scrollTop = nextScrollTop;
-  }, [messages.length, rows.length, virtualTotalSize, scrollFollow, streaming]);
+  const activeStreamingMessage =
+    last && isAssistantStreaming(last, messages.length - 1, messages, streaming)
+      ? last
+      : null;
+  const activeStreamKey = activeStreamingMessage
+    ? assistantMessageIdentity(activeStreamingMessage, messages.length - 1)
+    : null;
+  const contentRevision =
+    Math.round(virtualTotalSize) +
+    rows.length +
+    (activeStreamingMessage?.content.length ?? 0);
+  const { following, returnToLatest } = useConversationReadingAnchor({
+    viewportRef,
+    active: streaming,
+    revision: contentRevision,
+    streamKey: activeStreamKey,
+  });
 
   useEffect(() => {
     const pendingMeasureNodes = pendingMeasureNodesRef.current;
@@ -389,7 +377,7 @@ export const AiMessageList = memo(function AiMessageList({
 
   // Stable per-index callback cache. Inline arrows like `() => onRetract(i)`
   // create new function refs every render, breaking AiMessageBubble's memo
-  // during streaming (every bubble re-diffs at ~20fps). This Map persists
+  // during animation-frame streaming updates. This Map persists
   // across renders so each index always gets the same function ref.
   const retractCallbackRef = useRef<Map<number, () => void>>(new Map());
   const copyCallbackRef = useRef<Map<number, () => void>>(new Map());
@@ -447,13 +435,27 @@ export const AiMessageList = memo(function AiMessageList({
       return <AiMessageBubble role="assistant" streaming />;
     }
 
+    if (row.type === "citations") {
+      const message = messages[row.messageIndex];
+      if (!message || message.role !== "assistant") return null;
+      return (
+        <div className="assistant-citation-row pl-7" data-row-kind="citations">
+          <AssistantCitationFooter
+            content={message.content}
+            entries={message.webCitations ?? []}
+            binding={message.citationBinding}
+            sourceSummary={message.sourceSummary}
+            onOpenUrl={onCitationClick}
+          />
+        </div>
+      );
+    }
+
     const i = row.messageIndex;
     const m = messages[i];
     if (!m) return null;
     const isLast = i === messages.length - 1;
-    const assistantStreaming =
-      m.presentationStreaming ??
-      (streaming && m.role === "assistant" && isLast);
+    const assistantStreaming = isAssistantStreaming(m, i, messages, streaming);
     const isSelected = selectedIndices?.has(i) ?? false;
 
     if (m.role === "assistant") {
@@ -491,12 +493,10 @@ export const AiMessageList = memo(function AiMessageList({
           </div>
           <div className="min-w-0 max-w-full flex-1">
             <AiMessageBubble
-                key={assistantMessageIdentity(m, i)}
-
+              key={assistantMessageIdentity(m, i)}
               role="assistant"
               content={msgContent || undefined}
-                messageIdentity={assistantMessageIdentity(m, i)}
-
+              messageIdentity={assistantMessageIdentity(m, i)}
               streaming={assistantStreaming}
               processItems={m.processItems}
               selected={isSelected}
@@ -504,8 +504,6 @@ export const AiMessageList = memo(function AiMessageList({
               createdAt={m.created_at}
               onCitationClick={onCitationClick}
               webCitations={m.webCitations}
-              citationBinding={m.citationBinding}
-              sourceSummary={m.sourceSummary}
             />
           </div>
         </div>
@@ -548,7 +546,7 @@ export const AiMessageList = memo(function AiMessageList({
   };
 
   return (
-    <>
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         <div
           className="relative py-3"
@@ -562,6 +560,7 @@ export const AiMessageList = memo(function AiMessageList({
                 key={getItemKey(virtualRow.index)}
                 ref={measureRowElement}
                 data-index={virtualRow.index}
+                data-row-kind={row.type}
                 className="absolute left-0 top-0 w-full px-3"
                 style={{ transform: `translateY(${virtualRow.start}px)` }}
               >
@@ -571,6 +570,15 @@ export const AiMessageList = memo(function AiMessageList({
           })}
         </div>
       </ScrollArea>
-    </>
+      {streaming && !following ? (
+        <button
+          type="button"
+          className="absolute bottom-3 right-3 rounded-full border border-border-subtle bg-panel px-3 py-1.5 text-xs text-foreground shadow-sm"
+          onClick={returnToLatest}
+        >
+          回到最新
+        </button>
+      ) : null}
+    </div>
   );
 });

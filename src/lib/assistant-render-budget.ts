@@ -36,6 +36,31 @@ function truncationNotice(omittedChars: number, streaming: boolean): string {
   ].join("\n");
 }
 
+function streamingTailWindow(content: string): {
+  content: string;
+  omittedChars: number;
+} {
+  if (content.length <= ASSISTANT_STREAM_RENDER_TAIL_CHARS) {
+    return { content, omittedChars: 0 };
+  }
+
+  const suffixStart = alignBackwardToLine(
+    content,
+    Math.max(0, content.length - ASSISTANT_STREAM_RENDER_TAIL_CHARS),
+  );
+  const suffix = content.slice(suffixStart);
+  const omittedChars = content.length - suffix.length;
+  return {
+    content: `${truncationNotice(omittedChars, true)}${suffix}`,
+    omittedChars,
+  };
+}
+
+/** Builds the bounded live tail without hashing the entire growing answer. */
+export function createStreamingRenderableContent(content: string): string {
+  return streamingTailWindow(content).content;
+}
+
 export function createRenderableAssistantContent(
   content: string,
   options?: { streaming?: boolean; maxChars?: number },
@@ -80,30 +105,14 @@ export function createRenderableAssistantContent(
   }
 
   if (streaming) {
-    if (fullLength <= ASSISTANT_STREAM_RENDER_TAIL_CHARS) {
-      return {
-        content,
-        fullHash,
-        fullLength,
-        omittedChars: 0,
-        streaming,
-        truncated: false,
-      };
-    }
-
-    const suffixStart = alignBackwardToLine(
-      content,
-      Math.max(0, fullLength - ASSISTANT_STREAM_RENDER_TAIL_CHARS),
-    );
-    const suffix = content.slice(suffixStart);
-    const omittedChars = fullLength - suffix.length;
+    const renderedContent = streamingTailWindow(content);
     return {
-      content: `${truncationNotice(omittedChars, true)}${suffix}`,
+      content: renderedContent.content,
       fullHash,
       fullLength,
-      omittedChars,
+      omittedChars: renderedContent.omittedChars,
       streaming,
-      truncated: true,
+      truncated: renderedContent.omittedChars > 0,
     };
   }
 

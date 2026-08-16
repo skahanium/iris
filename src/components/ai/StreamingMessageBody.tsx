@@ -10,11 +10,9 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 
-import { proseMarked } from "@/lib/markdown-render";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import { toTrustedHtml } from "@/lib/sanitize";
 import { splitStreamingMarkdown } from "@/lib/streaming-markdown-splitter";
-import type { Token } from "marked";
 
 export function StreamingMessageBody({
   content,
@@ -66,16 +64,19 @@ export function StreamingMessageBody({
     }
 
     if (split.stableBlockCount > stableBlockCountRef.current) {
-      const tokens = proseMarked.lexer(content) as Token[];
-      const newStableMarkdown = tokens
-        .slice(stableBlockCountRef.current, split.stableBlockCount)
-        .map((token) => token.raw)
-        .join("");
+      const newStableMarkdown = split.stableMarkdown.slice(
+        stableMarkdownRef.current.length,
+      );
       if (newStableMarkdown.trim()) {
-        const html = renderMarkdownWithProfile(newStableMarkdown, "chat_assistant", {
-          streaming: false,
-        }).output;
-        tail.insertAdjacentHTML("beforebegin", toTrustedHtml(html) as unknown as string);
+        const html = renderMarkdownWithProfile(
+          newStableMarkdown,
+          "chat_assistant",
+          { streaming: false },
+        ).output;
+        tail.insertAdjacentHTML(
+          "beforebegin",
+          toTrustedHtml(html) as unknown as string,
+        );
       }
     }
 

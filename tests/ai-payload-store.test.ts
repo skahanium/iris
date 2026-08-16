@@ -64,6 +64,15 @@ describe("AI payload store", () => {
     expect(store.snapshot().entryCount).toBe(0);
   });
 
+  it("returns the previous array when every chat-line reference is unchanged", () => {
+    const store = createAiPayloadStore();
+    const previous = compactChatLinesForState(store, [
+      { role: "assistant", content: "unchanged" },
+    ]);
+
+    expect(compactChatLinesForState(store, previous, previous)).toBe(previous);
+  });
+
   it("reconciles shared payload refs without releasing refs still present in next state", () => {
     const store = createAiPayloadStore();
     const long = "B".repeat(100_000);

@@ -28,9 +28,9 @@ describe("assistantMessageIdentity", () => {
         9,
       ),
     ).toBe("request:request-b|user|");
-    expect(
-      assistantMessageIdentity({ role: "system", seq: 12 }, 5),
-    ).toBe("seq:12|system|");
+    expect(assistantMessageIdentity({ role: "system", seq: 12 }, 5)).toBe(
+      "seq:12|system|",
+    );
     expect(assistantMessageIdentity({ role: "system" }, 5)).toBe(
       "index:5|system|",
     );

@@ -17,17 +17,13 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
     });
   });
 
-
-  describe("Fix 2: content-aware estimateSize", () => {
-    it("estimateSize is a function of row content, not a fixed 112 constant", () => {
+  describe("Fix 2: stable streaming estimate", () => {
+    it("keeps streaming height independent from content length until ResizeObserver measures it", () => {
       const s = read("src/components/ai/AiMessageList.tsx");
-      // The old `estimateSize: () => 112` is a constant that's wildly wrong
-      // for tall messages. The fix must make it content-aware.
       expect(s).not.toContain("estimateSize: () => 112");
-      // Must reference a content/length-based heuristic.
-      expect(s).toMatch(
-        /estimateSize.*content|estimateRowHeight|estimateSizeByContent/,
-      );
+      expect(s).toContain("estimateRowSize");
+      expect(s).toContain("? 320");
+      expect(s).not.toContain("content.length *");
     });
   });
 
@@ -65,15 +61,32 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
     });
   });
 
-  describe("Fix 5: guarded auto-scroll writes", () => {
-    it("only writes scrollTop when the bottom target meaningfully changes", () => {
+  describe("Fix 5: reading-anchor controller", () => {
+    it("delegates pre-paint scroll writes and user detach handling to the reading-anchor hook", () => {
       const s = read("src/components/ai/AiMessageList.tsx");
 
-      expect(s).toContain("SCROLL_WRITE_EPSILON_PX");
-      expect(s).toMatch(/Math\.abs\([^)]*scrollTop[^)]*\)/);
-      expect(s).not.toContain(
-        "viewport.scrollTop = Math.max(\n      0,\n      viewport.scrollHeight - viewport.clientHeight,\n    );",
+      expect(s).toContain("useConversationReadingAnchor");
+      expect(s).toContain("returnToLatest");
+      expect(s).toContain("回到最新");
+    });
+
+    it("keys follow state and scroll revisions to the live assistant message", () => {
+      const s = read("src/components/ai/AiMessageList.tsx");
+
+      expect(s).toContain("const activeStreamingMessage");
+      expect(s).toContain("const activeStreamKey");
+      expect(s).toContain("const contentRevision");
+      expect(s).toContain("streamKey: activeStreamKey");
+      expect(s).toContain("revision: contentRevision");
+    });
+
+    it("keeps the tail observer stable for one streaming message", () => {
+      const hook = read(
+        "src/components/ai/hooks/useConversationReadingAnchor.ts",
       );
+
+      expect(hook).toContain("}, [active, streamKey, viewportRef]);");
+      expect(hook).toContain("lastObservedScrollTopRef.current = target;");
     });
   });
 });

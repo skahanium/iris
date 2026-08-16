@@ -107,7 +107,10 @@ export function AssistantComposerDock({
   return (
     <div
       data-testid="ai-input"
-      className={cn("flex flex-col", assistantFocus && "ai-focus-column")}
+      className={cn(
+        "flex shrink-0 flex-col",
+        assistantFocus && "ai-focus-column",
+      )}
     >
       {externalBindings.length > 0 ? (
         <div

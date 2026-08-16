@@ -38,8 +38,7 @@ import { ConversationSurface } from "./ConversationSurface";
 import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
 import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
 import { useAssistantConversation } from "./hooks/useAssistantConversation";
-import { useAssistantRunTranscript } from "./hooks/useAssistantRunTranscript";
-// Presentation playback is now folded into useAssistantRunTranscript.
+import { useAssistantConversationProjection } from "./hooks/useAssistantConversationProjection";
 import { useUnifiedAssistantSend } from "./hooks/useUnifiedAssistantSend";
 import type { UnifiedAssistantPanelProps } from "./types";
 import type { McpCapabilityBindingSummary } from "@/lib/ipc";
@@ -256,7 +255,7 @@ export function UnifiedAssistantPanel({
     return () => window.clearTimeout(timer);
   }, [aiDomain, displayMentions, input]);
 
-  useAssistantRunTranscript({
+  useAssistantConversationProjection({
     run: assistantRun.eventState,
     presentation: assistantRun.presentationState,
     session: runSession,
@@ -268,15 +267,6 @@ export function UnifiedAssistantPanel({
     classifiedContextRef,
     takeClassifiedResult: assistantClassifiedRunTakeResult,
   });
-    /*
-
-  useAssistantPresentationPlayback({
-    presentation: assistantRun.presentationState,
-    run: assistantRun.eventState,
-    setMessages,
-  });
-    */
-
 
   const { isStarting, send } = useUnifiedAssistantSend({
     aiDomain,
@@ -342,15 +332,12 @@ export function UnifiedAssistantPanel({
     };
   }, [onChromeChange]);
 
-  const handleCitationClick = useCallback(
-    (ref: string) => {
-      if (!isExternalHttpsHref(ref)) return;
-      void openExternalHttpsUrl(ref).catch(() => {
-        setLastError("无法打开引用链接，请检查系统默认浏览器设置。");
-      });
-    },
-    [],
-  );
+  const handleCitationClick = useCallback((ref: string) => {
+    if (!isExternalHttpsHref(ref)) return;
+    void openExternalHttpsUrl(ref).catch(() => {
+      setLastError("无法打开引用链接，请检查系统默认浏览器设置。");
+    });
+  }, []);
 
   const composerDisabled =
     streaming ||
@@ -439,7 +426,7 @@ export function UnifiedAssistantPanel({
   return (
     <div
       ref={assistantPanelRef}
-      className="ai-sidecar flex h-full flex-col bg-ai-workspace"
+      className="ai-sidecar flex h-full min-h-0 flex-col bg-ai-workspace"
       data-ai-domain={aiDomain}
       data-testid="unified-assistant-panel"
     >
@@ -530,8 +517,7 @@ export function UnifiedAssistantPanel({
       ) : null}
       <ErrorBoundary scope="AI 对话区">
         <ConversationSurface
-            key={assistantSessionIdentity(runSession)}
-
+          key={assistantSessionIdentity(runSession)}
           messages={messages}
           streaming={streaming}
           assistantFocus={assistantFocus}

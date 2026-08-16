@@ -39,7 +39,10 @@ self.onmessage = (event: MessageEvent<MarkdownRenderWorkerRequest>) => {
   }
 
   const contentHash = markdownContentHash(request.content);
-  if (contentHash === lastRenderedHash && request.content.length === lastRenderedLength) {
+  if (
+    contentHash === lastRenderedHash &&
+    request.content.length === lastRenderedLength
+  ) {
     if (lastRenderedResponse) {
       post({ ...lastRenderedResponse, id: request.id });
       return;

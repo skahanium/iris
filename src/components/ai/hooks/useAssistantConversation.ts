@@ -94,7 +94,7 @@ export function useAssistantConversation({
           next.length > MAX_CONVERSATION_UI_MESSAGES
             ? next.slice(-MAX_CONVERSATION_UI_MESSAGES)
             : next;
-          if (next === previous) return previous;
+        if (next === previous) return previous;
 
         return compactChatLinesForState(
           payloadStoreRef.current,
@@ -104,15 +104,12 @@ export function useAssistantConversation({
       });
     },
     [],
-    );
-
+  );
 
   const patchAssistantMessage = useCallback(
     (runId: string, patch: Partial<ChatLine>) => {
       setMessages((previous) => {
-        const index = previous.findIndex(
-          (message) => message.runId === runId,
-        );
+        const index = previous.findIndex((message) => message.runId === runId);
         if (index < 0) return previous;
         const current = previous[index]!;
         const nextMessage = { ...current, ...patch };
@@ -123,12 +120,6 @@ export function useAssistantConversation({
     },
     [setMessages],
   );
-
-    /*
-
-  );
-    */
-
 
   useEffect(() => {
     const store = payloadStoreRef.current;
@@ -329,7 +320,7 @@ export function useAssistantConversation({
     handleQuoteToInput,
     handleRetract,
     messages,
-      patchAssistantMessage,
+    patchAssistantMessage,
 
     runSession,
     setMessages,

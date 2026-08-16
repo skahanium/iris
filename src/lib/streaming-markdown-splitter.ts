@@ -21,15 +21,21 @@ function hasClosedCodeFence(token: Token): boolean {
   return fenceLines.length >= 2;
 }
 
-function isStableToken(token: Token, isLast: boolean): boolean {
-  if (!isLast) return true;
-  if (token.type === "space") return true;
-  if (token.type === "heading" || token.type === "hr") return true;
-  if (token.type === "code") return hasClosedCodeFence(token);
-  return false;
+function isHardCompleteToken(token: Token): boolean {
+  return (
+    token.type === "heading" ||
+    token.type === "hr" ||
+    (token.type === "code" && hasClosedCodeFence(token))
+  );
 }
 
-export function splitStreamingMarkdown(content: string): StreamingMarkdownSplit {
+function isWhitespaceToken(token: Token): boolean {
+  return token.type === "space";
+}
+
+export function splitStreamingMarkdown(
+  content: string,
+): StreamingMarkdownSplit {
   if (!content) {
     return {
       stableMarkdown: "",
@@ -39,21 +45,39 @@ export function splitStreamingMarkdown(content: string): StreamingMarkdownSplit 
   }
 
   const tokens = proseMarked.lexer(content) as Token[];
-  let stableBlockCount = 0;
-  while (
-    stableBlockCount < tokens.length &&
-    isStableToken(tokens[stableBlockCount]!, stableBlockCount === tokens.length - 1)
-  ) {
-    stableBlockCount += 1;
+  let lastContentIndex = -1;
+  for (let index = tokens.length - 1; index >= 0; index -= 1) {
+    const token = tokens[index];
+    if (token && !isWhitespaceToken(token)) {
+      lastContentIndex = index;
+      break;
+    }
+  }
+  if (lastContentIndex < 0) {
+    return {
+      stableMarkdown: "",
+      tailMarkdown: content,
+      stableBlockCount: 0,
+    };
   }
 
-  const stableMarkdown = tokens
-    .slice(0, stableBlockCount)
-    .map((token) => token.raw)
-    .join("");
+  const hasTrailingBoundary = tokens
+    .slice(lastContentIndex + 1)
+    .some(isWhitespaceToken);
+  const finalContentIsStable =
+    lastContentIndex < tokens.length - 1
+      ? hasTrailingBoundary
+      : isHardCompleteToken(tokens[lastContentIndex]!);
+  const stableTokenEnd = finalContentIsStable
+    ? tokens.length
+    : lastContentIndex;
+  const stableTokens = tokens.slice(0, stableTokenEnd);
+  const stableMarkdown = stableTokens.map((token) => token.raw).join("");
+
   return {
     stableMarkdown,
     tailMarkdown: content.slice(stableMarkdown.length),
-    stableBlockCount,
+    stableBlockCount: stableTokens.filter((token) => !isWhitespaceToken(token))
+      .length,
   };
 }

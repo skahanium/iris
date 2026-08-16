@@ -2307,7 +2307,7 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
         "tools_finished must not emit 正在生成答复 before the tool loop is done: {durable:?}"
     );
 
-    for (token_index, token) in ["第一段\n", "第二段\n"].into_iter().enumerate() {
+    for (token_index, token) in ["第", "一"].into_iter().enumerate() {
         observer
             .observe(
                 &StreamEvent {
@@ -2338,8 +2338,8 @@ fn tool_loop_observer_streams_answer_deltas_after_tools_finish() {
         answer_deltas.len() >= 2,
         "final turn after tools must emit multiple AnswerDelta events, got {presentation:?}"
     );
-    assert_eq!(answer_deltas[0]["delta"], "第一段\n");
-    assert_eq!(answer_deltas[1]["delta"], "第二段\n");
+    assert_eq!(answer_deltas[0]["delta"], "第");
+    assert_eq!(answer_deltas[1]["delta"], "一");
     assert!(
         sink.events
             .lock()

@@ -2055,7 +2055,6 @@
     min-height: 1em;
   }
 
-
   .ai-thinking-row {
     @apply flex min-h-0 items-center gap-2 px-3 py-2 text-sm text-muted-foreground;
   }

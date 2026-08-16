@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
+import { createStreamingRenderableContent } from "@/lib/assistant-render-budget";
 
 const LONG_TEXT_LENGTH = 220_000;
 const RENDERED_TEXT_BUDGET = 60_000;
@@ -62,6 +63,15 @@ describe("AI long response memory budget", () => {
     expect(host.textContent).toContain("truncated");
   });
 
+  it("builds the streaming tail window without requiring a full-content hash", () => {
+    const content = `${"A".repeat(100_000)}TAIL`;
+    const renderable = createStreamingRenderableContent(content);
+
+    expect(renderable.length).toBeLessThan(40_000);
+    expect(renderable).toContain("truncated");
+    expect(renderable).toContain("TAIL");
+  });
+
   it("keeps the bounded render budget under the focus content column", () => {
     const css = readFileSync("src/styles/globals.css", "utf8");
     const bubble = readFileSync(
@@ -74,6 +84,7 @@ describe("AI long response memory budget", () => {
     expect(css).toContain("max-width: var(--ai-focus-measure)");
     // 长回答预算仍作用于 focus 列内的气泡，不因加宽被绕过。
     expect(bubble).toContain("createRenderableAssistantContent");
+    expect(bubble).toContain("createStreamingRenderableContent");
     expect(bubble).not.toContain("max-width: none");
   });
 });

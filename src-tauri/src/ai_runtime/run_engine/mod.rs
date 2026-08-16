@@ -17,7 +17,7 @@ use std::future::Future;
 use std::mem;
 use std::pin::Pin;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use rusqlite::OptionalExtension;
 use tauri::{AppHandle, Emitter, Runtime};

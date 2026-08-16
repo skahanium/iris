@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 function read(path: string): string {
@@ -6,22 +6,16 @@ function read(path: string): string {
 }
 
 describe("assistant stream rendering performance contract", () => {
-  it("keeps streaming markdown render throttling explicit and responsive", () => {
-    const src = read("src/hooks/useStreamingContent.ts");
+  it("sends each committed streaming delta directly to the isolated tail", () => {
+    const src = read("src/components/ai/AiMessageBubble.tsx");
 
-    expect(src).toContain("const MIN_FLUSH_INTERVAL_MS = 80");
-    expect(src).toContain("const STREAMING_SHORT_CONTENT_LIMIT = 200");
-    expect(src).toContain("const STREAMING_BIG_JUMP_CHARS = 240");
-    expect(src).toContain("paragraphBreak");
-    expect(src).toContain("return cacheRef.current.rendered");
+    expect(src).toContain("content={streamingContent}");
+    expect(src).toContain("createStreamingRenderableContent(content)");
+    expect(src).not.toContain("useStreamingContent");
   });
 
-  it("documents that the hook protects markdown parsing frequency", () => {
-    const src = read("src/hooks/useStreamingContent.ts");
-
-    expect(src).toContain("Markdown");
-    expect(src).toContain("重解析");
-    expect(src).toContain("80ms");
+  it("removes the obsolete streaming content throttle module", () => {
+    expect(existsSync("src/hooks/useStreamingContent.ts")).toBe(false);
   });
 
   it("contains streaming assistant bubble layout and paint work", () => {
