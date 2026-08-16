@@ -1,6 +1,7 @@
 import { useRef } from "react";
 
 const MIN_FLUSH_INTERVAL_MS = 80;
+const MIN_SHORT_FLUSH_INTERVAL_MS = 32;
 const STREAMING_SHORT_CONTENT_LIMIT = 200;
 const STREAMING_BIG_JUMP_CHARS = 240;
 
@@ -41,7 +42,11 @@ export function useStreamingContent(
     return content;
   }
 
-  const shortContent = content.length < STREAMING_SHORT_CONTENT_LIMIT;
+  // Short replies still need a sub-frame floor: the previous unconditional
+  // bypass allowed every rAF token batch to schedule a full render/commit.
+  const shortContent =
+    content.length < STREAMING_SHORT_CONTENT_LIMIT &&
+    timeSince > MIN_SHORT_FLUSH_INTERVAL_MS;
   const timeUp = timeSince > MIN_FLUSH_INTERVAL_MS;
   const bigJump = added >= STREAMING_BIG_JUMP_CHARS;
   const paragraphBreak =

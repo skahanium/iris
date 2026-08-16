@@ -336,6 +336,16 @@ export function UnifiedAssistantPanel({
     };
   }, [onChromeChange]);
 
+  const handleCitationClick = useCallback(
+    (ref: string) => {
+      if (!isExternalHttpsHref(ref)) return;
+      void openExternalHttpsUrl(ref).catch(() => {
+        setLastError("无法打开引用链接，请检查系统默认浏览器设置。");
+      });
+    },
+    [],
+  );
+
   const composerDisabled =
     streaming ||
     assistantRun.isBusy ||
@@ -518,13 +528,7 @@ export function UnifiedAssistantPanel({
           streaming={streaming}
           assistantFocus={assistantFocus}
           messageListRef={messageListRef}
-          onCitationClick={(ref) => {
-            if (isExternalHttpsHref(ref)) {
-              void openExternalHttpsUrl(ref).catch(() => {
-                setLastError("无法打开引用链接，请检查系统默认浏览器设置。");
-              });
-            }
-          }}
+          onCitationClick={handleCitationClick}
           onRetract={handleRetract}
           onSelect={bubbleSelection.handleClick}
           onQuoteToInput={handleQuoteToInput}

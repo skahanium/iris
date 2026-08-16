@@ -75,7 +75,7 @@ describe("prose polish v2 tokens", () => {
       /\[data-prose-surface="conversation"\]\.iris-markdown-content\s+code\s*\{[\s\S]*overflow-wrap: anywhere;/,
     );
     expect(markdownProse).toMatch(
-      /\[data-prose-surface="conversation"\]\.iris-markdown-content\s+pre code\s*\{[\s\S]*white-space: pre-wrap;/,
+      /\[data-prose-surface="conversation"\]\.iris-markdown-content\s+pre\s*\{[\s\S]*overflow-x: auto;[\s\S]*white-space: pre;/,
     );
   });
 

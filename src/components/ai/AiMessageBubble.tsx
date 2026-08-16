@@ -35,6 +35,7 @@ import type {
   WebCitationEntry,
 } from "@/types/ai";
 import { AssistantCitationFooter } from "@/components/ai/AssistantCitationFooter";
+import { StableMarkdownHtml } from "@/components/ai/StableMarkdownHtml";
 import { resolveWebCitationUrl } from "@/lib/ai/citation-display";
 import { isExternalHttpsHref } from "@/lib/ai/citation-markdown";
 import { sanitizeHtml, toTrustedHtml } from "@/lib/sanitize";
@@ -598,16 +599,10 @@ const AssistantBody = memo(function AssistantBody({
 
   return (
     <>
-      <div
-        className={cn(
-          "ai-message-body",
-
-          proseConversation,
-
-          streaming && content && "opacity-[0.92]",
-        )}
-        data-prose-surface="conversation"
-        dangerouslySetInnerHTML={{ __html: toTrustedHtml(html) }}
+      <StableMarkdownHtml
+        className={cn("ai-message-body", proseConversation)}
+        dataProseSurface="conversation"
+        html={html}
         onClick={handleClick}
       />
       {!streaming && (webCitations.length > 0 || sourceSummary.length > 0) ? (

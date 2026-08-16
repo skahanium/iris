@@ -480,15 +480,15 @@
 
   [data-prose-surface="conversation"].iris-markdown-content pre {
     max-width: 100%;
-    overflow-x: hidden;
-    white-space: pre-wrap;
+    overflow-x: auto;
+    white-space: pre;
   }
 
   [data-prose-surface="conversation"].iris-markdown-content pre code {
-    display: inline;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-    white-space: pre-wrap;
+    display: block;
+    overflow-wrap: normal;
+    word-break: normal;
+    white-space: pre;
   }
 
   [data-prose-surface="conversation"].iris-markdown-content .ai-code-block {
