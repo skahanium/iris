@@ -1,4 +1,4 @@
-# v1.2.21 RAG broker evaluation
+# v1.2.22 RAG broker evaluation
 
 The default quality gate is intentionally model-free and deterministic. It
 indexes `fixtures/rag-v2-vault/` and calls the public broker rather than an
@@ -23,7 +23,7 @@ tag, and two required tags with AND semantics. The fixture contract test
 asserts all of these counts directly from `labels.json`.
 
 This is a **historical fixture frozen at v1.2.6**; its immutable labels hash
-is recorded in `fixtures/rag-v2-vault/fixture-metadata.json`. v1.2.21 names
+is recorded in `fixtures/rag-v2-vault/fixture-metadata.json`. v1.2.22 names
 the current broker and release gate evaluated against that fixture, not a new
 fixture revision.
 

@@ -2,7 +2,7 @@
 
 > 评测对象是端到端 AI 检索，而非单独的 embedding 相似度。版本范围见 [ROADMAP.md](../../ROADMAP.md)。
 
-## 当前 v1.2.21 基线
+## 当前 v1.2.22 基线
 
 当前基线使用 `Xenova/bge-small-zh-v1.5`（512 维）。`sqlite-vec` v3 是 macOS ARM64 与 Windows x64 桌面构建默认启用的有界 KNN 后端；扩展不可用时检索会明确报告状态并保留 FTS，不会回退为 Rust 全表 cosine 扫描。AI retrieval broker 还融合 FTS、链接、锚点和法规候选。
 
@@ -18,13 +18,13 @@
 - 10 条链接/多文档；
 - 10 条无答案。
 
-fixture 只用于测试，不包含真实用户笔记或秘密。当前 RAG v2 数据集是**冻结于 v1.2.6 的历史 fixture**；其 labels hash 固定在 `fixtures/rag-v2-vault/fixture-metadata.json`，v1.2.21 仅以它评估当前 broker，不声称数据集已更新为 v1.2.21。旧 `semantic-vault` 是 v1.2.5 历史基线，待 v2 fixture 落地后整体替换，不再扩充。
+fixture 只用于测试，不包含真实用户笔记或秘密。当前 RAG v2 数据集是**冻结于 v1.2.6 的历史 fixture**；其 labels hash 固定在 `fixtures/rag-v2-vault/fixture-metadata.json`，v1.2.22 仅以它评估当前 broker，不声称数据集已更新为 v1.2.22。旧 `semantic-vault` 是 v1.2.5 历史基线，待 v2 fixture 落地后整体替换，不再扩充。
 
 ## 指标与发布门槛
 
 每次评测保存机器、commit、模型、索引状态、查询标签和结果 JSON。固定基线为 `docs/eval/results/v1.2.5-hybrid.json`。
 
-| 指标                           | v1.2.21 门槛                               |
+| 指标                           | v1.2.22 门槛                               |
 | ------------------------------ | ------------------------------------------ |
 | semantic-only Recall@5/30      | ≥ 0.80 / ≥ 0.95                            |
 | vector-only Recall@5/30        | ≥ 0.80 / ≥ 0.95（已供给 BGE + sqlite-vec） |
