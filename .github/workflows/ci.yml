@@ -105,7 +105,7 @@ jobs:
 
   agent-smoke:
     name: Agent 24-case smoke
-    runs-on: ubuntu-24.04
+    runs-on: macos-15
     timeout-minutes: 15
 
     steps:
@@ -124,7 +124,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> ../.iris-dev/target
-          shared-key: ubuntu-agent-smoke
+          shared-key: macos-agent-smoke
 
       - name: Run Agent 24-case smoke gate
         run: npm run agent:eval:smoke
