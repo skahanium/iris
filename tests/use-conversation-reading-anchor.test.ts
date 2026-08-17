@@ -86,6 +86,83 @@ describe("readingAnchorTarget", () => {
     expect(host.querySelector("[data-following]")?.textContent).toBe("true");
   });
 
+  it("keeps following on small upward jitter near the bottom", () => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+
+    act(() => {
+      root?.render(createElement(ReadingAnchorHarness, { streamKey: "run-1" }));
+    });
+    const viewport = host.firstElementChild as HTMLDivElement;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 500 },
+    });
+
+    act(() => {
+      viewport.scrollTop = 390;
+      viewport.dispatchEvent(new Event("scroll"));
+      viewport.scrollTop = 380;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(host.querySelector("[data-following]")?.textContent).toBe("true");
+  });
+
+  it("detaches only after scrolling clearly above the bottom", () => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+
+    act(() => {
+      root?.render(createElement(ReadingAnchorHarness, { streamKey: "run-1" }));
+    });
+    const viewport = host.firstElementChild as HTMLDivElement;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 500 },
+    });
+
+    act(() => {
+      viewport.scrollTop = 390;
+      viewport.dispatchEvent(new Event("scroll"));
+      viewport.scrollTop = 300;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+
+    expect(host.querySelector("[data-following]")?.textContent).toBe("false");
+  });
+
+  it("resumes following when the user returns near the bottom", () => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+
+    act(() => {
+      root?.render(createElement(ReadingAnchorHarness, { streamKey: "run-1" }));
+    });
+    const viewport = host.firstElementChild as HTMLDivElement;
+    Object.defineProperties(viewport, {
+      clientHeight: { configurable: true, value: 100 },
+      scrollHeight: { configurable: true, value: 500 },
+    });
+
+    act(() => {
+      viewport.scrollTop = 390;
+      viewport.dispatchEvent(new Event("scroll"));
+      viewport.scrollTop = 300;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(host.querySelector("[data-following]")?.textContent).toBe("false");
+
+    act(() => {
+      viewport.scrollTop = 390;
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+    expect(host.querySelector("[data-following]")?.textContent).toBe("true");
+  });
+
   it("includes virtual-row transforms when locating the streaming tail", () => {
     expect(
       tailBottomInScrollContent({

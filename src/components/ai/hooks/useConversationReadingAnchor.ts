@@ -7,6 +7,8 @@ import {
   type RefObject,
 } from "react";
 
+const DETACH_BOTTOM_THRESHOLD = 24;
+
 export interface ReadingAnchorInput {
   scrollHeight: number;
   clientHeight: number;
@@ -63,6 +65,8 @@ export function useConversationReadingAnchor({
   streamKey: string | null;
 }) {
   const [following, setFollowing] = useState(true);
+  const followingRef = useRef(following);
+  followingRef.current = following;
   const programmaticWriteRef = useRef(false);
   const activeStreamKeyRef = useRef<string | null>(null);
   const lastObservedScrollTopRef = useRef(0);
@@ -88,9 +92,21 @@ export function useConversationReadingAnchor({
     const onScroll = () => {
       const nextScrollTop = viewport.scrollTop;
       const movedUp = nextScrollTop < lastObservedScrollTopRef.current;
+      const maxScrollTop = Math.max(
+        0,
+        viewport.scrollHeight - viewport.clientHeight,
+      );
+      const nearBottom =
+        nextScrollTop >= maxScrollTop - DETACH_BOTTOM_THRESHOLD;
       lastObservedScrollTopRef.current = nextScrollTop;
-      if (programmaticWriteRef.current || !movedUp) return;
-      setFollowing(false);
+      if (programmaticWriteRef.current) return;
+      if (nearBottom) {
+        setFollowing(true);
+        return;
+      }
+      if (movedUp) {
+        setFollowing(false);
+      }
     };
     lastObservedScrollTopRef.current = viewport.scrollTop;
     viewport.addEventListener("scroll", onScroll, { passive: true });
@@ -134,8 +150,32 @@ export function useConversationReadingAnchor({
     programmaticWriteRef.current = true;
     lastObservedScrollTopRef.current = target;
     viewport.scrollTop = target;
-    window.requestAnimationFrame(() => {
+
+    const clearProgrammatic = () => {
       programmaticWriteRef.current = false;
+    };
+
+    // The virtual list may not have published its final scrollHeight during
+    // this layout effect. Re-check after the browser has had a chance to apply
+    // the measured row heights so the latest content does not get left behind.
+    window.requestAnimationFrame(() => {
+      if (!followingRef.current) {
+        clearProgrammatic();
+        return;
+      }
+      const latestTarget = readingAnchorTarget({
+        scrollHeight: viewport.scrollHeight,
+        clientHeight: viewport.clientHeight,
+        tailBottom: viewport.scrollHeight,
+      });
+      if (Math.abs(viewport.scrollTop - latestTarget) < 1) {
+        clearProgrammatic();
+        return;
+      }
+      programmaticWriteRef.current = true;
+      lastObservedScrollTopRef.current = latestTarget;
+      viewport.scrollTop = latestTarget;
+      window.requestAnimationFrame(clearProgrammatic);
     });
   }, [active, following, revision, tailRevision, viewportRef]);
 

@@ -1,7 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 
-import { Check, Copy, RotateCcw } from "lucide-react";
+import { ArrowDown, Check, Copy, RotateCcw } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
@@ -574,10 +574,12 @@ export const AiMessageList = memo(function AiMessageList({
       {(streaming || activeStreamingMessage != null) && !following ? (
         <button
           type="button"
-          className="absolute bottom-3 right-3 rounded-full border border-border-subtle bg-panel px-3 py-1.5 text-xs text-foreground shadow-sm"
+          aria-label="回到最新"
+          title="回到最新"
+          className="absolute bottom-4 left-1/2 flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-border-subtle bg-panel text-foreground shadow-sm transition hover:bg-muted"
           onClick={returnToLatest}
         >
-          回到最新
+          <ArrowDown className="h-4 w-4" />
         </button>
       ) : null}
     </div>

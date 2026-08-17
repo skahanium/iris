@@ -103,5 +103,16 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
         "active: streaming || activeStreamingMessage != null",
       );
     });
+
+    it("renders the return-to-latest control as a centered circular down-arrow button", () => {
+      const s = read("src/components/ai/AiMessageList.tsx");
+
+      expect(s).toContain("ArrowDown");
+      expect(s).toContain("left-1/2");
+      expect(s).toContain("-translate-x-1/2");
+      expect(s).toContain("rounded-full");
+      expect(s).toContain('aria-label="回到最新"');
+      expect(s).not.toContain(">回到最新<");
+    });
   });
 });
