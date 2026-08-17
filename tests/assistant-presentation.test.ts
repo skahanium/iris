@@ -62,6 +62,18 @@ describe("Assistant 实时展示事件", () => {
     expect(state.answer).toBe("");
   });
 
+  it("answer_reset 会递增 resetEpoch", () => {
+    let state = createAssistantPresentationState(runId);
+    expect(state.resetEpoch).toBe(0);
+
+    state = reduceAssistantPresentationEvent(
+      state,
+      event(1, "answer_reset", { kind: "answer_reset" }),
+    );
+
+    expect(state.resetEpoch).toBe(1);
+  });
+
   it("新过程项默认 running，新 stage 会结束上一个 stage", () => {
     let state = createAssistantPresentationState(runId);
     state = reduceAssistantPresentationEvent(

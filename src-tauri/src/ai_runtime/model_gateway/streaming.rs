@@ -14,6 +14,7 @@ use super::{
     abort_impl::{clear_abort, is_abort_requested},
     body_impl::{build_llm_api_body, uses_openai_responses, GatewayRequest},
     http_backend_impl::format_llm_http_error,
+    minimax_tool_call_impl::MinimaxContentToolCallParser,
     responses_impl::{ResponsesStreamDelta, ResponsesStreamState},
     usage_impl::parse_usage,
     GatewayResponse,
@@ -109,6 +110,9 @@ pub trait StreamEventObserver: Send {
     fn on_tools_starting(&mut self) -> AppResult<()> {
         Ok(())
     }
+
+    /// Clear any provisional visible answer before a new provider attempt.
+    fn reset_visible_answer_for_new_attempt(&mut self) {}
 
     /// Whether this attempt has already reached the user-visible answer slot.
     /// Fallback routers must not splice a second provider into visible output.
@@ -996,6 +1000,8 @@ pub async fn send_streaming_request_to_observer(
     let mut full_reasoning = String::new();
     let mut minimax_reasoning_details = Vec::new();
     let is_minimax = provider_id.eq_ignore_ascii_case("minimax");
+    let mut minimax_content_parser = is_minimax.then(MinimaxContentToolCallParser::new);
+    let mut minimax_content_tool_calls = Vec::new();
     let mut usage = TokenUsage::default();
     let mut token_index: u32 = 0;
     let mut anthropic_state = AnthropicStreamState::default();
@@ -1224,15 +1230,31 @@ pub async fn send_streaming_request_to_observer(
 
             // Process content delta
             if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
-                full_content.push_str(delta);
-                emit_visible_token_outcome(
-                    observer,
-                    request_id,
-                    visible_token_delta(&mut visible_sanitizer, delta),
-                    surface,
-                    classified,
-                    &mut token_index,
-                )?;
+                if let Some(parser) = minimax_content_parser.as_mut() {
+                    let (visible_delta, calls) = parser.push(delta);
+                    minimax_content_tool_calls.extend(calls);
+                    if !visible_delta.is_empty() {
+                        full_content.push_str(&visible_delta);
+                        emit_visible_token_outcome(
+                            observer,
+                            request_id,
+                            visible_token_delta(&mut visible_sanitizer, &visible_delta),
+                            surface,
+                            classified,
+                            &mut token_index,
+                        )?;
+                    }
+                } else {
+                    full_content.push_str(delta);
+                    emit_visible_token_outcome(
+                        observer,
+                        request_id,
+                        visible_token_delta(&mut visible_sanitizer, delta),
+                        surface,
+                        classified,
+                        &mut token_index,
+                    )?;
+                }
             }
 
             if let Some(reasoning) = json["choices"][0]["delta"]["reasoning_content"].as_str() {
@@ -1361,15 +1383,31 @@ pub async fn send_streaming_request_to_observer(
                     }
 
                     if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
-                        full_content.push_str(delta);
-                        emit_visible_token_outcome(
-                            observer,
-                            request_id,
-                            visible_token_delta(&mut visible_sanitizer, delta),
-                            surface,
-                            classified,
-                            &mut token_index,
-                        )?;
+                        if let Some(parser) = minimax_content_parser.as_mut() {
+                            let (visible_delta, calls) = parser.push(delta);
+                            minimax_content_tool_calls.extend(calls);
+                            if !visible_delta.is_empty() {
+                                full_content.push_str(&visible_delta);
+                                emit_visible_token_outcome(
+                                    observer,
+                                    request_id,
+                                    visible_token_delta(&mut visible_sanitizer, &visible_delta),
+                                    surface,
+                                    classified,
+                                    &mut token_index,
+                                )?;
+                            }
+                        } else {
+                            full_content.push_str(delta);
+                            emit_visible_token_outcome(
+                                observer,
+                                request_id,
+                                visible_token_delta(&mut visible_sanitizer, delta),
+                                surface,
+                                classified,
+                                &mut token_index,
+                            )?;
+                        }
                     }
                     if let Some(reasoning) =
                         json["choices"][0]["delta"]["reasoning_content"].as_str()
@@ -1426,8 +1464,26 @@ pub async fn send_streaming_request_to_observer(
         return Ok(response);
     }
 
+    // Flush any remaining MiniMax content that is safe to show, and collect
+    // tool calls that were completed but not yet closed by a trailing marker.
+    if let Some(parser) = minimax_content_parser.take() {
+        let (visible_delta, calls) = parser.finish();
+        minimax_content_tool_calls.extend(calls);
+        if !visible_delta.is_empty() {
+            full_content.push_str(&visible_delta);
+            emit_visible_token_outcome(
+                observer,
+                request_id,
+                visible_token_delta(&mut visible_sanitizer, &visible_delta),
+                surface,
+                classified,
+                &mut token_index,
+            )?;
+        }
+    }
+
     // Assemble tool calls from accumulated deltas (deduplicated by index)
-    let tool_calls: Vec<ToolCall> = tool_call_deltas
+    let mut tool_calls: Vec<ToolCall> = tool_call_deltas
         .into_iter()
         .filter_map(|(_, (id, name, args))| {
             Some(ToolCall {
@@ -1440,6 +1496,7 @@ pub async fn send_streaming_request_to_observer(
             })
         })
         .collect();
+    tool_calls.extend(minimax_content_tool_calls);
 
     // Emit tool call events for each assembled call
     for tc in &tool_calls {

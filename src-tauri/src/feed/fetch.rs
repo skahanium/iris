@@ -25,6 +25,8 @@ pub(crate) const DISCOVERY_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// 网页正文响应体积上限（1 MiB）。正文提取会建立 DOM，较 Feed 更严格以
 /// 控制峰值内存；超限时安全降级为 RSS 摘要。
 pub(crate) const ARTICLE_MAX_BYTES: usize = 1024 * 1024;
+/// 远程图片导入上限（10 MiB）。
+pub(crate) const IMAGE_MAX_BYTES: usize = 10 * 1024 * 1024;
 /// 一条重定向链共享的总超时。
 pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 /// 重定向最大跳数。
@@ -39,6 +41,7 @@ pub(crate) enum FetchPurpose {
     Feed,
     Discovery,
     Article,
+    Image,
 }
 
 impl FetchPurpose {
@@ -47,6 +50,7 @@ impl FetchPurpose {
             Self::Feed => FEED_MAX_BYTES,
             Self::Discovery => DISCOVERY_MAX_BYTES,
             Self::Article => ARTICLE_MAX_BYTES,
+            Self::Image => IMAGE_MAX_BYTES,
         }
     }
 }

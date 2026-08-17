@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::app::AppState;
 use crate::cas::hash::content_hash as content_hash_bytes;
 use crate::error::{AppError, AppResult};
+use crate::feed::fetch::{FeedHttpClient, FetchPurpose, ProdNetGate};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
     collect_vault_folders, content_hash, index_file, index_vault_incremental, rename_file_index,
@@ -17,6 +18,7 @@ use crate::indexer::scan::{
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use uuid::Uuid;
 
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
@@ -546,6 +548,76 @@ pub async fn vault_asset_write(
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+/// Download a remote HTTPS image into vault `assets/` for local Markdown use.
+#[tauri::command]
+pub async fn vault_asset_import_url(
+    state: State<'_, Arc<AppState>>,
+    url: String,
+) -> AppResult<String> {
+    let trimmed = url.trim();
+    let parsed =
+        reqwest::Url::parse(trimmed).map_err(|_| AppError::msg("vault_asset_invalid_url"))?;
+    if parsed.scheme() != "https" {
+        return Err(AppError::msg("vault_asset_url_must_be_https"));
+    }
+
+    let result = FeedHttpClient
+        .fetch(&ProdNetGate, trimmed, FetchPurpose::Image, None, None, None)
+        .await
+        .map_err(|e| AppError::msg(format!("vault_asset_download_failed: {e}")))?;
+    let content_type = result.content_type.as_deref().unwrap_or("");
+    let extension = if content_type.is_empty() {
+        extension_from_url_path(parsed.path())
+    } else {
+        image_extension_for_content_type(content_type)
+    }
+    .ok_or_else(|| AppError::msg("vault_asset_unsupported_image_type"))?;
+    if result.bytes.is_empty() {
+        return Err(AppError::msg("vault_asset_empty_image"));
+    }
+
+    let vault = state.vault_path()?;
+    let path = format!("assets/{}.{}", Uuid::new_v4(), extension);
+    let abs = resolve_vault_path(&vault, &path)?;
+    let bytes = result.bytes;
+    tokio::task::spawn_blocking(move || {
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        atomic_write(&abs, &bytes)?;
+        Ok(path)
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+fn image_extension_for_content_type(content_type: &str) -> Option<&'static str> {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    match mime.as_str() {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
+}
+
+fn extension_from_url_path(path: &str) -> Option<&'static str> {
+    let extension = path.rsplit('.').next()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "png" => Some("png"),
+        "jpg" | "jpeg" => Some("jpg"),
+        "gif" => Some("gif"),
+        "webp" => Some("webp"),
+        _ => None,
+    }
 }
 
 /// Move note + all version snapshots into recycle bin (15-day retention).
@@ -2075,6 +2147,18 @@ mod path_tests {
             sql.trim().is_empty(),
             "vault switching must not delete persisted runtime rows automatically"
         );
+    }
+
+    #[test]
+    fn image_extension_helpers_accept_supported_types_only() {
+        assert_eq!(image_extension_for_content_type("image/png"), Some("png"));
+        assert_eq!(image_extension_for_content_type("image/jpeg"), Some("jpg"));
+        assert_eq!(image_extension_for_content_type("image/gif"), Some("gif"));
+        assert_eq!(image_extension_for_content_type("image/webp"), Some("webp"));
+        assert_eq!(image_extension_for_content_type("image/svg+xml"), None);
+        assert_eq!(image_extension_for_content_type("text/html"), None);
+        assert_eq!(extension_from_url_path("/a/b/c.PNG"), Some("png"));
+        assert_eq!(extension_from_url_path("/a/b/c.jpg?x=1"), None);
     }
 
     #[test]

@@ -697,6 +697,10 @@ impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObs
         Ok(())
     }
 
+    fn reset_visible_answer_for_new_attempt(&mut self) {
+        self.reset_provisional_answer_if_any();
+    }
+
     fn has_visible_content(&self) -> bool {
         self.has_visible_content()
     }

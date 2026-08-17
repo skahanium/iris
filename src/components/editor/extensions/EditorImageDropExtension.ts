@@ -1,7 +1,7 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 
-import { vaultAssetWrite } from "@/lib/ipc";
+import { vaultAssetImportUrl, vaultAssetWrite } from "@/lib/ipc";
 
 const pluginKey = new PluginKey("editorImageDrop");
 
@@ -41,6 +41,30 @@ async function saveImageFile(file: File): Promise<string | null> {
   const name = `assets/${crypto.randomUUID()}.${ext}`;
   const dataBase64 = await fileToBase64(file);
   return vaultAssetWrite({ path: name, dataBase64 });
+}
+
+export async function localizeRemoteImagesInHtml(
+  html: string,
+): Promise<string | null> {
+  if (typeof DOMParser === "undefined") return null;
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const images = Array.from(doc.querySelectorAll("img")).filter((img) => {
+    const src = img.getAttribute("src") ?? "";
+    return /^https:\/\//i.test(src.trim());
+  });
+  if (images.length === 0) return null;
+
+  for (const img of images) {
+    const src = img.getAttribute("src");
+    if (!src) continue;
+    try {
+      const local = await vaultAssetImportUrl(src);
+      img.setAttribute("src", local);
+    } catch {
+      img.remove();
+    }
+  }
+  return doc.body.innerHTML;
 }
 
 export interface EditorImageDropOptions {
@@ -104,29 +128,42 @@ export const EditorImageDropExtension =
             handlePaste: (view, event) => {
               if (!enabled || !view.editable || !canMutate()) return false;
               const items = event.clipboardData?.items;
-              if (!items) return false;
-              const fileItem = Array.from(items).find(
-                (item) =>
-                  item.kind === "file" && item.type.startsWith("image/"),
-              );
-              if (!fileItem) return false;
-              const file = fileItem.getAsFile();
-              if (!file) return false;
-              event.preventDefault();
-              const pos = view.state.selection.from;
-              void saveImageFile(file).then((src) => {
-                if (!src || !view.editable || !canMutate()) return;
-                view.dispatch(
-                  view.state.tr.insert(
-                    pos,
-                    view.state.schema.nodes.image?.create({
-                      src,
-                      alt: file.name.replace(/\.[^.]+$/, ""),
-                    }) ?? [],
-                  ),
+              if (items) {
+                const fileItem = Array.from(items).find(
+                  (item) =>
+                    item.kind === "file" && item.type.startsWith("image/"),
                 );
-              });
-              return true;
+                const file = fileItem?.getAsFile();
+                if (file) {
+                  event.preventDefault();
+                  const pos = view.state.selection.from;
+                  void saveImageFile(file).then((src) => {
+                    if (!src || !view.editable || !canMutate()) return;
+                    view.dispatch(
+                      view.state.tr.insert(
+                        pos,
+                        view.state.schema.nodes.image?.create({
+                          src,
+                          alt: file.name.replace(/\.[^.]+$/, ""),
+                        }) ?? [],
+                      ),
+                    );
+                  });
+                  return true;
+                }
+              }
+
+              const html = event.clipboardData?.getData("text/html");
+              if (html && /<img[^>]+src=["']https:\/\//i.test(html)) {
+                event.preventDefault();
+                void localizeRemoteImagesInHtml(html).then((localHtml) => {
+                  if (!localHtml || !view.editable || !canMutate()) return;
+                  view.pasteHTML(localHtml, event);
+                });
+                return true;
+              }
+
+              return false;
             },
           },
         }),

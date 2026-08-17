@@ -330,6 +330,11 @@ export async function vaultAssetWrite(params: {
   return invoke<string>("vault_asset_write", params);
 }
 
+/** Download a remote HTTPS image into vault `assets/`. Returns vault-relative path. */
+export async function vaultAssetImportUrl(url: string): Promise<string> {
+  return invoke<string>("vault_asset_import_url", { url });
+}
+
 export async function fileCreate(
   path: string,
   content: string,

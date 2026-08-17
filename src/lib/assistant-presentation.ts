@@ -53,6 +53,8 @@ export interface AssistantPresentationState {
   processItems: readonly AssistantPresentationItem[];
   answer: string;
   answerComplete: boolean;
+  /** Incremented on every explicit answer reset / new answer epoch. */
+  resetEpoch?: number;
 }
 
 /** Create isolated transient state for exactly one live Run. */
@@ -67,6 +69,7 @@ export function createAssistantPresentationState(
     processItems: [],
     answer: "",
     answerComplete: false,
+    resetEpoch: 0,
   };
 }
 
@@ -209,6 +212,7 @@ function applyEvent(
         lastSeq: event.presentationSeq,
         answer: "",
         answerComplete: false,
+        resetEpoch: (state.resetEpoch ?? 0) + 1,
       };
     case "answer_complete": {
       const completedItems = completeAllRunning(state.processItems);

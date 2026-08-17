@@ -16,6 +16,8 @@ mod body_impl;
 mod http_backend_impl;
 #[path = "model_gateway/messages.rs"]
 mod messages_impl;
+#[path = "model_gateway/minimax_tool_call.rs"]
+mod minimax_tool_call_impl;
 #[path = "model_gateway/responses.rs"]
 mod responses_impl;
 #[path = "model_gateway/streaming.rs"]
@@ -418,15 +420,26 @@ fn parse_openai_compatible_response(
     request: &GatewayRequest,
     json: &serde_json::Value,
 ) -> GatewayResponse {
-    let content = json["choices"][0]["message"]["content"]
+    let raw_content = json["choices"][0]["message"]["content"]
         .as_str()
-        .map(|text| {
-            crate::ai_runtime::text_support::sanitize_provider_visible_content(
-                &request.provider.name,
-                text,
-            )
-        })
-        .filter(|text| !text.is_empty());
+        .unwrap_or("");
+    let (visible_content, content_tool_calls) =
+        if request.provider.name.eq_ignore_ascii_case("minimax") {
+            let mut parser = minimax_tool_call_impl::MinimaxContentToolCallParser::new();
+            let (visible, mut calls) = parser.push(raw_content);
+            let (visible_tail, tail_calls) = parser.finish();
+            calls.extend(tail_calls);
+            (format!("{visible}{visible_tail}"), calls)
+        } else {
+            (raw_content.to_string(), Vec::new())
+        };
+    let content = {
+        let sanitized = crate::ai_runtime::text_support::sanitize_provider_visible_content(
+            &request.provider.name,
+            &visible_content,
+        );
+        (!sanitized.is_empty()).then_some(sanitized)
+    };
 
     let message = &json["choices"][0]["message"];
     let reasoning_content = if request.provider.name.eq_ignore_ascii_case("minimax") {
@@ -437,7 +450,7 @@ fn parse_openai_compatible_response(
         message["reasoning_content"].as_str().map(str::to_string)
     };
 
-    let tool_calls = json["choices"][0]["message"]["tool_calls"]
+    let mut tool_calls: Vec<ToolCall> = json["choices"][0]["message"]["tool_calls"]
         .as_array()
         .map(|arr| {
             arr.iter()
@@ -457,6 +470,7 @@ fn parse_openai_compatible_response(
                 .collect()
         })
         .unwrap_or_default();
+    tool_calls.extend(content_tool_calls);
 
     GatewayResponse {
         content,

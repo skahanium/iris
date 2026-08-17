@@ -69,7 +69,7 @@ pub fn sanitize_provider_visible_content(provider_id: &str, text: &str) -> Strin
 }
 
 fn strip_minimax_control_tokens(text: &str) -> String {
-    text.replace("<|minimax|>", "")
+    text.replace("]<|minimax|>[", "").replace("<|minimax|>", "")
 }
 
 /// Whether a partial streaming prefix must remain private until it can be classified.
@@ -231,6 +231,17 @@ mod provider_protocol_tests {
                 "<|minimax|><think>private</think>Visible answer"
             ),
             "Visible answer"
+        );
+    }
+
+    #[test]
+    fn minimax_bracket_control_markers_are_stripped_from_visible_content() {
+        assert_eq!(
+            sanitize_provider_visible_content(
+                "minimax",
+                "before ]<|minimax|>[{\"name\":\"web_search\"}]<|minimax|>[ after"
+            ),
+            "before {\"name\":\"web_search\"} after"
         );
     }
 

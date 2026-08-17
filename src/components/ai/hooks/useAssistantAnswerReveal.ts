@@ -63,6 +63,7 @@ export function useAssistantAnswerReveal(
   presentation: AssistantPresentationState | null,
 ): AssistantAnswerReveal {
   const runId = presentation?.runId ?? null;
+  const resetEpoch = presentation?.resetEpoch ?? 0;
   const target = useMemo(
     () => sanitizeAssistantVisibleText(presentation?.answer ?? ""),
     [presentation?.answer],
@@ -73,12 +74,14 @@ export function useAssistantAnswerReveal(
   const targetRef = useRef("");
   const frameRef = useRef<number | null>(null);
   const runIdRef = useRef<string | null>(null);
+  const resetEpochRef = useRef<number | null>(null);
 
   targetRef.current = target;
 
   useEffect(() => {
-    if (runIdRef.current !== runId) {
+    if (runIdRef.current !== runId || resetEpochRef.current !== resetEpoch) {
       runIdRef.current = runId;
+      resetEpochRef.current = resetEpoch;
       answerRef.current = "";
       setAnswer("");
       if (frameRef.current !== null) {
@@ -94,7 +97,7 @@ export function useAssistantAnswerReveal(
       answerRef.current = target;
       setAnswer(target);
     }
-  }, [runId, target]);
+  }, [resetEpoch, runId, target]);
 
   useEffect(() => {
     if (runId === null) return;

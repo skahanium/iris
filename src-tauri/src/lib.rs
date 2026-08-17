@@ -189,6 +189,7 @@ pub fn run() {
             commands::classified::classified_mkdir,
             commands::classified::classified_rename,
             commands::file::vault_asset_write,
+            commands::file::vault_asset_import_url,
             commands::file::file_delete,
             commands::file::file_discard,
             commands::file::file_rename,

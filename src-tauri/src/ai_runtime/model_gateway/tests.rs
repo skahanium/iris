@@ -360,6 +360,49 @@ fn minimax_response_keeps_private_reasoning_details_out_of_visible_content() {
 }
 
 #[test]
+fn minimax_content_embedded_tool_calls_are_parsed_and_hidden_from_visible_content() {
+    let request = GatewayRequest {
+        provider: ProviderConfig {
+            name: "minimax".into(),
+            base_url: "https://api.minimaxi.com/v1".into(),
+            model: "MiniMax-M3".into(),
+            api_key: None,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+        },
+        messages: vec![],
+        tools: vec![],
+        max_tokens: None,
+        input_token_budget: None,
+        temperature: None,
+        stream: false,
+        thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
+        continuation: None,
+        skip_stub_ids: vec![],
+    };
+    let response = super::parse_gateway_response(
+        &request,
+        &serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "content": "I'll look.]<|minimax|>[{\"name\":\"web_search\",\"arguments\":{\"query\":\"x\"}}]<|minimax|>[Done",
+                    "reasoning_details": []
+                }
+            }]
+        }),
+    );
+
+    assert_eq!(response.content.as_deref(), Some("I'll look.Done"));
+    assert_eq!(response.tool_calls.len(), 1);
+    assert_eq!(response.tool_calls[0].function.name, "web_search");
+    assert!(response.tool_calls[0]
+        .function
+        .arguments
+        .contains("\"query\":\"x\""));
+}
+
+#[test]
 fn messages_for_api_includes_tool_call_type() {
     let messages = vec![
         LlmMessage {

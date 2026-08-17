@@ -24,6 +24,7 @@ function Harness({
 function presentationFor(
   answer: string,
   runId = "run-1",
+  resetEpoch = 0,
 ): AssistantPresentationState {
   return {
     runId,
@@ -33,6 +34,7 @@ function presentationFor(
     processItems: [],
     answer,
     answerComplete: false,
+    resetEpoch,
   };
 }
 
@@ -215,6 +217,37 @@ describe("useAssistantAnswerReveal", () => {
       root.render(
         createElement(Harness, {
           presentation: presentationFor("new", "run-new"),
+        }),
+      );
+    });
+
+    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe("");
+    expect(host.querySelector("output")?.getAttribute("data-revealing")).toBe(
+      "true",
+    );
+  });
+
+  it("clears immediately when resetEpoch changes even if the target grows", () => {
+    act(() => {
+      root.render(
+        createElement(Harness, {
+          presentation: presentationFor("old", "run-same", 0),
+        }),
+      );
+    });
+    drainFrames();
+    expect(host.querySelector("output")?.getAttribute("data-answer")).toBe(
+      "old",
+    );
+
+    act(() => {
+      root.render(
+        createElement(Harness, {
+          presentation: presentationFor(
+            "a much longer new answer",
+            "run-same",
+            1,
+          ),
         }),
       );
     });

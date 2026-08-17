@@ -498,6 +498,7 @@ impl ToolLoopProvider for FailoverStreamingProvider<'_> {
                             },
                         )?;
                         self.sink.emit(&switched)?;
+                        observer.reset_visible_answer_for_new_attempt();
                         selected_index = next_index;
                     }
                 }
