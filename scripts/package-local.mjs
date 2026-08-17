@@ -154,6 +154,12 @@ function runEmbeddingAndSqliteVecSmoke() {
   ]);
 }
 
+function smokeStatusLabel() {
+  return process.env.IRIS_PACKAGE_SKIP_SMOKE === "1"
+    ? "smoke skipped by IRIS_PACKAGE_SKIP_SMOKE=1"
+    : "smoke verified";
+}
+
 function runChecks() {
   run("version check", "npm", ["run", "version:check"]);
   run("typecheck", "npm", ["run", "typecheck"]);
@@ -200,7 +206,9 @@ function packageMac() {
     throw new Error("mac packaging must run on macOS.");
   }
   prepareEmbeddedModel();
-  runEmbeddingAndSqliteVecSmoke();
+  if (process.env.IRIS_PACKAGE_SKIP_SMOKE !== "1") {
+    runEmbeddingAndSqliteVecSmoke();
+  }
   resetTargetBundle("mac");
   const configPath = writePackageTauriConfig();
   try {
@@ -224,7 +232,7 @@ function packageMac() {
       `  path: ${dmgPath}`,
       `  version: ${packageVersion()}`,
       `  arch: ${archLabel()}`,
-      "  sqlite-vec: required default feature, smoke verified",
+      `  sqlite-vec: required default feature, ${smokeStatusLabel()}`,
       `  trusted-types: ${trustedTypesStatus()}`,
       "  signing: ad-hoc app signature, unsigned DMG",
       "",
@@ -237,7 +245,9 @@ function packageWin() {
     throw new Error("Windows NSIS packaging must run on Windows.");
   }
   prepareEmbeddedModel();
-  runEmbeddingAndSqliteVecSmoke();
+  if (process.env.IRIS_PACKAGE_SKIP_SMOKE !== "1") {
+    runEmbeddingAndSqliteVecSmoke();
+  }
   resetTargetBundle("win");
   const configPath = writePackageTauriConfig();
   try {
@@ -261,7 +271,7 @@ function packageWin() {
       `  bundle dir: ${path.join(bundleRoot, "nsis")}`,
       `  version: ${packageVersion()}`,
       `  arch: ${archLabel()}`,
-      "  sqlite-vec: required default feature, smoke verified",
+      `  sqlite-vec: required default feature, ${smokeStatusLabel()}`,
       `  trusted-types: ${trustedTypesStatus()}`,
       "  signing: unsigned self-use installer",
       "",

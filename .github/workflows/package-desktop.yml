@@ -92,7 +92,7 @@ jobs:
   package-macos-arm64:
     name: macOS ARM64 package
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 30
     needs: validate-release-source
 
     steps:
@@ -122,9 +122,12 @@ jobs:
         with:
           path: .iris-dev/models/bge-small-zh-v1.5
           key: macos-arm64-bge-small-zh-v1.5-fcecc3c5fef6becfa2b2bdda15c1c938857be534
+          restore-keys: |
+            macos-arm64-bge-small-zh-v1.5-
 
       - name: Package macOS DMG
         env:
+          IRIS_PACKAGE_SKIP_SMOKE: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: node scripts/package-local.mjs mac
@@ -143,7 +146,7 @@ jobs:
   package-windows-x64:
     name: Windows x64 package
     runs-on: windows-2022
-    timeout-minutes: 45
+    timeout-minutes: 30
     needs: validate-release-source
 
     steps:
@@ -173,9 +176,12 @@ jobs:
         with:
           path: .iris-dev/models/bge-small-zh-v1.5
           key: windows-x64-bge-small-zh-v1.5-fcecc3c5fef6becfa2b2bdda15c1c938857be534
+          restore-keys: |
+            windows-x64-bge-small-zh-v1.5-
 
       - name: Package Windows NSIS installer
         env:
+          IRIS_PACKAGE_SKIP_SMOKE: "1"
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run package:local:win

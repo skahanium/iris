@@ -124,22 +124,30 @@ describe("GitHub Actions workflows", () => {
     );
   });
 
-  it("runs one bounded macOS quality job for PRs and main, with expensive gates manual", () => {
+  it("runs bounded parallel quality jobs for PRs and main, with expensive gates manual", () => {
     const workflow = readWorkflow(ciPath);
     const jobs = workflowJobs(ciPath);
-    const quality = workflowJob(ciPath, "quality-macos-arm64");
+    const frontend = workflowJob(ciPath, "frontend-quality");
+    const rust = workflowJob(ciPath, "rust-quality-macos-arm64");
+    const agent = workflowJob(ciPath, "agent-smoke");
     const windows = workflowJob(ciPath, "windows-desktop-e2e");
 
     expect(Object.keys(jobs)).toEqual([
-      "quality-macos-arm64",
+      "frontend-quality",
+      "rust-quality-macos-arm64",
+      "agent-smoke",
       "release-readiness-macos-arm64",
       "windows-desktop-e2e",
     ]);
     expect(workflow).toContain("pull_request:");
     expect(workflow).toContain("branches: [main]");
     expect(workflow).toContain("workflow_dispatch:");
-    expect(quality.name).toBe("macOS ARM64 quality");
-    expect(quality["runs-on"]).toBe("macos-15");
+    expect(frontend.name).toBe("Frontend quality");
+    expect(frontend["runs-on"]).toBe("ubuntu-24.04");
+    expect(rust.name).toBe("Rust quality / macOS ARM64");
+    expect(rust["runs-on"]).toBe("macos-15");
+    expect(agent.name).toBe("Agent 24-case smoke");
+    expect(agent["runs-on"]).toBe("ubuntu-24.04");
     expect(windows.name).toBe("Windows x64 desktop E2E");
     expect(windows.if).toBe("github.event_name == 'workflow_dispatch'");
     expect(windows["runs-on"]).toBe("windows-2022");
@@ -156,8 +164,11 @@ describe("GitHub Actions workflows", () => {
     expect(readiness["timeout-minutes"]).toBe(30);
   });
 
-  it("keeps all common checks once in the macOS quality job", () => {
-    const quality = jobText(ciPath, "quality-macos-arm64");
+  it("keeps common checks once across the parallel quality jobs", () => {
+    const frontend = jobText(ciPath, "frontend-quality");
+    const rust = jobText(ciPath, "rust-quality-macos-arm64");
+    const agent = jobText(ciPath, "agent-smoke");
+
     for (const command of [
       "npm ci",
       "npm run version:check",
@@ -166,17 +177,23 @@ describe("GitHub Actions workflows", () => {
       "npm run lint",
       "npm run typecheck",
       "npm run test",
+      "npm audit --audit-level=high",
+    ]) {
+      expect(frontend).toContain(command);
+    }
+    for (const command of [
       "cargo fmt --all -- --check",
       "cargo clippy --all-targets -- -D warnings",
       "cargo test",
-      "npm run agent:eval:smoke",
-      "npm audit",
       "npm run audit:rust",
     ]) {
-      expect(quality).toContain(command);
+      expect(rust).toContain(command);
     }
-    expect(quality).not.toContain("model:prepare");
-    expect(quality).not.toContain("--ignored");
+    expect(agent).toContain("npm run agent:eval:smoke");
+    expect(agent).toContain("dtolnay/rust-toolchain");
+    expect(frontend).not.toContain("cargo");
+    expect(rust).not.toContain("npm run test");
+    expect(rust).not.toContain("npm run lint");
     expect(readWorkflow(ciPath)).not.toContain("rag-vector-quality");
     expect(readWorkflow(ciPath)).not.toContain("rag-eval:");
   });
@@ -187,7 +204,7 @@ describe("GitHub Actions workflows", () => {
 
     expect(`${ci}\n${release}`).not.toContain("src-tauri -> target");
     expect(ci).toMatch(
-      /quality-macos-arm64:[\s\S]*?workspaces: src-tauri -> \.\.\/\.iris-dev\/target[\s\S]*?shared-key: macos-arm64/,
+      /rust-quality-macos-arm64:[\s\S]*?workspaces: src-tauri -> \.\.\/\.iris-dev\/target[\s\S]*?shared-key: macos-arm64/,
     );
     expect(ci).toMatch(
       /windows-desktop-e2e:[\s\S]*?workspaces: src-tauri -> \.\.\/\.iris-dev\/target[\s\S]*?shared-key: windows-x64/,
@@ -229,10 +246,10 @@ describe("GitHub Actions workflows", () => {
     );
     expect(
       workflowJob(packagePath, "package-macos-arm64")["timeout-minutes"],
-    ).toBe(45);
+    ).toBe(30);
     expect(
       workflowJob(packagePath, "package-windows-x64")["timeout-minutes"],
-    ).toBe(45);
+    ).toBe(30);
   });
 
   it("runs real-model, full Agent and 50k gates exactly once in one bounded macOS job", () => {
@@ -273,6 +290,7 @@ describe("GitHub Actions workflows", () => {
     expect(mac).toContain("node scripts/package-local.mjs mac");
     expect(windows).toContain("npm run package:local:win");
     for (const job of [mac, windows]) {
+      expect(job).toContain("IRIS_PACKAGE_SKIP_SMOKE");
       expect(job).not.toContain("model:prepare");
       expect(job).not.toContain("embedding_model_smoke");
       expect(job).not.toContain("verify-desktop-package");

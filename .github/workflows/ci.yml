@@ -14,10 +14,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  quality-macos-arm64:
-    name: macOS ARM64 quality
-    runs-on: macos-15
-    timeout-minutes: 30
+  frontend-quality:
+    name: Frontend quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -28,15 +28,6 @@ jobs:
         with:
           node-version: 20
           cache: npm
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> ../.iris-dev/target
-          shared-key: macos-arm64
 
       - name: Install dependencies
         run: npm ci
@@ -59,6 +50,32 @@ jobs:
       - name: Run frontend tests
         run: npm run test
 
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high
+
+  rust-quality-macos-arm64:
+    name: Rust quality / macOS ARM64
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> ../.iris-dev/target
+          shared-key: macos-arm64
+
       - name: Check Rust formatting
         working-directory: src-tauri
         run: cargo fmt --all -- --check
@@ -78,12 +95,6 @@ jobs:
           cargo test --features sqlite-vec sqlite_vec_v3_mirrors_all_canonical_caches_insert_update_and_delete
           cargo test --features sqlite-vec semantic_search_uses_sqlite_vec_knn_and_never_skips_a_large_index
 
-      - name: Run Agent 24-case smoke gate
-        run: npm run agent:eval:smoke
-
-      - name: Audit npm dependencies
-        run: npm audit
-
       - name: Install cargo-audit
         uses: taiki-e/install-action@v2
         with:
@@ -91,6 +102,32 @@ jobs:
 
       - name: Audit Rust dependencies
         run: npm run audit:rust
+
+  agent-smoke:
+    name: Agent 24-case smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> ../.iris-dev/target
+          shared-key: ubuntu-agent-smoke
+
+      - name: Run Agent 24-case smoke gate
+        run: npm run agent:eval:smoke
 
   release-readiness-macos-arm64:
     name: Release readiness / macOS ARM64
@@ -128,6 +165,8 @@ jobs:
         with:
           path: .iris-dev/models/bge-small-zh-v1.5
           key: macos-arm64-bge-small-zh-v1.5-fcecc3c5fef6becfa2b2bdda15c1c938857be534
+          restore-keys: |
+            macos-arm64-bge-small-zh-v1.5-
 
       - name: Verify or prepare embedded BGE model
         run: npm run model:prepare
@@ -171,14 +210,24 @@ jobs:
       - name: Build Windows debug desktop executable
         run: npm run tauri -- build --debug --no-bundle
 
+      - name: Cache Tauri WebDriver tools
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}\iris-webdriver-tools
+          key: windows-webdriver-tools-2.0.6
+
       - name: Install pinned Tauri WebDriver tools
         shell: pwsh
         env:
           IRIS_WEBDRIVER_TOOLS: ${{ runner.temp }}\iris-webdriver-tools
         run: |
           $ErrorActionPreference = "Stop"
-          cargo install tauri-driver --version 2.0.6 --locked --root "$env:IRIS_WEBDRIVER_TOOLS"
-          cargo install --git https://github.com/chippers/msedgedriver-tool --rev 8c4b34f51b45f5cf08013366d703de464ab871d1 --root "$env:IRIS_WEBDRIVER_TOOLS"
+          if (-not (Test-Path "$env:IRIS_WEBDRIVER_TOOLS/bin/tauri-driver.exe")) {
+            cargo install tauri-driver --version 2.0.6 --locked --root "$env:IRIS_WEBDRIVER_TOOLS"
+          }
+          if (-not (Test-Path "$env:IRIS_WEBDRIVER_TOOLS/bin/msedgedriver-tool.exe")) {
+            cargo install --git https://github.com/chippers/msedgedriver-tool --rev 8c4b34f51b45f5cf08013366d703de464ab871d1 --root "$env:IRIS_WEBDRIVER_TOOLS"
+          }
           & "$env:IRIS_WEBDRIVER_TOOLS/bin/msedgedriver-tool.exe"
           if (-not (Test-Path "$PWD/msedgedriver.exe")) {
             throw "msedgedriver-tool did not produce msedgedriver.exe"

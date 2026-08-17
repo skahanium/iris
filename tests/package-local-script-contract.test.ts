@@ -27,6 +27,15 @@ describe("local packaging script contract", () => {
     );
   });
 
+  it("allows CI packaging to skip the embedding smoke test explicitly", () => {
+    const source = script();
+
+    expect(source).toContain("IRIS_PACKAGE_SKIP_SMOKE");
+    expect(source).toContain('!== "1"');
+    expect(source).toContain("runEmbeddingAndSqliteVecSmoke()");
+    expect(source).toContain("smokeStatusLabel");
+  });
+
   it("exposes macOS and Windows self-package npm scripts", () => {
     expect(pkg().scripts).toMatchObject({
       "package:local:mac": "node scripts/package-local.mjs mac",
