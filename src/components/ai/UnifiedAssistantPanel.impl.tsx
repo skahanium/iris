@@ -36,6 +36,7 @@ import type { ImageAttachment } from "./AiMessageList";
 import { AssistantComposerDock } from "./AssistantComposerDock";
 import { ConversationSurface } from "./ConversationSurface";
 import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
+import { useAssistantAnswerReveal } from "./hooks/useAssistantAnswerReveal";
 import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
 import { useAssistantConversation } from "./hooks/useAssistantConversation";
 import { useAssistantConversationProjection } from "./hooks/useAssistantConversationProjection";
@@ -76,6 +77,9 @@ export function UnifiedAssistantPanel({
   const { profile: promptProfile } = usePromptProfile();
   const assistantRun = useAssistantRun();
   const { reset: resetAssistantRun } = assistantRun;
+  const assistantAnswerReveal = useAssistantAnswerReveal(
+    assistantRun.presentationState,
+  );
   const aiRuntime = useAiDomainRuntime({
     domainState: {
       domain: aiDomain,
@@ -258,6 +262,8 @@ export function UnifiedAssistantPanel({
   useAssistantConversationProjection({
     run: assistantRun.eventState,
     presentation: assistantRun.presentationState,
+    presentationAnswer: assistantAnswerReveal.answer,
+    presentationRevealing: assistantAnswerReveal.revealing,
     session: runSession,
     messages,
     setMessages,

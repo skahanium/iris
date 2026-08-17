@@ -15,6 +15,7 @@ import type {
   AssistantPresentationState,
 } from "@/lib/assistant-presentation";
 import { sanitizeAssistantVisibleText } from "@/lib/assistant-visible-text";
+import { getAiPayloadStore } from "@/lib/ai-payload-store";
 import { assistantSessionLoad } from "@/lib/ipc";
 import { toolDisplayName } from "@/lib/tool-display-names";
 import type {
@@ -25,6 +26,10 @@ import type {
 export interface AssistantConversationProjectionOptions {
   run: AssistantRunEventState | null;
   presentation?: AssistantPresentationState | null;
+  /** Smoothed live answer; falls back to `presentation.answer` when omitted. */
+  presentationAnswer?: string;
+  /** True while the smoothed answer is still catching up to the live answer. */
+  presentationRevealing?: boolean;
   session?: AssistantSessionRef | null;
   messages: readonly ChatLine[];
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
@@ -45,6 +50,8 @@ export interface AssistantConversationProjectionOptions {
 export function useAssistantConversationProjection({
   run,
   presentation,
+  presentationAnswer,
+  presentationRevealing,
   session,
   messages,
   setMessages,
@@ -114,7 +121,7 @@ export function useAssistantConversationProjection({
     if (run.lastSeq === 0 && !hasLivePresentation) return;
     if (!messages.some((message) => message.runId === run.runId)) return;
 
-    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}`;
+    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${presentationAnswer?.length ?? 0}:${presentationRevealing ? 1 : 0}`;
     if (appliedProjectionRef.current === projectionKey) return;
     appliedProjectionRef.current = projectionKey;
 
@@ -140,21 +147,48 @@ export function useAssistantConversationProjection({
       run.state,
     );
 
+    const currentMessage = messages.find(
+      (message) => message.role === "assistant" && message.runId === run.runId,
+    );
+    const content = presentationOwnsContent
+      ? sanitizeAssistantVisibleText(
+          presentationAnswer ?? presentation?.answer ?? "",
+        ) ||
+        currentMessage?.content ||
+        ""
+      : run.content.trim()
+        ? run.content
+        : (currentMessage?.content ?? "");
+    const presentationStreaming =
+      presentationOwnsContent && (Boolean(presentationRevealing) || !terminal);
+    const fullContent = presentationOwnsContent
+      ? sanitizeAssistantVisibleText(presentation?.answer ?? "")
+      : run.content.trim()
+        ? run.content
+        : (currentMessage?.content ?? "");
+    const store = getAiPayloadStore();
+    const existingRef = currentMessage?.contentRef;
+    const refMatchesFull = Boolean(
+      existingRef && fullContent && store.getText(existingRef) === fullContent,
+    );
+    let nextContentRef = existingRef;
+    if (fullContent && fullContent !== content) {
+      if (!refMatchesFull) {
+        nextContentRef = store.putText(fullContent, "assistant_message");
+      }
+    } else if (!refMatchesFull) {
+      nextContentRef = undefined;
+    }
+
     setMessages((previous) => {
       const current = previous.find(
         (message) =>
           message.role === "assistant" && message.runId === run.runId,
       );
       if (!current) return previous;
-      const content = presentationOwnsContent
-        ? sanitizeAssistantVisibleText(presentation?.answer ?? "") ||
-          current.content
-        : run.content.trim()
-          ? run.content
-          : current.content;
-      const presentationStreaming = presentationOwnsContent && !terminal;
       if (
         current.content === content &&
+        current.contentRef === nextContentRef &&
         current.presentationStreaming === presentationStreaming &&
         sameProcessItems(current.processItems, processItems)
       ) {
@@ -162,6 +196,7 @@ export function useAssistantConversationProjection({
       }
       return patchRunMessage(previous, run.runId, {
         content,
+        contentRef: nextContentRef,
         processItems,
         presentationStreaming,
       });
@@ -219,6 +254,8 @@ export function useAssistantConversationProjection({
     classifiedContextRef,
     messages,
     presentation,
+    presentationAnswer,
+    presentationRevealing,
     run,
     setActivityHint,
     setError,

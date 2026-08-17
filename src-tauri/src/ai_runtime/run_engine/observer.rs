@@ -385,13 +385,20 @@ impl AgentRunStreamObserver<'_> {
         if delta.is_empty() {
             return Ok(());
         }
-        let _ = self.sink.emit_presentation(
-            self.run_id,
-            RunPresentationPayload::AnswerDelta {
-                delta: delta.clone(),
-            },
-        );
-        self.presentation_content.push_str(&delta);
+        let mut delta_remaining = delta;
+        while !delta_remaining.is_empty() {
+            let chunk = take_safe_presentation_delta_chunk(&mut delta_remaining);
+            if chunk.is_empty() {
+                break;
+            }
+            let _ = self.sink.emit_presentation(
+                self.run_id,
+                RunPresentationPayload::AnswerDelta {
+                    delta: chunk.clone(),
+                },
+            );
+            self.presentation_content.push_str(&chunk);
+        }
         Ok(())
     }
 
@@ -440,7 +447,7 @@ impl AgentRunStreamObserver<'_> {
             }
             let mut presentation_remaining = presentation_delta;
             while !presentation_remaining.is_empty() {
-                let chunk = take_safe_content_delta_chunk(&mut presentation_remaining)?;
+                let chunk = take_safe_presentation_delta_chunk(&mut presentation_remaining);
                 if chunk.is_empty() {
                     break;
                 }
@@ -613,6 +620,23 @@ fn take_safe_content_delta_chunk(remaining: &mut String) -> AppResult<String> {
         }
         end = (end * 3 / 4).max(1);
     }
+}
+
+/// Keep live presentation deltas small enough for smooth incremental rendering.
+///
+/// Durable `ContentDelta` events are bounded by the persistence JSON budget,
+/// but presentation `AnswerDelta` events go straight to the UI. A provider that
+/// emits a whole paragraph in one chunk would otherwise make the frontend apply
+/// a large layout-affecting delta in a single frame. This chunks at Unicode
+/// scalar boundaries (Rust `char`), so surrogate pairs are never split.
+fn take_safe_presentation_delta_chunk(remaining: &mut String) -> String {
+    const PRESENTATION_CHUNK_CHARS: usize = 256;
+    if remaining.is_empty() {
+        return String::new();
+    }
+    let chunk: String = remaining.chars().take(PRESENTATION_CHUNK_CHARS).collect();
+    *remaining = remaining.chars().skip(chunk.chars().count()).collect();
+    chunk
 }
 
 impl crate::ai_runtime::model_gateway::StreamEventObserver for AgentRunStreamObserver<'_> {
@@ -793,5 +817,36 @@ mod presentation_clock_tests {
             .expect("terminal event");
             assert!(presentation_payload_for_durable_event(&event).is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod presentation_chunk_tests {
+    use super::take_safe_presentation_delta_chunk;
+
+    #[test]
+    fn large_presentation_delta_is_split_into_small_chunks() {
+        let mut remaining = "字".repeat(600);
+        let first = take_safe_presentation_delta_chunk(&mut remaining);
+        assert_eq!(first.chars().count(), 256);
+        assert_eq!(remaining.chars().count(), 344);
+        let second = take_safe_presentation_delta_chunk(&mut remaining);
+        assert_eq!(second.chars().count(), 256);
+        assert_eq!(remaining.chars().count(), 88);
+    }
+
+    #[test]
+    fn presentation_chunk_never_splits_emoji() {
+        let mut remaining = format!("a{}b", "😀");
+        let first = take_safe_presentation_delta_chunk(&mut remaining);
+        // "a😀b" is only 4 Rust chars; one chunk keeps the whole emoji intact.
+        assert_eq!(first, "a😀b");
+        assert!(remaining.is_empty());
+    }
+
+    #[test]
+    fn empty_presentation_delta_returns_empty_chunk() {
+        let mut remaining = String::new();
+        assert_eq!(take_safe_presentation_delta_chunk(&mut remaining), "");
     }
 }

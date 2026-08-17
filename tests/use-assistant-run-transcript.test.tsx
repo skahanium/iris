@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { useAssistantConversationProjection } from "@/components/ai/hooks/useAssistantConversationProjection";
+import { restoreChatLineContent } from "@/lib/ai-payload-store";
 import type { ChatLine } from "@/components/ai/AiMessageList";
 import {
   ANSWER_COMPLETE_PROCESS_LABEL,
@@ -19,13 +20,19 @@ let streaming = false;
 function Probe({
   run,
   presentation,
+  presentationAnswer,
+  presentationRevealing,
 }: {
   run: ReturnType<typeof replayAssistantRunEvents>;
   presentation?: AssistantPresentationState;
+  presentationAnswer?: string;
+  presentationRevealing?: boolean;
 }) {
   useAssistantConversationProjection({
     run,
     presentation,
+    presentationAnswer,
+    presentationRevealing,
     messages,
     setMessages: (updater) => {
       messages = typeof updater === "function" ? updater(messages) : updater;
@@ -939,5 +946,153 @@ describe("useAssistantConversationProjection", () => {
     );
 
     expect(messages[1]?.content).toBe("当前回答");
+  });
+
+  it("uses the smoothed presentation answer when reveal is active", () => {
+    messages = [
+      { role: "user", content: "你好", runId: "run-reveal", turnId: "turn-1" },
+      {
+        role: "assistant",
+        content: "",
+        runId: "run-reveal",
+        turnId: "turn-1",
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const running = replayAssistantRunEvents("run-reveal", [
+      {
+        runId: "run-reveal",
+        seq: 1,
+        stateVersion: 0,
+        timestamp: "2026-08-03T00:00:00.000Z",
+        type: "accepted",
+        payload: {
+          kind: "accepted",
+          turnId: "turn-1",
+          sessionKey: "session-1",
+        },
+      },
+      {
+        runId: "run-reveal",
+        seq: 2,
+        stateVersion: 1,
+        timestamp: "2026-08-03T00:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在生成答复",
+        },
+      },
+    ] satisfies AssistantRunEvent[]);
+
+    act(() =>
+      root?.render(
+        <Probe
+          run={running}
+          presentation={{
+            runId: "run-reveal",
+            lastSeq: 2,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [],
+            answer: "完整答复",
+            answerComplete: false,
+          }}
+          presentationAnswer="完整"
+          presentationRevealing={true}
+        />,
+      ),
+    );
+
+    expect(messages[1]?.content).toBe("完整");
+    expect(messages[1]?.presentationStreaming).toBe(true);
+    expect(restoreChatLineContent(messages[1]!)).toBe("完整答复");
+  });
+
+  it("keeps the bubble streaming while reveal drains after completion", () => {
+    messages = [
+      {
+        role: "user",
+        content: "你好",
+        runId: "run-complete",
+        turnId: "turn-1",
+      },
+      {
+        role: "assistant",
+        content: "",
+        runId: "run-complete",
+        turnId: "turn-1",
+      },
+    ];
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const completed = replayAssistantRunEvents("run-complete", [
+      {
+        runId: "run-complete",
+        seq: 1,
+        stateVersion: 0,
+        timestamp: "2026-08-03T00:00:00.000Z",
+        type: "accepted",
+        payload: {
+          kind: "accepted",
+          turnId: "turn-1",
+          sessionKey: "session-1",
+        },
+      },
+      {
+        runId: "run-complete",
+        seq: 2,
+        stateVersion: 1,
+        timestamp: "2026-08-03T00:00:01.000Z",
+        type: "stage_changed",
+        payload: {
+          kind: "stage_changed",
+          state: "running",
+          stage: "正在生成答复",
+        },
+      },
+      {
+        runId: "run-complete",
+        seq: 3,
+        stateVersion: 2,
+        timestamp: "2026-08-03T00:00:02.000Z",
+        type: "content_delta",
+        payload: { kind: "content_delta", delta: "完整答复" },
+      },
+      {
+        runId: "run-complete",
+        seq: 4,
+        stateVersion: 3,
+        timestamp: "2026-08-03T00:00:03.000Z",
+        type: "completed",
+        payload: { kind: "completed", messageId: "message-1" },
+      },
+    ] satisfies AssistantRunEvent[]);
+
+    act(() =>
+      root?.render(
+        <Probe
+          run={completed}
+          presentation={{
+            runId: "run-complete",
+            lastSeq: 4,
+            resyncFromSeq: null,
+            pendingEvents: [],
+            processItems: [],
+            answer: "完整答复",
+            answerComplete: true,
+          }}
+          presentationAnswer="完整"
+          presentationRevealing={true}
+        />,
+      ),
+    );
+
+    expect(messages[1]?.content).toBe("完整");
+    expect(messages[1]?.presentationStreaming).toBe(true);
   });
 });

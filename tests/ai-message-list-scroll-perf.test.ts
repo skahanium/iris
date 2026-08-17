@@ -88,5 +88,20 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
       expect(hook).toContain("}, [active, streamKey, viewportRef]);");
       expect(hook).toContain("lastObservedScrollTopRef.current = target;");
     });
+
+    it("reserves a bottom spacer so the latest text never touches the viewport edge", () => {
+      const s = read("src/components/ai/AiMessageList.tsx");
+
+      expect(s).toContain('className="h-24 shrink-0"');
+      expect(s).toContain("aria-hidden");
+    });
+
+    it("keeps following while a message is still in streaming presentation", () => {
+      const s = read("src/components/ai/AiMessageList.tsx");
+
+      expect(s).toContain(
+        "active: streaming || activeStreamingMessage != null",
+      );
+    });
   });
 });

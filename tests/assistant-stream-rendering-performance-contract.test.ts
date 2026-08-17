@@ -18,6 +18,14 @@ describe("assistant stream rendering performance contract", () => {
     expect(existsSync("src/hooks/useStreamingContent.ts")).toBe(false);
   });
 
+  it("uses the per-frame reveal hook instead of reintroducing a whole-delta throttle", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+
+    expect(panel).toContain("useAssistantAnswerReveal");
+    expect(panel).toContain("presentationAnswer");
+    expect(panel).toContain("presentationRevealing");
+  });
+
   it("contains streaming assistant bubble layout and paint work", () => {
     const css = read("src/styles/globals.css");
     const after =

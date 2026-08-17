@@ -7,9 +7,6 @@ import {
   type RefObject,
 } from "react";
 
-const SHORT_CONTENT_RATIO = 0.9;
-const READING_TAIL_VIEWPORT_RATIO = 0.6;
-
 export interface ReadingAnchorInput {
   scrollHeight: number;
   clientHeight: number;
@@ -31,24 +28,28 @@ export function tailBottomInScrollContent({
   return tailBottom - viewportTop + viewportScrollTop;
 }
 
-/** Calculates a clamped scroll position for short and long streaming answers. */
+/**
+ * Calculates the scroll position that keeps the newest output above the
+ * viewport bottom edge.
+ *
+ * `AiMessageList` reserves a bottom spacer after the virtual rows, so scrolling
+ * to `maxScrollTop` leaves that spacer visible below the latest assistant
+ * content. The tail geometry is accepted for callers that still locate the
+ * streaming tail, but the anchor itself intentionally follows the scroll
+ * content bottom rather than pinning the tail to the edge.
+ */
 export function readingAnchorTarget({
   scrollHeight,
   clientHeight,
-  tailBottom,
+  tailBottom: _tailBottom,
 }: ReadingAnchorInput): number {
-  const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
-  if (scrollHeight <= clientHeight * SHORT_CONTENT_RATIO) return maxScrollTop;
-  return Math.min(
-    maxScrollTop,
-    Math.max(0, tailBottom - clientHeight * READING_TAIL_VIEWPORT_RATIO),
-  );
+  return Math.max(0, scrollHeight - clientHeight);
 }
 
 /**
- * Follows a short answer at the bottom, then moves the live tail into the
- * reading zone for long output. Human upward movement permanently detaches
- * until the user explicitly returns to the newest output.
+ * Follows the latest streaming content while reserving a fixed bottom gap.
+ * Human upward movement permanently detaches until the user explicitly returns
+ * to the newest output.
  */
 export function useConversationReadingAnchor({
   viewportRef,

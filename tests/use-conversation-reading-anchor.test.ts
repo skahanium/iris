@@ -96,7 +96,7 @@ describe("readingAnchorTarget", () => {
     ).toBe(1_560);
   });
 
-  it("keeps short content bottom-aligned", () => {
+  it("keeps short content at the top when it cannot scroll", () => {
     expect(
       readingAnchorTarget({
         scrollHeight: 880,
@@ -106,24 +106,24 @@ describe("readingAnchorTarget", () => {
     ).toBe(0);
   });
 
-  it("places the last visible streaming line in the reading zone", () => {
+  it("follows the scroll-content bottom so the reserved spacer stays visible", () => {
     expect(
       readingAnchorTarget({
         scrollHeight: 3_000,
         clientHeight: 1_000,
         tailBottom: 2_100,
       }),
-    ).toBe(1_500);
+    ).toBe(2_000);
   });
 
-  it("advances as a single growing streaming paragraph adds new lines", () => {
+  it("advances as the streaming answer grows", () => {
     expect(
       readingAnchorTarget({
         scrollHeight: 3_000,
         clientHeight: 1_000,
         tailBottom: 2_500,
       }),
-    ).toBe(1_900);
+    ).toBe(2_000);
   });
 
   it("clamps the reading anchor to the scrollable range", () => {

@@ -356,7 +356,7 @@ export const AiMessageList = memo(function AiMessageList({
     (activeStreamingMessage?.content.length ?? 0);
   const { following, returnToLatest } = useConversationReadingAnchor({
     viewportRef,
-    active: streaming,
+    active: streaming || activeStreamingMessage != null,
     revision: contentRevision,
     streamKey: activeStreamKey,
   });
@@ -569,8 +569,9 @@ export const AiMessageList = memo(function AiMessageList({
             );
           })}
         </div>
+        <div className="h-24 shrink-0" aria-hidden="true" />
       </ScrollArea>
-      {streaming && !following ? (
+      {(streaming || activeStreamingMessage != null) && !following ? (
         <button
           type="button"
           className="absolute bottom-3 right-3 rounded-full border border-border-subtle bg-panel px-3 py-1.5 text-xs text-foreground shadow-sm"
