@@ -550,7 +550,7 @@ impl RunIntake {
                     request.expected_state_version,
                     chrono::Utc::now().timestamp_millis(),
                 )? {
-                    FrozenConfirmationRejection::Resumed(event) => {
+                    FrozenConfirmationRejection::Cancelled(event) => {
                         Ok((NormalRunControlOutcome::ConfirmationRejected, Some(event)))
                     }
                     FrozenConfirmationRejection::AlreadyRejected => {

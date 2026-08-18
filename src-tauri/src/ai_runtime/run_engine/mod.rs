@@ -273,43 +273,35 @@ impl RunEngine {
         session: &AssistantSessionRef,
         run_id: &str,
         sink: &impl RunEventSink,
-        applied: bool,
     ) -> AppResult<()> {
         let snapshot = AgentRunRepository::get_for_session(db, &session.session_key, run_id)?
             .ok_or_else(|| AppError::run(SafeRunErrorCode::RunNotFound))?;
         if snapshot.run.state != RunState::Running {
             return Err(AppError::run(SafeRunErrorCode::IllegalTransition));
         }
-        if applied {
-            let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?
-                .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointStageConflict))?;
-            AgentRunRepository::append_checkpoint_step(
-                db,
-                crate::ai_runtime::agent_run_repository::AppendRunCheckpointInput {
-                    run_id: run_id.to_string(),
-                    state_version: snapshot.run.state_version,
-                    checkpoint:
-                        crate::ai_runtime::agent_run_repository::DurableApplyCheckpoint::new(
-                            checkpoint.confirmation_id(),
-                            checkpoint.plan_hash(),
-                            crate::ai_runtime::agent_run_repository::DurableApplyCheckpointStage::Completed,
-                            checkpoint.base_content_hashes().to_vec(),
-                            checkpoint.expected_post_content_hashes().to_vec(),
-                            Vec::new(),
-                        )?,
-                },
-            )?;
-        }
+        let checkpoint = AgentRunRepository::latest_durable_apply_checkpoint(db, run_id)?
+            .ok_or_else(|| AppError::run(SafeRunErrorCode::CheckpointStageConflict))?;
+        AgentRunRepository::append_checkpoint_step(
+            db,
+            crate::ai_runtime::agent_run_repository::AppendRunCheckpointInput {
+                run_id: run_id.to_string(),
+                state_version: snapshot.run.state_version,
+                checkpoint: crate::ai_runtime::agent_run_repository::DurableApplyCheckpoint::new(
+                    checkpoint.confirmation_id(),
+                    checkpoint.plan_hash(),
+                    crate::ai_runtime::agent_run_repository::DurableApplyCheckpointStage::Completed,
+                    checkpoint.base_content_hashes().to_vec(),
+                    checkpoint.expected_post_content_hashes().to_vec(),
+                    Vec::new(),
+                )?,
+            },
+        )?;
         AgentRunRepository::finalize(
             db,
             FinalizeRunInput {
                 run_id: run_id.to_string(),
                 state_version: snapshot.run.state_version,
-                content: if applied {
-                    "已执行你确认的变更。".to_string()
-                } else {
-                    "已取消该变更，未作任何修改。".to_string()
-                },
+                content: "已执行你确认的变更。".to_string(),
                 evidence_ids: Vec::new(),
                 citation_map: serde_json::json!({}),
                 source_summary: Vec::new(),

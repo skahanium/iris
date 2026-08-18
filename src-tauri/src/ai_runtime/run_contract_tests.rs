@@ -152,7 +152,10 @@ fn state_machine_exhaustively_classifies_every_state_pair() {
                             | RunState::Failed
                             | RunState::Cancelled
                     )
-                    | (RunState::AwaitingConfirmation, RunState::Running)
+                    | (
+                        RunState::AwaitingConfirmation,
+                        RunState::Running | RunState::Cancelled
+                    )
                     | (RunState::Paused, RunState::Running)
                     | (
                         RunState::Verifying,

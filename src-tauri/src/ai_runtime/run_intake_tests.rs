@@ -1057,34 +1057,11 @@ fn intake_scoped_get_does_not_expose_a_run_to_another_session() {
 fn reconnect_lookup_returns_only_the_owner_latest_nonterminal_run() {
     let db = Database::open_in_memory().expect("database");
     let first = RunIntake::start(&db, request()).expect("first accepted run");
-    let mut second_request = request();
-    second_request.client_request_id = "latest-active-client-request".to_string();
-    second_request.session = Some(first.session.clone());
-    let second = RunIntake::start(&db, second_request).expect("second accepted run");
 
     let recovered = RunIntake::get_latest_active(&db, &first.session)
         .expect("recover latest")
         .expect("active run");
-    assert_eq!(recovered.run.run_id, second.run_id);
-
-    RunIntake::control(
-        &db,
-        AssistantRunControlRequest {
-            session: first.session.clone(),
-            run_id: second.run_id.clone(),
-            expected_state_version: 0,
-            action: RunControlAction::Cancel,
-        },
-    )
-    .expect("cancel latest run");
-    assert_eq!(
-        RunIntake::get_latest_active(&db, &first.session)
-            .expect("recover remaining active")
-            .expect("first run remains active")
-            .run
-            .run_id,
-        first.run_id
-    );
+    assert_eq!(recovered.run.run_id, first.run_id);
 
     RunIntake::control(
         &db,
@@ -1099,8 +1076,17 @@ fn reconnect_lookup_returns_only_the_owner_latest_nonterminal_run() {
     assert!(RunIntake::get_latest_active(&db, &first.session)
         .expect("recover with no active run")
         .is_none());
+
+    let mut second_request = request();
+    second_request.client_request_id = "latest-active-client-request".to_string();
+    second_request.session = Some(first.session.clone());
+    let second = RunIntake::start(&db, second_request).expect("second accepted run");
+    let recovered = RunIntake::get_latest_active(&db, &first.session)
+        .expect("recover replacement run")
+        .expect("replacement active run");
+    assert_eq!(recovered.run.run_id, second.run_id);
+
     crate::ai_runtime::model_gateway::clear_abort(&first.run_id);
-    crate::ai_runtime::model_gateway::clear_abort(&second.run_id);
 }
 
 #[test]
@@ -1526,7 +1512,7 @@ fn approval_consumes_the_exact_frozen_plan_and_resumes_the_owned_run_once() {
 }
 
 #[test]
-fn rejection_consumes_the_owned_frozen_plan_without_dispatching_it() {
+fn rejected_confirmation_cancels_without_write() {
     let (db, accepted, confirmation_id, awaiting_state_version) =
         accepted_run_awaiting_frozen_change_confirmation();
 
@@ -1546,20 +1532,29 @@ fn rejection_consumes_the_owned_frozen_plan_without_dispatching_it() {
     let rejected = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("get rejected run")
         .expect("rejected run exists");
-    assert_eq!(rejected.run.state, RunState::Running);
+    assert_eq!(rejected.run.state, RunState::Cancelled);
     assert!(rejected.run.pending_confirmation.is_none());
+    assert!(rejected.run.final_message_id.is_none());
     assert_eq!(
-        serde_json::to_value(rejected.events.last().expect("resumed event"))
-            .expect("serialize resumed event")["type"],
-        "resumed"
+        serde_json::to_value(rejected.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["type"],
+        "cancelled"
+    );
+    assert_eq!(
+        serde_json::to_value(rejected.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["payload"]["reason"],
+        "user_rejected_change"
     );
     db.with_read_conn(|conn| {
-        let status: String = conn.query_row(
-            "SELECT status FROM agent_run_confirmations WHERE confirmation_id = ?1",
+        let (status, assistant_messages): (String, i64) = conn.query_row(
+            "SELECT c.status,
+                    (SELECT COUNT(*) FROM session_messages WHERE role = 'assistant')
+             FROM agent_run_confirmations c WHERE c.confirmation_id = ?1",
             [&confirmation_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         assert_eq!(status, "rejected");
+        assert_eq!(assistant_messages, 0);
         Ok(())
     })
     .expect("confirmation rejected atomically");

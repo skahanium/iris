@@ -1898,7 +1898,7 @@ fn startup_recovery_leaves_a_pending_confirmation_awaiting_user_input() {
 }
 
 #[test]
-fn startup_recovery_completes_a_rejected_confirmation_as_not_modified() {
+fn rejected_confirmation_recovery_stays_cancelled() {
     let (db, accepted, vault) = durable_apply_interrupted_after_consumed_confirmation();
     db.with_conn(|conn| {
         conn.execute(
@@ -1922,19 +1922,25 @@ fn startup_recovery_completes_a_rejected_confirmation_as_not_modified() {
     let replay = RunIntake::get(&db, &accepted.session, &accepted.run_id)
         .expect("replay")
         .expect("run");
-    assert_eq!(replay.run.state, RunState::Completed);
-    let message: String = db
+    assert_eq!(replay.run.state, RunState::Cancelled);
+    assert!(replay.run.final_message_id.is_none());
+    assert_eq!(
+        serde_json::to_value(replay.events.last().expect("cancelled event"))
+            .expect("serialize cancelled event")["payload"]["reason"],
+        "user_rejected_change"
+    );
+    let assistant_messages: i64 = db
         .with_read_conn(|conn| {
             conn.query_row(
-                "SELECT content FROM session_messages
+                "SELECT COUNT(*) FROM session_messages
                  WHERE session_id = 1 AND role = 'assistant'",
                 [],
                 |row| row.get(0),
             )
             .map_err(Into::into)
         })
-        .expect("fixed rejection message");
-    assert_eq!(message, "已取消该变更，未作任何修改。");
+        .expect("no rejection assistant message");
+    assert_eq!(assistant_messages, 0);
     assert_eq!(
         std::fs::read_to_string(vault.join("notes/a.md")).expect("read untouched note"),
         "base"

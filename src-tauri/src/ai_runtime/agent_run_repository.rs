@@ -230,8 +230,8 @@ pub(crate) enum FrozenConfirmationApproval {
 
 /// Result of rejecting a persisted confirmation through one idempotent control request.
 pub(crate) enum FrozenConfirmationRejection {
-    /// The pending plan was rejected and the Run durably resumed.
-    Resumed(AssistantRunEvent),
+    /// The pending plan was rejected and the Run durably cancelled.
+    Cancelled(AssistantRunEvent),
     /// The same plan had already been rejected by an earlier identical control request.
     AlreadyRejected,
 }
@@ -1459,7 +1459,7 @@ impl AgentRunRepository {
         })
     }
 
-    /// Reject an exact pending plan and resume its Run without dispatching the plan.
+    /// Reject an exact pending plan and cancel its Run without dispatching the plan.
     pub(crate) fn reject_frozen_confirmation(
         db: &Database,
         session_key: &str,
@@ -1518,7 +1518,7 @@ impl AgentRunRepository {
                 let next_state_version = stored_state_version + 1;
                 let updated = conn.execute(
                     "UPDATE agent_runs
-                     SET status = 'running', state_version = ?1, updated_at = ?2
+                     SET status = 'cancelled', state_version = ?1, updated_at = ?2
                      WHERE run_id = ?3 AND state_version = ?4",
                     rusqlite::params![next_state_version, now, run_id, stored_state_version],
                 )?;
@@ -1535,15 +1535,15 @@ impl AgentRunRepository {
                     run_id,
                     event_seq,
                     next_state_version,
-                    RunEventType::Resumed,
+                    RunEventType::Cancelled,
                     &now,
-                    RunEventPayload::Resumed {
-                        reason: "变更计划已拒绝，正在继续处理".to_string(),
+                    RunEventPayload::Cancelled {
+                        reason: "user_rejected_change".to_string(),
                     },
                 )
                 .map_err(AppError::msg)?;
                 insert_event(conn, &event)?;
-                Ok(FrozenConfirmationRejection::Resumed(event))
+                Ok(FrozenConfirmationRejection::Cancelled(event))
             })
         })
     }

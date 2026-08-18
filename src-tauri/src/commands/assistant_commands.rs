@@ -479,15 +479,6 @@ async fn assistant_run_control_inner<R: tauri::Runtime>(
                     state.vault_path().ok(),
                 ),
                 (
-                    NormalRunControlOutcome::ConfirmationRejected,
-                    crate::ai_runtime::run_contract::RunControlAction::RejectChange { .. },
-                ) => spawn_rejected_change_finalization(
-                    Arc::clone(&state.db),
-                    app_handle,
-                    session,
-                    run_id,
-                ),
-                (
                     NormalRunControlOutcome::RecoveryResumed { confirmation_id },
                     crate::ai_runtime::run_contract::RunControlAction::Resume,
                 ) => spawn_confirmed_change_execution(
@@ -738,8 +729,7 @@ async fn execute_confirmed_change_with_sink(
     );
     match executor.execute_confirmed_frozen_change(&plan).await {
         Ok(result) if result.success => {
-            if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, sink, true)
-                .is_err()
+            if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, sink).is_err()
             {
                 fail();
             }
@@ -748,22 +738,6 @@ async fn execute_confirmed_change_with_sink(
     }
 }
 
-/// A rejected frozen plan ends the Run without dispatching a tool or calling a model.
-fn spawn_rejected_change_finalization<R: tauri::Runtime>(
-    db: Arc<crate::storage::db::Database>,
-    app_handle: AppHandle<R>,
-    session: AssistantSessionRef,
-    run_id: String,
-) {
-    tauri::async_runtime::spawn(async move {
-        let sink = TauriRunEventSink::new(&app_handle);
-        if RunEngine::finalize_confirmed_change_with_sink(&db, &session, &run_id, &sink, false)
-            .is_err()
-        {
-            let _ = RunEngine::fail_active_with_sink(&db, &session, &run_id, &sink);
-        }
-    });
-}
 /// Start normal-domain execution after its accepted event exists.
 ///
 /// Context, policy and bounded Web evidence are prepared from persisted Run

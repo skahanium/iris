@@ -1564,8 +1564,10 @@ pub(crate) fn transition_to(
                 | RunState::Completed
                 | RunState::Failed
                 | RunState::Cancelled
-        ) | (RunState::AwaitingConfirmation, RunState::Running)
-            | (RunState::Paused, RunState::Running)
+        ) | (
+            RunState::AwaitingConfirmation,
+            RunState::Running | RunState::Cancelled
+        ) | (RunState::Paused, RunState::Running)
             | (
                 RunState::Verifying,
                 RunState::Paused | RunState::Completed | RunState::Failed | RunState::Cancelled
