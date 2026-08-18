@@ -53,6 +53,9 @@ pub struct ToolCapabilitySnapshot {
     pub name: String,
     pub requires_confirmation: bool,
     pub access_level: String,
+    pub cost_class: Option<&'static str>,
+    pub output_policy: Option<&'static str>,
+    pub evidence_policy: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -232,10 +235,17 @@ pub fn capability_snapshot(
         models: model_pool_snapshots(db),
         tools: tools
             .iter()
-            .map(|tool| ToolCapabilitySnapshot {
-                name: tool.name.clone(),
-                requires_confirmation: tool.requires_confirmation,
-                access_level: format!("{:?}", tool.access_level),
+            .map(|tool| {
+                let metadata =
+                    crate::ai_runtime::tool_catalog::static_metadata_for_tool(&tool.name);
+                ToolCapabilitySnapshot {
+                    name: tool.name.clone(),
+                    requires_confirmation: tool.requires_confirmation,
+                    access_level: format!("{:?}", tool.access_level),
+                    cost_class: metadata.map(|metadata| metadata.cost_class),
+                    output_policy: metadata.map(|metadata| metadata.output_policy),
+                    evidence_policy: metadata.map(|metadata| metadata.evidence_policy),
+                }
             })
             .collect(),
     }

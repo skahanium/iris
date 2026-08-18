@@ -8,32 +8,32 @@
 - **Stale**：旧审查结论已被当前代码事实推翻。
 - **Unverified**：尚无足够代码或测试证据，不进入主干施工。
 
-| ID        | 优先级 | 状态       | 当前事实                                                                                                      | 最小行动                                               |
-| --------- | ------ | ---------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| RUN-001   | P0     | Resolved   | `retry_with_sink_outcome` 现返回 `is_new`，仅首次接受时 emit accepted 并允许 spawn；重放/并发只产生一个执行权 | 保留 `retry_replay_*` 与 `concurrent_retry_*` 回归测试 |
-| RUN-002   | P0     | Resolved   | 基线探针曾复现 `AnswerComplete` 早于持久化；现已改为 Completed 后再发终端展示                                 | 保留顺序回归测试并覆盖 sink 失败                       |
-| RUN-003   | P1     | Partial    | Run 状态与事件已有基础，但 sink 失败后的恢复语义缺少统一契约                                                  | 用快照/重放恢复，禁止重做副作用                        |
-| ROUTE-001 | P1     | Partial    | `ToolSurfacePlan` 已开始收敛时效/Web 判断，但能力读取和执行仍未完全消费同一冻结结果                           | 完成现有 planner 接入，Executor 只消费冻结结果         |
-| ROUTE-002 | P2     | Unverified | 没有证据表明新增 LLM Router 能改善当前可靠性                                                                  | 不进入首阶段；仅保留评测后立项可能                     |
-| TOOL-001  | P1     | Partial    | `ToolImplementationStatus` 已排除 Planned，但 `capabilities_read` 仍读取完整目录                              | 改为读取 `ToolSurfacePlan` 的已解析工具列表            |
-| TOOL-002  | P0     | Resolved   | 两个 harness 工具曾错误映射到 `vault.search`；现已使用独立 `harness.*` 权限原子                               | 保留权限映射回归测试                                   |
-| TOOL-003  | P1     | Partial    | 目录、权限和执行校验均存在，但尚未形成单一不可绕过门禁                                                        | 收敛门禁并覆盖旁路负例                                 |
-| TOOL-004  | P2     | Confirmed  | 部分工具参数没有生产消费方                                                                                    | 删除死参数或实现真实语义                               |
-| EVID-001  | P0     | Resolved   | `SourceGroupFallback` 已存在且 ToolLoop 会生成；Direct 严格 Web 现已补齐 binding                              | 保留 Direct/ToolLoop 双路径回归测试                    |
-| EVID-002  | P0     | Resolved   | UI 对缺失/未知 binding 与有来源条目时统一按“本次检索来源/未逐段核验”展示；精确 binding 仍走精确样式           | 保留 missing/unknown binding fail-safe 测试            |
-| EVID-003  | P1     | Confirmed  | 严格结构化 VERIFIED 规则没有形成有效覆盖                                                                      | 逐工具增加确定性规则；其余保持 uncalibrated            |
-| EVID-004  | P2     | Partial    | `session_evidence` 已具时间、原 Run、失效和安全摘录字段                                                       | 在绑定校验中完整消费现有字段，不新增证据表             |
-| SEC-001   | P0     | Confirmed  | 错误工具权限映射可能使授权语义失真                                                                            | 与 TOOL-002 一并修复并加入拒绝型测试                   |
-| SEC-002   | P0     | Partial    | 已有 Web 权限与内容隔离机制，但本地检索到 Web 查询的数据流需端到端负例                                        | 建立统一数据流门禁和隐私回归测试                       |
-| CTX-001   | P1     | Partial    | 运行时上下文构造逻辑存在，但生产调用链接入不足                                                                | 接成只读 `RunSituation`，不新增状态表                  |
-| CTX-002   | P1     | Confirmed  | 会话记忆兜底可能把第一条用户消息长期提升为目标                                                                | 移除兜底，目标只来自当前请求/明确任务                  |
-| CTX-003   | P1     | Partial    | `conversation_summaries` 已存在，可支持压缩，但需补覆盖范围和失效语义                                         | 复用现表并增加失效/重建测试                            |
-| MEM-001   | P2     | Partial    | `ai_memories` 已存在，但 key 冲突可能跨 scope 覆盖                                                            | 调整为 `(scope, key)` 并提供 scope 清理                |
-| MEM-002   | P2     | Confirmed  | 缺少“仅用户确认偏好可长期写入”的主干约束                                                                      | 限制写入入口、来源和预算                               |
-| UI-001    | P1     | Resolved   | `capability_degraded` 已接入 `UnifiedAssistantPanel` 生产事件投影，组件复用且不新增第二套体系                 | 保留事件 reducer 与生产面板 contract 测试              |
-| UI-002    | P2     | Confirmed  | 原始/无用工具参数会增加噪音与隐私风险                                                                         | 仅显示脱敏摘要和稳定错误码                             |
-| EVAL-001  | P1     | Stale      | “只有 24 个评测场景”的旧基线已过期；当前代码已有 48-case 契约                                                 | 复用现有套件并维护稳定场景 ID                          |
-| MEM-003   | —      | Stale      | “完全没有记忆基础设施”不准确：会话摘要和 `ai_memories` 均已存在                                               | 只补最小安全语义，不重建记忆中心                       |
+| ID        | 优先级 | 状态       | 当前事实                                                                                                                      | 最小行动                                               |
+| --------- | ------ | ---------- | ----------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| RUN-001   | P0     | Resolved   | `retry_with_sink_outcome` 现返回 `is_new`，仅首次接受时 emit accepted 并允许 spawn；重放/并发只产生一个执行权                 | 保留 `retry_replay_*` 与 `concurrent_retry_*` 回归测试 |
+| RUN-002   | P0     | Resolved   | 基线探针曾复现 `AnswerComplete` 早于持久化；现已改为 Completed 后再发终端展示                                                 | 保留顺序回归测试并覆盖 sink 失败                       |
+| RUN-003   | P1     | Partial    | Run 状态与事件已有基础，但 sink 失败后的恢复语义缺少统一契约                                                                  | 用快照/重放恢复，禁止重做副作用                        |
+| ROUTE-001 | P1     | Resolved   | `ToolSurfacePlan.tool_names` 已由生产编排器填充，`NormalRunToolExecutor` 只消费该冻结列表，`capabilities_read` 同步报告该列表 | 保留 current-surface-only 与 executor surface 测试     |
+| ROUTE-002 | P2     | Unverified | 没有证据表明新增 LLM Router 能改善当前可靠性                                                                                  | 不进入首阶段；仅保留评测后立项可能                     |
+| TOOL-001  | P1     | Resolved   | `capabilities_read` 现通过 `ToolDispatchContext.available_tool_names` 只报告当前 Run 已冻结 surface                           | 保留 current-surface-only 测试                         |
+| TOOL-002  | P0     | Resolved   | 两个 harness 工具曾错误映射到 `vault.search`；现已使用独立 `harness.*` 权限原子                                               | 保留权限映射回归测试                                   |
+| TOOL-003  | P1     | Resolved   | 模型工具调用同时受 `AgentToolLoop.allowed_tools` 与 `NormalRunToolExecutor.allowed_tool_names` 表面门禁约束                   | 保留 unexposed tool 负例与 executor surface 负例       |
+| TOOL-004  | P2     | Resolved   | 遗留 `conclude_reasoning` 保持内部不可见且不进入模型 surface；未消费参数不暴露给模型                                          | 保留 internal-only 不暴露测试与静态元数据负例          |
+| EVID-001  | P0     | Resolved   | `SourceGroupFallback` 已存在且 ToolLoop 会生成；Direct 严格 Web 现已补齐 binding                                              | 保留 Direct/ToolLoop 双路径回归测试                    |
+| EVID-002  | P0     | Resolved   | UI 对缺失/未知 binding 与有来源条目时统一按“本次检索来源/未逐段核验”展示；精确 binding 仍走精确样式                           | 保留 missing/unknown binding fail-safe 测试            |
+| EVID-003  | P1     | Confirmed  | 严格结构化 VERIFIED 规则没有形成有效覆盖                                                                                      | 逐工具增加确定性规则；其余保持 uncalibrated            |
+| EVID-004  | P2     | Partial    | `session_evidence` 已具时间、原 Run、失效和安全摘录字段                                                                       | 在绑定校验中完整消费现有字段，不新增证据表             |
+| SEC-001   | P0     | Confirmed  | 错误工具权限映射可能使授权语义失真                                                                                            | 与 TOOL-002 一并修复并加入拒绝型测试                   |
+| SEC-002   | P0     | Partial    | 已有 Web 权限与内容隔离机制，但本地检索到 Web 查询的数据流需端到端负例                                                        | 建立统一数据流门禁和隐私回归测试                       |
+| CTX-001   | P1     | Partial    | 运行时上下文构造逻辑存在，但生产调用链接入不足                                                                                | 接成只读 `RunSituation`，不新增状态表                  |
+| CTX-002   | P1     | Confirmed  | 会话记忆兜底可能把第一条用户消息长期提升为目标                                                                                | 移除兜底，目标只来自当前请求/明确任务                  |
+| CTX-003   | P1     | Partial    | `conversation_summaries` 已存在，可支持压缩，但需补覆盖范围和失效语义                                                         | 复用现表并增加失效/重建测试                            |
+| MEM-001   | P2     | Partial    | `ai_memories` 已存在，但 key 冲突可能跨 scope 覆盖                                                                            | 调整为 `(scope, key)` 并提供 scope 清理                |
+| MEM-002   | P2     | Confirmed  | 缺少“仅用户确认偏好可长期写入”的主干约束                                                                                      | 限制写入入口、来源和预算                               |
+| UI-001    | P1     | Resolved   | `capability_degraded` 已接入 `UnifiedAssistantPanel` 生产事件投影，组件复用且不新增第二套体系                                 | 保留事件 reducer 与生产面板 contract 测试              |
+| UI-002    | P2     | Confirmed  | 原始/无用工具参数会增加噪音与隐私风险                                                                                         | 仅显示脱敏摘要和稳定错误码                             |
+| EVAL-001  | P1     | Stale      | “只有 24 个评测场景”的旧基线已过期；当前代码已有 48-case 契约                                                                 | 复用现有套件并维护稳定场景 ID                          |
+| MEM-003   | —      | Stale      | “完全没有记忆基础设施”不准确：会话摘要和 `ai_memories` 均已存在                                                               | 只补最小安全语义，不重建记忆中心                       |
 
 ## 核对纪律
 
@@ -84,3 +84,13 @@
 - RUN-002：`direct_streaming_does_not_emit_answer_complete_before_durable_finalization` 保持 GREEN；terminal presentation 投递失败保持 best-effort。
 - EVID-002：`missing_binding_renders_unverified_source_group` / `unknown_binding_version_fails_safe` 均 GREEN；`AssistantCitationFooter` 对缺失/未知 binding 且有来源条目时统一 fail-safe。
 - UI-001：`AssistantRunCapabilityDegraded` 已接入 `UnifiedAssistantPanel.impl.tsx` 的事件投影，生产面板 contract 测试 GREEN。
+
+## 阶段 2 结果（branch-v1.3.0）
+
+- ROUTE-001：`ToolSurfacePlan.tool_names` 已由生产编排器填充，`NormalRunToolExecutor` 与 `capabilities_read` 均消费该冻结列表。
+- TOOL-001：`capabilities_read_reports_current_surface_only` 已 GREEN；`capabilities_read` 通过 `ToolDispatchContext.available_tool_names` 只报告当前 Run 冻结 surface。
+- TOOL-003：`unexposed_tool_call_is_rejected_without_reaching_executor` 与 `executor_rejects_model_call_outside_frozen_surface` 均 GREEN；模型工具调用在 AgentToolLoop 与 NormalRunToolExecutor 两层都被 surface 门禁拒绝。
+- TOOL-002：harness 工具独立权限映射保持 GREEN，`conclude_reasoning` 保持内部不可见。
+- TOOL-004：遗留 `conclude_reasoning` 不进入模型 surface，`static_metadata_for_tool` 对无生产消费方的内部工具返回 `None`。
+- 静态元数据：`ToolStaticMetadata` 已为 `web_search`、本地读取/搜索、运行时快照等关键工具补充 `cost_class` / `output_policy` / `evidence_policy`，并通过 `capabilities_read` 暴露。
+- 工具输出尺寸：既有 `oversized_web_tool_results_fail_closed_with_valid_json`、`tool_payload_8001_truncated` 等测试继续覆盖确定性截断与安全失败，未引入新平行截断逻辑。

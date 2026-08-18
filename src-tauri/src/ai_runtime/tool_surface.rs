@@ -42,6 +42,10 @@ pub(crate) struct ToolSurfacePlan {
     pub(crate) expose_web_search: bool,
     pub(crate) web_prefetched: bool,
     pub(crate) web_instruction: WebToolInstruction,
+    /// Exact model-visible tool names frozen for this Run. Filled by the
+    /// production orchestrator after combining the plan with the authorized
+    /// ToolRegistry and Run context constraints.
+    pub(crate) tool_names: Vec<String>,
 }
 
 pub(crate) struct ToolSurfacePlanner;
@@ -65,6 +69,7 @@ impl ToolSurfacePlanner {
                 } else {
                     WebToolInstruction::None
                 },
+                tool_names: Vec::new(),
             };
         }
 
@@ -78,6 +83,7 @@ impl ToolSurfacePlanner {
                 expose_web_search: false,
                 web_prefetched: true,
                 web_instruction: WebToolInstruction::AlreadyRetrievedDoNotDeny,
+                tool_names: Vec::new(),
             };
         }
 
@@ -102,6 +108,7 @@ impl ToolSurfacePlanner {
             expose_web_search,
             web_prefetched: false,
             web_instruction,
+            tool_names: Vec::new(),
         }
     }
 }

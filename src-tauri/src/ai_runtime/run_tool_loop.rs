@@ -259,6 +259,10 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     accepted: &'a AssistantRunAccepted,
     context: &'a RunContext,
     authorized_capabilities: Vec<CapabilityId>,
+    /// Exact model-visible tool surface frozen for this Run. Empty means the
+    /// executor is on an internal/confirmed path and does not enforce surface
+    /// membership (permission gates still apply).
+    allowed_tool_names: Vec<String>,
     /// The exact cached Skill plan selected before this Run entered the model.
     /// It is inherited by ChildRuns only as a scope restriction; Skill bodies
     /// never become tools or a second authorization path.
@@ -315,6 +319,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             accepted,
             context,
             authorized_capabilities,
+            allowed_tool_names: Vec::new(),
             skill_activation_plan: None,
             sink,
             retrieval_scope: context.retrieval_scope.clone(),
@@ -360,6 +365,17 @@ impl<'a> NormalRunToolExecutor<'a> {
         plan: Option<crate::ai_types::SkillActivationPlanSummary>,
     ) -> Self {
         self.skill_activation_plan = plan;
+        self
+    }
+
+    /// Freeze the exact model-visible tool surface for this Run. The executor
+    /// rejects any model tool call that is not on this list, closing the gap
+    /// between prompt tool specs and runtime dispatch.
+    /// Freeze the exact tool names from a resolved `ToolSurfacePlan`. This is
+    /// the production entry used after the orchestrator has filled the plan's
+    /// `tool_names` from the authorized registry and Run context.
+    pub(crate) fn with_allowed_tool_names(mut self, tool_names: &[String]) -> Self {
+        self.allowed_tool_names = tool_names.to_vec();
         self
     }
 
@@ -806,6 +822,7 @@ impl<'a> NormalRunToolExecutor<'a> {
             write_target_path: self.context.write_target_path.as_deref(),
             document_policy: Some(&self.context.document_policy),
             web_search_enabled: self.has_capability("web.search"),
+            available_tool_names: &self.allowed_tool_names,
             max_web_fetches: 5,
             cold_start_packets: &self.cold_start_packets,
             retrieval_scope: &self.retrieval_scope,
@@ -1265,6 +1282,17 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         Box::pin(async move {
+            if !self.allowed_tool_names.is_empty()
+                && !self
+                    .allowed_tool_names
+                    .iter()
+                    .any(|name| name == &call.function.name)
+            {
+                return Ok(failed_tool_call(
+                    &call.function.name,
+                    "tool_not_in_run_surface",
+                ));
+            }
             if self.external_snapshot(&call.function.name).is_some() {
                 let arguments =
                     match serde_json::from_str::<serde_json::Value>(&call.function.arguments) {
@@ -4625,6 +4653,53 @@ mod tests {
             .as_deref()
             .unwrap_or_default()
             .contains("outside the confirmed Skill scope"));
+    }
+
+    #[tokio::test]
+    async fn executor_rejects_model_call_outside_frozen_surface() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        std::fs::write(vault.join("allowed.md"), "allowed").expect("allowed note");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let allowed_tool_names = vec!["system_time_now".to_string()];
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&allowed_tool_names);
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new(
+                    "outside-surface-call",
+                    "read_note",
+                    r#"{"path":"allowed.md"}"#,
+                ),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
     }
 
     #[tokio::test]

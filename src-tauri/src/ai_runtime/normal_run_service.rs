@@ -440,7 +440,7 @@ async fn dispatch_normal_run_after_context(
             .flatten()
             .unwrap_or_default();
         let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-        let tool_surface_plan = plan_tool_surface(context, authorized_capabilities, false);
+        let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, false);
         let mut tools = ToolRegistry::constrain_for_run_context(
             registry.tools_for_authorized_capabilities(
                 authorized_capabilities,
@@ -452,6 +452,7 @@ async fn dispatch_normal_run_after_context(
         if !tool_surface_plan.expose_web_search {
             tools.retain(|tool| tool.name != "web_search");
         }
+        tool_surface_plan.tool_names = tools.iter().map(|tool| tool.name.clone()).collect();
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
             streaming: true,
@@ -491,6 +492,7 @@ async fn dispatch_normal_run_after_context(
             sink,
             required_web_provider_snapshots,
         )
+        .with_allowed_tool_names(&tool_surface_plan.tool_names)
         .with_skill_activation_plan(active_skills.plan.clone())
         .with_child_run_provider(&provider);
         return if let Some(telemetry) = telemetry {
@@ -775,7 +777,7 @@ async fn dispatch_required_web_verified_run(
     // only receives local follow-up tools; `web_search` remains hidden because
     // the evidence is already provided. The planner records this state so the
     // prompt can tell the model not to deny that retrieval happened.
-    let _tool_surface_plan = plan_tool_surface(context, authorized_capabilities, true);
+    let mut tool_surface_plan = plan_tool_surface(context, authorized_capabilities, true);
     let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
     let mut tools = ToolRegistry::constrain_for_run_context(
@@ -835,6 +837,8 @@ async fn dispatch_required_web_verified_run(
     if structured_finalization {
         tools.push(crate::ai_runtime::final_answer_submission::tool_spec());
     }
+    tool_surface_plan.tool_names = tools.iter().map(|tool| tool.name.clone()).collect();
+    let executor = executor.with_allowed_tool_names(&tool_surface_plan.tool_names);
     let provider = FailoverStreamingProvider::new(route, requirements, db, &accepted.session, sink);
     #[cfg(test)]
     let provider = if let Some(client) = state.test_streaming_client() {

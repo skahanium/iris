@@ -2,6 +2,23 @@ use super::*;
 use crate::ai_runtime::tool_dispatch::{DISPATCHABLE_TOOL_NAMES, HARNESS_ONLY_TOOL_NAMES};
 
 #[test]
+fn static_metadata_defines_cost_output_and_evidence_policies_for_key_tools() {
+    let web = static_metadata_for_tool("web_search").expect("web_search metadata");
+    assert_eq!(web.cost_class, "network");
+    assert_eq!(web.output_policy, "bounded_packets");
+    assert_eq!(web.evidence_policy, "current_run_web");
+
+    let read = static_metadata_for_tool("read_note").expect("read_note metadata");
+    assert_eq!(read.cost_class, "local");
+    assert_eq!(read.evidence_policy, "current_run_local");
+
+    assert!(
+        static_metadata_for_tool("conclude_reasoning").is_none(),
+        "internal-only tools without a production execution policy must not advertise metadata"
+    );
+}
+
+#[test]
 fn catalog_has_all_dispatchable_tools() {
     let catalog_disp = catalog_dispatchable_names();
     for name in DISPATCHABLE_TOOL_NAMES {

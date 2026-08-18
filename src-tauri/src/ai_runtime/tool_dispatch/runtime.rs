@@ -24,7 +24,15 @@ pub(crate) fn capabilities_read_tool(
     state: &AppState,
     ctx: &ToolDispatchContext<'_>,
 ) -> AppResult<serde_json::Value> {
-    let tools = runtime_context::all_catalog_tools_as_specs();
+    let all_tools = runtime_context::all_catalog_tools_as_specs();
+    let tools = if ctx.available_tool_names.is_empty() {
+        all_tools
+    } else {
+        all_tools
+            .into_iter()
+            .filter(|tool| ctx.available_tool_names.contains(&tool.name))
+            .collect::<Vec<_>>()
+    };
     serde_json::to_value(runtime_context::capability_snapshot(
         &state.db,
         ctx.web_search_enabled,
@@ -69,6 +77,7 @@ mod tests {
             write_target_path: None,
             document_policy: None,
             web_search_enabled: true,
+            available_tool_names: &[],
             max_web_fetches: 3,
             cold_start_packets: &[],
             retrieval_scope: &retrieval_scope,
@@ -124,6 +133,7 @@ mod tests {
     async fn capabilities_read_reports_current_surface_only() {
         let (state, _dir) = test_state();
         let retrieval_scope = crate::ai_runtime::retrieval_scope::RetrievalScope::default();
+        let available_tool_names = vec!["system_time_now".to_string()];
         let ctx = ToolDispatchContext {
             note_path: None,
             file_id: None,
@@ -131,6 +141,7 @@ mod tests {
             write_target_path: None,
             document_policy: None,
             web_search_enabled: false,
+            available_tool_names: &available_tool_names,
             max_web_fetches: 0,
             cold_start_packets: &[],
             retrieval_scope: &retrieval_scope,
