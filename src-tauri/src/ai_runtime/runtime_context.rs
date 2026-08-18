@@ -236,8 +236,8 @@ pub fn capability_snapshot(
         tools: tools
             .iter()
             .map(|tool| {
-                let metadata =
-                    crate::ai_runtime::tool_catalog::static_metadata_for_tool(&tool.name);
+                let metadata = crate::ai_runtime::tool_catalog::catalog_find(&tool.name)
+                    .and_then(|entry| entry.execution_metadata);
                 ToolCapabilitySnapshot {
                     name: tool.name.clone(),
                     requires_confirmation: tool.requires_confirmation,

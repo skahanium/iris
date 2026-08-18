@@ -1,6 +1,6 @@
 use crate::ai_runtime::ToolAccessLevel;
 
-use super::{ToolCatalogEntry, ToolImplementationStatus};
+use super::{ToolCatalogEntry, ToolExecutionMetadata, ToolImplementationStatus};
 
 pub(super) fn tools() -> Vec<ToolCatalogEntry> {
     vec![
@@ -25,6 +25,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(8),
+            execution_metadata: Some(ToolExecutionMetadata {
+                cost_class: "network",
+                output_policy: "bounded_packets",
+                evidence_policy: "current_run_web",
+            }),
         },
     ]
 }

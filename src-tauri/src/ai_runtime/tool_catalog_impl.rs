@@ -39,48 +39,14 @@ pub struct ToolCatalogEntry {
     pub implementation: ToolImplementationStatus,
     pub default_enabled_without_skill: bool,
     pub max_results: Option<u32>,
+    pub(crate) execution_metadata: Option<ToolExecutionMetadata>,
 }
 
-/// Static execution metadata for tools that have a real production consumer.
-///
-/// This is deliberately a small side table keyed by the existing catalog name,
-/// not a second maturity enum or a parallel catalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ToolStaticMetadata {
+pub(crate) struct ToolExecutionMetadata {
     pub(crate) cost_class: &'static str,
     pub(crate) output_policy: &'static str,
     pub(crate) evidence_policy: &'static str,
-}
-
-/// Return static cost/output/evidence metadata for a catalog tool when one has
-/// been defined. Tools without a defined policy remain `None` and must not be
-/// promoted to VERIFIED or expensive execution.
-pub(crate) fn static_metadata_for_tool(name: &str) -> Option<ToolStaticMetadata> {
-    match name {
-        "web_search" => Some(ToolStaticMetadata {
-            cost_class: "network",
-            output_policy: "bounded_packets",
-            evidence_policy: "current_run_web",
-        }),
-        "read_note" | "get_outline" | "get_regulation" => Some(ToolStaticMetadata {
-            cost_class: "local",
-            output_policy: "bounded_note_span",
-            evidence_policy: "current_run_local",
-        }),
-        "search_hybrid" | "search_semantic" | "search_keyword" | "list_vault" | "get_backlinks" => {
-            Some(ToolStaticMetadata {
-                cost_class: "local",
-                output_policy: "bounded_results",
-                evidence_policy: "current_run_local",
-            })
-        }
-        "capabilities_read" | "system_time_now" | "app_context_read" => Some(ToolStaticMetadata {
-            cost_class: "runtime",
-            output_policy: "small_snapshot",
-            evidence_policy: "runtime_fact",
-        }),
-        _ => None,
-    }
 }
 
 /// The complete built-in tool catalog. Add new tools through group modules only.

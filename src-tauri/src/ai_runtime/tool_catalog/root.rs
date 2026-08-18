@@ -1,6 +1,6 @@
 use crate::ai_runtime::ToolAccessLevel;
 
-use super::{ToolCatalogEntry, ToolImplementationStatus};
+use super::{ToolCatalogEntry, ToolExecutionMetadata, ToolImplementationStatus};
 
 pub(super) fn tools() -> Vec<ToolCatalogEntry> {
     vec![
@@ -16,6 +16,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(1),
+            execution_metadata: Some(ToolExecutionMetadata {
+                cost_class: "runtime",
+                output_policy: "small_snapshot",
+                evidence_policy: "runtime_fact",
+            }),
         },
         ToolCatalogEntry {
             name: "app_context_read",
@@ -29,6 +34,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(1),
+            execution_metadata: Some(ToolExecutionMetadata {
+                cost_class: "runtime",
+                output_policy: "small_snapshot",
+                evidence_policy: "runtime_fact",
+            }),
         },
         ToolCatalogEntry {
             name: "capabilities_read",
@@ -42,6 +52,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: true,
             max_results: Some(1),
+            execution_metadata: Some(ToolExecutionMetadata {
+                cost_class: "runtime",
+                output_policy: "small_snapshot",
+                evidence_policy: "runtime_fact",
+            }),
         },
         ToolCatalogEntry {
             name: "memory_read",
@@ -59,6 +74,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: Some(50),
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "memory_write",
@@ -77,6 +93,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "scheduled_task_create",
@@ -95,6 +112,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "scheduled_task_list",
@@ -110,6 +128,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: Some(50),
+            execution_metadata: None,
         },
         ToolCatalogEntry {
             name: "scheduled_task_delete",
@@ -126,6 +145,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             max_results: None,
+            execution_metadata: None,
         },
     ]
 }
