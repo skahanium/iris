@@ -755,4 +755,101 @@ describe("useAssistantRun", () => {
       cancelFrame.mockRestore();
     }
   });
+
+  it("queued_previous_run_frame_cannot_patch_new_run", async () => {
+    let emitPresentation:
+      | ((
+          event: Parameters<
+            Parameters<typeof listenAssistantRunPresentation>[0]
+          >[0],
+        ) => void)
+      | null = null;
+    const frameCallbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const requestFrame = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        const frame = nextFrame;
+        nextFrame += 1;
+        frameCallbacks.set(frame, callback);
+        return frame;
+      });
+    const cancelFrame = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((frame) => {
+        frameCallbacks.delete(frame);
+      });
+
+    mockAssistantRunStart
+      .mockResolvedValueOnce({
+        runId: "run-old",
+        turnId: "turn-old",
+        session: { domain: "normal", sessionKey: "session-1" },
+        state: "accepted",
+        stateVersion: 1,
+      })
+      .mockResolvedValueOnce({
+        runId: "run-new",
+        turnId: "turn-new",
+        session: { domain: "normal", sessionKey: "session-1" },
+        state: "accepted",
+        stateVersion: 1,
+      });
+    mockAssistantRunGet.mockResolvedValue(null);
+    mockListenAssistantRunEvent.mockResolvedValue(() => undefined);
+    mockListenAssistantRunPresentation.mockImplementation(async (handler) => {
+      emitPresentation = handler;
+      return () => undefined;
+    });
+    mountProbe();
+
+    try {
+      await act(async () => {
+        await runApi?.start({
+          ...request(),
+          clientRequestId: "client-run-old",
+        });
+      });
+
+      act(() => {
+        emitPresentation?.({
+          runId: "run-old",
+          presentationSeq: 1,
+          elapsedMs: 10,
+          type: "answer_delta",
+          payload: { kind: "answer_delta", delta: "old" },
+        });
+      });
+
+      const oldFrame = frameCallbacks.get(1);
+      expect(oldFrame).toBeTypeOf("function");
+
+      await act(async () => {
+        await runApi?.start({
+          ...request(),
+          clientRequestId: "client-run-new",
+        });
+      });
+
+      expect(runApi?.presentationState).toMatchObject({
+        runId: "run-new",
+        answer: "",
+        lastSeq: 0,
+      });
+      expect(cancelFrame).toHaveBeenCalledWith(1);
+
+      act(() => {
+        oldFrame?.(16);
+      });
+
+      expect(runApi?.presentationState).toMatchObject({
+        runId: "run-new",
+        answer: "",
+        lastSeq: 0,
+      });
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+    }
+  });
 });

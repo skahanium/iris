@@ -265,8 +265,7 @@ export function UnifiedAssistantPanel({
   useAssistantConversationProjection({
     run: assistantRun.eventState,
     presentation: assistantRun.presentationState,
-    presentationAnswer: assistantAnswerReveal.answer,
-    presentationRevealing: assistantAnswerReveal.revealing,
+    presentationReveal: assistantAnswerReveal,
     session: runSession,
     messages,
     setMessages,

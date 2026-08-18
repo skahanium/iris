@@ -285,6 +285,11 @@ export function useAssistantRun() {
 
   const activateAccepted = useCallback(
     (accepted: AssistantRunAccepted) => {
+      if (presentationFrameRef.current !== null) {
+        window.cancelAnimationFrame(presentationFrameRef.current);
+        presentationFrameRef.current = null;
+      }
+      pendingPresentationEventsRef.current = [];
       const run = activeRunFromAccepted(accepted);
       activeRunIdRef.current = accepted.runId;
       setRunIdentity(run);

@@ -22,14 +22,13 @@ import type {
   AssistantSessionRef,
   ClassifiedRunResultRequest,
 } from "@/types/ai";
+import type { AssistantAnswerReveal } from "./useAssistantAnswerReveal";
 
 export interface AssistantConversationProjectionOptions {
   run: AssistantRunEventState | null;
   presentation?: AssistantPresentationState | null;
-  /** Smoothed live answer; falls back to `presentation.answer` when omitted. */
-  presentationAnswer?: string;
-  /** True while the smoothed answer is still catching up to the live answer. */
-  presentationRevealing?: boolean;
+  /** Smoothed live answer scoped to a specific Run; must match `run.runId`. */
+  presentationReveal?: AssistantAnswerReveal;
   session?: AssistantSessionRef | null;
   messages: readonly ChatLine[];
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
@@ -50,8 +49,7 @@ export interface AssistantConversationProjectionOptions {
 export function useAssistantConversationProjection({
   run,
   presentation,
-  presentationAnswer,
-  presentationRevealing,
+  presentationReveal,
   session,
   messages,
   setMessages,
@@ -121,7 +119,7 @@ export function useAssistantConversationProjection({
     if (run.lastSeq === 0 && !hasLivePresentation) return;
     if (!messages.some((message) => message.runId === run.runId)) return;
 
-    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${presentationAnswer?.length ?? 0}:${presentationRevealing ? 1 : 0}`;
+    const projectionKey = `${run.runId}:${run.lastSeq}:${run.transientRevision}:${presentationSeq}:${presentationReveal?.runId ?? ""}:${presentationReveal?.answer.length ?? 0}:${presentationReveal?.revealing ? 1 : 0}`;
     if (appliedProjectionRef.current === projectionKey) return;
     appliedProjectionRef.current = projectionKey;
 
@@ -150,17 +148,20 @@ export function useAssistantConversationProjection({
     const currentMessage = messages.find(
       (message) => message.role === "assistant" && message.runId === run.runId,
     );
+    const revealMatchesRun =
+      presentationReveal?.runId === run.runId &&
+      presentation?.runId === run.runId;
+    const visiblePresentationAnswer = revealMatchesRun
+      ? sanitizeAssistantVisibleText(presentationReveal.answer)
+      : "";
     const content = presentationOwnsContent
-      ? sanitizeAssistantVisibleText(
-          presentationAnswer ?? presentation?.answer ?? "",
-        ) ||
-        currentMessage?.content ||
-        ""
+      ? visiblePresentationAnswer
       : run.content.trim()
         ? run.content
         : (currentMessage?.content ?? "");
     const presentationStreaming =
-      presentationOwnsContent && (Boolean(presentationRevealing) || !terminal);
+      presentationOwnsContent &&
+      (Boolean(presentationReveal?.revealing) || !terminal);
     const fullContent = presentationOwnsContent
       ? sanitizeAssistantVisibleText(presentation?.answer ?? "")
       : run.content.trim()
@@ -254,8 +255,7 @@ export function useAssistantConversationProjection({
     classifiedContextRef,
     messages,
     presentation,
-    presentationAnswer,
-    presentationRevealing,
+    presentationReveal,
     run,
     setActivityHint,
     setError,

@@ -10,10 +10,11 @@ function Harness({
 }: {
   presentation: AssistantPresentationState | null;
 }) {
-  const { answer, revealing } = useAssistantAnswerReveal(presentation);
+  const { runId, answer, revealing } = useAssistantAnswerReveal(presentation);
   return createElement(
     "output",
     {
+      "data-run-id": runId ?? "",
       "data-answer": answer,
       "data-revealing": String(revealing),
     },
@@ -209,6 +210,9 @@ describe("useAssistantAnswerReveal", () => {
       );
     });
     drainFrames();
+    expect(host.querySelector("output")?.getAttribute("data-run-id")).toBe(
+      "run-old",
+    );
     expect(host.querySelector("output")?.getAttribute("data-answer")).toBe(
       "old answer",
     );
@@ -221,6 +225,9 @@ describe("useAssistantAnswerReveal", () => {
       );
     });
 
+    expect(host.querySelector("output")?.getAttribute("data-run-id")).toBe(
+      "run-new",
+    );
     expect(host.querySelector("output")?.getAttribute("data-answer")).toBe("");
     expect(host.querySelector("output")?.getAttribute("data-revealing")).toBe(
       "true",
