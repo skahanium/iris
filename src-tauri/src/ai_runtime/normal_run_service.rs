@@ -15,8 +15,8 @@ use crate::ai_runtime::agent_run_repository::AgentRunRepository;
 use crate::ai_runtime::agent_tool_loop::ToolLoopExecutor;
 use crate::ai_runtime::prompt_contract::PromptContractV3;
 use crate::ai_runtime::run_contract::{
-    AssistantRunAccepted, Effort, Freshness, Modality, RunBudgetPolicy, SafeRunErrorCode,
-    VerificationRequirement, WebEvidenceFailureReason,
+    AssistantRunAccepted, CapabilityId, Effort, Freshness, Modality, RunBudgetPolicy,
+    SafeRunErrorCode, VerificationRequirement, WebEvidenceFailureReason,
 };
 use crate::ai_runtime::run_engine::{
     FailoverStreamingProvider, RunEngine, RunEventSink, WebVerificationFailure,
@@ -24,11 +24,38 @@ use crate::ai_runtime::run_engine::{
 use crate::ai_runtime::run_intake::RunIntake;
 use crate::ai_runtime::run_tool_loop::NormalRunToolExecutor;
 use crate::ai_runtime::tool_executor::ToolRegistry;
+use crate::ai_runtime::tool_surface::{
+    classify_time_sensitivity, ToolSurfaceInput, ToolSurfacePlan, ToolSurfacePlanner,
+};
 use crate::ai_runtime::{LlmMessage, MessageRole, ToolCall};
 use crate::ai_types::{AgentIntent, SkillActivationPlanSummary};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
+
+fn plan_tool_surface(
+    context: &crate::ai_runtime::run_context::RunContext,
+    authorized_capabilities: &[CapabilityId],
+    web_prefetched: bool,
+) -> ToolSurfacePlan {
+    let plan = ToolSurfacePlanner::plan(ToolSurfaceInput {
+        web_enabled: authorized_capabilities
+            .iter()
+            .any(|capability| capability.as_str() == "web.search"),
+        time_sensitive: classify_time_sensitivity(&context.user_message),
+        effort: context.envelope.effort,
+        web_prefetched,
+        authorized_capabilities: authorized_capabilities.to_vec(),
+    });
+    tracing::debug!(
+        effort = ?plan.effort,
+        expose_web_search = plan.expose_web_search,
+        web_prefetched = plan.web_prefetched,
+        web_instruction = ?plan.web_instruction,
+        "tool surface planned"
+    );
+    plan
+}
 
 /// Execute one already-accepted normal-domain Run through the production
 /// orchestration path without requiring a desktop runtime.
@@ -413,7 +440,8 @@ async fn dispatch_normal_run_after_context(
             .flatten()
             .unwrap_or_default();
         let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
-        let tools = ToolRegistry::constrain_for_run_context(
+        let tool_surface_plan = plan_tool_surface(context, authorized_capabilities, false);
+        let mut tools = ToolRegistry::constrain_for_run_context(
             registry.tools_for_authorized_capabilities(
                 authorized_capabilities,
                 context.envelope.effort != Effort::Durable,
@@ -421,6 +449,9 @@ async fn dispatch_normal_run_after_context(
             context.envelope.context,
             &context.retrieval_scope,
         );
+        if !tool_surface_plan.expose_web_search {
+            tools.retain(|tool| tool.name != "web_search");
+        }
         let requirements = crate::ai_runtime::provider_router::ProviderRequirements {
             endpoint_family: None,
             streaming: true,
@@ -740,21 +771,18 @@ async fn dispatch_required_web_verified_run(
             .await
         };
     }
-    // Required Web evidence is prefetched deterministically, but authorized
-    // vault retrieval and explicitly granted external reads may still be
-    // necessary for a hybrid answer. Continue withholding `web_search` from
-    // the model: the exact Run-local Web evidence above remains the mandatory
-    // proof for this execution.
+    // Required Web evidence is prefetched deterministically. The final model
+    // only receives local follow-up tools; `web_search` remains hidden because
+    // the evidence is already provided. The planner records this state so the
+    // prompt can tell the model not to deny that retrieval happened.
+    let _tool_surface_plan = plan_tool_surface(context, authorized_capabilities, true);
     let local_follow_up_capabilities = strict_follow_up_capabilities(authorized_capabilities);
     let registry = ToolRegistry::for_run(db, &accepted.run_id)?;
     let mut tools = ToolRegistry::constrain_for_run_context(
         registry.tools_for_authorized_capabilities(&local_follow_up_capabilities, true),
         context.envelope.context,
         &context.retrieval_scope,
-    )
-    .into_iter()
-    .filter(|tool| tool.name != "web_search")
-    .collect::<Vec<_>>();
+    );
     let has_local_follow_up_tools = !tools.is_empty();
     let serialized_messages = serde_json::to_string(messages).map_err(AppError::from)?;
     let mut requirements = crate::ai_runtime::provider_router::ProviderRequirements {

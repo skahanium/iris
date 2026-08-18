@@ -12,6 +12,7 @@ use crate::ai_runtime::run_contract::{
     Modality, RiskClass, RunControlAction, RunEventPayload, RunEventType, SafeRunErrorCode,
     SecurityDomain, VerificationRequirement, WebDecisionReason,
 };
+use crate::ai_runtime::tool_surface::{classify_time_sensitivity, TimeSensitivity};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -113,6 +114,7 @@ impl RunIntake {
                 .iter()
                 .any(|part| matches!(part, crate::ai_types::ContentPart::ImageUrl { .. }))
         });
+        let time_sensitive = classify_time_sensitivity(&directive_text) == TimeSensitivity::Current;
         let effort = match effect {
             Effect::Apply => Effort::Durable,
             _ if freshness == Freshness::WebPreferred
@@ -122,7 +124,8 @@ impl RunIntake {
                 || child_run_requested
                 || is_high_stakes_current_request(&directive_text)
                 || requires_multi_step_research(&directive_text)
-                || needs_offline_vault_tool_loop(request, &directive_text) =>
+                || needs_offline_vault_tool_loop(request, &directive_text)
+                || (request.web_enabled && time_sensitive) =>
             {
                 Effort::ToolLoop
             }

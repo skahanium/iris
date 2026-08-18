@@ -718,7 +718,7 @@ async fn execute_normal_run_uses_real_service_policy_route_executor_and_engine()
         .expect("provider messages")
         .iter()
         .filter_map(|message| message["content"].as_str())
-        .find(|content| content.contains("WebEvidenceData"))
+        .find(|content| content.contains("## WebEvidenceData"))
         .expect("web evidence system prompt");
     assert!(
         system_prompt.contains("Keep source mechanics out of visible prose"),

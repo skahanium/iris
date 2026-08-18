@@ -1692,6 +1692,21 @@ fn web_enabled_pure_rewrite_remains_direct_while_the_toggle_owns_web_authority()
 }
 
 #[test]
+fn web_enabled_time_sensitive_movie_question_enters_tool_loop() {
+    let mut request = request();
+    request.web_enabled = true;
+    request.turn.message = "最近有什么好看的电影吗？".to_string();
+
+    let envelope = RunIntake::resolve_envelope(&request).expect("resolve envelope");
+
+    assert_eq!(envelope.effort, Effort::ToolLoop);
+    assert!(envelope
+        .required_capabilities
+        .iter()
+        .any(|capability| capability.as_str() == "web.search"));
+}
+
+#[test]
 fn offline_local_note_dependency_without_explicit_refs_enters_tool_loop() {
     let mut request = request();
     request.web_enabled = false;

@@ -23,6 +23,7 @@
 
 | 文档                                                                                                   | 用途                                   |
 | ------------------------------------------------------------------------------------------------------ | -------------------------------------- |
+| [Agent Harness 可靠性重构](../refactor/README.md)                                                      | 当前差距、可靠性契约、实施顺序与验收   |
 | [MiniMax 协议与发布门禁加固计划](./superpowers/plans/2026-08-11-minimax-protocol-release-hardening.md) | 流式隐私、模型能力与发布门禁施工证据   |
 | [RSS 订阅资料库实施计划](./superpowers/plans/2026-08-11-rss-subscription-library.md)                   | 全周期阶段、测试先行任务与发布门禁     |
 | [RSS 订阅资料库人工清单](./testing/rss-subscription-library-manual-checklist.md)                       | 全尺寸、双平台、隐私、升级与回滚验收   |

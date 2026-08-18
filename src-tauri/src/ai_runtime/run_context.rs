@@ -230,41 +230,8 @@ impl RunContext {
 }
 
 fn is_time_sensitive_request(message: &str) -> bool {
-    let lower = message.to_ascii_lowercase();
-    [
-        "最近",
-        "最新",
-        "今天",
-        "今年",
-        "当前",
-        "现在",
-        "实时",
-        "上映",
-        "发布",
-        "价格",
-        "天气",
-        "比赛",
-        "新闻",
-        "近期",
-        "有什么新",
-    ]
-    .iter()
-    .any(|keyword| message.contains(keyword))
-        || [
-            "recent",
-            "latest",
-            "today",
-            "this year",
-            "current",
-            "now",
-            "news",
-            "weather",
-            "price",
-            "release",
-            "movie",
-        ]
-        .iter()
-        .any(|keyword| lower.contains(keyword))
+    crate::ai_runtime::tool_surface::classify_time_sensitivity(message)
+        == crate::ai_runtime::tool_surface::TimeSensitivity::Current
 }
 
 /// Assembles normal-domain context from one persisted Run and one vault.
