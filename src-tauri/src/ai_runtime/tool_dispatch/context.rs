@@ -18,7 +18,7 @@ pub struct ToolDispatchContext<'a> {
         Option<&'a crate::ai_runtime::policy_decision_engine::PolicyDecisionEngine>,
     pub web_search_enabled: bool,
     /// Current Run surface as exposed to the model. `capabilities_read` must
-    /// report only these tools; empty is reserved for isolated/internal paths.
+    /// report only these tools; empty means no model-visible tools.
     pub available_tool_names: &'a [String],
     pub max_web_fetches: usize,
     pub cold_start_packets: &'a [ContextPacket],

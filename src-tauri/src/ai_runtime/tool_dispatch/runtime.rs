@@ -25,14 +25,10 @@ pub(crate) fn capabilities_read_tool(
     ctx: &ToolDispatchContext<'_>,
 ) -> AppResult<serde_json::Value> {
     let all_tools = runtime_context::all_catalog_tools_as_specs();
-    let tools = if ctx.available_tool_names.is_empty() {
-        all_tools
-    } else {
-        all_tools
-            .into_iter()
-            .filter(|tool| ctx.available_tool_names.contains(&tool.name))
-            .collect::<Vec<_>>()
-    };
+    let tools = all_tools
+        .into_iter()
+        .filter(|tool| ctx.available_tool_names.contains(&tool.name))
+        .collect::<Vec<_>>();
     serde_json::to_value(runtime_context::capability_snapshot(
         &state.db,
         ctx.web_search_enabled,
@@ -58,7 +54,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn runtime_context_tools_return_structured_readonly_state() {
+    async fn capabilities_read_empty_surface_returns_no_tools() {
         let (state, _dir) = test_state();
         let mut routing = crate::llm::config::deepseek_defaults();
         routing.providers.insert(
@@ -124,9 +120,8 @@ mod tests {
             }));
         assert!(capabilities.output["tools"]
             .as_array()
-            .unwrap()
-            .iter()
-            .any(|tool| tool["name"] == "system_time_now"));
+            .expect("capabilities tools")
+            .is_empty());
     }
 
     #[tokio::test]

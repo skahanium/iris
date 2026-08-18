@@ -618,7 +618,8 @@ async fn tool_loop_executor_runs_without_a_desktop_app_handle() {
         super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
         &sink,
         Vec::new(),
-    );
+    )
+    .with_allowed_tool_names(&["system_time_now".to_string()]);
 
     let result = executor
         .execute(
@@ -693,6 +694,12 @@ async fn headless_tool_loop_runs_real_executor_mcp_broker_evidence_ledger_and_te
         super::run_contract::RunBudgetPolicy::for_envelope(&context.envelope),
         &sink,
         vec![provider_snapshot],
+    )
+    .with_allowed_tool_names(
+        &tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>(),
     );
 
     RunEngine::execute_tool_loop_with_sink(

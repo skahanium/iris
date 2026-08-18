@@ -637,6 +637,7 @@ async fn dispatch_required_web_verified_run(
         sink,
         provider_snapshots,
     )
+    .with_allowed_tool_names(&["web_search".to_string()])
     .with_skill_activation_plan(skill_plan);
     let query = required_web_query(context);
     let first_prefetch = crate::ai_runtime::agent_tool_loop::ToolLoopExecutor::execute(

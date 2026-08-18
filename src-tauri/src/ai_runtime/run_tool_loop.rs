@@ -259,9 +259,8 @@ pub(crate) struct NormalRunToolExecutor<'a> {
     accepted: &'a AssistantRunAccepted,
     context: &'a RunContext,
     authorized_capabilities: Vec<CapabilityId>,
-    /// Exact model-visible tool surface frozen for this Run. Empty means the
-    /// executor is on an internal/confirmed path and does not enforce surface
-    /// membership (permission gates still apply).
+    /// Exact model-visible tool surface frozen for this Run. Empty denies all
+    /// model-selected tool calls; confirmed execution uses its dedicated path.
     allowed_tool_names: Vec<String>,
     /// The exact cached Skill plan selected before this Run entered the model.
     /// It is inherited by ChildRuns only as a scope restriction; Skill bodies
@@ -1282,11 +1281,10 @@ impl ToolLoopExecutor for NormalRunToolExecutor<'_> {
         step: u32,
     ) -> Pin<Box<dyn Future<Output = AppResult<ToolCallResult>> + Send + 'a>> {
         Box::pin(async move {
-            if !self.allowed_tool_names.is_empty()
-                && !self
-                    .allowed_tool_names
-                    .iter()
-                    .any(|name| name == &call.function.name)
+            if !self
+                .allowed_tool_names
+                .iter()
+                .any(|name| name == &call.function.name)
             {
                 return Ok(failed_tool_call(
                     &call.function.name,
@@ -1812,6 +1810,10 @@ impl NormalRunToolExecutor<'_> {
             .filter(|tool| spec.allowed_tools.contains(&tool.name))
             .cloned()
             .collect::<Vec<_>>();
+        let child_tool_names = tools
+            .iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
         let messages = vec![
             LlmMessage {
                 role: MessageRole::System,
@@ -1842,6 +1844,7 @@ impl NormalRunToolExecutor<'_> {
             self.sink,
             self.required_web_provider_snapshots.clone(),
         )
+        .with_allowed_tool_names(&child_tool_names)
         .with_skill_activation_plan(self.skill_activation_plan.clone())
         .with_parent_run_web_state(self)
         .at_subagent_depth(1)
@@ -3438,7 +3441,8 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
+        )
+        .with_allowed_tool_names(std::slice::from_ref(&snapshot.exposed_name));
         let private_query = "external-query-body-must-not-persist";
         let provider_output = "fact-web-1=value-1";
         let private_call_id = "provider-call-id-must-not-persist";
@@ -3752,6 +3756,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
         executor
             .run_web_evidence
@@ -3929,6 +3934,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
 
         let provider_call_id = format!("{}{}", "ghp_", "1234567890abcdefghijklmnopqrstuvwxyz");
@@ -4258,7 +4264,8 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
+        )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()]);
         let denied = denied_executor
             .execute(
                 &accepted.run_id,
@@ -4345,6 +4352,7 @@ mod tests {
             &sink,
             Vec::new(),
         )
+        .with_allowed_tool_names(&["spawn_subagent".to_string()])
         .with_child_run_provider(&provider);
         let result = executor
             .execute(
@@ -4703,6 +4711,89 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_tool_surface_rejects_forged_tool_call() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![CapabilityId::new("runtime.read")],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        );
+
+        let result = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("forged-call", "system_time_now", "{}"),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
+    async fn internal_web_prefetch_allows_only_web_search() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let vault = directory.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault directory");
+        let state = AppState::new(directory.path().join("data")).expect("application state");
+        state.set_vault(vault.clone()).expect("activate vault");
+        let accepted = RunIntake::start(&state.db, request()).expect("accepted run");
+        let context = RunContextAssembler::assemble(
+            &state.db,
+            Some(&vault),
+            &accepted.session.session_key,
+            &accepted.run_id,
+        )
+        .expect("run context");
+        let sink = RecordingSink::default();
+        let executor = NormalRunToolExecutor::new(
+            &state,
+            None,
+            &accepted,
+            &context,
+            vec![
+                CapabilityId::new("web.search"),
+                CapabilityId::new("runtime.read"),
+            ],
+            RunBudgetPolicy::for_envelope(&context.envelope),
+            &sink,
+            Vec::new(),
+        )
+        .with_allowed_tool_names(&["web_search".to_string()]);
+
+        assert_eq!(executor.allowed_tool_names, ["web_search"]);
+        let forged = executor
+            .execute(
+                &accepted.run_id,
+                &ToolCall::new("forged-prefetch-call", "system_time_now", "{}"),
+                1,
+            )
+            .await
+            .expect("surface rejection is a normal tool result");
+        assert_eq!(forged.error.as_deref(), Some("tool_not_in_run_surface"));
+    }
+
+    #[tokio::test]
     async fn model_read_note_reloads_current_disk_content_and_registers_metadata_only() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let vault = directory.path().join("vault");
@@ -4784,7 +4875,8 @@ mod tests {
             RunBudgetPolicy::for_envelope(&context.envelope),
             &sink,
             Vec::new(),
-        );
+        )
+        .with_allowed_tool_names(&["read_note".to_string(), "search_keyword".to_string()]);
 
         let result = executor
             .execute(
