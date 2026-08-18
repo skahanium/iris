@@ -22,9 +22,9 @@
 | EVID-001  | P0     | Resolved   | `SourceGroupFallback` 已存在且 ToolLoop 会生成；Direct 严格 Web 现已补齐 binding                                              | 保留 Direct/ToolLoop 双路径回归测试                    |
 | EVID-002  | P0     | Resolved   | UI 对缺失/未知 binding 与有来源条目时统一按“本次检索来源/未逐段核验”展示；精确 binding 仍走精确样式                           | 保留 missing/unknown binding fail-safe 测试            |
 | EVID-003  | P1     | Confirmed  | 严格结构化 VERIFIED 规则没有形成有效覆盖                                                                                      | 逐工具增加确定性规则；其余保持 uncalibrated            |
-| EVID-004  | P2     | Partial    | `session_evidence` 已具时间、原 Run、失效和安全摘录字段                                                                       | 在绑定校验中完整消费现有字段，不新增证据表             |
-| SEC-001   | P0     | Confirmed  | 错误工具权限映射可能使授权语义失真                                                                                            | 与 TOOL-002 一并修复并加入拒绝型测试                   |
-| SEC-002   | P0     | Partial    | 已有 Web 权限与内容隔离机制，但本地检索到 Web 查询的数据流需端到端负例                                                        | 建立统一数据流门禁和隐私回归测试                       |
+| EVID-004  | P2     | Resolved   | `list_current_run_web_citation_links` 只返回当前 Run、未 retired、HTTPS 可定位证据；foreign/retired 均被排除                  | 保留 foreign/retired 负例测试                          |
+| SEC-001   | P0     | Resolved   | harness 工具已使用独立 `harness.*` 权限原子，不再继承 `vault.search`                                                          | 保留权限映射拒绝型测试                                 |
+| SEC-002   | P0     | Resolved   | 本地检索内容通过 `record_web_query_taint_witness` 与 Web 查询门禁阻止进入查询/URL/日志；已有端到端隐私负例                    | 保留 taint/隐私负例回归测试                            |
 | CTX-001   | P1     | Partial    | 运行时上下文构造逻辑存在，但生产调用链接入不足                                                                                | 接成只读 `RunSituation`，不新增状态表                  |
 | CTX-002   | P1     | Confirmed  | 会话记忆兜底可能把第一条用户消息长期提升为目标                                                                                | 移除兜底，目标只来自当前请求/明确任务                  |
 | CTX-003   | P1     | Partial    | `conversation_summaries` 已存在，可支持压缩，但需补覆盖范围和失效语义                                                         | 复用现表并增加失效/重建测试                            |
@@ -94,3 +94,11 @@
 - TOOL-004：遗留 `conclude_reasoning` 不进入模型 surface，`static_metadata_for_tool` 对无生产消费方的内部工具返回 `None`。
 - 静态元数据：`ToolStaticMetadata` 已为 `web_search`、本地读取/搜索、运行时快照等关键工具补充 `cost_class` / `output_policy` / `evidence_policy`，并通过 `capabilities_read` 暴露。
 - 工具输出尺寸：既有 `oversized_web_tool_results_fail_closed_with_valid_json`、`tool_payload_8001_truncated` 等测试继续覆盖确定性截断与安全失败，未引入新平行截断逻辑。
+
+## 阶段 3 结果（branch-v1.3.0）
+
+- EVID-004：`current_run_citation_links_exclude_foreign_and_retired_evidence` 已 GREEN；当前 Run 的 citation links 只包含本 Run、未 retired、HTTPS 可定位证据。
+- 来源展示：`AssistantCitationFooter` 不把插入顺序包装成“排名/评分/质量排序”，新增 UI 负例 GREEN。
+- SEC-001 / SEC-002：权限映射与本地检索→Web 查询隐私门禁保持既有负例 GREEN。
+- EVID-001/EVID-002：Direct/ToolLoop 的 `SourceGroupFallback` 与 UI fail-safe 继续 GREEN。
+- EVID-003：当前没有已支持的结构化 VERIFIED 工具，`VERIFIED` 注册表保持为空；`structured_verifier_requires_registered_rule` 保证无规则不能晋升。

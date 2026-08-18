@@ -191,4 +191,29 @@ describe("AssistantCitationFooter", () => {
       screen.getAllByText("用户输入 1 · 授权材料 2 · 网页 2 · 推断 1"),
     ).toHaveLength(2);
   });
+
+  it("does not present insertion order as source quality ranking", () => {
+    render(
+      <AssistantCitationFooter
+        content="模型回答没有行内引用格式。"
+        binding={{
+          mode: "source_group_fallback",
+          referencedIndices: [],
+          fallbackReason: "missing_marker",
+        }}
+        entries={[
+          { index: 1, title: "First", url: "https://example.com/one" },
+          { index: 2, title: "Second", url: "https://example.com/two" },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "展开本次检索来源" }));
+
+    expect(screen.getByText("First")).toBeInTheDocument();
+    expect(screen.getByText("Second")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/排名|评分|第1名|第2名|质量排序/),
+    ).not.toBeInTheDocument();
+  });
 });
